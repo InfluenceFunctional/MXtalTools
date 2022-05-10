@@ -240,5 +240,5 @@ if __name__ == '__main__':
     #helper.collect_chunks_and_initialize_df()
 
     # then, featurize each crystal
-    offset = 10
+    offset = 80
     helper.get_crystal_featuress(n_chunks = 100, chunk_inds=[offset + 0,offset +10])

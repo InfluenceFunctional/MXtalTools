@@ -26,7 +26,7 @@ parser.add_argument('--dataset_seed', type=int, default=0)
 parser.add_argument('--machine', type=str, default='local')  # 'local' (local windows venv) or 'cluster' (linux env)
 parser.add_argument("--device", default="cuda", type=str)  # 'cuda' or 'cpu'
 add_bool_arg(parser, 'skip_run_init', default=False)
-parser.add_argument("--mode", default="single molecule classification", type=str)  # 'single molecule classification' 'joint modelling' 'single molecule regression' 'crystal cell training'
+parser.add_argument("--mode", default="single molecule classification", type=str)  # 'single molecule classification' 'joint modelling' 'single molecule regresion' 'cell classification'
 parser.add_argument("--dataset_path", type=str, default = 'C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset')
 
 # wandb login
@@ -35,7 +35,7 @@ parser.add_argument('--wandb_username', type=str, default = 'mkilgour')
 parser.add_argument('--project_name', type=str, default = 'MCryGAN')
 # wandb reporting
 parser.add_argument('--sample_reporting_frequency', type = int, default = 1)
-add_bool_arg(parser, 'detailed_reporting', default=True)
+add_bool_arg(parser, 'log_figures', default=True)
 # wandb sweeps
 parser.add_argument('--sweep_config_file', type=str, default='sweep_1.yaml')
 add_bool_arg(parser, 'sweep', default=True) # whether to do a single run or use w&b to run a Bayesian sweep
@@ -58,6 +58,7 @@ parser.add_argument('--min_packing_coefficient', type=float, default = 0.55)
 add_bool_arg(parser, '--include_organic', default = True)
 add_bool_arg(parser, '--include_organometallic', default = True)
 parser.add_argument('--max_atomic_number',type=int,default=87)
+parser.add_argument('--min_atomic_number',type=int,default=1)
 add_bool_arg(parser,'exclude_disordered_crystals',default=True)
 add_bool_arg(parser,'exclude_polymorphs',default=True)
 add_bool_arg(parser,'exclude_nonstandard_settings',default=True)

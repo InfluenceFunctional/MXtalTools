@@ -1,7 +1,6 @@
 from utils import *
 import matplotlib.pyplot as plt
 import tqdm
-import collections
 import pandas as pd
 
 pd.set_option('display.max_rows', 500)
@@ -50,8 +49,8 @@ class Miner():
             else:
                 self.exclude_missing_r_factor = config.exclude_missing_r_factor
             self.exclude_nonstandard_settings = config.exclude_nonstandard_settings
-            self.max_temperature = config.max_temperature
-            self.min_temperature = config.min_temperature
+            self.max_temperature = config.max_crystal_temperature
+            self.min_temperature = config.min_crystal_temperature
             self.include_sgs = config.include_sgs
 
         self.dataset_path = dataset_path
@@ -218,7 +217,7 @@ class Miner():
 
         if self.exclude_nonstandard_settings:
             # nonstandard spacegroup setings have inconsistent lattice definitions
-            settings = np.asarray([self.dataset['crystal spacegroup setting'][i] for i in range(self.dataset_length)])
+            settings = np.asarray([self.dataset['crystal spacegroup setting'][i] for i in range(len(self.dataset))])
             bad_inds.extend(np.argwhere(settings != 1)[:, 0])
 
         # collate bad indices

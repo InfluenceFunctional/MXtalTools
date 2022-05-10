@@ -3,9 +3,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 import torch_geometric.nn as gnn
-from DimeNetCustom import CustomDimeNet
-from CustomSchNet import CustomSchNet
-from MikesGraphNet import MikesGraphNet, FCBlock
+from models.DimeNetCustom import CustomDimeNet
+from models.CustomSchNet import CustomSchNet
+from models.MikesGraphNet import MikesGraphNet, FCBlock
 import sys
 from nflib.flows import *
 from nflib.nets import *
@@ -27,7 +27,7 @@ class FlowModel(nn.Module):
         if config.conditional_modelling:
             self.n_conditional_features = dataDims['n conditional features']
             if config.conditioning_mode == 'graph model':
-                self.conditioner = CSP_model(config, dataDims, return_latent=True)
+                self.conditioner = molecule_graph_model(config, dataDims, return_latent=True)
                 self.n_conditional_features = config.fc_depth # will concatenate the graph model latent representation to the selected molecule features
             elif config.conditioning_mode == 'molecule features':
                 self.conditioner = None
@@ -204,9 +204,9 @@ class NormalizingFlow(nn.Module):
         return xs, log_det
 
 
-class CSP_model(nn.Module):
+class molecule_graph_model(nn.Module):
     def __init__(self,config, dataDims, return_latent=False):
-        super(CSP_model,self).__init__()
+        super(molecule_graph_model,self).__init__()
         # initialize constants and layers
         self.return_latent = return_latent
         self.activation = config.activation

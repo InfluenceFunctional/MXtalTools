@@ -4,10 +4,10 @@ from utils import standardize
 from torch_geometric.data import Data
 import sys
 from torch_geometric.loader import DataLoader
-from torch.utils.data import DataLoader as tDataLoader
 import tqdm
 import time
 import matplotlib.pyplot as plt
+import pandas as pd
 
 
 class BuildDataset():
@@ -89,7 +89,7 @@ class BuildDataset():
                 self.conditional_keys.remove('crystal z value')
 
 
-        dataset = np.load('datasets/dataset.npy', allow_pickle=True).item()
+        dataset = pd.read_pickle('datasets/dataset.npy')
         self.dataset_length = len(dataset)
         # add some missing binary features
         for i in range(config.min_z_value + 1, config.max_z_value + 1):
@@ -785,17 +785,8 @@ def get_dataloaders(dataset_builder, config, override_batch_size = None):
     for i in range(test_size):
         test_dataset.append(dataset_builder[i])
 
-    if (config.mode == 'joint modelling'):
-        if config.conditioning_mode == 'graph model':
-            tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
-            te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
-        else:
-            tr = tDataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
-            te = tDataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
-
-    else:
-        tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
-        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
+    tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
+    te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
 
     return tr, te
 
