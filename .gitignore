@@ -1,0 +1,5 @@
+.idea/
+__pycache__/
+/parallelTest.py
+/old/processDatasetChunks.py
+/req.out

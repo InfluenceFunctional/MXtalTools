@@ -1,0 +1,93 @@
+test_mode: False
+model_seed: 0
+dataset_seed: 0
+machine: "local"
+device: "cuda"
+skip_run_init: False
+explicit_run_enumeration: False
+run_num: 0
+mode: regression # mining or training or 'joint modelling'  or 'regression'(mining doesn't do much / isn't set up right now)
+
+sweep_config_file: "sweep_test.yaml"
+experiment_tag: "new_clean_data_testing"
+sweep: False
+sample_reporting_frequency: 1
+detailed_reporting: False
+sweep_id: null
+sweep_num_runs: 50
+
+target: crystal packing coefficient
+multi_crystal_tasks: False
+multi_molecule_tasks: False
+include_molecule_features: minimum # minimum, maximum
+concat_mol_to_atom_features: True
+regression_type_classes: 10
+regression_quantile_cutoff: 0.075
+
+dataset_length: 1000000
+max_crystal_temperature: 1000
+min_crystal_temperature: 0
+max_num_atoms: 200
+min_num_atoms: 20
+max_z_value: 10
+min_z_value: 0
+max_z_prime: 1
+min_z_prime: 1
+max_packing_coefficient: 0.85
+min_packing_coefficient: 0.58
+include_organic: True
+include_organometallic: True
+max_atomic_number: 87
+exclude_missing_r_factor: True
+exclude_disordered_crystals: True
+exclude_polymorphs: True
+exclude_nonstandard_settings: True
+include_sgs: null
+
+optimizer: "adamw"
+learning_rate: 0.001
+max_lr: 0.001
+lr_schedule: False
+beta1: 0.9
+beta2: 0.999
+weight_decay: 0.001
+convergence_eps: 0.00001
+gradient_norm_clip: 1
+anomaly_detection: False
+
+initial_batch_size: 10000
+auto_batch_sizing: True
+auto_batch_reduction: 0.2
+max_epochs: 500
+history: 20
+
+graph_model: schnet
+graph_convolution_layers: 8
+graph_filters: 16
+atom_embedding_size: 64
+graph_norm: layer
+num_spherical: 6
+num_radial: 100
+graph_convolution_cutoff: 5
+max_num_neighbors: 32
+radial_function: 'bessel'
+num_attention_heads: 1 # mikenet only
+graph_convolution: 'full message passing' # mikenet only
+add_spherical_basis: True # mikenet only
+
+num_fc_layers: 4
+fc_depth: 64
+pooling: attention
+activation: "gelu"
+fc_dropout_probability: 0.1
+fc_norm_mode: layer
+
+conditional_modelling: True # only implemented for nsf_cl coupling layer
+conditioning_mode: molecule features # 'graph model' or 'molecule features'
+num_flow_layers: 4
+flow_depth: 32
+flow_basis_fns: 8
+flow_prior: multivariate normal
+flow_type: nsf # choice of affine coupling layer - nsf or glow or made, glow seems to have low capacity and made isn't stable
+num_samples: 100000
+log_plots_to_wandb: True

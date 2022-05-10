@@ -1,0 +1,2168 @@
+'''import statement'''
+import numpy as np
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import Draw
+from rdkit.Chem import AllChem
+from argparse import Namespace
+import yaml
+from pathlib import Path
+import networkx as nx
+from rdkit.Chem import rdmolops
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+
+
+'''
+This is a general utilities file for the active learning pipeline
+
+To-Do:
+'''
+
+def initialize_metrics_dict(metrics):
+    m_dict = {}
+    for metric in metrics:
+        m_dict[metric] = []
+
+    return m_dict
+
+
+def update_metrics_dict(metrics_dict, new_metrics):
+    for key in new_metrics.keys():
+        if key in metrics_dict.keys():
+            metrics_dict[key].append(new_metrics[key])
+        else:
+            metrics_dict[key] = []
+            metrics_dict[key].append(new_metrics[key])
+
+    return metrics_dict
+
+
+def add_multi_task_loss_to_metrics_dict(metrics_dict, tr_losses, te_losses, task_list):
+    for i,key in enumerate(task_list):
+        train_key = 'task ' + key + ' train loss'
+        test_key = 'task ' + key + ' test loss'
+        if train_key not in metrics_dict.keys():
+            metrics_dict[train_key] = []
+            metrics_dict[test_key] = []
+        metrics_dict[train_key].append(np.average(tr_losses[:,i]))
+        metrics_dict[test_key].append(np.average(te_losses[:,i]))
+
+    return metrics_dict
+
+
+def printRecord(statement):
+    '''
+    print a string to command line output and a text file
+    :param statement:
+    :return:
+    '''
+    print(statement)
+    if os.path.exists('record.txt'):
+        with open('record.txt', 'a') as file:
+            file.write('\n' + statement)
+    else:
+        with open('record.txt', 'w') as file:
+            file.write('\n' + statement)
+
+
+def add_bool_arg(parser, name, default=False):
+    group = parser.add_mutually_exclusive_group(required=False)
+    group.add_argument('--' + name, dest=name, action = 'store_true')
+    group.add_argument('--no-' + name, dest=name, action = 'store_false')
+    parser.set_defaults(**{name:default})
+
+def add_arg_list(parser, arg_list):
+    for entry in arg_list:
+        if entry['type'] == 'bool':
+            add_bool_arg(parser, entry['name'], entry['default'])
+        else:
+            parser.add_argument('--' + entry['name'], type = entry['type'], default = entry['default'])
+
+    return parser
+
+def getModelName(ensembleIndex):
+    '''
+    :param config: parameters of the pipeline we are training
+    :return: directory label
+    '''
+    dirName = "estimator=" + str(ensembleIndex)
+
+    return dirName
+
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
+def numpy_fillna(data):
+    # Get lengths of each row of data
+    lens = np.array([len(i) for i in data])
+
+    # Mask of valid places in each row
+    mask = np.arange(lens.max()) < lens[:,None]
+
+    # Setup output array and put elements from data into masked positions
+    out = np.zeros(mask.shape, dtype=data.dtype)
+    out[mask] = np.concatenate(data)
+    return out
+
+
+def get_n_config(model):
+    '''
+    count parameters for a pytorch model
+    :param model:
+    :return:
+    '''
+    pp=0
+    for p in list(model.parameters()):
+        nn=1
+        for s in list(p.size()):
+            nn = nn*s
+        pp += nn
+    return pp
+
+
+def filterSmiles(samples):
+    filterInds = [samples.index(x) for x in set(samples)]
+    return filterInds
+
+
+def chunkify(lst,n):
+    return [lst[i::n] for i in range(n)]
+
+
+def stack_ragged(array_list, axis=0):
+    lengths = [np.shape(a)[axis] for a in array_list]
+    idx = np.cumsum(lengths[:-1])
+    stacked = np.concatenate(array_list, axis=axis)
+    return stacked, idx
+
+
+def unstack_ragged(array, idx):
+    if idx[-1] == len(array):
+        idx = idx[:-1] # adjust for improper endpoints
+    if idx[0] == 0:
+        idx = idx[1:] # adjust for improper beginning
+    list_of_lists = []
+    for sublist in np.split(array,idx):
+        list_of_lists.append(sublist)
+
+    return np.asarray(list_of_lists)
+
+
+def unstack_dataset(dataset):
+    if len(dataset['atom features']) != len(dataset['mol volume']):
+        for key in dataset.keys():
+            if ('atom' in key) and ('breakpoints' not in key) and ('mol' not in key):
+                dataset[key] = unstack_ragged(dataset[key], dataset['atom breakpoints'])
+    else:
+        pass
+    try:
+        del(dataset['atom breakpoints']) # clear this out so it doesn't interfere with anything
+    except:
+        pass
+
+    return dataset
+
+
+def stack_dataset(dataset):
+    if len(dataset['atom features']) != len(dataset['mol volume']):
+        pass
+    else:
+        dataset['atom breakpoints'] = [1,2,3]
+        for key in dataset.keys():
+            if ('atom' in key) and ('breakpoints' not in key) and ('mol' not in key):
+                dataset[key], dataset['atom breakpoints'] = stack_ragged(dataset[key])
+
+    return dataset
+
+
+def standardize(data, return_std = False):
+    data = data.astype('float32')
+    if return_std:
+        mean = np.mean(data)
+        std = np.sqrt(np.var(data))
+        return (data - mean) / std, mean, std
+    else:
+        return (data - np.mean(data))/np.sqrt(np.var(data))
+
+
+def combine_dataset_dicts(dataset1, dataset2):
+    for key in dataset1.keys():
+        dataset1[key] = np.concatenate((dataset1[key], dataset2[key]),axis=0)
+
+    return dataset1
+
+
+def getAtomFraction(dataset, max_atomic_number = 100, return_to_stacked=False):
+    if len(dataset['mol volume'] != len(dataset['atom features'])):
+        dataset = unstack_dataset(dataset)
+        return_to_stacked = True
+
+    nMols = len(dataset['mol volume'])
+
+    atomFractions = np.zeros((nMols, max_atomic_number), dtype='float16')
+    for i in range(nMols):
+        atomic_numbers = np.clip(dataset['atom features'][i],1,max_atomic_number)
+        atomFractions[i,:] = np.bincount(atomic_numbers,minlength=max_atomic_number + 1)[1:] / dataset['mol num atoms'][i]
+
+    return atomFractions
+
+
+def getSybylFraction(dataset, return_to_stacked=False):
+    sybyl_codes = getSybylSet(dataset)
+    if len(dataset['mol volume'] != len(dataset['atom features'])):
+        dataset = unstack_dataset(dataset)
+        return_to_stacked = True
+
+    nMols = len(dataset['mol volume'])
+
+    sybylFractions = np.zeros((nMols, len(sybyl_codes)), dtype='float16')
+    for i in range(nMols):
+        code_numbers = [sybyl_codes.index(dataset['atom sybyl'][i][j]) for j in range(dataset['mol num atoms'][i])]
+        sybylFractions[i,:] = np.bincount(code_numbers,minlength=len(sybyl_codes)) / dataset['mol num atoms'][i]
+
+    return sybylFractions, sybyl_codes
+
+
+def getSybylSet(dataset):
+    dataset = stack_dataset(dataset)
+    sybyl_codes = list(set(dataset['atom sybyl']))
+    return sybyl_codes
+
+
+def fix_space_groups(dataset, machine):
+    labels, symbols = load_CSD_labels(machine)
+    spaceGroupDict = loadSpaceGroups().to_dict()
+    group_inds = combineSpaceGroupList([spaceGroupList[dataset['crystal space group ind'][i]] for i in range(len(dataset['crystal space group ind']))], labels, symbols)
+    dataset['crystal space group ind'] = group_inds
+    dataset['crystal space group symbol'] = [spaceGroupDict['SG'][group_ind] for group_ind in group_inds]
+
+    return dataset
+
+
+spaceGroupList = ['A*', 'A***', 'A**a', 'A*/*', 'A*/a', 'A*a*', 'A-1', 'A1', 'A11*/a', 'A112', 'A112/a', 'A112/m', 'A11a', 'A2', 'A2/a', 'A2/m', 'A2/n', 'A2122', 'A21am', 'A21ma', 'A222', 'Aa', 'Ab2a', 'Aba*', 'Aba2', 'Abaa', 'Abam',
+                       'Abm2', 'Abma', 'Ac2a', 'Acaa', 'Acam', 'Am', 'Ama2', 'Amaa', 'Amam', 'Amm2', 'Amma', 'Ammm', 'An', 'B**b', 'B*a*', 'B-1', 'B1', 'B11*/b', 'B112', 'B112/b', 'B112/m', 'B112/n', 'B11b', 'B2', 'B2/c', 'B21', 'B21/*',
+                       'B21/a', 'B21/c', 'B21/d', 'B21/m', 'B2212', 'B222', 'B2ab', 'B2cb', 'B2mb', 'Bb21m', 'Bba*', 'Bba2', 'Bbab', 'Bbam', 'Bbcb', 'Bbcm', 'Bbmb', 'Bbmm', 'Bm21b', 'Bmab', 'Bmam', 'Bmm2', 'Bmmb', 'Bmmm', 'C*', 'C***',
+                       'C*/*', 'C*/c', 'C*c*', 'C-1', 'C-4m21', 'C1', 'C112/a', 'C112/b', 'C1121', 'C1121/b', 'C11a', 'C11b', 'C2', 'C2/c', 'C2/c11', 'C2/m', 'C2/m11', 'C2/n', 'C222', 'C2221', 'C2ca', 'C2cb', 'C2cm', 'C2mb', 'C2mm',
+                       'C41221', 'Cc', 'Cc**', 'Cc*a', 'Cc2a', 'Cc2b', 'Cc2m', 'Ccc*', 'Ccc2', 'Ccca', 'Cccb', 'Cccm', 'Ccm21', 'Ccma', 'Ccmb', 'Ccmm', 'Cm', 'Cm2a', 'Cm2m', 'Cmc21', 'Cmca', 'Cmcm', 'Cmm2', 'Cmma', 'Cmmm', 'Cn', 'F***',
+                       'F*3*', 'F*3c', 'F-1', 'F-43c', 'F-43m', 'F1', 'F2', 'F2/d', 'F2/m', 'F222', 'F23', 'F2dd', 'F2mm', 'F4132', 'F432', 'Fd-3', 'Fd-3c', 'Fd-3m', 'Fd11', 'Fd2d', 'Fd3', 'Fd3c', 'Fd3m', 'Fdd2', 'Fddd', 'Fm-3', 'Fm-3c',
+                       'Fm-3m', 'Fm2m', 'Fm3', 'Fm3c', 'Fm3m', 'Fmm2', 'Fmmm', 'I*', 'I***', 'I**a', 'I**d', 'I*/*', 'I*/a', 'I*3', 'I*3*', 'I*c*', 'I-1', 'I-4', 'I-42d', 'I-42m', 'I-43d', 'I-43m', 'I-4c2', 'I-4m2', 'I1', 'I112', 'I112/a',
+                       'I112/b', 'I112/m', 'I2', 'I2/a', 'I2/b11', 'I2/c', 'I2/c11', 'I2/m', 'I2/m11', 'I212121', 'I213', 'I222', 'I23', 'I2am', 'I2cb', 'I2cm', 'I2ma', 'I2mm', 'I4', 'I4*d', 'I4/*', 'I4/***', 'I4/*c*', 'I4/m', 'I4/mcm',
+                       'I4/mmm', 'I41', 'I41/a', 'I41/acd', 'I41/amd', 'I4122', 'I4132', 'I41cd', 'I41md', 'I422', 'I432', 'I4cm', 'I4mm', 'Ia', 'Ia-3', 'Ia-3d', 'Ia3', 'Ia3d', 'Iba*', 'Iba2', 'Ibam', 'Ibca', 'Ibm2', 'Ibmm', 'Ic', 'Ic2a',
+                       'Ic2m', 'Icab', 'Icm2', 'Icma', 'Icmm', 'Im', 'Im**', 'Im-3', 'Im-3m', 'Im2a', 'Im2m', 'Im3', 'Im3m', 'Ima2', 'Imam', 'Imcb', 'Imcm', 'Imm2', 'Imma', 'Immb', 'Immm', 'P*', 'P***', 'P**2', 'P**a', 'P**b', 'P**n',
+                       'P*,-3', 'P*/*', 'P*/a', 'P*/c', 'P*/n', 'P*3', 'P*3n', 'P*aa', 'P*ab', 'P*c*', 'P*cb', 'P*cc', 'P*cn', 'P*n*', 'P*nb', 'P-1', 'P-3', 'P-31c', 'P-31m', 'P-3c1', 'P-3m1', 'P-4', 'P-421c', 'P-421m', 'P-42c', 'P-42m',
+                       'P-43m', 'P-43n', 'P-4b2', 'P-4c2', 'P-4m2', 'P-4n2', 'P-6', 'P-62c', 'P-62m', 'P-6c2', 'P-6m2', 'P1', 'P112', 'P112/a', 'P112/b', 'P112/m', 'P112/n', 'P1121', 'P1121/a', 'P1121/b', 'P1121/m', 'P1121/n', 'P11a',
+                       'P11b', 'P11m', 'P11n', 'P2', 'P2/a', 'P2/c', 'P2/c11', 'P2/m', 'P2/n', 'P21', 'P21/*', 'P21/a', 'P21/b11', 'P21/c', 'P21/c11', 'P21/m', 'P21/m11', 'P21/n', 'P21/n11', 'P2111', 'P2121*', 'P21212', 'P212121', 'P2122',
+                       'P21221', 'P213', 'P21ab', 'P21am', 'P21ca', 'P21cn', 'P21ma', 'P21mn', 'P21nb', 'P21nm', 'P2212', 'P22121', 'P222', 'P2221', 'P23', 'P2aa', 'P2an', 'P2cb', 'P2mm', 'P2na', 'P2nn', 'P3', 'P3*1', 'P31', 'P31,2',
+                       'P31,221', 'P3112', 'P312', 'P3121', 'P31c', 'P31m', 'P32', 'P321', 'P3212', 'P3221', 'P3c1', 'P3m1', 'P4', 'P4/*', 'P4/***', 'P4/*b*', 'P4/*n*', 'P4/m', 'P4/mbm', 'P4/mcc', 'P4/mmm', 'P4/mnc', 'P4/n', 'P4/nbm',
+                       'P4/ncc', 'P4/nmm', 'P4/nnc', 'P41', 'P41,3', 'P41,3212', 'P41,322', 'P41,332', 'P41212', 'P4122', 'P4132', 'P42', 'P42/*', 'P42/m', 'P42/mbc', 'P42/mcm', 'P42/mmc', 'P42/mnm', 'P42/n', 'P42/nbc', 'P42/ncm',
+                       'P42/nmc', 'P42/nnm', 'P4212', 'P422', 'P42212', 'P4222', 'P4232', 'P42bc', 'P42cm', 'P42mc', 'P42nm', 'P43', 'P432', 'P43212', 'P4322', 'P4332', 'P4bm', 'P4cc', 'P4mm', 'P4nc', 'P6', 'P6/*', 'P6/***', 'P6/**c',
+                       'P6/*cc', 'P6/m', 'P6/mcc', 'P6/mmm', 'P61', 'P61,5', 'P61,522', 'P6122', 'P62', 'P62,4', 'P62,422', 'P622', 'P6222', 'P63', 'P63/*', 'P63/m', 'P63/mcm', 'P63/mmc', 'P6322', 'P63cm', 'P63mc', 'P64', 'P6422', 'P65',
+                       'P6522', 'P6cc', 'P6mm', 'Pa', 'Pa-3', 'Pa3', 'Pb**', 'Pb*a', 'Pb-3', 'Pb11', 'Pb21a', 'Pb21m', 'Pb2n', 'Pb3', 'Pba*', 'Pba2', 'Pbaa', 'Pbam', 'Pban', 'Pbc*', 'Pbc21', 'Pbca', 'Pbcb', 'Pbcm', 'Pbcn', 'Pbm2', 'Pbma',
+                       'Pbmm', 'Pbmn', 'Pbn*', 'Pbn21', 'Pbna', 'Pbnb', 'Pbnm', 'Pbnn', 'Pc', 'Pc**', 'Pc*a', 'Pc*b', 'Pc*n', 'Pc11', 'Pc21b', 'Pc21n', 'Pc2a', 'Pc2m', 'Pca*', 'Pca21', 'Pcaa', 'Pcab', 'Pcam', 'Pcan', 'Pcc2', 'Pcca', 'Pccb',
+                       'Pccm', 'Pccn', 'Pcm21', 'Pcma', 'Pcmb', 'Pcmm', 'Pcmn', 'Pcn*', 'Pcn2', 'Pcna', 'Pcnb', 'Pcnm', 'Pcnn', 'Pm', 'Pm*n', 'Pm-3', 'Pm-3m', 'Pm-3n', 'Pm21b', 'Pm21n', 'Pm3', 'Pm3m', 'Pm3n', 'Pma2', 'Pmaa', 'Pmab', 'Pmam',
+                       'Pman', 'Pmc21', 'Pmca', 'Pmcb', 'Pmcm', 'Pmcn', 'Pmm2', 'Pmma', 'Pmmm', 'Pmmn', 'Pmn*', 'Pmn21', 'Pmna', 'Pmnb', 'Pmnm', 'Pmnn', 'Pn', 'Pn**', 'Pn*a', 'Pn*n', 'Pn-3', 'Pn-3m', 'Pn-3n', 'Pn21a', 'Pn21m', 'Pn2b',
+                       'Pn2n', 'Pn3', 'Pn3m', 'Pn3n', 'Pna*', 'Pna21', 'Pnaa', 'Pnab', 'Pnam', 'Pnan', 'Pnc2', 'Pnca', 'Pncb', 'Pncm', 'Pncn', 'Pnm21', 'Pnma', 'Pnmb', 'Pnmm', 'Pnmn', 'Pnn*', 'Pnn2', 'Pnna', 'Pnnb', 'Pnnm', 'Pnnn', 'R*',
+                       'R**', 'R*c', 'R-3', 'R-3c', 'R-3m', 'R3', 'R32', 'R3c', 'R3m', 'Unknown']
+
+
+spaceGroupPops = [2, 1, 3, 6, 20, 1, 42, 13, 1, 5, 62, 4, 6, 84, 283, 35, 50, 10, 10, 7, 4, 55, 9, 2, 1088, 1, 10, 65, 26, 5, 3, 22, 5, 196, 1, 6, 38, 5, 4, 13, 1, 1, 28, 2, 1, 19, 193, 17, 1, 29, 1, 1, 34, 2, 13, 65, 6, 1, 27, 1, 2,
+                       2, 2, 3, 1, 1, 1, 8, 1, 8, 1, 1, 7, 5, 1, 1, 9, 1, 4, 8, 33, 116, 8, 104, 1, 8, 4, 2, 7, 2, 1, 1, 8898, 88639, 4, 5249, 3, 89, 77, 1935, 9, 66, 11, 2, 4, 2, 11240, 2, 2, 13, 1, 7, 1, 133, 525, 2, 141, 41, 4, 32, 31,
+                       368, 2, 5, 1475, 1258, 1041, 11, 80, 221, 9, 10, 10, 1, 21, 114, 59, 1, 3, 13, 3, 37, 131, 133, 3, 66, 64, 119, 146, 172, 3, 26, 20, 23, 51, 3594, 1241, 46, 95, 844, 6, 8, 2, 87, 79, 148, 5, 13, 1, 2, 6, 45, 2, 5, 1,
+                       57, 1502, 724, 224, 334, 482, 118, 41, 6, 1, 18, 14, 3, 571, 3980, 2, 532, 3, 424, 2, 78, 149, 253, 208, 1, 13, 5, 1, 6, 306, 1, 6, 1, 3, 825, 156, 301, 272, 4033, 592, 280, 218, 33, 441, 60, 104, 82, 45, 27, 367,
+                       142, 128, 19, 9, 5, 625, 455, 317, 2, 1, 33, 7, 8, 4, 1, 7, 3, 31, 1, 160, 180, 4, 5, 14, 42, 139, 5, 9, 10, 72, 284, 2, 161, 241, 19, 2, 1, 6, 3, 5, 23, 7, 28, 3, 1, 2, 1, 1, 1, 1, 1, 3, 9, 7, 283356, 1272, 524, 64,
+                       819, 162, 244, 1342, 330, 36, 6, 115, 170, 68, 44, 7, 193, 44, 201, 51, 19, 50, 10926, 2, 10, 15, 4, 11, 198, 206, 802, 20, 462, 2, 14, 1, 4, 193, 201, 4252, 1, 162, 2862, 57673, 86, 11815, 29, 216538, 21, 5298, 1,
+                       157711, 28, 15, 5, 4143, 78676, 6, 75, 676, 65, 3, 65, 236, 20, 14, 180, 14, 10, 329, 39, 90, 25, 2, 1, 6, 3, 8, 11, 261, 2, 813, 4, 4, 29, 18, 1026, 388, 26, 818, 110, 25, 810, 114, 8, 63, 1, 1, 1, 1, 53, 82, 114,
+                       213, 223, 973, 68, 539, 241, 252, 1004, 16, 10, 2, 2, 2125, 99, 68, 126, 4, 118, 116, 25, 158, 219, 1422, 50, 160, 129, 63, 104, 13, 225, 9, 6, 116, 9, 2, 32, 880, 45, 1934, 99, 59, 6, 35, 6, 132, 33, 3, 2, 4, 1, 60,
+                       143, 149, 729, 6, 1, 323, 85, 6, 1, 27, 89, 776, 6, 1230, 80, 462, 202, 38, 168, 60, 52, 709, 268, 15, 4, 124, 780, 230, 1, 4, 1, 1, 78, 11, 4, 3, 6, 185, 5, 319, 104, 12, 438, 35244, 12, 999, 8713, 1, 22, 1, 4, 12,
+                       195, 182, 77, 167, 20, 2753, 2, 2, 4, 4, 2, 160, 243, 5, 2, 6, 7740, 6, 1370, 42, 162, 34, 502, 4, 21, 3752, 5, 9, 17, 2, 142, 1, 3, 4, 98, 2, 20, 44, 1, 40, 313, 97, 1, 29, 8, 31, 11, 17, 1, 12, 2, 5, 141, 5, 7, 4,
+                       211, 9, 71, 41, 287, 3, 556, 143, 139, 10, 30, 2155, 10, 12, 1, 51, 28, 163, 512, 14, 4, 5, 10, 11, 19, 28, 14124, 129, 103, 463, 20, 138, 120, 5, 7, 7, 11, 10362, 5, 24, 32, 12, 307, 1135, 11, 714, 76, 10, 3, 3,
+                       9323, 2037, 703, 1517, 530, 1115, 333, 2953]
+
+
+def loadSpaceGroups():
+    sgDict = pd.DataFrame(columns=['system', 'laue', 'class', 'ce', 'SG'], index=np.arange(0, 230 + 1))
+    sgDict.loc[0] = pd.Series({'system': 'n/a', 'laue': 'n/a', 'class': 'n/a', 'ce': 'n/a', 'SG': 'n/a'})  # add an entry for misc / throwaway categories
+
+    # Triclinic
+    i = 1
+    sgDict.loc[i] = pd.Series({'system': 'triclinic',
+                               'laue': '-1',
+                               'class': '1',
+                               'ce': 'p',
+                               'SG': 'P1'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'triclinic',
+                               'laue': '-1',
+                               'class': '-1',
+                               'ce': 'p',
+                               'SG': 'P-1'
+                               })
+    i += 1
+
+    # Monoclinic
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': '2',
+                               'ce': 'p',
+                               'SG': 'P2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': '2',
+                               'ce': 'p',
+                               'SG': 'P21'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': '2',
+                               'ce': 'c',
+                               'SG': 'C2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': 'm',
+                               'ce': 'p',
+                               'SG': 'Pm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': 'm',
+                               'ce': 'p',
+                               'SG': 'Pc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': 'm',
+                               'ce': 'c',
+                               'SG': 'Cm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': 'm',
+                               'ce': 'c',
+                               'SG': 'Cc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': '2/m',
+                               'ce': 'p',
+                               'SG': 'P2/m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': '2/m',
+                               'ce': 'p',
+                               'SG': 'P21/m' # alt - P21m
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': '2/m',
+                               'ce': 'c',
+                               'SG': 'C2/m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': '2/m',
+                               'ce': 'p',
+                               'SG': 'P2/c'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': '2/m',
+                               'ce': 'p',
+                               'SG': 'P21/c' # alt - P21c
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'monoclinic',
+                               'laue': '2/m',
+                               'class': '2/m',
+                               'ce': 'c',
+                               'SG': 'C2/c'
+                               })
+    i += 1
+
+
+    # Orthorhombic
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': '222',
+                               'ce': 'p',
+                               'SG': 'P222'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': '222',
+                               'ce': 'p',
+                               'SG': 'P2221'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': '222',
+                               'ce': 'p',
+                               'SG': 'P21212'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': '222',
+                               'ce': 'p',
+                               'SG': 'P212121'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': '222',
+                               'ce': 'c',
+                               'SG': 'C2221'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': '222',
+                               'ce': 'c',
+                               'SG': 'C222'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': '222',
+                               'ce': 'f',
+                               'SG': 'F222'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': '222',
+                               'ce': 'i',
+                               'SG': 'I222'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': '222',
+                               'ce': 'i',
+                               'SG': 'I212121'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pmm2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pmc21'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pcc2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pma2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pca21'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pnc2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pmn21'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pba2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pna21'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'p',
+                               'SG': 'Pnn2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'c', # or a
+                               'SG': 'Cmm2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'c', # or a
+                               'SG': 'Cmc21'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'c', # or a
+                               'SG': 'Ccc2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'c', # or a
+                               'SG': 'Amm2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'c', # or a
+                               'SG': 'Abm2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'c', # or a
+                               'SG': 'Ama2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'c', # or a
+                               'SG': 'Aba2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'f',
+                               'SG': 'Fmm2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'f',
+                               'SG': 'Fdd2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'i',
+                               'SG': 'Imm2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'i',
+                               'SG': 'Iba2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mm2',
+                               'ce': 'i',
+                               'SG': 'Ima2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pmmm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pnnn'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pccm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pban'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pmma'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pnna'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pmna'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pcca'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pbam'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pccn'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pbcm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pnnm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pmmn'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pbcn'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pbca'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'p',
+                               'SG': 'Pnma'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'c',
+                               'SG': 'Cmcm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'c',
+                               'SG': 'Cmca'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'c',
+                               'SG': 'Cmmm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'c',
+                               'SG': 'Cccm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'c',
+                               'SG': 'Cmma'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'c',
+                               'SG': 'Ccca'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'f',
+                               'SG': 'Fmmm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'f',
+                               'SG': 'Fddd'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'i',
+                               'SG': 'Immm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'i',
+                               'SG': 'Ibam'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'i',
+                               'SG': 'Ibca' # aka Ibcm
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'orthorhombic',
+                               'laue': 'mmm',
+                               'class': 'mmm',
+                               'ce': 'i',
+                               'SG': 'Imma'
+                               })
+    i += 1
+
+
+    # Tetragonal
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4',
+                               'ce': 'p',
+                               'SG': 'P4'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4',
+                               'ce': 'p',
+                               'SG': 'P41'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4',
+                               'ce': 'p',
+                               'SG': 'P42'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4',
+                               'ce': 'p',
+                               'SG': 'P43'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4',
+                               'ce': 'i',
+                               'SG': 'I4'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4',
+                               'ce': 'i',
+                               'SG': 'I41'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '-4',
+                               'ce': 'p',
+                               'SG': 'P-4'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '-4',
+                               'ce': 'i',
+                               'SG': 'I-4'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4/m',
+                               'ce': 'p',
+                               'SG': 'P4/m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4/m',
+                               'ce': 'p',
+                               'SG': 'P42/m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4/m',
+                               'ce': 'p',
+                               'SG': 'P4/n'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4/m',
+                               'ce': 'p',
+                               'SG': 'P42/n'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4/m',
+                               'ce': 'i',
+                               'SG': 'I4/m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/m',
+                               'class': '4/m',
+                               'ce': 'i',
+                               'SG': 'I41/a'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'p',
+                               'SG': 'P422'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'p',
+                               'SG': 'P4212'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'p',
+                               'SG': 'P4122'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'p',
+                               'SG': 'P41212'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'p',
+                               'SG': 'P4222'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'p',
+                               'SG': 'P42212'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'p',
+                               'SG': 'P4322'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'p',
+                               'SG': 'P43212'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'i',
+                               'SG': 'I422'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '422',
+                               'ce': 'i',
+                               'SG': 'I4122' # aka I4212
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'p',
+                               'SG': 'P4mm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'p',
+                               'SG': 'P4bm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'p',
+                               'SG': 'P42cm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'p',
+                               'SG': 'P42nm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'p',
+                               'SG': 'P4cc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'p',
+                               'SG': 'P4nc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'p',
+                               'SG': 'P42mc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'p',
+                               'SG': 'P42bc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'i',
+                               'SG': 'I4mm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'i',
+                               'SG': 'I4cm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'i',
+                               'SG': 'I41md'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4mm',
+                               'ce': 'i',
+                               'SG': 'I41cd'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-42m',
+                               'ce': 'p',
+                               'SG': 'P-42m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-42m',
+                               'ce': 'p',
+                               'SG': 'P-42c'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-42m',
+                               'ce': 'p',
+                               'SG': 'P-421m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-42m',
+                               'ce': 'p',
+                               'SG': 'P-421c'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-4m2',
+                               'ce': 'p',
+                               'SG': 'P-4m2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-4m2',
+                               'ce': 'p',
+                               'SG': 'P-4c2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-4m2',
+                               'ce': 'p',
+                               'SG': 'P-4b2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-4m2',
+                               'ce': 'p',
+                               'SG': 'P-4n2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-4m2',
+                               'ce': 'i',
+                               'SG': 'I-4m2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-4m2',
+                               'ce': 'i',
+                               'SG': 'I-4c2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-42m',
+                               'ce': 'i',
+                               'SG': 'I-42m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '-42m',
+                               'ce': 'p',
+                               'SG': 'I-42d'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P4/mmm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P4/mcc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P4/nbm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P4/nnc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P4/mbm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P4/mnc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P4/nmm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P4/ncc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P42/mmc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P42/mcm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P42/nbc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P42/nnm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P42/mbc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P42/mnm' # incorrectly /mcm in source
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P42/nmc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'p',
+                               'SG': 'P42/ncm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'i',
+                               'SG': 'I4/mmm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'i',
+                               'SG': 'I4/mcm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'i',
+                               'SG': 'I41/amd'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'tetragonal',
+                               'laue': '4/mmm',
+                               'class': '4/mmm',
+                               'ce': 'i',
+                               'SG': 'I41/acd'
+                               })
+    i += 1
+
+    # Trigonal
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3',
+                               'class': '3',
+                               'ce': 'p',
+                               'SG': 'P3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3',
+                               'class': '3',
+                               'ce': 'p',
+                               'SG': 'P31'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3',
+                               'class': '3',
+                               'ce': 'p',
+                               'SG': 'P32'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3',
+                               'class': '3',
+                               'ce': 'r',
+                               'SG': 'R3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3',
+                               'class': '-3',
+                               'ce': 'p',
+                               'SG': 'P-3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3',
+                               'class': '-3',
+                               'ce': 'r',
+                               'SG': 'R-3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '312',
+                               'ce': 'p',
+                               'SG': 'P312'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '321',
+                               'ce': 'p',
+                               'SG': 'P321'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '312',
+                               'ce': 'p',
+                               'SG': 'P3112'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '321',
+                               'ce': 'p',
+                               'SG': 'P3121'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '312',
+                               'ce': 'p',
+                               'SG': 'P3212'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '321',
+                               'ce': 'p',
+                               'SG': 'P3221'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '321',
+                               'ce': 'r',
+                               'SG': 'R32'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '3m1',
+                               'ce': 'p',
+                               'SG': 'P3m1'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '31m',
+                               'ce': 'p',
+                               'SG': 'P31m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '3m1',
+                               'ce': 'p',
+                               'SG': 'P3c1'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '31m',
+                               'ce': 'p',
+                               'SG': 'P31c'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '3m1',
+                               'ce': 'r',
+                               'SG': 'R3m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '3m1',
+                               'ce': 'r',
+                               'SG': 'R3c'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '-31m',
+                               'ce': 'p',
+                               'SG': 'P-31m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '-31m',
+                               'ce': 'p',
+                               'SG': 'P-31c'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '-3m1',
+                               'ce': 'p',
+                               'SG': 'P-3m1'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '-3m1',
+                               'ce': 'p',
+                               'SG': 'P-3c1'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '-3m1',
+                               'ce': 'r',
+                               'SG': 'R-3m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'trigonal',
+                               'laue': '-3m',
+                               'class': '-3m1',
+                               'ce': 'r',
+                               'SG': 'R-3c'
+                               })
+    i += 1
+
+
+    # Hexagonal
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/m',
+                               'class': '6',
+                               'ce': 'p',
+                               'SG': 'P6'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/m',
+                               'class': '6',
+                               'ce': 'p',
+                               'SG': 'P61'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/m',
+                               'class': '6',
+                               'ce': 'p',
+                               'SG': 'P65'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/m',
+                               'class': '6',
+                               'ce': 'p',
+                               'SG': 'P62'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/m',
+                               'class': '6',
+                               'ce': 'p',
+                               'SG': 'P64'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/m',
+                               'class': '6',
+                               'ce': 'p',
+                               'SG': 'P63'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/m',
+                               'class': '-6',
+                               'ce': 'p',
+                               'SG': 'P-6'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/m',
+                               'class': '6/m',
+                               'ce': 'p',
+                               'SG': 'P6/m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/m',
+                               'class': '6/m',
+                               'ce': 'p',
+                               'SG': 'P63/m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '622',
+                               'ce': 'p',
+                               'SG': 'P622'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '622',
+                               'ce': 'p',
+                               'SG': 'P6122'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '622',
+                               'ce': 'p',
+                               'SG': 'P6522'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '622',
+                               'ce': 'p',
+                               'SG': 'P6222'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '622',
+                               'ce': 'p',
+                               'SG': 'P6422'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '622',
+                               'ce': 'p',
+                               'SG': 'P6322'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '6mm',
+                               'ce': 'p',
+                               'SG': 'P6mm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '6mm',
+                               'ce': 'p',
+                               'SG': 'P6cc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '6mm',
+                               'ce': 'p',
+                               'SG': 'P63cm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '6mm',
+                               'ce': 'p',
+                               'SG': 'P63mc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '-6m2',
+                               'ce': 'p',
+                               'SG': 'P-6m2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '-6m2',
+                               'ce': 'p',
+                               'SG': 'P-6c2'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '-62m',
+                               'ce': 'p',
+                               'SG': 'P-62m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '-62m',
+                               'ce': 'p',
+                               'SG': 'P-62c' # error in source, missing negative http://pd.chem.ucl.ac.uk/pdnn/symm3/allsgp.htm
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '6/mmm',
+                               'ce': 'p',
+                               'SG': 'P6/mmm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '6/mmm',
+                               'ce': 'p',
+                               'SG': 'P6/mcc'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '6/mmm',
+                               'ce': 'p',
+                               'SG': 'P63/mcm'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'hexagonal',
+                               'laue': '6/mmm',
+                               'class': '6/mmm',
+                               'ce': 'p',
+                               'SG': 'P63/mmc'
+                               })
+    i += 1
+
+    # Cubic
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': '23',
+                               'ce': 'p',
+                               'SG': 'P23'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': '23',
+                               'ce': 'f',
+                               'SG': 'F23'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': '23',
+                               'ce': 'i',
+                               'SG': 'I23'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': '23',
+                               'ce': 'p',
+                               'SG': 'P213'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': '23',
+                               'ce': 'i',
+                               'SG': 'I213'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': 'm-3',
+                               'ce': 'p',
+                               'SG': 'Pm-3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': 'm-3',
+                               'ce': 'p',
+                               'SG': 'Pn-3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': 'm-3',
+                               'ce': 'f',
+                               'SG': 'Fm-3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': 'm-3',
+                               'ce': 'f',
+                               'SG': 'Fd-3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': 'm-3',
+                               'ce': 'i',
+                               'SG': 'Im-3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3',
+                               'class': 'm-3',
+                               'ce': 'p',
+                               'SG': 'Pa-3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '432',
+                               'ce': 'i',
+                               'SG': 'Ia-3'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '432',
+                               'ce': 'p',
+                               'SG': 'P432'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '432',
+                               'ce': 'p',
+                               'SG': 'P4232'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '432',
+                               'ce': 'f',
+                               'SG': 'F432'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '432',
+                               'ce': 'f',
+                               'SG': 'F4132'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '432',
+                               'ce': 'i',
+                               'SG': 'I432'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '432',
+                               'ce': 'p',
+                               'SG': 'P4332'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '432',
+                               'ce': 'p',
+                               'SG': 'P4132'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '432',
+                               'ce': 'i',
+                               'SG': 'I4132'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '-43m',
+                               'ce': 'p',
+                               'SG': 'P-43m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '-43m',
+                               'ce': 'f',
+                               'SG': 'F-43m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '-43m',
+                               'ce': 'i',
+                               'SG': 'I-43m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '-43m',
+                               'ce': 'p',
+                               'SG': 'P-43n'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '-43m',
+                               'ce': 'f',
+                               'SG': 'F-43c'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': '-43m',
+                               'ce': 'i',
+                               'SG': 'I-43d'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'p',
+                               'SG': 'Pm-3m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'p',
+                               'SG': 'Pn-3n'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'p',
+                               'SG': 'Pm-3n'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'p',
+                               'SG': 'Pn-3m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'f',
+                               'SG': 'Fm-3m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'f',
+                               'SG': 'Fm-3c'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'f',
+                               'SG': 'Fd-3m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'f',
+                               'SG': 'Fd-3c'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'i',
+                               'SG': 'Im-3m'
+                               })
+    i += 1
+    sgDict.loc[i] = pd.Series({'system': 'cubic',
+                               'laue': 'm-3m',
+                               'class': 'm-3m',
+                               'ce': 'i',
+                               'SG': 'Ia-3d'
+                               })
+
+    return sgDict
+
+
+def load_CSD_labels(machine):
+    if machine == 'local':
+        with open('C:/Users\mikem\Desktop\CSP_runs\datasets\CSD_labels.txt') as f:
+            lines = f.readlines()
+
+    elif machine == 'cluster':
+        with open('/scratch/mk8347/csd_runs/datasets/CSD_labels.txt') as f:
+            lines = f.readlines()
+
+    labels, symbols = [], []
+    for line in lines:
+        line = line.split(' ')
+
+        labels.append(line[0])
+        if '\n' in line[-1]:
+            symbols.append(line[-1][:-1])
+        else:
+            symbols.append(line[-1])
+
+    return labels, symbols
+
+
+def update_CSD_labels(labels,symbols,sgDict):
+    # collect all the symbols according to label
+    labels = np.asarray(labels).astype(int)
+    symbol_list = [[] for i in range(np.amax(labels) + 1)]
+    for i in range(len(symbols)):
+        symbol_list[int(labels[i])].append(symbols[i])
+
+    mapping_inds = np.zeros((len(sgDict['SG']),2)).astype(int)
+    for i in range(len(sgDict['SG'])):
+        for j in range(len(symbol_list)):
+            if sgDict['SG'][i] in symbol_list[j]:
+                mapping_inds[i] = (i,j)
+                break
+
+    new_labels = labels.copy()
+    for i in range(len(new_labels)):
+        try:
+            ind = np.argwhere(mapping_inds[:,1] == labels[i])
+            new_labels[i] = mapping_inds[ind,0]
+        except:
+            pass
+
+    return new_labels
+
+
+def combineSpaceGroupList(spaceGroupList,labels,symbols):
+    # takes in csd labels and symbols, and a lst of SGs, and returns a mapping of SGs to unique csd symbols
+    groupLabels = np.zeros(len(spaceGroupList),dtype=int)
+    for i,group in enumerate(spaceGroupList):
+        if ('*' not in group) and (',' not in group):
+            try:
+                groupLabels[i] = int(labels[symbols.index(group)])
+            except:
+                pass
+
+    return groupLabels # the labels according to CSD doc - not in the same order as ours above
+
+
+def collectSpaceGroups(groupLabels, groupDict, spaceGroupPops):
+    collectedPops = np.zeros(len(groupDict),dtype=int)
+    for i in range(len(spaceGroupPops)):
+        collectedPops[groupLabels[i]] += spaceGroupPops[i]
+
+    return collectedPops
+
+
+def filterDataset(dataset, badInds):
+    '''
+    filter each ind of each entry in a dict
+    '''
+    if len(badInds) == 0:
+        pass
+    else:
+        for key in dataset.keys():
+            if (key != 'config') and ('breakpoint' not in key): # don't filter breakpoints - we'll rebuild them after we're done filtering
+                dataset[key] = np.delete(dataset[key],badInds,axis=0)#[dataset[key][i] for i in range(len(dataset[key])) if i not in badInds]
+
+    return dataset
+
+
+def one_hot_feature_to_dict(dict,key):
+    import torch.nn.functional as F
+    import torch
+
+    array = torch.Tensor(dict[key]).long()
+    classes = len(torch.unique(array))
+    one_hot = F.one_hot(array - torch.amin(array),num_classes = classes)
+
+    for i in range(classes):
+        dict[key + ' #{}'.format(i)] = one_hot[:,i].numpy()
+
+    return dict
+
+
+def add_one_hot_space_groups(dict,groups):
+    one_hots = np.zeros((len(dict['mol rings']),len(groups)))
+
+    for g in range(len(groups)):
+        for i in range(len(dict['mol rings'])):
+            one_hots[i,g] = dict['crystal space group symbol'][i] == groups[g]
+
+    for i in range(len(groups)):
+        group = groups[i]
+        dict['crystal sg is ' + group] = one_hots[:,i]
+
+    return dict
+
+#def print_molecule(name, z, coords):
+#    amol = Atoms(z,positions=coords)
+#    ase.io.write('{}.cif'.format(name),amol)
+
+
+def draw_molecule_2d(smiles,show=False):
+    mol = Chem.MolFromSmiles(smiles)
+    try:
+        AllChem.Compute2DCoords(mol)
+        img = Draw.MolToImage(mol, subImgSize=(400, 400))
+        if show:
+            img.show()
+        return img
+    except:
+        #print("Could not embed molecule")
+        return 'failed embedding'
+
+def dict2namespace(data_dict):
+    """
+    Recursively converts a dictionary and its internal dictionaries into an
+    argparse.Namespace
+
+    Parameters
+    ----------
+    data_dict : dict
+        The input dictionary
+
+    Return
+    ------
+    data_namespace : argparse.Namespace
+        The output namespace
+    """
+    for k, v in data_dict.items():
+        if isinstance(v, dict):
+            data_dict[k] = dict2namespace(v)
+        else:
+            pass
+    data_namespace = Namespace(**data_dict)
+
+    return data_namespace
+
+def load_yaml(path, append_config_dir = True):
+    if append_config_dir:
+        path = "configs/" + path
+    yaml_path = Path(path)
+    assert yaml_path.exists()
+    assert yaml_path.suffix in {".yaml", ".yml"}
+    with yaml_path.open("r") as f:
+        target_dict = yaml.safe_load(f)
+
+    return target_dict
+
+
+
+def isomorph_processing(all_formulas, xyzlist, z_list):
+    isomorph_group = {}
+    n_with_formula = len(all_formulas)
+    skip_idx = []
+
+    for idx1 in range(n_with_formula):
+        full_index_1 = all_formulas[idx1]
+        if idx1 not in skip_idx:
+            mat1 = rdmolops.GetAdjacencyMatrix(Chem.MolFromMol2Block(xyzlist[full_index_1], removeHs=False), useBO=True)
+            mat1 += np.eye(len(mat1)) * np.asarray(z_list[full_index_1])
+            g1 = nx.from_numpy_array(mat1)
+
+            for idx2 in range(idx1 + 1, n_with_formula):
+
+                if (idx1 != idx2) and (idx2 not in skip_idx):
+                    full_index_2 = all_formulas[idx2]
+                    mat2 = rdmolops.GetAdjacencyMatrix(Chem.MolFromMol2Block(xyzlist[full_index_2], removeHs=False), useBO=True)
+                    mat2 += np.eye(len(mat1)) * np.asarray(z_list[full_index_2]) # add nodes
+                    assert (len(mat1) == len(mat2))
+
+                    if nx.is_isomorphic(g1, nx.from_numpy_array(mat2)):
+                        if str(full_index_1) not in isomorph_group.keys():
+                            isomorph_group[str(full_index_1)] = [full_index_1]  # if this is our first match, make a new group and add both
+                        isomorph_group[str(full_index_1)].append(full_index_2)
+                        skip_idx.append(idx2)  # matching this against subsequent entries would be redundant - they will already have matched with idx1
+
+    return isomorph_group
+
+
+def pca_dataset_analysis(feature_array, dataDims):
+    means, stds, key_dtype = dataDims['means'], dataDims['stds'], dataDims['dtypes']
+
+    n_components = feature_array.shape[-1]
+    n_dims = n_components
+    pca = PCA(n_components=n_components)
+    pca.fit(feature_array)
+    pc_data = pca.transform(feature_array)
+    data_scores = pca.score_samples(feature_array)
+    #(pca.explained_variance_ratio_)
+
+    # compare random sampling vs sampling the PCs
+    # random data sampled from PCs
+    rand_pcs = np.zeros((100000, n_components))
+    for i in range(n_components):
+        rand_pcs[:, i] = np.random.randn(len(rand_pcs)) * np.sqrt(pca.explained_variance_[i])
+    trans_pcs = pca.inverse_transform(rand_pcs)
+
+    rand_pc_scores = pca.score_samples(trans_pcs)
+    raw_trans_pcs = np.zeros_like(trans_pcs)
+    for i in range(feature_array.shape[1]):
+        raw_trans_pcs[:, i] = (trans_pcs[:, i] * stds[i] + means[i])
+        if (key_dtype[i] == 'int32') or (key_dtype[i] == 'bool'):
+            if key_dtype[i] == 'bool':
+                raw_trans_pcs[:, i] = np.clip(raw_trans_pcs[:, i], a_min=0, a_max=1)
+            raw_trans_pcs[:, i] = np.round(raw_trans_pcs[:, i])
+
+    # random data
+    rand_data = np.zeros((len(rand_pcs), feature_array.shape[1]))
+    for i in range(feature_array.shape[1]):
+        rand_data[:, i] = (np.random.randn(len(rand_pcs)) * stds[i] + means[i])
+        if (key_dtype[i] == 'int32') or (key_dtype[i] == 'bool'):
+            if key_dtype[i] == 'bool':
+                rand_data[:, i] = np.clip(rand_data[:, i], a_min=0, a_max=1)
+            rand_data[:, i] = np.round(rand_data[:, i])
+    rand_scores = pca.score_samples(rand_data)
+
+    return {
+        'pca': pca,
+    }
+
+
+def delete_from_dataframe(df,inds):
+    df = df.drop(index=inds)
+    if 'level_0' in df.columns:  # delete unwanted samples
+        df = df.drop(columns='level_0')
+    df = df.reset_index()
+
+    return df
