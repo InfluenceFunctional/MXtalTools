@@ -110,8 +110,8 @@ def RQS(inputs, unnormalized_widths, unnormalized_heights,
     input_heights = heights.gather(-1, bin_idx)[..., 0]
 
     if inverse:
-        a = (((inputs - input_cumheights) * (input_derivatives \
-            + input_derivatives_plus_one - 2 * input_delta) \
+        a = (((inputs - input_cumheights) * (input_derivatives
+                                             + input_derivatives_plus_one - 2 * input_delta) \
             + input_heights * (input_delta - input_derivatives)))
         b = (input_heights * input_derivatives - (inputs - input_cumheights) \
             * (input_derivatives + input_derivatives_plus_one \

@@ -2,11 +2,9 @@ from utils import *
 import matplotlib.pyplot as plt
 import tqdm
 import pandas as pd
-
-pd.set_option('display.max_rows', 500)
-pd.set_option('display.max_columns', 500)
-pd.set_option('display.width', 1000)
-
+from nikos.coordinate_transformations import coor_trans, coor_trans_matrix, cell_vol
+from nikos.rotations import euler_rotation, rotation_matrix_from_vectors
+from utils import compute_principal_axes_np
 
 class Miner():
     def __init__(self, dataset_path, config=None, collect_chunks=False):
@@ -16,19 +14,19 @@ class Miner():
             self.min_z_prime = 1
             self.max_z_value = 10
             self.min_z_value = 1
-            self.max_num_atoms = 200
-            self.min_num_atoms = 20
+            self.max_num_atoms = 1000
+            self.min_num_atoms = 5
             self.max_atomic_number = 87
             self.max_packing_coefficient = 0.85
             self.min_packing_coefficient = 0.55
             self.include_organic = True
-            self.include_organometallic=True
-            self.exclude_disordered_crystals=True
-            self.exclude_missing_r_factor=True
-            self.exclude_polymorphs=True
-            self.exclude_nonstandard_settings = True
+            self.include_organometallic = True
+            self.exclude_disordered_crystals = False
+            self.exclude_missing_r_factor = False
+            self.exclude_polymorphs = False
+            self.exclude_nonstandard_settings = False
             self.max_temperature = 1000
-            self.min_temperature = 0
+            self.min_temperature = -10
             self.include_sgs = None
         else:
             self.max_z_prime = config.max_z_prime
@@ -39,11 +37,11 @@ class Miner():
             self.min_num_atoms = config.min_num_atoms
             self.max_atomic_number = config.max_atomic_number
             self.max_packing_coefficient = 0.85
-            self.min_packing_coefficient = config.min_atomic_number
+            self.min_packing_coefficient = config.min_packing_coefficient
             self.include_organic = config.include_organic
-            self.include_organometallic= config.include_organometallic
-            self.exclude_disordered_crystals=config.exclude_disordered_crystals
-            self.exclude_polymorphs=config.exclude_polymorphs
+            self.include_organometallic = config.include_organometallic
+            self.exclude_disordered_crystals = config.exclude_disordered_crystals
+            self.exclude_polymorphs = config.exclude_polymorphs
             if self.exclude_polymorphs:
                 self.exclude_missing_r_factor = True
             else:
@@ -60,6 +58,19 @@ class Miner():
         self.dataset = pd.read_pickle(self.dataset_path)
         self.dataset_keys = list(self.dataset.columns)
         self.filter_dataset()
+        if self.exclude_polymorphs:
+            self.filter_polymorphs()
+        self.datasetPath = 'datasets/dataset'
+        self.dataset.to_pickle(self.datasetPath)
+        del (self.dataset)
+
+    def load_npy_for_modelling(self):
+        self.dataset = np.load(self.dataset_path + '.npy',allow_pickle=True).item()
+        self.dataset = pd.DataFrame.from_dict(self.dataset)
+        self.dataset_keys = list(self.dataset.columns)
+        self.filter_dataset()
+        if self.exclude_polymorphs:
+            self.filter_polymorphs()
         self.datasetPath = 'datasets/dataset'
         self.dataset.to_pickle(self.datasetPath)
         del (self.dataset)
@@ -73,14 +84,7 @@ class Miner():
         self.dataset.to_pickle('../../full_dataset')
         self.dataset.loc[0:1000].to_pickle('../../test_dataset')
 
-
-    def load_dataset(self, dataset_path, collect_chunks=False,
-                     post_electronegativity_fix=True,
-                     post_symmetry_fix=True,
-                     do_add_formula=False,
-                     add_new_correlates=True,
-                     add_unit_cells=False,
-                     test_mode=False):
+    def load_dataset(self, dataset_path, collect_chunks=False, test_mode=False):
 
         if collect_chunks:
             os.chdir(dataset_path)
@@ -88,14 +92,14 @@ class Miner():
             print('collecting chunks')
 
             if test_mode:
-                nChunks = min(5,len(chunks))
+                nChunks = min(5, len(chunks))
             else:
                 nChunks = len(chunks)
 
             data_chunks = []
             for i in tqdm.tqdm(range(nChunks)):
                 data_chunks.append(pd.read_pickle(chunks[i]))
-            self.dataset = pd.concat(data_chunks,ignore_index=True)
+            self.dataset = pd.concat(data_chunks, ignore_index=True)
             del data_chunks
 
         else:
@@ -117,7 +121,7 @@ class Miner():
         if self.exclude_polymorphs:
             self.filter_polymorphs()
 
-    def collate_spacegroups(self, only_standard_settings = False):
+    def collate_spacegroups(self):
         '''
         reassign spacegroup symbols using spacegroup numbers and settings
         set all spacegroup symbols to setting 1
@@ -167,81 +171,103 @@ class Miner():
         self.dataset['crystal spacegroup is minority'] = np.asarray([spacegroup not in self.majority_sgs for spacegroup in self.dataset['crystal spacegroup symbol']])
 
     def filter_dataset(self):
-        print('Filtering dataset')
+        print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
         ## filtering out unwanted characteristics
         bad_inds = []
 
+        # todo filter samples where space groups explicitly disagree with given crystal system
+
         # Z prime
+        n_bad_inds = len(bad_inds)
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z prime']) > self.max_z_prime)[:, 0])  # self.config.max_z_prime))
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z prime']) < self.min_z_prime)[:, 0])  # self.config.min_z_prime))
+        print('z prime filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # Z value
+        n_bad_inds = len(bad_inds)
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z value']) > self.max_z_value)[:, 0])  # self.config.max_z_value))
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z value']) < self.min_z_value)[:, 0])  # self.config.min_z_value))
+        print('z value filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule num atoms
+        n_bad_inds = len(bad_inds)
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule num atoms']) > self.max_num_atoms)[:, 0])  # self.config.max_molecule_size))
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule num atoms']) < self.min_num_atoms)[:, 0])  # self.config.min_molecule_size))
+        print('molecule num atoms filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # heaviest atom
+        n_bad_inds = len(bad_inds)
         heaviest_atoms = np.asarray([max(atom_z) for atom_z in self.dataset['atom Z']])
         bad_inds.extend(np.argwhere(heaviest_atoms > self.max_atomic_number)[:, 0])  # self.config.max_atomic_number))
+        print('max atom size filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # too diffuse or too dense
+        n_bad_inds = len(bad_inds)
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal packing coefficient']) > self.max_packing_coefficient)[:, 0])  # self.config.max_molecule_size))
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal packing coefficient']) < self.min_packing_coefficient)[:, 0])  # self.config.min_molecule_size))
+        print('crystal packing coefficient filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
+        # erroneous densities
+        n_bad_inds = len(bad_inds)
+        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal calculated density']) == 0)[:, 0])  # self.config.max_molecule_size))
+        print('0 density filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # too hot or too cold
+        n_bad_inds = len(bad_inds)
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) > self.max_temperature)[:, 0])  # self.config.max_molecule_size))
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) < self.min_temperature)[:, 0])  # self.config.min_molecule_size))
+        print('crystal temperature filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # supported space groups
         if self.include_sgs is not None:
-            bad_inds.extend(np.argwhere([self.dataset['crystal spacegroup symbol'][i] not in self.include_sgs for i in range(len(self.dataset['crystal spacegroup symbol']))])[:,0])
+            n_bad_inds = len(bad_inds)
+            bad_inds.extend(np.argwhere([self.dataset['crystal spacegroup symbol'][i] not in self.include_sgs for i in range(len(self.dataset['crystal spacegroup symbol']))])[:, 0])
+            print('spacegroup filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule organic
         if not self.include_organic:
+            n_bad_inds = len(bad_inds)
             bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule is organic']))[:, 0])
+            print('organic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule organometallic
         if not self.include_organometallic:
+            n_bad_inds = len(bad_inds)
             bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule is organometallic']))[:, 0])
+            print('organometallic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule has disorder
         if self.exclude_disordered_crystals:
+            n_bad_inds = len(bad_inds)
             bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal has disorder']))[:, 0])
+            print('disorder filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # missing r factor
         if self.exclude_missing_r_factor:
+            n_bad_inds = len(bad_inds)
             bad_inds.extend(np.asarray([i for i in range(len(self.dataset['crystal r factor'])) if self.dataset['crystal r factor'][i] is None]))
+            print('missing r factor filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         if self.exclude_nonstandard_settings:
             # nonstandard spacegroup setings have inconsistent lattice definitions
+            n_bad_inds = len(bad_inds)
             settings = np.asarray([self.dataset['crystal spacegroup setting'][i] for i in range(len(self.dataset))])
             bad_inds.extend(np.argwhere(settings != 1)[:, 0])
+            print('nonstandard spacegroup setting filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # collate bad indices
         bad_inds = np.unique(bad_inds)
 
         # apply filtering
-        self.dataset = delete_from_dataframe(self.dataset,bad_inds)
-
+        self.dataset = delete_from_dataframe(self.dataset, bad_inds)
         print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
-
 
     def filter_polymorphs(self):
         '''
         find duplicate examples and pick one representative per molecule
         :return:
         '''
-        # check for polymorphs manually
-
-        # add molecular formula to every molecule
-
-        # check for duplicate molecular formulas
-
-        # isomorph_groups, isomorph_groups_extension = self.get_isomorph_lists()
-
+        # use CSD identifiers to pick out polymorphs
         duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_CSD_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
 
         # now, the 'representative structure' is the highest resolution structure which as the same space group as the oldest structure
@@ -260,8 +286,7 @@ class Miner():
             inds.remove(agreeing_ind_with_best_arg_factor)  # remove the good one
             bad_inds.extend(inds)  # delete residues from the dataset
 
-        self.dataset = delete_from_dataframe(self.dataset,bad_inds)
-
+        self.dataset = delete_from_dataframe(self.dataset, bad_inds)
 
     def get_CSD_identifier_duplicates(self):
         # by CSD identifier
@@ -288,7 +313,6 @@ class Miner():
                 duplicate_groups[key] = all_identifiers[key]
 
         return duplicate_lists, duplicate_list_extension, duplicate_groups
-
 
     def numerize_dataset(self):
         '''
@@ -427,24 +451,169 @@ class Miner():
         plt.title('Molecule-to-Crystal Correlations')
         plt.tight_layout()
 
-    def one_hot_feature_to_dict(self, dict, key):
-        import torch.nn.functional as F
-        import torch
+    def todays_analysis(self):
+        self.dataset = pd.read_pickle(self.dataset_path)
+        self.dataset_keys = list(self.dataset.columns)
 
-        array = torch.Tensor(dict[key]).long()
-        classes = len(torch.unique(array))
-        one_hot = F.one_hot(array - torch.amin(array), num_classes=classes)
+        cart_data = {}
+        frac_data = {}
 
-        for i in range(classes):
-            dict[key + ' #{}'.format(i)] = one_hot[:, i].numpy()
+        ip_axes_c, ip_axes_f, ip_moments, i_tensor_c, i_tensor_f = [],[],[],[],[]
+        ip_axes_c2, ip_axes_f2, ip_moments2, i_tensor_c2, i_tensor_f2 = [],[],[],[],[]
 
-        return dict
+        centroids_c, centroids_f = [],[]
+
+        for i in tqdm.tqdm(range(len(self.dataset))):
+            # atoms in cartesian coords
+            coords_c = self.dataset['atom coords'][i]
+            symbols = np.asarray(self.dataset['atom Z'][i])
+            masses = np.asarray(self.dataset['atom mass'][i])
+
+            # get cell params
+            cell_lengths = np.asarray(self.dataset['crystal cell lengths'][i])
+            cell_angles = np.asarray(self.dataset['crystal cell angles'][i])
+
+            #cell_volume = cell_vol(cell_lengths, cell_angles)
+
+            # get all the transforms
+            #t_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
+            t_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)
+            #coords_f = np.transpose(np.dot(t_cf,np.transpose(coords_c)))
+
+            # get all lattice vectors in cartesian coords
+            #lattice_f = np.eye(3)
+            #lattice_c = np.transpose(np.dot(t_fc,np.transpose(lattice_f)))
+
+            # get all the centroids
+            CoG_c = self.dataset['molecule centroid'][i] # center of geometry
+            CoG_f = np.transpose(np.dot(t_cf,np.transpose(CoG_c)))
+            CoM_c = np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
+            CoM_f = np.transpose(np.dot(t_cf,np.transpose(CoM_c)))
+
+            centroids_c.append(CoG_c)
+            centroids_f.append(CoG_f)
+
+        centroids_c = np.asarray(centroids_c)
+        centroids_f = np.asarray(centroids_f)
+
+        plt.clf()
+        plt.subplot(3, 2, 1)
+        plt.hist(centroids_c[:, 0]/self.dataset['molecule volume'], bins=100, density=True)
+        plt.subplot(3, 2, 3)
+        plt.hist(centroids_c[:, 1]/self.dataset['molecule volume'], bins=100, density=True)
+        plt.subplot(3, 2, 5)
+        plt.hist(centroids_c[:, 2]/self.dataset['molecule volume'], bins=100, density=True)
+        plt.subplot(3, 2, 2)
+        plt.hist(centroids_f[:, 0], bins=100, density=True)
+        plt.subplot(3, 2, 4)
+        plt.hist(centroids_f[:, 1], bins=100, density=True)
+        plt.subplot(3, 2, 6)
+        plt.hist(centroids_f[:, 2], bins=100, density=True)
+
+            # get all the ring planes
+            # get all the ring centroids
+            # get all the inertial data - axes, moments, and regular inertial tensor
+            # rand_vec = np.random.uniform(-1,1,size=3)
+            # rand_rot = rotation_matrix_from_vectors(rand_vec, np.ones(3))
+            # rot_coords_c = euler_rotation(rand_rot, coords_c)
+            #
+            # Ip_axes_c, Ip_moments_c, I_tensor_c = compute_principal_axes_np(masses, coords_c, CoM_c)
+            # Ip_axes_f = np.transpose(np.dot(t_cf,np.transpose(Ip_axes_c)))
+            # I_tensor_f = np.transpose(np.dot(t_cf,np.transpose(I_tensor_c)))
+            #
+            # ip_axes_c.append(Ip_axes_c)
+            # ip_moments.append(Ip_moments_c)
+            # i_tensor_c.append(I_tensor_c)
+            # ip_axes_f.append(Ip_axes_f)
+            # i_tensor_f.append(I_tensor_f)
+            #
+            # Ip_axes_c, Ip_moments_c, I_tensor_c = compute_principal_axes_np(masses, rot_coords_c, CoM_c)
+            # Ip_axes_f = np.transpose(np.dot(t_cf,np.transpose(Ip_axes_c)))
+            # I_tensor_f = np.transpose(np.dot(t_cf,np.transpose(I_tensor_c)))
+            #
+            # ip_axes_c2.append(Ip_axes_c)
+            # ip_moments2.append(Ip_moments_c)
+            # i_tensor_c2.append(I_tensor_c)
+            # ip_axes_f2.append(Ip_axes_f)
+            # i_tensor_f2.append(I_tensor_f)
+
+        #### histogram machine goes BRRT
+        # ip_axes_c = np.asarray(ip_axes_c)
+        # ip_moments = np.asarray(ip_moments)
+        # i_tensor_c = np.asarray(i_tensor_c)
+        # ip_axes_f = np.asarray(ip_axes_f)
+        # i_tensor_f = np.asarray(i_tensor_f)
+        #
+        # ip_axes_c2 = np.asarray(ip_axes_c2)
+        # ip_moments2 = np.asarray(ip_moments2)
+        # i_tensor_c2 = np.asarray(i_tensor_c2)
+        # ip_axes_f2 = np.asarray(ip_axes_f2)
+        # i_tensor_f2 = np.asarray(i_tensor_f2)
+        #
+        #
+        # # collect I tensor normalized diagonal and off diagonal elements
+        # i_diag_c = np.asarray([np.sum(np.diag(mat))/np.sum(np.abs(mat)) for mat in i_tensor_c])
+        # i_diag_f = np.asarray([np.sum(np.diag(mat))/np.sum(np.abs(mat)) for mat in i_tensor_f])
+        # i_odiag_c = np.asarray([(np.sum(np.abs(mat)) - np.sum(np.diag(mat)))/np.sum(np.abs(mat)) for mat in i_tensor_c])
+        # i_odiag_f = np.asarray([(np.sum(np.abs(mat)) - np.sum(np.diag(mat)))/np.sum(np.abs(mat)) for mat in i_tensor_f])
+        #
+        # plt.figure(5)
+        # plt.clf()
+        # plt.subplot(1,2,1)
+        # plt.title('diagonals')
+        # plt.hist(i_diag_c, density=True,bins=100)
+        # plt.subplot(1,2,1)
+        # plt.title('diagonals')
+        # plt.hist(i_diag_f, density=True,bins=100,alpha=0.5)
+        # plt.subplot(1,2,2)
+        # plt.title('off diagonals')
+        # plt.hist(i_odiag_c, density=True,bins=100)
+        # plt.subplot(1,2,2)
+        # plt.title('off diagonals')
+        # plt.hist(i_odiag_f, density=True,bins=100,alpha=0.5)
+        #
+        # quantile_elem = 0.01
+        # plt.figure(6)
+        # plt.clf()
+        # plt.subplot(2,3,1)
+        # plt.hist(i_tensor_c[:,0,0].clip(min=np.quantile(i_tensor_c[:,0,0],quantile_elem), max=np.quantile(i_tensor_c[:,0,0],1-quantile_elem)), density=True,bins=100)
+        # plt.hist(i_tensor_c2[:,0,0].clip(min=np.quantile(i_tensor_c2[:,0,0],quantile_elem), max=np.quantile(i_tensor_c2[:,0,0],1-quantile_elem)), density=True,bins=100,alpha=0.5)
+        # plt.xlabel('Ixx')
+        # plt.subplot(2,3,2)
+        # plt.hist(i_tensor_c[:,1,1].clip(min=np.quantile(i_tensor_c[:,1,1],quantile_elem), max=np.quantile(i_tensor_c[:,1,1],1-quantile_elem)), density=True,bins=100)
+        # plt.hist(i_tensor_c2[:,1,1].clip(min=np.quantile(i_tensor_c2[:,1,1],quantile_elem), max=np.quantile(i_tensor_c2[:,1,1],1-quantile_elem)), density=True,bins=100,alpha=0.5)
+        # plt.xlabel('Iyy')
+        # plt.subplot(2,3,3)
+        # plt.hist(i_tensor_c[:,2,2].clip(min=np.quantile(i_tensor_c[:,2,2],quantile_elem), max=np.quantile(i_tensor_c[:,2,2],1-quantile_elem)), density=True,bins=100)
+        # plt.hist(i_tensor_c2[:,1,1].clip(min=np.quantile(i_tensor_c2[:,1,1],quantile_elem), max=np.quantile(i_tensor_c2[:,1,1],1-quantile_elem)), density=True,bins=100,alpha=0.5)
+        # plt.xlabel('Izz')
+        #
+        # plt.subplot(2,3,4)
+        # plt.hist(i_tensor_c[:,0,1].clip(min=np.quantile(i_tensor_c[:,0,1],quantile_elem), max=np.quantile(i_tensor_c[:,0,1],1-quantile_elem)), density=True,bins=100)
+        # plt.hist(i_tensor_c2[:,0,1].clip(min=np.quantile(i_tensor_c2[:,0,1],quantile_elem), max=np.quantile(i_tensor_c2[:,0,1],1-quantile_elem)), density=True,bins=100,alpha=0.5)
+        # plt.xlabel('Ixy')
+        # plt.subplot(2,3,5)
+        # plt.hist(i_tensor_c[:,0,2].clip(min=np.quantile(i_tensor_c[:,0,2],quantile_elem), max=np.quantile(i_tensor_c[:,0,2],1-quantile_elem)), density=True,bins=100)
+        # plt.hist(i_tensor_c2[:,0,2].clip(min=np.quantile(i_tensor_c2[:,0,2],quantile_elem), max=np.quantile(i_tensor_c2[:,0,2],1-quantile_elem)), density=True,bins=100,alpha=0.5)
+        # plt.xlabel('Ixz')
+        # plt.subplot(2,3,6)
+        # plt.hist(i_tensor_c[:,1,2].clip(min=np.quantile(i_tensor_c[:,1,2],quantile_elem), max=np.quantile(i_tensor_c[:,1,2],1-quantile_elem)), density=True,bins=100)
+        # plt.hist(i_tensor_c2[:,1,2].clip(min=np.quantile(i_tensor_c2[:,1,2],quantile_elem), max=np.quantile(i_tensor_c2[:,1,2],1-quantile_elem)), density=True,bins=100,alpha=0.5)
+        # plt.xlabel('Iyz')
+
+        # need to understand the asymmetric units
+
+
+        debug_stop = 1
 
 
 if __name__ == '__main__':
     config = None
-    miner = Miner(dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/may_new_pull/mol_features', config=None, collect_chunks=True)
-    miner.process_new_dataset(test_mode=True)
+    mode = 'analyze'
 
-    # miner = Miner(config, collect_chunks=False, dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/new_full_featurized.npy')
-    # miner.basic_analysis()
+    if mode == 'gather':
+        miner = Miner(dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/may_new_pull/mol_features', config=None, collect_chunks=True)
+        miner.process_new_dataset(test_mode=False)
+    elif mode == 'analyze':
+        miner = Miner(dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset', config=None, collect_chunks=False)
+        miner.todays_analysis()

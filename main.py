@@ -58,12 +58,10 @@ parser.add_argument('--min_packing_coefficient', type=float, default = 0.55)
 add_bool_arg(parser, '--include_organic', default = True)
 add_bool_arg(parser, '--include_organometallic', default = True)
 parser.add_argument('--max_atomic_number',type=int,default=87)
-parser.add_argument('--min_atomic_number',type=int,default=1)
 add_bool_arg(parser,'exclude_disordered_crystals',default=True)
 add_bool_arg(parser,'exclude_polymorphs',default=True)
 add_bool_arg(parser,'exclude_nonstandard_settings',default=True)
 add_bool_arg(parser,'exclude_missing_r_factor',default=True)
-
 
 #  training settings
 parser.add_argument('--max_epochs', type=int, default=100)
@@ -135,10 +133,14 @@ config.dataset_seed = config.dataset_seed % 10
 
 
 if config.test_mode:
-    config.initial_batch_size = 10
+    if config.mode == 'joint modelling':
+        config.initial_batch_size = 100
+    else:
+        config.initial_batch_size = 10
     config.auto_batch_sizing = False
     config.num_samples = 1000
     config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset'
+    config.anomaly_detection = True
 
 
 # =====================================

@@ -1,5 +1,9 @@
 import numba as nb
-import numpy as np1
+import numpy as np
+
+'''
+uses high charge atoms to suggest molecule position
+'''
 
 @nb.jit(nopython=True)
 def calculate_molecular_positions(hca,r):

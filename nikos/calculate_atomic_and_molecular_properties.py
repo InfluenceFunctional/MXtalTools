@@ -8,6 +8,12 @@
 # You can use any space group for the cif file, it does not matter when 
 # all you want to do is to calculate the fractional atomic charges
 
+
+'''
+give a .CIF file, gets ring and centroid stats in the fractional coordinates, and some atom-wise features
+pretty straightforward
+'''
+
 import numpy as np
 
 from coor_trans import coor_trans

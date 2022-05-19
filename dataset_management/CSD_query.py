@@ -7,6 +7,7 @@ import os
 import pandas as pd
 import sys
 
+
 class CCDC_helper():
     def __init__(self, chunk_path, database, add_features=None):
         self.chunk_path = chunk_path
@@ -30,7 +31,7 @@ class CCDC_helper():
                 'crystal symmetry operators',
             ]
 
-    def grep_crystal_identifiers(self, chunks=[0, 100]):
+    def grep_crystal_identifiers(self, chunk_inds=[0, 100]):
         print('Getting hits')
         allhits = []
         # for group in self.searchingGroups:
@@ -43,9 +44,9 @@ class CCDC_helper():
             allhits.extend(hitlist)
             del hitlist
 
-        chunklist = np.arange(start=chunks[0], stop=chunks[1])
+        chunklist = np.arange(start=chunk_inds[0], stop=chunk_inds[1])
 
-        chunks = chunkify(allhits, 100)[chunks[0]:chunks[1]]
+        chunks = chunkify(allhits, 100)[chunk_inds[0]:chunk_inds[1]]
         del allhits
 
         print('Getting identifiers')
@@ -68,55 +69,62 @@ class CCDC_helper():
 
         identifiers = list(set(identifiers))
         df = pd.DataFrame(data=identifiers, index=np.arange(len(identifiers)), columns=['identifier'])
-        df.to_pickle('csd_dataframe')
+        df.to_pickle('../../csd_dataframe2')
 
-    def get_crystal_featuress(self,n_chunks = 100, chunk_inds = [0,100]):
+    def get_crystal_featuress(self, n_chunks=100, chunk_inds=[0, 100]):
         os.chdir(self.chunk_path)
         os.chdir('../')
-        df = pd.read_pickle('csd_dataframe')
+        df = pd.read_pickle('csd_dataframe2')
 
-        chunks = chunkify(df,n_chunks)[chunk_inds[0]:chunk_inds[1]]
+        chunks = chunkify(df, n_chunks)[chunk_inds[0]:chunk_inds[1]]
 
         csd_reader = EntryReader('CSD')
 
-        for n,chunk in enumerate(chunks):
-            chunk = chunk.reset_index()
-            new_features = [[] for _ in range(len(self.features))]
-            bad_inds = []
-            for i in tqdm.tqdm(range(len(chunk))):
-                entry = csd_reader.entry(chunk['identifier'][i])
-                molecule = entry.molecule
-                crystal = entry.crystal
-                if (len(molecule.atoms) > 0) and (len(molecule.components) == 1) and (not entry.is_polymeric) and (entry.has_3d_structure):
-                    try:
-                        new_features = self.featurize_crystal(new_features,crystal,entry)
-                    except:
-                        print('featurization failed on chunk {} entry {}'.format(n,i))
-                        if len(crystal.molecule.atoms) == 0:
-                            print("crystal had no atoms")
+        for n, chunk in enumerate(chunks):
+            if not os.path.exists(self.chunk_path + 'crystal_features/{}'.format(n + chunk_inds[0])):  # don't repeat
+                print('doing chunk {} with {} entries'.format(n+chunk_inds[0],len(chunk)))
+                chunk = chunk.reset_index()
+                new_features = [[] for _ in range(len(self.features))]
+                bad_inds = []
+                good_inds = []
+                for i in tqdm.tqdm(range(len(chunk))):
+                    entry = csd_reader.entry(chunk['identifier'][i])
+                    molecule = entry.molecule
+                    crystal = entry.crystal
+                    ma = crystal.asymmetric_unit_molecule
+                    if (len(molecule.atoms) > 0) and (len(molecule.components) == 1) and (not entry.is_polymeric) and (entry.has_3d_structure):
+                        #try:
+                        new_features = self.featurize_crystal(new_features, crystal, entry)
+                        good_inds.append(i)
+                        # except:
+                        #     print('featurization failed on chunk {} entry {}'.format(n, i))
+                        #     if len(crystal.molecule.atoms) == 0:
+                        #         print("crystal had no atoms")
+                        #     bad_inds.append(i)
+                    else:
+                        if len(molecule.atoms) == 0:
+                            print('molecule had no atoms')
+                        if not entry.has_3d_structure:
+                            print('molecule had no 3d structure')
+                        if len(molecule.components) > 1:
+                            print('more than one molecule')
+                        if entry.is_polymeric:
+                            print('entry was polymeric')
                         bad_inds.append(i)
-                else:
-                    if len(molecule.atoms) == 0:
-                        print('molecule had no atoms')
-                    if not entry.has_3d_structure:
-                        print('molecule had no 3d structure')
-                    if len(molecule.components) > 1:
-                        print('more than one molecule')
-                    if entry.is_polymeric:
-                        print('entry was polymeric')
-                    bad_inds.append(i)
 
-            chunk = chunk.drop(chunk.index[bad_inds]) # delete unwanted samples
-            chunk = chunk.reset_index()
-            for i,feature in enumerate(self.features):
-                chunk[feature] = new_features[i]
+                lens = [len(feat) for feat in new_features]
+                assert [lens[0]] * len(lens) == lens
 
-            chunk['crystal temperature'] = self.fix_temperature(chunk['crystal temperature'])# post-fix temperature
-            chunk.to_pickle(self.chunk_path + 'crystal_features/{}'.format(n + chunk_inds[0]))
+                chunk = chunk.drop(chunk.index[bad_inds])  # delete unwanted samples
+                chunk = chunk.reset_index()
+                for i, feature in enumerate(self.features):
+                    chunk[feature] = new_features[i]
 
+                chunk['crystal temperature'] = self.fix_temperature(chunk['crystal temperature'])  # post-fix temperature
+                chunk.to_pickle(self.chunk_path + 'crystal_features/{}'.format(n + chunk_inds[0]))
 
-    def featurize_crystal(self,features_list,crystal,entry):
-        for i,feature in enumerate(self.features):
+    def featurize_crystal(self, features_list, crystal, entry):
+        for i, feature in enumerate(self.features):
             if feature == 'xyz':
                 value = entry.molecule.to_string('mol2')
             elif feature == 'crystal atoms on special positions':
@@ -156,9 +164,16 @@ class CCDC_helper():
             elif feature == 'crystal z prime':
                 value = crystal.z_prime
             elif feature == 'crystal spacegroup number':
-                value = crystal.spacegroup_number_and_setting[0]
+                try:
+                    value = crystal.spacegroup_number_and_setting[0]
+                except:
+                    print("can't get spacegroup number, invalid symmetry ops")
+                    value = 0
             elif feature == 'crystal spacegroup setting':
-                value = crystal.spacegroup_number_and_setting[1]
+                try:
+                    value = crystal.spacegroup_number_and_setting[1]
+                except:
+                    value = 0
             elif feature == 'crystal spacegroup symbol':
                 value = crystal.spacegroup_symbol
             elif feature == 'crystal symmetry operators':
@@ -167,10 +182,13 @@ class CCDC_helper():
                 print(feature + ' is not an implemented crystal feature!!')
                 sys.exit()
             features_list[i].append(value)
+        # check for non-equal lengths
+        lens = [len(feat) for feat in features_list]
+        assert [lens[0]] * len(lens) == lens
+
         return features_list
 
-
-    def fix_temperature(self,temperatures):
+    def fix_temperature(self, temperatures):
         t2 = np.zeros(len(temperatures))  # fix temperature
         for i, temp in enumerate(temperatures):
             if temp is None:
@@ -214,6 +232,7 @@ class CCDC_helper():
 
         return list(t2)
 
+
 def visualizeEntry(identifier):
     csd_reader = EntryReader('CSD')
     mol = csd_reader.molecule(identifier)
@@ -227,18 +246,20 @@ def visualizeEntry(identifier):
     img.show()
 
 
-
 if __name__ == '__main__':
-    helper = CCDC_helper('C:/Users\mikem\Desktop\CSP_runs\datasets\may_new_pull/', 'CSD')
+    helper = CCDC_helper('C:/Users\mikem\Desktop\CSP_runs\datasets\may_new_pull2/', 'CSD')
 
-    #pull identifiers
-    # ind = 80
-    # for i in range(ind, ind+20) :
-    #     helper.grep_crystal_identifiers(chunks=[i,i+1])
+    # # #pull identifiers
+    # ind = 0
+    # run = 100
+    # helper.grep_crystal_identifiers(chunk_inds=[ind,ind+run])
+    #
+    # #after pull, initialize dataset
+    # helper.collect_chunks_and_initialize_df()
 
-    # after pull, initialize dataset
-    #helper.collect_chunks_and_initialize_df()
-
-    # then, featurize each crystal
+    # # then, featurize each crystal
     offset = 80
-    helper.get_crystal_featuress(n_chunks = 100, chunk_inds=[offset + 0,offset +10])
+    gap = 100
+    helper.get_crystal_featuress(n_chunks=100, chunk_inds=[offset + 0, offset + gap])
+
+    # optionally, store all the packings

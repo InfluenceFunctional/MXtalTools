@@ -1,5 +1,10 @@
 import numpy as np
 
+'''
+generate a set of perpendicular vectors
+not sure what for
+'''
+
 def perpendicular_vectors(n_max):
     ''' Set the possible values for the components of the vector '''
     dv = []

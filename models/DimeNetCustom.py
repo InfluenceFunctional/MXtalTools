@@ -15,7 +15,6 @@ from torch_geometric.nn.acts import swish
 from torch_geometric.nn.inits import glorot_orthogonal
 
 
-
 class Envelope(torch.nn.Module):
     def __init__(self, exponent):
         super(Envelope, self).__init__()
@@ -45,11 +44,11 @@ class BesselBasisLayer(torch.nn.Module):
     def reset_parameters(self):
         with torch.no_grad():
             torch.arange(1, self.freq.numel() + 1, out=self.freq).mul_(PI)
-        #self.freq = torch.arange(1,self.freq.numel() + 1).mul(PI)
+        # self.freq = torch.arange(1,self.freq.numel() + 1).mul(PI)
 
     def forward(self, dist):
         dist = dist.unsqueeze(-1) / self.cutoff
-        return self.envelope(dist) * (self.freq * dist).sin() # maybe missing a /dist here, or it might be in the envelope, which I don't really care about
+        return self.envelope(dist) * (self.freq * dist).sin()  # maybe missing a /dist here, or it might be in the envelope, which I don't really care about
 
 
 class SphericalBasisLayer(torch.nn.Module):
@@ -84,7 +83,6 @@ class SphericalBasisLayer(torch.nn.Module):
                 bessel = sym.lambdify([x], bessel_forms[i][j], modules)
                 self.bessel_funcs.append(bessel)
 
-
     def forward(self, dist, angle, idx_kj):
         dist = dist / self.cutoff
         rbf = torch.stack([f(dist) for f in self.bessel_funcs], dim=1)
@@ -109,7 +107,7 @@ class EmbeddingBlock(torch.nn.Module):
         self.embeddings = torch.nn.ModuleList(self.embeddings)
 
         self.lin_rbf = Linear(num_radial, hidden_channels)
-        self.lin = Linear(2* embedding_dimension * len(embedding_size) + hidden_channels + 2 * (num_atom_features - self.num_embeddings), hidden_channels)
+        self.lin = Linear(2 * embedding_dimension * len(embedding_size) + hidden_channels + 2 * (num_atom_features - self.num_embeddings), hidden_channels)
 
         self.reset_parameters()
 
@@ -120,16 +118,16 @@ class EmbeddingBlock(torch.nn.Module):
 
     def forward(self, x, rbf, i, j):
         if x.dim() == 1:
-            x = x.unsqueeze(1) # make dim 1 explicit
+            x = x.unsqueeze(1)  # make dim 1 explicit
 
         emb = []
         for ind in range(self.num_embeddings):
-            emb.append(self.embeddings[ind](x[:,ind].long()))
+            emb.append(self.embeddings[ind](x[:, ind].long()))
 
-        emb = torch.cat(emb,dim=-1)
+        emb = torch.cat(emb, dim=-1)
 
         rbf = self.act(self.lin_rbf(rbf))
-        concat_vec = torch.cat([emb[i], emb[j], rbf, x[i,self.num_embeddings:], x[j,self.num_embeddings:]], dim=-1)
+        concat_vec = torch.cat([emb[i], emb[j], rbf, x[i, self.num_embeddings:], x[j, self.num_embeddings:]], dim=-1)
 
         return self.act(self.lin(concat_vec))
 
@@ -151,11 +149,11 @@ class CustomEmbeddingBlock(torch.nn.Module):
 
     def forward(self, x, pos, batch):
         if x.dim() == 1:
-            x = x.unsqueeze(1) # make dim 1 explicit
+            x = x.unsqueeze(1)  # make dim 1 explicit
 
-        emb1 = self.emb1(x[:,0].long()) # 1st column (atomic number) goes to embedding
-        emb2 = self.emb2(x[:,1].long()) # 1st column (atomic number) goes to embedding
-        concat_vec = torch.cat([emb1,emb2, x[:,2:]], dim=-1)
+        emb1 = self.emb1(x[:, 0].long())  # 1st column (atomic number) goes to embedding
+        emb2 = self.emb2(x[:, 1].long())  # 1st column (atomic number) goes to embedding
+        concat_vec = torch.cat([emb1, emb2, x[:, 2:]], dim=-1)
         return self.act(self.lin(concat_vec))
 
 
@@ -240,7 +238,6 @@ class InteractionBlock(torch.nn.Module):
         return h
 
 
-
 class InteractionBlockPP(torch.nn.Module):
     def __init__(self, hidden_channels, graph_convolution_filters, num_spherical,
                  num_radial, num_before_skip, num_after_skip, act=swish):
@@ -256,8 +253,8 @@ class InteractionBlockPP(torch.nn.Module):
         self.lin_kj = Linear(hidden_channels, hidden_channels)
         self.lin_ji = Linear(hidden_channels, hidden_channels)
 
-        self.down_1x1 = Linear(hidden_channels, int_hidden_channels, bias = False)
-        self.up_1x1 = Linear(int_hidden_channels, hidden_channels, bias = False)
+        self.down_1x1 = Linear(hidden_channels, int_hidden_channels, bias=False)
+        self.up_1x1 = Linear(int_hidden_channels, hidden_channels, bias=False)
 
         self.layers_before_skip = torch.nn.ModuleList([
             ResidualLayer(hidden_channels, act) for _ in range(num_before_skip)
@@ -288,21 +285,21 @@ class InteractionBlockPP(torch.nn.Module):
             res_layer.reset_parameters()
 
     def forward(self, x, rbf, sbf, idx_kj, idx_ji):
-        #rbf = self.lin_rbf1(rbf)
+        # rbf = self.lin_rbf1(rbf)
         rbf = self.lin_rbf2(self.lin_rbf1(rbf))
-        #sbf = self.lin_sbf1(sbf)
+        # sbf = self.lin_sbf1(sbf)
         sbf = self.lin_sbf2(self.lin_sbf1(sbf))
 
         x_ji = self.act(self.lin_ji(x))
         x_kj = self.act(self.lin_kj(x)) * rbf
 
-        #x_kj = x_kj * rbf
-        #x_kj = scatter(x_kj, idx_ji, dim=0, dim_size=x.size(0))
+        # x_kj = x_kj * rbf
+        # x_kj = scatter(x_kj, idx_ji, dim=0, dim_size=x.size(0))
         x_kj = self.down_1x1(x_kj)
-        x_kj = x_kj[idx_kj] # torch.gather(x_kj,dim=0,index=idx_kj)
+        x_kj = x_kj[idx_kj]  # torch.gather(x_kj,dim=0,index=idx_kj)
         x_kj = x_kj * sbf
 
-        x_kj = scatter(x_kj, idx_ji, dim = 0, dim_size = x.size(0))
+        x_kj = scatter(x_kj, idx_ji, dim=0, dim_size=x.size(0))
         x_kj = self.up_1x1(x_kj)
 
         h = x_ji + x_kj
@@ -314,7 +311,9 @@ class InteractionBlockPP(torch.nn.Module):
 
         return h
 
+
 from torch_geometric.nn import DimeNet
+
 
 class OutputBlock(torch.nn.Module):
     def __init__(self, num_radial, hidden_channels, out_channels, num_layers,
@@ -345,13 +344,11 @@ class OutputBlock(torch.nn.Module):
         return self.lin(x)
 
 
-
 class OutputBlockPP(torch.nn.Module):
     def __init__(self, num_radial, hidden_channels, out_channels, num_layers,
                  act=swish):
         super(OutputBlockPP, self).__init__()
         self.act = act
-
 
         self.lin_rbf = Linear(num_radial, hidden_channels, bias=False)
         self.up_1x1 = Linear(hidden_channels // 2, hidden_channels)
@@ -425,11 +422,12 @@ class CustomDimeNet(torch.nn.Module):
                  num_after_skip: int = 1, num_output_layers: int = 1,
                  dense: bool = True,
                  act: Callable = swish,
-                 num_atom_features = 1,
-                 atom_embedding_dims = np.ones(1),
-                 embedding_hidden_dimension = 5,
-                 norm = None,
-                 dropout = 0
+                 num_atom_features=1,
+                 atom_embedding_dims=np.ones(1),
+                 embedding_hidden_dimension=5,
+                 norm=None,
+                 dropout=0,
+                 crystal_mode=False,
                  ):
         super(CustomDimeNet, self).__init__()
 
@@ -438,8 +436,10 @@ class CustomDimeNet(torch.nn.Module):
         self.cutoff = cutoff
         self.max_num_neighbors = max_num_neighbors
         self.num_blocks = num_blocks
-        self.pre_aggregate = False # use sum aggregation
+        self.pre_aggregate = False  # use sum aggregation
         self.num_atom_features = num_atom_features
+        self.crystal_mode = crystal_mode
+
         if not self.pre_aggregate:
             out_channels = hidden_channels
 
@@ -482,7 +482,7 @@ class CustomDimeNet(torch.nn.Module):
         ])
 
         if self.dense:
-            self.dense_condensation = Linear(hidden_channels * (num_blocks + 1), hidden_channels, bias=False) # collect dense skips
+            self.dense_condensation = Linear(hidden_channels * (num_blocks + 1), hidden_channels, bias=False)  # collect dense skips
 
         self.reset_parameters()
 
@@ -494,13 +494,12 @@ class CustomDimeNet(torch.nn.Module):
         for interaction in self.interaction_blocks:
             interaction.reset_parameters()
 
-
     def triplets(self, edge_index, num_nodes):
         row, col = edge_index  # j->i
 
-        value = torch.arange(row.size(0), device=row.device) # triplet index
+        value = torch.arange(row.size(0), device=row.device)  # triplet index
         adj_t = SparseTensor(row=col, col=row, value=value,
-                             sparse_sizes=(num_nodes, num_nodes)) # adjacency matrix
+                             sparse_sizes=(num_nodes, num_nodes))  # adjacency matrix
         adj_t_row = adj_t[row]
         num_triplets = adj_t_row.set_value(None).sum(dim=1).to(torch.long)
 
@@ -550,16 +549,14 @@ class CustomDimeNet(torch.nn.Module):
             x = dropout(x)
 
             if self.dense:
-                P = torch.cat((P,output_block(x, rbf, i)),dim=1)
+                P = torch.cat((P, output_block(x, rbf, i)), dim=1)
             else:
                 P += output_block(x, rbf, i)
 
         if self.dense:
-            P = self.dense_condensation(P) # collect skips
+            P = self.dense_condensation(P)  # collect skips
 
         if self.pre_aggregate:
             return P.sum(dim=0) if batch is None else scatter(P, batch, dim=0)
         else:
             return P
-
-

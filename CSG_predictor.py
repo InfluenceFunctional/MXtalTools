@@ -3,14 +3,23 @@ from utils import *
 import glob
 from model_utils import *
 from dataset_management.CSD_data_manager import Miner
-from torch import backends
+from torch import backends, optim
+import torch
 from dataset_utils import BuildDataset, get_dataloaders
 import time
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import tqdm
-from torch import optim
 import torch.optim.lr_scheduler as lr_scheduler
+from nikos.coordinate_transformations import coor_trans, cell_vol, coor_trans_matrix
+from nikos.rotations import rotation_matrix_from_vectors, euler_rotation, rodriguez_rotation
+from pyxtal import pyxtal, lattice, symmetry
+from ase.build import make_supercell
+import ase.visualize
+from pymatgen.core import Molecule
+from ase import Atoms
+import rdkit.Chem as Chem
+from ccdc.io import CrystalReader
 
 
 class Predictor():
@@ -28,6 +37,11 @@ class Predictor():
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
 
+        periodicTable = Chem.GetPeriodicTable()
+        self.atom_weights = {}
+        for i in range(100):
+            self.atom_weights[i] = periodicTable.GetAtomicWeight(i)
+
         miner = Miner(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)
 
         if not self.config.skip_run_init:
@@ -43,14 +57,14 @@ class Predictor():
                 os.chdir(self.workDir)  # move to working dir
                 print('Starting Fresh Run %d' % self.config.run_num)
                 t0 = time.time()
-                miner.load_for_modelling()
+                miner.load_npy_for_modelling()
                 print('Initializing dataset took {} seconds'.format(int(time.time() - t0)))
         else:
             if self.config.explicit_run_enumeration:
                 # move to working dir
                 self.workDir = self.config.workdir + '/' + 'run%d' % self.config.run_num
                 os.chdir(self.workDir)
-                self.groupLabels = list(np.load('group_labels.npy', allow_pickle=True))
+                self.class_labels = list(np.load('group_labels.npy', allow_pickle=True))
                 print('Resuming run %d' % self.config.run_num)
             else:
                 print("Must provide a run_num if not creating a new workdir!")
@@ -100,9 +114,12 @@ class Predictor():
         if config.mode == 'joint modelling':
             model = FlowModel(config, dataDims)
         elif 'molecule' in config.mode:
-            model = molecule_graph_model(config, dataDims)
+            model = molecule_graph_model(config, dataDims, crystal_mode=False)
         elif 'cell' in config.mode:
-            model = molecular_crystal_graph_model(config, dataDims)
+            model = molecule_graph_model(config, dataDims, crystal_mode=True)
+        else:
+            print(config.mode + ' is not a valid model mode!')
+            sys.exit()
 
         if config.device == 'cuda':
             model = model.cuda()
@@ -144,7 +161,6 @@ class Predictor():
             print('Proxy model has {:.3f} million or {} parameters'.format(nconfig / 1e6, int(nconfig)))
 
         return model, optimizer, [scheduler1, scheduler3, scheduler4], nconfig
-
 
     def get_batch_size(self, dataset, config):
         finished = 0
@@ -206,17 +222,16 @@ class Predictor():
             dataset_builder = BuildDataset(config)
             config.dataDims = dataset_builder.get_dimension()
             self.dataDims = dataset_builder.get_dimension()
-            if 'classification' in config.mode:
-                self.groupLabels =dataset_builder.group_labels
+            if 'classification' in config.mode:  # for convenience
+                self.class_labels = self.dataDims['class labels']
+                self.class_weights = self.dataDims['class weights']
             if config.mode == 'joint modelling':
                 self.lattice_features = dataset_builder.lattice_keys
-                self.dataDims = dataset_builder.get_dimension()
                 self.n_crystal_dims = self.dataDims['n crystal features']
                 if config.conditional_modelling:
                     self.n_conditional_features = self.dataDims['n conditional features']
                 else:
                     self.n_conditional_features = 0
-
 
             # get batch size
             if config.auto_batch_sizing:
@@ -245,47 +260,50 @@ class Predictor():
 
             # training loop
             hit_max_lr, converged, epoch = False, False, 0
-            while (epoch < config.max_epochs) and not converged:
-                # very cool
-                print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
-                print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
-                print("'      `--'      `.-'      `--'      `--'      `--'      `-.'      `--'      `")
-                # very cool
-                print("Starting Epoch {}".format(epoch))  # index from 0, very cool
+            # if config.anomaly_detection:
+            #     torch.autograd.set_detect_anomaly = True
+            with torch.autograd.set_detect_anomaly(True):
+                while (epoch < config.max_epochs) and not converged:
+                    # very cool
+                    print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
+                    print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
+                    print("'      `--'      `.-'      `--'      `--'      `--'      `-.'      `--'      `")
+                    # very cool
+                    print("Starting Epoch {}".format(epoch))  # index from 0, very cool
 
-                err_tr, tr_record, time_train = \
-                    self.model_epoch(config, dataLoader=train_loader, model=model,
-                                     optimizer=optimizer, update_gradients=True)  # train & compute test loss
+                    err_tr, tr_record, time_train = \
+                        self.model_epoch(config, dataLoader=train_loader, model=model,
+                                         optimizer=optimizer, update_gradients=True)  # train & compute test loss
 
-                err_te, te_record, epoch_stats_dict, time_test = \
-                    self.model_epoch(config, dataLoader=test_loader, model=model,
-                                     update_gradients=False, record_stats=True)  # compute loss on test set
+                    err_te, te_record, epoch_stats_dict, time_test = \
+                        self.model_epoch(config, dataLoader=test_loader, model=model,
+                                         update_gradients=False, record_stats=True)  # compute loss on test set
 
-                print('epoch={}; nll_tr={:.5f}; nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(epoch, torch.mean(torch.stack(err_tr)), torch.mean(torch.stack(err_te)), time_train, time_test))
+                    print('epoch={}; nll_tr={:.5f}; nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(epoch, torch.mean(torch.stack(err_tr)), torch.mean(torch.stack(err_te)), time_train, time_test))
 
-                # update learning rate
-                optimizer = set_lr(schedulers, optimizer, config, err_tr, hit_max_lr)
-                learning_rate = optimizer.param_groups[0]['lr']
-                if learning_rate >= config.max_lr: hit_max_lr = True
+                    # update learning rate
+                    optimizer = set_lr(schedulers, optimizer, config, err_tr, hit_max_lr)
+                    learning_rate = optimizer.param_groups[0]['lr']
+                    if learning_rate >= config.max_lr: hit_max_lr = True
 
-                # logging
-                self.update_metrics(epoch, metrics_dict, err_tr, err_te, learning_rate)
-                self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
-                                  metrics_dict, tr_record, te_record, epoch_stats_dict,
-                                  config, model, log_figures=config.log_figures)
-
-                # check for convergence
-                if checkConvergence(config, metrics_dict['test loss']) and (epoch > config.history + 2):
-                    config.finished = True
+                    # logging
+                    self.update_metrics(epoch, metrics_dict, err_tr, err_te, learning_rate)
                     self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
                                       metrics_dict, tr_record, te_record, epoch_stats_dict,
-                                      config, model, log_figures=True) # always log figures at end of run
-                    break
+                                      config, model, log_figures=config.log_figures)
 
-                epoch += 1
+                    # check for convergence
+                    if checkConvergence(config, metrics_dict['test loss']) and (epoch > config.history + 2):
+                        config.finished = True
+                        self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
+                                          metrics_dict, tr_record, te_record, epoch_stats_dict,
+                                          config, model, log_figures=True)  # always log figures at end of run
+                        break
 
-            if config.device.lower() == 'cuda':
-                torch.cuda.empty_cache()  # clear GPU
+                    epoch += 1
+
+                if config.device.lower() == 'cuda':
+                    torch.cuda.empty_cache()  # clear GPU
 
     def model_epoch(self, config, dataLoader=None, model=None, optimizer=None, update_gradients=True,
                     iteration_override=None, record_stats=False):
@@ -304,9 +322,14 @@ class Predictor():
         }
 
         for i, data in enumerate(dataLoader):
+            if 'cell' in config.mode:
+                data = self.supercell_data(data, config)
 
             if config.device.lower() == 'cuda':
                 data = data.cuda()
+
+            if config.test_mode or config.anomaly_detection:
+                assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
 
             losses, predictions = self.get_loss(model, data, config)
 
@@ -316,7 +339,7 @@ class Predictor():
 
             if record_stats:
                 epoch_stats_dict['predictions'].extend(predictions)
-                epoch_stats_dict['targets'].extend(data.y[0])
+                epoch_stats_dict['targets'].extend(data.y[0].cpu().detach().numpy())
                 epoch_stats_dict['tracking features'].extend(data.y[2])
 
             if update_gradients:
@@ -341,6 +364,9 @@ class Predictor():
             if targets.ndim > 1:
                 targets = targets[:, 0]
 
+            if pred.ndim > 1:
+                pred = pred[:, 0]
+
             losses = F.smooth_l1_loss(pred, targets.float(), reduction='none')
             return losses, pred.cpu().detach().numpy()
 
@@ -361,8 +387,6 @@ class Predictor():
             logprob = prior_logprob + log_det
 
             return -(logprob), prior_logprob.cpu().detach().numpy()
-
-
 
     def pairwise_correlations_analysis(self, dataset_builder, config):
         '''
@@ -387,23 +411,27 @@ class Predictor():
     def check_inversion_quality(self, model, test_loader, config):
         # check for quality of the inversion
         if self.n_conditional_features > 0:
-            test_conditions = next(iter(test_loader)).to(config.device)
-            if config.conditioning_mode == 'graph model':
+            if config.conditioning_mode == 'molecule features':
+                test_conditions = next(iter(test_loader)).to(config.device)
                 test_sample = model.sample(test_conditions.num_graphs, conditions=test_conditions)
-            else:
-                test_sample = model.sample(len(test_conditions), conditions=test_conditions[:, -self.n_conditional_features:])
-            if config.conditioning_mode == 'graph model':
+                test_conditions.y[0][:, :-self.n_conditional_features] = test_sample
+                zs, _, _ = model.forward(test_conditions)
+                test_conditions.y[0] = torch.cat((zs, test_conditions.y[0][:, -self.n_conditional_features:]), dim=1)
+                test_sample2, _ = model.backward(test_conditions)
+            elif config.conditioning_mode == 'graph model':
+                test_conditions = next(iter(test_loader)).to(config.device)
+                test_sample = model.sample(test_conditions.num_graphs, conditions=test_conditions)
                 test_conditions.y[0] = test_sample
                 zs, _, _ = model.forward(test_conditions)
                 test_conditions.y[0] = zs
                 test_sample2, _ = model.backward(test_conditions)
-            else:
-                zs, _, _ = model.forward(torch.cat((test_sample, test_conditions[:, -self.n_conditional_features:].to(test_sample.device)), dim=-1))
-                test_sample2, _ = model.backward(torch.cat((zs, test_conditions[:, -self.n_conditional_features:].to(zs.device)), dim=-1))
         else:
-            test_sample = model.sample(self.sampling_batch_size)
-            zs, _, _ = model.forward(test_sample)
-            test_sample2, _ = model.backward(zs)
+            test_conditions = next(iter(test_loader)).to(config.device)
+            test_sample = model.sample(test_conditions.num_graphs, conditions=None)
+            test_conditions.y[0] = test_sample
+            zs, _, _ = model.forward(test_conditions)
+            test_conditions.y[0] = zs
+            test_sample2, _ = model.backward(test_conditions)
         diff = torch.mean((torch.abs(test_sample - test_sample2))).cpu().detach().numpy()
         print('Average Inversion Error is {:.6f} per sample'.format(diff))
         if diff > 0.01:
@@ -447,29 +475,19 @@ class Predictor():
         generation_conditions = []
         targets = []
         for i, data in enumerate(test_loader):
-            if config.conditioning_mode == 'graph model':
-                generation_conditions.append(data.to(model.device))
-                targets.extend(generation_conditions[-1].y[0].cpu().detach().numpy())
-            else:
-                batch_placeholder = data
-                if config.conditional_modelling:
-                    generation_conditions.append(batch_placeholder[:, -self.n_conditional_features:].float())
-                    targets.extend(batch_placeholder[:, :-self.n_conditional_features].cpu().detach().numpy())
-                else:
-                    generation_conditions.append(batch_placeholder.float())
-                    targets.extend(batch_placeholder.cpu().detach().numpy())
+            generation_conditions.append(data.to(model.device))
+            targets.extend(generation_conditions[-1].y[0].cpu().detach().numpy())
+
+        targets = np.asarray(targets)
 
         train_data = train_loader.dataset
-        if (self.n_conditional_features > 0):
-            if (config.conditioning_mode != 'graph model'):
-                train_data = np.asarray(train_data)[:, :-self.n_conditional_features]
-            else:
-                train_data = np.asarray([(train_data[i].y[0]).detach().numpy() for i in range(len(train_data))])[:, 0, :]
-        else:
-            train_data = np.asarray(train_data)
+        train_data = np.asarray([(train_data[i].y[0]).detach().numpy() for i in range(len(train_data))])[:, 0, :]
+        if (self.n_conditional_features > 0) and (config.conditioning_mode == 'molecule features'):
+            train_data = train_data[:, :-self.n_conditional_features]
+            targets = targets[:, :-self.n_conditional_features]
 
         del generation_conditions
-        return np.asarray(targets), train_data
+        return targets, train_data
 
     def sample_nf(self, n_repeats, config, model, test_loader):
         nf_samples = [[] for _ in range(n_repeats)]
@@ -479,11 +497,7 @@ class Predictor():
                 if config.conditional_modelling:
                     if config.device == 'cuda':
                         data = data.cuda()
-                    if config.conditioning_mode == 'graph model':
-                        minibatch_size = data.num_graphs
-                    else:
-                        minibatch_size = len(data)
-                        data = data[:, -self.n_conditional_features:]
+                    minibatch_size = data.num_graphs
                     nf_samples[j].extend(model.sample(
                         minibatch_size,
                         conditions=data
@@ -516,12 +530,9 @@ class Predictor():
                     elif sample.shape[0] == dataset_length:
                         sample = sample[:, None, :]  # the real data only has one repeat
                 sample = torch.Tensor(sample[n * self.sampling_batch_size:n * self.sampling_batch_size + self.sampling_batch_size:1]).to(config.device)
-                for j in range(sample.shape[1]):
+                for j in range(sample.shape[1]):  # todo this is very likely broken
                     if self.n_conditional_features > 0:
-                        if config.conditioning_mode == 'graph model':
-                            data.y[0] = sample[:, j]
-                        else:
-                            data = torch.cat((sample[:, j, :], data[:, -self.n_conditional_features:].to(sample.device)), dim=1)
+                        data.y[0] = sample[:, j]
 
                     scores.extend(model.score(data.to(config.device)).cpu().detach().numpy())
             nf_scores_dict[key] = np.asarray(scores)
@@ -537,7 +548,7 @@ class Predictor():
             if 'loss' in key:  # log 'best' metrics
                 current_metrics['best ' + key] = np.amin(metrics_dict[key])
 
-            elif ('epoch' in key) or ('confusion' in key) or ('lr'):
+            elif ('epoch' in key) or ('confusion' in key) or ('learning rate'):
                 pass
             else:
                 current_metrics['best ' + key] = np.amax(metrics_dict[key])
@@ -577,8 +588,8 @@ class Predictor():
             target_mean = config.dataDims['mean']
             target_std = config.dataDims['std']
 
-            target = np.asarray(epoch_stats_dict['target'])
-            prediction = np.asarray(epoch_stats_dict['prediction'])
+            target = np.asarray(epoch_stats_dict['targets'])
+            prediction = np.asarray(epoch_stats_dict['predictions'])
             orig_target = target * target_std + target_mean
             orig_prediction = prediction * target_std + target_mean
 
@@ -687,7 +698,7 @@ class Predictor():
             print('Top {} Accuracy Overall: {:.3f} By Group: {:.3f}'.format(X, overallTopXAccuracy, np.average(byGroupTopXAccuracy)))
             print('ROC AUC Score {:.3f}'.format(roc_score))
 
-            metrics_dict = {
+            classifier_accuracy_dict = {
                 'ROC AUC': roc_score,
                 'F1': avgF1,
                 'P F1': avgProbF1,
@@ -702,19 +713,15 @@ class Predictor():
                 'average top 1 accuracy': overallTop1Accuracy,
                 'average top {} accuracy'.format(X): overallTopXAccuracy
             }
+            wandb.log(classifier_accuracy_dict)
             accuracy_dict = {}
-            if 'symbol' in config.target:
-                for i in range(len(config.groupLabels)):
-                    accuracy_dict[config.groupLabels[i] + ' top 1 accuracy'] = byGroupTop1Accuracy[i]
-                    accuracy_dict[config.groupLabels[i] + ' top {} accuracy'.format(X)] = byGroupTopXAccuracy[i]
-            else:
-                for i in range(len(byGroupTop1Accuracy)):
-                    accuracy_dict['Class {} top 1 accuracy'.format(i)] = byGroupTop1Accuracy[i]
-                    accuracy_dict['Class {} top {} accuracy'.format(i, X)] = byGroupTopXAccuracy[i]
+            for i in range(len(self.class_labels)):
+                accuracy_dict[self.class_labels[i] + ' top 1 accuracy'] = byGroupTop1Accuracy[i]
+                accuracy_dict[self.class_labels[i] + ' top {} accuracy'.format(X)] = byGroupTopXAccuracy[i]
 
             if log_figures:
-                xaxis = self.groupLabels
-                yaxis = self.groupLabels[-1::-1]
+                xaxis = self.class_labels
+                yaxis = self.class_labels[-1::-1]
                 zaxis = confusion_matrix / np.sum(confusion_matrix)
                 fig = go.Figure(data=go.Heatmap(z=np.flipud(zaxis),
                                                 x=xaxis,
@@ -724,8 +731,8 @@ class Predictor():
                                                 ))
                 wandb.log({"Confusion Matrix": fig})
 
-                xaxis = self.groupLabels
-                yaxis = self.groupLabels[-1::-1]
+                xaxis = self.class_labels
+                yaxis = self.class_labels[-1::-1]
                 zaxis = prob_matrix / np.sum(prob_matrix)
                 fig = go.Figure(data=go.Heatmap(z=np.flipud(zaxis),
                                                 x=xaxis,
@@ -735,10 +742,9 @@ class Predictor():
                                                 ))
                 wandb.log({"P Confusion Matrix": fig})
 
-
                 rands = np.random.choice(len(targets), size=len(targets), replace=False)  # min(len(targets), 9999)
                 wandb.log({"roc {}".format(epoch): wandb.plot.roc_curve(
-                    y_true=targets[rands], y_probas=probs[rands], labels=self.groupLabels, title='Epoch {}'.format(epoch))})
+                    y_true=targets[rands], y_probas=probs[rands], labels=self.class_labels, title='Epoch {}'.format(epoch))})
 
         elif config.mode == 'joint modelling':
             '''
@@ -751,7 +757,6 @@ class Predictor():
             self.sampling_batch_size = min(dataset_length, config.final_batch_size)
             n_repeats = n_samples // dataset_length
             n_samples = n_repeats * dataset_length
-            full_dataDims = dataset_builder.get_full_dimension()
             model.eval()
 
             if config.device.lower() == 'cuda':
@@ -761,21 +766,15 @@ class Predictor():
             targets, train_data = self.get_generation_conditions(train_loader, test_loader, model, config)
             self.check_inversion_quality(model, test_loader, config)
             pca = model.fit_pca(train_data, print_variance=(epoch == 0))
-            full_pca = model.fit_pca(dataset_builder.full_dataset_data, print_variance=(epoch == 0))
             # get all our samples
             sample_dict = {}
             sample_dict['data'] = targets
             sample_dict['independent gaussian'] = model.prior.sample((n_samples,)).detach().numpy()
-            # sample_dict['full independent gaussian'] = model.prior.sample((n_samples,)).detach().numpy()
             sample_dict['pca gaussian'] = model.pca_sampling(pca, n_samples)
-            # sample_dict['full pca gaussian'] = model.pca_sampling(full_pca,n_samples)
             sample_dict['nf gaussian'] = self.sample_nf(n_repeats, config, model, test_loader)
             renormalized_sample_dict = {}
             for key in sample_dict.keys():
-                if 'full' in key:
-                    renormalized_sample_dict[key] = model.destandardize_samples(sample_dict[key], full_dataDims)
-                else:
-                    renormalized_sample_dict[key] = model.destandardize_samples(sample_dict[key], self.dataDims)
+                renormalized_sample_dict[key] = model.destandardize_samples(sample_dict[key], self.dataDims)
 
             # skipping because it's expensive
             # # get PC and NF scores
@@ -1036,3 +1035,190 @@ class Predictor():
             print(config.mode + ' is not a real model! how did you get this far?')
 
         print('Analysis took {} seconds'.format(int(time.time() - t0)))
+
+    def supercell_data(self, data, config):
+        '''
+        test code for on-the-fly cell generation
+        data = self.build_supercells(data)
+        0. extract molecule and cell parameters
+        1. find centroid
+        2. find principal axis & angular component
+        3. place centroid & align axes
+        4. apply point symmetry
+        5. tile supercell
+        '''
+
+        cell_angle_keys = ['crystal alpha', 'crystal beta', 'crystal gamma']
+        cell_angle_inds = [config.dataDims['tracking features dict'].index(key) for key in cell_angle_keys]
+        cell_length_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c']
+        cell_length_inds = [config.dataDims['tracking features dict'].index(key) for key in cell_length_keys]
+        z_value_ind = config.dataDims['tracking features dict'].index('crystal z value')
+        z_prime_ind = config.dataDims['tracking features dict'].index('crystal z prime')
+        sg_number_ind = config.dataDims['tracking features dict'].index('crystal spacegroup number')
+        reader = CrystalReader('CSD')
+
+        for i in range(data.num_graphs):
+            # 0 extract molecule and cell parameters
+            atoms = data.x[data.batch == i]
+            atomic_numbers = atoms[:, 0]  # this is currently atomic number - convert to masses
+            weights = torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers])
+            coords = data.pos[data.batch == i]
+            cell_lengths = data.y[2][i][cell_length_inds]  # pull cell params from tracking inds
+            cell_angles = data.y[2][i][cell_angle_inds]
+            csd_identifier = data.y[1][i]
+
+            z_value = int(data.y[2][i][z_value_ind])
+            z_prime = int(data.y[2][i][z_prime_ind])
+            sg_number = int(data.y[2][i][sg_number_ind])
+            T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)
+            T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
+            cell_vectors = np.transpose(np.dot(T_fc, np.transpose(np.eye(3))))  # do the transform
+
+            # pre-enforce hydrogen cleanliness (for now, or it gets confused)
+            heavy_inds = np.where(atomic_numbers != 1)
+            atomic_numbers = atomic_numbers[heavy_inds]
+            weights = weights[heavy_inds]
+            coords = coords[heavy_inds]
+            atoms = atoms[heavy_inds]
+
+            use_CSD = np.random.uniform(0, 1) > 0.5
+            if False:# use_CSD:
+                reference_cell = self.generate_random_crystal(cell_lengths, cell_angles, T_cf, T_fc, atoms, coords, weights, sg_number, z_value)
+                aa = 1
+            else:
+                # get reference cell positions
+                reference_cell = self.get_CSD_crystal(reader, csd_identifier=csd_identifier, mol_n_atoms=len(coords), z_value=z_value)
+                # pattern molecule into reference cell, assuming consistent ordering between dataset (drawn from CSD) and CSD crystals
+                coords = torch.tensor(reference_cell.reshape(z_value * reference_cell.shape[1], 3))  # assign reference cell coordinates to the coords array
+                atoms = atoms.repeat(z_value, 1)  # simply copy the feature vectors
+
+            assert len(atoms) == len(coords)
+
+            # 5 tile the supercell
+            # index the molecules as 'within main cell' vs 'outside'
+            supercell_coords = coords.clone()
+            supercell_size = 1  # 1 is a 3x3, 2 is a 5x5, etc.
+            for xx in range(-supercell_size, supercell_size + 1):
+                for yy in range(-supercell_size, supercell_size + 1):
+                    for zz in range(-supercell_size, supercell_size + 1):
+                        if not all([xx == 0, yy == 0, zz == 0]):
+                            supercell_coords = torch.cat((supercell_coords, coords + (cell_vectors[0] * xx + cell_vectors[1] * yy + cell_vectors[2] * zz)), dim=0)
+
+            supercell_atoms = atoms.repeat((supercell_size * 2 + 1) ** 3, 1)
+            supercell_atoms = torch.cat((supercell_atoms, torch.ones(len(supercell_atoms))[:, None]), dim=1)  # inside main unit cell
+            supercell_atoms[len(atoms):, -1] = 0  # outside of main unit cell
+
+            supercell_batch = torch.ones(len(supercell_atoms)).int() * i
+
+            # append supercell info to the data class
+
+            if i == 0:
+                new_x = supercell_atoms
+                new_coords = supercell_coords
+                new_batch = supercell_batch
+                new_ptr = torch.zeros(data.num_graphs)
+            else:
+                new_x = torch.cat((new_x, supercell_atoms), dim=0)
+                new_coords = torch.cat((new_coords, supercell_coords), dim=0)
+                new_batch = torch.cat((new_batch, supercell_batch))
+                new_ptr[i] = new_ptr[-1] + len(new_x)
+
+
+        # update dataloader with cell info
+        data.x = new_x.type(dtype=torch.float32)
+        data.pos = new_coords.type(dtype=torch.float32)
+        data.batch = new_batch.type(dtype=torch.int64)
+        data.ptr = new_ptr.type(dtype=torch.int64)
+
+        return data
+
+    def params_f_to_c(self, cell_lengths, cell_angles):
+        cell_vector_a, cell_vector_b, cell_vector_c = \
+            torch.tensor(coor_trans('f_to_c', np.array((1, 0, 0)), cell_lengths, cell_angles)), \
+            torch.tensor(coor_trans('f_to_c', np.array((0, 1, 0)), cell_lengths, cell_angles)), \
+            torch.tensor(coor_trans('f_to_c', np.array((0, 0, 1)), cell_lengths, cell_angles))
+
+        return np.concatenate((cell_vector_a[None, :], cell_vector_b[None, :], cell_vector_c[None, :]), axis=0), cell_vol(cell_lengths, cell_angles)
+
+    def generate_random_crystal(self, cell_lengths, cell_angles, T_cf, T_fc, atoms, coords, weights, sg_number, z_value):
+        '''
+        generate a fake unit cell
+        # todo consider preference for special positions
+        # todo plug in the generator
+        # todo account for point symmetry (sample within single asymmetric unit)
+        '''
+
+        # get fractional transforms
+        cell_volume = cell_vol(cell_lengths, cell_angles)
+
+        crystal_density = torch.sum(weights) * z_value / cell_volume * 1.66054  # grams/cm^3
+
+        # 1 get molecule centroid
+        CoM = torch.tensor(coords.T @ weights[:, None] / sum(weights)).T
+        # 2 find principal axes (functional but incomplete)
+        Ip_axes, Ip_moments, I_tensor = compute_principal_axes(weights, coords, CoM)
+
+        # 3 place centroid & align axes
+
+        # random fractional coordinate #
+        new_centroid_frac = np.random.uniform(0, 1, size=(3)) # need to account for possible multiplicity issue
+        new_centroid_cart = np.transpose(np.dot(T_fc, np.transpose(new_centroid_frac)))
+
+        # random direction & rotation
+        new_orientation = np.random.uniform(-1, 1, size=3)
+        new_rotation = np.random.uniform(-1, 1, size=1)
+
+        # move molecule to new centroid
+        coords = coords - CoM + new_centroid_cart
+
+        # align molecule principal axis to new orientation
+        rot_mat = rotation_matrix_from_vectors(Ip_axes[-1].detach().numpy().astype(float), new_orientation.astype(float))
+        coords = euler_rotation(rot_mat, coords.detach().numpy())
+
+        # rotate about the principal axis by theta # todo think carefully about this
+        coords = rodriguez_rotation(Ip_axes[-1].detach().numpy().astype(float), coords, new_rotation * 180)
+
+        # apply point symmetry to generate the reference cell
+        coords_f = np.transpose(np.dot(T_cf, np.transpose(coords)))  # go to fractional coordinates
+
+        # use pyxtal to make us a unit cell
+        sym_group = symmetry.Group(sg_number)
+        sym_ops = [sym_group.wyckoffs_organized[0][0][i] for i in range(z_value)]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
+        cell_coords_f = np.zeros((z_value, len(coords_f), 3))
+        cell_coords_c = np.zeros_like(cell_coords_f)
+        for zv in range(z_value):
+            cell_coords_f[zv, :, :] = sym_ops[zv].operate_multi(coords_f)
+            cell_coords_c[zv, :, :] = np.transpose(np.dot(T_fc, np.transpose(cell_coords_f[zv, :, :]))) # something wrong here - the symmetry operated images are warped
+
+        return cell_coords_c
+
+        # molecule_unit = Molecule(species=atoms[:, 0], coords=coords)
+        # ase_molecule = Atoms(numbers=atoms[:, 0], positions=coords)
+        # crystal_system = sym_group.lattice_type
+        # crystal = pyxtal(molecular=True)
+        #crystal.from_random(dim=3, numIons=[z_value], seed=config.dataset_seed,
+        #                     species=[molecule_unit],
+        #                     group=sym_group,
+        #                     lattice=lattice.Lattice(ltype=crystal_system,
+        #                                             volume=cell_volume,
+        #                                             matrix=T_fc,
+        #                                             allow_volume_reset=False
+        #                                             ))
+
+        # crystal_density = crystal.get_density()
+
+    def get_CSD_crystal(self, reader, csd_identifier, mol_n_atoms, z_value):
+        crystal = reader.crystal(csd_identifier)
+        tile_len = 1
+        n_tiles = tile_len ** 3
+        ref_cell = crystal.packing(box_dimensions=((0, 0, 0), (tile_len, tile_len, tile_len)), inclusion='CentroidIncluded')
+
+        ref_cell_coords_c = np.zeros((n_tiles * z_value, mol_n_atoms, 3), dtype=np.float_)
+        ref_cell_centroids_c = np.zeros((n_tiles * z_value, 3), dtype=np.float_)
+
+        for ind, component in enumerate(ref_cell.components):
+            if ind < z_value: # some cells have spurious little atoms counted as extra components. Just hope the early components are the good ones
+                ref_cell_coords_c[ind, :] = np.asarray([atom.coordinates for atom in component.atoms if atom.atomic_number != 1])  # filter hydrogen
+                ref_cell_centroids_c[ind, :] = np.average(ref_cell_coords_c[ind], axis=0)
+
+        return ref_cell_coords_c

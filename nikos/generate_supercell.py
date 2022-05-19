@@ -1,6 +1,11 @@
 import numba as nb
 import numpy as np
 
+'''
+generates supercell given reference cell
+I have a code for this, but it doesn't go molecule-by-molecule, instead treating the whole reference cell as one continuous block
+'''
+
 @nb.jit(nopython=True)
 def generate_supercell(z,n_atoms,r):
     ''' Initialize atomic positions in the supercell '''

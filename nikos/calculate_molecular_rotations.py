@@ -1,13 +1,18 @@
 import numba as nb
 import numpy as np
 
+'''
+correlates ZZP distances with atom-pair distances? and angles?
+pass for now
+'''
+
 @nb.jit(nopython=True)
 def calculate_molecular_rotations(zzp_pairs,k,v,T_cf,cell_vectors,cell_angles,tol):
     ''' Set the distance between the ZZPs in fractional coordinates '''
     d_zzp_list = [-1.00,-0.75,-0.50,-0.25,0.25,0.50,0.75,1.00]
     
     ''' Initialize angles list. It is not an empty list because numba cannot work well with empty lists. 
-        This value will be discarder later '''
+        This value will be discarded later '''
     dzzp_angles = [1000.0]
 
     ''' Loop over all atomic pairs '''

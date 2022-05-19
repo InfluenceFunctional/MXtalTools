@@ -1,6 +1,13 @@
 import numba as nb
 import numpy as np
 
+'''
+1) find rotation matrix between 2 vectors, nice!
+2) rotate a point cloud (r) for a given rotation matrix, useful!
+3) rotate a point cloud (v) for a given axis (k) and angle of rotation
+
+'''
+
 @nb.jit(nopython=True)
 def rotation_matrix_from_vectors(vec1, vec2):
     ''' Find the rotation matrix that aligns vec1 to vec2
@@ -29,7 +36,7 @@ def euler_rotation(Rmat,r):
         
     return v
 
-@nb.jit(nopython=True)
+#@nb.jit(nopython=True)
 def rodriguez_rotation(k,v,angle):
     angle *= np.pi / 180.0
     

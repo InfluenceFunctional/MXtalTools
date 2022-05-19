@@ -10,6 +10,11 @@ from perpendicular_vectors import perpendicular_vectors
 from plane_vector_transformation import plane_vector_transformation
 from rotations import rotation_matrix_from_vectors, euler_rotation, rodriguez_rotation
 from symmetry_operations import symmetry_operations
+
+'''
+main script
+'''
+
     
 def structure_generator(sg,
                         random_cell_geometry,
@@ -135,56 +140,58 @@ def structure_generator(sg,
                                    r_cm[0],
                                    r_cm[1],
                                    r_cm[2]])
-    
+
     return np.array(unit_cells)
- 
-''' Set the space group '''
-sg = 'Pca21'
 
-''' Set the number of atoms '''
-n_atoms = 17
 
-''' Set the atomic species '''
-atom_name = np.array(['O','O','C','C','C','C','C','C','C','C','C','H','H','H','H','H','H']).reshape(n_atoms,1)
+if __name__ == '__main__':
+    ''' Set the space group '''
+    sg = 'Pca21'
 
-''' Set the atomic vdW radii'''
-atom_vdw = np.array([1.52,1.52,1.70,1.70,1.70,1.70,1.70,1.70,1.70,1.70,1.70,1.20,1.20,1.20,1.20,1.20,1.20]).reshape(n_atoms,1)
+    ''' Set the number of atoms '''
+    n_atoms = 17
 
-''' The atomic coordinates in the reference system '''
-atom_sfc = np.array([[-1.0024,   1.0330,  -0.0084],
-                     [-3.1773,   0.7271,   0.0015],
-                     [-2.0918,   0.2055,  -0.0022],
-                     [-1.8446,  -1.2239,   0.0049],
-                     [-0.5794,  -1.7139,   0.0048],
-                     [ 1.8677,  -1.2501,  -0.0069],
-                     [ 2.8932,  -0.3298,  -0.0042],
-                     [ 2.6097,   1.0275,   0.0099],
-                     [ 1.3095,   1.4842,   0.0095],
-                     [ 0.2808,   0.5421,  -0.0047],
-                     [ 0.5333,  -0.8241,  -0.0010],
-                     [-2.6828,  -1.7773,   0.0171],
-                     [-0.3838,  -2.6962,   0.0064],
-                     [ 2.0631,  -2.1366,  -0.0046],
-                     [ 3.7395,  -0.7100,  -0.0062],
-                     [ 3.1963,   1.7495,  -0.0010],
-                     [ 1.0892,   2.4476,  -0.0238]])
+    ''' Set the atomic species '''
+    atom_name = np.array(['O','O','C','C','C','C','C','C','C','C','C','H','H','H','H','H','H']).reshape(n_atoms,1)
 
-''' Set the mass of the atoms '''
-atom_mass = np.array([15.999,15.999,12.0107,12.0107,12.0107,12.0107,12.0107,12.0107,12.0107,12.0107,12.0107,1.0089,1.0089,1.0089,1.0089,1.0089,1.0089])
+    ''' Set the atomic vdW radii'''
+    atom_vdw = np.array([1.52,1.52,1.70,1.70,1.70,1.70,1.70,1.70,1.70,1.70,1.70,1.20,1.20,1.20,1.20,1.20,1.20]).reshape(n_atoms,1)
 
-''' This is the random cell geometry with values from the database '''
-random_cell_geometry = np.array([15.503,5.666,7.918,90.0,90.0,90.0])
+    ''' The atomic coordinates in the reference system '''
+    atom_sfc = np.array([[-1.0024,   1.0330,  -0.0084],
+                         [-3.1773,   0.7271,   0.0015],
+                         [-2.0918,   0.2055,  -0.0022],
+                         [-1.8446,  -1.2239,   0.0049],
+                         [-0.5794,  -1.7139,   0.0048],
+                         [ 1.8677,  -1.2501,  -0.0069],
+                         [ 2.8932,  -0.3298,  -0.0042],
+                         [ 2.6097,   1.0275,   0.0099],
+                         [ 1.3095,   1.4842,   0.0095],
+                         [ 0.2808,   0.5421,  -0.0047],
+                         [ 0.5333,  -0.8241,  -0.0010],
+                         [-2.6828,  -1.7773,   0.0171],
+                         [-0.3838,  -2.6962,   0.0064],
+                         [ 2.0631,  -2.1366,  -0.0046],
+                         [ 3.7395,  -0.7100,  -0.0062],
+                         [ 3.1963,   1.7495,  -0.0010],
+                         [ 1.0892,   2.4476,  -0.0238]])
 
-''' This is the normal ring plane in cartesian coordinates in your reference coordinate system '''
-ring_vector = np.array([0,0,1.0])
+    ''' Set the mass of the atoms '''
+    atom_mass = np.array([15.999,15.999,12.0107,12.0107,12.0107,12.0107,12.0107,12.0107,12.0107,12.0107,12.0107,1.0089,1.0089,1.0089,1.0089,1.0089,1.0089])
 
-''' Set the high charge atoms, the most probable close contact pairs, and the pairs that are most likely to be found at distance 0.25k in fractional coordinates '''
-high_charge_atoms = np.array([0,2])
-close_contact_pairs = np.array([])
-zzp_pairs = np.array([[0,5],[0,6]])
+    ''' This is the random cell geometry with values from the database '''
+    random_cell_geometry = np.array([15.503,5.666,7.918,90.0,90.0,90.0])
 
-unit_cells = structure_generator(sg,
-                                 random_cell_geometry,
-                                 atom_sfc,
-                                 ring_vector,
-                                 zzp_pairs)
+    ''' This is the normal ring plane in cartesian coordinates in your reference coordinate system '''
+    ring_vector = np.array([0,0,1.0])
+
+    ''' Set the high charge atoms, the most probable close contact pairs, and the pairs that are most likely to be found at distance 0.25k in fractional coordinates '''
+    high_charge_atoms = np.array([0,2])
+    close_contact_pairs = np.array([])
+    zzp_pairs = np.array([[0,5],[0,6]])
+
+    unit_cells = structure_generator(sg,
+                                     random_cell_geometry,
+                                     atom_sfc,
+                                     ring_vector,
+                                     zzp_pairs)

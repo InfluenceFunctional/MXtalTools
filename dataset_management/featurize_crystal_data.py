@@ -674,42 +674,44 @@ class CustomGraphFeaturizer():
         self.init_features()
 
         for i, chunk in enumerate(chunks):
-            df = pd.read_pickle(chunk)
-            bad_inds = []
-            new_features = None
-            print('Processing chunk {} with {} entries'.format(i, len(df)))
-            for j in tqdm.tqdm(range(len(df))):
-                mol = Chem.MolFromMol2Block(df['xyz'][j], sanitize=True, removeHs=True)
-                t0 = time.time()
-                if mol is None:
-                    bad_inds.append(j)
-                else:
-                    mol_data = featurizer.featurize_molecule(mol)
-                    crystal_data = featurizer.featurize_crystal(df['crystal symmetry operators'][j], df['crystal cell lengths'][j], df['crystal cell angles'][j])
-                    mol_data.update(crystal_data)
+            if not os.path.exists('../mol_features/{}'.format(chunk_inds[0] + i)):  # don't repeat
 
-                    if new_features is None:
-                        new_features = [[] for _ in range(len(mol_data.keys()))]
-                        self.new_features_names = list(mol_data.keys())
+                df = pd.read_pickle(chunk)
+                bad_inds = []
+                new_features = None
+                print('Processing chunk {} with {} entries'.format(i, len(df)))
+                for j in tqdm.tqdm(range(len(df))):
+                    mol = Chem.MolFromMol2Block(df['xyz'][j], sanitize=True, removeHs=True)
+                    t0 = time.time()
+                    if mol is None:
+                        bad_inds.append(j)
+                    else:
+                        mol_data = featurizer.featurize_molecule(mol)
+                        crystal_data = featurizer.featurize_crystal(df['crystal symmetry operators'][j], df['crystal cell lengths'][j], df['crystal cell angles'][j])
+                        mol_data.update(crystal_data)
 
-                    for k, key in enumerate(mol_data.keys()):
-                        new_features[k].append(mol_data[key])
+                        if new_features is None:
+                            new_features = [[] for _ in range(len(mol_data.keys()))]
+                            self.new_features_names = list(mol_data.keys())
 
-                    # from ase.visualize import view
-                    # from ase import Atoms
-                    # z = mol_data['atom Z']
-                    # coords = mol_data['atom coords']
-                    # amol = Atoms(z, positions=coords)
-                    # view(atoms)
+                        for k, key in enumerate(mol_data.keys()):
+                            new_features[k].append(mol_data[key])
 
-            df = df.drop(df.index[bad_inds])
-            if 'level_0' in df.columns:  # delete unwanted samples
-                df = df.drop(columns='level_0')
-            df = df.reset_index()
-            for k, key in enumerate(self.new_features_names):
-                df[key] = new_features[k]
+                        # from ase.visualize import view
+                        # from ase import Atoms
+                        # z = mol_data['atom Z']
+                        # coords = mol_data['atom coords']
+                        # amol = Atoms(z, positions=coords)
+                        # view(atoms)
 
-            df.to_pickle('../mol_features/{}'.format(chunk_inds[0] + i))
+                df = df.drop(df.index[bad_inds])
+                if 'level_0' in df.columns:  # delete unwanted samples
+                    df = df.drop(columns='level_0')
+                df = df.reset_index()
+                for k, key in enumerate(self.new_features_names):
+                    df[key] = new_features[k]
+
+                df.to_pickle('../mol_features/{}'.format(chunk_inds[0] + i))
 
     def featurize_molecule(self, mol):
         '''
@@ -810,8 +812,10 @@ class CustomGraphFeaturizer():
 if __name__ == '__main__':
     chunkwise = True
     if chunkwise:
+        offset = 6
+        run = 40
         featurizer = CustomGraphFeaturizer(crystal_chunks_path='C:/Users\mikem\Desktop\CSP_runs\datasets\may_new_pull\crystal_features')
-        featurizer.featurize(chunk_inds=[2, 4])
+        featurizer.featurize(chunk_inds=[offset + 0, offset + run])
     else:
         aa = 1
         # featurize based on the full dataframe

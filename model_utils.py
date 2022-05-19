@@ -2,12 +2,10 @@ from models.torch_models import *
 import sklearn.metrics as metrics
 import sys
 import os
-# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+#os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 from utils import get_n_config, draw_molecule_2d
 from dataset_utils import get_dataloaders
 import numpy as np
-
-
 
 
 def get_grad_norm(model):

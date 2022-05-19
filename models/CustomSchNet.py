@@ -10,7 +10,6 @@ from torch_scatter import scatter
 from torch_geometric.nn import radius_graph, MessagePassing, GraphNorm, LayerNorm
 
 
-
 class CustomSchNet(torch.nn.Module):
     r"""The continuous-filter convolutional neural network SchNet from the
     `"SchNet: A Continuous-filter Convolutional Neural Network for Modeling
@@ -66,8 +65,8 @@ class CustomSchNet(torch.nn.Module):
                  num_interactions: int = 6, num_gaussians: int = 50,
                  cutoff: float = 10.0, max_num_neighbors: int = 32,
                  readout: str = 'add', num_atom_features=None,
-                 embedding_hidden_dimension = 128, atom_embedding_dims = [20],
-                 norm = None, dropout = 0
+                 embedding_hidden_dimension=128, atom_embedding_dims=[20],
+                 norm=None, dropout=0, crystal_mode=False,
                  ):
         super(CustomSchNet, self).__init__()
 
@@ -79,13 +78,14 @@ class CustomSchNet(torch.nn.Module):
         self.cutoff = cutoff
         self.max_num_neighbors = max_num_neighbors
         self.readout = readout
+        self.crystal_mode = crystal_mode
 
         if isinstance(atom_embedding_dims, list):
             atom_embedding_dims = atom_embedding_dims[0]
         for key in atom_embedding_dims.keys():
             self.embedding = Embedding(atom_embedding_dims[key], embedding_hidden_dimension)
 
-        self.atom_features_lin = Linear(embedding_hidden_dimension + (num_atom_features - 1),hidden_channels)
+        self.atom_features_lin = Linear(embedding_hidden_dimension + (num_atom_features - 1), hidden_channels)
 
         self.distance_expansion = GaussianSmearing(0.0, cutoff, num_gaussians)
 
@@ -131,13 +131,12 @@ class CustomSchNet(torch.nn.Module):
         torch.nn.init.xavier_uniform_(self.lin2.weight)
         self.lin2.bias.data.fill_(0)
 
-
     def forward(self, z, pos, batch=None):
         """"""
         batch = torch.zeros_like(z) if batch is None else batch
 
-        h = self.embedding(z[:,0].long())
-        h = self.atom_features_lin(torch.cat((h,z[:,1:]),dim=1))
+        h = self.embedding(z[:, 0].long())
+        h = self.atom_features_lin(torch.cat((h, z[:, 1:]), dim=1))
 
         edge_index = radius_graph(pos, r=self.cutoff, batch=batch,
                                   max_num_neighbors=self.max_num_neighbors)
@@ -154,7 +153,7 @@ class CustomSchNet(torch.nn.Module):
         h = self.act(h)
         h = self.lin2(h)
 
-        #out = scatter(h, batch, dim=0, reduce=self.readout)
+        # out = scatter(h, batch, dim=0, reduce=self.readout)
 
         return h
 
@@ -165,7 +164,6 @@ class CustomSchNet(torch.nn.Module):
                 f'num_interactions={self.num_interactions}, '
                 f'num_gaussians={self.num_gaussians}, '
                 f'cutoff={self.cutoff})')
-
 
 
 class InteractionBlock(torch.nn.Module):
@@ -215,7 +213,7 @@ class CFConv(MessagePassing):
         self.lin2.bias.data.fill_(0)
 
     def forward(self, x, edge_index, edge_weight, edge_attr):
-        C = 0.5 * (torch.cos(edge_weight * PI / self.cutoff) + 1.0) # seems unnecessary ngl
+        C = 0.5 * (torch.cos(edge_weight * PI / self.cutoff) + 1.0)  # seems unnecessary ngl
         W = self.nn(edge_attr) * C.view(-1, 1)
 
         x = self.lin1(x)
@@ -231,7 +229,7 @@ class GaussianSmearing(torch.nn.Module):
     def __init__(self, start=0.0, stop=5.0, num_gaussians=50):
         super(GaussianSmearing, self).__init__()
         offset = torch.linspace(start, stop, num_gaussians)
-        self.coeff = -0.5 / (offset[1] - offset[0]).item()**2
+        self.coeff = -0.5 / (offset[1] - offset[0]).item() ** 2
         self.register_buffer('offset', offset)
 
     def forward(self, dist):

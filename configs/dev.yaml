@@ -1,4 +1,4 @@
-test_mode: True
+test_mode: False
 model_seed: 0
 dataset_seed: 0
 machine: "local"
@@ -6,7 +6,7 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: False
 run_num: 0
-mode: single molecule regression # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification'
+mode: cell classification # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification'
 log_figures: True
 
 sweep: False
@@ -16,16 +16,13 @@ sample_reporting_frequency: 1
 sweep_id: null
 sweep_num_runs: 50
 
-target: crystal packing coefficient
-include_molecule_features: minimum # minimum, maximum
+target: crystal spacegroup symbol
+include_molecule_features: maximum # minimum, maximum
 concat_mol_to_atom_features: True
- # for doing regression as classification
-regression_type_classes: 10
-regression_quantile_cutoff: 0.075
 
 dataset_length: 1000000
 max_crystal_temperature: 1000
-min_crystal_temperature: 0
+min_crystal_temperature: -100
 max_num_atoms: 200
 min_num_atoms: 20
 max_z_value: 10
@@ -37,12 +34,11 @@ min_packing_coefficient: 0.58
 include_organic: True
 include_organometallic: True
 max_atomic_number: 87
-min_atomic_number: 1
-exclude_missing_r_factor: True
+exclude_missing_r_factor: False
 exclude_disordered_crystals: True
-exclude_polymorphs: True
-exclude_nonstandard_settings: True
-include_sgs: null
+exclude_polymorphs: False
+exclude_nonstandard_settings: False
+include_sgs: [P21/c,P21,P212121,P-1,C2/c]
 
 optimizer: "adamw"
 learning_rate: 0.001
@@ -61,32 +57,32 @@ auto_batch_reduction: 0.2
 max_epochs: 500
 history: 20
 
-graph_model: schnet
-graph_convolution_layers: 2
-graph_filters: 32
-atom_embedding_size: 32
+graph_model: mike
+graph_convolution_layers: 8
+graph_filters: 16
+atom_embedding_size: 64
 graph_norm: layer
 num_spherical: 6
-num_radial: 100
+num_radial: 12
 graph_convolution_cutoff: 5
-max_num_neighbors: 32
-radial_function: 'bessel'
+max_num_neighbors: 10
+radial_function: 'bessel' # mikenet only
 num_attention_heads: 1 # mikenet only
 graph_convolution: 'full message passing' # mikenet only
-add_spherical_basis: True # mikenet only
+add_spherical_basis: False # mikenet only
 
-num_fc_layers: 1
-fc_depth: 32
+num_fc_layers: 2
+fc_depth: 256
 pooling: attention
 activation: "gelu"
 fc_dropout_probability: 0.1
 fc_norm_mode: layer
 
 conditional_modelling: True # only implemented for nsf_cl coupling layer
-conditioning_mode: molecule features # 'graph model' or 'molecule features'
-num_flow_layers: 4
-flow_depth: 32
-flow_basis_fns: 8
+conditioning_mode: graph model # 'graph model' or 'molecule features'
+num_flow_layers: 10
+flow_depth: 64
+flow_basis_fns: 6
 flow_prior: multivariate normal
 flow_type: nsf # choice of affine coupling layer - nsf or glow or made, glow seems to have low capacity and made isn't stable
 num_samples: 100000
