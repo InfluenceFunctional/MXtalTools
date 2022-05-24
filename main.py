@@ -140,7 +140,10 @@ if config.test_mode:
         config.initial_batch_size = 10
     config.auto_batch_sizing = False
     config.num_samples = 1000
-    config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset'
+    if config.machine == 'cluster':
+        config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
+    else:
+        config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset'
     config.anomaly_detection = True
 
 
