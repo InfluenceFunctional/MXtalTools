@@ -37,7 +37,7 @@ class BuildDataset:
         self.conditioning_mode = config.conditioning_mode
 
         # define relevant features for analysis
-        self.crystal_keys = ['crystal spacegroup symbol','crystal spacegroup number',
+        self.crystal_keys = ['crystal spacegroup symbol', 'crystal spacegroup number',
                              'crystal calculated density', 'crystal packing coefficient',
                              'crystal lattice centring', 'crystal system',
                              'crystal has 2-fold screw', 'crystal has 2-fold rotation', 'crystal has glide', 'crystal has inversion',
@@ -85,7 +85,7 @@ class BuildDataset:
         # get dictionary for crystal system elements
         crystal_system_elems = np.unique(dataset['crystal system'])
         self.crystal_system_dict = {}
-        for i,system in enumerate(crystal_system_elems):
+        for i, system in enumerate(crystal_system_elems):
             self.crystal_system_dict[i] = system
             self.crystal_system_dict[system] = i
 
@@ -97,13 +97,14 @@ class BuildDataset:
             targets = self.get_targets(dataset)
             atom_features_list = self.concatenate_atom_features(dataset)
             tracking_features = self.gather_tracking_features(dataset)
-            self.datapoints = self.generate_training_data(dataset['atom coords'], dataset['identifier'], atom_features_list, molecule_features_array, targets, tracking_features)
+            self.datapoints = self.generate_training_data(dataset['atom coords'], dataset['identifier'], atom_features_list,
+                                                          molecule_features_array, targets, tracking_features, dataset['crystal reference cell coords'])
 
         self.shuffle_datapoints()
 
     def shuffle_datapoints(self):
         np.random.seed(self.dataset_seed)
-        good_inds = np.random.choice(self.dataset_length, size=self.final_dataset_length, replace=False)
+        good_inds = np.random.choice(self.final_dataset_length, size=self.final_dataset_length, replace=False)
         self.dataset_length = len(good_inds)
 
         self.datapoints = [self.datapoints[i] for i in good_inds]
@@ -115,7 +116,7 @@ class BuildDataset:
         return [atom_features_list[i] for i in good_inds], molecule_features_array[good_inds], targets[good_inds], \
                [smiles[i] for i in good_inds], [coords[i] for i in good_inds], tracking_features[good_inds]
 
-    def generate_training_data(self, atom_coords, smiles, atom_features_list, mol_features, targets, tracking_features):
+    def generate_training_data(self, atom_coords, smiles, atom_features_list, mol_features, targets, tracking_features,reference_cells = None):
         '''
         convert feature, target and tracking vectors into torch.geometric data objects
         :param atom_coords:
@@ -140,8 +141,10 @@ class BuildDataset:
 
             input_features = torch.Tensor(input_features)
             assert torch.sum(torch.isnan(input_features)) == 0, "NaN in training input"
-
-            datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i]]))
+            if 'cell' in self.model_mode:
+                datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i],reference_cells[i]]))
+            else:
+                datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i]]))
 
         return datapoints
 

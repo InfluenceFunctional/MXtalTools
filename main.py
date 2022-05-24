@@ -48,6 +48,7 @@ parser.add_argument('--dataset_length', type=int, default=int(1e3))  # maximum n
 # data in modelling
 parser.add_argument('--amount_of_features',type=str,default='minimum') #minimum, maximum
 add_bool_arg(parser, '--concat_mol_to_atom_features',default=False)
+parser.add_argument('--csd_fraction', type = float, default = 0.5)
 #dataset composition
 parser.add_argument('--include_sgs', type = str, default = ['P21/c']) # spacegroups to explicitly include in modelling - new!
 parser.add_argument('--max_crystal_temperature', type=float, default=int(1e3))

@@ -8,6 +8,7 @@ import numpy as np
 
 '''
 
+
 @nb.jit(nopython=True)
 def rotation_matrix_from_vectors(vec1, vec2):
     ''' Find the rotation matrix that aligns vec1 to vec2
@@ -24,30 +25,32 @@ def rotation_matrix_from_vectors(vec1, vec2):
     rotation_matrix = Imat + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
     return rotation_matrix
 
+
 @nb.jit(nopython=True)
-def euler_rotation(Rmat,r):
+def euler_rotation(Rmat, r):
     n_atoms = len(r)
-    
-    v = np.zeros((n_atoms,3),dtype=np.float_)
+
+    v = np.zeros((n_atoms, 3), dtype=np.float_)
     for at in range(n_atoms):
-        v[at,0] = Rmat[0,0] * r[at,0] + Rmat[0,1] * r[at,1] + Rmat[0,2] * r[at,2]
-        v[at,1] = Rmat[1,0] * r[at,0] + Rmat[1,1] * r[at,1] + Rmat[1,2] * r[at,2]
-        v[at,2] = Rmat[2,0] * r[at,0] + Rmat[2,1] * r[at,1] + Rmat[2,2] * r[at,2]
-        
+        v[at, 0] = Rmat[0, 0] * r[at, 0] + Rmat[0, 1] * r[at, 1] + Rmat[0, 2] * r[at, 2]
+        v[at, 1] = Rmat[1, 0] * r[at, 0] + Rmat[1, 1] * r[at, 1] + Rmat[1, 2] * r[at, 2]
+        v[at, 2] = Rmat[2, 0] * r[at, 0] + Rmat[2, 1] * r[at, 1] + Rmat[2, 2] * r[at, 2]
+
     return v
 
-#@nb.jit(nopython=True)
-def rodriguez_rotation(k,v,angle):
+
+@nb.jit(nopython=True)
+def rodriguez_rotation(k, v, angle):
     angle *= np.pi / 180.0
-    
+
     n_atoms = len(v)
-    
-    r = np.zeros((n_atoms,3),dtype=np.float_)
+
+    r = np.zeros((n_atoms, 3), dtype=np.float_)
     for at in range(n_atoms):
-        k_dot_v = k[0] * v[at,0] + k[1] * v[at,1] + k[2] * v[at,2]
-        
-        r[at,0] = v[at,0] * np.cos(angle) + (k[1] * v[at,2] - k[2] * v[at,1]) * np.sin(angle) + k[0] * k_dot_v * (1.0 - np.cos(angle))
-        r[at,1] = v[at,1] * np.cos(angle) + (k[2] * v[at,0] - k[0] * v[at,2]) * np.sin(angle) + k[1] * k_dot_v * (1.0 - np.cos(angle))
-        r[at,2] = v[at,2] * np.cos(angle) + (k[0] * v[at,1] - k[1] * v[at,0]) * np.sin(angle) + k[2] * k_dot_v * (1.0 - np.cos(angle))
-    
+        k_dot_v = k[0] * v[at, 0] + k[1] * v[at, 1] + k[2] * v[at, 2]
+
+        r[at, 0] = v[at, 0] * np.cos(angle) + (k[1] * v[at, 2] - k[2] * v[at, 1]) * np.sin(angle) + k[0] * k_dot_v * (1.0 - np.cos(angle))
+        r[at, 1] = v[at, 1] * np.cos(angle) + (k[2] * v[at, 0] - k[0] * v[at, 2]) * np.sin(angle) + k[1] * k_dot_v * (1.0 - np.cos(angle))
+        r[at, 2] = v[at, 2] * np.cos(angle) + (k[0] * v[at, 1] - k[1] * v[at, 0]) * np.sin(angle) + k[2] * k_dot_v * (1.0 - np.cos(angle))
+
     return r

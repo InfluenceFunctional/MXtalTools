@@ -12,14 +12,11 @@ import plotly.graph_objects as go
 import tqdm
 import torch.optim.lr_scheduler as lr_scheduler
 from nikos.coordinate_transformations import coor_trans, cell_vol, coor_trans_matrix
-from nikos.rotations import rotation_matrix_from_vectors, euler_rotation, rodriguez_rotation
-from pyxtal import pyxtal, lattice, symmetry
-from ase.build import make_supercell
-import ase.visualize
-from pymatgen.core import Molecule
+from pyxtal import symmetry
+from ase.visualize import view
 from ase import Atoms
 import rdkit.Chem as Chem
-from ccdc.io import CrystalReader
+from dataset_management.random_crystal_builder import *
 
 
 class Predictor():
@@ -57,7 +54,7 @@ class Predictor():
                 os.chdir(self.workDir)  # move to working dir
                 print('Starting Fresh Run %d' % self.config.run_num)
                 t0 = time.time()
-                miner.load_npy_for_modelling()
+                miner.load_for_modelling()
                 print('Initializing dataset took {} seconds'.format(int(time.time() - t0)))
         else:
             if self.config.explicit_run_enumeration:
@@ -68,6 +65,14 @@ class Predictor():
                 print('Resuming run %d' % self.config.run_num)
             else:
                 print("Must provide a run_num if not creating a new workdir!")
+
+        if 'cell' in self.config.mode:
+            print('Pre-generating general position symmetries')
+            self.sym_ops = {}
+            for i in range(1,231):
+                sym_group = symmetry.Group(i)
+                general_position_syms = sym_group.wyckoffs_organized[0][0]
+                self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
 
     def makeNewWorkingDirectory(self):  # make working directory
         '''
@@ -111,6 +116,7 @@ class Predictor():
         :return:
         '''
         # init model
+        print("Initializing model for " + config.mode)
         if config.mode == 'joint modelling':
             model = FlowModel(config, dataDims)
         elif 'molecule' in config.mode:
@@ -232,21 +238,31 @@ class Predictor():
                     self.n_conditional_features = self.dataDims['n conditional features']
                 else:
                     self.n_conditional_features = 0
+            if 'cell' in config.mode: # get relevant indices
+                self.cell_angle_keys = ['crystal alpha', 'crystal beta', 'crystal gamma']
+                self.cell_angle_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_angle_keys]
+                self.cell_length_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c']
+                self.cell_length_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_length_keys]
+                self.z_value_ind = self.dataDims['tracking features dict'].index('crystal z value')
+                self.sg_number_ind = self.dataDims['tracking features dict'].index('crystal spacegroup number')
 
             # get batch size
             if config.auto_batch_sizing:
+                print('Finding optimal batch size')
                 train_loader, test_loader, config.final_batch_size = self.get_batch_size(dataset_builder, config)
             else:
+                print('Getting dataloaders for pre-determined batch size')
                 train_loader, test_loader = get_dataloaders(dataset_builder, config)
                 config.final_batch_size = config.initial_batch_size
 
-            # model, optimizer, schedulers
-            model, optimizer, schedulers, n_params = self.init_model(config, self.dataDims)
-
             print("Training batch size set to {}".format(config.final_batch_size))
+            # model, optimizer, schedulers
+            print('Reinitializing model and optimizer')
+            model, optimizer, schedulers, n_params = self.init_model(config, self.dataDims)
 
             # cuda
             if config.device.lower() == 'cuda':
+                print('Putting model on CUDA')
                 torch.backends.cudnn.benchmark = True
                 # model = torch.nn.DataParallel(model) # send to multiple GPUs - not always working with wandb
                 model.cuda()
@@ -323,7 +339,10 @@ class Predictor():
 
         for i, data in enumerate(dataLoader):
             if 'cell' in config.mode:
+                t0 = time.time()
                 data = self.supercell_data(data, config)
+                if i < 3:
+                    print('Batch {} supercell generation took {:.2f} seconds for {} samples'.format(i, round(time.time() - t0,2), data.num_graphs))
 
             if config.device.lower() == 'cuda':
                 data = data.cuda()
@@ -1048,56 +1067,56 @@ class Predictor():
         5. tile supercell
         '''
 
-        cell_angle_keys = ['crystal alpha', 'crystal beta', 'crystal gamma']
-        cell_angle_inds = [config.dataDims['tracking features dict'].index(key) for key in cell_angle_keys]
-        cell_length_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c']
-        cell_length_inds = [config.dataDims['tracking features dict'].index(key) for key in cell_length_keys]
-        z_value_ind = config.dataDims['tracking features dict'].index('crystal z value')
-        z_prime_ind = config.dataDims['tracking features dict'].index('crystal z prime')
-        sg_number_ind = config.dataDims['tracking features dict'].index('crystal spacegroup number')
-        reader = CrystalReader('CSD')
+        #z_prime_ind = config.dataDims['tracking features dict'].index('crystal z prime')
+        #reader = CrystalReader('CSD')
 
         for i in range(data.num_graphs):
             # 0 extract molecule and cell parameters
-            atoms = data.x[data.batch == i]
-            atomic_numbers = atoms[:, 0]  # this is currently atomic number - convert to masses
-            weights = torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers])
-            coords = data.pos[data.batch == i]
-            cell_lengths = data.y[2][i][cell_length_inds]  # pull cell params from tracking inds
-            cell_angles = data.y[2][i][cell_angle_inds]
-            csd_identifier = data.y[1][i]
+            # todo get rid of unnecessary assignments
+            atoms = np.asarray(data.x[data.batch == i])
+            atomic_numbers = np.asarray(atoms[:, 0])  # this is currently atomic number - convert to masses
+            heavy_inds = np.where(atomic_numbers != 1)
+            # pre-enforce hydrogen cleanliness (for now)
+            atoms = atoms[heavy_inds]
+            
+            cell_lengths = data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
+            cell_angles = data.y[2][i][self.cell_angle_inds]
+            #csd_identifier = data.y[1][i]
 
-            z_value = int(data.y[2][i][z_value_ind])
-            z_prime = int(data.y[2][i][z_prime_ind])
-            sg_number = int(data.y[2][i][sg_number_ind])
-            T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)
-            T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
+            z_value = int(data.y[2][i][self.z_value_ind])
+            #z_prime = int(data.y[2][i][z_prime_ind])
+            T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles) # todo pre-store in the dataset
             cell_vectors = np.transpose(np.dot(T_fc, np.transpose(np.eye(3))))  # do the transform
 
-            # pre-enforce hydrogen cleanliness (for now, or it gets confused)
-            heavy_inds = np.where(atomic_numbers != 1)
-            atomic_numbers = atomic_numbers[heavy_inds]
-            weights = weights[heavy_inds]
-            coords = coords[heavy_inds]
-            atoms = atoms[heavy_inds]
+            use_CSD = np.random.uniform(0, 1) < config.csd_fraction # todo pre-sample random number
+            if not use_CSD:
+                sg_number = int(data.y[2][i][self.sg_number_ind])
+                coords = np.asarray(data.pos[data.batch == i])
+                weights = np.asarray([self.atom_weights[int(number)] for number in atomic_numbers])
+                coords = coords[heavy_inds]
+                weights = weights[heavy_inds]
+                T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)
 
-            use_CSD = np.random.uniform(0, 1) > 0.5
-            if False:# use_CSD:
-                reference_cell = self.generate_random_crystal(cell_lengths, cell_angles, T_cf, T_fc, atoms, coords, weights, sg_number, z_value)
-                aa = 1
+                reference_cell = self.generate_random_crystal(T_cf, T_fc, coords, weights, sg_number, z_value)
+
             else:
                 # get reference cell positions
-                reference_cell = self.get_CSD_crystal(reader, csd_identifier=csd_identifier, mol_n_atoms=len(coords), z_value=z_value)
-                # pattern molecule into reference cell, assuming consistent ordering between dataset (drawn from CSD) and CSD crystals
-                coords = torch.tensor(reference_cell.reshape(z_value * reference_cell.shape[1], 3))  # assign reference cell coordinates to the coords array
-                atoms = atoms.repeat(z_value, 1)  # simply copy the feature vectors
+                # first 3 columns are cartesian coords, last 3 are fractional
+                reference_cell = data.y[3][i][:,:,:3] # we're now pre-storing the packing rather than grabbing it from the CSD at runtime
+                # #self.get_CSD_crystal(reader, csd_identifier=csd_identifier, mol_n_atoms=len(coords), z_value=z_value)
 
-            assert len(atoms) == len(coords)
+            # pattern molecule into reference cell, assuming consistent ordering between dataset (drawn from CSD) and CSD crystals
+            coords = torch.tensor(reference_cell.reshape(z_value * reference_cell.shape[1], 3))  # assign reference cell coordinates to the coords array
+            atoms = torch.tensor(np.tile(atoms, (z_value,1)))  # simply copy the feature vectors
+            #assert len(atoms) == len(coords) # assert everyone is the same size
 
+            # look at the thing
+            # amol = Atoms(numbers = atoms[:,0], positions = coords,cell=np.concatenate((cell_lengths,cell_angles)),pbc=True)
+            # visualize.view(amol)
             # 5 tile the supercell
             # index the molecules as 'within main cell' vs 'outside'
             supercell_coords = coords.clone()
-            supercell_size = 1  # 1 is a 3x3, 2 is a 5x5, etc.
+            supercell_size = 1  # 1 is a 3x3x3, 2 is a 5x5x5, etc.
             for xx in range(-supercell_size, supercell_size + 1):
                 for yy in range(-supercell_size, supercell_size + 1):
                     for zz in range(-supercell_size, supercell_size + 1):
@@ -1111,7 +1130,6 @@ class Predictor():
             supercell_batch = torch.ones(len(supercell_atoms)).int() * i
 
             # append supercell info to the data class
-
             if i == 0:
                 new_x = supercell_atoms
                 new_coords = supercell_coords
@@ -1123,12 +1141,12 @@ class Predictor():
                 new_batch = torch.cat((new_batch, supercell_batch))
                 new_ptr[i] = new_ptr[-1] + len(new_x)
 
-
         # update dataloader with cell info
         data.x = new_x.type(dtype=torch.float32)
         data.pos = new_coords.type(dtype=torch.float32)
         data.batch = new_batch.type(dtype=torch.int64)
         data.ptr = new_ptr.type(dtype=torch.int64)
+
 
         return data
 
@@ -1140,63 +1158,17 @@ class Predictor():
 
         return np.concatenate((cell_vector_a[None, :], cell_vector_b[None, :], cell_vector_c[None, :]), axis=0), cell_vol(cell_lengths, cell_angles)
 
-    def generate_random_crystal(self, cell_lengths, cell_angles, T_cf, T_fc, atoms, coords, weights, sg_number, z_value):
+    def generate_random_crystal(self, T_cf, T_fc, coords, weights, sg_number, z_value):
         '''
-        generate a fake unit cell
-        # todo consider preference for special positions
-        # todo plug in the generator
-        # todo account for point symmetry (sample within single asymmetric unit)
-        '''
+        generate a random unit cell with appropriate general position point symmetries
+        # ignores special positions
 
-        # get fractional transforms
-        cell_volume = cell_vol(cell_lengths, cell_angles)
-
-        crystal_density = torch.sum(weights) * z_value / cell_volume * 1.66054  # grams/cm^3
-
-        # 1 get molecule centroid
-        CoM = torch.tensor(coords.T @ weights[:, None] / sum(weights)).T
-        # 2 find principal axes (functional but incomplete)
-        Ip_axes, Ip_moments, I_tensor = compute_principal_axes(weights, coords, CoM)
-
-        # 3 place centroid & align axes
-
-        # random fractional coordinate #
-        new_centroid_frac = np.random.uniform(0, 1, size=(3)) # need to account for possible multiplicity issue
-        new_centroid_cart = np.transpose(np.dot(T_fc, np.transpose(new_centroid_frac)))
-
-        # random direction & rotation
-        new_orientation = np.random.uniform(-1, 1, size=3)
-        new_rotation = np.random.uniform(-1, 1, size=1)
-
-        # move molecule to new centroid
-        coords = coords - CoM + new_centroid_cart
-
-        # align molecule principal axis to new orientation
-        rot_mat = rotation_matrix_from_vectors(Ip_axes[-1].detach().numpy().astype(float), new_orientation.astype(float))
-        coords = euler_rotation(rot_mat, coords.detach().numpy())
-
-        # rotate about the principal axis by theta # todo think carefully about this
-        coords = rodriguez_rotation(Ip_axes[-1].detach().numpy().astype(float), coords, new_rotation * 180)
-
-        # apply point symmetry to generate the reference cell
-        coords_f = np.transpose(np.dot(T_cf, np.transpose(coords)))  # go to fractional coordinates
-
-        # use pyxtal to make us a unit cell
-        sym_group = symmetry.Group(sg_number)
-        sym_ops = [sym_group.wyckoffs_organized[0][0][i] for i in range(z_value)]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
-        cell_coords_f = np.zeros((z_value, len(coords_f), 3))
-        cell_coords_c = np.zeros_like(cell_coords_f)
-        for zv in range(z_value):
-            cell_coords_f[zv, :, :] = sym_ops[zv].operate_multi(coords_f)
-            cell_coords_c[zv, :, :] = np.transpose(np.dot(T_fc, np.transpose(cell_coords_f[zv, :, :]))) # something wrong here - the symmetry operated images are warped
-
-        return cell_coords_c
-
+        # code for using pyxtal
+        #cell_volume = cell_vol(cell_lengths, cell_angles)
         # molecule_unit = Molecule(species=atoms[:, 0], coords=coords)
-        # ase_molecule = Atoms(numbers=atoms[:, 0], positions=coords)
         # crystal_system = sym_group.lattice_type
         # crystal = pyxtal(molecular=True)
-        #crystal.from_random(dim=3, numIons=[z_value], seed=config.dataset_seed,
+        # crystal.from_random(dim=3, numIons=[z_value], seed=0,
         #                     species=[molecule_unit],
         #                     group=sym_group,
         #                     lattice=lattice.Lattice(ltype=crystal_system,
@@ -1204,8 +1176,17 @@ class Predictor():
         #                                             matrix=T_fc,
         #                                             allow_volume_reset=False
         #                                             ))
+        # bmol = crystal.to_ase()
+        # ase.visualize.view(bmol)
 
-        # crystal_density = crystal.get_density()
+        #
+        '''
+        random_coords = randomize_molecule_position_and_orientation(coords.astype(float), weights.astype(float), T_fc.astype(float))
+        ref_cell = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number],dtype=float), z_value)
+
+        return ref_cell
+
+
 
     def get_CSD_crystal(self, reader, csd_identifier, mol_n_atoms, z_value):
         crystal = reader.crystal(csd_identifier)

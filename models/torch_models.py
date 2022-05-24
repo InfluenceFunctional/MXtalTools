@@ -268,7 +268,7 @@ class molecule_graph_model(nn.Module):
                     graph_convolution_filters=config.graph_filters,
                     graph_convolution=config.graph_convolution,
                     out_channels=config.fc_depth,
-                    hidden_channels=config.fc_depth,
+                    hidden_channels=config.atom_embedding_size,
                     num_blocks=config.graph_convolution_layers,
                     num_radial=config.num_radial,
                     num_spherical=config.num_spherical,
@@ -346,10 +346,15 @@ class molecule_graph_model(nn.Module):
             x = data.x
             pos = data.pos
             if self.crystal_mode:
-                x = self.graph_net(x[:, :self.n_atom_feats + 1], pos, data.batch)  # extra dim for crystal indexing
+                x = self.graph_net(torch.cat((x[:, :self.n_atom_feats],x[:,-1:]),dim=1), pos, data.batch)  # extra dim for crystal indexing
             else:
                 x = self.graph_net(x[:, :self.n_atom_feats], pos, data.batch)  # get atoms encoding
-            x = self.global_pool(x, data.batch)  # aggregate atoms to molecule # TODO restrict this to reference cell in crystal cell training
+
+            if self.crystal_mode:
+                keep_cell_inds = torch.where(data.x[:,-1] == 1)[0]
+                data.batch = data.batch[keep_cell_inds] # keep only atoms inside the reference cell
+                data.x = data.x[keep_cell_inds] # also apply to molecular_data
+            x = self.global_pool(x, data.batch)  # aggregate atoms to molecule
 
         mol_inputs = data.x[:, -self.n_mol_feats:]
         mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch).float())  # not actually pooling here, as the values are all the same for each molecule

@@ -1,5 +1,6 @@
 """import statement"""
 import numpy as np
+import numba as nb
 import os
 import pandas as pd
 from rdkit import Chem
@@ -1837,26 +1838,10 @@ def delete_from_dataframe(df, inds):
     return df
 
 
-def compute_principal_axes(masses, coords, CoM):
-    coords -= CoM
-    x, y, z = coords.T
-    Ixx = torch.sum(masses * (y ** 2 + z ** 2))
-    Iyy = torch.sum(masses * (x ** 2 + z ** 2))
-    Izz = torch.sum(masses * (x ** 2 + y ** 2))
-    Ixy = -torch.sum(masses * x * y)
-    Iyz = -torch.sum(masses * y * z)
-    Ixz = -torch.sum(masses * x * z)
-    I = torch.Tensor([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]])  # inertial tensor
-    Ipm, Ip = torch.linalg.eig(I) # principal inertial tensor
-    Ipm, Ip = torch.real(Ipm), torch.real(Ip)
-    Ipm, sort_inds = Ipm.sort()
-    Ip = Ip[sort_inds] # todo check that it should be rows vs inds
-
-    return Ip, Ipm, I
-
+@nb.jit(nopython=True)
 def compute_principal_axes_np(masses, coords, CoM):
-    coords -= CoM
-    x, y, z = coords.T
+    points = coords - CoM
+    x, y, z = points.T
     Ixx = np.sum(masses * (y ** 2 + z ** 2))
     Iyy = np.sum(masses * (x ** 2 + z ** 2))
     Izz = np.sum(masses * (x ** 2 + y ** 2))
@@ -1868,6 +1853,6 @@ def compute_principal_axes_np(masses, coords, CoM):
     Ipm, Ip = np.real(Ipm), np.real(Ip)
     sort_inds = np.argsort(Ipm)
     Ipm = Ipm[sort_inds]
-    Ip = Ip[sort_inds] # todo check that it should be rows vs inds
+    Ip = Ip[sort_inds]
 
     return Ip, Ipm, I

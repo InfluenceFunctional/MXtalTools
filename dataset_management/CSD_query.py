@@ -13,7 +13,7 @@ class CCDC_helper():
         self.chunk_path = chunk_path
         self.database = database
         if add_features is not None:  # for adding features after initial pull
-            self.features = add_features
+            self.features = [add_features]
         else:
             self.features = [
                 'xyz',
@@ -29,6 +29,7 @@ class CCDC_helper():
                 'crystal lattice centring', 'crystal system', 'crystal z value', 'crystal z prime',
                 'crystal spacegroup number', 'crystal spacegroup setting', 'crystal spacegroup symbol',
                 'crystal symmetry operators',
+                'crystal reference cell coords',
             ]
 
     def grep_crystal_identifiers(self, chunk_inds=[0, 100]):
@@ -71,10 +72,13 @@ class CCDC_helper():
         df = pd.DataFrame(data=identifiers, index=np.arange(len(identifiers)), columns=['identifier'])
         df.to_pickle('../../csd_dataframe2')
 
-    def get_crystal_featuress(self, n_chunks=100, chunk_inds=[0, 100]):
-        os.chdir(self.chunk_path)
-        os.chdir('../')
-        df = pd.read_pickle('csd_dataframe2')
+    def get_crystal_features(self, n_chunks=100, chunk_inds=[0, 100],source_dataset = None):
+        if source_dataset is None:
+            os.chdir(self.chunk_path)
+            os.chdir('../')
+            df = pd.read_pickle('csd_dataframe2')
+        else:
+            df = pd.DataFrame.from_dict(np.load(source_dataset,allow_pickle=True).item())
 
         chunks = chunkify(df, n_chunks)[chunk_inds[0]:chunk_inds[1]]
 
@@ -83,6 +87,8 @@ class CCDC_helper():
         for n, chunk in enumerate(chunks):
             if not os.path.exists(self.chunk_path + 'crystal_features/{}'.format(n + chunk_inds[0])):  # don't repeat
                 print('doing chunk {} with {} entries'.format(n+chunk_inds[0],len(chunk)))
+                if 'level_0' in chunk.columns:  # delete unwanted samples
+                    chunk = chunk.drop(columns='level_0')
                 chunk = chunk.reset_index()
                 new_features = [[] for _ in range(len(self.features))]
                 bad_inds = []
@@ -115,12 +121,17 @@ class CCDC_helper():
                 lens = [len(feat) for feat in new_features]
                 assert [lens[0]] * len(lens) == lens
 
-                chunk = chunk.drop(chunk.index[bad_inds])  # delete unwanted samples
+                chunk = chunk.drop(chunk.index[bad_inds])
+                if 'level_0' in chunk.columns:  # delete unwanted samples
+                    chunk = chunk.drop(columns='level_0')
+                # delete unwanted samples
                 chunk = chunk.reset_index()
                 for i, feature in enumerate(self.features):
                     chunk[feature] = new_features[i]
 
-                chunk['crystal temperature'] = self.fix_temperature(chunk['crystal temperature'])  # post-fix temperature
+                if 'crystal temperature' in self.features:
+                    chunk['crystal temperature'] = self.fix_temperature(chunk['crystal temperature'])  # post-fix temperature
+
                 chunk.to_pickle(self.chunk_path + 'crystal_features/{}'.format(n + chunk_inds[0]))
 
     def featurize_crystal(self, features_list, crystal, entry):
@@ -178,6 +189,22 @@ class CCDC_helper():
                 value = crystal.spacegroup_symbol
             elif feature == 'crystal symmetry operators':
                 value = crystal.symmetry_operators
+            elif feature == 'crystal reference cell coords':
+                ref_cell = crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded')
+                ref_cell_coords_c = np.zeros((int(crystal.z_value), len(crystal.molecule.heavy_atoms), 3), dtype=np.float_)
+                ref_cell_coords_f = np.zeros((int(crystal.z_value), len(crystal.molecule.heavy_atoms), 3), dtype=np.float_)
+
+                lens = [len(component.heavy_atoms) for component in ref_cell.components]
+                if (len(ref_cell.components) == crystal.z_value) and (lens.count(lens[0]) == len(lens)) and (lens[0] == len(crystal.molecule.heavy_atoms)): # correct number of components and molecule size
+                    for ind, component in enumerate(ref_cell.components):
+                        if ind < crystal.z_value:  # some cells have spurious little atoms counted as extra components. Just hope the early components are the good ones
+                            ref_cell_coords_c[ind, :] = np.asarray([atom.coordinates for atom in component.heavy_atoms])  # filter hydrogen
+                            ref_cell_coords_f[ind, :] = np.asarray([atom.fractional_coordinates for atom in component.heavy_atoms])  # filter hydrogen
+
+                    value = np.concatenate((ref_cell_coords_c, ref_cell_coords_f),axis=-1)
+                else:
+                    print('Crystal components not equal to Z value or has incorrect number of heavy atoms in each molecule or had atoms added by the packer for no reason')
+                    value = 'error'
             else:
                 print(feature + ' is not an implemented crystal feature!!')
                 sys.exit()
@@ -247,7 +274,7 @@ def visualizeEntry(identifier):
 
 
 if __name__ == '__main__':
-    helper = CCDC_helper('C:/Users\mikem\Desktop\CSP_runs\datasets\may_new_pull2/', 'CSD')
+    helper = CCDC_helper('C:/Users\mikem\Desktop\CSP_runs\datasets\may_new_pull2/', 'CSD',add_features='crystal reference cell coords')
 
     # # #pull identifiers
     # ind = 0
@@ -258,8 +285,9 @@ if __name__ == '__main__':
     # helper.collect_chunks_and_initialize_df()
 
     # # then, featurize each crystal
-    offset = 80
-    gap = 100
-    helper.get_crystal_featuress(n_chunks=100, chunk_inds=[offset + 0, offset + gap])
+    # offset = 30
+    # gap = 10
+    # helper.get_crystal_features(n_chunks=100, chunk_inds=[offset + 0, offset + gap])
 
     # optionally, store all the packings
+    helper.get_crystal_features(source_dataset = 'C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset.npy')

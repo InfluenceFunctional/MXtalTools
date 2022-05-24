@@ -85,7 +85,7 @@ class MikesGraphNet(torch.nn.Module):
     def forward(self, z, pos, batch=None):
         """"""
         if self.crystal_mode: # allow incoming edges from outside the central crystal but exclude outgoing edges
-            atom_inds = z[:,-1] # pull the atom-wise index per-molecule
+            atom_inds = z[:,-1].clone() # pull the atom-wise index per-molecule
             z = z[:,:-1] # then delete it, since it's just an index, not used for modelling
             inside_inds = torch.where(atom_inds == 1)[0]
             edge_index = asymmetric_radius_graph(pos,pos[inside_inds],batch_x=batch, batch_y = batch[inside_inds],r=self.cutoff,
@@ -134,13 +134,14 @@ class MikesGraphNet(torch.nn.Module):
                 keep_cell_batch = batch[keep_cell_inds] # get the feature vectors we want to repeat
                 # might be able to do this in one step with something like torch.interleave
                 # else do it as a for loop if it's fast enough
-                for i in range(batch[-1]):
-                    unit_cell_inds = keep_cell_inds[keep_cell_batch == i]
-                    x[unit_cell_inds[0]:unit_cell_inds[0] + len(unit_cell_inds) * n_repeats, :] = x[unit_cell_inds].repeat(n_repeats,1) # copy the first unit cell to all periodic images
+                if n < (self.num_blocks - 1):
+                    for i in range(batch[-1]):
+                        unit_cell_inds = keep_cell_inds[keep_cell_batch == i]
+                        x[unit_cell_inds[0]:unit_cell_inds[0] + len(unit_cell_inds) * n_repeats, :] = x[unit_cell_inds].repeat(n_repeats,1) # copy the first unit cell to all periodic images
+                else: # on the final convolutional block, do not broadcast the reference cell
+                    x = x[keep_cell_inds] # reduce the output to only the nodes of the reference cell - outer nodes are just copies anyway, so this gets the same information with less memory / compute overhead
 
-        x = self.output_layer(x)
-
-        return x
+        return self.output_layer(x)
 
 
 class SphericalBasisLayer(torch.nn.Module):

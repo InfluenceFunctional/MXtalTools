@@ -13,6 +13,8 @@ from rdkit.Chem import Descriptors, rdMolDescriptors, AllChem, rdMolTransforms
 import time
 from nikos.coor_trans import coor_trans
 from mendeleev import element as element_table
+from ccdc.search import EntryReader
+
 
 
 def get_fraction(atomic_numbers, target):
@@ -27,7 +29,7 @@ def get_dipole(coords, charges):
 
 
 class CustomGraphFeaturizer():
-    def __init__(self, crystal_chunks_path=None):
+    def __init__(self, crystal_chunks_path=None, full_dataset_path = None):
         '''
         get atom and molecule level features
 
@@ -65,6 +67,10 @@ class CustomGraphFeaturizer():
         if crystal_chunks_path is not None:
             os.chdir(crystal_chunks_path)
             self.crystal_chunks_path = crystal_chunks_path
+
+        if full_dataset_path is not None:
+            self.full_dataset_path = full_dataset_path
+
 
         self.crystalSystems = ['error', 'triclinic', 'monoclinic', 'orthorhombic', 'tetragonal', 'trigonal', 'hexagonal', 'cubic', 'rhombohedral']
         self.latticeCentering = ['error', 'primitive', 'A-centred', 'B-centred', 'C-centred', 'F-centred', 'I-centred', 'R-centred']
@@ -668,6 +674,44 @@ class CustomGraphFeaturizer():
             '$([O,S;H0;v2]),$([O,S;-]),$([N;v3;!$(N-*=!@[O,N,P,S])]),' +
             '$([nH0,o,s;+0])]')
 
+    def add_one_feature_to_full_dataset(self, feature):
+        df = pd.DataFrame.from_dict(np.load(self.full_dataset_path, allow_pickle=True).item())
+        csd_reader = EntryReader('CSD')
+
+        identifiers = df['identifier']
+        del df
+
+        new_feature_vec = [[] for _ in range(len(identifiers))]
+        if feature == 'crystal reference cell coords':
+            for i in tqdm.tqdm(range(len(identifiers))):
+                try:
+                    entry = csd_reader.entry(identifiers[i])
+                except:
+                    print('Identifier {} is somehow missing'.format(identifiers[i]))
+                    new_feature_vec[i] = 'error'
+                    continue
+                crystal = entry.crystal
+                ref_cell = crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded')
+                ref_cell_coords_c = np.zeros((int(crystal.z_value), len(crystal.molecule.heavy_atoms), 3), dtype=np.float_)
+                ref_cell_coords_f = np.zeros((int(crystal.z_value), len(crystal.molecule.heavy_atoms), 3), dtype=np.float_)
+
+                lens = [len(component.heavy_atoms) for component in ref_cell.components]
+                if (len(ref_cell.components) == crystal.z_value) and (lens.count(lens[0]) == len(lens)) and (lens[0] == len(crystal.molecule.heavy_atoms)):  # correct number of components and molecule size
+                    for ind, component in enumerate(ref_cell.components):
+                        if ind < crystal.z_value:  # some cells have spurious little atoms counted as extra components. Just hope the early components are the good ones
+                            ref_cell_coords_c[ind, :] = np.asarray([atom.coordinates for atom in component.heavy_atoms])  # filter hydrogen
+                            ref_cell_coords_f[ind, :] = np.asarray([atom.fractional_coordinates for atom in component.heavy_atoms])  # filter hydrogen
+
+                    new_feature_vec[i] = np.concatenate((ref_cell_coords_c, ref_cell_coords_f), axis=-1)
+
+                else:
+                    print('CSD Packing Error (ugh)')
+                    new_feature_vec[i] = 'error'
+
+        df = pd.DataFrame.from_dict(np.load(self.full_dataset_path, allow_pickle=True).item())
+        df[feature] = new_feature_vec
+        df.to_pickle('dataset_with_new_feature')
+
     def featurize(self, chunk_inds=[0, 100]):
         os.chdir(self.crystal_chunks_path)
         chunks = os.listdir()[chunk_inds[0]:chunk_inds[1]]
@@ -810,12 +854,12 @@ class CustomGraphFeaturizer():
 
 
 if __name__ == '__main__':
-    chunkwise = True
+    chunkwise = False
     if chunkwise:
         offset = 6
         run = 40
         featurizer = CustomGraphFeaturizer(crystal_chunks_path='C:/Users\mikem\Desktop\CSP_runs\datasets\may_new_pull\crystal_features')
         featurizer.featurize(chunk_inds=[offset + 0, offset + run])
     else:
-        aa = 1
-        # featurize based on the full dataframe
+        featurizer = CustomGraphFeaturizer(full_dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset.npy')
+        featurizer.add_one_feature_to_full_dataset(feature='crystal reference cell coords')

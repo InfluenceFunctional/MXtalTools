@@ -2,9 +2,9 @@ from utils import *
 import matplotlib.pyplot as plt
 import tqdm
 import pandas as pd
-from nikos.coordinate_transformations import coor_trans, coor_trans_matrix, cell_vol
-from nikos.rotations import euler_rotation, rotation_matrix_from_vectors
-from utils import compute_principal_axes_np
+from dataset_management.random_crystal_builder import *
+from pyxtal import symmetry
+from nikos.coordinate_transformations import cell_vol, coor_trans_matrix
 
 class Miner():
     def __init__(self, dataset_path, config=None, collect_chunks=False):
@@ -65,7 +65,7 @@ class Miner():
         del (self.dataset)
 
     def load_npy_for_modelling(self):
-        self.dataset = np.load(self.dataset_path + '.npy',allow_pickle=True).item()
+        self.dataset = np.load(self.dataset_path + '.npy', allow_pickle=True).item()
         self.dataset = pd.DataFrame.from_dict(self.dataset)
         self.dataset_keys = list(self.dataset.columns)
         self.filter_dataset()
@@ -176,6 +176,23 @@ class Miner():
         bad_inds = []
 
         # todo filter samples where space groups explicitly disagree with given crystal system
+
+        # samples with bad CSD-generated reference cells
+        if ('cell' in self.config.mode) or ('joint' in self.config.mode):
+            n_bad_inds = len(bad_inds)
+            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:,0])
+            print('bad packing filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
+        # cases where the csd has the wrong number of molecules
+        n_bad_inds = len(bad_inds)
+        lens = [len(item) for item in self.dataset['crystal reference cell coords']]
+        bad_inds.extend(np.argwhere(np.asarray(lens != self.dataset['crystal z value']))[:,0])
+        print('improper CSD Z value filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
+        # exclude samples with atoms on special positions
+        n_bad_inds = len(bad_inds)
+        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal atoms on special positions'].ne([[] for _ in range(len(self.dataset))])))[:,0])
+        print('special positions filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # Z prime
         n_bad_inds = len(bad_inds)
@@ -452,159 +469,204 @@ class Miner():
         plt.tight_layout()
 
     def todays_analysis(self):
+
         self.dataset = pd.read_pickle(self.dataset_path)
         self.dataset_keys = list(self.dataset.columns)
 
-        cart_data = {}
-        frac_data = {}
+        '''
+        analysis to-do
+        0.
+        X confirm csd fractional transforms agree with my method
+        1. 
+        X get reference cell
+        X get all centroids
+        X consider nearest centroid as canonical
+        2. 
+        X compute inertial plane
+        X compute orientation w.r.t. a and b axes
+        rotation w.r.t. some canonical axis
+        X plane overlaps with supercell axes out to 5x5
+        3. 
+        compute histograms of raw data and distances on CSD data
+            distance - e.g., some kind of RMSD or COMPACK calc, now that we do have the CCDC api to-hand
+        3a.
+        repeat analysis for random cells
+        3b. try to fit it all with a joint distribution, with auxiliary loss(es) [e.g., volume, orientation distance]
+        4. 
+        compare inertial and/or ring planes to 5x5 cell axes
+        5. 
+        '''
 
-        ip_axes_c, ip_axes_f, ip_moments, i_tensor_c, i_tensor_f = [],[],[],[],[]
-        ip_axes_c2, ip_axes_f2, ip_moments2, i_tensor_c2, i_tensor_f2 = [],[],[],[],[]
+        # generate all combinations of 5x5 fractional vectors
+        # Nikos says only take these [-n_max,n_max], n_1*n_2*n_3=0 and n_1|n_2|n_3=n_max
+        supercell_ref_vectors_f = []
+        for i in range(-2, 3):
+            for j in range(-2, 3):
+                for k in range(-2, 3):
+                    if (i != j != k):
+                        supercell_ref_vectors_f.append([i, j, k])
+        supercell_ref_vectors_f = np.asarray(supercell_ref_vectors_f)
 
-        centroids_c, centroids_f = [],[]
+        self.centroids_f = []
+        self.supercell_angle_overlaps = []
+        self.centroid_fractional_displacement = []
+        self.centroid_cartesian_displacement = []
+        self.inertial_angles = []
+        self.inertial_axes = []
+        good_inds = []
+        rand_inds = []
+        csd_inds = []
+        ind = -1
+        for i in tqdm.tqdm(range(10000)):#len(self.dataset))):
+            if self.dataset['crystal reference cell coords'][i] != 'error':  # skip bad cells
+                # confirm we have good syms
+                z_value = int(self.dataset['crystal z value'][i])
+                sym_group = symmetry.Group(self.dataset['crystal spacegroup number'][i])
+                if z_value != len(sym_group[0]): # if there's something wrong with the symmetry
+                    continue
+                '''
+                SETUP & BOILERPLATE
+                '''
+                # get cell params
 
-        for i in tqdm.tqdm(range(len(self.dataset))):
-            # atoms in cartesian coords
-            coords_c = self.dataset['atom coords'][i]
-            symbols = np.asarray(self.dataset['atom Z'][i])
-            masses = np.asarray(self.dataset['atom mass'][i])
+                ind += 1
+                good_inds.append(i)
+                cell_lengths = np.asarray(self.dataset['crystal cell lengths'][i])
+                cell_angles = np.asarray(self.dataset['crystal cell angles'][i])
 
-            # get cell params
-            cell_lengths = np.asarray(self.dataset['crystal cell lengths'][i])
-            cell_angles = np.asarray(self.dataset['crystal cell angles'][i])
+                # get all the transforms
+                T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
+                T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)
 
-            #cell_volume = cell_vol(cell_lengths, cell_angles)
+                atomic_numbers = np.asarray(self.dataset['atom Z'][i])
+                heavy_atom_inds = np.argwhere(atomic_numbers > 1)[:, 0]
+                masses = np.asarray(self.dataset['atom mass'][i])[heavy_atom_inds]
+                # atoms in cartesian coords
+                from_csd = np.random.randint(0,2,size=1)
+                if from_csd:
+                    csd_inds.append(ind)
 
-            # get all the transforms
-            #t_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
-            t_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)
-            #coords_f = np.transpose(np.dot(t_cf,np.transpose(coords_c)))
+                    # reference cell coords
+                    cell_coords_c = self.dataset['crystal reference cell coords'][i][:, :, :3]
+                    cell_coords_f = self.dataset['crystal reference cell coords'][i][:, :, 3:]
+                else:
+                    rand_inds.append(ind)
+                    # reference cell coords
+                    coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
+                    random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc)
+                    sym_ops = [sym_group.wyckoffs_organized[0][0][i].affine_matrix for i in range(z_value)]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
+                    cell_coords_c = build_random_crystal(T_cf, T_fc, random_coords, sym_ops, z_value)
 
-            # get all lattice vectors in cartesian coords
-            #lattice_f = np.eye(3)
-            #lattice_c = np.transpose(np.dot(t_fc,np.transpose(lattice_f)))
+                    cell_coords_f = np.zeros_like(cell_coords_c)
+                    for n in range(len(cell_coords_c)):
+                        cell_coords_f[n] = (T_cf.dot(cell_coords_c[n].T)).T
 
-            # get all the centroids
-            CoG_c = self.dataset['molecule centroid'][i] # center of geometry
-            CoG_f = np.transpose(np.dot(t_cf,np.transpose(CoG_c)))
-            CoM_c = np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
-            CoM_f = np.transpose(np.dot(t_cf,np.transpose(CoM_c)))
+                self.get_cell_data(i, masses, T_cf, T_fc, cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f)
 
-            centroids_c.append(CoG_c)
-            centroids_f.append(CoG_f)
-
-        centroids_c = np.asarray(centroids_c)
-        centroids_f = np.asarray(centroids_f)
-
-        plt.clf()
-        plt.subplot(3, 2, 1)
-        plt.hist(centroids_c[:, 0]/self.dataset['molecule volume'], bins=100, density=True)
-        plt.subplot(3, 2, 3)
-        plt.hist(centroids_c[:, 1]/self.dataset['molecule volume'], bins=100, density=True)
-        plt.subplot(3, 2, 5)
-        plt.hist(centroids_c[:, 2]/self.dataset['molecule volume'], bins=100, density=True)
-        plt.subplot(3, 2, 2)
-        plt.hist(centroids_f[:, 0], bins=100, density=True)
-        plt.subplot(3, 2, 4)
-        plt.hist(centroids_f[:, 1], bins=100, density=True)
-        plt.subplot(3, 2, 6)
-        plt.hist(centroids_f[:, 2], bins=100, density=True)
-
-            # get all the ring planes
-            # get all the ring centroids
-            # get all the inertial data - axes, moments, and regular inertial tensor
-            # rand_vec = np.random.uniform(-1,1,size=3)
-            # rand_rot = rotation_matrix_from_vectors(rand_vec, np.ones(3))
-            # rot_coords_c = euler_rotation(rand_rot, coords_c)
-            #
-            # Ip_axes_c, Ip_moments_c, I_tensor_c = compute_principal_axes_np(masses, coords_c, CoM_c)
-            # Ip_axes_f = np.transpose(np.dot(t_cf,np.transpose(Ip_axes_c)))
-            # I_tensor_f = np.transpose(np.dot(t_cf,np.transpose(I_tensor_c)))
-            #
-            # ip_axes_c.append(Ip_axes_c)
-            # ip_moments.append(Ip_moments_c)
-            # i_tensor_c.append(I_tensor_c)
-            # ip_axes_f.append(Ip_axes_f)
-            # i_tensor_f.append(I_tensor_f)
-            #
-            # Ip_axes_c, Ip_moments_c, I_tensor_c = compute_principal_axes_np(masses, rot_coords_c, CoM_c)
-            # Ip_axes_f = np.transpose(np.dot(t_cf,np.transpose(Ip_axes_c)))
-            # I_tensor_f = np.transpose(np.dot(t_cf,np.transpose(I_tensor_c)))
-            #
-            # ip_axes_c2.append(Ip_axes_c)
-            # ip_moments2.append(Ip_moments_c)
-            # i_tensor_c2.append(I_tensor_c)
-            # ip_axes_f2.append(Ip_axes_f)
-            # i_tensor_f2.append(I_tensor_f)
-
-        #### histogram machine goes BRRT
-        # ip_axes_c = np.asarray(ip_axes_c)
-        # ip_moments = np.asarray(ip_moments)
-        # i_tensor_c = np.asarray(i_tensor_c)
-        # ip_axes_f = np.asarray(ip_axes_f)
-        # i_tensor_f = np.asarray(i_tensor_f)
-        #
-        # ip_axes_c2 = np.asarray(ip_axes_c2)
-        # ip_moments2 = np.asarray(ip_moments2)
-        # i_tensor_c2 = np.asarray(i_tensor_c2)
-        # ip_axes_f2 = np.asarray(ip_axes_f2)
-        # i_tensor_f2 = np.asarray(i_tensor_f2)
-        #
-        #
-        # # collect I tensor normalized diagonal and off diagonal elements
-        # i_diag_c = np.asarray([np.sum(np.diag(mat))/np.sum(np.abs(mat)) for mat in i_tensor_c])
-        # i_diag_f = np.asarray([np.sum(np.diag(mat))/np.sum(np.abs(mat)) for mat in i_tensor_f])
-        # i_odiag_c = np.asarray([(np.sum(np.abs(mat)) - np.sum(np.diag(mat)))/np.sum(np.abs(mat)) for mat in i_tensor_c])
-        # i_odiag_f = np.asarray([(np.sum(np.abs(mat)) - np.sum(np.diag(mat)))/np.sum(np.abs(mat)) for mat in i_tensor_f])
-        #
-        # plt.figure(5)
-        # plt.clf()
-        # plt.subplot(1,2,1)
-        # plt.title('diagonals')
-        # plt.hist(i_diag_c, density=True,bins=100)
-        # plt.subplot(1,2,1)
-        # plt.title('diagonals')
-        # plt.hist(i_diag_f, density=True,bins=100,alpha=0.5)
-        # plt.subplot(1,2,2)
-        # plt.title('off diagonals')
-        # plt.hist(i_odiag_c, density=True,bins=100)
-        # plt.subplot(1,2,2)
-        # plt.title('off diagonals')
-        # plt.hist(i_odiag_f, density=True,bins=100,alpha=0.5)
-        #
-        # quantile_elem = 0.01
-        # plt.figure(6)
-        # plt.clf()
-        # plt.subplot(2,3,1)
-        # plt.hist(i_tensor_c[:,0,0].clip(min=np.quantile(i_tensor_c[:,0,0],quantile_elem), max=np.quantile(i_tensor_c[:,0,0],1-quantile_elem)), density=True,bins=100)
-        # plt.hist(i_tensor_c2[:,0,0].clip(min=np.quantile(i_tensor_c2[:,0,0],quantile_elem), max=np.quantile(i_tensor_c2[:,0,0],1-quantile_elem)), density=True,bins=100,alpha=0.5)
-        # plt.xlabel('Ixx')
-        # plt.subplot(2,3,2)
-        # plt.hist(i_tensor_c[:,1,1].clip(min=np.quantile(i_tensor_c[:,1,1],quantile_elem), max=np.quantile(i_tensor_c[:,1,1],1-quantile_elem)), density=True,bins=100)
-        # plt.hist(i_tensor_c2[:,1,1].clip(min=np.quantile(i_tensor_c2[:,1,1],quantile_elem), max=np.quantile(i_tensor_c2[:,1,1],1-quantile_elem)), density=True,bins=100,alpha=0.5)
-        # plt.xlabel('Iyy')
-        # plt.subplot(2,3,3)
-        # plt.hist(i_tensor_c[:,2,2].clip(min=np.quantile(i_tensor_c[:,2,2],quantile_elem), max=np.quantile(i_tensor_c[:,2,2],1-quantile_elem)), density=True,bins=100)
-        # plt.hist(i_tensor_c2[:,1,1].clip(min=np.quantile(i_tensor_c2[:,1,1],quantile_elem), max=np.quantile(i_tensor_c2[:,1,1],1-quantile_elem)), density=True,bins=100,alpha=0.5)
-        # plt.xlabel('Izz')
-        #
-        # plt.subplot(2,3,4)
-        # plt.hist(i_tensor_c[:,0,1].clip(min=np.quantile(i_tensor_c[:,0,1],quantile_elem), max=np.quantile(i_tensor_c[:,0,1],1-quantile_elem)), density=True,bins=100)
-        # plt.hist(i_tensor_c2[:,0,1].clip(min=np.quantile(i_tensor_c2[:,0,1],quantile_elem), max=np.quantile(i_tensor_c2[:,0,1],1-quantile_elem)), density=True,bins=100,alpha=0.5)
-        # plt.xlabel('Ixy')
-        # plt.subplot(2,3,5)
-        # plt.hist(i_tensor_c[:,0,2].clip(min=np.quantile(i_tensor_c[:,0,2],quantile_elem), max=np.quantile(i_tensor_c[:,0,2],1-quantile_elem)), density=True,bins=100)
-        # plt.hist(i_tensor_c2[:,0,2].clip(min=np.quantile(i_tensor_c2[:,0,2],quantile_elem), max=np.quantile(i_tensor_c2[:,0,2],1-quantile_elem)), density=True,bins=100,alpha=0.5)
-        # plt.xlabel('Ixz')
-        # plt.subplot(2,3,6)
-        # plt.hist(i_tensor_c[:,1,2].clip(min=np.quantile(i_tensor_c[:,1,2],quantile_elem), max=np.quantile(i_tensor_c[:,1,2],1-quantile_elem)), density=True,bins=100)
-        # plt.hist(i_tensor_c2[:,1,2].clip(min=np.quantile(i_tensor_c2[:,1,2],quantile_elem), max=np.quantile(i_tensor_c2[:,1,2],1-quantile_elem)), density=True,bins=100,alpha=0.5)
-        # plt.xlabel('Iyz')
-
-        # need to understand the asymmetric units
-
-
+        results_dict = {
+            'csd_centroids_f' : np.asarray(self.centroids_f)[csd_inds],
+            'csd_supercell_angles' : np.asarray(self.supercell_angle_overlaps)[csd_inds],
+            'csd_centroid_fractional_displacement' : np.asarray(self.centroid_fractional_displacement)[csd_inds],
+            'csd_centroid_cartesian_displacement' : np.asarray(self.centroid_cartesian_displacement)[csd_inds],
+            'csd_inertial_angles' : np.asarray(self.inertial_angles)[csd_inds],
+            'rand_centroids_f': np.asarray(self.centroids_f)[rand_inds],
+            'rand_supercell_angles': np.asarray(self.supercell_angle_overlaps)[rand_inds],
+            'rand_centroid_fractional_displacement': np.asarray(self.centroid_fractional_displacement)[rand_inds],
+            'rand_centroid_cartesian_displacement': np.asarray(self.centroid_cartesian_displacement)[rand_inds],
+            'rand_inertial_angles': np.asarray(self.inertial_angles)[rand_inds],
+        }
+        np.save('cell_analysis',results_dict)
         debug_stop = 1
+        if True:
+            # look at results
+            plt.figure(1)
+            plt.clf()
+            plt.title('Canonical molecule centroid fractional distance')
+            plt.hist(results_dict['csd_centroid_fractional_displacement'], density=True, bins=100, alpha=0.5,label='csd')
+            plt.hist(results_dict['rand_centroid_fractional_displacement'], density=True, bins=100, alpha=0.5,label='random')
+            plt.legend()
+
+            # nearest alignment of inertial axis to one of a,b,c
+            plt.figure(2)
+            plt.clf()
+            plt.title('Closest overlap of principal inertial axis to a, b, or c')
+            plt.hist(np.amin(results_dict['csd_inertial_angles'],axis=1), density=True, bins=100, alpha=0.5,label='csd')
+            plt.hist(np.amin(results_dict['rand_inertial_angles'],axis=1), density=True, bins=100, alpha=0.5,label='random')
+            plt.legend()
+
+            # nearest alignment of inertial axis to a 5x5 supercell direction
+            plt.figure(3)
+            plt.clf()
+            plt.title('Closest overlap of principal inertial axis to any crystallographic direction in 5x5')
+            plt.hist(np.amin(results_dict['csd_supercell_angles'],axis=1), density=True, bins=100, alpha=0.5,label='csd')
+            plt.hist(np.amin(results_dict['rand_supercell_angles'],axis=1), density=True, bins=100, alpha=0.5,label='random')
+            plt.legend()
+
+            plt.figure(4)
+            plt.clf()
+            plt.subplot(1, 2, 1)
+            plt.title('CSD fractional x-y centroid')
+            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 1], bins=100)
+            plt.subplot(1, 2, 2)
+            plt.title('Random fractional x-y centroid')
+            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 1], bins=100)
+
+    def get_cell_data(self, i, masses, T_cf, T_fc,cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f):
+
+        # confirm my fractional coords agree with CSD
+        my_cell_coords_f = np.zeros_like(cell_coords_f)
+        for n in range(len(my_cell_coords_f)):
+            my_cell_coords_f[n] = (T_cf.dot(cell_coords_c[n].T)).T
+
+        # sometimes, the CSD fractional and cartesian coordinates disagree with each other
+        conversion_error = np.average(np.abs(my_cell_coords_f - cell_coords_f))
+        if conversion_error > 1e-5:
+            print("fractional conversion discrepancy of {:.3f} at {}, replacing cartesian coordinates by f_to_c transform".format(conversion_error, i))
+            cell_coords_c = np.zeros_like(cell_coords_f)
+            for n in range(len(my_cell_coords_f)):
+                cell_coords_c[n] = (T_fc.dot(cell_coords_f[n].T)).T
+
+        # get all lattice vectors in cartesian coords
+        lattice_f = np.eye(3)
+        lattice_c = (T_fc.dot(lattice_f.T)).T
+
+        '''
+        CENTROIDS
+        '''
+        # get all the centroids
+        CoG_c = np.average(cell_coords_c, axis=1)
+        CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
+        CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
+        CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
+
+        # take the fractional molecule centroid closest to the origin
+        centroid_distance_from_origin_c = np.linalg.norm(CoG_c, axis=1)
+        centroid_distance_from_origin_f = np.linalg.norm(CoG_f, axis=1)
+        canonical_mol_ind = np.argmin(centroid_distance_from_origin_f)
+
+        '''
+        INERTIAL AXES
+        # todo something with rotation
+        '''
+        # get inertial axes
+        Ip_axes_c, Ip_moments_c, I_tensor_c = compute_principal_axes_np(masses, cell_coords_c[canonical_mol_ind], CoM_c[canonical_mol_ind])
+        # get angles w.r.t. a-axis and b-axis
+        inertial_angle1 = np.arccos(np.dot(lattice_c[0] / np.linalg.norm(lattice_c[0]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
+        inertial_angle2 = np.arccos(np.dot(lattice_c[1] / np.linalg.norm(lattice_c[1]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
+        inertial_angle3 = np.arccos(np.dot(lattice_c[2] / np.linalg.norm(lattice_c[2]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
+
+        # get overlaps with supercell angles
+        supercell_ref_vectors_c = (T_fc.dot(supercell_ref_vectors_f.T)).T
+        supercell_vector_angles = np.zeros(len(supercell_ref_vectors_c))
+        for n in range(len(supercell_ref_vectors_c)):
+            supercell_vector_angles[n] = np.arccos(np.dot(supercell_ref_vectors_c[n] / np.linalg.norm(supercell_ref_vectors_c[n]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
+
+        self.centroids_f.append(CoG_f[canonical_mol_ind])
+        self.supercell_angle_overlaps.append(supercell_vector_angles)
+        self.centroid_fractional_displacement.append(centroid_distance_from_origin_f[canonical_mol_ind])
+        self.centroid_cartesian_displacement.append(centroid_distance_from_origin_c[canonical_mol_ind])
+        self.inertial_angles.append([inertial_angle1, inertial_angle2, inertial_angle3])
+        self.inertial_axes.append(Ip_axes_c)
 
 
 if __name__ == '__main__':

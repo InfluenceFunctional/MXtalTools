@@ -1,4 +1,4 @@
-test_mode: False
+test_mode: True
 model_seed: 0
 dataset_seed: 0
 machine: "local"
@@ -6,7 +6,8 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: False
 run_num: 0
-mode: cell classification # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification'
+mode: cell regression # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification'
+# note only mikenet currently works for cell-wise training
 log_figures: True
 
 sweep: False
@@ -16,14 +17,15 @@ sample_reporting_frequency: 1
 sweep_id: null
 sweep_num_runs: 50
 
-target: crystal spacegroup symbol
-include_molecule_features: maximum # minimum, maximum
-concat_mol_to_atom_features: True
+target: crystal packing coefficient
+include_molecule_features: minimum # minimum, maximum
+concat_mol_to_atom_features: False
+csd_fraction: 0.5 # fraction of cell-wise training data to be from the CSD
 
-dataset_length: 1000000
+dataset_length: 10000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
-max_num_atoms: 200
+max_num_atoms: 50
 min_num_atoms: 20
 max_z_value: 10
 min_z_value: 0
@@ -37,8 +39,8 @@ max_atomic_number: 87
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
 exclude_polymorphs: False
-exclude_nonstandard_settings: False
-include_sgs: [P21/c,P21,P212121,P-1,C2/c]
+exclude_nonstandard_settings: True
+include_sgs: [P21/c,P21,P212121,P-1]
 
 optimizer: "adamw"
 learning_rate: 0.001
@@ -51,16 +53,16 @@ convergence_eps: 0.00001
 gradient_norm_clip: 1
 anomaly_detection: False
 
-initial_batch_size: 10000
+initial_batch_size: 1000
 auto_batch_sizing: True
-auto_batch_reduction: 0.2
-max_epochs: 500
-history: 20
+auto_batch_reduction: 0.5
+max_epochs: 10
+history: 10
 
 graph_model: mike
-graph_convolution_layers: 8
+graph_convolution_layers: 4
 graph_filters: 16
-atom_embedding_size: 64
+atom_embedding_size: 16
 graph_norm: layer
 num_spherical: 6
 num_radial: 12
@@ -72,7 +74,7 @@ graph_convolution: 'full message passing' # mikenet only
 add_spherical_basis: False # mikenet only
 
 num_fc_layers: 2
-fc_depth: 256
+fc_depth: 32
 pooling: attention
 activation: "gelu"
 fc_dropout_probability: 0.1
