@@ -691,7 +691,7 @@ class CustomGraphFeaturizer():
                     new_feature_vec[i] = 'error'
                     continue
                 crystal = entry.crystal
-                ref_cell = crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded')
+                ref_cell = crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded') # note sometimes it does this wrong (includes hydrogens?) - implement a manual check
                 ref_cell_coords_c = np.zeros((int(crystal.z_value), len(crystal.molecule.heavy_atoms), 3), dtype=np.float_)
                 ref_cell_coords_f = np.zeros((int(crystal.z_value), len(crystal.molecule.heavy_atoms), 3), dtype=np.float_)
 

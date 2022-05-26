@@ -6,7 +6,7 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: False
 run_num: 0
-mode: cell regression # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification'
+mode: cell classification # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification'
 # note only mikenet currently works for cell-wise training
 log_figures: True
 
@@ -17,7 +17,7 @@ sample_reporting_frequency: 1
 sweep_id: null
 sweep_num_runs: 50
 
-target: crystal packing coefficient
+target: crystal veracity
 include_molecule_features: minimum # minimum, maximum
 concat_mol_to_atom_features: False
 csd_fraction: 0.5 # fraction of cell-wise training data to be from the CSD
@@ -43,8 +43,8 @@ exclude_nonstandard_settings: True
 include_sgs: [P21/c,P21,P212121,P-1]
 
 optimizer: "adamw"
-learning_rate: 0.001
-max_lr: 0.001
+learning_rate: 0.00001
+max_lr: 0.00001
 lr_schedule: False
 beta1: 0.9
 beta2: 0.999
@@ -56,14 +56,14 @@ anomaly_detection: False
 initial_batch_size: 1000
 auto_batch_sizing: True
 auto_batch_reduction: 0.5
-max_epochs: 10
-history: 10
+max_epochs: 500
+history: 20
 
 graph_model: mike
-graph_convolution_layers: 4
+graph_convolution_layers: 20
 graph_filters: 16
-atom_embedding_size: 16
-graph_norm: layer
+atom_embedding_size: 32
+graph_norm: null
 num_spherical: 6
 num_radial: 12
 graph_convolution_cutoff: 5
@@ -73,12 +73,12 @@ num_attention_heads: 1 # mikenet only
 graph_convolution: 'full message passing' # mikenet only
 add_spherical_basis: False # mikenet only
 
-num_fc_layers: 2
-fc_depth: 32
+num_fc_layers: 4
+fc_depth: 256
 pooling: attention
 activation: "gelu"
-fc_dropout_probability: 0.1
-fc_norm_mode: layer
+fc_dropout_probability: 0
+fc_norm_mode: null
 
 conditional_modelling: True # only implemented for nsf_cl coupling layer
 conditioning_mode: graph model # 'graph model' or 'molecule features'

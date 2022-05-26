@@ -79,6 +79,7 @@ class BuildDataset:
         for i in range(config.min_z_value + 1, config.max_z_value + 1):
             dataset['crystal z is {}'.format(i)] = dataset['crystal z value'] == i
         dataset['molecule point group is C1'] = dataset['molecule point group'] == 'C1'
+        dataset['crystal veracity'] = np.random.randint(0,2,size=len(dataset['crystal z value'])).astype(bool) # whether it's a real crystal
 
         self.final_dataset_length = min(self.dataset_length, config.dataset_length)
 

@@ -1853,6 +1853,6 @@ def compute_principal_axes_np(masses, coords, CoM):
     Ipm, Ip = np.real(Ipm), np.real(Ip)
     sort_inds = np.argsort(Ipm)
     Ipm = Ipm[sort_inds]
-    Ip = Ip[sort_inds]
+    Ip = Ip.T[sort_inds] # want eigenvectors to be sorted row-wise (rather than column-wise)
 
     return Ip, Ipm, I

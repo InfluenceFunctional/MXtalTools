@@ -41,6 +41,13 @@ def euler_rotation(Rmat, r):
 
 @nb.jit(nopython=True)
 def rodriguez_rotation(k, v, angle):
+    '''
+
+    :param k: axis about which to rotate
+    :param v: points which will rotate
+    :param angle: angle in degrees (-180<->180) about which to rotate
+    :return:
+    '''
     angle *= np.pi / 180.0
 
     n_atoms = len(v)

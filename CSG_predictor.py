@@ -39,6 +39,14 @@ class Predictor():
         for i in range(100):
             self.atom_weights[i] = periodicTable.GetAtomicWeight(i)
 
+        if 'cell' in self.config.mode:
+            print('Pre-generating general position symmetries')
+            self.sym_ops = {}
+            for i in tqdm.tqdm(range(1,231)):
+                sym_group = symmetry.Group(i)
+                general_position_syms = sym_group.wyckoffs_organized[0][0]
+                self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
+
         miner = Miner(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)
 
         if not self.config.skip_run_init:
@@ -65,14 +73,6 @@ class Predictor():
                 print('Resuming run %d' % self.config.run_num)
             else:
                 print("Must provide a run_num if not creating a new workdir!")
-
-        if 'cell' in self.config.mode:
-            print('Pre-generating general position symmetries')
-            self.sym_ops = {}
-            for i in range(1,231):
-                sym_group = symmetry.Group(i)
-                general_position_syms = sym_group.wyckoffs_organized[0][0]
-                self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
 
     def makeNewWorkingDirectory(self):  # make working directory
         '''
@@ -1069,26 +1069,26 @@ class Predictor():
 
         #z_prime_ind = config.dataDims['tracking features dict'].index('crystal z prime')
         #reader = CrystalReader('CSD')
+        real_sample = []
 
         for i in range(data.num_graphs):
             # 0 extract molecule and cell parameters
             # todo get rid of unnecessary assignments
             atoms = np.asarray(data.x[data.batch == i])
+            # pre-enforce hydrogen cleanliness (for now)
             atomic_numbers = np.asarray(atoms[:, 0])  # this is currently atomic number - convert to masses
             heavy_inds = np.where(atomic_numbers != 1)
-            # pre-enforce hydrogen cleanliness (for now)
             atoms = atoms[heavy_inds]
             
             cell_lengths = data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
             cell_angles = data.y[2][i][self.cell_angle_inds]
-            #csd_identifier = data.y[1][i]
 
             z_value = int(data.y[2][i][self.z_value_ind])
-            #z_prime = int(data.y[2][i][z_prime_ind])
             T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles) # todo pre-store in the dataset
-            cell_vectors = np.transpose(np.dot(T_fc, np.transpose(np.eye(3))))  # do the transform
+            cell_vectors = T_fc.dot(np.eye(3)).T#np.transpose(np.dot(T_fc, np.transpose(np.eye(3))))  # do the transform
 
             use_CSD = np.random.uniform(0, 1) < config.csd_fraction # todo pre-sample random number
+            real_sample.append(use_CSD)
             if not use_CSD:
                 sg_number = int(data.y[2][i][self.sg_number_ind])
                 coords = np.asarray(data.pos[data.batch == i])
@@ -1146,7 +1146,8 @@ class Predictor():
         data.pos = new_coords.type(dtype=torch.float32)
         data.batch = new_batch.type(dtype=torch.int64)
         data.ptr = new_ptr.type(dtype=torch.int64)
-
+        if config.target == 'crystal veracity':
+            data.y[0] = torch.tensor(real_sample)
 
         return data
 
@@ -1182,10 +1183,9 @@ class Predictor():
         #
         '''
         random_coords = randomize_molecule_position_and_orientation(coords.astype(float), weights.astype(float), T_fc.astype(float))
-        ref_cell = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number],dtype=float), z_value)
+        ref_cell_c, ref_cell_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number],dtype=float), z_value)
 
-        return ref_cell
-
+        return ref_cell_c
 
 
     def get_CSD_crystal(self, reader, csd_identifier, mol_n_atoms, z_value):

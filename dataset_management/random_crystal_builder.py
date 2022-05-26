@@ -1,11 +1,71 @@
 import numpy as np
-import numba as nb
+#import numba as nb
 from nikos.rotations import rotation_matrix_from_vectors, euler_rotation, rodriguez_rotation
 from utils import compute_principal_axes_np
 
 
-@nb.jit(nopython=True)
-def randomize_molecule_position_and_orientation(coords, weights, T_fc, set_position=None, set_orientation=None, set_rotation = None):
+#@nb.jit(nopython=True)
+def randomize_molecule_position_and_orientation(coords, weights, T_fc, set_position=None, set_rotation = None):
+    '''
+    :param coords:
+    :param weights:
+    :param T_fc:
+    :param set_position:
+    :param set_orientation:
+    :param set_rotation:
+    :return:
+    '''
+    # random direction & rotation
+    if set_rotation is not None:
+        new_rotation = np.asarray(set_rotation,dtype=float)
+    else:
+        new_rotation = np.random.uniform(-1, 1, size=3)
+    if set_position is not None:
+        new_centroid_frac = np.asarray(set_position,dtype=float)
+    else:
+        new_centroid_frac = np.random.uniform(0, 1, size=(3))
+
+    # center coordinates on the center of mass
+    CoM = coords.T.dot(weights) / np.sum(weights)
+    coords -= CoM
+    Ip_axes, Ip_moments, I_tensor = compute_principal_axes_np(weights, coords, np.zeros(3)) # third row of the Ip_axes matrix is the principal moment axis
+
+    #1. align I1 to (1,1,1)
+    normed_corner_vector = T_fc.dot(np.ones(3))
+    normed_corner_vector /= np.linalg.norm(normed_corner_vector)
+    rot_mat = rotation_matrix_from_vectors(Ip_axes[-1], normed_corner_vector) # align I1 to (1,1,1)
+    coords = (rot_mat.dot(coords.T)).T # apply rotation matrix (add and subtract CoM if not already done)    #coords = euler_rotation(rot_mat, coords)
+    Ip_axes2, Ip_moments2, I_tensor2 = compute_principal_axes_np(weights, coords, np.zeros(3)) # third row of the Ip_axes matrix is the principal moment axis
+    # Ip_axes2 = rot_mat.dot(Ip_axes.T).T or this way - not exact but pretty close
+
+    #2. rotate I2 to align with the perpendicular vector between (1,1,1)-(0,0,0) and (0,1,1)
+    #a) find the point on (1,1,1)-(0,0,0) closest to (0,1,1)
+    corner_point = np.array((0,1,1))
+    t0 = T_fc.dot(corner_point).dot(normed_corner_vector)/(normed_corner_vector.dot(normed_corner_vector))
+    P0 = normed_corner_vector * t0 # point nearest to (0,1,1)
+    rot_alignment_vec = T_fc.dot(corner_point) - P0 # vector between two points
+    #b) get angle between I2 and the corner vector
+    I2_alignment_angle = np.arccos(np.dot(rot_alignment_vec, Ip_axes2[1])/np.linalg.norm(rot_alignment_vec))
+    #c) execute the rotation about I1 - now I1 is aligned to (1,1,1)-(0,0,0) and I2 is pointed from this line, to the corner (0,1,1)
+    coords = rodriguez_rotation(Ip_axes2[-1], coords, np.prod((I2_alignment_angle,180)))
+    #Ip_axes3, Ip_moments3, I_tensor3 = compute_principal_axes_np(weights, aligned_coords, CoM) # third row of the Ip_axes matrix is the principal moment axis
+
+    '''
+    molecule is now 'set' to a 'standard' position
+    '''
+
+    #3. rotate to align with an arbitrary vector in the fractional basis
+    new_direction = T_fc.dot(new_rotation) # new vector is A*a + B*b + C*c in the frac basis
+    new_direction /= np.linalg.norm(new_direction)
+    new_rot_mat = rotation_matrix_from_vectors(normed_corner_vector, new_direction) # align molecule (which is pointed at (1,1,1)) to new random direction
+    coords = (new_rot_mat.dot(coords.T)).T
+
+    #4. move centroid to the given coordinate
+    coords = coords - np.average(coords, axis=0) + T_fc.dot(new_centroid_frac)
+    return coords
+
+
+def old_randomize_molecule_position_and_orientation(coords, weights, T_fc, set_position=None, set_orientation=None, set_rotation = None):
     '''
     # todo define rodriguez rotation against some reference axis
     :param coords:
@@ -41,7 +101,7 @@ def randomize_molecule_position_and_orientation(coords, weights, T_fc, set_posit
 
     # rotate about the principal axis by theta
     # todo would be nice if this was defined against some standard axis, but it's not obvious to me
-    coords = rodriguez_rotation(Ip_axes[-1], coords, np.prod(new_rotation * 180))
+    coords = rodriguez_rotation(Ip_axes[-1], coords, np.prod((new_rotation, 180)))
 
     # move centroid to new location
     new_centroid_cart = T_fc.dot(new_centroid_frac) #np.transpose(np.dot(T_fc, np.transpose(new_centroid_frac)))
@@ -49,7 +109,7 @@ def randomize_molecule_position_and_orientation(coords, weights, T_fc, set_posit
 
     return coords
 
-@nb.jit(nopython=True)
+#@nb.jit(nopython=True)
 def build_random_crystal(T_cf, T_fc, coords, affine_ops, z_value):
     '''
     generate a random unit cell with appropriate general position point symmetries
@@ -71,7 +131,7 @@ def build_random_crystal(T_cf, T_fc, coords, affine_ops, z_value):
         centroids[zv] = np.average(cell_coords_f[zv],axis=0)
         cell_coords_c[zv, :, :] = (T_fc.dot(cell_coords_f[zv].T)).T #np.transpose(np.dot(T_fc, np.transpose(cell_coords_f[zv, :, :])))
 
-    #assert (np.amax(centroids < 1)) and (np.amin(centroids) > 0) # assert everyone is in the unit cell
+    #assert (np.amax(centroids < 1)) and (np.amin(centroids) > 0), "Molecules must be inside the unit cell!" # assert everyone is in the unit cell
 
     # look at the ref cell
     '''
@@ -152,4 +212,4 @@ def build_random_crystal(T_cf, T_fc, coords, affine_ops, z_value):
 
     '''
 
-    return cell_coords_c
+    return cell_coords_c, cell_coords_f

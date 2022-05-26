@@ -496,6 +496,12 @@ class Miner():
         compare inertial and/or ring planes to 5x5 cell axes
         5. 
         '''
+        print('Pre-generating general position symmetries')
+        self.sym_ops = {}
+        for i in tqdm.tqdm(range(1, 231)):
+            sym_group = symmetry.Group(i)
+            general_position_syms = sym_group.wyckoffs_organized[0][0]
+            self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
 
         # generate all combinations of 5x5 fractional vectors
         # Nikos says only take these [-n_max,n_max], n_1*n_2*n_3=0 and n_1|n_2|n_3=n_max
@@ -513,6 +519,7 @@ class Miner():
         self.centroid_cartesian_displacement = []
         self.inertial_angles = []
         self.inertial_axes = []
+        self.orientation_angles = []
         good_inds = []
         rand_inds = []
         csd_inds = []
@@ -521,8 +528,9 @@ class Miner():
             if self.dataset['crystal reference cell coords'][i] != 'error':  # skip bad cells
                 # confirm we have good syms
                 z_value = int(self.dataset['crystal z value'][i])
-                sym_group = symmetry.Group(self.dataset['crystal spacegroup number'][i])
-                if z_value != len(sym_group[0]): # if there's something wrong with the symmetry
+                sg_number = self.dataset['crystal spacegroup number'][i]
+                #sym_group = symmetry.Group(self.dataset['crystal spacegroup number'][i])
+                if z_value != len(self.sym_ops[sg_number]):#sym_group[0]): # if there's something wrong with the symmetry
                     continue
                 '''
                 SETUP & BOILERPLATE
@@ -554,12 +562,8 @@ class Miner():
                     # reference cell coords
                     coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
                     random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc)
-                    sym_ops = [sym_group.wyckoffs_organized[0][0][i].affine_matrix for i in range(z_value)]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
-                    cell_coords_c = build_random_crystal(T_cf, T_fc, random_coords, sym_ops, z_value)
+                    cell_coords_c, cell_coords_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
 
-                    cell_coords_f = np.zeros_like(cell_coords_c)
-                    for n in range(len(cell_coords_c)):
-                        cell_coords_f[n] = (T_cf.dot(cell_coords_c[n].T)).T
 
                 self.get_cell_data(i, masses, T_cf, T_fc, cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f)
 
@@ -604,27 +608,34 @@ class Miner():
 
             plt.figure(4)
             plt.clf()
-            plt.subplot(1, 2, 1)
+            plt.subplot(2, 2, 1)
             plt.title('CSD fractional x-y centroid')
             plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 1], bins=100)
-            plt.subplot(1, 2, 2)
+            plt.subplot(2, 2, 2)
             plt.title('Random fractional x-y centroid')
             plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 1], bins=100)
+            plt.subplot(2, 2, 3)
+            plt.title('CSD fractional x-z centroid')
+            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 2], bins=100)
+            plt.subplot(2, 2, 4)
+            plt.title('Random fractional x-z centroid')
+            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 2], bins=100)
+            plt.tight_layout()
 
     def get_cell_data(self, i, masses, T_cf, T_fc,cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f):
 
-        # confirm my fractional coords agree with CSD
-        my_cell_coords_f = np.zeros_like(cell_coords_f)
-        for n in range(len(my_cell_coords_f)):
-            my_cell_coords_f[n] = (T_cf.dot(cell_coords_c[n].T)).T
-
-        # sometimes, the CSD fractional and cartesian coordinates disagree with each other
-        conversion_error = np.average(np.abs(my_cell_coords_f - cell_coords_f))
-        if conversion_error > 1e-5:
-            print("fractional conversion discrepancy of {:.3f} at {}, replacing cartesian coordinates by f_to_c transform".format(conversion_error, i))
-            cell_coords_c = np.zeros_like(cell_coords_f)
-            for n in range(len(my_cell_coords_f)):
-                cell_coords_c[n] = (T_fc.dot(cell_coords_f[n].T)).T
+        # # confirm my fractional coords agree with CSD
+        # my_cell_coords_f = np.zeros_like(cell_coords_f)
+        # for n in range(len(my_cell_coords_f)):
+        #     my_cell_coords_f[n] = (T_cf.dot(cell_coords_c[n].T)).T
+        #
+        # # sometimes, the CSD fractional and cartesian coordinates disagree with each other
+        # conversion_error = np.average(np.abs(my_cell_coords_f - cell_coords_f))
+        # if conversion_error > 1e-5:
+        #     print("fractional conversion discrepancy of {:.3f} at {}, replacing cartesian coordinates by f_to_c transform".format(conversion_error, i))
+        #     cell_coords_c = np.zeros_like(cell_coords_f)
+        #     for n in range(len(my_cell_coords_f)):
+        #         cell_coords_c[n] = (T_fc.dot(cell_coords_f[n].T)).T
 
         # get all lattice vectors in cartesian coords
         lattice_f = np.eye(3)
@@ -634,6 +645,21 @@ class Miner():
         CENTROIDS
         '''
         # get all the centroids
+        CoG_c = np.average(cell_coords_c, axis=1)
+        CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
+        CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
+        CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
+
+        # manually enforce our style of centroid
+        for i in range(z_value):
+            if (np.amin(CoG_f[i])) < 0 or (np.amax(CoG_f[i])> 1):
+                print('Sample found with molecule out of cell')
+                floor = np.floor(CoG_f[i])
+                new_fractional_coords = cell_coords_f[i] - floor
+                cell_coords_c[i] = T_fc.dot(new_fractional_coords.T).T
+                cell_coords_f[i] = new_fractional_coords
+
+        # redo it
         CoG_c = np.average(cell_coords_c, axis=1)
         CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
         CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
@@ -661,12 +687,28 @@ class Miner():
         for n in range(len(supercell_ref_vectors_c)):
             supercell_vector_angles[n] = np.arccos(np.dot(supercell_ref_vectors_c[n] / np.linalg.norm(supercell_ref_vectors_c[n]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
 
+
+        '''
+        ORIENTATION ANALYSIS
+        Compute the rotations necessary to achieve the 'standard' orientation (I1 aligned with (1,1,1)-(0,0,0), 
+        and I2 pointed along the perpendicular vector between (1,1,1)-(0,0,0) and (0,1,1) 
+        '''
+        #1. compute the abc and P_perp vectors in cartesian coordinates
+
+        #2. align molecule inertial axes to abc and P_perp
+
+        #3. determine Rodrigues rotations about the a,b,c axes necessary for the given orientation
+
+
+        orientation_angles = 3
+
         self.centroids_f.append(CoG_f[canonical_mol_ind])
         self.supercell_angle_overlaps.append(supercell_vector_angles)
         self.centroid_fractional_displacement.append(centroid_distance_from_origin_f[canonical_mol_ind])
         self.centroid_cartesian_displacement.append(centroid_distance_from_origin_c[canonical_mol_ind])
         self.inertial_angles.append([inertial_angle1, inertial_angle2, inertial_angle3])
         self.inertial_axes.append(Ip_axes_c)
+        self.orientation_angles.append(orientation_angles)
 
 
 if __name__ == '__main__':
