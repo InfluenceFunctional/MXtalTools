@@ -5,6 +5,7 @@ import pandas as pd
 from dataset_management.random_crystal_builder import *
 from pyxtal import symmetry
 from nikos.coordinate_transformations import cell_vol, coor_trans_matrix
+import matplotlib.colors as colors
 
 class Miner():
     def __init__(self, dataset_path, config=None, collect_chunks=False):
@@ -523,6 +524,7 @@ class Miner():
         good_inds = []
         rand_inds = []
         csd_inds = []
+        tests = []
         ind = -1
         for i in tqdm.tqdm(range(10000)):#len(self.dataset))):
             if self.dataset['crystal reference cell coords'][i] != 'error':  # skip bad cells
@@ -544,7 +546,7 @@ class Miner():
 
                 # get all the transforms
                 T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
-                T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)
+                T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles) #np.linalg.inv(T_fc)#
 
                 atomic_numbers = np.asarray(self.dataset['atom Z'][i])
                 heavy_atom_inds = np.argwhere(atomic_numbers > 1)[:, 0]
@@ -561,7 +563,8 @@ class Miner():
                     rand_inds.append(ind)
                     # reference cell coords
                     coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
-                    random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc)
+                    random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc,confirm_transform = False)
+                    #tests.append(np.average(T_cf.dot(random_coords.T).T,axis=0))
                     cell_coords_c, cell_coords_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
 
 
@@ -569,15 +572,17 @@ class Miner():
 
         results_dict = {
             'csd_centroids_f' : np.asarray(self.centroids_f)[csd_inds],
-            'csd_supercell_angles' : np.asarray(self.supercell_angle_overlaps)[csd_inds],
+            #'csd_supercell_angles' : np.asarray(self.supercell_angle_overlaps)[csd_inds],
             'csd_centroid_fractional_displacement' : np.asarray(self.centroid_fractional_displacement)[csd_inds],
             'csd_centroid_cartesian_displacement' : np.asarray(self.centroid_cartesian_displacement)[csd_inds],
-            'csd_inertial_angles' : np.asarray(self.inertial_angles)[csd_inds],
+            #'csd_inertial_angles' : np.asarray(self.inertial_angles)[csd_inds],
+            'csd_orientation_angles': np.asarray(self.orientation_angles)[csd_inds],
             'rand_centroids_f': np.asarray(self.centroids_f)[rand_inds],
-            'rand_supercell_angles': np.asarray(self.supercell_angle_overlaps)[rand_inds],
+            #'rand_supercell_angles': np.asarray(self.supercell_angle_overlaps)[rand_inds],
             'rand_centroid_fractional_displacement': np.asarray(self.centroid_fractional_displacement)[rand_inds],
             'rand_centroid_cartesian_displacement': np.asarray(self.centroid_cartesian_displacement)[rand_inds],
-            'rand_inertial_angles': np.asarray(self.inertial_angles)[rand_inds],
+            #'rand_inertial_angles': np.asarray(self.inertial_angles)[rand_inds],
+            'rand_orientation_angles': np.asarray(self.orientation_angles)[rand_inds],
         }
         np.save('cell_analysis',results_dict)
         debug_stop = 1
@@ -590,37 +595,69 @@ class Miner():
             plt.hist(results_dict['rand_centroid_fractional_displacement'], density=True, bins=100, alpha=0.5,label='random')
             plt.legend()
 
-            # nearest alignment of inertial axis to one of a,b,c
-            plt.figure(2)
-            plt.clf()
-            plt.title('Closest overlap of principal inertial axis to a, b, or c')
-            plt.hist(np.amin(results_dict['csd_inertial_angles'],axis=1), density=True, bins=100, alpha=0.5,label='csd')
-            plt.hist(np.amin(results_dict['rand_inertial_angles'],axis=1), density=True, bins=100, alpha=0.5,label='random')
-            plt.legend()
-
-            # nearest alignment of inertial axis to a 5x5 supercell direction
-            plt.figure(3)
-            plt.clf()
-            plt.title('Closest overlap of principal inertial axis to any crystallographic direction in 5x5')
-            plt.hist(np.amin(results_dict['csd_supercell_angles'],axis=1), density=True, bins=100, alpha=0.5,label='csd')
-            plt.hist(np.amin(results_dict['rand_supercell_angles'],axis=1), density=True, bins=100, alpha=0.5,label='random')
-            plt.legend()
+            # # nearest alignment of inertial axis to one of a,b,c
+            # plt.figure(2)
+            # plt.clf()
+            # plt.title('Closest overlap of principal inertial axis to a, b, or c')
+            # plt.hist(np.amin(results_dict['csd_inertial_angles'],axis=1), density=True, bins=100, alpha=0.5,label='csd')
+            # plt.hist(np.amin(results_dict['rand_inertial_angles'],axis=1), density=True, bins=100, alpha=0.5,label='random')
+            # plt.legend()
+            #
+            # # nearest alignment of inertial axis to a 5x5 supercell direction
+            # plt.figure(3)
+            # plt.clf()
+            # plt.title('Closest overlap of principal inertial axis to any crystallographic direction in 5x5')
+            # plt.hist(np.amin(results_dict['csd_supercell_angles'],axis=1), density=True, bins=100, alpha=0.5,label='csd')
+            # plt.hist(np.amin(results_dict['rand_supercell_angles'],axis=1), density=True, bins=100, alpha=0.5,label='random')
+            # plt.legend()
 
             plt.figure(4)
             plt.clf()
             plt.subplot(2, 2, 1)
             plt.title('CSD fractional x-y centroid')
-            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 1], bins=100)
+            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 1], bins=100,norm=colors.LogNorm())
             plt.subplot(2, 2, 2)
             plt.title('Random fractional x-y centroid')
-            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 1], bins=100)
+            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 1], bins=100,norm=colors.LogNorm())
             plt.subplot(2, 2, 3)
             plt.title('CSD fractional x-z centroid')
-            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 2], bins=100)
+            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 2], bins=100,norm=colors.LogNorm())
             plt.subplot(2, 2, 4)
             plt.title('Random fractional x-z centroid')
-            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 2], bins=100)
+            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 2], bins=100,norm=colors.LogNorm())
             plt.tight_layout()
+
+            plt.figure(5)
+            plt.clf()
+            for i in range(3):
+                plt.subplot(1,3,i+1)
+                plt.title('angle {}'.format(i))
+                plt.hist(results_dict['csd_orientation_angles'][:,i],density=True,bins=100)
+                plt.hist(results_dict['rand_orientation_angles'][:,i],density=True,bins=100,alpha=0.35)
+
+            plt.figure(6)
+            plt.clf()
+            plt.subplot(2, 3, 1)
+            plt.title('CSD 0-1 angles')
+            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 0], y=results_dict['csd_orientation_angles'][:, 1], bins=100,norm=colors.LogNorm())
+            plt.subplot(2, 3, 4)
+            plt.title('Random 0-1 angles')
+            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 0], y=results_dict['rand_orientation_angles'][:, 1], bins=100,norm=colors.LogNorm())
+            plt.subplot(2, 3, 2)
+            plt.title('CSD 0-2 angles')
+            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 0], y=results_dict['csd_orientation_angles'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.subplot(2, 3, 5)
+            plt.title('Random 0-2 angles')
+            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 0], y=results_dict['rand_orientation_angles'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.subplot(2, 3, 3)
+            plt.title('CSD 1-2 angles')
+            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 1], y=results_dict['csd_orientation_angles'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.subplot(2, 3, 6)
+            plt.title('Random 1-2 angles')
+            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 1], y=results_dict['rand_orientation_angles'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.tight_layout()
+
+
 
     def get_cell_data(self, i, masses, T_cf, T_fc,cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f):
 
@@ -651,19 +688,22 @@ class Miner():
         CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
 
         # manually enforce our style of centroid
+        flag = 0
         for i in range(z_value):
             if (np.amin(CoG_f[i])) < 0 or (np.amax(CoG_f[i])> 1):
-                print('Sample found with molecule out of cell')
+                flag = 1
+                #print('Sample found with molecule out of cell')
                 floor = np.floor(CoG_f[i])
                 new_fractional_coords = cell_coords_f[i] - floor
                 cell_coords_c[i] = T_fc.dot(new_fractional_coords.T).T
                 cell_coords_f[i] = new_fractional_coords
 
         # redo it
-        CoG_c = np.average(cell_coords_c, axis=1)
-        CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
-        CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
-        CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
+        if flag:
+            CoG_c = np.average(cell_coords_c, axis=1)
+            CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
+            CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
+            CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
 
         # take the fractional molecule centroid closest to the origin
         centroid_distance_from_origin_c = np.linalg.norm(CoG_c, axis=1)
@@ -672,20 +712,20 @@ class Miner():
 
         '''
         INERTIAL AXES
-        # todo something with rotation
+        # look for overlaps with lattice vectors
         '''
-        # get inertial axes
-        Ip_axes_c, Ip_moments_c, I_tensor_c = compute_principal_axes_np(masses, cell_coords_c[canonical_mol_ind], CoM_c[canonical_mol_ind])
-        # get angles w.r.t. a-axis and b-axis
-        inertial_angle1 = np.arccos(np.dot(lattice_c[0] / np.linalg.norm(lattice_c[0]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
-        inertial_angle2 = np.arccos(np.dot(lattice_c[1] / np.linalg.norm(lattice_c[1]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
-        inertial_angle3 = np.arccos(np.dot(lattice_c[2] / np.linalg.norm(lattice_c[2]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
-
-        # get overlaps with supercell angles
-        supercell_ref_vectors_c = (T_fc.dot(supercell_ref_vectors_f.T)).T
-        supercell_vector_angles = np.zeros(len(supercell_ref_vectors_c))
-        for n in range(len(supercell_ref_vectors_c)):
-            supercell_vector_angles[n] = np.arccos(np.dot(supercell_ref_vectors_c[n] / np.linalg.norm(supercell_ref_vectors_c[n]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
+        # # get inertial axes
+        # Ip_axes_c, Ip_moments_c, I_tensor_c = compute_principal_axes_np(masses, cell_coords_c[canonical_mol_ind])
+        # # get angles w.r.t. a-axis and b-axis
+        # inertial_angle1 = np.arccos(np.dot(lattice_c[0] / np.linalg.norm(lattice_c[0]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
+        # inertial_angle2 = np.arccos(np.dot(lattice_c[1] / np.linalg.norm(lattice_c[1]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
+        # inertial_angle3 = np.arccos(np.dot(lattice_c[2] / np.linalg.norm(lattice_c[2]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
+        #
+        # # get overlaps with supercell angles
+        # supercell_ref_vectors_c = (T_fc.dot(supercell_ref_vectors_f.T)).T
+        # supercell_vector_angles = np.zeros(len(supercell_ref_vectors_c))
+        # for n in range(len(supercell_ref_vectors_c)):
+        #     supercell_vector_angles[n] = np.arccos(np.dot(supercell_ref_vectors_c[n] / np.linalg.norm(supercell_ref_vectors_c[n]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
 
 
         '''
@@ -693,21 +733,14 @@ class Miner():
         Compute the rotations necessary to achieve the 'standard' orientation (I1 aligned with (1,1,1)-(0,0,0), 
         and I2 pointed along the perpendicular vector between (1,1,1)-(0,0,0) and (0,1,1) 
         '''
-        #1. compute the abc and P_perp vectors in cartesian coordinates
-
-        #2. align molecule inertial axes to abc and P_perp
-
-        #3. determine Rodrigues rotations about the a,b,c axes necessary for the given orientation
-
-
-        orientation_angles = 3
+        _, orientation_angles = retrieve_alignment_parameters(masses, cell_coords_c[canonical_mol_ind], T_fc, T_cf)
 
         self.centroids_f.append(CoG_f[canonical_mol_ind])
-        self.supercell_angle_overlaps.append(supercell_vector_angles)
+        #self.supercell_angle_overlaps.append(supercell_vector_angles)
         self.centroid_fractional_displacement.append(centroid_distance_from_origin_f[canonical_mol_ind])
         self.centroid_cartesian_displacement.append(centroid_distance_from_origin_c[canonical_mol_ind])
-        self.inertial_angles.append([inertial_angle1, inertial_angle2, inertial_angle3])
-        self.inertial_axes.append(Ip_axes_c)
+        #self.inertial_angles.append([inertial_angle1, inertial_angle2, inertial_angle3])
+        #self.inertial_axes.append(Ip_axes_c)
         self.orientation_angles.append(orientation_angles)
 
 

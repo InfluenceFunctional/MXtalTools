@@ -1838,9 +1838,9 @@ def delete_from_dataframe(df, inds):
     return df
 
 
-@nb.jit(nopython=True)
-def compute_principal_axes_np(masses, coords, CoM):
-    points = coords - CoM
+#@nb.jit(nopython=True)
+def compute_principal_axes_np(masses, coords):
+    points = coords - coords.T.dot(masses)/np.sum(masses)
     x, y, z = points.T
     Ixx = np.sum(masses * (y ** 2 + z ** 2))
     Iyy = np.sum(masses * (x ** 2 + z ** 2))
@@ -1854,5 +1854,13 @@ def compute_principal_axes_np(masses, coords, CoM):
     sort_inds = np.argsort(Ipm)
     Ipm = Ipm[sort_inds]
     Ip = Ip.T[sort_inds] # want eigenvectors to be sorted row-wise (rather than column-wise)
+
+    # we want consistent directionality - set it against the CoG (Ipm always points towards CoG from CoM)
+    direction = points.mean(axis=0) # CoM is 0 by construction, so we don't have to subtract it
+    # if the CoG exactly == the CoM in any dimension, the molecule is symmetric on that axis, and we can arbitraily pick a side
+    if any(direction) == 0:
+        direction[direction==0] += 1 # arbitrarily set the positive side
+    overlaps = np.sign(Ip.dot(direction)) # check if the principal components point towards or away from the CoG
+    Ip = (Ip.T * overlaps).T # if the vectors have negative overlap, flip the direction
 
     return Ip, Ipm, I

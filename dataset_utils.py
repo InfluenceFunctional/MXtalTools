@@ -57,10 +57,15 @@ class BuildDataset:
         # for coupling NF models, must be an even number of these
         self.lattice_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal alpha', 'crystal beta', 'crystal gamma',
-                             'crystal calculated density', 'crystal packing coefficient',
-                             'crystal z is 2', 'crystal z is 4', 'crystal z is 8',
-                             'crystal has glide', 'crystal has 2-fold screw', 'crystal has inversion',
+                             'crystal reference cell centroid x', 'crystal reference cell centroid y', 'crystal reference cell centroid z',
+                             'crystal reference cell angle 1', 'crystal reference cell angle 2', 'crystal reference cell angle 3',
                              ]
+        for key in self.include_sgs:
+            self.lattice_keys.append('crystal spacegroup is ' + key)
+
+        if len(self.lattice_keys) % 2 != 0: # coupling flow model requires an even number of dimensions
+            self.lattice_keys.append(self.lattice_keys[0]) # add a redundant dimension
+
         self.conditional_keys = ['molecule volume', 'molecule mass', 'molecule num atoms', 'molecule n donors', 'molecule n acceptors',
                                  'molecule num rings', 'molecule planarity', 'molecule spherical defect', 'molecule radius of gyration',
                                  ]
@@ -79,7 +84,10 @@ class BuildDataset:
         for i in range(config.min_z_value + 1, config.max_z_value + 1):
             dataset['crystal z is {}'.format(i)] = dataset['crystal z value'] == i
         dataset['molecule point group is C1'] = dataset['molecule point group'] == 'C1'
-        dataset['crystal veracity'] = np.random.randint(0,2,size=len(dataset['crystal z value'])).astype(bool) # whether it's a real crystal
+        dataset['crystal veracity'] = np.random.randint(0, 2, size=len(dataset['crystal z value'])).astype(bool)  # whether it's a real crystal
+
+        for key in self.include_sgs:
+            dataset['crystal spacegroup is ' + key] = dataset['crystal spacegroup symbol'] == key
 
         self.final_dataset_length = min(self.dataset_length, config.dataset_length)
 
@@ -117,7 +125,7 @@ class BuildDataset:
         return [atom_features_list[i] for i in good_inds], molecule_features_array[good_inds], targets[good_inds], \
                [smiles[i] for i in good_inds], [coords[i] for i in good_inds], tracking_features[good_inds]
 
-    def generate_training_data(self, atom_coords, smiles, atom_features_list, mol_features, targets, tracking_features,reference_cells = None):
+    def generate_training_data(self, atom_coords, smiles, atom_features_list, mol_features, targets, tracking_features, reference_cells=None):
         '''
         convert feature, target and tracking vectors into torch.geometric data objects
         :param atom_coords:
@@ -143,7 +151,7 @@ class BuildDataset:
             input_features = torch.Tensor(input_features)
             assert torch.sum(torch.isnan(input_features)) == 0, "NaN in training input"
             if 'cell' in self.model_mode:
-                datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i],reference_cells[i]]))
+                datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i], reference_cells[i]]))
             else:
                 datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i]]))
 

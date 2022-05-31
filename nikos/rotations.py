@@ -40,7 +40,7 @@ def euler_rotation(Rmat, r):
 
 
 @nb.jit(nopython=True)
-def rodriguez_rotation(k, v, angle):
+def rodrigues_rotation(k, v, angle):
     '''
 
     :param k: axis about which to rotate

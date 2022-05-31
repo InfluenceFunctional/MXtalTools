@@ -115,7 +115,7 @@ class FlowModel(nn.Module):
         pca.fit(data)
         if print_variance:
             print("Pca Explained Variance:")
-            print(pca.explained_variance_ratio_)
+            print(np.asarray(pca.explained_variance_ratio_).astype('float16'))
         return pca
 
     def pca_sampling(self, pca, n_samples):
@@ -127,7 +127,8 @@ class FlowModel(nn.Module):
     def forward(self, x):
         if self.n_conditional_features > 0:
             conditions = self.get_conditions(x)
-            x.y[0] = torch.cat((x.y[0],conditions),dim=1)
+            if self.conditioner is not None:
+                x.y[0] = torch.cat((x.y[0],conditions),dim=1)
 
         zs, log_det = self.flow.forward(x.y[0].float())
         prior_logprob = self.prior.log_prob(zs[-1].cpu()).view(x.y[0].size(0), -1).sum(1)
@@ -136,19 +137,19 @@ class FlowModel(nn.Module):
     def backward(self, z):
         if self.n_conditional_features > 0:
             conditions = self.get_conditions(z)
-            z.y[0] = torch.cat((z.y[0],conditions),dim=1)
+            if self.conditioner is not None:
+                z.y[0] = torch.cat((z.y[0],conditions),dim=1)
 
         xs, log_det = self.flow.backward(z.y[0].float())
         return xs[-1], log_det
 
     def sample(self, num_samples, conditions=None):
-        if conditions is not None:
-            if self.conditioner is not None:
-                conditions = self.conditioner(conditions)
-
         z = self.prior.sample((num_samples,)).to(self.device)
+
         if conditions is not None:
+            conditions = self.get_conditions(conditions)
             z = torch.cat((z, conditions.to(z.device)), dim=1)
+
         xs, _ = self.flow.backward(z.float())
         return xs[-1]
 

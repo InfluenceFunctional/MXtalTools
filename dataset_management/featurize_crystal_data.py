@@ -11,9 +11,10 @@ import itertools
 import rdkit.Chem as Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors, AllChem, rdMolTransforms
 import time
-from nikos.coor_trans import coor_trans
+from nikos.coordinate_transformations import coor_trans, coor_trans_matrix
 from mendeleev import element as element_table
 from ccdc.search import EntryReader
+from random_crystal_builder import retrieve_alignment_parameters
 
 
 
@@ -675,14 +676,17 @@ class CustomGraphFeaturizer():
             '$([nH0,o,s;+0])]')
 
     def add_one_feature_to_full_dataset(self, feature):
-        df = pd.DataFrame.from_dict(np.load(self.full_dataset_path, allow_pickle=True).item())
-        csd_reader = EntryReader('CSD')
+        df = pd.read_pickle(self.full_dataset_path)
+        #df = pd.DataFrame.from_dict(np.load(self.full_dataset_path, allow_pickle=True).item())
 
-        identifiers = df['identifier']
-        del df
 
-        new_feature_vec = [[] for _ in range(len(identifiers))]
         if feature == 'crystal reference cell coords':
+            csd_reader = EntryReader('CSD')
+
+            identifiers = df['identifier']
+            del df
+            new_feature_vec = [[] for _ in range(len(identifiers))]
+
             for i in tqdm.tqdm(range(len(identifiers))):
                 try:
                     entry = csd_reader.entry(identifiers[i])
@@ -708,9 +712,79 @@ class CustomGraphFeaturizer():
                     print('CSD Packing Error (ugh)')
                     new_feature_vec[i] = 'error'
 
-        df = pd.DataFrame.from_dict(np.load(self.full_dataset_path, allow_pickle=True).item())
-        df[feature] = new_feature_vec
-        df.to_pickle('dataset_with_new_feature')
+            df = pd.read_pickle(self.full_dataset_path)
+            # df = pd.DataFrame.from_dict(np.load(self.full_dataset_path, allow_pickle=True).item())
+            df[feature] = new_feature_vec
+            df.to_pickle('dataset_with_new_feature')
+
+        elif feature == 'molecule alignment':
+            feat_tfc = np.zeros((len(df),3,3))
+            feat_tcf = np.zeros_like(feat_tfc)
+            feat_centroid = np.zeros((len(df),3))
+            feat_angles = np.zeros_like(feat_centroid)
+            for i in tqdm.tqdm(range(len(df))):
+                cell_lengths = np.asarray(df['crystal cell lengths'][i])
+                cell_angles = np.asarray(df['crystal cell angles'][i])
+
+                # get all the transforms
+                T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
+                T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)  # np.linalg.inv(T_fc)#
+                feat_tfc[i] = T_fc
+                feat_tcf[i] = T_cf
+
+                if df['crystal reference cell coords'][i] != 'error':
+                    cell_coords_c = df['crystal reference cell coords'][i][:, :, :3]
+                    cell_coords_f = df['crystal reference cell coords'][i][:, :, 3:]
+                    z_value = int(df['crystal z value'][i])
+
+                    atomic_numbers = np.asarray(df['atom Z'][i])
+                    heavy_atom_inds = np.argwhere(atomic_numbers > 1)[:, 0]
+                    masses = np.asarray(df['atom mass'][i])[heavy_atom_inds]
+                    # get all the centroids
+                    CoG_c = np.average(cell_coords_c, axis=1)
+                    CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
+                    #CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
+                    #CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
+
+                    # manually enforce our style of centroid
+                    flag = 0
+                    for zv in range(z_value):
+                        if (np.amin(CoG_f[zv]) < 0) or (np.amax(CoG_f[zv]) > 1):
+                            flag = 1
+                            # print('Sample found with molecule out of cell')
+                            floor = np.floor(CoG_f[zv])
+                            new_fractional_coords = cell_coords_f[zv] - floor
+                            cell_coords_c[zv] = T_fc.dot(new_fractional_coords.T).T
+                            cell_coords_f[zv] = new_fractional_coords
+
+                    if flag:
+                        CoG_c = np.average(cell_coords_c, axis=1)
+                        CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
+                        #CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
+                        #CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
+
+                    # take the fractional molecule centroid closest to the origin
+                    #centroid_distance_from_origin_c = np.linalg.norm(CoG_c, axis=1)
+                    centroid_distance_from_origin_f = np.linalg.norm(CoG_f, axis=1)
+                    canonical_mol_ind = np.argmin(centroid_distance_from_origin_f)
+
+                    feat_centroid[i], feat_angles[i] = retrieve_alignment_parameters(masses, cell_coords_c[canonical_mol_ind], T_fc, T_cf)
+                    if (np.amin(feat_centroid[i]) < 0) or (np.amax(feat_centroid[i]) > 1):
+                        aa = 1
+                else:
+                    feat_centroid[i], feat_angles[i] = np.ones(3) * np.nan, np.ones(3)*np.nan
+
+            df['crystal reference cell centroid x'] = feat_centroid[:,0]
+            df['crystal reference cell centroid y'] = feat_centroid[:,1]
+            df['crystal reference cell centroid z'] = feat_centroid[:,2]
+
+            df['crystal reference cell angle 1'] = feat_angles[:,0]
+            df['crystal reference cell angle 2'] = feat_angles[:,1]
+            df['crystal reference cell angle 3'] = feat_angles[:,2]
+
+            df['crystal fc transform'] = list(feat_tfc)
+            df['crystal cf transform'] = list(feat_tcf)
+            df.to_pickle('dataset_with_new_feature')
 
     def featurize(self, chunk_inds=[0, 100]):
         os.chdir(self.crystal_chunks_path)
@@ -861,5 +935,5 @@ if __name__ == '__main__':
         featurizer = CustomGraphFeaturizer(crystal_chunks_path='C:/Users\mikem\Desktop\CSP_runs\datasets\may_new_pull\crystal_features')
         featurizer.featurize(chunk_inds=[offset + 0, offset + run])
     else:
-        featurizer = CustomGraphFeaturizer(full_dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset.npy')
-        featurizer.add_one_feature_to_full_dataset(feature='crystal reference cell coords')
+        featurizer = CustomGraphFeaturizer(full_dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset')
+        featurizer.add_one_feature_to_full_dataset(feature='molecule alignment')#'crystal reference cell coords')

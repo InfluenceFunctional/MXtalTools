@@ -134,7 +134,7 @@ config.dataset_seed = config.dataset_seed % 10
 
 
 if config.test_mode:
-    if config.mode == 'joint modelling':
+    if (config.mode == 'joint modelling') and (config.conditioning_mode != 'graph model'):
         config.initial_batch_size = 100
     else:
         config.initial_batch_size = 10

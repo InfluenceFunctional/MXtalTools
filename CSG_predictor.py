@@ -304,15 +304,17 @@ class Predictor():
 
                     # logging
                     self.update_metrics(epoch, metrics_dict, err_tr, err_te, learning_rate)
-                    self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
-                                      metrics_dict, tr_record, te_record, epoch_stats_dict,
-                                      config, model, log_figures=config.log_figures)
+                    self.log_loss(metrics_dict, tr_record, te_record)
+                    if epoch % config.sample_reporting_frequency == 0:
+                        self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
+                                          te_record, epoch_stats_dict,
+                                          config, model, log_figures=config.log_figures)
 
                     # check for convergence
                     if checkConvergence(config, metrics_dict['test loss']) and (epoch > config.history + 2):
                         config.finished = True
                         self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
-                                          metrics_dict, tr_record, te_record, epoch_stats_dict,
+                                          te_record, epoch_stats_dict,
                                           config, model, log_figures=True)  # always log figures at end of run
                         break
 
@@ -513,17 +515,17 @@ class Predictor():
         print('Sampling from NF')
         for j in tqdm.tqdm(range(n_repeats)):
             for i, data in enumerate(test_loader):
+                minibatch_size = data.num_graphs
                 if config.conditional_modelling:
                     if config.device == 'cuda':
                         data = data.cuda()
-                    minibatch_size = data.num_graphs
                     nf_samples[j].extend(model.sample(
                         minibatch_size,
                         conditions=data
                     ).cpu().detach().numpy())
                 else:
                     nf_samples[j].extend(model.sample(
-                        len(data)
+                        minibatch_size,
                     ).cpu().detach().numpy())
         return np.asarray(nf_samples).transpose((1, 0, 2))  # molecule - n_samples - feature dimension
 
@@ -558,9 +560,7 @@ class Predictor():
 
         return nf_scores_dict
 
-    def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
-                     metrics_dict, tr_record, te_record, epoch_stats_dict, config, model, log_figures=True):
-        t0 = time.time()
+    def log_loss(self,metrics_dict, tr_record, te_record):
         current_metrics = {}
         for key in metrics_dict.keys():
             current_metrics[key] = float(metrics_dict[key][-1])
@@ -583,6 +583,11 @@ class Predictor():
 
         wandb.log({"Train Loss Coeff. of Variation": np.sqrt(np.var(tr_record)) / np.average(tr_record)})
         wandb.log({"Test Loss Coeff. of Variation": np.sqrt(np.var(te_record)) / np.average(te_record)})
+
+
+    def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
+                     te_record, epoch_stats_dict, config, model, log_figures=True):
+        t0 = time.time()
 
         # correlate losses with molecular features
         tracking_features = np.asarray(epoch_stats_dict['tracking features'])
@@ -769,12 +774,11 @@ class Predictor():
             '''
             Get the samples
             '''
-
             n_samples = config.num_samples
             n_dims = self.dataDims['n crystal features']
             dataset_length = len(test_loader.dataset)
             self.sampling_batch_size = min(dataset_length, config.final_batch_size)
-            n_repeats = n_samples // dataset_length
+            n_repeats = max(n_samples // dataset_length,1)
             n_samples = n_repeats * dataset_length
             model.eval()
 

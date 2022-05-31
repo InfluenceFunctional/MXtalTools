@@ -1,14 +1,48 @@
 import numpy as np
 #import numba as nb
-from nikos.rotations import rotation_matrix_from_vectors, euler_rotation, rodriguez_rotation
+from nikos.rotations import rotation_matrix_from_vectors, euler_rotation, rodrigues_rotation
 from utils import compute_principal_axes_np
+from scipy.spatial.transform import Rotation
+
+
+def set_standard_position(masses,coords0,T_fc):
+    coords = coords0.copy()
+    # center coordinates on the center of mass
+    CoM = coords.T.dot(masses) / np.sum(masses)
+    coords -= CoM
+    Ip_axes, Ip_moments, I_tensor = compute_principal_axes_np(masses, coords) # third row of the Ip_axes matrix is the principal moment axis
+
+    #1. align I1 to (1,1,1)
+    normed_corner_vector = T_fc.dot(np.ones(3))
+    normed_corner_vector /= np.linalg.norm(normed_corner_vector)
+    rot_mat = rotation_matrix_from_vectors(Ip_axes[-1], normed_corner_vector) # align I1 to (1,1,1)
+    coords = (rot_mat.dot(coords.T)).T # apply rotation matrix (add and subtract CoM if not already done)    #coords = euler_rotation(rot_mat, coords)
+    Ip_axes2, _, _ = compute_principal_axes_np(masses, coords) # third row of the Ip_axes matrix is the principal moment axis
+
+    #2. rotate I2 to align with the perpendicular vector between (1,1,1)-(0,0,0) and (0,1,1)
+    #a) find the point on (1,1,1)-(0,0,0) closest to (0,1,1)
+    corner_point = np.array((0,1,1))
+    # multiple of the unit vector in the direction (1,1,1)-(0,0,0) to the nearest point to (0,1,1)
+    t0 = T_fc.dot(corner_point).dot(normed_corner_vector)/(normed_corner_vector.dot(normed_corner_vector))
+    P0 = normed_corner_vector * t0 # point nearest to (0,1,1)
+    rot_alignment_vec = T_fc.dot(corner_point) - P0 # vector between two P0 and (0,1,1)
+    #b) get angle between I2 and the corner vector
+    spoke = Ip_axes2[1]
+    target = rot_alignment_vec / np.linalg.norm(rot_alignment_vec)
+    I2_alignment_angle = np.arctan2(np.dot(np.cross(spoke, target), Ip_axes2[-1]), np.dot(spoke, target)) # get the SIGNED angle between the two vectors, in the axes perpendicular to I1
+    #c) execute the rotation about I1 - now I1 is aligned to (1,1,1)-(0,0,0) and I2 is pointed from this line, to the corner (0,1,1)
+    coords = rodrigues_rotation(normed_corner_vector, coords, I2_alignment_angle / np.pi *180)
+    '''
+    molecule is now 'set' to a 'standard' position, with CoG at (0,0,0)
+    '''
+    return coords - np.average(coords,axis=0), normed_corner_vector, rot_alignment_vec
 
 
 #@nb.jit(nopython=True)
-def randomize_molecule_position_and_orientation(coords, weights, T_fc, set_position=None, set_rotation = None):
+def randomize_molecule_position_and_orientation(coords, masses, T_fc, set_position=None, set_rotation = None, confirm_transform = False):
     '''
     :param coords:
-    :param weights:
+    :param masses:
     :param T_fc:
     :param set_position:
     :param set_orientation:
@@ -19,57 +53,56 @@ def randomize_molecule_position_and_orientation(coords, weights, T_fc, set_posit
     if set_rotation is not None:
         new_rotation = np.asarray(set_rotation,dtype=float)
     else:
-        new_rotation = np.random.uniform(-1, 1, size=3)
+        new_rotation = np.random.uniform(-np.pi, np.pi, size=3)
+        new_rotation[1] /= 2 # second rotation is from -pi/2 to pi/2 by convention (also makes inversion possible)
     if set_position is not None:
         new_centroid_frac = np.asarray(set_position,dtype=float)
     else:
         new_centroid_frac = np.random.uniform(0, 1, size=(3))
 
-    # center coordinates on the center of mass
-    CoM = coords.T.dot(weights) / np.sum(weights)
-    coords -= CoM
-    Ip_axes, Ip_moments, I_tensor = compute_principal_axes_np(weights, coords, np.zeros(3)) # third row of the Ip_axes matrix is the principal moment axis
+    coords, normed_corner_vector, _ = set_standard_position(masses, coords, T_fc) # get standard position at CoG
+    rotation = Rotation.from_euler('xyz',new_rotation) # apply rotation - not fancy but will work
+    coords = rotation.apply(coords)
+    coords = coords - np.average(coords, axis=0) + T_fc.dot(new_centroid_frac)  #4. move centroid to the given coordinate
 
-    #1. align I1 to (1,1,1)
-    normed_corner_vector = T_fc.dot(np.ones(3))
-    normed_corner_vector /= np.linalg.norm(normed_corner_vector)
-    rot_mat = rotation_matrix_from_vectors(Ip_axes[-1], normed_corner_vector) # align I1 to (1,1,1)
-    coords = (rot_mat.dot(coords.T)).T # apply rotation matrix (add and subtract CoM if not already done)    #coords = euler_rotation(rot_mat, coords)
-    Ip_axes2, Ip_moments2, I_tensor2 = compute_principal_axes_np(weights, coords, np.zeros(3)) # third row of the Ip_axes matrix is the principal moment axis
-    # Ip_axes2 = rot_mat.dot(Ip_axes.T).T or this way - not exact but pretty close
+    if confirm_transform:
+        centroid_check, angle_check = retrieve_alignment_parameters(masses, coords, T_fc, np.linalg.inv(T_fc))
+        if (np.linalg.norm(centroid_check - new_centroid_frac) > 0.01) or (np.linalg.norm(angle_check - new_rotation) > 0.01):
+            print('Error in analyzer!')
 
-    #2. rotate I2 to align with the perpendicular vector between (1,1,1)-(0,0,0) and (0,1,1)
-    #a) find the point on (1,1,1)-(0,0,0) closest to (0,1,1)
-    corner_point = np.array((0,1,1))
-    t0 = T_fc.dot(corner_point).dot(normed_corner_vector)/(normed_corner_vector.dot(normed_corner_vector))
-    P0 = normed_corner_vector * t0 # point nearest to (0,1,1)
-    rot_alignment_vec = T_fc.dot(corner_point) - P0 # vector between two points
-    #b) get angle between I2 and the corner vector
-    I2_alignment_angle = np.arccos(np.dot(rot_alignment_vec, Ip_axes2[1])/np.linalg.norm(rot_alignment_vec))
-    #c) execute the rotation about I1 - now I1 is aligned to (1,1,1)-(0,0,0) and I2 is pointed from this line, to the corner (0,1,1)
-    coords = rodriguez_rotation(Ip_axes2[-1], coords, np.prod((I2_alignment_angle,180)))
-    #Ip_axes3, Ip_moments3, I_tensor3 = compute_principal_axes_np(weights, aligned_coords, CoM) # third row of the Ip_axes matrix is the principal moment axis
-
-    '''
-    molecule is now 'set' to a 'standard' position
-    '''
-
-    #3. rotate to align with an arbitrary vector in the fractional basis
-    new_direction = T_fc.dot(new_rotation) # new vector is A*a + B*b + C*c in the frac basis
-    new_direction /= np.linalg.norm(new_direction)
-    new_rot_mat = rotation_matrix_from_vectors(normed_corner_vector, new_direction) # align molecule (which is pointed at (1,1,1)) to new random direction
-    coords = (new_rot_mat.dot(coords.T)).T
-
-    #4. move centroid to the given coordinate
-    coords = coords - np.average(coords, axis=0) + T_fc.dot(new_centroid_frac)
     return coords
 
 
-def old_randomize_molecule_position_and_orientation(coords, weights, T_fc, set_position=None, set_orientation=None, set_rotation = None):
+def retrieve_alignment_parameters(masses,coords,T_fc,T_cf):
     '''
-    # todo define rodriguez rotation against some reference axis
+    :param masses:
     :param coords:
-    :param weights:
+    :param T_fc:
+    :param T_cf:
+    :return:
+    '''
+    points = coords.copy()
+    # reverse the transform
+    std_coords, normed_corner_vector, _ = set_standard_position(masses, points, T_fc)
+
+    # translation component
+    centroid_c = np.average(points,axis=0)
+    centroid_f = T_cf.dot(centroid_c)
+
+    # rotation component invert the rotation and extract the three Euler angles
+    points -= centroid_c
+    rmat = (points[:3].T @ np.linalg.inv(std_coords[:3]).T)
+    rot = Rotation.from_matrix(rmat)
+    angles = rot.as_euler('xyz') # euler angles of the original rotation
+
+    return centroid_f, angles
+
+
+def old_randomize_molecule_position_and_orientation(coords, masses, T_fc, set_position=None, set_orientation=None, set_rotation = None):
+    '''
+    # todo define rodrigues rotation against some reference axis
+    :param coords:
+    :param masses:
     :param T_fc:
     :param set_position:
     :param set_orientation:
@@ -91,9 +124,9 @@ def old_randomize_molecule_position_and_orientation(coords, weights, T_fc, set_p
         new_centroid_frac = np.random.uniform(0, 1, size=(3))
 
 
-    CoM = coords.T.dot(weights) / np.sum(weights)
+    CoM = coords.T.dot(masses) / np.sum(masses)
     coords -= CoM
-    Ip_axes, Ip_moments, I_tensor = compute_principal_axes_np(weights, coords, CoM) # third row of the Ip_axes matrix is the principal moment axis
+    Ip_axes, Ip_moments, I_tensor = compute_principal_axes_np(masses, coords) # third row of the Ip_axes matrix is the principal moment axis
 
     # align molecule principal axis to new orientation
     rot_mat = rotation_matrix_from_vectors(Ip_axes[-1], T_fc.dot(np.eye(3)[0] - new_orientation)) # define as difference from a vector
@@ -101,7 +134,7 @@ def old_randomize_molecule_position_and_orientation(coords, weights, T_fc, set_p
 
     # rotate about the principal axis by theta
     # todo would be nice if this was defined against some standard axis, but it's not obvious to me
-    coords = rodriguez_rotation(Ip_axes[-1], coords, np.prod((new_rotation, 180)))
+    coords = rodrigues_rotation(Ip_axes[-1], coords, np.prod((new_rotation, 180)))
 
     # move centroid to new location
     new_centroid_cart = T_fc.dot(new_centroid_frac) #np.transpose(np.dot(T_fc, np.transpose(new_centroid_frac)))

@@ -1,11 +1,11 @@
 test_mode: False
 model_seed: 0
 dataset_seed: 0
-machine: "local"
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
-run_num: 0
+explicit_run_enumeration: True
+run_num: 3032
 mode: joint modelling # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification'
 # note only mikenet currently works for cell-wise training
 log_figures: True
@@ -13,7 +13,7 @@ log_figures: True
 sweep: False
 sweep_config_file: "sweep_test.yaml"
 experiment_tag: "new_clean_data_testing"
-sample_reporting_frequency: 10
+sample_reporting_frequency: 5
 sweep_id: null
 sweep_num_runs: 50
 
@@ -55,14 +55,14 @@ anomaly_detection: False
 
 initial_batch_size: 20000
 auto_batch_sizing: True
-auto_batch_reduction: 0.2
+auto_batch_reduction: 0.5
 max_epochs: 500
 history: 20
 
 graph_model: mike
-graph_convolution_layers: 2
+graph_convolution_layers: 8
 graph_filters: 16
-atom_embedding_size: 16
+atom_embedding_size: 32
 graph_norm: null
 num_spherical: 6
 num_radial: 12
@@ -73,15 +73,15 @@ num_attention_heads: 1 # mikenet only
 graph_convolution: 'full message passing' # mikenet only
 add_spherical_basis: False # mikenet only
 
-num_fc_layers: 1
-fc_depth: 16
+num_fc_layers: 2
+fc_depth: 32
 pooling: attention
 activation: "gelu"
 fc_dropout_probability: 0
 fc_norm_mode: null
 
-conditional_modelling: False # only implemented for nsf_cl coupling layer
-conditioning_mode: molecule features # 'graph model' or 'molecule features'
+conditional_modelling: True # only implemented for nsf_cl coupling layer
+conditioning_mode: graph model # 'graph model' or 'molecule features'
 num_flow_layers: 20
 flow_depth: 128
 flow_basis_fns: 8

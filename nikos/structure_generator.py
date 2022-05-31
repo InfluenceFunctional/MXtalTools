@@ -8,7 +8,7 @@ from generate_unit_cell import generate_unit_cell
 from identify_close_contacts import identify_close_contacts
 from perpendicular_vectors import perpendicular_vectors
 from plane_vector_transformation import plane_vector_transformation
-from rotations import rotation_matrix_from_vectors, euler_rotation, rodriguez_rotation
+from rotations import rotation_matrix_from_vectors, euler_rotation, rodrigues_rotation
 from symmetry_operations import symmetry_operations
 
 '''
@@ -100,7 +100,7 @@ def structure_generator(sg,
     ''' Loop over all possible dzzp_angles '''
     for angle in dzzp_angles:
         ''' Rotate the molecule about the plane vector to get the bond vectors '''
-        bv = rodriguez_rotation(k,v,angle)
+        bv = rodrigues_rotation(k,v,angle)
         
         ''' Convert to fractional coordinates '''
         bv_f = coor_trans('c_to_f',bv,cell_vectors,cell_angles)
