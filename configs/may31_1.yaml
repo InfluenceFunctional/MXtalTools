@@ -23,6 +23,7 @@ concat_mol_to_atom_features: False
 csd_fraction: 0.5 # fraction of cell-wise training data to be from the CSD
 
 dataset_length: 1000000
+dataset_path:  '/scratch/mk8347/csd_runs/datasets/full_dataset'
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 50
