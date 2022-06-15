@@ -86,6 +86,6 @@ conditioning_mode: graph model # 'graph model' or 'molecule features'
 num_flow_layers: 20
 flow_depth: 128
 flow_basis_fns: 8
-flow_prior: multivariate normal
+generator_prior: multivariate normal
 flow_type: nsf # choice of affine coupling layer - nsf or glow or made, glow seems to have low capacity and made isn't stable
 num_samples: 100000

@@ -6,16 +6,17 @@ import matplotlib.pyplot as plt
 import tqdm
 from pymatgen.core import Molecule
 from pymatgen.symmetry.analyzer import PointGroupAnalyzer
-import sys
-import itertools
 import rdkit.Chem as Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors, AllChem, rdMolTransforms
 import time
 from nikos.coordinate_transformations import coor_trans, coor_trans_matrix
 from mendeleev import element as element_table
 from ccdc.search import EntryReader
-from random_crystal_builder import retrieve_alignment_parameters
-
+from random_crystal_builder import retrieve_alignment_parameters, build_random_crystal, randomize_molecule_position_and_orientation
+from pyxtal import symmetry
+from ase.ga.utilities import get_rdf
+from ase import Atoms
+from ase.visualize import view
 
 
 def get_fraction(atomic_numbers, target):
@@ -30,7 +31,7 @@ def get_dipole(coords, charges):
 
 
 class CustomGraphFeaturizer():
-    def __init__(self, crystal_chunks_path=None, full_dataset_path = None):
+    def __init__(self, crystal_chunks_path=None, full_dataset_path=None):
         '''
         get atom and molecule level features
 
@@ -71,7 +72,6 @@ class CustomGraphFeaturizer():
 
         if full_dataset_path is not None:
             self.full_dataset_path = full_dataset_path
-
 
         self.crystalSystems = ['error', 'triclinic', 'monoclinic', 'orthorhombic', 'tetragonal', 'trigonal', 'hexagonal', 'cubic', 'rhombohedral']
         self.latticeCentering = ['error', 'primitive', 'A-centred', 'B-centred', 'C-centred', 'F-centred', 'I-centred', 'R-centred']
@@ -677,8 +677,12 @@ class CustomGraphFeaturizer():
 
     def add_one_feature_to_full_dataset(self, feature):
         df = pd.read_pickle(self.full_dataset_path)
-        #df = pd.DataFrame.from_dict(np.load(self.full_dataset_path, allow_pickle=True).item())
-
+        # df = pd.DataFrame.from_dict(np.load(self.full_dataset_path, allow_pickle=True).item())
+        self.sym_ops = {}
+        for i in tqdm.tqdm(range(1, 231)):
+            sym_group = symmetry.Group(i)
+            general_position_syms = sym_group.wyckoffs_organized[0][0]
+            self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
 
         if feature == 'crystal reference cell coords':
             csd_reader = EntryReader('CSD')
@@ -695,7 +699,7 @@ class CustomGraphFeaturizer():
                     new_feature_vec[i] = 'error'
                     continue
                 crystal = entry.crystal
-                ref_cell = crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded') # note sometimes it does this wrong (includes hydrogens?) - implement a manual check
+                ref_cell = crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded')  # note sometimes it does this wrong (includes hydrogens?) - implement a manual check
                 ref_cell_coords_c = np.zeros((int(crystal.z_value), len(crystal.molecule.heavy_atoms), 3), dtype=np.float_)
                 ref_cell_coords_f = np.zeros((int(crystal.z_value), len(crystal.molecule.heavy_atoms), 3), dtype=np.float_)
 
@@ -718,10 +722,11 @@ class CustomGraphFeaturizer():
             df.to_pickle('dataset_with_new_feature')
 
         elif feature == 'molecule alignment':
-            feat_tfc = np.zeros((len(df),3,3))
+            feat_tfc = np.zeros((len(df), 3, 3))
             feat_tcf = np.zeros_like(feat_tfc)
-            feat_centroid = np.zeros((len(df),3))
+            feat_centroid = np.zeros((len(df), 3))
             feat_angles = np.zeros_like(feat_centroid)
+            flaglist = []
             for i in tqdm.tqdm(range(len(df))):
                 cell_lengths = np.asarray(df['crystal cell lengths'][i])
                 cell_angles = np.asarray(df['crystal cell angles'][i])
@@ -739,12 +744,13 @@ class CustomGraphFeaturizer():
 
                     atomic_numbers = np.asarray(df['atom Z'][i])
                     heavy_atom_inds = np.argwhere(atomic_numbers > 1)[:, 0]
+                    atomic_numbers = atomic_numbers[heavy_atom_inds]
                     masses = np.asarray(df['atom mass'][i])[heavy_atom_inds]
                     # get all the centroids
                     CoG_c = np.average(cell_coords_c, axis=1)
                     CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
-                    #CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
-                    #CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
+                    # CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
+                    # CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
 
                     # manually enforce our style of centroid
                     flag = 0
@@ -760,31 +766,65 @@ class CustomGraphFeaturizer():
                     if flag:
                         CoG_c = np.average(cell_coords_c, axis=1)
                         CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
-                        #CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
-                        #CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
 
                     # take the fractional molecule centroid closest to the origin
-                    #centroid_distance_from_origin_c = np.linalg.norm(CoG_c, axis=1)
                     centroid_distance_from_origin_f = np.linalg.norm(CoG_f, axis=1)
                     canonical_mol_ind = np.argmin(centroid_distance_from_origin_f)
 
                     feat_centroid[i], feat_angles[i] = retrieve_alignment_parameters(masses, cell_coords_c[canonical_mol_ind], T_fc, T_cf)
-                    if (np.amin(feat_centroid[i]) < 0) or (np.amax(feat_centroid[i]) > 1):
-                        aa = 1
+
+                    assert np.amin(feat_centroid[i]) >= 0
+                    assert np.amax(feat_centroid[i]) <= 1
+
+                    if df['crystal spacegroup setting'][i] == 1: # for now do not attempt for nonstandard settings
+                        # invert the analysis to confirm we make a good unit cell with these parameters
+                        #conformer = df['atom coords'][i][heavy_atom_inds]
+
+                        random_coords, centroid_chec, angle_check, new_centroid_frac, new_rotation, error = randomize_molecule_position_and_orientation(
+                            cell_coords_c[canonical_mol_ind], masses, T_fc, T_cf, np.asarray(self.sym_ops[df['crystal spacegroup number'][i]]),
+                            confirm_transform=True, force_centroid = True, set_position=feat_centroid[i], set_rotation=feat_angles[i])
+
+                        generated_c, _ = build_random_crystal(T_cf, T_fc, random_coords,
+                                                              np.asarray(self.sym_ops[df['crystal spacegroup number'][i]]), z_value)
+
+                        #CoG_f_gen = T_cf.dot(generated_c.mean(1).T).T
+
+                        # analyze
+                        mol1 = Atoms(numbers=np.tile(atomic_numbers, z_value), positions=cell_coords_c.reshape(z_value * len(atomic_numbers), 3), cell=T_fc)
+                        mol2 = Atoms(numbers=np.tile(atomic_numbers, z_value), positions=generated_c.reshape(z_value * len(atomic_numbers), 3), cell=T_fc)
+
+                        r_maxs = np.zeros(3)
+                        for j in range(3):
+                            axb = np.cross(mol1.cell[(j + 1) % 3, :], mol1.cell[(j + 2) % 3, :])
+                            h = mol1.get_volume() / np.linalg.norm(axb)
+                            r_maxs[j] = h/2.01
+
+                        rdf1 = get_rdf(mol1, rmax=r_maxs.min(), nbins=50)[0]
+                        rdf2 = get_rdf(mol2,rmax=r_maxs.min(),nbins=50)[0]
+                        diff = np.mean(np.abs(rdf1-rdf2))
+                        if (diff > 0.01):
+                            flaglist.append(i)
+                            print(f'flagged entry {i} in spacegroup {df["crystal spacegroup symbol"][i]}')
+                            feat_centroid[i], feat_angles[i] = np.ones(3) * np.nan, np.ones(3) * np.nan
+                            flag = 1
+                            #view((mol1,mol2))
+
                 else:
-                    feat_centroid[i], feat_angles[i] = np.ones(3) * np.nan, np.ones(3)*np.nan
+                    feat_centroid[i], feat_angles[i] = np.ones(3) * np.nan, np.ones(3) * np.nan
 
-            df['crystal reference cell centroid x'] = feat_centroid[:,0]
-            df['crystal reference cell centroid y'] = feat_centroid[:,1]
-            df['crystal reference cell centroid z'] = feat_centroid[:,2]
+            df['crystal reference cell centroid x'] = feat_centroid[:, 0]
+            df['crystal reference cell centroid y'] = feat_centroid[:, 1]
+            df['crystal reference cell centroid z'] = feat_centroid[:, 2]
 
-            df['crystal reference cell angle 1'] = feat_angles[:,0]
-            df['crystal reference cell angle 2'] = feat_angles[:,1]
-            df['crystal reference cell angle 3'] = feat_angles[:,2]
+            df['crystal reference cell angle 1'] = feat_angles[:, 0]
+            df['crystal reference cell angle 2'] = feat_angles[:, 1]
+            df['crystal reference cell angle 3'] = feat_angles[:, 2]
 
             df['crystal fc transform'] = list(feat_tfc)
             df['crystal cf transform'] = list(feat_tcf)
             df.to_pickle('dataset_with_new_feature')
+            np.save('flagged_crystals',np.asarray(flaglist))
+            aa = 1
 
     def featurize(self, chunk_inds=[0, 100]):
         os.chdir(self.crystal_chunks_path)
@@ -911,7 +951,6 @@ class CustomGraphFeaturizer():
         dataset2['crystal beta'] = cell_angles[1]
         dataset2['crystal gamma'] = cell_angles[2]
 
-
         return dataset2
 
     def checkForSymmetry(self, crystal_symmetries, type=None):
@@ -936,4 +975,4 @@ if __name__ == '__main__':
         featurizer.featurize(chunk_inds=[offset + 0, offset + run])
     else:
         featurizer = CustomGraphFeaturizer(full_dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset')
-        featurizer.add_one_feature_to_full_dataset(feature='molecule alignment')#'crystal reference cell coords')
+        featurizer.add_one_feature_to_full_dataset(feature='molecule alignment')  # 'crystal reference cell coords')

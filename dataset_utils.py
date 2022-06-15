@@ -8,6 +8,7 @@ import tqdm
 import time
 import matplotlib.pyplot as plt
 import pandas as pd
+from pyxtal import symmetry
 
 
 class BuildDataset:
@@ -15,7 +16,7 @@ class BuildDataset:
     build dataset object
     """
 
-    def __init__(self, config):
+    def __init__(self, config, pg_dict=None):
         self.target = config.target
         self.max_atomic_number = config.max_atomic_number
         self.atom_dict_size = {'atom z': self.max_atomic_number + 1}  # for embeddings
@@ -29,8 +30,6 @@ class BuildDataset:
         self.min_packing_coefficient = config.min_packing_coefficient
         self.include_organic = config.include_organic
         self.include_organometallic = config.include_organometallic
-        self.concat_mol_to_atom_features = config.concat_mol_to_atom_features
-        self.amount_of_features = config.amount_of_features
         self.model_mode = config.mode
         self.conditional_modelling = config.conditional_modelling
         self.include_sgs = config.include_sgs
@@ -40,18 +39,16 @@ class BuildDataset:
         self.crystal_keys = ['crystal spacegroup symbol', 'crystal spacegroup number',
                              'crystal calculated density', 'crystal packing coefficient',
                              'crystal lattice centring', 'crystal system',
-                             'crystal has 2-fold screw', 'crystal has 2-fold rotation', 'crystal has glide', 'crystal has inversion',
                              'crystal alpha', 'crystal beta', 'crystal gamma',
                              'crystal cell a', 'crystal cell b', 'crystal cell c',
-                             'crystal z value', 'crystal z prime',
+                             'crystal z value', 'crystal z prime', 'crystal point group',
                              ]
-        # todo add target key for cell-wise classifcation (real, not real, RMSD, etc.)
         self.molecule_keys = ['molecule point group is C1', 'molecule mass', 'molecule num atoms', 'molecule volume',
                               'molecule num rings', 'molecule n donors', 'molecule n acceptors',
-                              'molecule n rotatable bonds', 'molecule planarity',
+                              'molecule n rotatable bonds', 'molecule planarity', 'molecule polarity',
                               'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
-                              'molecule H fraction', 'molecule C fraction', 'molecule N fraction', 'molecule O fraction',
-                              'crystal is organic', 'crystal is organometallic', 'crystal temperature', 'molecule polarity',
+                              # 'molecule H fraction', 'molecule C fraction', 'molecule N fraction', 'molecule O fraction',
+                              # 'crystal is organic', 'crystal is organometallic', 'crystal temperature',
                               'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
                               ]
         # for coupling NF models, must be an even number of these
@@ -60,19 +57,22 @@ class BuildDataset:
                              'crystal reference cell centroid x', 'crystal reference cell centroid y', 'crystal reference cell centroid z',
                              'crystal reference cell angle 1', 'crystal reference cell angle 2', 'crystal reference cell angle 3',
                              ]
-        for key in self.include_sgs:
-            self.lattice_keys.append('crystal spacegroup is ' + key)
+        # for key in self.include_sgs:
+        #    self.lattice_keys.append('crystal spacegroup is ' + key)
 
-        if len(self.lattice_keys) % 2 != 0: # coupling flow model requires an even number of dimensions
-            self.lattice_keys.append(self.lattice_keys[0]) # add a redundant dimension
+        if len(self.lattice_keys) % 2 != 0:  # coupling flow model requires an even number of dimensions
+            self.lattice_keys.append(self.lattice_keys[0])  # add a redundant dimension
 
-        self.conditional_keys = ['molecule volume', 'molecule mass', 'molecule num atoms', 'molecule n donors', 'molecule n acceptors',
-                                 'molecule num rings', 'molecule planarity', 'molecule spherical defect', 'molecule radius of gyration',
-                                 ]
         self.minimal_molecule_keys = ['molecule point group is C1', 'molecule mass', 'molecule num atoms', 'molecule volume']
         self.atom_keys = ['atom Z', 'atom mass', 'atom is H bond donor', 'atom is H bond acceptor',
                           'atom is aromatic', 'atom valence', 'atom vdW radius',
                           'atom on a ring', 'atom chirality', 'atom degree', 'atom electronegativity']
+
+        if pg_dict is None:
+            pg_dict = {}
+            for i in tqdm.tqdm(range(1, 231)):
+                sym_group = symmetry.Group(i)
+                pg_dict[i] = sym_group.point_group
 
         if self.include_sgs is not None:
             print("Modelling within " + str(self.include_sgs))
@@ -84,7 +84,7 @@ class BuildDataset:
         for i in range(config.min_z_value + 1, config.max_z_value + 1):
             dataset['crystal z is {}'.format(i)] = dataset['crystal z value'] == i
         dataset['molecule point group is C1'] = dataset['molecule point group'] == 'C1'
-        dataset['crystal veracity'] = np.random.randint(0, 2, size=len(dataset['crystal z value'])).astype(bool)  # whether it's a real crystal
+        dataset['crystal veracity'] = np.random.randint(0, 2, size=len(dataset['crystal z value'])).astype(bool)  # DUMMY VARIABLE
 
         for key in self.include_sgs:
             dataset['crystal spacegroup is ' + key] = dataset['crystal spacegroup symbol'] == key
@@ -98,7 +98,24 @@ class BuildDataset:
             self.crystal_system_dict[i] = system
             self.crystal_system_dict[system] = i
 
+        dataset['crystal system'] = [self.crystal_system_dict[system] for system in dataset['crystal system']]
+
+
+        # get crystal point groups and make an ordered dict
+        if pg_dict is not None:
+            point_groups = [pg_dict[dataset['crystal spacegroup number'][i]] for i in range(len(dataset))]
+            point_group_elems = np.unique(point_groups)
+            self.point_group_dict = {}
+            for i, group in enumerate(point_group_elems):
+                self.point_group_dict[i] = group
+                self.point_group_dict[group] = i
+
+        dataset['crystal point group'] = [self.point_group_dict[pg] for pg in point_groups]
+
         if self.model_mode == 'joint modelling':
+            self.datapoints, self.means, self.stds, self.dtypes = self.get_joint_features(dataset)
+            self.datapoints = self.generate_joint_training_datapoints(dataset, config)
+        elif self.model_mode == 'cell gan':
             self.datapoints, self.means, self.stds, self.dtypes = self.get_joint_features(dataset)
             self.datapoints = self.generate_joint_training_datapoints(dataset, config)
         else:
@@ -202,13 +219,7 @@ class BuildDataset:
         # normalize everything
         keys_to_add = []
         if mol_keys:
-            if self.amount_of_features.lower() == 'maximum':
-                keys_to_add.extend(self.molecule_keys)
-            elif self.amount_of_features.lower() == 'minimum':
-                keys_to_add.extend(self.minimal_molecule_keys)
-            else:
-                print(self.amount_of_features + ' is not a valid featurization!')
-                sys.exit()
+            keys_to_add.extend(self.molecule_keys)
 
         if extra_keys is not None:
             keys_to_add.extend(extra_keys)
@@ -241,59 +252,47 @@ class BuildDataset:
 
         return molecule_feature_array
 
-    def add_conditional_features(self, dataset, config):
-        if config.conditioning_mode == 'molecule features':
-            keys_to_add = self.conditional_keys
-
-            key_dtype = []
-            # featurize
-            means, stds = [], []
-            feature_array = np.zeros((self.dataset_length, len(keys_to_add)), dtype=float)
-            raw_feature_array = np.zeros_like(feature_array)
-            for column, key in enumerate(keys_to_add):
-                feature_vector = dataset[key]
-                if type(feature_vector) is not np.ndarray:
-                    feature_vector = np.asarray(feature_vector)
-
-                key_dtype.append(feature_vector.dtype)
-
-                raw_feature_array[:, column] = feature_vector
-                means.append(np.average(feature_vector))
-                stds.append(np.std(feature_vector))
-                feature_vector = (feature_vector - means[-1]) / stds[-1]
-                feature_array[:, column] = feature_vector
-        else:
-            print(config.conditioning_mode + ' is not a valid conditioning mode')
-            sys.exit()
-
-        return feature_array, means, stds, key_dtype
-
     def generate_joint_training_datapoints(self, dataset, config):
         tracking_features = self.gather_tracking_features(dataset)
 
+        if config.mode == 'cell gan':
+            ref_coords = dataset['crystal reference cell coords']
+        else:
+            ref_coords = None
+
         if self.conditional_modelling:
             if self.conditioning_mode == 'graph model':
-                molecule_features_array = self.concatenate_molecule_features(dataset, extra_keys=self.conditional_keys)
                 atom_features_list = self.concatenate_atom_features(dataset)
-                tracking_features = self.gather_tracking_features(dataset)
+                molecule_features_array = self.concatenate_molecule_features(dataset, extra_keys=['crystal point group','crystal system'])
 
-                self.conditional_keys = np.arange(config.fc_depth)
-                return self.generate_training_data(dataset['atom coords'], dataset['molecule smiles'],
-                                                   atom_features_list,
-                                                   molecule_features_array, self.datapoints, tracking_features)
+                self.molecule_keys = np.arange(config.fc_depth)
+                return self.generate_training_data(atom_coords=dataset['atom coords'],
+                                                   smiles=dataset['molecule smiles'],
+                                                   atom_features_list=atom_features_list,
+                                                   mol_features=molecule_features_array,
+                                                   targets=self.datapoints,
+                                                   tracking_features=tracking_features,
+                                                   reference_cells=ref_coords)
 
             elif self.conditioning_mode == 'molecule features':
-                conditional_features = self.concatenate_molecule_features(dataset, extra_keys=self.conditional_keys, mol_keys=False)
-                self.datapoints = np.concatenate((self.datapoints, conditional_features), axis=1)
+                conditional_features = self.concatenate_molecule_features(dataset, extra_keys=['crystal point group','crystal system'])
 
-                return self.generate_training_data([np.zeros((3, 3)) for _ in range(self.final_dataset_length)], dataset['molecule smiles'],
-                                                   [np.zeros((3, 3)) for _ in range(self.final_dataset_length)],
-                                                   [np.zeros((1)) for _ in range(self.final_dataset_length)], self.datapoints, tracking_features)
+                return self.generate_training_data(atom_coords=[np.zeros((1, 3)) for _ in range(self.final_dataset_length)],
+                                                   smiles=dataset['molecule smiles'],
+                                                   atom_features_list=[np.zeros((1, 1)) for _ in range(self.final_dataset_length)],
+                                                   mol_features=conditional_features,
+                                                   targets=self.datapoints,
+                                                   tracking_features=tracking_features,
+                                                   reference_cells=ref_coords)
 
         else:
-            return self.generate_training_data([np.zeros((3, 3)) for _ in range(self.final_dataset_length)], dataset['molecule smiles'],
-                                               [np.zeros((3, 3)) for _ in range(self.final_dataset_length)],
-                                               [np.zeros((1)) for _ in range(self.final_dataset_length)], self.datapoints, tracking_features)
+            return self.generate_training_data(atom_coords=[np.zeros((1, 3)) for _ in range(self.final_dataset_length)],
+                                               smiles=dataset['molecule smiles'],
+                                               atom_features_list=[np.zeros((1, 1)) for _ in range(self.final_dataset_length)],
+                                               mol_features=[np.zeros((1)) for _ in range(self.final_dataset_length)],
+                                               targets=self.datapoints,
+                                               tracking_features=tracking_features,
+                                               reference_cells=ref_coords)
 
     def get_joint_features(self, dataset):
         keys_to_add = self.lattice_keys
@@ -394,7 +393,7 @@ class BuildDataset:
             print([out for out in zip(self.class_labels, counts, self.class_weights)])
 
         else:
-            print('Target collection not implemented for ' + self.model_mode)
+            print('Target not implemented for ' + self.model_mode)
             sys.exit()
 
         return target_features
@@ -463,14 +462,13 @@ class BuildDataset:
                 'tracking features dict': self.tracking_dict_keys,
             }
             if self.conditional_modelling:
-                dim['conditional features'] = self.conditional_keys
-                dim['n conditional features'] = len(self.conditional_keys)
+                dim['conditional features'] = self.molecule_keys
+                dim['n conditional features'] = len(self.molecule_keys)
                 if self.conditioning_mode == 'graph model':  #
                     dim['output classes'] = [2]  # placeholder - will be overwritten later
                     dim['atom features'] = self.datapoints[0].x.shape[1]
                     dim['mol features'] = self.n_mol_features
                     dim['atom embedding dict sizes'] = self.atom_dict_size
-                    dim['prediction tasks'] = 1
 
 
         elif 'regression' in self.model_mode:
@@ -480,7 +478,6 @@ class BuildDataset:
                 'output classes': [1],
                 'dataset length': len(self.datapoints),
                 'atom embedding dict sizes': self.atom_dict_size,
-                'prediction tasks': 1,
                 'n tracking features': self.n_tracking_features,
                 'tracking features dict': self.tracking_dict_keys,
                 'mean': self.mean,
@@ -490,20 +487,39 @@ class BuildDataset:
             dim = {
                 'atom features': self.datapoints[0].x.shape[1],
                 'mol features': self.n_mol_features,
-                'output classes': [self.output_classes],
+                'output classes': self.output_classes,
                 'dataset length': len(self.datapoints),
-                'atom embedding dict sizes': self.atom_dict_size,
-                'prediction tasks': 1,
                 'n tracking features': self.n_tracking_features,
                 'tracking features dict': self.tracking_dict_keys,
                 'class weights': self.class_weights,
                 'class labels': self.class_labels,
             }
+        elif self.model_mode == 'cell gan':
+            dim = {
+                'crystal features': self.lattice_keys,
+                'n crystal features': len(self.lattice_keys),
+                'dataset length': len(self.datapoints),
+                'means': self.means,
+                'stds': self.stds,
+                'dtypes': self.dtypes,
+                'n tracking features': self.n_tracking_features,
+                'tracking features dict': self.tracking_dict_keys,
+                'atom features': self.datapoints[0].x.shape[1],
+                'mol features': self.n_mol_features,
+                'atom embedding dict sizes': self.atom_dict_size,
+                'conditional features': ['crystal system', 'crystal point group'],
+                'n conditional features': 2
+            }
+            if self.conditional_modelling:
+                dim['conditional features'] += self.molecule_keys
+                dim['n conditional features'] += len(self.molecule_keys)
+
         else:
             print(self.model_mode + ' is not a valid mode!')
             sys.exit()
 
         dim['crystal system dict'] = self.crystal_system_dict
+        dim['point group dict'] = self.point_group_dict
 
         return dim
 

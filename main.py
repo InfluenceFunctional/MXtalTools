@@ -26,7 +26,7 @@ parser.add_argument('--dataset_seed', type=int, default=0)
 parser.add_argument('--machine', type=str, default='local')  # 'local' (local windows venv) or 'cluster' (linux env)
 parser.add_argument("--device", default="cuda", type=str)  # 'cuda' or 'cpu'
 add_bool_arg(parser, 'skip_run_init', default=False)
-parser.add_argument("--mode", default="single molecule classification", type=str)  # 'single molecule classification' 'joint modelling' 'single molecule regresion' 'cell classification'
+parser.add_argument("--mode", default="cell gan", type=str)  # 'single molecule classification' 'joint modelling' 'single molecule regresion' 'cell classification', 'cell gan'
 parser.add_argument("--dataset_path", type=str, default = 'C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset')
 
 # wandb login
@@ -46,8 +46,6 @@ parser.add_argument('--sweep_num_runs', type=int, default=100)
 parser.add_argument('--target', type=str, default='molecule spherical defect') # 'rings', 'groups', 'screw', 'inversion','rotoinversion','mirror','rotation','glide', 'crystal system', 'lattice centering', 'spherical', 'planar'(not in Jan17 dataset)
 parser.add_argument('--dataset_length', type=int, default=int(1e3))  # maximum number of items in the dataset before filtration
 # data in modelling
-parser.add_argument('--amount_of_features',type=str,default='minimum') #minimum, maximum
-add_bool_arg(parser, '--concat_mol_to_atom_features',default=False)
 parser.add_argument('--csd_fraction', type = float, default = 0.5)
 #dataset composition
 parser.add_argument('--include_sgs', type = str, default = ['P21/c']) # spacegroups to explicitly include in modelling - new!
@@ -103,16 +101,41 @@ parser.add_argument('--activation', type=str, default='gelu')
 parser.add_argument('--fc_dropout_probability', type=float, default = 0) # dropout probability, [0,1)
 parser.add_argument('--fc_norm_mode', type=str, default='layer') # None, 'batch', 'instance', 'layer'
 
+
+# crystal cell graph Net
+parser.add_argument('--discriminator_graph_model', type=str, default='mike') #'dime', or 'schnet', or 'mike' or None
+parser.add_argument('--discriminator_atom_embedding_size', type=int, default = 32) # embedding dimension for atoms
+parser.add_argument('--discriminator_graph_filters', type=int, default=28)  # number of neurons per graph convolution
+parser.add_argument('--discriminator_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'self attention' 'full message passing'
+parser.add_argument('--discriminator_graph_convolutions_layers', type=int, default=0)  # number of graph convolution blocks
+parser.add_argument('--discriminator_graph_norm',type = str, default = 'layer') # None, 'layer', 'graph'
+parser.add_argument('--discriminator_num_spherical', type = int, default = 6) # dime angular basis functions, default is 6
+parser.add_argument('--discriminator_num_radial', type = int, default = 12) # dime radial basis functions, default is 12
+parser.add_argument('--discriminator_graph_convolution_cutoff', type = int, default = 5) # dime default is 5.0 A, schnet default is 10
+parser.add_argument('--discriminator_max_num_neighbors', type = int, default = 32) # dime default is 32
+parser.add_argument('--discriminator_radial_function', type=str, default = 'bessel') # 'bessel' or 'gaussian' - only applies to mikenet
+add_bool_arg(parser, 'discriminator_add_spherical_basis', default = False) # include spherical information in message aggregation - only applies to mikenet
+
+parser.add_argument('--discriminator_num_fc_layers', type=int, default=1)  # number of layers in NN models
+parser.add_argument('--discriminator_fc_depth', type=int, default=27)  # number of neurons per NN layer
+parser.add_argument('--discriminator_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
+parser.add_argument('--discriminator_activation', type=str, default='gelu')
+parser.add_argument('--discriminator_fc_dropout_probability', type=float, default = 0) # dropout probability, [0,1)
+parser.add_argument('--discriminator_fc_norm_mode', type=str, default='layer') # None, 'batch', 'instance', 'layer'
+
 # flow model
 parser.add_argument('--num_flow_layers', type=int, default=3) # number of flow layers
 parser.add_argument('--flow_depth', type=int, default=16) # number of filters per flow layer
 parser.add_argument('--flow_basis_fns', type=int, default=8) # number of basis functions for spline NF model
-parser.add_argument('--flow_prior', type=str, default='multivariate normal') # type of prior distribution
+parser.add_argument('--generator_prior', type=str, default='multivariate normal') # type of prior distribution
 parser.add_argument('--flow_type', type=str, default='nsf_ar') # type of flow model
 parser.add_argument('--num_samples', type=int, default=10000) # number of samples to generate for analysis
 add_bool_arg(parser,'conditional_modelling', default=True) # whether to use molecular features as conditions for normalizing flow model
 parser.add_argument('--conditioning_mode', type=str, default='graph model') # how to derive molecular conditioning - graph model or just selected features
 
+# cell generator
+parser.add_argument('--generator_model', type=str, default='mlp') # random, 'csd cell', 'model'
+parser.add_argument('--gan_loss', type=str, default = 'wasserstein') # 'wasserstein, 'standard'
 
 config = parser.parse_args()
 if config.config_file is not None: # load up config from file

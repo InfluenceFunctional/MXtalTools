@@ -6,6 +6,10 @@ from dataset_management.random_crystal_builder import *
 from pyxtal import symmetry
 from nikos.coordinate_transformations import cell_vol, coor_trans_matrix
 import matplotlib.colors as colors
+from ase import Atoms
+from ase.visualize import view
+from ase.geometry.analysis import Analysis
+from ase.ga.utilities import get_rdf
 
 class Miner():
     def __init__(self, dataset_path, config=None, collect_chunks=False):
@@ -497,7 +501,7 @@ class Miner():
         compare inertial and/or ring planes to 5x5 cell axes
         5. 
         '''
-        print('Pre-generating general position symmetries')
+        print('Analyzing reference cells')
         self.sym_ops = {}
         for i in tqdm.tqdm(range(1, 231)):
             sym_group = symmetry.Group(i)
@@ -526,7 +530,10 @@ class Miner():
         csd_inds = []
         tests = []
         ind = -1
-        for i in tqdm.tqdm(range(10000)):#len(self.dataset))):
+        study_cells = True
+        compare_cells = False
+        diff_list = []
+        for i in tqdm.tqdm(range(len(self.dataset))):
             if self.dataset['crystal reference cell coords'][i] != 'error':  # skip bad cells
                 # confirm we have good syms
                 z_value = int(self.dataset['crystal z value'][i])
@@ -551,40 +558,120 @@ class Miner():
                 atomic_numbers = np.asarray(self.dataset['atom Z'][i])
                 heavy_atom_inds = np.argwhere(atomic_numbers > 1)[:, 0]
                 masses = np.asarray(self.dataset['atom mass'][i])[heavy_atom_inds]
-                # atoms in cartesian coords
-                from_csd = np.random.randint(0,2,size=1)
-                if from_csd:
-                    csd_inds.append(ind)
+                atomic_numbers = atomic_numbers[heavy_atom_inds]
 
-                    # reference cell coords
-                    cell_coords_c = self.dataset['crystal reference cell coords'][i][:, :, :3]
-                    cell_coords_f = self.dataset['crystal reference cell coords'][i][:, :, 3:]
-                else:
-                    rand_inds.append(ind)
-                    # reference cell coords
+                if study_cells:
+                    # atoms in cartesian coords
+                    from_csd = np.random.randint(0,2,size=1)
+                    if from_csd:
+                        csd_inds.append(ind)
+
+                        # reference cell coords
+                        cell_coords_c = self.dataset['crystal reference cell coords'][i][:, :, :3]
+                        cell_coords_f = self.dataset['crystal reference cell coords'][i][:, :, 3:]
+                    else:
+                        # random cell
+                        rand_inds.append(ind)
+                        # reference cell coords
+                        coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
+                        random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc, T_cf, np.asarray(self.sym_ops[sg_number]),confirm_transform = False)
+                        #tests.append(np.average(T_cf.dot(random_coords.T).T,axis=0))
+                        cell_coords_c, cell_coords_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
+
+
+                    self.get_cell_data(i, masses, T_cf, T_fc, cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f)
+                if compare_cells:
+                    #check against CSD cell
+                    #
+                    # # get csd corrected for centroids outside the reference cell
+                    # cell_coords_c = self.dataset['crystal reference cell coords'][i][:, :, :3]
+                    # cell_coords_f = self.dataset['crystal reference cell coords'][i][:, :, 3:]
+                    #
+                    # # manually enforce our style of centroid
+                    # flag = 0
+                    # for j in range(z_value):
+                    #     if (np.amin(CoG_f[j])) < 0 or (np.amax(CoG_f[j]) > 1):
+                    #         flag = 1
+                    #         # print('Sample found with molecule out of cell')
+                    #         floor = np.floor(CoG_f[j])
+                    #         new_fractional_coords = cell_coords_f[j] - floor
+                    #         cell_coords_c[j] = T_fc.dot(new_fractional_coords.T).T
+                    #         cell_coords_f[j] = new_fractional_coords
+                    #
+                    # # redo it
+                    # if flag:
+                    #     CoG_c = np.average(cell_coords_c, axis=1)
+                    #     CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
+                    #
+                    # coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
+                    # x, y, z = self.dataset['crystal reference cell centroid x'][i], self.dataset['crystal reference cell centroid y'][i], self.dataset['crystal reference cell centroid z'][i]
+                    # #ang1, ang2, ang3 = self.dataset['crystal reference cell angle 1'][i], self.dataset['crystal reference cell angle 2'][i], self.dataset['crystal reference cell angle 3'][i]
+                    # ang1, ang2, ang3 = orientation_angles
+                    # random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc, confirm_transform=False, set_position=(x, y, z), set_rotation=(ang1, ang2, ang3))
+                    # generated_c, _ = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
+                    #
+                    # mol1 = Atoms(numbers=np.tile(atomic_numbers, z_value), positions=cell_coords_c.reshape(z_value * len(atomic_numbers), 3), cell=np.concatenate((cell_lengths, cell_angles)), pbc=True)
+                    # mol2 = Atoms(numbers=np.tile(atomic_numbers, z_value), positions=generated_c.reshape(z_value * len(atomic_numbers), 3), cell=np.concatenate((cell_lengths, cell_angles)), pbc=True)
+                    # #a1 = Analysis(mol1)
+                    # #a2 = Analysis(mol2)
+                    # r_maxs = np.zeros(3)
+                    # for j in range(3):
+                    #     axb = np.cross(mol1.cell[(j + 1) % 3, :], mol1.cell[(j + 2) % 3, :])
+                    #     h = mol1.get_volume() / np.linalg.norm(axb)
+                    #     r_maxs[j] = h/2.01
+                    #
+                    # rdf1 = get_rdf(mol1,rmax=r_maxs.min(),nbins=50)[0]
+                    # rdf2 = get_rdf(mol2,rmax=r_maxs.min(),nbins=50)[0]
+                    # diff = np.sum(np.abs(rdf1-rdf2))
+                    # if diff > 0.1:
+                    #     aa = 1
+                    # diff_list.append(diff)
+
+                    # # check our ability to standardize consistently
                     coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
-                    random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc,confirm_transform = False)
-                    #tests.append(np.average(T_cf.dot(random_coords.T).T,axis=0))
-                    cell_coords_c, cell_coords_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
+
+                    angs = np.random.uniform(-np.pi, np.pi, 3)
+                    angs[1] /= 2
+                    pos = np.random.uniform(0, 1, 3)
+                    error = rotate_invert_and_check(atomic_numbers, masses, coords_c, T_fc, T_cf, np.asarray(self.sym_ops[sg_number]), angs, pos)
+                    # error = check_standardization(atomic_numbers, masses, coords_c, T_fc, T_cf, np.asarray(self.sym_ops[sg_number]), angs, pos)
+
+                    # # check our ability to invert angles correctly
+                    # cell_coords_c, _ = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
+                    #
+                    # # get all the centroids
+                    # CoG_c = np.average(cell_coords_c, axis=1)
+                    # CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
+                    #
+                    # # take the fractional molecule centroid closest to the origin
+                    # centroid_distance_from_origin_f = np.linalg.norm(CoG_f, axis=1)
+                    # canonical_mol_ind = np.argmin(centroid_distance_from_origin_f)
+                    #
+                    # retrieved_centroid_f, orientation_angles = retrieve_alignment_parameters(masses, cell_coords_c[canonical_mol_ind], T_fc, T_cf)
+                    #
+                    # if np.linalg.norm(orientation_angles - angs) > 1e-6:
+                    #     aa = 1
+                    #view((mol1,mol2))
 
 
-                self.get_cell_data(i, masses, T_cf, T_fc, cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f)
-
-        results_dict = {
-            'csd_centroids_f' : np.asarray(self.centroids_f)[csd_inds],
-            #'csd_supercell_angles' : np.asarray(self.supercell_angle_overlaps)[csd_inds],
-            'csd_centroid_fractional_displacement' : np.asarray(self.centroid_fractional_displacement)[csd_inds],
-            'csd_centroid_cartesian_displacement' : np.asarray(self.centroid_cartesian_displacement)[csd_inds],
-            #'csd_inertial_angles' : np.asarray(self.inertial_angles)[csd_inds],
-            'csd_orientation_angles': np.asarray(self.orientation_angles)[csd_inds],
-            'rand_centroids_f': np.asarray(self.centroids_f)[rand_inds],
-            #'rand_supercell_angles': np.asarray(self.supercell_angle_overlaps)[rand_inds],
-            'rand_centroid_fractional_displacement': np.asarray(self.centroid_fractional_displacement)[rand_inds],
-            'rand_centroid_cartesian_displacement': np.asarray(self.centroid_cartesian_displacement)[rand_inds],
-            #'rand_inertial_angles': np.asarray(self.inertial_angles)[rand_inds],
-            'rand_orientation_angles': np.asarray(self.orientation_angles)[rand_inds],
-        }
-        np.save('cell_analysis',results_dict)
+        if study_cells:
+            results_dict = {
+                'csd_centroids_f' : np.asarray(self.centroids_f)[csd_inds],
+                #'csd_supercell_angles' : np.asarray(self.supercell_angle_overlaps)[csd_inds],
+                'csd_centroid_fractional_displacement' : np.asarray(self.centroid_fractional_displacement)[csd_inds],
+                'csd_centroid_cartesian_displacement' : np.asarray(self.centroid_cartesian_displacement)[csd_inds],
+                #'csd_inertial_angles' : np.asarray(self.inertial_angles)[csd_inds],
+                'csd_orientation_angles': np.asarray(self.orientation_angles)[csd_inds],
+                'rand_centroids_f': np.asarray(self.centroids_f)[rand_inds],
+                #'rand_supercell_angles': np.asarray(self.supercell_angle_overlaps)[rand_inds],
+                'rand_centroid_fractional_displacement': np.asarray(self.centroid_fractional_displacement)[rand_inds],
+                'rand_centroid_cartesian_displacement': np.asarray(self.centroid_cartesian_displacement)[rand_inds],
+                #'rand_inertial_angles': np.asarray(self.inertial_angles)[rand_inds],
+                'rand_orientation_angles': np.asarray(self.orientation_angles)[rand_inds],
+            }
+            np.save('cell_analysis',results_dict)
+        if compare_cells:
+            diffs = np.asarray(diff_list)
         debug_stop = 1
         if True:
             # look at results
@@ -752,5 +839,5 @@ if __name__ == '__main__':
         miner = Miner(dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/may_new_pull/mol_features', config=None, collect_chunks=True)
         miner.process_new_dataset(test_mode=False)
     elif mode == 'analyze':
-        miner = Miner(dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset', config=None, collect_chunks=False)
+        miner = Miner(dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset', config=None, collect_chunks=False)
         miner.todays_analysis()

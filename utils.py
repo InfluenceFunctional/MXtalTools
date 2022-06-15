@@ -10,11 +10,67 @@ from argparse import Namespace
 import yaml
 from pathlib import Path
 import torch
+import sys
 
 '''
 general utilities
 '''
 
+def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lattice, dataDims, enforce_crystal_system = True):
+    '''
+    assert physically meaningful parameters
+    :param cell_lengths:
+    :param cell_angles:
+    :param mol_position:
+    :param mol_rotation:
+    :return:
+    '''
+    # de-standardize everything
+    means = torch.Tensor(dataDims['means'])
+    stds = torch.Tensor(dataDims['stds'])
+    cell_lengths = cell_lengths * means[0:3] + stds[0:3]
+    cell_angles = cell_angles * means[3:6] + stds[3:6]
+    cell_angles = cell_angles * torch.pi / 180
+    mol_position = mol_position * means[6:9] + stds[6:9]
+    mol_rotation = mol_rotation * means[9:12] + stds[9:12]
+
+    # apply appropriate limits
+    cell_lengths = torch.clip(cell_lengths,min=0)
+    cell_angles = torch.clip(cell_angles,min=0,max=torch.pi)
+    mol_position = torch.clip(mol_position,min=0,max=1)
+    mol_rotation = torch.clip(mol_rotation,min=-torch.pi,max=torch.pi)
+    mol_rotation[:,1] = torch.clip(mol_rotation[:,1],min=-torch.pi/2, max=torch.pi/2) # second rotation has shorter range
+
+    for i in range(len(cell_lengths)):
+        lattice = lattices[i]
+        if enforce_crystal_system: # todo can alternately enforce this via auxiliary loss on the generator itself
+            # enforce agreement with crystal system
+            if lattice.lower() == 'triclinic':
+                pass
+            elif lattice.lower() == 'monoclinic': # fix alpha and gamma
+                cell_angles[i,0], cell_angles[i,2] = torch.pi/2, torch.pi/2
+            elif lattice.lower() == 'orthorhombic': # fix all angles
+                cell_angles[i] = torch.ones(3) * torch.pi / 2
+            elif (lattice.lower() == 'tetragonal'): # fix all angles and a & b vectors
+                cell_angles[i] = torch.ones(3) * torch.pi / 2
+                cell_lengths[i,0], cell_lengths[i,1] = torch.mean(cell_lengths[i,0:2]) * torch.ones(2)
+            elif (lattice.lower() == 'hexagonal'): # for rhombohedral, all angles and lengths equal, but not 90.
+                # for truly hexagonal, alpha=90, gamma is 120, a=b!=c
+                # todo figure out how to properly deal with this
+                print('hexagonal lattice is not yet implemented!')
+                pass
+            elif (lattice.lower() == 'cubic'):  # all angles 90 all lengths equal
+                cell_lengths[i] = cell_lengths[i].mean() * torch.ones(3)
+                cell_angles[i] = torch.pi * torch.ones(3) / 2
+            else:
+                print(lattice + ' is not a valid crystal lattice!')
+                sys.exit()
+        else:
+            # todo we now need a symmetry analyzer to tell us what we're building
+            # don't assume a crystal system, but snap angles close to 90, to assist in precise symmetry
+            cell_angles[i,torch.abs(cell_angles[i] - torch.pi/2) < 0.1] = torch.pi/2
+
+    return cell_lengths, cell_angles, mol_position, mol_rotation
 
 def initialize_metrics_dict(metrics):
     m_dict = {}
@@ -1839,8 +1895,8 @@ def delete_from_dataframe(df, inds):
 
 
 #@nb.jit(nopython=True)
-def compute_principal_axes_np(masses, coords):
-    points = coords - coords.T.dot(masses)/np.sum(masses)
+def compute_principal_axes_np(masses, coords, return_direction = False):
+    points = (coords - coords.T.dot(masses)/np.sum(masses))
     x, y, z = points.T
     Ixx = np.sum(masses * (y ** 2 + z ** 2))
     Iyy = np.sum(masses * (x ** 2 + z ** 2))
@@ -1853,14 +1909,31 @@ def compute_principal_axes_np(masses, coords):
     Ipm, Ip = np.real(Ipm), np.real(Ip)
     sort_inds = np.argsort(Ipm)
     Ipm = Ipm[sort_inds]
-    Ip = Ip.T[sort_inds] # want eigenvectors to be sorted row-wise (rather than column-wise)
+    Ip = Ip.T[sort_inds]# want eigenvectors to be sorted row-wise (rather than column-wise)
 
-    # we want consistent directionality - set it against the CoG (Ipm always points towards CoG from CoM)
-    direction = points.mean(axis=0) # CoM is 0 by construction, so we don't have to subtract it
-    # if the CoG exactly == the CoM in any dimension, the molecule is symmetric on that axis, and we can arbitraily pick a side
-    if any(direction) == 0:
-        direction[direction==0] += 1 # arbitrarily set the positive side
-    overlaps = np.sign(Ip.dot(direction)) # check if the principal components point towards or away from the CoG
-    Ip = (Ip.T * overlaps).T # if the vectors have negative overlap, flip the direction
+    # cardinal direction is vector from CoM to farthest atom
+    dists = np.linalg.norm(points, axis=1)
+    max_ind = np.argmax(dists)
+    max_equivs = np.argwhere(np.round(dists, 8) == np.round(dists[max_ind], 8))[:, 0]  # if there are multiple equidistant atoms - pick the one with the lowest index
+    max_ind = int(np.amin(max_equivs))
+    direction = points[max_ind]
+    direction /= np.linalg.norm(direction)
+    overlaps = Ip.dot(direction) # check if the principal components point towards or away from the CoG
+    if any(overlaps == 0): # exactly zero is invalid
+        overlaps[overlaps==0] = 1e-9
+    if any(np.abs(overlaps) < 1e-8):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+        # align the 'good' vectors
+        Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
+        fix_ind = np.argmin(np.abs(overlaps))
+        other_vectors = np.delete(np.arange(3), fix_ind)
+        check_direction = np.cross(Ip[other_vectors[0]], Ip[other_vectors[1]])
+        # align the 'bad' vector
+        Ip[fix_ind] *= np.sign(np.dot(check_direction, Ip[fix_ind]))
+    else:
+        Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
 
-    return Ip, Ipm, I
+
+    if return_direction:
+        return Ip, Ipm, I, direction
+    else:
+        return Ip, Ipm, I

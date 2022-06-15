@@ -40,12 +40,16 @@ class Predictor():
             self.atom_weights[i] = periodicTable.GetAtomicWeight(i)
 
         if 'cell' in self.config.mode:
-            print('Pre-generating general position symmetries')
+            print('Pre-generating spacegroup symmetries')
             self.sym_ops = {}
-            for i in tqdm.tqdm(range(1,231)):
+            self.point_groups = {}
+            self.lattice_type = {}
+            for i in tqdm.tqdm(range(1, 231)):
                 sym_group = symmetry.Group(i)
                 general_position_syms = sym_group.wyckoffs_organized[0][0]
                 self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
+                self.point_groups[i] = sym_group.point_group
+                self.lattice_type[i] = sym_group.lattice_type
 
         miner = Miner(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)
 
@@ -168,6 +172,81 @@ class Predictor():
 
         return model, optimizer, [scheduler1, scheduler3, scheduler4], nconfig
 
+    def init_gan(self, config, dataDims, print_status=True):
+        '''
+        Initialize model and optimizer
+        :return:
+        '''
+        # init model
+        print("Initializing models for " + config.mode)
+        generator = crystal_generator(config, dataDims)  # todo add more generator options
+        discriminator = crystal_discriminator(config, dataDims)
+
+        if config.device == 'cuda':
+            generator = generator.cuda()
+            discriminator = discriminator.cuda()
+
+        # init optimizers
+        for i in range(2):
+            amsgrad = False
+            beta1 = config.beta1  # 0.9
+            beta2 = config.beta2  # 0.999
+            weight_decay = config.weight_decay  # 0.01
+            momentum = 0
+
+            if i == 0:
+                if config.optimizer == 'adam':
+                    optimizer = optim.Adam(generator.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+                elif config.optimizer == 'adamw':
+                    optimizer = optim.AdamW(generator.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+                elif config.optimizer == 'sgd':
+                    optimizer = optim.SGD(generator.parameters(), lr=config.learning_rate, momentum=momentum, weight_decay=weight_decay)
+                else:
+                    print(config.optimizer + ' is not a valid optimizer')
+                    sys.exit()
+            if i == 1:
+                if config.optimizer == 'adam':
+                    optimizer = optim.Adam(discriminator.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+                elif config.optimizer == 'adamw':
+                    optimizer = optim.AdamW(discriminator.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+                elif config.optimizer == 'sgd':
+                    optimizer = optim.SGD(discriminator.parameters(), lr=config.learning_rate, momentum=momentum, weight_decay=weight_decay)
+                else:
+                    print(config.optimizer + ' is not a valid optimizer')
+                    sys.exit()
+
+            # init schedulers
+            scheduler1 = lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='min',
+                factor=0.1,
+                patience=15,
+                threshold=1e-4,
+                threshold_mode='rel',
+                cooldown=15
+            )
+            lr_lambda = lambda epoch: 1.25
+            scheduler3 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda)
+            lr_lambda2 = lambda epoch: 0.95
+            scheduler4 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda2)
+
+            if i == 0:
+                optimizer1 = optimizer
+                scheduler1 = [scheduler1, scheduler3, scheduler4]
+            if i == 1:
+                optimizer2 = optimizer
+                scheduler2 = [scheduler1, scheduler3, scheduler4]
+
+        params1 = get_n_config(generator)
+        if print_status:
+            print('Generator model has {:.3f} million or {} parameters'.format(params1 / 1e6, int(params1)))
+
+        params2 = get_n_config(discriminator)
+        if print_status:
+            print('Discriminator model has {:.3f} million or {} parameters'.format(params1 / 1e6, int(params2)))
+
+        return generator, discriminator, optimizer1, scheduler1, optimizer2, scheduler2, params1, params2
+
     def get_batch_size(self, dataset, config):
         finished = 0
         batch_size = config.initial_batch_size.real
@@ -225,7 +304,7 @@ class Predictor():
             print(config)
 
             # dataset
-            dataset_builder = BuildDataset(config)
+            dataset_builder = BuildDataset(config, self.point_groups)
             config.dataDims = dataset_builder.get_dimension()
             self.dataDims = dataset_builder.get_dimension()
             if 'classification' in config.mode:  # for convenience
@@ -238,13 +317,14 @@ class Predictor():
                     self.n_conditional_features = self.dataDims['n conditional features']
                 else:
                     self.n_conditional_features = 0
-            if 'cell' in config.mode: # get relevant indices
+            if 'cell' in config.mode:  # get relevant indices
                 self.cell_angle_keys = ['crystal alpha', 'crystal beta', 'crystal gamma']
                 self.cell_angle_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_angle_keys]
                 self.cell_length_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c']
                 self.cell_length_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_length_keys]
                 self.z_value_ind = self.dataDims['tracking features dict'].index('crystal z value')
                 self.sg_number_ind = self.dataDims['tracking features dict'].index('crystal spacegroup number')
+                self.mol_volume_ind = self.dataDims['tracking features dict'].index('molecule volume')
 
             # get batch size
             if config.auto_batch_sizing:
@@ -258,16 +338,29 @@ class Predictor():
             print("Training batch size set to {}".format(config.final_batch_size))
             # model, optimizer, schedulers
             print('Reinitializing model and optimizer')
-            model, optimizer, schedulers, n_params = self.init_model(config, self.dataDims)
+            if 'gan'.lower() in config.mode:
+                generator, discriminator, optimizer1, \
+                schedulers1, optimizer2, schedulers2, params1, params2 = self.init_gan(config, self.dataDims)
+                n_params = params1 + params2
+            else:
+                model, optimizer, schedulers, n_params = self.init_model(config, self.dataDims)
 
             # cuda
             if config.device.lower() == 'cuda':
                 print('Putting model on CUDA')
                 torch.backends.cudnn.benchmark = True
                 # model = torch.nn.DataParallel(model) # send to multiple GPUs - not always working with wandb
-                model.cuda()
+                if 'gan'.lower() in config.mode:
+                    generator.cuda()
+                    discriminator.cuda()
+                else:
+                    model.cuda()
 
-            wandb.watch(model, log_graph=True)
+            if 'gan'.lower() in config.mode:
+                wandb.watch(generator, log_graph=True)
+                wandb.watch(discriminator, log_graph=True)
+            else:
+                wandb.watch(model, log_graph=True)
 
             wandb.log({"Model Num Parameters": n_params,
                        "Final Batch Size": config.final_batch_size})
@@ -287,13 +380,23 @@ class Predictor():
                     # very cool
                     print("Starting Epoch {}".format(epoch))  # index from 0, very cool
 
-                    err_tr, tr_record, time_train = \
-                        self.model_epoch(config, dataLoader=train_loader, model=model,
-                                         optimizer=optimizer, update_gradients=True)  # train & compute test loss
+                    if 'gan'.lower() in config.mode:
+                        err_tr, tr_record, time_train = \
+                            self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                                           optimizer1=optimizer1, optimizer2=optimizer2, update_gradients=True)  # train & compute test loss
 
-                    err_te, te_record, epoch_stats_dict, time_test = \
-                        self.model_epoch(config, dataLoader=test_loader, model=model,
-                                         update_gradients=False, record_stats=True)  # compute loss on test set
+                        err_te, te_record, epoch_stats_dict, time_test = \
+                            self.gan_epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
+                                           update_gradients=False, record_stats=True)  # compute loss on test set
+                    else:
+
+                        err_tr, tr_record, time_train = \
+                            self.model_epoch(config, dataLoader=train_loader, model=model,
+                                             optimizer=optimizer, update_gradients=True)  # train & compute test loss
+
+                        err_te, te_record, epoch_stats_dict, time_test = \
+                            self.model_epoch(config, dataLoader=test_loader, model=model,
+                                             update_gradients=False, record_stats=True)  # compute loss on test set
 
                     print('epoch={}; nll_tr={:.5f}; nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(epoch, torch.mean(torch.stack(err_tr)), torch.mean(torch.stack(err_te)), time_train, time_test))
 
@@ -323,6 +426,67 @@ class Predictor():
                 if config.device.lower() == 'cuda':
                     torch.cuda.empty_cache()  # clear GPU
 
+    def gan_epoch(self, config, dataLoader=None, generator=None, discriminator=None, optimizer1=None, optimizer2=None, update_gradients=True,
+                  iteration_override=None, record_stats=False):
+        t0 = time.time()
+        if update_gradients:
+            generator.train(True)
+            discriminator.train(True)
+        else:
+            generator.eval()
+            discriminator.eval()
+
+        err = []
+        loss_record = []
+        epoch_stats_dict = {
+            'predictions': [],
+            'targets': [],
+            'tracking features': [],
+            'samples': [],
+        }
+
+        for i, data in enumerate(dataLoader):
+            if 'cell' in config.mode:
+                t0 = time.time()
+                real_sample = np.random.uniform(0, 1) < config.csd_fraction
+                if real_sample:
+                    data =
+                data = self.supercell_data(real_sample, data, config, generator=generator)
+                if i < 3:
+                    print('Batch {} supercell generation took {:.2f} seconds for {} samples'.format(i, round(time.time() - t0, 2), data.num_graphs))
+
+            if config.device.lower() == 'cuda':
+                data = data.cuda()
+
+            if config.test_mode or config.anomaly_detection:
+                assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
+
+            generator_losses, discriminator_losses, discriminator_predictions, aux_losses = self.gan_loss(discriminator, data, config)
+
+            loss = losses.mean()
+            err.append(loss.data.cpu())  # average loss
+            loss_record.extend(losses.cpu().detach().numpy())  # loss distribution
+
+            if record_stats:
+                epoch_stats_dict['predictions'].extend(predictions)
+                epoch_stats_dict['targets'].extend(data.y[0].cpu().detach().numpy())
+                epoch_stats_dict['tracking features'].extend(data.y[2])
+
+            if update_gradients:
+                optimizer.zero_grad()  # reset gradients from previous passes
+                loss.backward()  # back-propagation
+                optimizer.step()  # update parameters
+
+            if iteration_override is not None:
+                if i >= iteration_override:
+                    break  # stop training early - for debugging purposes
+
+        total_time = time.time() - t0
+        if record_stats:
+            return err, loss_record, epoch_stats_dict, total_time
+        else:
+            return err, loss_record, total_time
+
     def model_epoch(self, config, dataLoader=None, model=None, optimizer=None, update_gradients=True,
                     iteration_override=None, record_stats=False):
         t0 = time.time()
@@ -342,9 +506,10 @@ class Predictor():
         for i, data in enumerate(dataLoader):
             if 'cell' in config.mode:
                 t0 = time.time()
-                data = self.supercell_data(data, config)
+                real_sample = np.random.uniform(0, 1, size=data.num_graphs) < config.csd_fraction
+                data = self.supercell_data(real_sample, data, config)
                 if i < 3:
-                    print('Batch {} supercell generation took {:.2f} seconds for {} samples'.format(i, round(time.time() - t0,2), data.num_graphs))
+                    print('Batch {} supercell generation took {:.2f} seconds for {} samples'.format(i, round(time.time() - t0, 2), data.num_graphs))
 
             if config.device.lower() == 'cuda':
                 data = data.cuda()
@@ -408,6 +573,27 @@ class Predictor():
             logprob = prior_logprob + log_det
 
             return -(logprob), prior_logprob.cpu().detach().numpy()
+
+    def gan_loss(self, discriminator, data, config):
+        output = discriminator(data)  # reshape output from flat filters to channels * filters per channel
+        targets = data.y[0]
+
+        if targets.ndim > 1:
+            targets = targets[:, 0]
+
+        # discriminator loss
+        if config.gan_loss == 'wasserstein':
+            scores = output
+
+        elif config.gan_loss == 'standard':
+            probs = F.softmax(output, dim=1)
+
+        # generator loss
+
+        # consistency losses
+        # volume
+
+        generator_losses, discriminator_losses, F.softmax(output, dim=1)
 
     def pairwise_correlations_analysis(self, dataset_builder, config):
         '''
@@ -560,7 +746,7 @@ class Predictor():
 
         return nf_scores_dict
 
-    def log_loss(self,metrics_dict, tr_record, te_record):
+    def log_loss(self, metrics_dict, tr_record, te_record):
         current_metrics = {}
         for key in metrics_dict.keys():
             current_metrics[key] = float(metrics_dict[key][-1])
@@ -576,14 +762,13 @@ class Predictor():
             current_metrics[key] = np.amax(current_metrics[key])  # just a formatting thing - nothing to do with the max of anything
 
         wandb.log(current_metrics)
-        hist = np.histogram(tr_record, bins=256, range=(0, np.quantile(tr_record, 0.9)))
+        hist = np.histogram(tr_record, bins=256, range=(np.amin(tr_record), np.quantile(tr_record, 0.9)))
         wandb.log({"Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
-        hist = np.histogram(te_record, bins=256, range=(0, np.quantile(te_record, 0.9)))
+        hist = np.histogram(te_record, bins=256, range=(np.amin(te_record), np.quantile(te_record, 0.9)))
         wandb.log({"Test Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
 
         wandb.log({"Train Loss Coeff. of Variation": np.sqrt(np.var(tr_record)) / np.average(tr_record)})
         wandb.log({"Test Loss Coeff. of Variation": np.sqrt(np.var(te_record)) / np.average(te_record)})
-
 
     def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
                      te_record, epoch_stats_dict, config, model, log_figures=True):
@@ -778,7 +963,7 @@ class Predictor():
             n_dims = self.dataDims['n crystal features']
             dataset_length = len(test_loader.dataset)
             self.sampling_batch_size = min(dataset_length, config.final_batch_size)
-            n_repeats = max(n_samples // dataset_length,1)
+            n_repeats = max(n_samples // dataset_length, 1)
             n_samples = n_repeats * dataset_length
             model.eval()
 
@@ -1059,7 +1244,86 @@ class Predictor():
 
         print('Analysis took {} seconds'.format(int(time.time() - t0)))
 
-    def supercell_data(self, data, config):
+    def generated_supercells(self, data, config, generator):
+        '''
+              test code for on-the-fly cell generation
+              data = self.build_supercells(data)
+              0. extract molecule and cell parameters
+              1. find centroid
+              2. find principal axis & angular component
+              3. place centroid & align axes
+              4. apply point symmetry
+              5. tile supercell
+              '''
+        sg_numbers = [int(data.y[2][i][self.sg_number_ind]) for i in range(data.num_graphs)]
+        lattices = self.lattice_type[sg_numbers]
+
+        cell_sample = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device)).cpu()
+        cell_lengths, cell_angles, rand_position, rand_rotation = cell_sample.split(3, 1)
+        cell_lengths, cell_angles, rand_position, rand_rotation = clean_cell_output(
+            cell_lengths, cell_angles, rand_position, rand_rotation, lattices, config.dataDims
+        )
+
+        for i in range(data.num_graphs):
+            # 0 extract molecule and cell parameters
+            atoms = np.asarray(data.x[data.batch == i])
+            atomic_numbers = np.asarray(atoms[:, 0])
+            heavy_inds = np.where(atomic_numbers != 1)
+            atoms = atoms[heavy_inds]
+
+            # get symmetry info
+            sym_ops = np.asarray(self.sym_ops[sg_numbers[i]])  # symmetry operations between the general positions for this space group
+            z_value = len(sym_ops)  # number of molecules in the reference cell
+
+            # prep conformer
+            coords = np.asarray(data.pos[data.batch == i])
+            weights = np.asarray([self.atom_weights[int(number)] for number in atomic_numbers])
+            coords = coords[heavy_inds]
+            weights = weights[heavy_inds]
+
+            # # option to get the cell itself from the CSD
+            # cell_lengths = data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
+            # cell_angles = data.y[2][i][self.cell_angle_inds]
+
+            T_fc = coor_trans_matrix('f_to_c', cell_lengths[i].detach().numpy(), cell_angles[i].detach().numpy())
+            T_cf = coor_trans_matrix('c_to_f', cell_lengths[i].detach().numpy(), cell_angles[i].detach().numpy())
+            calculated_volume = cell_vol(cell_lengths.detach().numpy(), cell_angles.detach().numpy())
+            cell_vectors = T_fc.dot(np.eye(3)).T
+
+            random_coords = randomize_molecule_position_and_orientation(
+                coords.astype(float), weights.astype(float), T_fc.astype(float), T_cf.astype(float),
+                np.asarray(self.sym_ops[sg_numbers[i]], dtype=float), set_position=rand_position[i], set_rotation=rand_rotation[i])
+
+            reference_cell, ref_cell_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_numbers[i]], dtype=float), z_value)
+
+            supercell_atoms, supercell_coords = ref_to_supercell(reference_cell, z_value, atoms, cell_vectors)
+
+            supercell_batch = torch.ones(len(supercell_atoms)).int() * i
+
+            # append supercell info to the data class
+            if i == 0:
+                new_x = supercell_atoms
+                new_coords = supercell_coords
+                new_batch = supercell_batch
+                new_ptr = torch.zeros(data.num_graphs)
+            else:
+                new_x = torch.cat((new_x, supercell_atoms), dim=0)
+                new_coords = torch.cat((new_coords, supercell_coords), dim=0)
+                new_batch = torch.cat((new_batch, supercell_batch))
+                new_ptr[i] = new_ptr[-1] + len(new_x)
+
+        # update dataloader with cell info
+        data.x = new_x.type(dtype=torch.float32)
+        data.pos = new_coords.type(dtype=torch.float32)
+        data.batch = new_batch.type(dtype=torch.int64)
+        data.ptr = new_ptr.type(dtype=torch.int64)
+        if config.target == 'crystal veracity':
+            data.y[0] = torch.zeros(data.num_graphs)
+
+        return data
+
+
+    def real_supercells(self, real_sample, data, config, generator=None):
         '''
         test code for on-the-fly cell generation
         data = self.build_supercells(data)
@@ -1071,65 +1335,63 @@ class Predictor():
         5. tile supercell
         '''
 
-        #z_prime_ind = config.dataDims['tracking features dict'].index('crystal z prime')
-        #reader = CrystalReader('CSD')
-        real_sample = []
-
         for i in range(data.num_graphs):
             # 0 extract molecule and cell parameters
-            # todo get rid of unnecessary assignments
             atoms = np.asarray(data.x[data.batch == i])
-            # pre-enforce hydrogen cleanliness (for now)
+            # pre-enforce hydrogen cleanliness - shouldn't be necessary but you never know
             atomic_numbers = np.asarray(atoms[:, 0])  # this is currently atomic number - convert to masses
             heavy_inds = np.where(atomic_numbers != 1)
             atoms = atoms[heavy_inds]
-            
-            cell_lengths = data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
-            cell_angles = data.y[2][i][self.cell_angle_inds]
 
-            z_value = int(data.y[2][i][self.z_value_ind])
-            T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles) # todo pre-store in the dataset
-            cell_vectors = T_fc.dot(np.eye(3)).T#np.transpose(np.dot(T_fc, np.transpose(np.eye(3))))  # do the transform
-
-            use_CSD = np.random.uniform(0, 1) < config.csd_fraction # todo pre-sample random number
-            real_sample.append(use_CSD)
-            if not use_CSD:
+            if not real_sample[i]:  # generate a synthetic reference cell
+                # get symmetry info
                 sg_number = int(data.y[2][i][self.sg_number_ind])
+                sym_ops = np.asarray(self.sym_ops[sg_number])  # symmetry operations between the general positions for this space group
+                lattice = self.lattice_type[sg_number]
+                z_value = len(sym_ops)  # number of molecules in the reference cell
+
+
+                # prep conformer
                 coords = np.asarray(data.pos[data.batch == i])
                 weights = np.asarray([self.atom_weights[int(number)] for number in atomic_numbers])
                 coords = coords[heavy_inds]
                 weights = weights[heavy_inds]
-                T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)
 
-                reference_cell = self.generate_random_crystal(T_cf, T_fc, coords, weights, sg_number, z_value)
+                cell_sample = generator.forward(n_samples = 1, conditions = data[i].to(generator.device)).cpu() # todo vectorize this
+                cell_lengths, cell_angles, rand_position, rand_rotation = cell_sample.split(3,1)
+                cell_lengths, cell_angles, rand_position, rand_rotation = clean_cell_output(
+                    cell_lengths, cell_angles, rand_position, rand_rotation, lattice, config.dataDims
+                )
+                # # option to get the cell itself from the CSD
+                # cell_lengths = data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
+                # cell_angles = data.y[2][i][self.cell_angle_inds]
+
+                T_fc = coor_trans_matrix('f_to_c', cell_lengths.detach().numpy(), cell_angles.detach().numpy())
+                T_cf = coor_trans_matrix('c_to_f', cell_lengths.detach().numpy(), cell_angles.detach().numpy())
+                calculated_volume = cell_vol(cell_lengths.detach().numpy(), cell_angles.detach().numpy())
+                cell_vectors = T_fc.dot(np.eye(3)).T
+
+                random_coords = randomize_molecule_position_and_orientation(
+                    coords.astype(float), weights.astype(float), T_fc.astype(float), T_cf.astype(float),
+                    np.asarray(self.sym_ops[sg_number], dtype=float), set_position=rand_position, set_rotation=rand_rotation)
+
+                reference_cell, ref_cell_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number], dtype=float), z_value)
 
             else:
                 # get reference cell positions
                 # first 3 columns are cartesian coords, last 3 are fractional
-                reference_cell = data.y[3][i][:,:,:3] # we're now pre-storing the packing rather than grabbing it from the CSD at runtime
-                # #self.get_CSD_crystal(reader, csd_identifier=csd_identifier, mol_n_atoms=len(coords), z_value=z_value)
 
-            # pattern molecule into reference cell, assuming consistent ordering between dataset (drawn from CSD) and CSD crystals
-            coords = torch.tensor(reference_cell.reshape(z_value * reference_cell.shape[1], 3))  # assign reference cell coordinates to the coords array
-            atoms = torch.tensor(np.tile(atoms, (z_value,1)))  # simply copy the feature vectors
-            #assert len(atoms) == len(coords) # assert everyone is the same size
+                cell_lengths = data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
+                cell_angles = data.y[2][i][self.cell_angle_inds]
+                z_value = int(data.y[2][i][self.z_value_ind])
+                T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
+                cell_vectors = T_fc.dot(np.eye(3)).T
 
-            # look at the thing
-            # amol = Atoms(numbers = atoms[:,0], positions = coords,cell=np.concatenate((cell_lengths,cell_angles)),pbc=True)
-            # visualize.view(amol)
-            # 5 tile the supercell
-            # index the molecules as 'within main cell' vs 'outside'
-            supercell_coords = coords.clone()
-            supercell_size = 1  # 1 is a 3x3x3, 2 is a 5x5x5, etc.
-            for xx in range(-supercell_size, supercell_size + 1):
-                for yy in range(-supercell_size, supercell_size + 1):
-                    for zz in range(-supercell_size, supercell_size + 1):
-                        if not all([xx == 0, yy == 0, zz == 0]):
-                            supercell_coords = torch.cat((supercell_coords, coords + (cell_vectors[0] * xx + cell_vectors[1] * yy + cell_vectors[2] * zz)), dim=0)
+                reference_cell = data.y[3][i][:, :, :3]  # we're now pre-storing the packing rather than grabbing it from the CSD at runtime
+                # #self.get_CSD_crystal(reader, csd_identifier=csd_identifier, mol_n_atoms=len(coords), z_value=z_value) # use CSD directly - slow
+                # alternately, we could use the above random_coords functions with the known parameters to create the CSD cells (>99% accurate from a couple tests)
 
-            supercell_atoms = atoms.repeat((supercell_size * 2 + 1) ** 3, 1)
-            supercell_atoms = torch.cat((supercell_atoms, torch.ones(len(supercell_atoms))[:, None]), dim=1)  # inside main unit cell
-            supercell_atoms[len(atoms):, -1] = 0  # outside of main unit cell
+            supercell_atoms, supercell_coords = ref_to_supercell(reference_cell, z_value, atoms, cell_vectors)
 
             supercell_batch = torch.ones(len(supercell_atoms)).int() * i
 
@@ -1163,35 +1425,6 @@ class Predictor():
 
         return np.concatenate((cell_vector_a[None, :], cell_vector_b[None, :], cell_vector_c[None, :]), axis=0), cell_vol(cell_lengths, cell_angles)
 
-    def generate_random_crystal(self, T_cf, T_fc, coords, weights, sg_number, z_value):
-        '''
-        generate a random unit cell with appropriate general position point symmetries
-        # ignores special positions
-
-        # code for using pyxtal
-        #cell_volume = cell_vol(cell_lengths, cell_angles)
-        # molecule_unit = Molecule(species=atoms[:, 0], coords=coords)
-        # crystal_system = sym_group.lattice_type
-        # crystal = pyxtal(molecular=True)
-        # crystal.from_random(dim=3, numIons=[z_value], seed=0,
-        #                     species=[molecule_unit],
-        #                     group=sym_group,
-        #                     lattice=lattice.Lattice(ltype=crystal_system,
-        #                                             volume=cell_volume,
-        #                                             matrix=T_fc,
-        #                                             allow_volume_reset=False
-        #                                             ))
-        # bmol = crystal.to_ase()
-        # ase.visualize.view(bmol)
-
-        #
-        '''
-        random_coords = randomize_molecule_position_and_orientation(coords.astype(float), weights.astype(float), T_fc.astype(float))
-        ref_cell_c, ref_cell_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number],dtype=float), z_value)
-
-        return ref_cell_c
-
-
     def get_CSD_crystal(self, reader, csd_identifier, mol_n_atoms, z_value):
         crystal = reader.crystal(csd_identifier)
         tile_len = 1
@@ -1202,7 +1435,7 @@ class Predictor():
         ref_cell_centroids_c = np.zeros((n_tiles * z_value, 3), dtype=np.float_)
 
         for ind, component in enumerate(ref_cell.components):
-            if ind < z_value: # some cells have spurious little atoms counted as extra components. Just hope the early components are the good ones
+            if ind < z_value:  # some cells have spurious little atoms counted as extra components. Just hope the early components are the good ones
                 ref_cell_coords_c[ind, :] = np.asarray([atom.coordinates for atom in component.atoms if atom.atomic_number != 1])  # filter hydrogen
                 ref_cell_centroids_c[ind, :] = np.average(ref_cell_coords_c[ind], axis=0)
 

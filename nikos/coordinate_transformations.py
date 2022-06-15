@@ -37,17 +37,17 @@ def coor_trans(opt,pos,v,a):
     return p
 
 
-@nb.jit(nopython=True)
+#@nb.jit(nopython=True)
 def cell_vol(v, a):
     ''' Calculate cos and sin of cell angles '''
-    cos_a = np.cos(a * np.pi / 180.0)
+    cos_a = np.cos(a) # in natural units
 
     ''' Calculate volume of the unit cell '''
     vol = v[0] * v[1] * v[2] * np.sqrt(1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2])
 
     return vol
 
-@nb.jit(nopython=True)
+#@nb.jit(nopython=True)
 def coor_trans_matrix(opt,v,a):
     ''' Calculate cos and sin of cell angles '''
     cos_a = np.cos(a*np.pi/180.0)

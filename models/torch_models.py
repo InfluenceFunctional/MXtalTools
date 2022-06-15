@@ -2,6 +2,7 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
+import torch_geometric
 import torch_geometric.nn as gnn
 from models.DimeNetCustom import CustomDimeNet
 from models.CustomSchNet import CustomSchNet
@@ -10,7 +11,7 @@ import sys
 from nflib.flows import *
 from nflib.nets import *
 from nflib.spline_flows import *
-from torch.distributions import MultivariateNormal
+from torch.distributions import MultivariateNormal, Uniform
 import itertools
 from sklearn.decomposition import PCA
 
@@ -42,16 +43,16 @@ class FlowModel(nn.Module):
         else:
             self.device = 'cpu'
         # prior
-        if config.flow_prior == 'multivariate normal':
+        if config.generator_prior == 'multivariate normal':
             self.prior = MultivariateNormal(torch.zeros(dataDims['n crystal features']), torch.eye(dataDims['n crystal features']))
         else:
-            print(config.flow_prior + ' is not an implemented prior!!')
+            print(config.generator_prior + ' is not an implemented prior!!')
             sys.exit()
 
         # flows
         if config.flow_type == 'nsf':
-            nfs_flow = NSF_CL if True else NSF_AR
-            flows = [nfs_flow(dim=dataDims['n crystal features'],
+            nsf_flow = NSF_CL if True else NSF_AR
+            flows = [nsf_flow(dim=dataDims['n crystal features'],
                               K=config.flow_basis_fns,
                               B=3,
                               hidden_dim=config.flow_depth,
@@ -128,7 +129,7 @@ class FlowModel(nn.Module):
         if self.n_conditional_features > 0:
             conditions = self.get_conditions(x)
             if self.conditioner is not None:
-                x.y[0] = torch.cat((x.y[0],conditions),dim=1)
+                x.y[0] = torch.cat((x.y[0], conditions), dim=1)
 
         zs, log_det = self.flow.forward(x.y[0].float())
         prior_logprob = self.prior.log_prob(zs[-1].cpu()).view(x.y[0].size(0), -1).sum(1)
@@ -138,7 +139,7 @@ class FlowModel(nn.Module):
         if self.n_conditional_features > 0:
             conditions = self.get_conditions(z)
             if self.conditioner is not None:
-                z.y[0] = torch.cat((z.y[0],conditions),dim=1)
+                z.y[0] = torch.cat((z.y[0], conditions), dim=1)
 
         xs, log_det = self.flow.backward(z.y[0].float())
         return xs[-1], log_det
@@ -214,7 +215,7 @@ class molecule_graph_model(nn.Module):
         self.num_fc_layers = config.num_fc_layers
         self.fc_depth = config.fc_depth
         self.graph_model = config.graph_model
-        self.classes = dataDims['output classes']
+        self.output_classes = dataDims['output classes']
         self.graph_filters = config.graph_filters
         self.n_mol_feats = dataDims['mol features']
         self.n_atom_feats = dataDims['atom features']
@@ -227,10 +228,10 @@ class molecule_graph_model(nn.Module):
 
         torch.manual_seed(config.model_seed)
 
-        if config.graph_model is not None:
+        if self.graph_model is not None:
             if config.graph_model == 'dime':
                 self.graph_net = CustomDimeNet(
-                    crystal_mode=crystal_mode,
+                    crystal_mode=self.crystal_mode,
                     graph_filters=config.graph_filters,
                     hidden_channels=config.fc_depth,
                     out_channels=self.classes,
@@ -306,75 +307,50 @@ class molecule_graph_model(nn.Module):
         if self.n_mol_feats != 0:
             self.mol_fc = nn.Linear(self.n_mol_feats, self.n_mol_feats)
 
-        self.fc_layers = torch.nn.ModuleList([
-            nn.Linear(config.fc_depth, config.fc_depth)
-            for _ in range(config.num_fc_layers)
-        ])
-
-        self.fc_norms = torch.nn.ModuleList([
-            Normalization(config.fc_norm_mode, config.fc_depth)
-            for _ in range(config.num_fc_layers)
-        ])
-
-        self.fc_dropouts = torch.nn.ModuleList([
-            nn.Dropout(p=config.fc_dropout_probability)
-            for _ in range(config.num_fc_layers)
-        ])
-
-        self.fc_activations = torch.nn.ModuleList([
-            Activation('gelu', config.fc_depth)
-            for _ in range(config.num_fc_layers)
-        ])
-
-        # adjust first layer
-        if config.graph_model is None:
-            self.fc_layers[0] = nn.Linear(self.n_mol_feats, config.fc_depth)
-            self.fc_norms[0] = Normalization(config.fc_norm_mode, self.n_mol_feats)
+        if self.graph_model is not None:
+            fc_input_dim = self.fc_depth
         else:
-            self.fc_layers[0] = nn.Linear(config.fc_depth + self.n_mol_feats, config.fc_depth)
-            self.fc_norms[0] = Normalization(config.fc_norm_mode, config.fc_depth + self.n_mol_feats)
+            fc_input_dim = 0
+        self.mol_fc = general_MLP(layers=config.num_fc_layers,
+                                  filters=config.fc_depth,
+                                  norm=config.fc_norm_mode,
+                                  dropout=config.fc_dropout_probability,
+                                  input_dim=fc_input_dim,
+                                  output_dim=self.fc_depth,
+                                  conditioning_dim=self.n_mol_feats,
+                                  seed=config.model_seed
+                                  )
 
-        self.fc_layers = nn.ModuleList(self.fc_layers)
-        self.fc_norms = nn.ModuleList(self.fc_norms)
-
-        self.output_heads = torch.nn.ModuleList([
-            nn.Sequential(nn.Linear(config.fc_depth, config.fc_depth), nn.ReLU(), nn.Linear(config.fc_depth, self.classes[i], bias=False))
-            for i in range(dataDims['prediction tasks'])
-        ])
+        self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
 
     def forward(self, data):
         if self.graph_model is not None:
             x = data.x
             pos = data.pos
             if self.crystal_mode:
-                x = self.graph_net(torch.cat((x[:, :self.n_atom_feats],x[:,-1:]),dim=1), pos, data.batch)  # extra dim for crystal indexing
+                x = self.graph_net(torch.cat((x[:, :self.n_atom_feats], x[:, -1:]), dim=1), pos, data.batch)  # extra dim for crystal indexing
             else:
                 x = self.graph_net(x[:, :self.n_atom_feats], pos, data.batch)  # get atoms encoding
 
             if self.crystal_mode:
-                keep_cell_inds = torch.where(data.x[:,-1] == 1)[0]
-                data.batch = data.batch[keep_cell_inds] # keep only atoms inside the reference cell
-                data.x = data.x[keep_cell_inds] # also apply to molecular_data
+                keep_cell_inds = torch.where(data.x[:, -1] == 1)[0]
+                data.batch = data.batch[keep_cell_inds]  # keep only atoms inside the reference cell
+                data.x = data.x[keep_cell_inds]  # also apply to molecular_data
+
             x = self.global_pool(x, data.batch)  # aggregate atoms to molecule
 
         mol_inputs = data.x[:, -self.n_mol_feats:]
         mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch).float())  # not actually pooling here, as the values are all the same for each molecule
 
         if self.graph_model is not None:
-            x = torch.cat((x, mol_feats), dim=1)
+            x = self.mol_fc(x, conditions=mol_feats)
         else:
-            x = mol_feats
-
-        for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
-            x = dropout(activation(linear(norm(x))))
+            x = self.mol_fc(mol_feats)
 
         if self.return_latent:  # immediately return the latent space prediction
             return x
         else:
-            if len(self.output_heads) == 1:
-                return self.output_heads[0](x)  # each task has its own head
-            else:
-                return [self.output_heads[i](x) for i in range(len(self.output_heads))]
+            return self.output_fc(x)
 
 
 class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation of activation as a linear combination of basis functions
@@ -420,12 +396,14 @@ class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation
 class Activation(nn.Module):
     def __init__(self, activation_func, filters, *args, **kwargs):
         super().__init__()
-        if activation_func == 'relu':
+        if activation_func.lower() == 'relu':
             self.activation = F.relu
-        elif activation_func == 'gelu':
+        elif activation_func.lower() == 'gelu':
             self.activation = F.gelu
-        elif activation_func == 'kernel':
+        elif activation_func.lower() == 'kernel':
             self.activation = kernelActivation(n_basis=20, span=4, channels=filters)
+        elif activation_func.lower() == 'leaky relu':
+            self.activation = F.leaky_relu
 
     def forward(self, input):
         return self.activation(input)
@@ -446,3 +424,309 @@ class Normalization(nn.Module):
 
     def forward(self, input):
         return self.norm(input)
+
+
+class general_MLP(nn.Module):
+    def __init__(self, layers, filters, input_dim, output_dim, seed=0, dropout=0, conditioning_dim=0, norm=None):
+        super(general_MLP, self).__init__()
+        # initialize constants and layers
+        self.n_layers = layers
+        self.n_filters = filters
+        self.conditioning_dim = conditioning_dim
+        self.output_dim = output_dim
+        self.input_dim = input_dim + conditioning_dim
+        self.norm_mode = norm
+        self.dropout_p = dropout
+
+        torch.manual_seed(seed)
+
+        self.fc_layers = torch.nn.ModuleList([
+            nn.Linear(self.n_filters, self.n_filters)
+            for _ in range(self.n_layers)
+        ])
+
+        self.fc_norms = torch.nn.ModuleList([
+            Normalization(self.norm_mode, self.n_filters)
+            for _ in range(self.n_layers)
+        ])
+
+        self.fc_dropouts = torch.nn.ModuleList([
+            nn.Dropout(p=self.dropout_p)
+            for _ in range(self.n_layers)
+        ])
+
+        self.fc_activations = torch.nn.ModuleList([
+            Activation('leaky relu', self.n_filters)
+            for _ in range(self.n_layers)
+        ])
+
+        # adjust first and last layers
+        self.fc_norms[0] = Normalization(self.norm_mode, self.input_dim)
+
+        if self.n_layers == 1:
+            self.fc_layers[0] = nn.Linear(self.input_dim, self.output_dim)
+        else:
+            self.fc_layers[0] = nn.Linear(self.input_dim, self.n_filters)
+            self.fc_layers[-1] = nn.Linear(self.n_filters, self.output_dim)
+
+
+        self.fc_layers = nn.ModuleList(self.fc_layers)
+        self.fc_norms = nn.ModuleList(self.fc_norms)
+
+    def forward(self, x, conditions=None): # todo make safe for torch geometric data - need to de-entangle conditional and molecular features, then prep and feed consistently
+        if conditions is not None:
+            if type(conditions) == torch_geometric.data.data.Data: # extract conditions from trailing atomic features
+                if len(x) == 1:
+                    conditions = conditions.x[:,-self.conditioning_dim:]
+                else:
+                    conditions = conditions.x[x.ptr][:,-self.conditioning_dim:]
+
+            x = torch.cat((x, conditions), dim=1)
+        for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
+            x = dropout(activation(linear(norm(x))))
+
+        return x
+
+
+class crystal_generator(nn.Module):
+    def __init__(self, config, dataDims):
+        super(crystal_generator, self).__init__()
+
+        self.device = config.device
+        self.generator_model = config.generator_model
+
+        if config.generator_prior == 'multivariate normal':
+            self.prior = MultivariateNormal(torch.zeros(dataDims['n crystal features']), torch.eye(dataDims['n crystal features']))
+        elif config.generator_prior.lower() == 'uniform':
+            self.prior = Uniform(low=0, high=1)
+        else:
+            print(config.generator_prior + ' is not an implemented prior!!')
+            sys.exit()
+
+        if self.generator_model.lower() == 'gnn':  # molecular graph model
+            self.model = molecule_graph_model(config, dataDims)
+        elif self.generator_model.lower() == 'mlp':  # simple MLP
+            self.model = general_MLP(layers=config.num_fc_layers,
+                                     filters=config.fc_depth,
+                                     norm=config.fc_norm_mode,
+                                     dropout=config.fc_dropout_probability,
+                                     input_dim=dataDims['n crystal features'],
+                                     output_dim=dataDims['n crystal features'],
+                                     conditioning_dim=dataDims['n conditional features'],
+                                     seed=config.model_seed
+                                     )
+        elif self.generator_model.lower() == 'nf':  # conditioned normalizing flow
+            self.model = crystal_nf(config, dataDims, self.prior)
+
+    def sample_latent(self, n_samples):
+        return self.prior.sample((n_samples,)).to(self.device)
+
+    def forward(self, n_samples, z=None, conditions=None):
+        if z is None:  # sample random numbers from simple prior
+            z = self.sample_latent(n_samples)
+
+        # run through model
+        if self.generator_model is not 'nf':
+            return self.model(z, conditions=conditions)
+        else:
+            x, _ = self.model.backward(z, conditions=conditions)  # normalizing flow runs backwards from z->x
+            return x
+
+
+class crystal_discriminator(nn.Module):
+    def __init__(self, config, dataDims):
+        super(crystal_discriminator, self).__init__()
+        # initialize constants and layers
+        self.activation = config.discriminator_activation
+        self.num_fc_layers = config.discriminator_num_fc_layers
+        self.fc_depth = config.discriminator_fc_depth
+        self.output_classes = 1 if config.gan_loss == 'wasserstein' else 2
+        self.graph_filters = config.discriminator_graph_filters
+        self.n_mol_feats = dataDims['mol features']
+        self.n_atom_feats = dataDims['atom features']
+        self.n_atom_feats -= self.n_mol_feats
+        self.pool_type = config.pooling
+        self.fc_norm_mode = config.discriminator_fc_norm_mode
+        self.embedding_dim = config.discriminator_atom_embedding_size
+        self.crystal_mode = True
+
+        torch.manual_seed(config.model_seed)
+
+        self.graph_net = MikesGraphNet(
+            crystal_mode=True,
+            graph_convolution_filters=config.discriminator_graph_filters,
+            graph_convolution=config.discriminator_graph_convolution,
+            out_channels=config.discriminator_fc_depth,
+            hidden_channels=config.discriminator_atom_embedding_size,
+            num_blocks=config.discriminator_graph_convolution_layers,
+            num_radial=config.discriminator_num_radial,
+            num_spherical=config.discriminator_num_spherical,
+            max_num_neighbors=config.discriminator_max_num_neighbors,
+            cutoff=config.discriminator_graph_convolution_cutoff,
+            activation='gelu',
+            embedding_hidden_dimension=config.discriminator_atom_embedding_size,
+            num_atom_features=self.n_atom_feats,
+            norm=config.discriminator_graph_norm,
+            dropout=config.discriminator_fc_dropout_probability,
+            spherical_embedding=config.discriminator_add_spherical_basis,
+            radial_embedding=config.discriminator_radial_function,
+            atom_embedding_dims=dataDims['atom embedding dict sizes'],
+            attention_heads=config.discriminator_num_attention_heads
+        )
+
+        # initialize global pooling operation
+        if config.pooling == 'mean':
+            self.global_pool = gnn.global_mean_pool
+        elif config.pooling == 'sum':
+            self.global_pool = gnn.global_add_pool
+        elif config.pooling == 'attention':
+            self.global_pool = gnn.GlobalAttention(nn.Sequential(nn.Linear(config.fc_depth, config.fc_depth), nn.GELU(), nn.Linear(config.fc_depth, 1)))
+
+        # molecule features FC layer
+        if self.n_mol_feats != 0:
+            self.mol_fc = nn.Linear(self.n_mol_feats, self.n_mol_feats)
+
+        self.gnn_mlp = general_MLP(layers=config.num_fc_layers,
+                                   filters=config.fc_depth,
+                                   norm=config.fc_norm_mode,
+                                   dropout=config.fc_dropout_probability,
+                                   input_dim=self.fc_depth + self.n_mol_feats,
+                                   output_dim=self.fc_depth,
+                                   conditioning_dim=self.n_mol_feats,
+                                   seed=config.model_seed
+                                   )
+
+        self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
+
+    def forward(self, data):
+        x = data.x
+        pos = data.pos
+
+        x = self.graph_net(torch.cat((x[:, :self.n_atom_feats], x[:, -1:]), dim=1), pos, data.batch)  # extra dim for crystal indexing
+
+        keep_cell_inds = torch.where(data.x[:, -1] == 1)[0]
+        data.batch = data.batch[keep_cell_inds]  # keep only atoms inside the reference cell
+        data.x = data.x[keep_cell_inds]  # also apply to molecular_data
+
+        x = self.global_pool(x, data.batch)  # aggregate atoms to molecule
+
+        mol_inputs = data.x[:, -self.n_mol_feats:]
+        mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch).float())  # not actually pooling here, as the values are all the same for each molecule
+
+        x = self.gnn_mlp(x, conditions=mol_feats)
+
+        return self.output_fc(x)
+
+
+class crystal_nf(nn.Module):
+    def __init__(self, config, dataDims, prior):
+        super(crystal_nf, self).__init__()
+        torch.manual_seed(config.model_seed)
+        # https://github.com/karpathy/pytorch-normalizing-flows/blob/master/nflib1.ipynb
+        # nice review https://arxiv.org/pdf/1912.02762.pdf
+        self.flow_dimension = dataDims['n crystal features']
+        self.prior = prior
+
+        if config.conditional_modelling:
+            self.n_conditional_features = dataDims['n conditional features']
+            if config.conditioning_mode == 'graph model':
+                self.conditioner = molecule_graph_model(config, dataDims, return_latent=True)
+                self.n_conditional_features = config.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
+            elif config.conditioning_mode == 'molecule features':
+                self.conditioner = general_MLP(layers=2,
+                                               filters=32,
+                                               norm=config.fc_norm_mode,
+                                               dropout=config.fc_dropout_probability,
+                                               input_dim=self.n_conditional_features,
+                                               output_dim=self.n_conditional_features,
+                                               conditioning_dim=0,
+                                               seed=config.model_seed)
+            else:
+                print(config.conditioning_mode + ' is not an implemented conditioner!')
+                sys.exit()
+        else:
+            self.n_conditional_features = 0
+
+        # normalizing flow is a combination of a prior and some flows
+        if config.device.lower() == 'cuda':
+            self.device = 'cuda'
+        else:
+            self.device = 'cpu'
+
+        # flows
+        nsf_flow = NSF_CL
+        flows = [nsf_flow(dim=dataDims['n crystal features'],
+                          K=config.flow_basis_fns,
+                          B=3,
+                          hidden_dim=config.flow_depth,
+                          conditioning_dim=self.n_conditional_features
+                          ) for _ in range(config.num_flow_layers)]
+        convs = [Invertible1x1Conv(dim=dataDims['n crystal features']) for _ in flows]
+        norms = [ActNorm(dim=dataDims['n crystal features']) for _ in flows]
+        self.flow = NormalizingFlow2(list(itertools.chain(*zip(norms, convs, flows))), self.n_conditional_features)
+
+    def forward(self, x, conditions=None):
+        if conditions is not None:
+            conditions = self.conditioner(conditions)
+
+        zs, log_det = self.flow.forward(x.y[0].float(), conditions=conditions)
+
+        prior_logprob = self.prior.log_prob(zs[-1].cpu()).view(x.y[0].size(0), -1).sum(1)
+
+        return zs, prior_logprob.to(log_det.device), log_det
+
+    def backward(self, z, conditions=None):
+        if conditions is not None:
+            conditions = self.conditioner(conditions)
+
+        xs, log_det = self.flow.backward(z.y[0].float(), conditions=conditions)
+
+        return xs, log_det
+
+    def sample(self, num_samples, conditions=None):
+        z = self.prior.sample((num_samples,)).to(self.device)
+        prior_logprob = self.prior.log_prob(z.cpu())
+
+        if conditions is not None:
+            conditions = self.conditioner(conditions)
+
+        xs, log_det = self.flow.backward(z.float(), conditions=conditions)
+
+        return xs, z, prior_logprob, log_det
+
+    def score(self, x):
+        _, prior_logprob, log_det = self.forward(x)
+        return (prior_logprob + log_det)
+
+
+class NormalizingFlow2(nn.Module):
+    """ A sequence of Normalizing Flows is a Normalizing Flow """
+
+    def __init__(self, flows, n_conditional_features=0):
+        super().__init__()
+        self.flows = nn.ModuleList(flows)
+        self.conditioning_dims = n_conditional_features
+
+    def forward(self, x, conditions=None):
+        log_det = torch.zeros(len(x)).to(x.device)
+
+        for i, flow in enumerate(self.flows):
+            if ('nsf' in flow._get_name().lower()) and (self.conditioning_dims > 0):  # conditioning only implemented for spline flow
+                x, ld = flow.forward(torch.cat((x, conditions), dim=1))
+            else:
+                x, ld = flow.forward(x)
+            log_det += ld
+
+        return x, log_det
+
+    def backward(self, z, conditions=None):
+        log_det = torch.zeros(len(z)).to(z.device)
+
+        for flow in self.flows[::-1]:
+            if ('nsf' in flow._get_name().lower()) and (self.conditioning_dims > 0):
+                z, ld = flow.backward(torch.cat((z, conditions), dim=1))
+            else:
+                z, ld = flow.backward(z)
+            log_det += ld
+
+        return z, log_det
