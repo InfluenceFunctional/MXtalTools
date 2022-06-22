@@ -276,7 +276,7 @@ def set_standard_position_torch(masses, coords, T_fc):
 
 def get_standard_rotation_torch(masses, coords, T_fc):
     # center coordinates on the center of mass
-    Ip_axes, Ip_moments, I_tensor = compute_principal_axes_torch(masses, coords)  # todo seems like all of this could be done in pre-batches
+    Ip_axes, Ip_moments, I_tensor = compute_principal_axes_torch(masses, coords)
 
     # new standard position shortcut
     I1_alignment_vec = torch.inner(T_fc, torch.ones(3).to(coords.device))

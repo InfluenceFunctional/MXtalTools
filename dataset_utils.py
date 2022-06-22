@@ -15,7 +15,6 @@ class BuildDataset:
     """
     build dataset object
     """
-    # todo enforce protons here
     def __init__(self, config, pg_dict=None):
         self.target = config.target
         self.max_atomic_number = config.max_atomic_number

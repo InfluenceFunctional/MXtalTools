@@ -607,7 +607,8 @@ class crystal_discriminator(nn.Module):
         elif config.pooling == 'sum':
             self.global_pool = gnn.global_add_pool
         elif config.pooling == 'attention':
-            self.global_pool = gnn.GlobalAttention(nn.Sequential(nn.Linear(config.fc_depth, config.fc_depth), nn.GELU(), nn.Linear(config.fc_depth, 1)))
+            self.global_pool = gnn.GlobalAttention(nn.Sequential(nn.Linear(config.discriminator_fc_depth, config.discriminator_fc_depth),
+                                                                 nn.GELU(), nn.Linear(config.discriminator_fc_depth, 1)))
 
         # molecule features FC layer
         if self.n_mol_feats != 0:

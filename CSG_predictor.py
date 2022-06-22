@@ -1565,7 +1565,7 @@ class Predictor():
 
             random_coords = randomize_molecule_position_and_orientation_torch(
                 coords, weights, T_fc, sym_ops,
-                set_position=rand_position[i], set_rotation=rand_rotation[i])  # todo could largely be vectorized pre-loop
+                set_position=rand_position[i], set_rotation=rand_rotation[i])
 
             reference_cell = build_random_crystal_torch(T_cf, T_fc, random_coords, sym_ops, z_value)
 
@@ -1634,10 +1634,10 @@ class Predictor():
         for i in range(supercell_data.num_graphs):
             atoms_i = supercell_data.x[supercell_data.batch == i]
             atomic_numbers = atoms_i[:, 0]
-            heavy_atom_inds = torch.argwhere(atomic_numbers > 1)[:, 0]
-            atoms_list.append(atoms_i[heavy_atom_inds])
-            coords_list.append(supercell_data.pos[supercell_data.batch == i][heavy_atom_inds])
-            masses_list.append(torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers])[heavy_atom_inds].to(supercell_data.x.device))
+            #heavy_atom_inds = torch.argwhere(atomic_numbers > 1)[:, 0]
+            atoms_list.append(atoms_i)
+            coords_list.append(supercell_data.pos[supercell_data.batch == i])
+            masses_list.append(torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(supercell_data.x.device))
 
         sym_ops_list = [torch.Tensor(self.sym_ops[sg_numbers[i]]).to(supercell_data.x.device) for i in range(len(sg_numbers))]
         z_values = [len(sym_ops) for sym_ops in sym_ops_list]

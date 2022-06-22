@@ -1958,12 +1958,12 @@ def compute_principal_axes_torch(masses, coords, return_direction=False):
     # cardinal direction is vector from CoM to farthest atom
     dists = torch.linalg.norm(points, axis=1)
     max_ind = torch.argmax(dists)
-    max_equivs = torch.argwhere(torch.round(dists, decimals=8) == torch.round(dists[max_ind], decimals=8))[:, 0]  # if there are multiple equidistant atoms - pick the one with the lowest index
+    max_equivs = torch.where(torch.round(dists, decimals=8) == torch.round(dists[max_ind], decimals=8))[0]  # if there are multiple equidistant atoms - pick the one with the lowest index
     max_ind = int(torch.amin(max_equivs))
     direction = points[max_ind]
     direction = direction / torch.linalg.norm(direction)
     overlaps = torch.inner(Ip, direction)  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
-    if any(overlaps == 0):  # exactly zero is invalid # todo get rid of in-place ops
+    if any(overlaps == 0):  # exactly zero is invalid #
         overlaps[overlaps == 0] = 1e-9
     if any(torch.abs(overlaps) < 1e-8):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
         # align the 'good' vectors
