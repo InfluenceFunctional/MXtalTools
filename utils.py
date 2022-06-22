@@ -1958,7 +1958,7 @@ def compute_principal_axes_torch(masses, coords, return_direction=False):
     # cardinal direction is vector from CoM to farthest atom
     dists = torch.linalg.norm(points, axis=1)
     max_ind = torch.argmax(dists)
-    max_equivs = torch.where(torch.round(dists, decimals=8) == torch.round(dists[max_ind], decimals=8))[0]  # if there are multiple equidistant atoms - pick the one with the lowest index
+    max_equivs = torch.where(dists==dists[max_ind])[0]#torch.where(torch.round(dists, decimals=8) == torch.round(dists[max_ind], decimals=8))[0]  # if there are multiple equidistant atoms - pick the one with the lowest index
     max_ind = int(torch.amin(max_equivs))
     direction = points[max_ind]
     direction = direction / torch.linalg.norm(direction)
