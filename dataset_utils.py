@@ -15,7 +15,7 @@ class BuildDataset:
     """
     build dataset object
     """
-
+    # todo enforce protons here
     def __init__(self, config, pg_dict=None):
         self.target = config.target
         self.max_atomic_number = config.max_atomic_number
@@ -34,6 +34,7 @@ class BuildDataset:
         self.conditional_modelling = config.conditional_modelling
         self.include_sgs = config.include_sgs
         self.conditioning_mode = config.conditioning_mode
+        self.include_pgs = config.include_pgs
 
         # define relevant features for analysis
         self.crystal_keys = ['crystal spacegroup symbol', 'crystal spacegroup number',
@@ -86,9 +87,13 @@ class BuildDataset:
         dataset['molecule point group is C1'] = dataset['molecule point group'] == 'C1'
         dataset['crystal veracity'] = np.random.randint(0, 2, size=len(dataset['crystal z value'])).astype(bool)  # DUMMY VARIABLE
 
-        for key in self.include_sgs:
-            dataset['crystal spacegroup is ' + key] = dataset['crystal spacegroup symbol'] == key
-
+        if self.include_sgs is not None:
+            for key in self.include_sgs:
+                dataset['crystal spacegroup is ' + key] = dataset['crystal spacegroup symbol'] == key
+        else:
+            self.include_sgs = list(np.unique(dataset['crystal spacegroup symbol']))
+            for key in self.include_sgs:
+                dataset['crystal spacegroup is ' + key] = dataset['crystal spacegroup symbol'] == key
         self.final_dataset_length = min(self.dataset_length, config.dataset_length)
 
         # get dictionary for crystal system elements
@@ -99,7 +104,6 @@ class BuildDataset:
             self.crystal_system_dict[system] = i
 
         dataset['crystal system'] = [self.crystal_system_dict[system] for system in dataset['crystal system']]
-
 
         # get crystal point groups and make an ordered dict
         if pg_dict is not None:
@@ -112,6 +116,15 @@ class BuildDataset:
 
         dataset['crystal point group'] = [self.point_group_dict[pg] for pg in point_groups]
 
+        # set angle units to natural
+        # dataset['crystal reference cell angle 1'] = dataset['crystal reference cell angle 1'] * np.pi / 180
+        # dataset['crystal reference cell angle 2'] = dataset['crystal reference cell angle 2'] * np.pi / 180
+        # dataset['crystal reference cell angle 3'] = dataset['crystal reference cell angle 3'] * np.pi / 180
+        #
+        dataset['crystal alpha'] = dataset['crystal alpha'] * np.pi / 180
+        dataset['crystal beta'] = dataset['crystal beta'] * np.pi / 180
+        dataset['crystal gamma'] = dataset['crystal gamma'] * np.pi / 180
+
         if self.model_mode == 'joint modelling':
             self.datapoints, self.means, self.stds, self.dtypes = self.get_joint_features(dataset)
             self.datapoints = self.generate_joint_training_datapoints(dataset, config)
@@ -121,7 +134,12 @@ class BuildDataset:
         else:
             molecule_features_array = self.concatenate_molecule_features(dataset)
             targets = self.get_targets(dataset)
-            atom_features_list = self.concatenate_atom_features(dataset)
+            atom_features_list, hydrogen_inds = self.concatenate_atom_features(dataset)
+            for i in range(len(dataset)):
+                if len(hydrogen_inds[i]) > 0:
+                    coords_i = [dataset['atom coords'][i][j] for j in range(len(dataset['atom coords'][i])) if j not in hydrogen_inds[i]]
+                    dataset['atom coords'][i] = coords_i
+
             tracking_features = self.gather_tracking_features(dataset)
             self.datapoints = self.generate_training_data(dataset['atom coords'], dataset['identifier'], atom_features_list,
                                                           molecule_features_array, targets, tracking_features, dataset['crystal reference cell coords'])
@@ -184,14 +202,18 @@ class BuildDataset:
         keys_to_add = self.atom_keys
         # removed 'atom partial charge' due to issues with organometallic dataset
         print("Preparing atom-wise features")
-        atom_features_list = [np.zeros((len(dataset['atom Z'][i]), len(keys_to_add))) for i in range(self.dataset_length)]
         stds, means = {}, {}
+        hydrogen_inds = [np.argwhere(np.asarray(dataset['atom Z'][i]) == 1)[:, 0] for i in range(len(dataset))]  # identify hydrogens
+        atom_features_list = [np.zeros((len(dataset['atom Z'][i]) - len(hydrogen_inds[i]), len(keys_to_add))) for i in range(self.dataset_length)]
+
         for column, key in enumerate(keys_to_add):
             flat_feature = np.concatenate(dataset[key])
             stds[key] = np.std(flat_feature)
             means[key] = np.mean(flat_feature)
             for i in range(self.dataset_length):
                 feature_vector = dataset[key][i]
+                if len(hydrogen_inds[i]) > 0:
+                    feature_vector = [feature_vector[j] for j in range(len(feature_vector)) if j not in hydrogen_inds[i]]
 
                 if type(feature_vector) is not np.ndarray:
                     feature_vector = np.asarray(feature_vector)
@@ -210,7 +232,7 @@ class BuildDataset:
 
                 atom_features_list[i][:, column] = feature_vector
 
-        return atom_features_list
+        return atom_features_list, hydrogen_inds
 
     def concatenate_molecule_features(self, dataset, mol_keys=True, extra_keys=None):
         """
@@ -260,39 +282,22 @@ class BuildDataset:
         else:
             ref_coords = None
 
-        if self.conditional_modelling:
-            if self.conditioning_mode == 'graph model':
-                atom_features_list = self.concatenate_atom_features(dataset)
-                molecule_features_array = self.concatenate_molecule_features(dataset, extra_keys=['crystal point group','crystal system'])
+        atom_features_list, hydrogen_inds = self.concatenate_atom_features(dataset)
+        for i in range(len(dataset)):
+            if len(hydrogen_inds[i]) > 0:
+                coords_i = [dataset['atom coords'][i][j] for j in range(len(dataset['atom coords'][i])) if j not in hydrogen_inds[i]]
+                dataset['atom coords'][i] = coords_i
 
-                self.molecule_keys = np.arange(config.fc_depth)
-                return self.generate_training_data(atom_coords=dataset['atom coords'],
-                                                   smiles=dataset['molecule smiles'],
-                                                   atom_features_list=atom_features_list,
-                                                   mol_features=molecule_features_array,
-                                                   targets=self.datapoints,
-                                                   tracking_features=tracking_features,
-                                                   reference_cells=ref_coords)
+        molecule_features_array = self.concatenate_molecule_features(dataset, extra_keys=['crystal point group','crystal system'])
 
-            elif self.conditioning_mode == 'molecule features':
-                conditional_features = self.concatenate_molecule_features(dataset, extra_keys=['crystal point group','crystal system'])
+        return self.generate_training_data(atom_coords=dataset['atom coords'],
+                                           smiles=dataset['molecule smiles'],
+                                           atom_features_list=atom_features_list,
+                                           mol_features=molecule_features_array,
+                                           targets=self.datapoints,
+                                           tracking_features=tracking_features,
+                                           reference_cells=ref_coords)
 
-                return self.generate_training_data(atom_coords=[np.zeros((1, 3)) for _ in range(self.final_dataset_length)],
-                                                   smiles=dataset['molecule smiles'],
-                                                   atom_features_list=[np.zeros((1, 1)) for _ in range(self.final_dataset_length)],
-                                                   mol_features=conditional_features,
-                                                   targets=self.datapoints,
-                                                   tracking_features=tracking_features,
-                                                   reference_cells=ref_coords)
-
-        else:
-            return self.generate_training_data(atom_coords=[np.zeros((1, 3)) for _ in range(self.final_dataset_length)],
-                                               smiles=dataset['molecule smiles'],
-                                               atom_features_list=[np.zeros((1, 1)) for _ in range(self.final_dataset_length)],
-                                               mol_features=[np.zeros((1)) for _ in range(self.final_dataset_length)],
-                                               targets=self.datapoints,
-                                               tracking_features=tracking_features,
-                                               reference_cells=ref_coords)
 
     def get_joint_features(self, dataset):
         keys_to_add = self.lattice_keys
@@ -520,6 +525,7 @@ class BuildDataset:
 
         dim['crystal system dict'] = self.crystal_system_dict
         dim['point group dict'] = self.point_group_dict
+        dim['point groups to search'] = self.include_pgs
 
         return dim
 

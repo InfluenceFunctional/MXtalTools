@@ -18,14 +18,13 @@ sweep_id: null
 sweep_num_runs: 50
 
 # model data parameters
-target: crystal packing coefficient
-csd_fraction: 0.5 # fraction of cell-wise training data to be from the CSD
+target: crystal spacegroup setting
 
 # dataset curation
-dataset_length: 1000000
+dataset_length: 100
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
-max_num_atoms: 50
+max_num_atoms: 60
 min_num_atoms: 20
 max_z_value: 10
 min_z_value: 0
@@ -40,11 +39,12 @@ exclude_missing_r_factor: False
 exclude_disordered_crystals: True
 exclude_polymorphs: False
 exclude_nonstandard_settings: True
-include_sgs: [P-1, P21/c, P212121, C2/c, Pbca, P21]
+include_sgs: null #[P-1, P21/c, P212121, C2/c, Pbca, P21]
+include_pgs: null #[222, -1, 2/m, 2, mm2, mmm, m, 1, 422]
 
 # optimizer params
 optimizer: "adamw"
-learning_rate: 0.0001
+learning_rate: 0.00001
 max_lr: 0.0005
 lr_schedule: True
 beta1: 0.9
@@ -84,9 +84,9 @@ fc_norm_mode: null
 
 # discriminator model
 discriminator_graph_model: mike
-discriminator_graph_convolution_layers: 2
-discriminator_graph_filters: 16
-discriminator_atom_embedding_size: 16
+discriminator_graph_convolution_layers: 8
+discriminator_graph_filters: 32
+discriminator_atom_embedding_size: 32
 discriminator_graph_norm: null
 discriminator_num_spherical: 6
 discriminator_num_radial: 12
@@ -96,21 +96,25 @@ discriminator_radial_function: 'bessel' # mikenet only
 discriminator_num_attention_heads: 1 # mikenet only
 discriminator_graph_convolution: 'full message passing' # mikenet only
 discriminator_add_spherical_basis: False # mikenet only
-discriminator_num_fc_layers: 2
-discriminator_fc_depth: 16
+discriminator_num_fc_layers: 4
+discriminator_fc_depth: 32
 discriminator_pooling: attention
 discriminator_activation: "gelu"
 discriminator_fc_dropout_probability: 0
 discriminator_fc_norm_mode: null
 
+generator_model: mlp
+d_g_balance: 0.5 # relative amount of training for discriminator : generator
+gan_loss: 'standard' # or 'standard'
+train_volume: True
+train_flow: True
+gan_adversarial_loss: True
+
 conditional_modelling: True # only implemented for nsf_cl coupling layer
 conditioning_mode: molecule features # 'graph model' or 'molecule features'
-num_flow_layers: 20
-flow_depth: 64
+num_flow_layers: 4
+flow_depth: 32
 flow_basis_fns: 6
 generator_prior: multivariate normal # or uniform
 flow_type: nsf # #DEPRECATED choice of affine coupling layer - nsf or glow or made, glow seems to have low capacity and made isn't stable
 num_samples: 100000
-
-generator_model: mlp
-gan_loss: 'wasserstein' # or 'standard'

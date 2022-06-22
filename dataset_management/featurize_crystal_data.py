@@ -18,7 +18,6 @@ from ase.ga.utilities import get_rdf
 from ase import Atoms
 from ase.visualize import view
 
-
 def get_fraction(atomic_numbers, target):
     return atomic_numbers.count(target) / len(atomic_numbers)
 
@@ -678,11 +677,15 @@ class CustomGraphFeaturizer():
     def add_one_feature_to_full_dataset(self, feature):
         df = pd.read_pickle(self.full_dataset_path)
         # df = pd.DataFrame.from_dict(np.load(self.full_dataset_path, allow_pickle=True).item())
+        self.point_groups = {}
+        self.lattice_type = {}
         self.sym_ops = {}
         for i in tqdm.tqdm(range(1, 231)):
             sym_group = symmetry.Group(i)
             general_position_syms = sym_group.wyckoffs_organized[0][0]
             self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
+            self.point_groups[i] = sym_group.point_group
+            self.lattice_type[i] = sym_group.lattice_type
 
         if feature == 'crystal reference cell coords':
             csd_reader = EntryReader('CSD')
@@ -825,6 +828,30 @@ class CustomGraphFeaturizer():
             df.to_pickle('dataset_with_new_feature')
             np.save('flagged_crystals',np.asarray(flaglist))
             aa = 1
+
+        elif feature == 'point group':
+            self.sym_ops = {}
+            atom_keys = []
+            for column in df.columns:
+                if column[0:4] == 'atom':
+                    atom_keys.append(column)
+
+            pg_list = np.zeros(len(df),dtype=str)
+
+            for i in tqdm.tqdm(range(len(df))):
+                # filter hydrogens
+                atoms = np.asarray(df['atom Z'][i])
+                heavy_atom_inds = np.argwhere(atoms > 1)
+                for key in atom_keys:
+                    df[key][i] = list(np.asarray(df[key][i])[heavy_atom_inds])
+
+                # add point group
+                pg_list[i] = self.point_groups[df['crystal spacegroup number'][i]]
+
+            df['crystal point group'] = pg_list
+            df.to_pickle('dataset_with_new_feature')
+            df.loc[0:1000].to_pickle('../../test_dataset_with_new_feature')
+
 
     def featurize(self, chunk_inds=[0, 100]):
         os.chdir(self.crystal_chunks_path)
@@ -975,4 +1002,4 @@ if __name__ == '__main__':
         featurizer.featurize(chunk_inds=[offset + 0, offset + run])
     else:
         featurizer = CustomGraphFeaturizer(full_dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset')
-        featurizer.add_one_feature_to_full_dataset(feature='molecule alignment')  # 'crystal reference cell coords')
+        featurizer.add_one_feature_to_full_dataset(feature='point group')  # 'crystal reference cell coords')

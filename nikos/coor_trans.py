@@ -5,8 +5,8 @@ import numpy as np
 def coor_trans(opt,pos,v,a):
     
     ''' Calculate cos and sin of cell angles '''
-    cos_a = np.cos(a*np.pi/180.0)
-    sin_a = np.sin(a*np.pi/180.0)
+    cos_a = np.cos(a)
+    sin_a = np.sin(a)
     
     ''' Calculate volume of the unit cell '''
     vol = v[0]*v[1]*v[2]*np.sqrt(1.0 - cos_a[0]**2 - cos_a[1]**2 - cos_a[2]**2 + 2.0*cos_a[0]*cos_a[1]*cos_a[2])

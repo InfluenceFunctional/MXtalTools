@@ -87,7 +87,7 @@ class Miner():
         self.curate_dataset()
 
         self.dataset.to_pickle('../../full_dataset')
-        self.dataset.loc[0:1000].to_pickle('../../test_dataset')
+        self.dataset.loc[0:10000].to_pickle('../../test_dataset')
 
     def load_dataset(self, dataset_path, collect_chunks=False, test_mode=False):
 
@@ -503,10 +503,14 @@ class Miner():
         '''
         print('Analyzing reference cells')
         self.sym_ops = {}
+        self.point_groups = {}
+        self.lattice_type = {}
         for i in tqdm.tqdm(range(1, 231)):
             sym_group = symmetry.Group(i)
             general_position_syms = sym_group.wyckoffs_organized[0][0]
             self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
+            self.point_groups[i] = sym_group.point_group
+            self.lattice_type[i] = sym_group.lattice_type
 
         # generate all combinations of 5x5 fractional vectors
         # Nikos says only take these [-n_max,n_max], n_1*n_2*n_3=0 and n_1|n_2|n_3=n_max

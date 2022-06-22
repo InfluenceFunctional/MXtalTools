@@ -426,6 +426,22 @@ class Normalization(nn.Module):
         return self.norm(input)
 
 
+class independent_gaussian_model(nn.Module):
+    def __init__(self, input_dim, output_dim, means, stds):
+        super(independent_gaussian_model, self).__init__()
+
+        self.output_dim = output_dim
+        self.input_dim = input_dim
+        self.register_buffer('means',torch.Tensor(means))
+        self.register_buffer('stds',torch.Tensor(stds))
+
+        self.dummy_params = nn.Parameter(torch.ones(100))
+
+    def forward(self,z,conditions = None):
+        # conditions are unused - dummy
+        return z * self.stds + self.means # pass random numbers through an appropriate standardization
+
+
 class general_MLP(nn.Module):
     def __init__(self, layers, filters, input_dim, output_dim, seed=0, dropout=0, conditioning_dim=0, norm=None):
         super(general_MLP, self).__init__()
@@ -475,11 +491,11 @@ class general_MLP(nn.Module):
 
     def forward(self, x, conditions=None): # todo make safe for torch geometric data - need to de-entangle conditional and molecular features, then prep and feed consistently
         if conditions is not None:
-            if type(conditions) == torch_geometric.data.data.Data: # extract conditions from trailing atomic features
+            if type(conditions) == torch_geometric.data.batch.DataBatch: # extract conditions from trailing atomic features
                 if len(x) == 1:
                     conditions = conditions.x[:,-self.conditioning_dim:]
                 else:
-                    conditions = conditions.x[x.ptr][:,-self.conditioning_dim:]
+                    conditions = conditions.x[conditions.ptr[:-1]][:,-self.conditioning_dim:]
 
             x = torch.cat((x, conditions), dim=1)
         for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
@@ -517,9 +533,20 @@ class crystal_generator(nn.Module):
                                      )
         elif self.generator_model.lower() == 'nf':  # conditioned normalizing flow
             self.model = crystal_nf(config, dataDims, self.prior)
+        elif self.generator_model.lower() == 'fit normal':
+            assert config.generator_prior.lower() == 'multivariate normal'
+            self.model = independent_gaussian_model(config, dataDims, dataDims['means'], dataDims['stds'])
 
     def sample_latent(self, n_samples):
         return self.prior.sample((n_samples,)).to(self.device)
+
+    def nf_forward(self, data):
+        '''
+        x-->z (forward, in the conventional sense)
+        '''
+        zs, prior_logprob, log_det = self.model(data.y[0],conditions=data) # y[0] is are the flow dimensions
+
+        return zs, prior_logprob, log_det
 
     def forward(self, n_samples, z=None, conditions=None):
         if z is None:  # sample random numbers from simple prior
@@ -590,7 +617,7 @@ class crystal_discriminator(nn.Module):
                                    filters=config.fc_depth,
                                    norm=config.fc_norm_mode,
                                    dropout=config.fc_dropout_probability,
-                                   input_dim=self.fc_depth + self.n_mol_feats,
+                                   input_dim=self.fc_depth,
                                    output_dim=self.fc_depth,
                                    conditioning_dim=self.n_mol_feats,
                                    seed=config.model_seed

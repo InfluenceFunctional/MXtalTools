@@ -16,7 +16,8 @@ import sys
 general utilities
 '''
 
-def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lattice, dataDims, enforce_crystal_system = True):
+
+def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lattices, dataDims, enforce_crystal_system=False):
     '''
     assert physically meaningful parameters
     :param cell_lengths:
@@ -25,36 +26,40 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     :param mol_rotation:
     :return:
     '''
+
+    c_pi = torch.pi * 0.9
+
     # de-standardize everything
-    means = torch.Tensor(dataDims['means'])
-    stds = torch.Tensor(dataDims['stds'])
-    cell_lengths = cell_lengths * means[0:3] + stds[0:3]
-    cell_angles = cell_angles * means[3:6] + stds[3:6]
+    means = torch.Tensor(dataDims['means']).to(cell_lengths.device)
+    stds = torch.Tensor(dataDims['stds']).to(cell_lengths.device)
+    cell_lengths = cell_lengths * stds[0:3] + means[0:3]
+    cell_angles = cell_angles * stds[3:6] + means[3:6]
     cell_angles = cell_angles * torch.pi / 180
-    mol_position = mol_position * means[6:9] + stds[6:9]
-    mol_rotation = mol_rotation * means[9:12] + stds[9:12]
+    mol_position = mol_position * stds[6:9] + means[6:9]
+    mol_rotation = mol_rotation * stds[9:12] + means[9:12]
 
     # apply appropriate limits
-    cell_lengths = torch.clip(cell_lengths,min=0)
-    cell_angles = torch.clip(cell_angles,min=0,max=torch.pi)
-    mol_position = torch.clip(mol_position,min=0,max=1)
-    mol_rotation = torch.clip(mol_rotation,min=-torch.pi,max=torch.pi)
-    mol_rotation[:,1] = torch.clip(mol_rotation[:,1],min=-torch.pi/2, max=torch.pi/2) # second rotation has shorter range
+    cell_lengths = torch.clip(cell_lengths, min=1)
+    cell_angles = torch.clip(cell_angles, min=torch.pi * 0.1, max=c_pi)
+    mol_position = torch.clip(mol_position, min=0, max=1)
+    mol_rotation = torch.clip(mol_rotation, min=-c_pi, max=c_pi)
+    mol_rotation[:, 1] = torch.clip(mol_rotation[:, 1], min=-c_pi / 2, max=c_pi / 2)  # second rotation has shorter range
 
     for i in range(len(cell_lengths)):
-        lattice = lattices[i]
-        if enforce_crystal_system: # todo can alternately enforce this via auxiliary loss on the generator itself
+        if enforce_crystal_system:  # todo can alternately enforce this via auxiliary loss on the generator itself
+            lattice = lattices[i]
+
             # enforce agreement with crystal system
             if lattice.lower() == 'triclinic':
                 pass
-            elif lattice.lower() == 'monoclinic': # fix alpha and gamma
-                cell_angles[i,0], cell_angles[i,2] = torch.pi/2, torch.pi/2
-            elif lattice.lower() == 'orthorhombic': # fix all angles
+            elif lattice.lower() == 'monoclinic':  # fix alpha and gamma
+                cell_angles[i, 0], cell_angles[i, 2] = torch.pi / 2, torch.pi / 2
+            elif lattice.lower() == 'orthorhombic':  # fix all angles
                 cell_angles[i] = torch.ones(3) * torch.pi / 2
-            elif (lattice.lower() == 'tetragonal'): # fix all angles and a & b vectors
+            elif (lattice.lower() == 'tetragonal'):  # fix all angles and a & b vectors
                 cell_angles[i] = torch.ones(3) * torch.pi / 2
-                cell_lengths[i,0], cell_lengths[i,1] = torch.mean(cell_lengths[i,0:2]) * torch.ones(2)
-            elif (lattice.lower() == 'hexagonal'): # for rhombohedral, all angles and lengths equal, but not 90.
+                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2)
+            elif (lattice.lower() == 'hexagonal'):  # for rhombohedral, all angles and lengths equal, but not 90.
                 # for truly hexagonal, alpha=90, gamma is 120, a=b!=c
                 # todo figure out how to properly deal with this
                 print('hexagonal lattice is not yet implemented!')
@@ -68,9 +73,10 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
         else:
             # todo we now need a symmetry analyzer to tell us what we're building
             # don't assume a crystal system, but snap angles close to 90, to assist in precise symmetry
-            cell_angles[i,torch.abs(cell_angles[i] - torch.pi/2) < 0.1] = torch.pi/2
+            cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.1] = torch.pi / 2
 
     return cell_lengths, cell_angles, mol_position, mol_rotation
+
 
 def initialize_metrics_dict(metrics):
     m_dict = {}
@@ -94,6 +100,7 @@ def printRecord(statement):
         with open('record.txt', 'w') as file:
             file.write('\n' + statement)
 
+
 def add_bool_arg(parser, name, default=False):
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument('--' + name, dest=name, action='store_true')
@@ -109,7 +116,6 @@ def add_arg_list(parser, arg_list):
             parser.add_argument('--' + entry['name'], type=entry['type'], default=entry['default'])
 
     return parser
-
 
 
 class bcolors:
@@ -161,7 +167,6 @@ def standardize(data, return_std=False, known_mean=None, known_std=None):
         return std_data, mean, std
     else:
         return std_data
-
 
 
 spaceGroupList = ['A*', 'A***', 'A**a', 'A*/*', 'A*/a', 'A*a*', 'A-1', 'A1', 'A11*/a', 'A112', 'A112/a', 'A112/m', 'A11a', 'A2', 'A2/a', 'A2/m', 'A2/n', 'A2122', 'A21am', 'A21ma', 'A222', 'Aa', 'Ab2a', 'Aba*', 'Aba2', 'Abaa', 'Abam',
@@ -1884,7 +1889,6 @@ def load_yaml(path, append_config_dir=True):
     return target_dict
 
 
-
 def delete_from_dataframe(df, inds):
     df = df.drop(index=inds)
     if 'level_0' in df.columns:  # delete unwanted samples
@@ -1895,8 +1899,8 @@ def delete_from_dataframe(df, inds):
 
 
 #@nb.jit(nopython=True)
-def compute_principal_axes_np(masses, coords, return_direction = False):
-    points = (coords - coords.T.dot(masses)/np.sum(masses))
+def compute_principal_axes_np(masses, coords):
+    points = (coords - coords.T.dot(masses) / np.sum(masses))
     x, y, z = points.T
     Ixx = np.sum(masses * (y ** 2 + z ** 2))
     Iyy = np.sum(masses * (x ** 2 + z ** 2))
@@ -1905,11 +1909,11 @@ def compute_principal_axes_np(masses, coords, return_direction = False):
     Iyz = -np.sum(masses * y * z)
     Ixz = -np.sum(masses * x * z)
     I = np.array([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]])  # inertial tensor
-    Ipm, Ip = np.linalg.eig(I) # principal inertial tensor
+    Ipm, Ip = np.linalg.eig(I)  # principal inertial tensor
     Ipm, Ip = np.real(Ipm), np.real(Ip)
     sort_inds = np.argsort(Ipm)
     Ipm = Ipm[sort_inds]
-    Ip = Ip.T[sort_inds]# want eigenvectors to be sorted row-wise (rather than column-wise)
+    Ip = Ip.T[sort_inds]  # want eigenvectors to be sorted row-wise (rather than column-wise)
 
     # cardinal direction is vector from CoM to farthest atom
     dists = np.linalg.norm(points, axis=1)
@@ -1917,23 +1921,107 @@ def compute_principal_axes_np(masses, coords, return_direction = False):
     max_equivs = np.argwhere(np.round(dists, 8) == np.round(dists[max_ind], 8))[:, 0]  # if there are multiple equidistant atoms - pick the one with the lowest index
     max_ind = int(np.amin(max_equivs))
     direction = points[max_ind]
-    direction /= np.linalg.norm(direction)
-    overlaps = Ip.dot(direction) # check if the principal components point towards or away from the CoG
-    if any(overlaps == 0): # exactly zero is invalid
-        overlaps[overlaps==0] = 1e-9
-    if any(np.abs(overlaps) < 1e-8):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+    direction = np.divide(direction,np.linalg.norm(direction))
+    overlaps = Ip.dot(direction)  # check if the principal components point towards or away from the CoG
+    #if any(overlaps == 0):  # exactly zero is invalid
+    #    overlaps[overlaps == 0] = 1e-9
+    if np.any(np.abs(overlaps) < 1e-8):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
         # align the 'good' vectors
         Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
         fix_ind = np.argmin(np.abs(overlaps))
         other_vectors = np.delete(np.arange(3), fix_ind)
         check_direction = np.cross(Ip[other_vectors[0]], Ip[other_vectors[1]])
         # align the 'bad' vector
-        Ip[fix_ind] *= np.sign(np.dot(check_direction, Ip[fix_ind]))
+        Ip[fix_ind] = np.prod(Ip[fix_ind], np.sign(np.dot(check_direction, Ip[fix_ind])))
     else:
         Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
 
+    return Ip, Ipm, I
+
+
+def compute_principal_axes_torch(masses, coords, return_direction=False):
+    points = (coords - torch.inner(coords.T, masses) / torch.sum(masses))
+    x, y, z = points.T
+    Ixx = torch.sum(masses * (y ** 2 + z ** 2))  # todo switch to single-step
+    Iyy = torch.sum(masses * (x ** 2 + z ** 2))
+    Izz = torch.sum(masses * (x ** 2 + y ** 2))
+    Ixy = -torch.sum(masses * x * y)
+    Iyz = -torch.sum(masses * y * z)
+    Ixz = -torch.sum(masses * x * z)
+    I = torch.tensor([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]]).to(points.device)  # inertial tensor
+    Ipm, Ip = torch.linalg.eig(I)  # principal inertial tensor
+    Ipm, Ip = torch.real(Ipm), torch.real(Ip)
+    sort_inds = torch.argsort(Ipm)
+    Ipm = Ipm[sort_inds]
+    Ip = Ip.T[sort_inds]  # want eigenvectors to be sorted row-wise (rather than column-wise)
+
+    # cardinal direction is vector from CoM to farthest atom
+    dists = torch.linalg.norm(points, axis=1)
+    max_ind = torch.argmax(dists)
+    max_equivs = torch.argwhere(torch.round(dists, decimals=8) == torch.round(dists[max_ind], decimals=8))[:, 0]  # if there are multiple equidistant atoms - pick the one with the lowest index
+    max_ind = int(torch.amin(max_equivs))
+    direction = points[max_ind]
+    direction = direction / torch.linalg.norm(direction)
+    overlaps = torch.inner(Ip, direction)  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
+    if any(overlaps == 0):  # exactly zero is invalid # todo get rid of in-place ops
+        overlaps[overlaps == 0] = 1e-9
+    if any(torch.abs(overlaps) < 1e-8):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+        # align the 'good' vectors
+        Ip = (Ip.T * torch.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
+        fix_ind = torch.argmin(torch.abs(overlaps))
+        other_vectors = np.delete(np.arange(3), fix_ind)
+        check_direction = torch.cross(Ip[other_vectors[0]], Ip[other_vectors[1]])
+        # align the 'bad' vector
+        Ip[fix_ind] = Ip[fix_ind] * torch.sign(torch.dot(check_direction, Ip[fix_ind]))
+    else:
+        Ip = (Ip.T * torch.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
 
     if return_direction:
         return Ip, Ipm, I, direction
     else:
         return Ip, Ipm, I
+
+
+def coor_trans_matrix_torch(opt, v, a, return_vol=False):
+    ''' Calculate cos and sin of cell angles '''
+    cos_a = torch.cos(a)
+    sin_a = torch.sin(a)
+
+    ''' Calculate volume of the unit cell '''
+    val = 1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2]
+    vol = torch.sign(val) * v[0] * v[1] * v[2] * torch.sqrt(torch.abs(val))  # technically a signed quanitity
+
+    ''' Setting the transformation matrix '''
+    m = torch.zeros((3, 3))
+    if (opt == 'c_to_f'):
+        ''' Converting from cartesian to fractional '''
+        m[0, 0] = 1.0 / v[0]
+        m[0, 1] = -cos_a[2] / v[0] / sin_a[2]
+        m[0, 2] = v[1] * v[2] * (cos_a[0] * cos_a[2] - cos_a[1]) / vol / sin_a[2]
+        m[1, 1] = 1.0 / v[1] / sin_a[2]
+        m[1, 2] = v[0] * v[2] * (cos_a[1] * cos_a[2] - cos_a[0]) / vol / sin_a[2]
+        m[2, 2] = v[0] * v[1] * sin_a[2] / vol
+    elif (opt == 'f_to_c'):
+        ''' Converting from fractional to cartesian '''
+        m[0, 0] = v[0]
+        m[0, 1] = v[1] * cos_a[2]
+        m[0, 2] = v[2] * cos_a[1]
+        m[1, 1] = v[1] * sin_a[2]
+        m[1, 2] = v[2] * (cos_a[0] - cos_a[1] * cos_a[2]) / sin_a[2]
+        m[2, 2] = vol / v[0] / v[1] / sin_a[2]
+
+    # todo create m in a single-step
+    if return_vol:
+        return m, torch.abs(vol)
+    else:
+        return m
+
+
+def cell_vol_torch(v, a):
+    ''' Calculate cos and sin of cell angles '''
+    cos_a = torch.cos(a)  # in natural units
+
+    ''' Calculate volume of the unit cell '''
+    vol = v[0] * v[1] * v[2] * torch.sqrt(torch.abs(1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2]))
+
+    return vol
