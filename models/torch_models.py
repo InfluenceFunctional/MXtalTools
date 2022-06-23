@@ -19,20 +19,20 @@ from sklearn.decomposition import PCA
 class FlowModel(nn.Module):
     def __init__(self, config, dataDims):
         super(FlowModel, self).__init__()
-        torch.manual_seed(config.model_seed)
+        torch.manual_seed(config.seeds.model)
         # https://github.com/karpathy/pytorch-normalizing-flows/blob/master/nflib1.ipynb
         # nice review https://arxiv.org/pdf/1912.02762.pdf
         self.flow_dimension = dataDims['n crystal features']
 
-        if config.conditional_modelling:
+        if config.generator.conditional_modelling:
             self.n_conditional_features = dataDims['n conditional features']
-            if config.conditioning_mode == 'graph model':
+            if config.generator.conditioning_mode == 'graph model':
                 self.conditioner = molecule_graph_model(config, dataDims, return_latent=True)
                 self.n_conditional_features = config.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
-            elif config.conditioning_mode == 'molecule features':
+            elif config.generator.conditioning_mode == 'molecule features':
                 self.conditioner = None
             else:
-                print(config.conditioning_mode + ' is not an implemented conditioner!')
+                print(config.generator.conditioning_mode + ' is not an implemented conditioner!')
                 sys.exit()
         else:
             self.n_conditional_features = 0
@@ -43,10 +43,10 @@ class FlowModel(nn.Module):
         else:
             self.device = 'cpu'
         # prior
-        if config.generator_prior == 'multivariate normal':
+        if config.generator.prior == 'multivariate normal':
             self.prior = MultivariateNormal(torch.zeros(dataDims['n crystal features']), torch.eye(dataDims['n crystal features']))
         else:
-            print(config.generator_prior + ' is not an implemented prior!!')
+            print(config.generator.prior + ' is not an implemented prior!!')
             sys.exit()
 
         # flows
@@ -207,87 +207,116 @@ class NormalizingFlow(nn.Module):
 
 
 class molecule_graph_model(nn.Module):
-    def __init__(self, config, dataDims, return_latent=False, crystal_mode=False):
+    def __init__(self, dataDims,seed,
+                 activation,
+                 num_fc_layers,
+                 fc_depth,
+                 fc_dropout_probability,
+                 fc_norm_mode,
+                 graph_model,
+                 graph_filters,
+                 graph_convolutional_layers,
+                 concat_mol_to_atom_features,
+                 pooling,
+                 graph_norm,
+                 num_spherical,
+                 num_radial,
+                 graph_convolution,
+                 num_attention_heads,
+                 add_spherical_basis,
+                 atom_embedding_size,
+                 radial_function,
+                 return_latent=False, crystal_mode=False):
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
         self.return_latent = return_latent
-        self.activation = config.activation
-        self.num_fc_layers = config.num_fc_layers
-        self.fc_depth = config.fc_depth
-        self.graph_model = config.graph_model
+        self.activation = activation
+        self.num_fc_layers = num_fc_layers
+        self.fc_depth = fc_depth
+        self.fc_dropout_probability = fc_dropout_probability
+        self.fc_norm_mode = fc_norm_mode
+        self.graph_model = graph_model
+        self.graph_convolution = graph_convolution
         self.output_classes = dataDims['output classes']
-        self.graph_filters = config.graph_filters
+        self.graph_convolutional_layers = graph_convolutional_layers
+        self.graph_filters = graph_filters
+        self.graph_norm = graph_norm
+        self.num_spherical = num_spherical
+        self.num_radial = num_radial
+        self.num_attention_heads = num_attention_heads
+        self.add_spherical_basis = add_spherical_basis
         self.n_mol_feats = dataDims['mol features']
         self.n_atom_feats = dataDims['atom features']
-        if not config.concat_mol_to_atom_features:  # if we are not adding molwise feats to atoms, subtract the dimension
+        self.radial_function = radial_function
+        if not concat_mol_to_atom_features:  # if we are not adding molwise feats to atoms, subtract the dimension
             self.n_atom_feats -= self.n_mol_feats
-        self.pool_type = config.pooling
-        self.fc_norm_mode = config.fc_norm_mode
-        self.embedding_dim = config.atom_embedding_size
+        self.pool_type = pooling
+        self.fc_norm_mode = fc_norm_mode
+        self.embedding_dim = atom_embedding_size
         self.crystal_mode = crystal_mode
 
-        torch.manual_seed(config.model_seed)
+        torch.manual_seed(seed)
 
         if self.graph_model is not None:
-            if config.graph_model == 'dime':
+            if self.graph_model == 'dime':
                 self.graph_net = CustomDimeNet(
                     crystal_mode=self.crystal_mode,
-                    graph_filters=config.graph_filters,
-                    hidden_channels=config.fc_depth,
+                    graph_filters=self.graph_filters,
+                    hidden_channels=self.fc_depth,
                     out_channels=self.classes,
-                    num_blocks=config.graph_convolution_layers,
-                    num_spherical=config.num_spherical,
-                    num_radial=config.num_radial,
-                    cutoff=config.graph_convolution_cutoff,
-                    max_num_neighbors=config.max_num_neighbors,
+                    num_blocks=self.graph_convolution_layers,
+                    num_spherical=self.num_spherical,
+                    num_radial=self.num_radial,
+                    cutoff=self.graph_convolution_cutoff,
+                    max_num_neighbors=self.max_num_neighbors,
                     num_output_layers=1,
                     dense=False,
                     num_atom_features=self.n_atom_feats,
                     atom_embedding_dims=dataDims['atom embedding dict sizes'],
-                    embedding_hidden_dimension=config.atom_embedding_size,
-                    norm=config.graph_norm,
-                    dropout=config.fc_dropout_probability
+                    embedding_hidden_dimension=self.atom_embedding_size,
+                    norm=self.graph_norm,
+                    dropout=self.fc_dropout_probability
                 )
-            elif config.graph_model == 'schnet':
+            elif self.graph_model == 'schnet':
                 self.graph_net = CustomSchNet(
                     crystal_mode=crystal_mode,
-                    hidden_channels=config.fc_depth,
-                    num_filters=config.graph_filters,
-                    num_interactions=config.graph_convolution_layers,
-                    num_gaussians=config.num_radial,
-                    cutoff=config.graph_convolution_cutoff,
-                    max_num_neighbors=config.max_num_neighbors,
+                    hidden_channels=self.fc_depth,
+                    num_filters=self.graph_filters,
+                    num_interactions=self.graph_convolution_layers,
+                    num_gaussians=self.num_radial,
+                    cutoff=self.graph_convolution_cutoff,
+                    max_num_neighbors=self.max_num_neighbors,
                     readout='mean',
                     num_atom_features=self.n_atom_feats,
-                    embedding_hidden_dimension=config.atom_embedding_size,
+                    embedding_hidden_dimension=self.atom_embedding_size,
                     atom_embedding_dims=dataDims['atom embedding dict sizes'],
-                    norm=config.graph_norm,
-                    dropout=config.fc_dropout_probability
+                    norm=self.graph_norm,
+                    dropout=self.fc_dropout_probability
                 )
-            elif config.graph_model == 'mike':  # mike's net
+            elif self.graph_model == 'mike':  # mike's net
                 self.graph_net = MikesGraphNet(
                     crystal_mode=crystal_mode,
-                    graph_convolution_filters=config.graph_filters,
-                    graph_convolution=config.graph_convolution,
-                    out_channels=config.fc_depth,
-                    hidden_channels=config.atom_embedding_size,
-                    num_blocks=config.graph_convolution_layers,
-                    num_radial=config.num_radial,
-                    num_spherical=config.num_spherical,
-                    max_num_neighbors=config.max_num_neighbors,
-                    cutoff=config.graph_convolution_cutoff,
+                    graph_convolution_filters=self.graph_filters,
+                    graph_convolution=self.graph_convolution,
+                    out_channels=self.fc_depth,
+                    hidden_channels=self.atom_embedding_size,
+                    num_blocks=self.graph_convolution_layers,
+                    num_radial=self.num_radial,
+                    num_spherical=self.num_spherical,
+                    max_num_neighbors=self.max_num_neighbors,
+                    cutoff=self.graph_convolution_cutoff,
                     activation='gelu',
-                    embedding_hidden_dimension=config.atom_embedding_size,
+                    embedding_hidden_dimension=self.atom_embedding_size,
                     num_atom_features=self.n_atom_feats,
-                    norm=config.graph_norm,
-                    dropout=config.fc_dropout_probability,
-                    spherical_embedding=config.add_spherical_basis,
-                    radial_embedding=config.radial_function,
+                    norm=self.graph_norm,
+                    dropout=self.fc_dropout_probability,
+                    spherical_embedding=self.add_spherical_basis,
+                    radial_embedding=self.radial_function,
                     atom_embedding_dims=dataDims['atom embedding dict sizes'],
-                    attention_heads=config.num_attention_heads
+                    attention_heads=self.num_attention_heads
                 )
             else:
-                print(config.graph_model + ' is not a valid graph model!!')
+                print(self.graph_model + ' is not a valid graph model!!')
                 sys.exit()
         else:
             self.graph_net = nn.Identity()
@@ -296,12 +325,12 @@ class molecule_graph_model(nn.Module):
 
         # initialize global pooling operation
         if self.graph_model is not None:
-            if config.pooling == 'mean':
+            if self.pooling == 'mean':
                 self.global_pool = gnn.global_mean_pool
-            elif config.pooling == 'sum':
+            elif self.pooling == 'sum':
                 self.global_pool = gnn.global_add_pool
-            elif config.pooling == 'attention':
-                self.global_pool = gnn.GlobalAttention(nn.Sequential(nn.Linear(config.fc_depth, config.fc_depth), nn.GELU(), nn.Linear(config.fc_depth, 1)))
+            elif self.pooling == 'attention':
+                self.global_pool = gnn.GlobalAttention(nn.Sequential(nn.Linear(self.fc_depth, self.fc_depth), nn.GELU(), nn.Linear(self.fc_depth, 1)))
 
         # molecule features FC layer
         if self.n_mol_feats != 0:
@@ -311,14 +340,14 @@ class molecule_graph_model(nn.Module):
             fc_input_dim = self.fc_depth
         else:
             fc_input_dim = 0
-        self.mol_fc = general_MLP(layers=config.num_fc_layers,
-                                  filters=config.fc_depth,
-                                  norm=config.fc_norm_mode,
-                                  dropout=config.fc_dropout_probability,
+        self.mol_fc = general_MLP(layers=self.num_fc_layers,
+                                  filters=self.fc_depth,
+                                  norm=self.fc_norm_mode,
+                                  dropout=self.fc_dropout_probability,
                                   input_dim=fc_input_dim,
                                   output_dim=self.fc_depth,
                                   conditioning_dim=self.n_mol_feats,
-                                  seed=config.model_seed
+                                  seed=self.seeds.model
                                   )
 
         self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
@@ -503,258 +532,3 @@ class general_MLP(nn.Module):
 
         return x
 
-
-class crystal_generator(nn.Module):
-    def __init__(self, config, dataDims):
-        super(crystal_generator, self).__init__()
-
-        self.device = config.device
-        self.generator_model = config.generator_model
-
-        if config.generator_prior == 'multivariate normal':
-            self.prior = MultivariateNormal(torch.zeros(dataDims['n crystal features']), torch.eye(dataDims['n crystal features']))
-        elif config.generator_prior.lower() == 'uniform':
-            self.prior = Uniform(low=0, high=1)
-        else:
-            print(config.generator_prior + ' is not an implemented prior!!')
-            sys.exit()
-
-        if self.generator_model.lower() == 'gnn':  # molecular graph model
-            self.model = molecule_graph_model(config, dataDims)
-        elif self.generator_model.lower() == 'mlp':  # simple MLP
-            self.model = general_MLP(layers=config.num_fc_layers,
-                                     filters=config.fc_depth,
-                                     norm=config.fc_norm_mode,
-                                     dropout=config.fc_dropout_probability,
-                                     input_dim=dataDims['n crystal features'],
-                                     output_dim=dataDims['n crystal features'],
-                                     conditioning_dim=dataDims['n conditional features'],
-                                     seed=config.model_seed
-                                     )
-        elif self.generator_model.lower() == 'nf':  # conditioned normalizing flow
-            self.model = crystal_nf(config, dataDims, self.prior)
-        elif self.generator_model.lower() == 'fit normal':
-            assert config.generator_prior.lower() == 'multivariate normal'
-            self.model = independent_gaussian_model(config, dataDims, dataDims['means'], dataDims['stds'])
-
-    def sample_latent(self, n_samples):
-        return self.prior.sample((n_samples,)).to(self.device)
-
-    def nf_forward(self, data):
-        '''
-        x-->z (forward, in the conventional sense)
-        '''
-        zs, prior_logprob, log_det = self.model(data.y[0],conditions=data) # y[0] is are the flow dimensions
-
-        return zs, prior_logprob, log_det
-
-    def forward(self, n_samples, z=None, conditions=None):
-        if z is None:  # sample random numbers from simple prior
-            z = self.sample_latent(n_samples)
-
-        # run through model
-        if self.generator_model is not 'nf':
-            return self.model(z, conditions=conditions)
-        else:
-            x, _ = self.model.backward(z, conditions=conditions)  # normalizing flow runs backwards from z->x
-            return x
-
-
-class crystal_discriminator(nn.Module):
-    def __init__(self, config, dataDims):
-        super(crystal_discriminator, self).__init__()
-        # initialize constants and layers
-        self.activation = config.discriminator_activation
-        self.num_fc_layers = config.discriminator_num_fc_layers
-        self.fc_depth = config.discriminator_fc_depth
-        self.output_classes = 1 if config.gan_loss == 'wasserstein' else 2
-        self.graph_filters = config.discriminator_graph_filters
-        self.n_mol_feats = dataDims['mol features']
-        self.n_atom_feats = dataDims['atom features']
-        self.n_atom_feats -= self.n_mol_feats
-        self.pool_type = config.pooling
-        self.fc_norm_mode = config.discriminator_fc_norm_mode
-        self.embedding_dim = config.discriminator_atom_embedding_size
-        self.crystal_mode = True
-
-        torch.manual_seed(config.model_seed)
-
-        self.graph_net = MikesGraphNet(
-            crystal_mode=True,
-            graph_convolution_filters=config.discriminator_graph_filters,
-            graph_convolution=config.discriminator_graph_convolution,
-            out_channels=config.discriminator_fc_depth,
-            hidden_channels=config.discriminator_atom_embedding_size,
-            num_blocks=config.discriminator_graph_convolution_layers,
-            num_radial=config.discriminator_num_radial,
-            num_spherical=config.discriminator_num_spherical,
-            max_num_neighbors=config.discriminator_max_num_neighbors,
-            cutoff=config.discriminator_graph_convolution_cutoff,
-            activation='gelu',
-            embedding_hidden_dimension=config.discriminator_atom_embedding_size,
-            num_atom_features=self.n_atom_feats,
-            norm=config.discriminator_graph_norm,
-            dropout=config.discriminator_fc_dropout_probability,
-            spherical_embedding=config.discriminator_add_spherical_basis,
-            radial_embedding=config.discriminator_radial_function,
-            atom_embedding_dims=dataDims['atom embedding dict sizes'],
-            attention_heads=config.discriminator_num_attention_heads
-        )
-
-        # initialize global pooling operation
-        if config.pooling == 'mean':
-            self.global_pool = gnn.global_mean_pool
-        elif config.pooling == 'sum':
-            self.global_pool = gnn.global_add_pool
-        elif config.pooling == 'attention':
-            self.global_pool = gnn.GlobalAttention(nn.Sequential(nn.Linear(config.discriminator_fc_depth, config.discriminator_fc_depth),
-                                                                 nn.GELU(), nn.Linear(config.discriminator_fc_depth, 1)))
-
-        # molecule features FC layer
-        if self.n_mol_feats != 0:
-            self.mol_fc = nn.Linear(self.n_mol_feats, self.n_mol_feats)
-
-        self.gnn_mlp = general_MLP(layers=config.num_fc_layers,
-                                   filters=config.fc_depth,
-                                   norm=config.fc_norm_mode,
-                                   dropout=config.fc_dropout_probability,
-                                   input_dim=self.fc_depth,
-                                   output_dim=self.fc_depth,
-                                   conditioning_dim=self.n_mol_feats,
-                                   seed=config.model_seed
-                                   )
-
-        self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
-
-    def forward(self, data):
-        x = data.x
-        pos = data.pos
-
-        x = self.graph_net(torch.cat((x[:, :self.n_atom_feats], x[:, -1:]), dim=1), pos, data.batch)  # extra dim for crystal indexing
-
-        keep_cell_inds = torch.where(data.x[:, -1] == 1)[0]
-        data.batch = data.batch[keep_cell_inds]  # keep only atoms inside the reference cell
-        data.x = data.x[keep_cell_inds]  # also apply to molecular_data
-
-        x = self.global_pool(x, data.batch)  # aggregate atoms to molecule
-
-        mol_inputs = data.x[:, -self.n_mol_feats:]
-        mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch).float())  # not actually pooling here, as the values are all the same for each molecule
-
-        x = self.gnn_mlp(x, conditions=mol_feats)
-
-        return self.output_fc(x)
-
-
-class crystal_nf(nn.Module):
-    def __init__(self, config, dataDims, prior):
-        super(crystal_nf, self).__init__()
-        torch.manual_seed(config.model_seed)
-        # https://github.com/karpathy/pytorch-normalizing-flows/blob/master/nflib1.ipynb
-        # nice review https://arxiv.org/pdf/1912.02762.pdf
-        self.flow_dimension = dataDims['n crystal features']
-        self.prior = prior
-
-        if config.conditional_modelling:
-            self.n_conditional_features = dataDims['n conditional features']
-            if config.conditioning_mode == 'graph model':
-                self.conditioner = molecule_graph_model(config, dataDims, return_latent=True)
-                self.n_conditional_features = config.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
-            elif config.conditioning_mode == 'molecule features':
-                self.conditioner = general_MLP(layers=2,
-                                               filters=32,
-                                               norm=config.fc_norm_mode,
-                                               dropout=config.fc_dropout_probability,
-                                               input_dim=self.n_conditional_features,
-                                               output_dim=self.n_conditional_features,
-                                               conditioning_dim=0,
-                                               seed=config.model_seed)
-            else:
-                print(config.conditioning_mode + ' is not an implemented conditioner!')
-                sys.exit()
-        else:
-            self.n_conditional_features = 0
-
-        # normalizing flow is a combination of a prior and some flows
-        if config.device.lower() == 'cuda':
-            self.device = 'cuda'
-        else:
-            self.device = 'cpu'
-
-        # flows
-        nsf_flow = NSF_CL
-        flows = [nsf_flow(dim=dataDims['n crystal features'],
-                          K=config.flow_basis_fns,
-                          B=3,
-                          hidden_dim=config.flow_depth,
-                          conditioning_dim=self.n_conditional_features
-                          ) for _ in range(config.num_flow_layers)]
-        convs = [Invertible1x1Conv(dim=dataDims['n crystal features']) for _ in flows]
-        norms = [ActNorm(dim=dataDims['n crystal features']) for _ in flows]
-        self.flow = NormalizingFlow2(list(itertools.chain(*zip(norms, convs, flows))), self.n_conditional_features)
-
-    def forward(self, x, conditions=None):
-        if conditions is not None:
-            conditions = self.conditioner(conditions)
-
-        zs, log_det = self.flow.forward(x.y[0].float(), conditions=conditions)
-
-        prior_logprob = self.prior.log_prob(zs[-1].cpu()).view(x.y[0].size(0), -1).sum(1)
-
-        return zs, prior_logprob.to(log_det.device), log_det
-
-    def backward(self, z, conditions=None):
-        if conditions is not None:
-            conditions = self.conditioner(conditions)
-
-        xs, log_det = self.flow.backward(z.y[0].float(), conditions=conditions)
-
-        return xs, log_det
-
-    def sample(self, num_samples, conditions=None):
-        z = self.prior.sample((num_samples,)).to(self.device)
-        prior_logprob = self.prior.log_prob(z.cpu())
-
-        if conditions is not None:
-            conditions = self.conditioner(conditions)
-
-        xs, log_det = self.flow.backward(z.float(), conditions=conditions)
-
-        return xs, z, prior_logprob, log_det
-
-    def score(self, x):
-        _, prior_logprob, log_det = self.forward(x)
-        return (prior_logprob + log_det)
-
-
-class NormalizingFlow2(nn.Module):
-    """ A sequence of Normalizing Flows is a Normalizing Flow """
-
-    def __init__(self, flows, n_conditional_features=0):
-        super().__init__()
-        self.flows = nn.ModuleList(flows)
-        self.conditioning_dims = n_conditional_features
-
-    def forward(self, x, conditions=None):
-        log_det = torch.zeros(len(x)).to(x.device)
-
-        for i, flow in enumerate(self.flows):
-            if ('nsf' in flow._get_name().lower()) and (self.conditioning_dims > 0):  # conditioning only implemented for spline flow
-                x, ld = flow.forward(torch.cat((x, conditions), dim=1))
-            else:
-                x, ld = flow.forward(x)
-            log_det += ld
-
-        return x, log_det
-
-    def backward(self, z, conditions=None):
-        log_det = torch.zeros(len(z)).to(z.device)
-
-        for flow in self.flows[::-1]:
-            if ('nsf' in flow._get_name().lower()) and (self.conditioning_dims > 0):
-                z, ld = flow.backward(torch.cat((z, conditions), dim=1))
-            else:
-                z, ld = flow.backward(z)
-            log_det += ld
-
-        return z, log_det

@@ -15,11 +15,11 @@ class BuildDataset:
     """
     build dataset object
     """
-    def __init__(self, config, pg_dict=None):
+    def __init__(self, config, pg_dict=None, premade_dataset = None):
         self.target = config.target
         self.max_atomic_number = config.max_atomic_number
         self.atom_dict_size = {'atom z': self.max_atomic_number + 1}  # for embeddings
-        self.dataset_seed = config.dataset_seed
+        self.dataset_seed = config.seeds.dataset
         self.max_temperature = config.max_crystal_temperature
         self.min_temperature = config.min_crystal_temperature
         self.max_num_atoms = config.max_num_atoms
@@ -30,9 +30,9 @@ class BuildDataset:
         self.include_organic = config.include_organic
         self.include_organometallic = config.include_organometallic
         self.model_mode = config.mode
-        self.conditional_modelling = config.conditional_modelling
+        self.conditional_modelling = config.generator.conditional_modelling
         self.include_sgs = config.include_sgs
-        self.conditioning_mode = config.conditioning_mode
+        self.conditioning_mode = config.generator.conditioning_mode
         self.include_pgs = config.include_pgs
 
         # define relevant features for analysis
@@ -77,7 +77,14 @@ class BuildDataset:
         if self.include_sgs is not None:
             print("Modelling within " + str(self.include_sgs))
 
-        dataset = pd.read_pickle('datasets/dataset')
+        '''
+        actually load the dataset
+        '''
+
+        if premade_dataset is None:
+            dataset = pd.read_pickle('datasets/dataset')
+        else:
+            dataset = premade_dataset
         self.dataset_length = len(dataset)
 
         # add some missing binary features

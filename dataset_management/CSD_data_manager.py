@@ -59,15 +59,19 @@ class Miner():
         self.dataset_path = dataset_path
         self.collect_chunks = collect_chunks
 
-    def load_for_modelling(self):
+    def load_for_modelling(self, return_dataset = False, save_dataset = True):
         self.dataset = pd.read_pickle(self.dataset_path)
         self.dataset_keys = list(self.dataset.columns)
         self.filter_dataset()
         if self.exclude_polymorphs:
             self.filter_polymorphs()
         self.datasetPath = 'datasets/dataset'
-        self.dataset.to_pickle(self.datasetPath)
-        del (self.dataset)
+        if save_dataset:
+            self.dataset.to_pickle(self.datasetPath)
+        if return_dataset:
+            return self.dataset
+        else:
+            del (self.dataset)
 
     def load_npy_for_modelling(self):
         self.dataset = np.load(self.dataset_path + '.npy', allow_pickle=True).item()

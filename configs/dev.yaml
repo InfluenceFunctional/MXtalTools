@@ -1,27 +1,36 @@
 test_mode: True
-model_seed: 0
-dataset_seed: 0
 machine: "local"
 device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: False
 run_num: 0
-log_figures: True
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
+gan_loss: standard
+train_generator_density: True
+train_generator_as_flow: False
+train_generator_adversarially: False
+train_discriminator_adversarially: False
+
+
+seeds:
+  model: 0
+  dataset: 0
 
 # opt - sweep details
-sweep: False
-sweep_config_file: "sweep_test.yaml"
-experiment_tag: "new_clean_data_testing"
-sample_reporting_frequency: 10
-sweep_id: null
-sweep_num_runs: 50
+wandb:
+  sweep_config_file: "sweep_test.yaml"
+  experiment_tag: "new_clean_data_testing"
+  log_figures: True
+  sample_reporting_frequency: 10
+  sweep: False
+  sweep_id: null
+  sweep_num_runs: 50
 
-# model data parameters
-target: crystal spacegroup setting
 
 # dataset curation
-dataset_length: 100
+target: crystal spacegroup setting
+skip_saving_and_loading: True
+length: 100000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 60
@@ -42,18 +51,6 @@ exclude_nonstandard_settings: True
 include_sgs: null #[P-1, P21/c, P212121, C2/c, Pbca, P21]
 include_pgs: null #[222, -1, 2/m, 2, mm2, mmm, m, 1, 422]
 
-# optimizer params
-optimizer: "adamw"
-learning_rate: 0.00001
-max_lr: 0.0005
-lr_schedule: True
-beta1: 0.9
-beta2: 0.999
-weight_decay: 0.001
-convergence_eps: 0.00001
-gradient_norm_clip: 1
-anomaly_detection: False
-
 # batching & convergence
 initial_batch_size: 100000
 auto_batch_sizing: True
@@ -61,60 +58,78 @@ auto_batch_reduction: 0.2
 max_epochs: 500
 history: 20
 
-# generator model
-graph_model: mike
-graph_convolution_layers: 2
-graph_filters: 16
-atom_embedding_size: 16
-graph_norm: null
-num_spherical: 6
-num_radial: 12
-graph_convolution_cutoff: 5
-max_num_neighbors: 10
-radial_function: 'bessel' # mikenet only
-num_attention_heads: 1 # mikenet only
-graph_convolution: 'full message passing' # mikenet only
-add_spherical_basis: False # mikenet only
-num_fc_layers: 1
-fc_depth: 16
-pooling: attention
-activation: "gelu"
-fc_dropout_probability: 0
-fc_norm_mode: null
+# discriminator optimizer and model
+discriminator:
+  optimizer: "adamw"
+  learning_rate: 0.00001
+  max_lr: 0.0005
+  lr_schedule: True
+  beta1: 0.9
+  beta2: 0.999
+  weight_decay: 0.001
+  convergence_eps: 0.00001
 
-# discriminator model
-discriminator_graph_model: mike
-discriminator_graph_convolution_layers: 8
-discriminator_graph_filters: 32
-discriminator_atom_embedding_size: 32
-discriminator_graph_norm: null
-discriminator_num_spherical: 6
-discriminator_num_radial: 12
-discriminator_graph_convolution_cutoff: 5
-discriminator_max_num_neighbors: 10
-discriminator_radial_function: 'bessel' # mikenet only
-discriminator_num_attention_heads: 1 # mikenet only
-discriminator_graph_convolution: 'full message passing' # mikenet only
-discriminator_add_spherical_basis: False # mikenet only
-discriminator_num_fc_layers: 4
-discriminator_fc_depth: 32
-discriminator_pooling: attention
-discriminator_activation: "gelu"
-discriminator_fc_dropout_probability: 0
-discriminator_fc_norm_mode: null
+  model_type: mlp
+  graph_model: mike
+  graph_convolution_layers: 2
+  graph_filters: 16
+  atom_embedding_size: 16
+  graph_norm: null
+  num_spherical: 6
+  num_radial: 12
+  graph_convolution_cutoff: 5
+  max_num_neighbors: 10
+  radial_function: 'bessel' # mikenet only
+  num_attention_heads: 1 # mikenet only
+  graph_convolution: 'full message passing' # mikenet only
+  add_spherical_basis: False # mikenet only
 
-generator_model: mlp
-d_g_balance: 0.5 # relative amount of training for discriminator : generator
-gan_loss: 'standard' # or 'standard'
-train_volume: True
-train_flow: True
-gan_adversarial_loss: True
+  num_fc_layers: 1
+  fc_depth: 16
+  pooling: attention
+  activation: "gelu"
+  fc_dropout_probability: 0
+  fc_norm_mode: null
 
-conditional_modelling: True # only implemented for nsf_cl coupling layer
-conditioning_mode: molecule features # 'graph model' or 'molecule features'
-num_flow_layers: 4
-flow_depth: 32
-flow_basis_fns: 6
-generator_prior: multivariate normal # or uniform
-flow_type: nsf # #DEPRECATED choice of affine coupling layer - nsf or glow or made, glow seems to have low capacity and made isn't stable
-num_samples: 100000
+# generator optimizer and model
+generator:
+  optimizer: "adamw"
+  learning_rate: 0.00001
+  max_lr: 0.0005
+  lr_schedule: True
+  beta1: 0.9
+  beta2: 0.999
+  weight_decay: 0.001
+  convergence_eps: 0.00001
+
+  graph_model: mike
+  graph_convolution_layers: 2
+  graph_filters: 16
+  atom_embedding_size: 16
+  graph_norm: null
+  num_spherical: 6
+  num_radial: 12
+  graph_convolution_cutoff: 5
+  max_num_neighbors: 10
+  radial_function: 'bessel' # mikenet only
+  num_attention_heads: 1 # mikenet only
+  graph_convolution: 'full message passing' # mikenet only
+  add_spherical_basis: False # mikenet only
+
+  num_fc_layers: 1
+  fc_depth: 16
+  pooling: attention
+  activation: "gelu"
+  fc_dropout_probability: 0
+  fc_norm_mode: null
+
+  num_samples: 10000
+  prior: multivariate normal
+  conditional_modelling: True
+  conditioning_mode: molecule features
+
+  num_flow_layers: 4
+  flow_depth: 32
+  flow_basis_fns: 8
+  flow_type: nsf_cl
+

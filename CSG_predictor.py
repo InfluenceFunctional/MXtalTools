@@ -17,12 +17,18 @@ from ase.visualize import view
 from ase import Atoms
 import rdkit.Chem as Chem
 from dataset_management.random_crystal_builder import *
+from models.generator_models import crystal_generator
+from models.discriminator_models import crystal_discriminator
 
 
 class Predictor():
     def __init__(self, config):
         self.config = config
-        self.setup()
+        setup_outputs = self.setup()
+        if config.skip_saving_and_loading:
+            self.prep_dataset = setup_outputs
+        else:
+            self.prep_dataset = None
 
     def setup(self):
         '''
@@ -66,10 +72,15 @@ class Predictor():
                 os.chdir(self.workDir)  # move to working dir
                 print('Starting Fresh Run %d' % self.config.run_num)
                 t0 = time.time()
-                miner.load_for_modelling()
+                if self.config.skip_saving_and_loading:
+                    dataset = miner.load_for_modelling(return_dataset=True, save_dataset=False)
+                    del miner
+                    return dataset
+                else:
+                    miner.load_for_modelling(return_dataset=False, save_dataset=True)
                 print('Initializing dataset took {} seconds'.format(int(time.time() - t0)))
         else:
-            if self.config.explicit_run_enumeration:
+            if self.config.explicit_run_enumeration:  # todo this is deprecated
                 # move to working dir
                 self.workDir = self.config.workdir + '/' + 'run%d' % self.config.run_num
                 os.chdir(self.workDir)
@@ -195,7 +206,7 @@ class Predictor():
         '''
         # init model
         print("Initializing models for " + config.mode)
-        generator = crystal_generator(config, dataDims)  # todo add more generator options
+        generator = crystal_generator(config, dataDims)
         discriminator = crystal_discriminator(config, dataDims)
 
         if config.device == 'cuda':
@@ -203,55 +214,69 @@ class Predictor():
             discriminator = discriminator.cuda()
 
         # init optimizers
-        for i in range(2):
-            amsgrad = False
-            beta1 = config.beta1  # 0.9
-            beta2 = config.beta2  # 0.999
-            weight_decay = config.weight_decay  # 0.01
-            momentum = 0
+        amsgrad = False
+        beta1 = config.generator.beta1  # 0.9
+        beta2 = config.generator.beta2  # 0.999
+        weight_decay = config.generator.weight_decay  # 0.01
+        momentum = 0
 
-            if i == 0:
-                if config.optimizer == 'adam':
-                    optimizer = optim.Adam(generator.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
-                elif config.optimizer == 'adamw':
-                    optimizer = optim.AdamW(generator.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
-                elif config.optimizer == 'sgd':
-                    optimizer = optim.SGD(generator.parameters(), lr=config.learning_rate, momentum=momentum, weight_decay=weight_decay)
-                else:
-                    print(config.optimizer + ' is not a valid optimizer')
-                    sys.exit()
-            if i == 1:
-                if config.optimizer == 'adam':
-                    optimizer = optim.Adam(discriminator.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
-                elif config.optimizer == 'adamw':
-                    optimizer = optim.AdamW(discriminator.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
-                elif config.optimizer == 'sgd':
-                    optimizer = optim.SGD(discriminator.parameters(), lr=config.learning_rate, momentum=momentum, weight_decay=weight_decay)
-                else:
-                    print(config.optimizer + ' is not a valid optimizer')
-                    sys.exit()
+        if config.generator.optimizer == 'adam':
+            g_optimizer = optim.Adam(generator.parameters(), amsgrad=amsgrad, lr=config.generator.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif config.generator.optimizer == 'adamw':
+            g_optimizer = optim.AdamW(generator.parameters(), amsgrad=amsgrad, lr=config.generator.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif config.generator.optimizer == 'sgd':
+            g_optimizer = optim.SGD(generator.parameters(), lr=config.generator.learning_rate, momentum=momentum, weight_decay=weight_decay)
+        else:
+            print(config.generator.optimizer + ' is not a valid optimizer')
+            sys.exit()
 
-            # init schedulers
-            scheduler1 = lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode='min',
-                factor=0.1,
-                patience=15,
-                threshold=1e-4,
-                threshold_mode='rel',
-                cooldown=15
-            )
-            lr_lambda = lambda epoch: 1.25
-            scheduler3 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda)
-            lr_lambda2 = lambda epoch: 0.95
-            scheduler4 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda2)
+        amsgrad = False
+        beta1 = config.discriminator.beta1  # 0.9
+        beta2 = config.discriminator.beta2  # 0.999
+        weight_decay = config.discriminator.weight_decay  # 0.01
+        momentum = 0
 
-            if i == 0:
-                g_optimizer = optimizer
-                g_scheduler = [scheduler1, scheduler3, scheduler4]
-            if i == 1:
-                d_optimizer = optimizer
-                d_scheduler = [scheduler1, scheduler3, scheduler4]
+        if config.discriminator.optimizer == 'adam':
+            d_optimizer = optim.Adam(discriminator.parameters(), amsgrad=amsgrad, lr=config.discriminator.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif config.discriminator.optimizer == 'adamw':
+            d_optimizer = optim.AdamW(discriminator.parameters(), amsgrad=amsgrad, lr=config.discriminator.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif config.discriminator.optimizer == 'sgd':
+            d_optimizer = optim.SGD(discriminator.parameters(), lr=config.discriminator.learning_rate, momentum=momentum, weight_decay=weight_decay)
+        else:
+            print(config.discriminator.optimizer + ' is not a valid optimizer')
+            sys.exit()
+
+        # init schedulers
+        scheduler1 = lr_scheduler.ReduceLROnPlateau(
+            g_optimizer,
+            mode='min',
+            factor=0.1,
+            patience=15,
+            threshold=1e-4,
+            threshold_mode='rel',
+            cooldown=15
+        )
+        lr_lambda = lambda epoch: 1.25
+        scheduler2 = lr_scheduler.MultiplicativeLR(g_optimizer, lr_lambda=lr_lambda)
+        lr_lambda2 = lambda epoch: 0.95
+        scheduler3 = lr_scheduler.MultiplicativeLR(g_optimizer, lr_lambda=lr_lambda2)
+
+        scheduler4 = lr_scheduler.ReduceLROnPlateau(
+            d_optimizer,
+            mode='min',
+            factor=0.1,
+            patience=15,
+            threshold=1e-4,
+            threshold_mode='rel',
+            cooldown=15
+        )
+        lr_lambda = lambda epoch: 1.25
+        scheduler5 = lr_scheduler.MultiplicativeLR(d_optimizer, lr_lambda=lr_lambda)
+        lr_lambda2 = lambda epoch: 0.95
+        scheduler6 = lr_scheduler.MultiplicativeLR(d_optimizer, lr_lambda=lr_lambda2)
+
+        g_scheduler = [scheduler1, scheduler2, scheduler3]
+        d_scheduler = [scheduler4, scheduler5, scheduler6]
 
         params1 = get_n_config(generator)
         if print_status:
@@ -374,12 +399,52 @@ class Predictor():
                         sys.exit()
 
     def train(self):
-        with wandb.init(config=self.config, project=self.config.project_name, entity=self.config.wandb_username, tags=self.config.experiment_tag):
-            config = wandb.config
-            print(config)
+        with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=self.config.wandb.experiment_tag):
+            # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken
+            # print(config)
+            '''
+            #hypothetical fix
+            from omegaconf import DictConfig
+            import argparse
+            
+            def parse_unknown_cmd(config: DictConfig) -> DictConfig:
+                #parses unknown command line arguments to overwrite the config file
+                #:param config:
+                #:return:
+                parser = argparse.ArgumentParser()
+                args, unknown = parser.parse_known_args()
+            
+                for flag in unknown:
+                    arg = flag.find('--')
+                    set = flag.find('=')
+            
+                    if (arg >= 0) and (set >= 0):
+                        arg = flag[arg + 2:set]
+                        val = flag[set + 1:]
+            
+            
+                        if val.isdigit():
+                            val = int(val)
+                        elif val.replace('.', '', 1).isdigit():
+                            val = float(val)
+                        elif val.lower() in ('true', 'false'):
+                            val = bool(val)
+                        else:
+                            val = f'"{val}"'
+            
+                        print(f'Executing ... config.{arg}={val}')
+                        exec(f'config.{arg}={val}')
+                    else:
+                        print(f'Not executing {flag}')
+            
+                return config
+            '''
+            config = self.config  # go with hand-built config
 
             # dataset
-            dataset_builder = BuildDataset(config, self.point_groups)
+            dataset_builder = BuildDataset(config, self.point_groups, premade_dataset=self.prep_dataset)
+            del self.prep_dataset  # we don't actually want this huge thing floating around
+
             config.dataDims = dataset_builder.get_dimension()
             self.dataDims = dataset_builder.get_dimension()
             if 'classification' in config.mode:  # for convenience
@@ -388,7 +453,7 @@ class Predictor():
             if config.mode == 'joint modelling':
                 self.lattice_features = dataset_builder.lattice_keys
                 self.n_crystal_dims = self.dataDims['n crystal features']
-                if config.conditional_modelling:
+                if config.generator.conditional_modelling:
                     self.n_conditional_features = self.dataDims['n conditional features']
                 else:
                     self.n_conditional_features = 0
@@ -445,7 +510,7 @@ class Predictor():
             metrics_dict = self.prep_metrics(config=config)
 
             # training loop
-            hit_max_lr, converged, epoch = False, False, 0
+            d_hit_max_lr, g_hit_max_lr, converged, epoch = False, False, False, 0
             # if config.anomaly_detection:
             #     torch.autograd.set_detect_anomaly = True
             with torch.autograd.set_detect_anomaly(True):
@@ -473,14 +538,16 @@ class Predictor():
                             time_train, time_test))
 
                         # update learning rate
-                        g_optimizer = set_lr(g_schedulers, g_optimizer, config, d_err_tr, hit_max_lr)
+                        g_optimizer = set_lr(g_schedulers, g_optimizer, config.generator.lr_schedule,
+                                             config.generator.learning_rate, config.generator_max_lr,g_err_tr, g_hit_max_lr)
                         g_learning_rate = g_optimizer.param_groups[0]['lr']
-                        if g_learning_rate >= config.max_lr: hit_max_lr = True
+                        if g_learning_rate >= config.generator.max_lr: g_hit_max_lr = True
 
                         # update learning rate
-                        d_optimizer = set_lr(d_schedulers, d_optimizer, config, d_err_tr, hit_max_lr)
+                        d_optimizer = set_lr(d_schedulers, d_optimizer, config.discriminator.lr_schedule,
+                                             config.discriminator.learning_rate, config.discriminator,d_err_tr, d_hit_max_lr)
                         d_learning_rate = d_optimizer.param_groups[0]['lr']
-                        if d_learning_rate >= config.max_lr: hit_max_lr = True
+                        if d_learning_rate >= config.discriminator.max_lr: d_hit_max_lr = True
 
                         # logging
                         metrics_dict = self.update_gan_metrics(
@@ -488,20 +555,20 @@ class Predictor():
                             g_err_tr, g_err_te, d_learning_rate, d_learning_rate)
 
                         self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict, d_tr_record, d_te_record, g_tr_record, g_te_record)
-                        # if epoch % config.sample_reporting_frequency == 0:
+                        # if epoch % config.wandb.sample_reporting_frequency == 0:
                         #     self.log_gan_accuracy(epoch, dataset_builder, train_loader, test_loader,
                         #                       te_record, epoch_stats_dict,
-                        #                       config, model, log_figures=config.log_figures)
+                        #                       config, model, wandb_log_figures=config.wandb.log_figures)
 
                         # check for convergence
                         if checkConvergence(config, metrics_dict['generator test loss']) and (epoch > config.history + 2):
                             config.finished = True
                             # self.log_gan_accuracy(epoch, dataset_builder, train_loader, test_loader,
                             #                   te_record, epoch_stats_dict,
-                            #                   config, model, log_figures=True)  # always log figures at end of run
+                            #                   config, model, wandb_log_figures=True)  # always log figures at end of run
                             break
 
-                    else:  # flow model will likely no longer function on its own here
+                    else:  # todo officially deprecate the old way of doing this #flow model will likely no longer function on its own here
                         err_tr, tr_record, time_train = \
                             self.model_epoch(config, dataLoader=train_loader, model=model,
                                              optimizer=optimizer, update_gradients=True)  # train & compute test loss
@@ -520,17 +587,17 @@ class Predictor():
                         # logging
                         self.update_metrics(epoch, metrics_dict, err_tr, err_te, learning_rate)
                         self.log_loss(metrics_dict, tr_record, te_record)
-                        if epoch % config.sample_reporting_frequency == 0:
+                        if epoch % config.wandb.sample_reporting_frequency == 0:
                             self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
                                               te_record, epoch_stats_dict,
-                                              config, model, log_figures=config.log_figures)
+                                              config, model, wandb_log_figures=config.wandb.log_figures)
 
                         # check for convergence
                         if checkConvergence(config, metrics_dict['test loss']) and (epoch > config.history + 2):
                             config.finished = True
                             self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
                                               te_record, epoch_stats_dict,
-                                              config, model, log_figures=True)  # always log figures at end of run
+                                              config, model, wandb_log_figures=True)  # always log figures at end of run
                             break
 
                     epoch += 1
@@ -565,57 +632,73 @@ class Predictor():
             '''
             train discriminator
             '''
-            score_on_real, score_on_fake = self.train_discriminator(generator, discriminator, config, data, i)  # alternately trains on real and fake samples
+            if config.train_discriminator_adversarially:
+                score_on_real, score_on_fake = self.train_discriminator(generator, discriminator, config, data, i)  # alternately trains on real and fake samples
 
-            if config.gan_loss == 'wasserstein':
-                d_losses = -score_on_real + score_on_fake # maximize score on real, minimize score on fake
-                d_real_losses.append(-score_on_real.cpu().detach().numpy())
+                if config.gan_loss == 'wasserstein':
+                    d_losses = -score_on_real + score_on_fake  # maximize score on real, minimize score on fake
+                    d_real_losses.append(-score_on_real.cpu().detach().numpy())
 
-            elif config.gan_loss == 'standard':
-                d_losses = (1-score_on_real) + score_on_fake # maximize probability on real(normed on 0-1) and minimize score on fake
-                d_real_losses.append(1-score_on_real.cpu().detach().numpy())
+                elif config.gan_loss == 'standard':
+                    d_losses = (1 - score_on_real) + score_on_fake  # maximize probability on real(normed on 0-1) and minimize score on fake
+                    d_real_losses.append(1 - score_on_real.cpu().detach().numpy())
 
+                else:
+                    print(config.gan_loss + ' is not an implemented GAN loss function!')
+                    sys.exit()
+
+                d_fake_losses.append(score_on_fake.cpu().detach().numpy())
+
+                d_loss = d_losses.mean()
+                d_err.append(d_loss.data.cpu())  # average overall loss
+                d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
             else:
-                print(config.gan_loss + ' is not an implemented GAN loss function!')
-                sys.exit()
-
-            d_fake_losses.append(score_on_fake.cpu().detach().numpy())
-
-            d_loss = d_losses.mean()
-            d_err.append(d_loss.data.cpu())  # average overall loss
-            d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
+                d_err.append(torch.zeros(1))
+                d_loss_record.extend(torch.zeros(data.num_graphs))
 
             '''
             train_generator
             '''
-            adversarial_score, raw_sample, auxiliary_loss = self.train_generator(generator, discriminator, config, data, i)
+            if any((config.train_generator_density, config.train_generator_adversarially)):
 
-            if config.gan_loss == 'wasserstein':
-                adversarial_loss = -adversarial_score # generator wants to maximize the score
-            elif config.gan_loss == 'standard':
-                adversarial_loss = 1-adversarial_score
+                adversarial_score, raw_sample, auxiliary_loss = self.train_generator(generator, discriminator, config, data, i)
+
+                if adversarial_score is not None:
+                    if config.gan_loss == 'wasserstein':
+                        adversarial_loss = -adversarial_score  # generator wants to maximize the score
+                    elif config.gan_loss == 'standard':
+                        adversarial_loss = 1 - adversarial_score
+                    else:
+                        print(config.gan_loss + ' is not an implemented GAN loss function!')
+                        sys.exit()
+
+                if config.train_generator_density and config.train_generator_adversarially:
+                    g_losses = adversarial_loss + auxiliary_loss.float()
+                    g_adv_losses.append(adversarial_loss.cpu().detach().numpy())
+                    g_aux_losses.append(auxiliary_loss.cpu().detach().numpy())
+
+                elif config.train_generator_density and not config.train_generator_adversarially:
+                    g_losses = auxiliary_loss.float()
+                    g_aux_losses.append(auxiliary_loss.cpu().detach().numpy())
+
+                elif config.train_generator_adversarially and not config.train_generator_density:
+                    g_losses = adversarial_loss
+                    g_adv_losses.append(adversarial_loss.cpu().detach().numpy())
+
+                g_loss = g_losses.mean()
+                g_err.append(g_loss.data.cpu())  # average loss
+                g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
+
+                if update_gradients:
+                    g_optimizer.zero_grad()  # reset gradients from previous passes
+                    g_losses.mean().backward()  # back-propagation
+                    g_optimizer.step()  # update parameters
             else:
-                print(config.gan_loss + ' is not an implemented GAN loss function!')
-                sys.exit()
+                g_err.append(torch.zeros(1))
+                g_loss_record.extend(torch.zeros(data.num_graphs))
 
-            g_adv_losses.append(adversarial_loss.cpu().detach().numpy())
-            if auxiliary_loss is not None:
-                g_losses = adversarial_loss + auxiliary_loss.float()
-                g_aux_losses.append(auxiliary_loss.cpu().detach().numpy())
-            else:
-                g_losses = adversarial_loss
-
-            g_loss = g_losses.mean()
-            g_err.append(g_loss.data.cpu())  # average loss
-            g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
-
-            if update_gradients:
-                g_optimizer.zero_grad()  # reset gradients from previous passes
-                g_losses.mean().backward()  # back-propagation
-                g_optimizer.step()  # update parameters
-
-            # flow loss
-            if config.train_flow and ('flow' in config.generator_model):
+            # flow loss # totally separate thing
+            if config.train_generator_as_flow and ('flow' in config.generator.model_type):
                 g_flow_losses = self.flow_iter(generator, data)
 
                 g_flow_loss = g_flow_losses.mean()
@@ -739,10 +822,10 @@ class Predictor():
 
         # discriminator score
         if config.gan_loss == 'wasserstein':
-            scores = F.softplus(output[:,0]) # critic score - higher meaning better
+            scores = F.softplus(output[:, 0])  # critic score - higher meaning better
 
         elif config.gan_loss == 'standard':
-            scores = F.softmax(output, dim=1)[:,-1] # probability of 'yes'
+            scores = F.softmax(output, dim=1)[:, -1]  # probability of 'yes'
 
         else:
             print(config.gan_loss + ' is not a valid GAN loss function!')
@@ -759,8 +842,8 @@ class Predictor():
         '''
         data = dataset_builder.datapoints
         keys = self.dataDims['crystal features']
-        if config.conditional_modelling:
-            if (config.conditioning_mode != 'graph model'):
+        if config.generator.conditional_modelling:
+            if (config.generator.conditioning_mode != 'graph model'):
                 keys.extend(self.dataDims['conditional features'])
             else:
                 data = np.asarray([(data[i].y[0]).detach().numpy() for i in range(len(data))])[:, 0, :]
@@ -773,14 +856,14 @@ class Predictor():
     def check_inversion_quality(self, model, test_loader, config):
         # check for quality of the inversion
         if self.n_conditional_features > 0:
-            if config.conditioning_mode == 'molecule features':
+            if config.generator.conditioning_mode == 'molecule features':
                 test_conditions = next(iter(test_loader)).to(config.device)
                 test_sample = model.sample(test_conditions.num_graphs, conditions=test_conditions)
                 test_conditions.y[0][:, :-self.n_conditional_features] = test_sample
                 zs, _, _ = model.forward(test_conditions)
                 test_conditions.y[0] = torch.cat((zs, test_conditions.y[0][:, -self.n_conditional_features:]), dim=1)
                 test_sample2, _ = model.backward(test_conditions)
-            elif config.conditioning_mode == 'graph model':
+            elif config.generator.conditioning_mode == 'graph model':
                 test_conditions = next(iter(test_loader)).to(config.device)
                 test_sample = model.sample(test_conditions.num_graphs, conditions=test_conditions)
                 test_conditions.y[0] = test_sample
@@ -844,7 +927,7 @@ class Predictor():
 
         train_data = train_loader.dataset
         train_data = np.asarray([(train_data[i].y[0]).detach().numpy() for i in range(len(train_data))])[:, 0, :]
-        if (self.n_conditional_features > 0) and (config.conditioning_mode == 'molecule features'):
+        if (self.n_conditional_features > 0) and (config.generator.conditioning_mode == 'molecule features'):
             train_data = train_data[:, :-self.n_conditional_features]
             targets = targets[:, :-self.n_conditional_features]
 
@@ -857,7 +940,7 @@ class Predictor():
         for j in tqdm.tqdm(range(n_repeats)):
             for i, data in enumerate(test_loader):
                 minibatch_size = data.num_graphs
-                if config.conditional_modelling:
+                if config.generator.conditional_modelling:
                     if config.device == 'cuda':
                         data = data.cuda()
                     nf_samples[j].extend(model.sample(
@@ -970,7 +1053,7 @@ class Predictor():
         wandb.log({"Test Loss Coeff. of Variation": np.sqrt(np.var(te_record)) / np.average(te_record)})
 
     def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
-                     te_record, epoch_stats_dict, config, model, log_figures=True):
+                     te_record, epoch_stats_dict, config, model, wandb_log_figures=True):
         t0 = time.time()
 
         # correlate losses with molecular features
@@ -984,7 +1067,7 @@ class Predictor():
         sort_inds = np.argsort(loss_correlations)
         loss_correlations = loss_correlations[sort_inds]
 
-        if log_figures:
+        if wandb_log_figures:
             fig = go.Figure(go.Bar(
                 y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['n tracking features'])],
                 x=[loss_correlations[i] for i in range(config.dataDims['n tracking features'])],
@@ -1019,7 +1102,7 @@ class Predictor():
             wandb.log(loss_dict)
 
             # log loss distribution
-            if log_figures:
+            if wandb_log_figures:
                 fig = go.Figure()
                 for loss in losses:
                     fig.add_trace(go.Histogram(
@@ -1127,7 +1210,7 @@ class Predictor():
                 accuracy_dict[self.class_labels[i] + ' top 1 accuracy'] = byGroupTop1Accuracy[i]
                 accuracy_dict[self.class_labels[i] + ' top {} accuracy'.format(X)] = byGroupTopXAccuracy[i]
 
-            if log_figures:
+            if wandb_log_figures:
                 xaxis = self.class_labels
                 yaxis = self.class_labels[-1::-1]
                 zaxis = confusion_matrix / np.sum(confusion_matrix)
@@ -1270,7 +1353,7 @@ class Predictor():
                 'nf 2D overlap': average_nf_overlap
             })
 
-            if log_figures:
+            if wandb_log_figures:
                 fig_dict = {}
 
                 # bar graph of feature-wise sample accuracy
@@ -1517,7 +1600,7 @@ class Predictor():
 
         return data, cell_sample
 
-    def differentiable_generated_supercells(self, data, config, generator, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None):
+    def differentiable_generated_supercells(self, cell_sample, supercell_data, config, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None):
         '''
         convert cell parameters to reference cell
         convert reference cell to 3x3 supercell
@@ -1525,11 +1608,9 @@ class Predictor():
         '''
         volumes = []
         z_values = []
-        supercell_data = data.clone()
         sg_numbers = [int(supercell_data.y[2][i][self.sg_number_ind]) for i in range(supercell_data.num_graphs)]
         lattices = [self.lattice_type[number] for number in sg_numbers]
 
-        cell_sample = generator.forward(n_samples=supercell_data.num_graphs, conditions=supercell_data.to(generator.device))
         cell_lengths, cell_angles, rand_position, rand_rotation = cell_sample.split(3, 1)
 
         cell_lengths, cell_angles, rand_position, rand_rotation = clean_cell_output(
@@ -1547,17 +1628,17 @@ class Predictor():
         for i in range(supercell_data.num_graphs):
             atoms = supercell_data.x[supercell_data.batch == i]
             atomic_numbers = atoms[:, 0]
-            #heavy_atom_inds = torch.argwhere(atomic_numbers > 1)[:, 0]
+            # heavy_atom_inds = torch.argwhere(atomic_numbers > 1)[:, 0]
             # assert torch.sum(atomic_numbers == 1) == 0, 'hydrogens in supercell_dataset!'
-            #atoms = atoms_i[heavy_atom_inds]
-            coords = supercell_data.pos[supercell_data.batch == i,:]
+            # atoms = atoms_i[heavy_atom_inds]
+            coords = supercell_data.pos[supercell_data.batch == i, :]
             weights = torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(config.device)
 
             sym_ops = torch.tensor(self.sym_ops[sg_numbers[i]], dtype=coords.dtype).to(coords.device)
             z_value = len(sym_ops)  # number of molecules in the reference cell
             z_values.append(z_value)
 
-            T_fc, vol = coor_trans_matrix_torch('f_to_c', cell_lengths[i], cell_angles[i], return_vol = True)
+            T_fc, vol = coor_trans_matrix_torch('f_to_c', cell_lengths[i], cell_angles[i], return_vol=True)
             T_fc = T_fc.to(config.device)
             T_cf = torch.linalg.inv(T_fc)  # faster #coor_trans_matrix_torch('c_to_f', cell_lengths[i], cell_angles[i]).to(config.device)
             cell_vectors = torch.inner(T_fc, torch.eye(3).to(config.device)).T  # T_fc.dot(torch.eye(3)).T
@@ -1591,7 +1672,7 @@ class Predictor():
         supercell_data.batch = new_batch.type(dtype=torch.int64)
         supercell_data.ptr = new_ptr.type(dtype=torch.int64)
 
-        return supercell_data, cell_sample, z_values, volumes
+        return supercell_data, z_values, volumes
 
     def fast_differentiable_generated_supercells(self, data, config, generator, do_cpu=True, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None):
         '''
@@ -1634,7 +1715,7 @@ class Predictor():
         for i in range(supercell_data.num_graphs):
             atoms_i = supercell_data.x[supercell_data.batch == i]
             atomic_numbers = atoms_i[:, 0]
-            #heavy_atom_inds = torch.argwhere(atomic_numbers > 1)[:, 0]
+            # heavy_atom_inds = torch.argwhere(atomic_numbers > 1)[:, 0]
             atoms_list.append(atoms_i)
             coords_list.append(supercell_data.pos[supercell_data.batch == i])
             masses_list.append(torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(supercell_data.x.device))
@@ -1687,7 +1768,7 @@ class Predictor():
 
         return supercell_data.to(config.device), cell_sample.to(config.device), z_values, generated_cell_volumes.to(config.device)
 
-    def real_supercells(self, data, config):
+    def real_supercells(self, supercell_data, config):
         '''
         test code for on-the-fly cell generation
         data = self.build_supercells(data)
@@ -1698,7 +1779,6 @@ class Predictor():
         4. apply point symmetry
         5. tile supercell
         '''
-        supercell_data = data.clone()
         for i in range(supercell_data.num_graphs):
             # 0 extract molecule and cell parameters
             atoms = np.asarray(supercell_data.x[supercell_data.batch == i])
@@ -1801,9 +1881,10 @@ class Predictor():
     def train_discriminator(self, generator, discriminator, config, data, i):
         t0 = time.time()
 
-        real_supercell_data = self.real_supercells(data, config)
-        fake_supercell_data, raw_generation, z_values, generated_cell_volumes = self.differentiable_generated_supercells(data, config, generator=generator)
-        #fake_supercell_data, raw_generation, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generator=generator)
+        real_supercell_data = self.real_supercells(data.clone(), config)
+        generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
+        fake_supercell_data, z_values, generated_cell_volumes = self.differentiable_generated_supercells(generated_samples, data.clone(), config)
+        # fake_supercell_data, raw_generation, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generator=generator)
         '''
         # supercell method comparison
         supercell_data1, raw_generation, z_values = self.differentiable_generated_supercells(data, config, generator=generator, override_position = torch.ones((50,3))/4, override_orientation = torch.ones((50,3)) * torch.pi / 2)
@@ -1833,31 +1914,41 @@ class Predictor():
         t0 = time.time()
 
         # data, raw_generation = self.generated_supercells(data, config, generator = generator)
-        supercell_data, raw_generation, z_values, generated_cell_volumes = self.differentiable_generated_supercells(data, config, generator=generator)
-        #supercell_data, raw_generation, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generator=generator)
+        generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
+        if config.train_generator_adversarially:
+            supercell_data, z_values, generated_cell_volumes = self.differentiable_generated_supercells(generated_samples, data.clone(), config)
+            # supercell_data, raw_generation, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generator=generator)
 
-        if i % 5 == 0:
-            print('Batch {} supercell generation took {:.2f} seconds for {} samples'.format(i, round(time.time() - t0, 2), data.num_graphs))
+            if i % 5 == 0:
+                print('Batch {} supercell generation took {:.2f} seconds for {} samples'.format(i, round(time.time() - t0, 2), data.num_graphs))
 
-        if config.device.lower() == 'cuda':
-            supercell_data = supercell_data.cuda()
+            if config.device.lower() == 'cuda':
+                supercell_data = supercell_data.cuda()
 
-        if config.test_mode or config.anomaly_detection:
-            assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
+            if config.test_mode or config.anomaly_detection:
+                assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
 
-        discriminator_score, raw_output = self.adversarial_loss(discriminator, supercell_data, config)
+            discriminator_score, raw_output = self.adversarial_loss(discriminator, supercell_data, config)
 
-        if config.train_volume:
-            auxiliary_loss = self.generator_auxiliary_loss(data, raw_generation, z_values, config.dataDims, precomputed_volumes = generated_cell_volumes)
+        else:
+            discriminator_score = None
+
+        if config.train_generator_density:
+            if not config.train_generator_adversarially:
+                sg_numbers = [int(data.y[2][i][self.sg_number_ind]) for i in range(data.num_graphs)]
+                z_values = [len(self.sym_ops[sg_numbers[i]]) for i in range(data.num_graphs)]
+                auxiliary_loss = self.generator_auxiliary_loss(data, generated_samples, z_values, config.dataDims)
+            else:
+                auxiliary_loss = self.generator_auxiliary_loss(data, generated_samples, z_values, config.dataDims, precomputed_volumes=generated_cell_volumes)
         else:
             auxiliary_loss = None
 
-        return -discriminator_score, raw_output, auxiliary_loss
+        return discriminator_score, generated_samples, auxiliary_loss
 
-    def generator_auxiliary_loss(self, data, raw_sample, z_values, dataDims, precomputed_volumes = None):
+    def generator_auxiliary_loss(self, data, raw_sample, z_values, dataDims, precomputed_volumes=None):
         # compute proposed density and evaluate loss against known volume
 
-        if precomputed_volumes is not None:
+        if precomputed_volumes is None:
             cell_lengths, cell_angles, rand_position, rand_rotation = raw_sample.split(3, 1)
             cell_lengths, cell_angles, rand_position, rand_rotation = clean_cell_output(
                 cell_lengths, cell_angles, rand_position, rand_rotation, None, dataDims)
@@ -1865,17 +1956,18 @@ class Predictor():
         gen_packing = []
         csd_packing = []
         for i in range(len(raw_sample)):
-            if precomputed_volumes is not None:
+            if precomputed_volumes is None:
                 volume = cell_vol_torch(cell_lengths[i], cell_angles[i])
             else:
                 volume = precomputed_volumes[i]
+
             gen_packing.append(volume / z_values[i] / data.y[2][i][self.mol_volume_ind])  # compute packing index from given volume
             csd_packing.append((data.y[2][i][self.crystal_packing_ind] - 0.673) / 0.0271)  # subtract dataset mean and divide std dev
 
         generated_packing_coefficients = torch.stack(gen_packing)
         csd_packing_coefficients = torch.Tensor(csd_packing).to(generated_packing_coefficients.device)
 
-        return F.mse_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none')
+        return F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none')
 
     def flow_iter(self, generator, data):
         '''

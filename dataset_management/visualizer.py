@@ -69,7 +69,7 @@ if config.machine == 'local':
 elif config.machine == 'cluster':
     config.workdir = '/scratch/mk8347/csd_runs/'
 
-config.dataset_seed = config.dataset_seed % 10
+config.seeds.dataset = config.seeds.dataset % 10
 
 os.chdir(config.workdir)  # move to working dir
 

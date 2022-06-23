@@ -2025,3 +2025,87 @@ def cell_vol_torch(v, a):
     vol = v[0] * v[1] * v[2] * torch.sqrt(torch.abs(1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2]))
 
     return vol
+
+
+
+def dict2namespace(data_dict):
+    """
+    Recursively converts a dictionary and its internal dictionaries into an
+    argparse.Namespace
+
+    Parameters
+    ----------
+    data_dict : dict
+        The input dictionary
+
+    Return
+    ------
+    data_namespace : argparse.Namespace
+        The output namespace
+    """
+    for k, v in data_dict.items():
+        if isinstance(v, dict):
+            data_dict[k] = dict2namespace(v)
+        else:
+            pass
+    data_namespace = Namespace(**data_dict)
+
+    return data_namespace
+
+
+
+def get_config(args, override_args, args2config):
+    """
+    Combines YAML configuration file, command line arguments and default arguments into
+    a single configuration dictionary.
+
+    - Values in YAML file override default values
+    - Command line arguments override values in YAML file
+
+    Returns
+    -------
+        Namespace
+    """
+
+    def _update_config(arg, val, config, override=False):
+        config_aux = config
+        for k in args2config[arg]:
+            if k not in config_aux:
+                if k is args2config[arg][-1]:
+                    config_aux.update({k: val})
+                else:
+                    config_aux.update({k: {}})
+                    config_aux = config_aux[k]
+            else:
+                if k is args2config[arg][-1] and override:
+                    config_aux[k] = val
+                else:
+                    config_aux = config_aux[k]
+
+    # Read YAML config
+    if args.yaml_config:
+        yaml_path = Path(args.yaml_config)
+        assert yaml_path.exists()
+        assert yaml_path.suffix in {".yaml", ".yml"}
+        with yaml_path.open("r") as f:
+            config = yaml.safe_load(f)
+    else:
+        config = {}
+    # Add args to config: add if not provided; override if in command line
+    override_args = [
+        arg.strip("--").split("=")[0] for arg in override_args if "--" in arg
+    ]
+    override_args_extra = []
+    for k1 in override_args:
+        if k1 in args2config:
+            v1 = args2config[k1]
+            for k2, v2 in args2config.items():
+                if v2 == v1 and k2 != k1:
+                    override_args_extra.append(k2)
+    override_args = override_args + override_args_extra
+    for k, v in vars(args).items():
+        if k in override_args:
+            _update_config(k, v, config, override=True)
+        else:
+            _update_config(k, v, config, override=False)
+    return dict2namespace(config)

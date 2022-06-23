@@ -18,19 +18,19 @@ def get_grad_norm(model):
     return norm
 
 
-def set_lr(schedulers, optimizer, config, err_tr, hit_max_lr):
-    if config.lr_schedule:
+def set_lr(schedulers, optimizer, lr_schedule, learning_rate, max_lr, err_tr, hit_max_lr):
+    if lr_schedule:
         lr = optimizer.param_groups[0]['lr']
         if lr > 1e-4:
             schedulers[0].step(torch.mean(torch.stack(err_tr)))  # plateau scheduler
 
         if not hit_max_lr:
-            if lr <= config.max_lr:
+            if lr <= max_lr:
                 schedulers[1].step()
             else:
                 hit_max_lr = True
         elif hit_max_lr:
-            if lr > config.learning_rate:
+            if lr > learning_rate:
                 schedulers[2].step()  # start reducing lr
     lr = optimizer.param_groups[0]['lr']
     print("Learning rate is {:.5f}".format(lr))
