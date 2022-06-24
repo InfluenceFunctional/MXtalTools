@@ -830,21 +830,8 @@ class CustomGraphFeaturizer():
             aa = 1
 
         elif feature == 'point group':
-            self.sym_ops = {}
-            atom_keys = []
-            for column in df.columns:
-                if column[0:4] == 'atom':
-                    atom_keys.append(column)
-
             pg_list = np.zeros(len(df),dtype=str)
-
             for i in tqdm.tqdm(range(len(df))):
-                # filter hydrogens
-                atoms = np.asarray(df['atom Z'][i])
-                heavy_atom_inds = np.argwhere(atoms > 1)
-                for key in atom_keys:
-                    df[key][i] = list(np.asarray(df[key][i])[heavy_atom_inds])
-
                 # add point group
                 pg_list[i] = self.point_groups[df['crystal spacegroup number'][i]]
 
@@ -852,6 +839,28 @@ class CustomGraphFeaturizer():
             df.to_pickle('dataset_with_new_feature')
             df.loc[0:1000].to_pickle('../../test_dataset_with_new_feature')
 
+        elif feature == 'protons':
+            '''
+            get rid of all protons in the dataset
+            but do not adjust mol-level features
+            '''# todo check mol level features in future dataset rebuild
+            self.sym_ops = {}
+            atom_keys = []
+            for column in df.columns:
+                if column[0:4] == 'atom':
+                    atom_keys.append(column)
+
+            for i in tqdm.tqdm(range(len(df))):
+                # filter hydrogens
+                atoms = np.asarray(df['atom Z'][i])
+                hydrogen_inds = np.argwhere(atoms == 1)
+                if len(hydrogen_inds) > 0:
+                    for key in atom_keys:
+                        feat = [df[key][i][j] for j in range(len(df[key][i])) if j not in hydrogen_inds]
+                        df[key][i] = feat #list(np.asarray(df[key][i])[heavy_atom_inds])
+
+            df.to_pickle('C:/Users\mikem\Desktop\CSP_runs\datasets/dataset_without_protons')
+            df.loc[0:1000].to_pickle('C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset_without_protons')
 
     def featurize(self, chunk_inds=[0, 100]):
         os.chdir(self.crystal_chunks_path)

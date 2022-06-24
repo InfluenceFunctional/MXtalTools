@@ -207,7 +207,8 @@ class NormalizingFlow(nn.Module):
 
 
 class molecule_graph_model(nn.Module):
-    def __init__(self, dataDims,seed,
+    def __init__(self, dataDims, seed,
+                 output_dimension,
                  activation,
                  num_fc_layers,
                  fc_depth,
@@ -226,6 +227,8 @@ class molecule_graph_model(nn.Module):
                  add_spherical_basis,
                  atom_embedding_size,
                  radial_function,
+                 max_num_neighbors,
+                 convolution_cutoff,
                  return_latent=False, crystal_mode=False):
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
@@ -237,20 +240,22 @@ class molecule_graph_model(nn.Module):
         self.fc_norm_mode = fc_norm_mode
         self.graph_model = graph_model
         self.graph_convolution = graph_convolution
-        self.output_classes = dataDims['output classes']
-        self.graph_convolutional_layers = graph_convolutional_layers
+        self.output_classes = output_dimension
+        self.graph_convolution_layers = graph_convolutional_layers
         self.graph_filters = graph_filters
         self.graph_norm = graph_norm
         self.num_spherical = num_spherical
         self.num_radial = num_radial
         self.num_attention_heads = num_attention_heads
         self.add_spherical_basis = add_spherical_basis
-        self.n_mol_feats = dataDims['mol features']
+        self.n_mol_feats = dataDims['n mol features']
         self.n_atom_feats = dataDims['atom features']
         self.radial_function = radial_function
+        self.max_num_neighbors = max_num_neighbors
+        self.graph_convolution_cutoff = convolution_cutoff
         if not concat_mol_to_atom_features:  # if we are not adding molwise feats to atoms, subtract the dimension
             self.n_atom_feats -= self.n_mol_feats
-        self.pool_type = pooling
+        self.pooling = pooling
         self.fc_norm_mode = fc_norm_mode
         self.embedding_dim = atom_embedding_size
         self.crystal_mode = crystal_mode
@@ -273,7 +278,7 @@ class molecule_graph_model(nn.Module):
                     dense=False,
                     num_atom_features=self.n_atom_feats,
                     atom_embedding_dims=dataDims['atom embedding dict sizes'],
-                    embedding_hidden_dimension=self.atom_embedding_size,
+                    embedding_hidden_dimension=self.embedding_dim,
                     norm=self.graph_norm,
                     dropout=self.fc_dropout_probability
                 )
@@ -288,7 +293,7 @@ class molecule_graph_model(nn.Module):
                     max_num_neighbors=self.max_num_neighbors,
                     readout='mean',
                     num_atom_features=self.n_atom_feats,
-                    embedding_hidden_dimension=self.atom_embedding_size,
+                    embedding_hidden_dimension=self.embedding_dim,
                     atom_embedding_dims=dataDims['atom embedding dict sizes'],
                     norm=self.graph_norm,
                     dropout=self.fc_dropout_probability
@@ -299,14 +304,14 @@ class molecule_graph_model(nn.Module):
                     graph_convolution_filters=self.graph_filters,
                     graph_convolution=self.graph_convolution,
                     out_channels=self.fc_depth,
-                    hidden_channels=self.atom_embedding_size,
+                    hidden_channels=self.embedding_dim,
                     num_blocks=self.graph_convolution_layers,
                     num_radial=self.num_radial,
                     num_spherical=self.num_spherical,
                     max_num_neighbors=self.max_num_neighbors,
                     cutoff=self.graph_convolution_cutoff,
                     activation='gelu',
-                    embedding_hidden_dimension=self.atom_embedding_size,
+                    embedding_hidden_dimension=self.embedding_dim,
                     num_atom_features=self.n_atom_feats,
                     norm=self.graph_norm,
                     dropout=self.fc_dropout_probability,
@@ -336,19 +341,15 @@ class molecule_graph_model(nn.Module):
         if self.n_mol_feats != 0:
             self.mol_fc = nn.Linear(self.n_mol_feats, self.n_mol_feats)
 
-        if self.graph_model is not None:
-            fc_input_dim = self.fc_depth
-        else:
-            fc_input_dim = 0
-        self.mol_fc = general_MLP(layers=self.num_fc_layers,
-                                  filters=self.fc_depth,
-                                  norm=self.fc_norm_mode,
-                                  dropout=self.fc_dropout_probability,
-                                  input_dim=fc_input_dim,
-                                  output_dim=self.fc_depth,
-                                  conditioning_dim=self.n_mol_feats,
-                                  seed=self.seeds.model
-                                  )
+        self.gnn_mlp = general_MLP(layers=self.num_fc_layers,
+                                   filters=self.fc_depth,
+                                   norm=self.fc_norm_mode,
+                                   dropout=self.fc_dropout_probability,
+                                   input_dim=self.fc_depth,
+                                   output_dim=self.fc_depth,
+                                   conditioning_dim=self.n_mol_feats,
+                                   seed=seed
+                                   )
 
         self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
 
@@ -372,9 +373,9 @@ class molecule_graph_model(nn.Module):
         mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch).float())  # not actually pooling here, as the values are all the same for each molecule
 
         if self.graph_model is not None:
-            x = self.mol_fc(x, conditions=mol_feats)
+            x = self.gnn_mlp(x, conditions=mol_feats)
         else:
-            x = self.mol_fc(mol_feats)
+            x = self.gnn_mlp(mol_feats)
 
         if self.return_latent:  # immediately return the latent space prediction
             return x
@@ -461,18 +462,19 @@ class independent_gaussian_model(nn.Module):
 
         self.output_dim = output_dim
         self.input_dim = input_dim
-        self.register_buffer('means',torch.Tensor(means))
-        self.register_buffer('stds',torch.Tensor(stds))
+        self.register_buffer('means', torch.Tensor(means))
+        self.register_buffer('stds', torch.Tensor(stds))
 
         self.dummy_params = nn.Parameter(torch.ones(100))
 
-    def forward(self,z,conditions = None):
+    def forward(self, z, conditions=None):
         # conditions are unused - dummy
-        return z * self.stds + self.means # pass random numbers through an appropriate standardization
+        return z * self.stds + self.means  # pass random numbers through an appropriate standardization
+
 
 
 class general_MLP(nn.Module):
-    def __init__(self, layers, filters, input_dim, output_dim, seed=0, dropout=0, conditioning_dim=0, norm=None):
+    def __init__(self, layers, filters, input_dim, output_dim, activation = 'gelu', seed=0, dropout=0, conditioning_dim=0, norm=None):
         super(general_MLP, self).__init__()
         # initialize constants and layers
         self.n_layers = layers
@@ -482,6 +484,7 @@ class general_MLP(nn.Module):
         self.input_dim = input_dim + conditioning_dim
         self.norm_mode = norm
         self.dropout_p = dropout
+        self.activation = activation
 
         torch.manual_seed(seed)
 
@@ -501,7 +504,7 @@ class general_MLP(nn.Module):
         ])
 
         self.fc_activations = torch.nn.ModuleList([
-            Activation('leaky relu', self.n_filters)
+            Activation('gelu', self.n_filters)
             for _ in range(self.n_layers)
         ])
 
@@ -509,26 +512,75 @@ class general_MLP(nn.Module):
         self.fc_norms[0] = Normalization(self.norm_mode, self.input_dim)
 
         if self.n_layers == 1:
-            self.fc_layers[0] = nn.Linear(self.input_dim, self.output_dim)
+            self.fc_layers[0] = nn.Linear(self.input_dim, self.n_filters)
         else:
             self.fc_layers[0] = nn.Linear(self.input_dim, self.n_filters)
-            self.fc_layers[-1] = nn.Linear(self.n_filters, self.output_dim)
-
 
         self.fc_layers = nn.ModuleList(self.fc_layers)
         self.fc_norms = nn.ModuleList(self.fc_norms)
 
-    def forward(self, x, conditions=None): # todo make safe for torch geometric data - need to de-entangle conditional and molecular features, then prep and feed consistently
+        self.output_layer = nn.Linear(self.n_filters, self.output_dim, bias=False)
+
+    def forward(self, x, conditions=None):
+        #x = torch.zeros_like(x)
+        if type(x) == torch_geometric.data.batch.DataBatch:  # extract conditions from trailing atomic features
+            if len(x) == 1:
+                x = x.x[:,-self.input_dim:]
+            else:
+                x = gnn.global_max_pool(x.x,x.batch)[:,-self.input_dim:] #x.x[x.ptr[:-1]][:, -self.input_dim:]
+
         if conditions is not None:
-            if type(conditions) == torch_geometric.data.batch.DataBatch: # extract conditions from trailing atomic features
-                if len(x) == 1:
-                    conditions = conditions.x[:,-self.conditioning_dim:]
-                else:
-                    conditions = conditions.x[conditions.ptr[:-1]][:,-self.conditioning_dim:]
+            # if type(conditions) == torch_geometric.data.batch.DataBatch: # extract conditions from trailing atomic features
+            #     if len(x) == 1:
+            #         conditions = conditions.x[:,-self.conditioning_dim:]
+            #     else:
+            #         conditions = conditions.x[conditions.ptr[:-1]][:,-self.conditioning_dim:]
 
             x = torch.cat((x, conditions), dim=1)
+
         for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
             x = dropout(activation(linear(norm(x))))
 
-        return x
+        return self.output_layer(x)
 
+#
+#
+# class general_MLP(nn.Module):
+#     def __init__(self, layers, filters, input_dim, output_dim, activation='gelu', seed=0, dropout=0, conditioning_dim=0, norm=None):
+#         super(general_MLP, self).__init__()
+#         # initialize constants and layers
+#         self.n_layers = layers
+#         self.n_filters = filters
+#         self.conditioning_dim = conditioning_dim
+#         self.output_dim = output_dim
+#         self.input_dim = input_dim + conditioning_dim
+#         self.norm_mode = norm
+#         self.dropout_p = dropout
+#         self.activation = activation
+#
+#         torch.manual_seed(seed)
+#
+#         self.model = nn.Sequential(
+#             nn.Linear(self.input_dim, self.n_filters), nn.ReLU(),
+#             nn.Linear(self.n_filters, self.n_filters), nn.ReLU(), nn.Linear(self.n_filters, self.output_dim, bias=False)
+#         )
+#
+#
+#     def forward(self, x, conditions=None):
+#         # x = torch.zeros_like(x)
+#         if type(x) == torch_geometric.data.batch.DataBatch:  # extract conditions from trailing atomic features
+#             if len(x) == 1:
+#                 x = x.x[:, -self.input_dim:]
+#             else:
+#                 x = gnn.global_max_pool(x.x,x.batch)[:,-self.input_dim:] #x.x[x.ptr[:-1]][:, -self.input_dim:]
+#
+#         if conditions is not None:
+#             # if type(conditions) == torch_geometric.data.batch.DataBatch: # extract conditions from trailing atomic features
+#             #     if len(x) == 1:
+#             #         conditions = conditions.x[:,-self.conditioning_dim:]
+#             #     else:
+#             #         conditions = conditions.x[conditions.ptr[:-1]][:,-self.conditioning_dim:]
+#
+#             x = torch.cat((x, conditions), dim=1)
+#
+#         return self.model(x)

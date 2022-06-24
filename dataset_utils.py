@@ -113,7 +113,7 @@ class BuildDataset:
 
         # get crystal point groups and make an ordered dict
         if pg_dict is not None:
-            point_groups = [pg_dict[dataset['crystal spacegroup number'][i]] for i in range(len(dataset))]
+            point_groups = dataset['crystal point group']#[pg_dict[dataset['crystal spacegroup number'][i]] for i in range(len(dataset))]
             point_group_elems = np.unique(point_groups)
             self.point_group_dict = {}
             for i, group in enumerate(point_group_elems):
@@ -140,11 +140,11 @@ class BuildDataset:
         else:
             molecule_features_array = self.concatenate_molecule_features(dataset)
             targets = self.get_targets(dataset)
-            atom_features_list, hydrogen_inds = self.concatenate_atom_features(dataset)
-            for i in range(len(dataset)):
-                if len(hydrogen_inds[i]) > 0:
-                    coords_i = [dataset['atom coords'][i][j] for j in range(len(dataset['atom coords'][i])) if j not in hydrogen_inds[i]]
-                    dataset['atom coords'][i] = coords_i
+            atom_features_list = self.concatenate_atom_features(dataset)
+            # for i in range(len(dataset)):
+            #     if len(hydrogen_inds[i]) > 0:
+            #         coords_i = [dataset['atom coords'][i][j] for j in range(len(dataset['atom coords'][i])) if j not in hydrogen_inds[i]]
+            #         dataset['atom coords'][i] = coords_i
 
             tracking_features = self.gather_tracking_features(dataset)
             self.datapoints = self.generate_training_data(dataset['atom coords'], dataset['identifier'], atom_features_list,
@@ -209,8 +209,9 @@ class BuildDataset:
         # removed 'atom partial charge' due to issues with organometallic dataset
         print("Preparing atom-wise features")
         stds, means = {}, {}
-        hydrogen_inds = [np.argwhere(np.asarray(dataset['atom Z'][i]) == 1)[:, 0] for i in range(len(dataset))]  # identify hydrogens
-        atom_features_list = [np.zeros((len(dataset['atom Z'][i]) - len(hydrogen_inds[i]), len(keys_to_add))) for i in range(self.dataset_length)]
+        #hydrogen_inds = [np.argwhere(np.asarray(dataset['atom Z'][i]) == 1)[:, 0] for i in range(len(dataset))]  # todo - pre-do this in the dataset, this is slow as hell
+        #atom_features_list = [np.zeros((len(dataset['atom Z'][i]) - len(hydrogen_inds[i]), len(keys_to_add))) for i in range(self.dataset_length)]
+        atom_features_list = [np.zeros((len(dataset['atom Z'][i]), len(keys_to_add))) for i in range(self.dataset_length)]
 
         for column, key in enumerate(keys_to_add):
             flat_feature = np.concatenate(dataset[key])
@@ -218,8 +219,8 @@ class BuildDataset:
             means[key] = np.mean(flat_feature)
             for i in range(self.dataset_length):
                 feature_vector = dataset[key][i]
-                if len(hydrogen_inds[i]) > 0:
-                    feature_vector = [feature_vector[j] for j in range(len(feature_vector)) if j not in hydrogen_inds[i]]
+                # if len(hydrogen_inds[i]) > 0:
+                #     feature_vector = [feature_vector[j] for j in range(len(feature_vector)) if j not in hydrogen_inds[i]]
 
                 if type(feature_vector) is not np.ndarray:
                     feature_vector = np.asarray(feature_vector)
@@ -238,7 +239,7 @@ class BuildDataset:
 
                 atom_features_list[i][:, column] = feature_vector
 
-        return atom_features_list, hydrogen_inds
+        return atom_features_list#, hydrogen_inds
 
     def concatenate_molecule_features(self, dataset, mol_keys=True, extra_keys=None):
         """
@@ -288,13 +289,14 @@ class BuildDataset:
         else:
             ref_coords = None
 
-        atom_features_list, hydrogen_inds = self.concatenate_atom_features(dataset)
-        for i in range(len(dataset)):
-            if len(hydrogen_inds[i]) > 0:
-                coords_i = [dataset['atom coords'][i][j] for j in range(len(dataset['atom coords'][i])) if j not in hydrogen_inds[i]]
-                dataset['atom coords'][i] = coords_i
+        atom_features_list = self.concatenate_atom_features(dataset)
+        # for i in range(len(dataset)):
+        #     if len(hydrogen_inds[i]) > 0:
+        #         coords_i = [dataset['atom coords'][i][j] for j in range(len(dataset['atom coords'][i])) if j not in hydrogen_inds[i]]
+        #         dataset['atom coords'][i] = coords_i
 
-        molecule_features_array = self.concatenate_molecule_features(dataset, extra_keys=['crystal point group','crystal system'])
+        molecule_features_array = self.concatenate_molecule_features(
+            dataset, extra_keys=['crystal point group','crystal z value'])
 
         return self.generate_training_data(atom_coords=dataset['atom coords'],
                                            smiles=dataset['molecule smiles'],
@@ -478,14 +480,12 @@ class BuildDataset:
                 if self.conditioning_mode == 'graph model':  #
                     dim['output classes'] = [2]  # placeholder - will be overwritten later
                     dim['atom features'] = self.datapoints[0].x.shape[1]
-                    dim['mol features'] = self.n_mol_features
+                    dim['n mol features'] = self.n_mol_features
                     dim['atom embedding dict sizes'] = self.atom_dict_size
-
-
         elif 'regression' in self.model_mode:
             dim = {
                 'atom features': self.datapoints[0].x.shape[1],
-                'mol features': self.n_mol_features,
+                'n mol features': self.n_mol_features,
                 'output classes': [1],
                 'dataset length': len(self.datapoints),
                 'atom embedding dict sizes': self.atom_dict_size,
@@ -497,7 +497,7 @@ class BuildDataset:
         elif 'classification' in self.model_mode:
             dim = {
                 'atom features': self.datapoints[0].x.shape[1],
-                'mol features': self.n_mol_features,
+                'n mol features': self.n_mol_features,
                 'output classes': self.output_classes,
                 'dataset length': len(self.datapoints),
                 'n tracking features': self.n_tracking_features,
@@ -516,7 +516,8 @@ class BuildDataset:
                 'n tracking features': self.n_tracking_features,
                 'tracking features dict': self.tracking_dict_keys,
                 'atom features': self.datapoints[0].x.shape[1],
-                'mol features': self.n_mol_features,
+                'n mol features': self.n_mol_features,
+                'mol features': self.mol_dict_keys,
                 'atom embedding dict sizes': self.atom_dict_size,
                 'conditional features': ['crystal system', 'crystal point group'],
                 'n conditional features': 2

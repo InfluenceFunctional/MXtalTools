@@ -15,7 +15,7 @@ class crystal_discriminator(nn.Module):
         self.fc_depth = config.discriminator.fc_depth
         self.output_classes = 1 if config.gan_loss == 'wasserstein' else 2
         self.graph_filters = config.discriminator.graph_filters
-        self.n_mol_feats = dataDims['mol features']
+        self.n_mol_feats = dataDims['n mol features']
         self.n_atom_feats = dataDims['atom features']
         self.n_atom_feats -= self.n_mol_feats
         self.pool_type = config.discriminator.pooling

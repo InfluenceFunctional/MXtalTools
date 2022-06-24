@@ -23,37 +23,55 @@ class crystal_generator(nn.Module):
         else:
             print(config.generator.prior + ' is not an implemented prior!!')
             sys.exit()
-
-        if self.generator_model_type.lower() == 'gnn':  # molecular graph model
-            self.model = molecule_graph_model(dataDims,
-                                              seed=config.seeds.model,
-                                              activation=config.generator.activation,
-                                              num_fc_layers=config.generator.num_fc_layers,
-                                              fc_depth=config.generator.fc_depth,
-                                              fc_dropout_probability=config.generator.fc_dropout_probability,
-                                              fc_norm_mode=config.generator.fc_norm_mode,
-                                              graph_model=config.generator.graph_model,
-                                              graph_filters=config.generator.graph_filters,
-                                              graph_convolutional_layers=config.generator.graph_convolution_layers,
-                                              concat_mol_to_atom_features=True,
-                                              pooling=config.generator.pooling,
-                                              graph_norm=config.generator.graph_norm,
-                                              num_spherical=config.generator.num_spherical,
-                                              num_radial=config.generator.num_radial,
-                                              graph_convolution=config.generator.graph_convolution,
-                                              num_attention_heads=config.generator.num_attention_heads,
-                                              add_spherical_basis=config.generator.add_spherical_basis,
-                                              atom_embedding_size=config.generator.atom_embedding_size,
-                                              radial_function=config.generator.radial_function,
-                                              )
-        elif self.generator_model_type.lower() == 'mlp':  # simple MLP
+        '''
+        conditioning model
+        '''
+        if config.generator.conditioning_mode == 'graph model':  # molecular graph model
+            self.conditioner = molecule_graph_model(dataDims,
+                                                    seed=config.seeds.model,
+                                                    output_dimension=config.generator.fc_depth,
+                                                    activation=config.generator.activation,
+                                                    num_fc_layers=config.generator.num_fc_layers,
+                                                    fc_depth=config.generator.fc_depth,
+                                                    fc_dropout_probability=config.generator.fc_dropout_probability,
+                                                    fc_norm_mode=config.generator.fc_norm_mode,
+                                                    graph_model=config.generator.graph_model,
+                                                    graph_filters=config.generator.graph_filters,
+                                                    graph_convolutional_layers=config.generator.graph_convolution_layers,
+                                                    concat_mol_to_atom_features=True,
+                                                    pooling=config.generator.pooling,
+                                                    graph_norm=config.generator.graph_norm,
+                                                    num_spherical=config.generator.num_spherical,
+                                                    num_radial=config.generator.num_radial,
+                                                    graph_convolution=config.generator.graph_convolution,
+                                                    num_attention_heads=config.generator.num_attention_heads,
+                                                    add_spherical_basis=config.generator.add_spherical_basis,
+                                                    atom_embedding_size=config.generator.atom_embedding_size,
+                                                    radial_function=config.generator.radial_function,
+                                                    max_num_neighbors=config.generator.max_num_neighbors,
+                                                    convolution_cutoff=config.generator.graph_convolution_cutoff,
+                                                    )
+        elif config.generator.conditioning_mode == 'molecule features':
+            self.conditioner = general_MLP(layers=config.generator.num_fc_layers,
+                                           filters=config.generator.fc_depth,
+                                           norm=config.generator.fc_norm_mode,
+                                           dropout=config.generator.fc_dropout_probability,
+                                           input_dim=dataDims['n conditional features'],
+                                           output_dim=config.generator.fc_depth,
+                                           conditioning_dim=0,
+                                           seed=config.seeds.model
+                                           )
+        '''
+        generator model
+        '''
+        if self.generator_model_type.lower() == 'mlp':  # simple MLP
             self.model = general_MLP(layers=config.generator.num_fc_layers,
                                      filters=config.generator.fc_depth,
                                      norm=config.generator.fc_norm_mode,
                                      dropout=config.generator.fc_dropout_probability,
                                      input_dim=dataDims['n crystal features'],
                                      output_dim=dataDims['n crystal features'],
-                                     conditioning_dim=dataDims['n conditional features'],
+                                     conditioning_dim=config.generator.fc_depth,
                                      seed=config.seeds.model
                                      )
         elif self.generator_model_type.lower() == 'nf':  # conditioned normalizing flow
@@ -61,6 +79,9 @@ class crystal_generator(nn.Module):
         elif self.generator_model_type.lower() == 'fit normal':
             assert config.generator.prior.lower() == 'multivariate normal'
             self.model = independent_gaussian_model(config, dataDims, dataDims['means'], dataDims['stds'])
+        else:
+            print(self.generator_model_type + ' is not an implemented generator model!')
+            sys.exit()
 
     def sample_latent(self, n_samples):
         return self.prior.sample((n_samples,)).to(self.device)
@@ -76,6 +97,10 @@ class crystal_generator(nn.Module):
     def forward(self, n_samples, z=None, conditions=None):
         if z is None:  # sample random numbers from simple prior
             z = self.sample_latent(n_samples)
+            #z = torch.zeros_like(z0)
+
+        if conditions is not None:
+            conditions = self.conditioner(conditions)
 
         # run through model
         if self.generator_model_type is not 'nf':

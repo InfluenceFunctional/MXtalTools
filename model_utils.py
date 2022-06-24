@@ -2,7 +2,7 @@ from models.torch_models import *
 import sklearn.metrics as metrics
 import sys
 import os
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+#os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 from utils import get_n_config, draw_molecule_2d
 from dataset_utils import get_dataloaders
 import numpy as np
@@ -70,7 +70,7 @@ def computeTopXAccuracy(config, probs, targets, X=5):
     return overallTopXAccuracy, byGroupTopXAccuracy
 
 
-def checkConvergence(config, record):
+def checkConvergence(record, history, convergence_eps):
     """
     check if we are converged
     condition: test loss has increased or levelled out over the last several epochs
@@ -81,14 +81,14 @@ def checkConvergence(config, record):
     if type(record) == list:
         record = np.asarray(record)
 
-    if len(record) > (config.history + 2):
-        if all(record[-config.history:] > np.amin(record)):
+    if len(record) > (history + 2):
+        if all(record[-history:] > np.amin(record)):
             converged = True
             print("Model converged, target diverging")
 
-        criteria = np.var(record[-config.history:]) / np.abs(np.average(record[-config.history:]))
+        criteria = np.var(record[-history:]) / np.abs(np.average(record[-history:]))
         print('Convergence criteria at {:.3f}'.format(np.log10(criteria)))
-        if criteria < config.convergence_eps:
+        if criteria < convergence_eps:
             converged = True
             print("Model converged, target stabilized")
 

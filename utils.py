@@ -11,6 +11,7 @@ import yaml
 from pathlib import Path
 import torch
 import sys
+import torch.nn.functional as F
 
 '''
 general utilities
@@ -38,12 +39,12 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     mol_position = mol_position * stds[6:9] + means[6:9]
     mol_rotation = mol_rotation * stds[9:12] + means[9:12]
 
-    # apply appropriate limits
-    cell_lengths = torch.clip(cell_lengths, min=1)
-    cell_angles = torch.clip(cell_angles, min=torch.pi * 0.1, max=c_pi)
-    mol_position = torch.clip(mol_position, min=0, max=1)
-    mol_rotation = torch.clip(mol_rotation, min=-c_pi, max=c_pi)
-    mol_rotation[:, 1] = torch.clip(mol_rotation[:, 1], min=-c_pi / 2, max=c_pi / 2)  # second rotation has shorter range
+    # apply appropriate limits to raw outputs
+    cell_lengths = torch.clip(cell_lengths, min=1) # F.softplus(cell_lengths) # poisitive numbers #
+    cell_angles = torch.clip(cell_angles, min=torch.pi * 0.1, max=c_pi) #F.sigmoid(cell_angles) * torch.pi # sigmoid from 0 to pi  #
+    mol_position = torch.clip(mol_position, min=0, max=1) # F.sigmoid(mol_position) # sigmoid from 0 to 1 #
+    mol_rotation =torch.clip(mol_rotation, min=-c_pi, max=c_pi) # F.tanh(mol_rotation) * torch.pi # tanh from -pi to pi #
+    #mol_rotation[:, 1] = mol_rotation[:,1] / 2 # second rotation has half range by convention #torch.clip(mol_rotation[:, 1], min=-c_pi / 2, max=c_pi / 2)  # second rotation has shorter range
 
     for i in range(len(cell_lengths)):
         if enforce_crystal_system:  # todo can alternately enforce this via auxiliary loss on the generator itself
@@ -2109,3 +2110,18 @@ def get_config(args, override_args, args2config):
         else:
             _update_config(k, v, config, override=False)
     return dict2namespace(config)
+
+
+'''
+# look at all kinds of activations
+plt.clf()
+x = torch.linspace(-3,3,1001)
+funcs = [F.hardswish,F.selu,F.celu,F.logsigmoid,F.hardshrink,F.tanhshrink,F.softsign,F.softplus,F.softshrink,F.sigmoid,F.silu,F.mish] 
+nfuncs = len(funcs)
+for i in range(nfuncs):
+    plt.subplot(np.ceil(np.sqrt(nfuncs)),np.ceil(np.sqrt(nfuncs)),i+1)
+    plt.plot(x,funcs[i](x))
+    plt.title(str(funcs[i].__name__))
+
+plt.tight_layout()
+'''
