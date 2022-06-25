@@ -286,14 +286,10 @@ def process_config(config):
         config.workdir = 'C:/Users\mikem\Desktop/CSP_runs'  # Working directory
     elif config.machine == 'cluster':
         config.workdir = '/scratch/mk8347/csd_runs/'
+        config.dataset_path = '/scratch/mk8347/csd_runs/datasets/full_dataset'
 
     config.seeds.model = config.seeds.model % 10
     config.seeds.dataset = config.seeds.dataset % 10
-
-    if config.machine == 'cluster':
-        config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
-    else:
-        config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset'
 
     if config.test_mode:
         if (config.mode == 'joint modelling') and (config.generator.conditioning_mode != 'graph model'):
@@ -303,6 +299,10 @@ def process_config(config):
         config.auto_batch_sizing = False
         config.num_samples = 1000
         config.anomaly_detection = True
+        if config.machine == 'cluster':
+            config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
+        else:
+            config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset'
 
     return config
 
