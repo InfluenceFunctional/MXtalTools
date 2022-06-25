@@ -290,6 +290,11 @@ def process_config(config):
     config.seeds.model = config.seeds.model % 10
     config.seeds.dataset = config.seeds.dataset % 10
 
+    if config.machine == 'cluster':
+        config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
+    else:
+        config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset'
+
     if config.test_mode:
         if (config.mode == 'joint modelling') and (config.generator.conditioning_mode != 'graph model'):
             config.initial_batch_size = 100
@@ -297,10 +302,6 @@ def process_config(config):
             config.initial_batch_size = 50
         config.auto_batch_sizing = False
         config.num_samples = 1000
-        if config.machine == 'cluster':
-            config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
-        else:
-            config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset'
         config.anomaly_detection = True
 
     return config
