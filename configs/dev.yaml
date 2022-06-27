@@ -1,4 +1,4 @@
-test_mode: False
+test_mode: True
 machine: "local"
 device: "cuda"
 skip_run_init: False
@@ -9,8 +9,8 @@ mode: cell gan # 'single molecule regression' 'single molecule classification' '
 gan_loss: standard
 train_generator_density: True
 train_generator_as_flow: False
-train_generator_adversarially: False
-train_discriminator_adversarially: False
+train_generator_adversarially: True
+train_discriminator_adversarially: True
 
 seeds:
   model: 0
@@ -68,10 +68,10 @@ discriminator:
   convergence_eps: 0.00001
 
   graph_model: mike
-  graph_convolution_layers: 2
+  graph_convolution_layers: 8
   graph_filters: 16
   atom_embedding_size: 16
-  graph_norm: null
+  graph_norm: layer
   num_spherical: 6
   num_radial: 12
   graph_convolution_cutoff: 5
@@ -82,11 +82,11 @@ discriminator:
   add_spherical_basis: False # mikenet only
   pooling: attention
 
-  num_fc_layers: 1
-  fc_depth: 16
+  num_fc_layers: 2
+  fc_depth: 32
   activation: leaky relu
-  fc_dropout_probability: 0
-  fc_norm_mode: null
+  fc_dropout_probability: 0.1
+  fc_norm_mode: layer
 
 # generator optimizer and model
 generator:
@@ -102,9 +102,9 @@ generator:
   model_type: mlp # or nf
   graph_model: mike
   graph_convolution_layers: 8
-  graph_filters: 32
-  atom_embedding_size: 64
-  graph_norm: null
+  graph_filters: 16
+  atom_embedding_size: 16
+  graph_norm: layer
   num_spherical: 6
   num_radial: 12
   graph_convolution_cutoff: 5
@@ -115,11 +115,11 @@ generator:
   add_spherical_basis: False # mikenet only
   pooling: attention
 
-  num_fc_layers: 12
-  fc_depth: 64
+  num_fc_layers: 2
+  fc_depth: 32
   activation: leaky relu
-  fc_dropout_probability: 0
-  fc_norm_mode: null
+  fc_dropout_probability: 0.1
+  fc_norm_mode: layer
 
   num_samples: 10000
   prior: multivariate normal

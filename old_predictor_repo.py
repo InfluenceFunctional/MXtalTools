@@ -672,3 +672,265 @@ def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
                         self.model_epoch(config, dataLoader=tr, model=model, optimizer=optimizer, update_gradients=True, iteration_override=2)  # train & compute loss
 
                         sys.exit()
+
+
+
+    def generated_supercells(self, data, config, generator):
+        '''
+              test code for on-the-fly cell generation
+              data = self.build_supercells(data)
+              0. extract molecule and cell parameters
+              1. find centroid
+              2. find principal axis & angular component
+              3. place centroid & align axes
+              4. apply point symmetry
+              5. tile supercell
+              '''
+        sg_numbers = [int(data.y[2][i][self.sg_number_ind]) for i in range(data.num_graphs)]
+        lattices = [self.lattice_type[number] for number in sg_numbers]
+
+        cell_sample = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device)).cpu()
+        cell_lengths, cell_angles, rand_position, rand_rotation = cell_sample.split(3, 1)
+        cell_lengths, cell_angles, rand_position, rand_rotation = clean_cell_output(
+            cell_lengths, cell_angles, rand_position, rand_rotation, lattices, config.dataDims)
+
+        for i in range(data.num_graphs):
+            # 0 extract molecule and cell parameters
+            atoms = np.asarray(data.x[data.batch == i].cpu().detach())
+            atomic_numbers = np.asarray(atoms[:, 0])
+            heavy_inds = np.where(atomic_numbers != 1)
+            atoms = atoms[heavy_inds]
+
+            # get symmetry info
+            sym_ops = np.asarray(self.sym_ops[sg_numbers[i]])  # symmetry operations between the general positions for this space group
+            z_value = len(sym_ops)  # number of molecules in the reference cell
+
+            # prep conformer
+            coords = np.asarray(data.pos[data.batch == i].cpu().detach())
+            weights = np.asarray([self.atom_weights[int(number)] for number in atomic_numbers])
+            coords = coords[heavy_inds]
+            weights = weights[heavy_inds]
+
+            # # option to get the cell itself from the CSD
+            # cell_lengths = data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
+            # cell_angles = data.y[2][i][self.cell_angle_inds]
+
+            T_fc = coor_trans_matrix('f_to_c', cell_lengths[i].detach().numpy(), cell_angles[i].detach().numpy())
+            T_cf = coor_trans_matrix('c_to_f', cell_lengths[i].detach().numpy(), cell_angles[i].detach().numpy())
+            cell_vectors = T_fc.dot(np.eye(3)).T
+
+            random_coords = randomize_molecule_position_and_orientation(
+                coords.astype(float), weights.astype(float), T_fc.astype(float), T_cf.astype(float),
+                np.asarray(self.sym_ops[sg_numbers[i]], dtype=float), set_position=rand_position[i].detach().numpy(), set_rotation=rand_rotation[i].detach().numpy())
+
+            reference_cell, ref_cell_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_numbers[i]], dtype=float), z_value)
+
+            supercell_atoms, supercell_coords = ref_to_supercell(reference_cell, z_value, atoms, cell_vectors)
+
+            supercell_batch = torch.ones(len(supercell_atoms)).int() * i
+
+            # append supercell info to the data class
+            if i == 0:
+                new_x = supercell_atoms
+                new_coords = supercell_coords
+                new_batch = supercell_batch
+                new_ptr = torch.zeros(data.num_graphs)
+            else:
+                new_x = torch.cat((new_x, supercell_atoms), dim=0)
+                new_coords = torch.cat((new_coords, supercell_coords), dim=0)
+                new_batch = torch.cat((new_batch, supercell_batch))
+                new_ptr[i] = new_ptr[-1] + len(new_x)
+
+        # update dataloader with cell info
+        data.x = new_x.type(dtype=torch.float32)
+        data.pos = new_coords.type(dtype=torch.float32)
+        data.batch = new_batch.type(dtype=torch.int64)
+        data.ptr = new_ptr.type(dtype=torch.int64)
+
+        return data, cell_sample
+
+
+
+    def train(self):
+        with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=self.config.wandb.experiment_tag):
+            # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken
+            # print(config)
+
+            config = self.config  # go with hand-built config
+
+            # dataset
+            dataset_builder = BuildDataset(config, self.point_groups, premade_dataset=self.prep_dataset)
+            del self.prep_dataset  # we don't actually want this huge thing floating around
+
+            config.dataDims = dataset_builder.get_dimension()
+            self.dataDims = dataset_builder.get_dimension()
+            if 'classification' in config.mode:  # for convenience
+                self.class_labels = self.dataDims['class labels']
+                self.class_weights = self.dataDims['class weights']
+            if config.mode == 'joint modelling':
+                self.lattice_features = dataset_builder.lattice_keys
+                self.n_crystal_dims = self.dataDims['n crystal features']
+                if config.generator.conditional_modelling:
+                    self.n_conditional_features = self.dataDims['n conditional features']
+                else:
+                    self.n_conditional_features = 0
+            if 'cell' in config.mode:  # get relevant indices
+                self.cell_angle_keys = ['crystal alpha', 'crystal beta', 'crystal gamma']
+                self.cell_angle_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_angle_keys]
+                self.cell_length_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c']
+                self.cell_length_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_length_keys]
+                self.z_value_ind = self.dataDims['tracking features dict'].index('crystal z value')
+                self.sg_number_ind = self.dataDims['tracking features dict'].index('crystal spacegroup number')
+                self.mol_volume_ind = self.dataDims['tracking features dict'].index('molecule volume')
+                self.crystal_packing_ind = self.dataDims['tracking features dict'].index('crystal packing coefficient')
+                self.crystal_density_ind = self.dataDims['tracking features dict'].index('crystal calculated density')
+
+            # get batch size
+            if config.auto_batch_sizing:
+                print('Finding optimal batch size')
+                train_loader, test_loader, config.final_batch_size = self.get_batch_size(dataset_builder, config)
+            else:
+                print('Getting dataloaders for pre-determined batch size')
+                train_loader, test_loader = get_dataloaders(dataset_builder, config)
+                config.final_batch_size = config.initial_batch_size
+
+            print("Training batch size set to {}".format(config.final_batch_size))
+            # model, optimizer, schedulers
+            print('Reinitializing model and optimizer')
+            if 'gan'.lower() in config.mode:
+                generator, discriminator, g_optimizer, \
+                g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
+                n_params = params1 + params2
+            else:
+                model, optimizer, schedulers, n_params = self.init_model(config, self.dataDims)
+
+            # cuda
+            if config.device.lower() == 'cuda':
+                print('Putting model on CUDA')
+                torch.backends.cudnn.benchmark = True
+                # model = torch.nn.DataParallel(model) # send to multiple GPUs - not always working with wandb
+                if 'gan'.lower() in config.mode:
+                    generator.cuda()
+                    discriminator.cuda()
+                else:
+                    model.cuda()
+
+            if 'gan'.lower() in config.mode:
+                wandb.watch((generator,discriminator), log_graph=True, log_freq = 100)
+            else:
+                wandb.watch(model, log_graph=True)
+
+            wandb.log({"Model Num Parameters": n_params,
+                       "Final Batch Size": config.final_batch_size})
+
+            metrics_dict = self.prep_metrics(config=config)
+
+            # training loop
+            d_hit_max_lr, g_hit_max_lr, converged, epoch = False, False, False, 0
+            # if config.anomaly_detection:
+            #     torch.autograd.set_detect_anomaly = True
+            with torch.autograd.set_detect_anomaly(True):
+                while (epoch < config.max_epochs) and not converged:
+                    # very cool
+                    print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
+                    print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
+                    print("'      `--'      `.-'      `--'      `--'      `--'      `-.'      `--'      `")
+                    # very cool
+                    print("Starting Epoch {}".format(epoch))  # index from 0, very cool
+
+                    if 'gan'.lower() in config.mode:
+                        '''
+                        train
+                        '''
+                        d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
+                            self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                                           g_optimizer=g_optimizer, d_optimizer=d_optimizer,
+                                           update_gradients=True, record_stats=True)  # train & compute test loss
+
+                        d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
+                            self.gan_epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
+                                           update_gradients=False, record_stats=True)  # compute loss on test set
+
+                        print('epoch={}; d_nll_tr={:.5f}; d_nll_te={:.5f}; g_nll_tr={:.5f}; g_nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(
+                            epoch, torch.mean(torch.stack(d_err_tr)), torch.mean(torch.stack(d_err_te)),
+                            torch.mean(torch.stack(g_err_tr)), torch.mean(torch.stack(g_err_te)),
+                            time_train, time_test))
+
+                        '''
+                        update LR
+                        '''
+                        # update learning rate
+                        g_optimizer = set_lr(g_schedulers, g_optimizer, config.generator.lr_schedule,
+                                             config.generator.learning_rate, config.generator.max_lr,g_err_tr, g_hit_max_lr)
+                        g_learning_rate = g_optimizer.param_groups[0]['lr']
+                        if g_learning_rate >= config.generator.max_lr: g_hit_max_lr = True
+
+                        # update learning rate
+                        d_optimizer = set_lr(d_schedulers, d_optimizer, config.discriminator.lr_schedule,
+                                             config.discriminator.learning_rate, config.discriminator.max_lr,d_err_tr, d_hit_max_lr)
+                        d_learning_rate = d_optimizer.param_groups[0]['lr']
+                        if d_learning_rate >= config.discriminator.max_lr: d_hit_max_lr = True
+
+                        '''
+                        logging
+                        '''
+                        # logging
+                        metrics_dict = self.update_gan_metrics(
+                            epoch, metrics_dict, d_err_tr, d_err_te,
+                            g_err_tr, g_err_te, d_learning_rate, d_learning_rate)
+
+                        self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict, d_tr_record, d_te_record, g_tr_record, g_te_record)
+                        if epoch % config.wandb.sample_reporting_frequency == 0:
+                            self.log_gan_accuracy(epoch, dataset_builder, train_loader, test_loader,
+                                                  metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
+                                                  train_epoch_stats_dict, test_epoch_stats_dict, config,
+                                                  generator, discriminator, wandb_log_figures=config.wandb.log_figures)
+
+                        '''
+                        convergence checks
+                        '''
+
+                        # check for convergence
+                        if checkConvergence(metrics_dict['generator test loss'], config.history, config.generator.convergence_eps) and (epoch > config.history + 2):
+                            config.finished = True
+                            # self.log_gan_accuracy(epoch, dataset_builder, train_loader, test_loader,
+                            #                   te_record, epoch_stats_dict,
+                            #                   config, model, wandb_log_figures=True)  # always log figures at end of run
+                            break
+
+                    else:  # todo officially deprecate the old way of doing this #flow model will likely no longer function on its own here
+                        err_tr, tr_record, time_train = \
+                            self.model_epoch(config, dataLoader=train_loader, model=model,
+                                             optimizer=optimizer, update_gradients=True)  # train & compute test loss
+
+                        err_te, te_record, epoch_stats_dict, time_test = \
+                            self.model_epoch(config, dataLoader=test_loader, model=model,
+                                             update_gradients=False, record_stats=True)  # compute loss on test set
+
+                        print('epoch={}; nll_tr={:.5f}; nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(epoch, torch.mean(torch.stack(err_tr)), torch.mean(torch.stack(err_te)), time_train, time_test))
+
+                        # update learning rate
+                        optimizer = set_lr(schedulers, optimizer, config, err_tr, hit_max_lr)
+                        learning_rate = optimizer.param_groups[0]['lr']
+                        if learning_rate >= config.max_lr: hit_max_lr = True
+
+                        # logging
+                        self.update_metrics(epoch, metrics_dict, err_tr, err_te, learning_rate)
+                        self.log_loss(metrics_dict, tr_record, te_record)
+                        if epoch % config.wandb.sample_reporting_frequency == 0:
+                            self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
+                                              te_record, epoch_stats_dict,
+                                              config, model, wandb_log_figures=config.wandb.log_figures)
+
+                        # check for convergence
+                        if checkConvergence(config, metrics_dict['test loss']) and (epoch > config.history + 2):
+                            config.finished = True
+                            self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
+                                              te_record, epoch_stats_dict,
+                                              config, model, wandb_log_figures=True)  # always log figures at end of run
+                            break
+
+                    epoch += 1
+
+                if config.device.lower() == 'cuda':
+                    torch.cuda.empty_cache()  # clear GPU

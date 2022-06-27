@@ -498,37 +498,6 @@ class Predictor():
                             #                   config, model, wandb_log_figures=True)  # always log figures at end of run
                             break
 
-                    else:  # todo officially deprecate the old way of doing this #flow model will likely no longer function on its own here
-                        err_tr, tr_record, time_train = \
-                            self.model_epoch(config, dataLoader=train_loader, model=model,
-                                             optimizer=optimizer, update_gradients=True)  # train & compute test loss
-
-                        err_te, te_record, epoch_stats_dict, time_test = \
-                            self.model_epoch(config, dataLoader=test_loader, model=model,
-                                             update_gradients=False, record_stats=True)  # compute loss on test set
-
-                        print('epoch={}; nll_tr={:.5f}; nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(epoch, torch.mean(torch.stack(err_tr)), torch.mean(torch.stack(err_te)), time_train, time_test))
-
-                        # update learning rate
-                        optimizer = set_lr(schedulers, optimizer, config, err_tr, hit_max_lr)
-                        learning_rate = optimizer.param_groups[0]['lr']
-                        if learning_rate >= config.max_lr: hit_max_lr = True
-
-                        # logging
-                        self.update_metrics(epoch, metrics_dict, err_tr, err_te, learning_rate)
-                        self.log_loss(metrics_dict, tr_record, te_record)
-                        if epoch % config.wandb.sample_reporting_frequency == 0:
-                            self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
-                                              te_record, epoch_stats_dict,
-                                              config, model, wandb_log_figures=config.wandb.log_figures)
-
-                        # check for convergence
-                        if checkConvergence(config, metrics_dict['test loss']) and (epoch > config.history + 2):
-                            config.finished = True
-                            self.log_accuracy(epoch, dataset_builder, train_loader, test_loader,
-                                              te_record, epoch_stats_dict,
-                                              config, model, wandb_log_figures=True)  # always log figures at end of run
-                            break
 
                     epoch += 1
 
@@ -861,21 +830,21 @@ class Predictor():
         # log discriminator losses
         wandb.log(current_metrics)
         hist = np.histogram(d_tr_record, bins=256, range=(np.amin(d_tr_record), np.quantile(d_tr_record, 0.9)))
-        wandb.log({"Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
+        wandb.log({"Discriminator Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
         hist = np.histogram(d_te_record, bins=256, range=(np.amin(d_te_record), np.quantile(d_te_record, 0.9)))
-        wandb.log({"Test Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
+        wandb.log({"Discriminator Test Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
 
-        wandb.log({"Train Loss Coeff. of Variation": np.sqrt(np.var(d_tr_record)) / np.average(d_tr_record)})
-        wandb.log({"Test Loss Coeff. of Variation": np.sqrt(np.var(d_te_record)) / np.average(d_te_record)})
+        wandb.log({"D Train Loss Coeff. of Variation": np.sqrt(np.var(d_tr_record)) / np.average(d_tr_record)})
+        wandb.log({"D Test Loss Coeff. of Variation": np.sqrt(np.var(d_te_record)) / np.average(d_te_record)})
 
         # log generator losses
         hist = np.histogram(g_tr_record, bins=256, range=(np.amin(g_tr_record), np.quantile(g_tr_record, 0.9)))
-        wandb.log({"Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
+        wandb.log({"Generator Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
         hist = np.histogram(g_te_record, bins=256, range=(np.amin(g_te_record), np.quantile(g_te_record, 0.9)))
-        wandb.log({"Test Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
+        wandb.log({"Generator Test Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
 
-        wandb.log({"Train Loss Coeff. of Variation": np.sqrt(np.var(g_tr_record)) / np.average(g_tr_record)})
-        wandb.log({"Test Loss Coeff. of Variation": np.sqrt(np.var(g_te_record)) / np.average(g_te_record)})
+        wandb.log({"G Train Loss Coeff. of Variation": np.sqrt(np.var(g_tr_record)) / np.average(g_tr_record)})
+        wandb.log({"G Test Loss Coeff. of Variation": np.sqrt(np.var(g_te_record)) / np.average(g_te_record)})
 
         # log specific losses
         special_losses = {}
@@ -912,79 +881,6 @@ class Predictor():
         wandb.log({"Test Loss Coeff. of Variation": np.sqrt(np.var(te_record)) / np.average(te_record)})
 
 
-    def generated_supercells(self, data, config, generator):
-        '''
-              test code for on-the-fly cell generation
-              data = self.build_supercells(data)
-              0. extract molecule and cell parameters
-              1. find centroid
-              2. find principal axis & angular component
-              3. place centroid & align axes
-              4. apply point symmetry
-              5. tile supercell
-              '''
-        sg_numbers = [int(data.y[2][i][self.sg_number_ind]) for i in range(data.num_graphs)]
-        lattices = [self.lattice_type[number] for number in sg_numbers]
-
-        cell_sample = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device)).cpu()
-        cell_lengths, cell_angles, rand_position, rand_rotation = cell_sample.split(3, 1)
-        cell_lengths, cell_angles, rand_position, rand_rotation = clean_cell_output(
-            cell_lengths, cell_angles, rand_position, rand_rotation, lattices, config.dataDims)
-
-        for i in range(data.num_graphs):
-            # 0 extract molecule and cell parameters
-            atoms = np.asarray(data.x[data.batch == i].cpu().detach())
-            atomic_numbers = np.asarray(atoms[:, 0])
-            heavy_inds = np.where(atomic_numbers != 1)
-            atoms = atoms[heavy_inds]
-
-            # get symmetry info
-            sym_ops = np.asarray(self.sym_ops[sg_numbers[i]])  # symmetry operations between the general positions for this space group
-            z_value = len(sym_ops)  # number of molecules in the reference cell
-
-            # prep conformer
-            coords = np.asarray(data.pos[data.batch == i].cpu().detach())
-            weights = np.asarray([self.atom_weights[int(number)] for number in atomic_numbers])
-            coords = coords[heavy_inds]
-            weights = weights[heavy_inds]
-
-            # # option to get the cell itself from the CSD
-            # cell_lengths = data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
-            # cell_angles = data.y[2][i][self.cell_angle_inds]
-
-            T_fc = coor_trans_matrix('f_to_c', cell_lengths[i].detach().numpy(), cell_angles[i].detach().numpy())
-            T_cf = coor_trans_matrix('c_to_f', cell_lengths[i].detach().numpy(), cell_angles[i].detach().numpy())
-            cell_vectors = T_fc.dot(np.eye(3)).T
-
-            random_coords = randomize_molecule_position_and_orientation(
-                coords.astype(float), weights.astype(float), T_fc.astype(float), T_cf.astype(float),
-                np.asarray(self.sym_ops[sg_numbers[i]], dtype=float), set_position=rand_position[i].detach().numpy(), set_rotation=rand_rotation[i].detach().numpy())
-
-            reference_cell, ref_cell_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_numbers[i]], dtype=float), z_value)
-
-            supercell_atoms, supercell_coords = ref_to_supercell(reference_cell, z_value, atoms, cell_vectors)
-
-            supercell_batch = torch.ones(len(supercell_atoms)).int() * i
-
-            # append supercell info to the data class
-            if i == 0:
-                new_x = supercell_atoms
-                new_coords = supercell_coords
-                new_batch = supercell_batch
-                new_ptr = torch.zeros(data.num_graphs)
-            else:
-                new_x = torch.cat((new_x, supercell_atoms), dim=0)
-                new_coords = torch.cat((new_coords, supercell_coords), dim=0)
-                new_batch = torch.cat((new_batch, supercell_batch))
-                new_ptr[i] = new_ptr[-1] + len(new_x)
-
-        # update dataloader with cell info
-        data.x = new_x.type(dtype=torch.float32)
-        data.pos = new_coords.type(dtype=torch.float32)
-        data.batch = new_batch.type(dtype=torch.int64)
-        data.ptr = new_ptr.type(dtype=torch.int64)
-
-        return data, cell_sample
 
     def differentiable_generated_supercells(self, cell_sample, supercell_data, config, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None):
         '''
@@ -1018,16 +914,16 @@ class Predictor():
             # assert torch.sum(atomic_numbers == 1) == 0, 'hydrogens in supercell_dataset!'
             # atoms = atoms_i[heavy_atom_inds]
             coords = supercell_data.pos[supercell_data.batch == i, :]
-            weights = torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(config.device)
+            weights = torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(coords.device)
 
             sym_ops = torch.tensor(self.sym_ops[sg_numbers[i]], dtype=coords.dtype).to(coords.device)
             z_value = len(sym_ops)  # number of molecules in the reference cell
             z_values.append(z_value)
 
             T_fc, vol = coor_trans_matrix_torch('f_to_c', cell_lengths[i], cell_angles[i], return_vol=True)
-            T_fc = T_fc.to(config.device)
+            T_fc = T_fc.to(coords.device)
             T_cf = torch.linalg.inv(T_fc)  # faster #coor_trans_matrix_torch('c_to_f', cell_lengths[i], cell_angles[i]).to(config.device)
-            cell_vectors = torch.inner(T_fc, torch.eye(3).to(config.device)).T  # T_fc.dot(torch.eye(3)).T
+            cell_vectors = torch.inner(T_fc, torch.eye(3).to(coords.device)).T  # T_fc.dot(torch.eye(3)).T
             volumes.append(vol)
 
             random_coords = randomize_molecule_position_and_orientation_torch(
@@ -1322,7 +1218,7 @@ class Predictor():
 
         real_supercell_data = self.real_supercells(data.clone(), config)
         generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
-        fake_supercell_data, z_values, generated_cell_volumes = self.differentiable_generated_supercells(generated_samples, data.clone(), config)
+        fake_supercell_data, z_values, generated_cell_volumes = self.differentiable_generated_supercells(generated_samples, data.clone().to(generated_samples.device), config)
         # fake_supercell_data, raw_generation, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generator=generator)
         '''
         # supercell method comparison
@@ -1331,6 +1227,22 @@ class Predictor():
         mol1 = Atoms(numbers=supercell_data1.x[supercell_data1.batch==0,0].cpu().detach().numpy(),positions=supercell_data1.pos[supercell_data1.batch==0,:].cpu().detach().numpy())
         mol2 = Atoms(numbers=supercell_data2.x[supercell_data2.batch==0,0].cpu().detach().numpy(),positions=supercell_data2.pos[supercell_data2.batch==0,:].cpu().detach().numpy())
         view((mol1,mol2))
+        
+        
+        real_data = data.y[0] * torch.tile(torch.tensor(config.dataDims['stds']).to(data.y[0].device),(len(data.y[0]),1)) + torch.tile(torch.tensor(config.dataDims['means']).to(data.y[0].device),(len(data.y[0]),1))
+        real_lengths, real_angles, real_positions, real_orientations = torch.split(real_data.float(),3,dim=1)
+        
+        real_supercell_data = self.real_supercells(data.clone(), config)
+        generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
+        fake_supercell_data, z_values, generated_cell_volumes = self.differentiable_generated_supercells(generated_samples, data.clone().to(generated_samples.device), config, 
+                                                                                                         override_position = real_positions,
+                                                                                                         override_orientation = real_orientations,
+                                                                                                         override_cell_length = real_lengths,
+                                                                                                         override_cell_angle = real_angles)
+        ind = 0
+        mol1 = Atoms(numbers=real_supercell_data.x[real_supercell_data.batch == ind, 0].cpu().detach().numpy(), positions=real_supercell_data.pos[real_supercell_data.batch == ind, :].cpu().detach().numpy())
+        mol2 = Atoms(numbers=fake_supercell_data.x[fake_supercell_data.batch == ind, 0].cpu().detach().numpy(), positions=fake_supercell_data.pos[fake_supercell_data.batch == ind, :].cpu().detach().numpy())
+        view((mol1, mol2))
         '''
 
         if i % 5 == 0:
@@ -1412,8 +1324,8 @@ class Predictor():
             #gen_packing.append(raw_sample[i,0]) # first dimension of output
             #csd_packing.append((data.y[2][i][self.mol_volume_ind] - 348.12) / 114.61) # molecule volume substitute toy target (a number which is directly given to the model)
 
-        #generated_packing_coefficients = torch.stack(gen_packing)
-        generated_packing_coefficients = raw_sample[:,0]
+        generated_packing_coefficients = torch.stack(gen_packing)
+        #generated_packing_coefficients = raw_sample[:,0]
         csd_packing_coefficients = torch.Tensor(csd_packing).to(generated_packing_coefficients.device)
 
         return (F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'),
