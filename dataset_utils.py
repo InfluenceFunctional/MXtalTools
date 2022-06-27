@@ -237,6 +237,7 @@ class BuildDataset:
                     else:
                         feature_vector = np.asarray(feature_vector == np.amax(feature_vector))  # turn it into a bool
 
+                assert np.sum(np.isnan(feature_vector)) == 0
                 atom_features_list[i][:, column] = feature_vector
 
         return atom_features_list#, hydrogen_inds
@@ -279,6 +280,7 @@ class BuildDataset:
         # store known info for training analysis
         self.mol_dict_keys = keys_to_add
 
+        assert np.sum(np.isnan(molecule_feature_array)) == 0
         return molecule_feature_array
 
     def generate_joint_training_datapoints(self, dataset, config):
@@ -329,6 +331,11 @@ class BuildDataset:
             stds.append(np.std(feature_vector))
             feature_vector = (feature_vector - means[-1]) / stds[-1]
             feature_array[:, column] = feature_vector
+
+            assert np.sum(np.isnan(feature_vector)) == 0
+
+        assert np.sum(np.isnan(stds)) == 0
+        assert np.sum(np.asarray(stds) == 0) == 0
 
         return feature_array, means, stds, key_dtype
 

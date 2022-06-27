@@ -187,10 +187,12 @@ class Miner():
         # todo filter samples where space groups explicitly disagree with given crystal system
 
         # samples with bad CSD-generated reference cells
-        if ('cell' in self.config.mode) or ('joint' in self.config.mode):
+        if ('cell' in self.config.mode) or ('joint' in self.config.mode) or ('gan' in self.config.mode):
             n_bad_inds = len(bad_inds)
             bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:,0])
+            bad_inds.extend(np.argwhere(np.asarray(np.isnan(self.dataset['crystal reference cell centroid x'])))[:,0]) # missing orientation features
             print('bad packing filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
 
         # cases where the csd has the wrong number of molecules
         n_bad_inds = len(bad_inds)
