@@ -488,6 +488,7 @@ class general_MLP(nn.Module):
 
         torch.manual_seed(seed)
 
+
         self.fc_layers = torch.nn.ModuleList([
             nn.Linear(self.n_filters, self.n_filters)
             for _ in range(self.n_layers)
@@ -504,21 +505,11 @@ class general_MLP(nn.Module):
         ])
 
         self.fc_activations = torch.nn.ModuleList([
-            Activation('gelu', self.n_filters)
+            Activation(activation, self.n_filters)
             for _ in range(self.n_layers)
         ])
 
-        # adjust first and last layers
-        self.fc_norms[0] = Normalization(self.norm_mode, self.input_dim)
-
-        if self.n_layers == 1:
-            self.fc_layers[0] = nn.Linear(self.input_dim, self.n_filters)
-        else:
-            self.fc_layers[0] = nn.Linear(self.input_dim, self.n_filters)
-
-        self.fc_layers = nn.ModuleList(self.fc_layers)
-        self.fc_norms = nn.ModuleList(self.fc_norms)
-
+        self.init_layer = nn.Linear(self.input_dim, self.n_filters) # set appropriate sizing
         self.output_layer = nn.Linear(self.n_filters, self.output_dim, bias=False)
 
     def forward(self, x, conditions=None):
@@ -538,49 +529,8 @@ class general_MLP(nn.Module):
 
             x = torch.cat((x, conditions), dim=1)
 
+        x = self.init_layer(x)
         for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
-            x = dropout(activation(linear(norm(x))))
+            x = x + dropout(activation(linear(norm(x)))) # residue
 
         return self.output_layer(x)
-
-#
-#
-# class general_MLP(nn.Module):
-#     def __init__(self, layers, filters, input_dim, output_dim, activation='gelu', seed=0, dropout=0, conditioning_dim=0, norm=None):
-#         super(general_MLP, self).__init__()
-#         # initialize constants and layers
-#         self.n_layers = layers
-#         self.n_filters = filters
-#         self.conditioning_dim = conditioning_dim
-#         self.output_dim = output_dim
-#         self.input_dim = input_dim + conditioning_dim
-#         self.norm_mode = norm
-#         self.dropout_p = dropout
-#         self.activation = activation
-#
-#         torch.manual_seed(seed)
-#
-#         self.model = nn.Sequential(
-#             nn.Linear(self.input_dim, self.n_filters), nn.ReLU(),
-#             nn.Linear(self.n_filters, self.n_filters), nn.ReLU(), nn.Linear(self.n_filters, self.output_dim, bias=False)
-#         )
-#
-#
-#     def forward(self, x, conditions=None):
-#         # x = torch.zeros_like(x)
-#         if type(x) == torch_geometric.data.batch.DataBatch:  # extract conditions from trailing atomic features
-#             if len(x) == 1:
-#                 x = x.x[:, -self.input_dim:]
-#             else:
-#                 x = gnn.global_max_pool(x.x,x.batch)[:,-self.input_dim:] #x.x[x.ptr[:-1]][:, -self.input_dim:]
-#
-#         if conditions is not None:
-#             # if type(conditions) == torch_geometric.data.batch.DataBatch: # extract conditions from trailing atomic features
-#             #     if len(x) == 1:
-#             #         conditions = conditions.x[:,-self.conditioning_dim:]
-#             #     else:
-#             #         conditions = conditions.x[conditions.ptr[:-1]][:,-self.conditioning_dim:]
-#
-#             x = torch.cat((x, conditions), dim=1)
-#
-#         return self.model(x)

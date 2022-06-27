@@ -350,95 +350,12 @@ class Predictor():
 
                         sys.exit()
 
-        else:
-
-            model, optimizer, schedulers, n_params = self.init_model(config, config.dataDims, print_status=False)
-
-            while finished == 0:
-                if config.device.lower() == 'cuda':
-                    torch.cuda.empty_cache()  # clear GPU cache
-
-                if config.add_spherical_basis is False:  # initializing spherical basis is too expensive to do repetitively
-                    model, optimizer, schedulers, n_params = self.init_model(config, config.dataDims, print_status=False)  # for some reason necessary for memory reasons
-
-                try:
-                    tr, te = get_dataloaders(dataset, config, override_batch_size=batch_size)
-                    self.model_epoch(config, dataLoader=tr, model=model, optimizer=optimizer, update_gradients=True, iteration_override=2)  # train & compute loss
-
-                    finished = 1
-
-                    if batch_size < 10:
-                        leeway = batch_reduction_factor / 2
-                    elif batch_size > 20:
-                        leeway = batch_reduction_factor
-                    else:
-                        leeway = batch_reduction_factor / 1.33
-
-                    batch_size = max(1, int(batch_size * leeway))  # give a margin for molecule sizes - larger margin for smaller batch sizes
-
-                    print('Final batch size is {}'.format(batch_size))
-
-                    tr, te = get_dataloaders(dataset, config, override_batch_size=batch_size)
-
-                    if config.device.lower() == 'cuda':
-                        torch.cuda.empty_cache()  # clear GPU cache
-
-                    return tr, te, batch_size
-                except:  # MemoryError or RuntimeError:
-                    batch_size = int(batch_size * 0.95)
-                    print('Training batch size reduced to {}'.format(batch_size))
-                    if batch_size <= 2:
-                        print('Model is too big! (or otherwise broken)')
-                        if config.device.lower() == 'cuda':
-                            torch.cuda.empty_cache()  # clear GPU cache
-
-                        # for debugging purposes
-                        tr, te = get_dataloaders(dataset, config, override_batch_size=batch_size)
-                        self.model_epoch(config, dataLoader=tr, model=model, optimizer=optimizer, update_gradients=True, iteration_override=2)  # train & compute loss
-
-                        sys.exit()
 
     def train(self):
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=self.config.wandb.experiment_tag):
             # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken
             # print(config)
-            '''
-            #hypothetical fix
-            from omegaconf import DictConfig
-            import argparse
-            
-            def parse_unknown_cmd(config: DictConfig) -> DictConfig:
-                #parses unknown command line arguments to overwrite the config file
-                #:param config:
-                #:return:
-                parser = argparse.ArgumentParser()
-                args, unknown = parser.parse_known_args()
-            
-                for flag in unknown:
-                    arg = flag.find('--')
-                    set = flag.find('=')
-            
-                    if (arg >= 0) and (set >= 0):
-                        arg = flag[arg + 2:set]
-                        val = flag[set + 1:]
-            
-            
-                        if val.isdigit():
-                            val = int(val)
-                        elif val.replace('.', '', 1).isdigit():
-                            val = float(val)
-                        elif val.lower() in ('true', 'false'):
-                            val = bool(val)
-                        else:
-                            val = f'"{val}"'
-            
-                        print(f'Executing ... config.{arg}={val}')
-                        exec(f'config.{arg}={val}')
-                    else:
-                        print(f'Not executing {flag}')
-            
-                return config
-            '''
+
             config = self.config  # go with hand-built config
 
             # dataset
@@ -499,8 +416,7 @@ class Predictor():
                     model.cuda()
 
             if 'gan'.lower() in config.mode:
-                wandb.watch(generator, log_graph=True)
-                wandb.watch(discriminator, log_graph=True)
+                wandb.watch((generator,discriminator), log_graph=True, log_freq = 100)
             else:
                 wandb.watch(model, log_graph=True)
 
@@ -1488,7 +1404,7 @@ class Predictor():
             mol_volume = data.y[2][i][self.z_value_ind] * data.y[2][i][self.mol_volume_ind]
 
             coeff = mol_volume / volume
-            std_coeff = raw_sample[i,0] #(coeff - 0.673) / 0.0271
+            std_coeff = (coeff - 0.673) / 0.0271
 
             #volumes.append(volume)
             gen_packing.append(std_coeff)  # compute packing index from given volume and restandardize
@@ -1496,7 +1412,8 @@ class Predictor():
             #gen_packing.append(raw_sample[i,0]) # first dimension of output
             #csd_packing.append((data.y[2][i][self.mol_volume_ind] - 348.12) / 114.61) # molecule volume substitute toy target (a number which is directly given to the model)
 
-        generated_packing_coefficients = torch.stack(gen_packing)
+        #generated_packing_coefficients = torch.stack(gen_packing)
+        generated_packing_coefficients = raw_sample[:,0]
         csd_packing_coefficients = torch.Tensor(csd_packing).to(generated_packing_coefficients.device)
 
         return (F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'),

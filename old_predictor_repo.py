@@ -560,3 +560,115 @@ def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
             logprob = prior_logprob + log_det
 
             return -(logprob), prior_logprob.cpu().detach().numpy()
+
+
+
+    def get_batch_size(self, dataset, config):
+        finished = 0
+        batch_size = config.initial_batch_size.real
+        batch_reduction_factor = config.auto_batch_reduction
+
+        if 'gan'.lower() in config.mode:
+            generator, discriminator, g_optimizer, \
+            g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
+
+            while finished == 0:
+                if config.device.lower() == 'cuda':
+                    torch.cuda.empty_cache()  # clear GPU cache
+                    generator.cuda()
+                    discriminator.cuda()
+
+                if config.add_spherical_basis is False:  # initializing spherical basis is too expensive to do repetitively
+                    generator, discriminator, g_optimizer, \
+                    g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
+
+                try:
+                    train_loader, test_loader = get_dataloaders(dataset, config, override_batch_size=batch_size)
+                    d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
+                        self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                                       g_optimizer=g_optimizer, d_optimizer=d_optimizer,
+                                       update_gradients=True, record_stats=True, iteration_override=2)  # train & compute test loss
+
+                    finished = 1
+
+                    if batch_size < 10:
+                        leeway = batch_reduction_factor / 2
+                    elif batch_size > 20:
+                        leeway = batch_reduction_factor
+                    else:
+                        leeway = batch_reduction_factor / 1.33
+
+                    batch_size = max(1, int(batch_size * leeway))  # give a margin for molecule sizes - larger margin for smaller batch sizes
+
+                    print('Final batch size is {}'.format(batch_size))
+
+                    tr, te = get_dataloaders(dataset, config, override_batch_size=batch_size)
+
+                    if config.device.lower() == 'cuda':
+                        torch.cuda.empty_cache()  # clear GPU cache
+
+                    return tr, te, batch_size
+                except:  # MemoryError or RuntimeError:
+                    batch_size = int(batch_size * 0.95)
+                    print('Training batch size reduced to {}'.format(batch_size))
+                    if batch_size <= 2:
+                        print('Model is too big! (or otherwise broken)')
+                        if config.device.lower() == 'cuda':
+                            torch.cuda.empty_cache()  # clear GPU cache
+
+                        # for debugging purposes
+                        train_loader, test_loader = get_dataloaders(dataset, config, override_batch_size=batch_size)
+                        d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
+                            self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                                           g_optimizer=g_optimizer, d_optimizer=d_optimizer,
+                                           update_gradients=True, record_stats=True, iteration_override=2)  # train & compute test loss
+
+                        sys.exit()
+
+        else:
+
+            model, optimizer, schedulers, n_params = self.init_model(config, config.dataDims, print_status=False)
+
+            while finished == 0:
+                if config.device.lower() == 'cuda':
+                    torch.cuda.empty_cache()  # clear GPU cache
+
+                if config.add_spherical_basis is False:  # initializing spherical basis is too expensive to do repetitively
+                    model, optimizer, schedulers, n_params = self.init_model(config, config.dataDims, print_status=False)  # for some reason necessary for memory reasons
+
+                try:
+                    tr, te = get_dataloaders(dataset, config, override_batch_size=batch_size)
+                    self.model_epoch(config, dataLoader=tr, model=model, optimizer=optimizer, update_gradients=True, iteration_override=2)  # train & compute loss
+
+                    finished = 1
+
+                    if batch_size < 10:
+                        leeway = batch_reduction_factor / 2
+                    elif batch_size > 20:
+                        leeway = batch_reduction_factor
+                    else:
+                        leeway = batch_reduction_factor / 1.33
+
+                    batch_size = max(1, int(batch_size * leeway))  # give a margin for molecule sizes - larger margin for smaller batch sizes
+
+                    print('Final batch size is {}'.format(batch_size))
+
+                    tr, te = get_dataloaders(dataset, config, override_batch_size=batch_size)
+
+                    if config.device.lower() == 'cuda':
+                        torch.cuda.empty_cache()  # clear GPU cache
+
+                    return tr, te, batch_size
+                except:  # MemoryError or RuntimeError:
+                    batch_size = int(batch_size * 0.95)
+                    print('Training batch size reduced to {}'.format(batch_size))
+                    if batch_size <= 2:
+                        print('Model is too big! (or otherwise broken)')
+                        if config.device.lower() == 'cuda':
+                            torch.cuda.empty_cache()  # clear GPU cache
+
+                        # for debugging purposes
+                        tr, te = get_dataloaders(dataset, config, override_batch_size=batch_size)
+                        self.model_epoch(config, dataLoader=tr, model=model, optimizer=optimizer, update_gradients=True, iteration_override=2)  # train & compute loss
+
+                        sys.exit()
