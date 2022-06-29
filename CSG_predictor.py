@@ -403,7 +403,7 @@ class Predictor():
                         # logging
                         metrics_dict = self.update_gan_metrics(
                             epoch, metrics_dict, d_err_tr, d_err_te,
-                            g_err_tr, g_err_te, d_learning_rate, d_learning_rate)
+                            g_err_tr, g_err_te, d_learning_rate, g_learning_rate)
 
                         self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict, d_tr_record, d_te_record, g_tr_record, g_te_record)
                         if epoch % config.wandb.sample_reporting_frequency == 0:
@@ -492,7 +492,6 @@ class Predictor():
                 g_pairwise_dist.append(fake_pairwise_dists)
                 real_pairwise_dist.append(real_pairwise_dists)
                 generated_samples_list.append(generated_samples)
-
             else:
                 d_err.append(torch.zeros(1))
                 d_loss_record.extend(torch.zeros(data.num_graphs))
@@ -979,7 +978,7 @@ class Predictor():
         4. apply point symmetry
         5. tile supercell
         '''
-        for i in range(supercell_data.num_graphs): # todo speed this up
+        for i in range(supercell_data.num_graphs):  # todo speed this up
             # 0 extract molecule and cell parameters
             atoms = np.asarray(supercell_data.x[supercell_data.batch == i])
             # pre-enforce hydrogen cleanliness - shouldn't be necessary but you never know
