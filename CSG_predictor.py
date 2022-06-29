@@ -19,6 +19,7 @@ import rdkit.Chem as Chem
 from dataset_management.random_crystal_builder import *
 from models.generator_models import crystal_generator
 from models.discriminator_models import crystal_discriminator
+import logging
 
 
 class Predictor():
@@ -141,64 +142,6 @@ class Predictor():
 
         return metrics_dict
 
-    def init_model(self, config, dataDims, print_status=True):
-        '''
-        Initialize model and optimizer
-        :return:
-        '''
-        # init model
-        print("Initializing model for " + config.mode)
-        if config.mode == 'joint modelling':
-            model = FlowModel(config, dataDims)
-        elif 'molecule' in config.mode:
-            model = molecule_graph_model(config, dataDims, crystal_mode=False)
-        elif 'cell' in config.mode:
-            model = molecule_graph_model(config, dataDims, crystal_mode=True)
-        else:
-            print(config.mode + ' is not a valid model mode!')
-            sys.exit()
-
-        if config.device == 'cuda':
-            model = model.cuda()
-
-        # init optimizers
-        amsgrad = False
-        beta1 = config.beta1  # 0.9
-        beta2 = config.beta2  # 0.999
-        weight_decay = config.weight_decay  # 0.01
-        momentum = 0
-
-        if config.optimizer == 'adam':
-            optimizer = optim.Adam(model.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
-        elif config.optimizer == 'adamw':
-            optimizer = optim.AdamW(model.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
-        elif config.optimizer == 'sgd':
-            optimizer = optim.SGD(model.parameters(), lr=config.learning_rate, momentum=momentum, weight_decay=weight_decay)
-        else:
-            print(config.optimizer + ' is not a valid optimizer')
-            sys.exit()
-
-        # init schedulers
-        scheduler1 = lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode='min',
-            factor=0.1,
-            patience=15,
-            threshold=1e-4,
-            threshold_mode='rel',
-            cooldown=15
-        )
-        lr_lambda = lambda epoch: 1.25
-        scheduler3 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda)
-        lr_lambda2 = lambda epoch: 0.95
-        scheduler4 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda2)
-
-        nconfig = get_n_config(model)
-        if print_status:
-            print('Proxy model has {:.3f} million or {} parameters'.format(nconfig / 1e6, int(nconfig)))
-
-        return model, optimizer, [scheduler1, scheduler3, scheduler4], nconfig
-
     def init_gan(self, config, dataDims, print_status=True):
         '''
         Initialize model and optimizer
@@ -284,77 +227,79 @@ class Predictor():
 
         params2 = get_n_config(discriminator)
         if print_status:
-            print('Discriminator model has {:.3f} million or {} parameters'.format(params1 / 1e6, int(params2)))
+            print('Discriminator model has {:.3f} million or {} parameters'.format(params2 / 1e6, int(params2)))
 
         return generator, discriminator, g_optimizer, g_scheduler, d_optimizer, d_scheduler, params1, params2
 
     def get_batch_size(self, dataset, config):
-        finished = 0
-        batch_size = config.initial_batch_size.real
+        '''
+        try larger batches until it crashes
+        '''
+        finished = False
+        init_batch_size = 2
+        max_batch_size = config.max_batch_size.real
         batch_reduction_factor = config.auto_batch_reduction
 
-        if 'gan'.lower() in config.mode:
-            generator, discriminator, g_optimizer, \
-            g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
+        generator, discriminator, g_optimizer, \
+        g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
+        train_loader, test_loader = get_dataloaders(dataset, config, override_batch_size=init_batch_size)
 
-            while finished == 0:
-                if config.device.lower() == 'cuda':
-                    torch.cuda.empty_cache()  # clear GPU cache
-                    generator.cuda()
-                    discriminator.cuda()
+        increment = 1.5  # what fraction by which to increment the batch size
+        batch_size = int(init_batch_size)
 
-                if config.add_spherical_basis is False:  # initializing spherical basis is too expensive to do repetitively
-                    generator, discriminator, g_optimizer, \
-                    g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
+        while (not finished) and (batch_size < max_batch_size):
+            if config.device.lower() == 'cuda':
+                torch.cuda.empty_cache()  # clear GPU cache
+                generator.cuda()
+                discriminator.cuda()
 
-                try:
-                    train_loader, test_loader = get_dataloaders(dataset, config, override_batch_size=batch_size)
-                    d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
-                        self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
-                                       g_optimizer=g_optimizer, d_optimizer=d_optimizer,
-                                       update_gradients=True, record_stats=True, iteration_override=2)  # train & compute test loss
+            # if config.add_spherical_basis is False:  # initializing spherical basis is too expensive to do repetitively
+            #     generator, discriminator, g_optimizer, \
+            #     g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
 
-                    finished = 1
+            try:
+                _ = self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                                   g_optimizer=g_optimizer, d_optimizer=d_optimizer,
+                                   update_gradients=True, record_stats=True, iteration_override=2)  # train & compute test loss
 
-                    if batch_size < 10:
-                        leeway = batch_reduction_factor / 2
-                    elif batch_size > 20:
-                        leeway = batch_reduction_factor
-                    else:
-                        leeway = batch_reduction_factor / 1.33
+                # if successful, increase the batch and try again
+                batch_size = max(batch_size + 2, int(batch_size * increment))
+                train_loader, test_loader = get_dataloaders(dataset, config, override_batch_size=batch_size)
 
-                    batch_size = max(1, int(batch_size * leeway))  # give a margin for molecule sizes - larger margin for smaller batch sizes
+                print('Training batch size increased to {}'.format(batch_size))
 
-                    print('Final batch size is {}'.format(batch_size))
+            except RuntimeError as e:
+                if "CUDA out of memory" in str(e):
+                    finished = True
+                    batch_size = int(batch_size / increment)
+                else:
+                    raise e
 
-                    tr, te = get_dataloaders(dataset, config, override_batch_size=batch_size)
+        # once it hits OOM or the maximum batch size, take it as final
+        # reduce by a certain factor to give room for different size graphs
+        if batch_size < 10:
+            leeway = batch_reduction_factor / 2
+        elif batch_size > 20:
+            leeway = batch_reduction_factor
+        else:
+            leeway = batch_reduction_factor / 1.33
 
-                    if config.device.lower() == 'cuda':
-                        torch.cuda.empty_cache()  # clear GPU cache
+        batch_size = max(1, int(batch_size * leeway))
 
-                    return tr, te, batch_size
-                except:  # MemoryError or RuntimeError:
-                    batch_size = int(batch_size * 0.95)
-                    print('Training batch size reduced to {}'.format(batch_size))
-                    if batch_size <= 2:
-                        print('Model is too big! (or otherwise broken)')
-                        if config.device.lower() == 'cuda':
-                            torch.cuda.empty_cache()  # clear GPU cache
+        print('Final batch size is {}'.format(batch_size))
 
-                        # for debugging purposes
-                        train_loader, test_loader = get_dataloaders(dataset, config, override_batch_size=batch_size)
-                        d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
-                            self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
-                                           g_optimizer=g_optimizer, d_optimizer=d_optimizer,
-                                           update_gradients=True, record_stats=True, iteration_override=2)  # train & compute test loss
+        tr, te = get_dataloaders(dataset, config, override_batch_size=batch_size)
 
-                        sys.exit()
+        if config.device.lower() == 'cuda':
+            torch.cuda.empty_cache()  # clear GPU cache
 
+        return tr, te, batch_size
 
     def train(self):
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=self.config.wandb.experiment_tag):
             # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken
             # print(config)
+            logging.info('test message')
 
             config = self.config  # go with hand-built config
 
@@ -364,26 +309,16 @@ class Predictor():
 
             config.dataDims = dataset_builder.get_dimension()
             self.dataDims = dataset_builder.get_dimension()
-            if 'classification' in config.mode:  # for convenience
-                self.class_labels = self.dataDims['class labels']
-                self.class_weights = self.dataDims['class weights']
-            if config.mode == 'joint modelling':
-                self.lattice_features = dataset_builder.lattice_keys
-                self.n_crystal_dims = self.dataDims['n crystal features']
-                if config.generator.conditional_modelling:
-                    self.n_conditional_features = self.dataDims['n conditional features']
-                else:
-                    self.n_conditional_features = 0
-            if 'cell' in config.mode:  # get relevant indices
-                self.cell_angle_keys = ['crystal alpha', 'crystal beta', 'crystal gamma']
-                self.cell_angle_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_angle_keys]
-                self.cell_length_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c']
-                self.cell_length_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_length_keys]
-                self.z_value_ind = self.dataDims['tracking features dict'].index('crystal z value')
-                self.sg_number_ind = self.dataDims['tracking features dict'].index('crystal spacegroup number')
-                self.mol_volume_ind = self.dataDims['tracking features dict'].index('molecule volume')
-                self.crystal_packing_ind = self.dataDims['tracking features dict'].index('crystal packing coefficient')
-                self.crystal_density_ind = self.dataDims['tracking features dict'].index('crystal calculated density')
+
+            self.cell_angle_keys = ['crystal alpha', 'crystal beta', 'crystal gamma']
+            self.cell_angle_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_angle_keys]
+            self.cell_length_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c']
+            self.cell_length_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_length_keys]
+            self.z_value_ind = self.dataDims['tracking features dict'].index('crystal z value')
+            self.sg_number_ind = self.dataDims['tracking features dict'].index('crystal spacegroup number')
+            self.mol_volume_ind = self.dataDims['tracking features dict'].index('molecule volume')
+            self.crystal_packing_ind = self.dataDims['tracking features dict'].index('crystal packing coefficient')
+            self.crystal_density_ind = self.dataDims['tracking features dict'].index('crystal calculated density')
 
             # get batch size
             if config.auto_batch_sizing:
@@ -392,34 +327,23 @@ class Predictor():
             else:
                 print('Getting dataloaders for pre-determined batch size')
                 train_loader, test_loader = get_dataloaders(dataset_builder, config)
-                config.final_batch_size = config.initial_batch_size
+                config.final_batch_size = config.max_batch_size
 
             print("Training batch size set to {}".format(config.final_batch_size))
             # model, optimizer, schedulers
             print('Reinitializing model and optimizer')
-            if 'gan'.lower() in config.mode:
-                generator, discriminator, g_optimizer, \
-                g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
-                n_params = params1 + params2
-            else:
-                model, optimizer, schedulers, n_params = self.init_model(config, self.dataDims)
+            generator, discriminator, g_optimizer, \
+            g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
+            n_params = params1 + params2
 
             # cuda
             if config.device.lower() == 'cuda':
-                print('Putting model on CUDA')
+                print('Putting models on CUDA')
                 torch.backends.cudnn.benchmark = True
-                # model = torch.nn.DataParallel(model) # send to multiple GPUs - not always working with wandb
-                if 'gan'.lower() in config.mode:
-                    generator.cuda()
-                    discriminator.cuda()
-                else:
-                    model.cuda()
+                generator.cuda()
+                discriminator.cuda()
 
-            if 'gan'.lower() in config.mode:
-                wandb.watch((generator,discriminator), log_graph=True, log_freq = 100)
-            else:
-                wandb.watch(model, log_graph=True)
-
+            wandb.watch((generator, discriminator), log_graph=True, log_freq=100)
             wandb.log({"Model Num Parameters": n_params,
                        "Final Batch Size": config.final_batch_size})
 
@@ -442,34 +366,36 @@ class Predictor():
                         '''
                         train
                         '''
-                        d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
+                        d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train, time_train_cell_gen = \
                             self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
                                            g_optimizer=g_optimizer, d_optimizer=d_optimizer,
                                            update_gradients=True, record_stats=True)  # train & compute test loss
 
-                        d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
+                        d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test, time_test_cell_gen = \
                             self.gan_epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
                                            update_gradients=False, record_stats=True)  # compute loss on test set
 
-                        print('epoch={}; d_nll_tr={:.5f}; d_nll_te={:.5f}; g_nll_tr={:.5f}; g_nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(
+                        print('epoch={}; d_nll_tr={:.5f}; d_nll_te={:.5f}; g_nll_tr={:.5f}; g_nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s; time_tr_cell_gen={:.1f}s; time_te_cell_gen={:.1f}s'.format(
                             epoch, torch.mean(torch.stack(d_err_tr)), torch.mean(torch.stack(d_err_te)),
                             torch.mean(torch.stack(g_err_tr)), torch.mean(torch.stack(g_err_te)),
-                            time_train, time_test))
+                            time_train, time_test, time_train_cell_gen, time_test_cell_gen))
 
                         '''
                         update LR
                         '''
                         # update learning rate
-                        g_optimizer = set_lr(g_schedulers, g_optimizer, config.generator.lr_schedule,
-                                             config.generator.learning_rate, config.generator.max_lr,g_err_tr, g_hit_max_lr)
+                        d_optimizer, d_lr = set_lr(d_schedulers, d_optimizer, config.discriminator.lr_schedule,
+                                                   config.discriminator.learning_rate, config.discriminator.max_lr, d_err_tr, d_hit_max_lr)
+                        d_learning_rate = d_optimizer.param_groups[0]['lr']
+                        if d_learning_rate >= config.discriminator.max_lr: d_hit_max_lr = True
+
+                        # update learning rate
+                        g_optimizer, g_lr = set_lr(g_schedulers, g_optimizer, config.generator.lr_schedule,
+                                                   config.generator.learning_rate, config.generator.max_lr, g_err_tr, g_hit_max_lr)
                         g_learning_rate = g_optimizer.param_groups[0]['lr']
                         if g_learning_rate >= config.generator.max_lr: g_hit_max_lr = True
 
-                        # update learning rate
-                        d_optimizer = set_lr(d_schedulers, d_optimizer, config.discriminator.lr_schedule,
-                                             config.discriminator.learning_rate, config.discriminator.max_lr,d_err_tr, d_hit_max_lr)
-                        d_learning_rate = d_optimizer.param_groups[0]['lr']
-                        if d_learning_rate >= config.discriminator.max_lr: d_hit_max_lr = True
+                        print(f"Learning rates are d={d_lr:.5f}, g={g_lr:.5f}")
 
                         '''
                         logging
@@ -493,11 +419,11 @@ class Predictor():
                         # check for convergence
                         if checkConvergence(metrics_dict['generator test loss'], config.history, config.generator.convergence_eps) and (epoch > config.history + 2):
                             config.finished = True
-                            # self.log_gan_accuracy(epoch, dataset_builder, train_loader, test_loader,
-                            #                   te_record, epoch_stats_dict,
-                            #                   config, model, wandb_log_figures=True)  # always log figures at end of run
+                            self.log_gan_accuracy(epoch, dataset_builder, train_loader, test_loader,
+                                                  metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
+                                                  train_epoch_stats_dict, test_epoch_stats_dict, config,
+                                                  generator, discriminator, wandb_log_figures=config.wandb.log_figures)
                             break
-
 
                     epoch += 1
 
@@ -526,16 +452,21 @@ class Predictor():
         g_adv_losses = []
         g_aux_pred = []
         g_aux_true = []
+        g_pairwise_dist = []
+        real_pairwise_dist = []
+        generated_samples_list = []
         epoch_stats_dict = {
             'tracking features': [],
         }
+        total_cell_time = 0
         for i, data in enumerate(dataLoader):
             '''
             train discriminator
             '''
             if config.train_discriminator_adversarially:
-                score_on_real, score_on_fake = self.train_discriminator(generator, discriminator, config, data, i)  # alternately trains on real and fake samples
-
+                score_on_real, score_on_fake, generated_samples, real_pairwise_dists, fake_pairwise_dists, cell_gen_time \
+                    = self.train_discriminator(generator, discriminator, config, data, i)  # alternately trains on real and fake samples
+                total_cell_time += cell_gen_time
                 if config.gan_loss == 'wasserstein':
                     d_losses = -score_on_real + score_on_fake  # maximize score on real, minimize score on fake
                     d_real_losses.append(-score_on_real.cpu().detach().numpy())
@@ -549,7 +480,6 @@ class Predictor():
                     sys.exit()
 
                 d_fake_losses.append(score_on_fake.cpu().detach().numpy())
-
                 d_loss = d_losses.mean()
                 d_err.append(d_loss.data.cpu())  # average overall loss
                 d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
@@ -558,6 +488,11 @@ class Predictor():
                     d_optimizer.zero_grad()  # reset gradients from previous passes
                     d_loss.backward()  # back-propagation
                     d_optimizer.step()  # update parameters
+
+                g_pairwise_dist.append(fake_pairwise_dists)
+                real_pairwise_dist.append(real_pairwise_dists)
+                generated_samples_list.append(generated_samples)
+
             else:
                 d_err.append(torch.zeros(1))
                 d_loss_record.extend(torch.zeros(data.num_graphs))
@@ -567,9 +502,10 @@ class Predictor():
             '''
             if any((config.train_generator_density, config.train_generator_adversarially)):
 
-                adversarial_score, raw_sample, auxiliary_loss, auxiliary_prediction, auxiliary_target = \
+                adversarial_score, generated_samples, auxiliary_loss, auxiliary_prediction, auxiliary_target, generated_pairwise_distances, cell_gen_time = \
                     self.train_generator(generator, discriminator, config, data, i)
 
+                total_cell_time += cell_gen_time
                 if adversarial_score is not None:
                     if config.gan_loss == 'wasserstein':
                         adversarial_loss = -adversarial_score  # generator wants to maximize the score
@@ -585,6 +521,7 @@ class Predictor():
                     g_aux_losses.append(auxiliary_loss.cpu().detach().numpy())
                     g_aux_pred.append(auxiliary_prediction)
                     g_aux_true.append(auxiliary_target)
+                    g_pairwise_dist.append(generated_pairwise_distances)
 
                 elif config.train_generator_density and not config.train_generator_adversarially:
                     g_losses = auxiliary_loss.float()
@@ -596,10 +533,12 @@ class Predictor():
                 elif config.train_generator_adversarially and not config.train_generator_density:
                     g_losses = adversarial_loss
                     g_adv_losses.append(adversarial_loss.cpu().detach().numpy())
+                    g_pairwise_dist.append(generated_pairwise_distances)
 
                 g_loss = g_losses.mean()
                 g_err.append(g_loss.data.cpu())  # average loss
                 g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
+                generated_samples_list.append(generated_samples)
 
                 if update_gradients:
                     g_optimizer.zero_grad()  # reset gradients from previous passes
@@ -637,16 +576,18 @@ class Predictor():
             epoch_stats_dict['generator auxiliary loss'] = np.concatenate(g_aux_losses) if g_aux_losses != [] else None
             epoch_stats_dict['generator adversarial loss'] = np.concatenate(g_adv_losses) if g_adv_losses != [] else None
             epoch_stats_dict['generator flow loss'] = np.concatenate(g_flow_loss_record) if g_flow_loss_record != [] else None
-            epoch_stats_dict['generator auxiliary prediction'] =np.concatenate(g_aux_pred) if g_aux_pred != [] else None
+            epoch_stats_dict['generator auxiliary prediction'] = np.concatenate(g_aux_pred) if g_aux_pred != [] else None
             epoch_stats_dict['generator auxiliary target'] = np.concatenate(g_aux_true) if g_aux_true != [] else None
+            epoch_stats_dict['generator pairwise distance hist'] = np.histogram(np.concatenate(g_pairwise_dist), bins=50, range=(0, 5), density=True) if g_pairwise_dist != [] else None
+            epoch_stats_dict['real pairwise distance hist'] = np.histogram(np.concatenate(real_pairwise_dist), bins=50, range=(0, 5), density=True) if real_pairwise_dist != [] else None
+            epoch_stats_dict['generated cell parameters'] = np.concatenate(generated_samples_list) if generated_samples_list != [] else None
 
-            return d_err, d_loss_record, g_err, g_loss_record, epoch_stats_dict, total_time
+            return d_err, d_loss_record, g_err, g_loss_record, epoch_stats_dict, total_time, total_cell_time
         else:
-            return d_err, d_loss_record, g_err, g_loss_record, total_time
-
+            return d_err, d_loss_record, g_err, g_loss_record, total_time, total_cell_time
 
     def adversarial_loss(self, discriminator, data, config):
-        output = discriminator(data)  # reshape output from flat filters to channels * filters per channel
+        output, dists = discriminator(data, return_dists=True)  # reshape output from flat filters to channels * filters per channel
 
         # discriminator score
         if config.gan_loss == 'wasserstein':
@@ -659,7 +600,7 @@ class Predictor():
             print(config.gan_loss + ' is not a valid GAN loss function!')
             sys.exit()
 
-        return scores, output
+        return scores, output, dists.cpu().detach().numpy()
 
     def pairwise_correlations_analysis(self, dataset_builder, config):
         '''
@@ -856,32 +797,6 @@ class Predictor():
                 special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
         wandb.log(special_losses)
 
-    def log_loss(self, metrics_dict, tr_record, te_record):
-        current_metrics = {}
-        for key in metrics_dict.keys():
-            current_metrics[key] = float(metrics_dict[key][-1])
-            if 'loss' in key:  # log 'best' metrics
-                current_metrics['best ' + key] = np.amin(metrics_dict[key])
-
-            elif ('epoch' in key) or ('confusion' in key) or ('learning rate'):
-                pass
-            else:
-                current_metrics['best ' + key] = np.amax(metrics_dict[key])
-
-        for key in current_metrics.keys():
-            current_metrics[key] = np.amax(current_metrics[key])  # just a formatting thing - nothing to do with the max of anything
-
-        wandb.log(current_metrics)
-        hist = np.histogram(tr_record, bins=256, range=(np.amin(tr_record), np.quantile(tr_record, 0.9)))
-        wandb.log({"Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
-        hist = np.histogram(te_record, bins=256, range=(np.amin(te_record), np.quantile(te_record, 0.9)))
-        wandb.log({"Test Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
-
-        wandb.log({"Train Loss Coeff. of Variation": np.sqrt(np.var(tr_record)) / np.average(tr_record)})
-        wandb.log({"Test Loss Coeff. of Variation": np.sqrt(np.var(te_record)) / np.average(te_record)})
-
-
-
     def differentiable_generated_supercells(self, cell_sample, supercell_data, config, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None):
         '''
         convert cell parameters to reference cell
@@ -956,18 +871,16 @@ class Predictor():
 
         return supercell_data, z_values, volumes
 
-    def fast_differentiable_generated_supercells(self, data, config, generator, do_cpu=True, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None):
+    def fast_differentiable_generated_supercells(self, supercell_data, config, cell_sample, do_cpu=True, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None):
         '''
         convert cell parameters to reference cell
         convert reference cell to 3x3 supercell
         all using differentiable torch functions
         note: currently it seems a bit faster on CPU
         '''
-        supercell_data = data.clone()
         sg_numbers = [int(supercell_data.y[2][i][self.sg_number_ind]) for i in range(supercell_data.num_graphs)]
         # lattices = [self.lattice_type[number] for number in sg_numbers]
         # t0 = time.time()
-        cell_sample = generator.forward(n_samples=supercell_data.num_graphs, conditions=supercell_data.to(generator.device))
 
         if do_cpu:
             supercell_data = supercell_data.cpu()
@@ -1012,14 +925,19 @@ class Predictor():
         # t3 = time.time()
         canonical_mol_position = fast_differentiable_get_canonical_coords(mol_position, sym_ops_list)
         # t4 = time.time()
+        # final_coords_list = fast_differentiable_apply_rotations_and_translations(
+        #     standardization_rotation_list, applied_rotation_list, coords_list, masses_list, T_fc_list, canonical_mol_position)
         final_coords_list = fast_differentiable_apply_rotations_and_translations(
             standardization_rotation_list, applied_rotation_list, coords_list, masses_list, T_fc_list, canonical_mol_position)
+        # [torch.randn(len(atoms_list[i]), 3).to(T_fc_list.device) for i in range(supercell_data.num_graphs)]
         # t5 = time.time()
+        # reference_cell_list = fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)
         reference_cell_list = fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)
         # t6 = time.time()
         cell_vector_list = fast_differentiable_cell_vectors(T_fc_list)
         # t7 = time.time()
         supercell_list, supercell_atoms_list = fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values)
+        # supercell_list, supercell_atoms_list = fast_differentiable_ref_to_supercell([torch.randn(z_values[i],len(atoms_list[i]),3).to(T_fc_list.device) for i in range(supercell_data.num_graphs)], cell_vector_list, T_fc_list, atoms_list, z_values)
         # t8 = time.time()
 
         # print(f'generator took {t05-t0:.1f}')
@@ -1034,7 +952,7 @@ class Predictor():
         # print(f'supercell tiling took {t8-t7:.1f}')
 
         # append supercell info to the data class #
-        for i in range(data.num_graphs):
+        for i in range(supercell_data.num_graphs):
             if i == 0:
                 new_batch = torch.ones(len(supercell_atoms_list[i])).int() * i
                 new_ptr = torch.zeros(supercell_data.num_graphs)
@@ -1048,7 +966,7 @@ class Predictor():
         supercell_data.batch = new_batch.type(dtype=torch.int64)
         supercell_data.ptr = new_ptr.type(dtype=torch.int64)
 
-        return supercell_data.to(config.device), cell_sample.to(config.device), z_values, generated_cell_volumes.to(config.device)
+        return supercell_data.to(config.device), z_values, generated_cell_volumes.to(config.device)
 
     def real_supercells(self, supercell_data, config):
         '''
@@ -1061,7 +979,7 @@ class Predictor():
         4. apply point symmetry
         5. tile supercell
         '''
-        for i in range(supercell_data.num_graphs):
+        for i in range(supercell_data.num_graphs): # todo speed this up
             # 0 extract molecule and cell parameters
             atoms = np.asarray(supercell_data.x[supercell_data.batch == i])
             # pre-enforce hydrogen cleanliness - shouldn't be necessary but you never know
@@ -1133,7 +1051,7 @@ class Predictor():
     def log_gan_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
                          metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
                          train_epoch_stats_dict, test_epoch_stats_dict, config,
-                         generator, discriminator, wandb_log_figures = True):
+                         generator, discriminator, wandb_log_figures=True):
         '''
         Do analysis and upload results to w&b
 
@@ -1141,6 +1059,7 @@ class Predictor():
             -:> cell parameter rmsd
             -:> RDF / RMSD20 (from compack, CCDC)
             -:> cell density
+            -:> 1D & 2D correlation overlaps
         Future: FF evaluations, polymorphs ranking
 
         :param epoch:
@@ -1159,13 +1078,105 @@ class Predictor():
         :return:
         '''
 
+        '''
+        cell parameter analysis
+        '''
+        if train_epoch_stats_dict['generated cell parameters'] is not None:
+            n_crystal_features = config.dataDims['n crystal features']
+            generated_samples = test_epoch_stats_dict['generated cell parameters']
+            means = config.dataDims['means']
+            stds = config.dataDims['stds']
+
+            if not hasattr(self, 'dataset_cell_distribution'):
+                self.dataset_cell_distribution = np.concatenate([datapoint.y[0].cpu().detach().numpy() for datapoint in train_loader.dataset])  # build it
+                for i in range(self.dataset_cell_distribution.shape[1]):
+                    self.dataset_cell_distribution[:, i] = self.dataset_cell_distribution[:, i] * stds[i] + means[i]
+
+            renormalized_samples = np.zeros_like(generated_samples)
+            for i in range(generated_samples.shape[1]):
+                renormalized_samples[:, i] = generated_samples[:, i] * stds[i] + means[i]
+
+            overlaps_1d = {}
+            for i, key in enumerate(config.dataDims['crystal features']):
+                mini, maxi = np.amin(self.dataset_cell_distribution[:, i]), np.amax(self.dataset_cell_distribution[:, i])
+                h1, r1 = np.histogram(self.dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
+                h1 = h1 / len(self.dataset_cell_distribution[:, i])
+
+                h2, r2 = np.histogram(renormalized_samples[:, i], bins=r1)
+                h2 = h2 / len(renormalized_samples[:, i])
+
+                overlaps_1d[f'{key} 1D Overlap'] = np.min(np.concatenate((h1[None], h2[None]), axis=0), axis=0).sum()
+
+            average_overlap = np.average([overlaps_1d[key] for key in overlaps_1d.keys()])
+            overlaps_1d['average 1D overlap'] = average_overlap
+            wandb.log(overlaps_1d.copy())
+            print("1D Overlap With Data:{:.3f}".format(average_overlap))
+
+            if wandb_log_figures:
+                fig_dict = {}
+
+                # bar graph of 1d overlaps
+                fig = go.Figure(go.Bar(
+                    y=list(overlaps_1d.keys()),
+                    x=[overlaps_1d[key] for key in overlaps_1d],
+                    orientation='h',
+                    marker=dict(color='red')
+                ))
+                fig_dict['1D overlaps'] = fig
+
+                # 1d Histograms
+                for i in range(n_crystal_features):
+                    fig = go.Figure()
+
+                    fig.add_trace(go.Histogram(
+                        x=self.dataset_cell_distribution[:, i],
+                        histnorm='probability density',
+                        nbinsx=100,
+                        name="Dataset",
+                        showlegend=True,
+                    ))
+
+                    fig.add_trace(go.Histogram(
+                        x=renormalized_samples[:, i],
+                        histnorm='probability density',
+                        nbinsx=100,
+                        name="Samples",
+                        showlegend=True,
+                    ))
+                    fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                    fig.update_traces(opacity=0.5)
+
+                    fig_dict[self.dataDims['crystal features'][i] + ' distribution'] = fig
+
+                wandb.log(fig_dict)
 
         '''
-        auxiliary regression loss
+        cell pairwise atomic distances
+        '''
+        if train_epoch_stats_dict['real pairwise distance hist'] is not None:
+            tr_real_g2, rrange = train_epoch_stats_dict['real pairwise distance hist']  # same range by construction
+            te_real_g2, _ = test_epoch_stats_dict['real pairwise distance hist']
+            tr_fake_g2, _ = train_epoch_stats_dict['generator pairwise distance hist']
+            te_fake_g2, _ = test_epoch_stats_dict['generator pairwise distance hist']
+            bin_width = rrange[1] - rrange[0]
+
+            range_analysis_dict = {}
+            # get histogram overlaps
+            range_analysis_dict['tr g2 overlap'] = np.min(np.concatenate((tr_real_g2[None, :] * bin_width, tr_fake_g2[None, :] * bin_width), axis=0), axis=0).sum()
+            range_analysis_dict['te g2 overlap'] = np.min(np.concatenate((te_real_g2[None, :] * bin_width, te_fake_g2[None, :] * bin_width), axis=0), axis=0).sum()
+
+            # get probability mass at too-close range (should be ~zero)
+            range_analysis_dict['tr short range density'] = np.sum(tr_fake_g2[(rrange < 1)[:-1]] * bin_width)
+            range_analysis_dict['te short range density'] = np.sum(te_fake_g2[(rrange < 1)[:-1]] * bin_width)
+
+            wandb.log(range_analysis_dict)
+
+        '''
+        auxiliary regression target
         '''
         if config.train_generator_density:
-            target_mean = 0.673 # pacing coefficient mean #config.dataDims['mean']
-            target_std = 0.0271# packing coefficient std dev #config.dataDims['std']
+            target_mean = 0.673  # pacing coefficient mean #config.dataDims['mean']
+            target_std = 0.0271  # packing coefficient std dev #config.dataDims['std']
 
             target = np.asarray(test_epoch_stats_dict['generator auxiliary target'])
             prediction = np.asarray(test_epoch_stats_dict['generator auxiliary prediction'])
@@ -1214,39 +1225,14 @@ class Predictor():
         return None
 
     def train_discriminator(self, generator, discriminator, config, data, i):
+        generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
+
         t0 = time.time()
-
         real_supercell_data = self.real_supercells(data.clone(), config)
-        generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
-        fake_supercell_data, z_values, generated_cell_volumes = self.differentiable_generated_supercells(generated_samples, data.clone().to(generated_samples.device), config)
-        # fake_supercell_data, raw_generation, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generator=generator)
-        '''
-        # supercell method comparison
-        supercell_data1, raw_generation, z_values = self.differentiable_generated_supercells(data, config, generator=generator, override_position = torch.ones((50,3))/4, override_orientation = torch.ones((50,3)) * torch.pi / 2)
-        supercell_data2, raw_generation, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generator=generator,  override_position = torch.ones((50,3))/4, override_orientation = torch.ones((50,3)) * torch.pi / 2)
-        mol1 = Atoms(numbers=supercell_data1.x[supercell_data1.batch==0,0].cpu().detach().numpy(),positions=supercell_data1.pos[supercell_data1.batch==0,:].cpu().detach().numpy())
-        mol2 = Atoms(numbers=supercell_data2.x[supercell_data2.batch==0,0].cpu().detach().numpy(),positions=supercell_data2.pos[supercell_data2.batch==0,:].cpu().detach().numpy())
-        view((mol1,mol2))
-        
-        
-        real_data = data.y[0] * torch.tile(torch.tensor(config.dataDims['stds']).to(data.y[0].device),(len(data.y[0]),1)) + torch.tile(torch.tensor(config.dataDims['means']).to(data.y[0].device),(len(data.y[0]),1))
-        real_lengths, real_angles, real_positions, real_orientations = torch.split(real_data.float(),3,dim=1)
-        
-        real_supercell_data = self.real_supercells(data.clone(), config)
-        generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
-        fake_supercell_data, z_values, generated_cell_volumes = self.differentiable_generated_supercells(generated_samples, data.clone().to(generated_samples.device), config, 
-                                                                                                         override_position = real_positions,
-                                                                                                         override_orientation = real_orientations,
-                                                                                                         override_cell_length = real_lengths,
-                                                                                                         override_cell_angle = real_angles)
-        ind = 0
-        mol1 = Atoms(numbers=real_supercell_data.x[real_supercell_data.batch == ind, 0].cpu().detach().numpy(), positions=real_supercell_data.pos[real_supercell_data.batch == ind, :].cpu().detach().numpy())
-        mol2 = Atoms(numbers=fake_supercell_data.x[fake_supercell_data.batch == ind, 0].cpu().detach().numpy(), positions=fake_supercell_data.pos[fake_supercell_data.batch == ind, :].cpu().detach().numpy())
-        view((mol1, mol2))
-        '''
-
-        if i % 5 == 0:
-            print('Batch {} supercell generation took {:.2f} seconds for {} samples'.format(i, round(time.time() - t0, 2), data.num_graphs))
+        fake_supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone().to(generated_samples.device), config, generated_samples)
+        t1 = time.time()
+        if i % 10 == 0:
+            print('Batch {} supercell generation took {:.1f} seconds for {} samples'.format(i, round(t1 - t0, 2), data.num_graphs))
 
         if config.device.lower() == 'cuda':
             real_supercell_data = real_supercell_data.cuda()
@@ -1256,22 +1242,23 @@ class Predictor():
             assert torch.sum(torch.isnan(real_supercell_data.x)) == 0, "NaN in training input"
             assert torch.sum(torch.isnan(fake_supercell_data.x)) == 0, "NaN in training input"
 
-        score_on_real, raw_output_on_real = self.adversarial_loss(discriminator, real_supercell_data, config)
-        score_on_fake, raw_output_on_fake = self.adversarial_loss(discriminator, fake_supercell_data, config)
+        score_on_real, raw_output_on_real, real_pairwise_distances = self.adversarial_loss(discriminator, real_supercell_data, config)
+        score_on_fake, raw_output_on_fake, fake_pairwise_distances = self.adversarial_loss(discriminator, fake_supercell_data, config)
 
-        return score_on_real, score_on_fake
+        return score_on_real, score_on_fake, generated_samples.cpu().detach().numpy(), real_pairwise_distances, fake_pairwise_distances, t1 - t0
 
     def train_generator(self, generator, discriminator, config, data, i):
-        t0 = time.time()
-
+        pairwise_distances = None
         # data, raw_generation = self.generated_supercells(data, config, generator = generator)
         generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
         if config.train_generator_adversarially:
-            supercell_data, z_values, generated_cell_volumes = self.differentiable_generated_supercells(generated_samples, data.clone(), config)
-            # supercell_data, raw_generation, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generator=generator)
 
-            if i % 5 == 0:
-                print('Batch {} supercell generation took {:.2f} seconds for {} samples'.format(i, round(time.time() - t0, 2), data.num_graphs))
+            t0 = time.time()
+            supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generated_samples)
+            t1 = time.time()
+
+            if i % 10 == 0:
+                print('Batch {} supercell generation took {:.1f} seconds for {} samples'.format(i, round(t1 - t0, 2), data.num_graphs))
 
             if config.device.lower() == 'cuda':
                 supercell_data = supercell_data.cuda()
@@ -1279,10 +1266,12 @@ class Predictor():
             if config.test_mode or config.anomaly_detection:
                 assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
 
-            discriminator_score, raw_output = self.adversarial_loss(discriminator, supercell_data, config)
+            discriminator_score, raw_output, pairwise_distances = self.adversarial_loss(discriminator, supercell_data, config)
 
         else:
             discriminator_score = None
+            t1 = 0
+            t0 = 0
 
         if config.train_generator_density:
             if not config.train_generator_adversarially:
@@ -1294,7 +1283,7 @@ class Predictor():
         else:
             auxiliary_loss, auxiliary_prediction, auxiliary_target = None, None, None
 
-        return discriminator_score, generated_samples, auxiliary_loss, auxiliary_prediction, auxiliary_target
+        return discriminator_score, generated_samples.cpu().detach().numpy(), auxiliary_loss, auxiliary_prediction, auxiliary_target, pairwise_distances, t1 - t0
 
     def generator_auxiliary_loss(self, data, raw_sample, z_values, dataDims, precomputed_volumes=None):
         # compute proposed density and evaluate loss against known volume
@@ -1306,10 +1295,10 @@ class Predictor():
 
         gen_packing = []
         csd_packing = []
-        #volumes = []
+        # volumes = []
         for i in range(len(raw_sample)):
             if precomputed_volumes is None:
-                volume = cell_vol_torch(cell_lengths[i], cell_angles[i]) # torch.prod(cell_lengths[i]) # toss angles #
+                volume = cell_vol_torch(cell_lengths[i], cell_angles[i])  # torch.prod(cell_lengths[i]) # toss angles #
             else:
                 volume = precomputed_volumes[i]
 
@@ -1318,14 +1307,14 @@ class Predictor():
             coeff = mol_volume / volume
             std_coeff = (coeff - 0.673) / 0.0271
 
-            #volumes.append(volume)
+            # volumes.append(volume)
             gen_packing.append(std_coeff)  # compute packing index from given volume and restandardize
             csd_packing.append((data.y[2][i][self.crystal_packing_ind] - 0.673) / 0.0271)  # standardized true packing coefficient
-            #gen_packing.append(raw_sample[i,0]) # first dimension of output
-            #csd_packing.append((data.y[2][i][self.mol_volume_ind] - 348.12) / 114.61) # molecule volume substitute toy target (a number which is directly given to the model)
+            # gen_packing.append(raw_sample[i,0]) # first dimension of output
+            # csd_packing.append((data.y[2][i][self.mol_volume_ind] - 348.12) / 114.61) # molecule volume substitute toy target (a number which is directly given to the model)
 
         generated_packing_coefficients = torch.stack(gen_packing)
-        #generated_packing_coefficients = raw_sample[:,0]
+        # generated_packing_coefficients = raw_sample[:,0]
         csd_packing_coefficients = torch.Tensor(csd_packing).to(generated_packing_coefficients.device)
 
         return (F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'),

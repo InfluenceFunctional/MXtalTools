@@ -114,7 +114,7 @@ def add_args(parser):
     #  training settings
     parser.add_argument('--max_epochs', type=int, default=100)
     parser.add_argument('--history', type=int, default=5)
-    parser.add_argument('--initial_batch_size', type=int, default=10000)
+    parser.add_argument('--max_batch_size', type=int, default=10000)
     add_bool_arg(parser, 'auto_batch_sizing', default=True)  # whether to densely connect dimenet outputs
     parser.add_argument('--auto_batch_reduction', type=float, default=0.2)  # leeway factor to reduce batch size at end of auto-sizing run
     parser.add_argument('--gradient_norm_clip', type=float, default=1)
@@ -122,7 +122,7 @@ def add_args(parser):
 
     update_args2config(args2config, 'max_epochs')
     update_args2config(args2config, 'history')
-    update_args2config(args2config, 'initial_batch_size')
+    update_args2config(args2config, 'max_batch_size')
     update_args2config(args2config, 'auto_batch_sizing')
     update_args2config(args2config, 'auto_batch_reduction')
     update_args2config(args2config, 'gradient_norm_clip')
@@ -292,10 +292,7 @@ def process_config(config):
     config.seeds.dataset = config.seeds.dataset % 10
 
     if config.test_mode:
-        if (config.mode == 'joint modelling') and (config.generator.conditioning_mode != 'graph model'):
-            config.initial_batch_size = 100
-        else:
-            config.initial_batch_size = 50
+        config.max_batch_size = 50
         config.auto_batch_sizing = False
         config.num_samples = 1000
         config.anomaly_detection = True

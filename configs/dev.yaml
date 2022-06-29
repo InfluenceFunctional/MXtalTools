@@ -5,13 +5,13 @@ skip_run_init: False
 explicit_run_enumeration: False
 skip_saving_and_loading: True
 run_num: 0
+anomaly_detection: False
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
 gan_loss: standard
 train_generator_density: True
 train_generator_as_flow: False
 train_generator_adversarially: True
 train_discriminator_adversarially: True
-anomaly_detection: False
 
 seeds:
   model: 0
@@ -22,14 +22,14 @@ wandb:
   sweep_config_file: "sweep_test.yaml"
   experiment_tag: "new_clean_data_testing"
   log_figures: True
-  sample_reporting_frequency: 2
+  sample_reporting_frequency: 1
   sweep: False
   sweep_id: null
   sweep_num_runs: 50
 
 # dataset curation
-target: crystal spacegroup setting
-dataset_length: 1000000
+target: crystal spacegroup setting # not currently used
+dataset_length: 10000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 200
@@ -51,9 +51,9 @@ include_sgs: null #[P-1, P21/c, P212121, C2/c, Pbca, P21]
 include_pgs: null #[222, -1, 2/m, 2, mm2, mmm, m, 1, 422]
 
 # batching & convergence
-auto_batch_sizing: False
-initial_batch_size: 50
-auto_batch_reduction: 0.2
+auto_batch_sizing: True
+max_batch_size: 2000
+auto_batch_reduction: 0.25
 max_epochs: 1000
 history: 200
 
@@ -70,8 +70,8 @@ discriminator:
 
   graph_model: mike
   graph_convolution_layers: 8
-  graph_filters: 32
-  atom_embedding_size: 32
+  graph_filters: 16
+  atom_embedding_size: 16
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
@@ -83,7 +83,7 @@ discriminator:
   add_spherical_basis: False # mikenet only
   pooling: attention
 
-  num_fc_layers: 1
+  num_fc_layers: 4
   fc_depth: 16
   activation: leaky relu
   fc_dropout_probability: 0.1

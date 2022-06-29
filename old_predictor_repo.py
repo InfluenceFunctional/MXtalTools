@@ -565,7 +565,7 @@ def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
 
     def get_batch_size(self, dataset, config):
         finished = 0
-        batch_size = config.initial_batch_size.real
+        batch_size = config.max_batch_size.real
         batch_reduction_factor = config.auto_batch_reduction
 
         if 'gan'.lower() in config.mode:
@@ -792,7 +792,7 @@ def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
             else:
                 print('Getting dataloaders for pre-determined batch size')
                 train_loader, test_loader = get_dataloaders(dataset_builder, config)
-                config.final_batch_size = config.initial_batch_size
+                config.final_batch_size = config.max_batch_size
 
             print("Training batch size set to {}".format(config.final_batch_size))
             # model, optimizer, schedulers
@@ -934,3 +934,198 @@ def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
 
                 if config.device.lower() == 'cuda':
                     torch.cuda.empty_cache()  # clear GPU
+
+
+
+    def init_model(self, config, dataDims, print_status=True):
+        '''
+        Initialize model and optimizer
+        :return:
+        '''
+        # init model
+        print("Initializing model for " + config.mode)
+        if config.mode == 'joint modelling':
+            model = FlowModel(config, dataDims)
+        elif 'molecule' in config.mode:
+            model = molecule_graph_model(config, dataDims, crystal_mode=False)
+        elif 'cell' in config.mode:
+            model = molecule_graph_model(config, dataDims, crystal_mode=True)
+        else:
+            print(config.mode + ' is not a valid model mode!')
+            sys.exit()
+
+        if config.device == 'cuda':
+            model = model.cuda()
+
+        # init optimizers
+        amsgrad = False
+        beta1 = config.beta1  # 0.9
+        beta2 = config.beta2  # 0.999
+        weight_decay = config.weight_decay  # 0.01
+        momentum = 0
+
+        if config.optimizer == 'adam':
+            optimizer = optim.Adam(model.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif config.optimizer == 'adamw':
+            optimizer = optim.AdamW(model.parameters(), amsgrad=amsgrad, lr=config.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif config.optimizer == 'sgd':
+            optimizer = optim.SGD(model.parameters(), lr=config.learning_rate, momentum=momentum, weight_decay=weight_decay)
+        else:
+            print(config.optimizer + ' is not a valid optimizer')
+            sys.exit()
+
+        # init schedulers
+        scheduler1 = lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.1,
+            patience=15,
+            threshold=1e-4,
+            threshold_mode='rel',
+            cooldown=15
+        )
+        lr_lambda = lambda epoch: 1.25
+        scheduler3 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda)
+        lr_lambda2 = lambda epoch: 0.95
+        scheduler4 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda2)
+
+        nconfig = get_n_config(model)
+        if print_status:
+            print('Proxy model has {:.3f} million or {} parameters'.format(nconfig / 1e6, int(nconfig)))
+
+        return model, optimizer, [scheduler1, scheduler3, scheduler4], nconfig
+
+
+
+    def log_loss(self, metrics_dict, tr_record, te_record):
+        current_metrics = {}
+        for key in metrics_dict.keys():
+            current_metrics[key] = float(metrics_dict[key][-1])
+            if 'loss' in key:  # log 'best' metrics
+                current_metrics['best ' + key] = np.amin(metrics_dict[key])
+
+            elif ('epoch' in key) or ('confusion' in key) or ('learning rate'):
+                pass
+            else:
+                current_metrics['best ' + key] = np.amax(metrics_dict[key])
+
+        for key in current_metrics.keys():
+            current_metrics[key] = np.amax(current_metrics[key])  # just a formatting thing - nothing to do with the max of anything
+
+        wandb.log(current_metrics)
+        hist = np.histogram(tr_record, bins=256, range=(np.amin(tr_record), np.quantile(tr_record, 0.9)))
+        wandb.log({"Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
+        hist = np.histogram(te_record, bins=256, range=(np.amin(te_record), np.quantile(te_record, 0.9)))
+        wandb.log({"Test Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
+
+        wandb.log({"Train Loss Coeff. of Variation": np.sqrt(np.var(tr_record)) / np.average(tr_record)})
+        wandb.log({"Test Loss Coeff. of Variation": np.sqrt(np.var(te_record)) / np.average(te_record)})
+
+
+
+
+    def get_dimension(self):
+
+        if self.model_mode == 'joint modelling':
+            dim = {
+                'crystal features': self.lattice_keys,
+                'n crystal features': len(self.lattice_keys),
+                'dataset length': len(self.datapoints),
+                'means': self.means,
+                'stds': self.stds,
+                'dtypes': self.dtypes,
+                'n tracking features': self.n_tracking_features,
+                'tracking features dict': self.tracking_dict_keys,
+            }
+            if self.conditional_modelling:
+                dim['conditional features'] = self.molecule_keys
+                dim['n conditional features'] = len(self.molecule_keys)
+                if self.conditioning_mode == 'graph model':  #
+                    dim['output classes'] = [2]  # placeholder - will be overwritten later
+                    dim['atom features'] = self.datapoints[0].x.shape[1]
+                    dim['n mol features'] = self.n_mol_features
+                    dim['atom embedding dict sizes'] = self.atom_dict_size
+        elif 'regression' in self.model_mode:
+            dim = {
+                'atom features': self.datapoints[0].x.shape[1],
+                'n mol features': self.n_mol_features,
+                'output classes': [1],
+                'dataset length': len(self.datapoints),
+                'atom embedding dict sizes': self.atom_dict_size,
+                'n tracking features': self.n_tracking_features,
+                'tracking features dict': self.tracking_dict_keys,
+                'mean': self.mean,
+                'std': self.std,
+            }
+        elif 'classification' in self.model_mode:
+            dim = {
+                'atom features': self.datapoints[0].x.shape[1],
+                'n mol features': self.n_mol_features,
+                'output classes': self.output_classes,
+                'dataset length': len(self.datapoints),
+                'n tracking features': self.n_tracking_features,
+                'tracking features dict': self.tracking_dict_keys,
+                'class weights': self.class_weights,
+                'class labels': self.class_labels,
+            }
+        elif self.model_mode == 'cell gan':
+            dim = {
+                'crystal features': self.lattice_keys,
+                'n crystal features': len(self.lattice_keys),
+                'dataset length': len(self.datapoints),
+                'means': self.means,
+                'stds': self.stds,
+                'dtypes': self.dtypes,
+                'n tracking features': self.n_tracking_features,
+                'tracking features dict': self.tracking_dict_keys,
+                'atom features': self.datapoints[0].x.shape[1],
+                'n mol features': self.n_mol_features,
+                'mol features': self.mol_dict_keys,
+                'atom embedding dict sizes': self.atom_dict_size,
+                'conditional features': ['crystal system', 'crystal point group'],
+                'n conditional features': 2
+            }
+            if self.conditional_modelling:
+                dim['conditional features'] += self.molecule_keys
+                dim['n conditional features'] += len(self.molecule_keys)
+
+        else:
+            print(self.model_mode + ' is not a valid mode!')
+            sys.exit()
+
+        dim['crystal system dict'] = self.crystal_system_dict
+        dim['point group dict'] = self.point_group_dict
+        dim['point groups to search'] = self.include_pgs
+
+        return dim
+
+    def __getitem__(self, idx):
+        return self.datapoints[idx]
+
+    def __len__(self):
+        return len(self.datapoints)
+
+    '''
+            # supercell method comparison
+            supercell_data1, raw_generation, z_values = self.differentiable_generated_supercells(data, config, generator=generator, override_position = torch.ones((50,3))/4, override_orientation = torch.ones((50,3)) * torch.pi / 2)
+            supercell_data2, raw_generation, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generator=generator,  override_position = torch.ones((50,3))/4, override_orientation = torch.ones((50,3)) * torch.pi / 2)
+            mol1 = Atoms(numbers=supercell_data1.x[supercell_data1.batch==0,0].cpu().detach().numpy(),positions=supercell_data1.pos[supercell_data1.batch==0,:].cpu().detach().numpy())
+            mol2 = Atoms(numbers=supercell_data2.x[supercell_data2.batch==0,0].cpu().detach().numpy(),positions=supercell_data2.pos[supercell_data2.batch==0,:].cpu().detach().numpy())
+            view((mol1,mol2))
+
+
+            real_data = data.y[0] * torch.tile(torch.tensor(config.dataDims['stds']).to(data.y[0].device),(len(data.y[0]),1)) + torch.tile(torch.tensor(config.dataDims['means']).to(data.y[0].device),(len(data.y[0]),1))
+            real_lengths, real_angles, real_positions, real_orientations = torch.split(real_data.float(),3,dim=1)
+
+            real_supercell_data = self.real_supercells(data.clone(), config)
+            generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
+            fake_supercell_data, z_values, generated_cell_volumes = self.differentiable_generated_supercells(generated_samples, data.clone().to(generated_samples.device), config, 
+                                                                                                             override_position = real_positions,
+                                                                                                             override_orientation = real_orientations,
+                                                                                                             override_cell_length = real_lengths,
+                                                                                                             override_cell_angle = real_angles)
+            ind = 0
+            mol1 = Atoms(numbers=real_supercell_data.x[real_supercell_data.batch == ind, 0].cpu().detach().numpy(), positions=real_supercell_data.pos[real_supercell_data.batch == ind, :].cpu().detach().numpy())
+            mol2 = Atoms(numbers=fake_supercell_data.x[fake_supercell_data.batch == ind, 0].cpu().detach().numpy(), positions=fake_supercell_data.pos[fake_supercell_data.batch == ind, :].cpu().detach().numpy())
+            view((mol1, mol2))
+            '''

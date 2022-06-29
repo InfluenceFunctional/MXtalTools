@@ -470,72 +470,26 @@ class BuildDataset:
 
     def get_dimension(self):
 
-        if self.model_mode == 'joint modelling':
-            dim = {
-                'crystal features': self.lattice_keys,
-                'n crystal features': len(self.lattice_keys),
-                'dataset length': len(self.datapoints),
-                'means': self.means,
-                'stds': self.stds,
-                'dtypes': self.dtypes,
-                'n tracking features': self.n_tracking_features,
-                'tracking features dict': self.tracking_dict_keys,
-            }
-            if self.conditional_modelling:
-                dim['conditional features'] = self.molecule_keys
-                dim['n conditional features'] = len(self.molecule_keys)
-                if self.conditioning_mode == 'graph model':  #
-                    dim['output classes'] = [2]  # placeholder - will be overwritten later
-                    dim['atom features'] = self.datapoints[0].x.shape[1]
-                    dim['n mol features'] = self.n_mol_features
-                    dim['atom embedding dict sizes'] = self.atom_dict_size
-        elif 'regression' in self.model_mode:
-            dim = {
-                'atom features': self.datapoints[0].x.shape[1],
-                'n mol features': self.n_mol_features,
-                'output classes': [1],
-                'dataset length': len(self.datapoints),
-                'atom embedding dict sizes': self.atom_dict_size,
-                'n tracking features': self.n_tracking_features,
-                'tracking features dict': self.tracking_dict_keys,
-                'mean': self.mean,
-                'std': self.std,
-            }
-        elif 'classification' in self.model_mode:
-            dim = {
-                'atom features': self.datapoints[0].x.shape[1],
-                'n mol features': self.n_mol_features,
-                'output classes': self.output_classes,
-                'dataset length': len(self.datapoints),
-                'n tracking features': self.n_tracking_features,
-                'tracking features dict': self.tracking_dict_keys,
-                'class weights': self.class_weights,
-                'class labels': self.class_labels,
-            }
-        elif self.model_mode == 'cell gan':
-            dim = {
-                'crystal features': self.lattice_keys,
-                'n crystal features': len(self.lattice_keys),
-                'dataset length': len(self.datapoints),
-                'means': self.means,
-                'stds': self.stds,
-                'dtypes': self.dtypes,
-                'n tracking features': self.n_tracking_features,
-                'tracking features dict': self.tracking_dict_keys,
-                'atom features': self.datapoints[0].x.shape[1],
-                'n mol features': self.n_mol_features,
-                'mol features': self.mol_dict_keys,
-                'atom embedding dict sizes': self.atom_dict_size,
-                'conditional features': ['crystal system', 'crystal point group'],
-                'n conditional features': 2
-            }
-            if self.conditional_modelling:
-                dim['conditional features'] += self.molecule_keys
-                dim['n conditional features'] += len(self.molecule_keys)
+        dim = {
+            'crystal features': self.lattice_keys,
+            'n crystal features': len(self.lattice_keys),
+            'dataset length': len(self.datapoints),
+            'means': self.means,
+            'stds': self.stds,
+            'dtypes': self.dtypes,
+            'n tracking features': self.n_tracking_features,
+            'tracking features dict': self.tracking_dict_keys,
+            'atom features': self.datapoints[0].x.shape[1],
+            'n mol features': self.n_mol_features,
+            'mol features': self.mol_dict_keys,
+            'atom embedding dict sizes': self.atom_dict_size,
+            'conditional features': ['crystal system', 'crystal point group'],
+            'n conditional features': 2
+        }
+        if self.conditional_modelling:
+            dim['conditional features'] += self.molecule_keys
+            dim['n conditional features'] += len(self.molecule_keys)
 
-        else:
-            print(self.model_mode + ' is not a valid mode!')
-            sys.exit()
 
         dim['crystal system dict'] = self.crystal_system_dict
         dim['point group dict'] = self.point_group_dict
@@ -554,7 +508,7 @@ def get_dataloaders(dataset_builder, config, override_batch_size=None):
     if override_batch_size is not None:
         batch_size = override_batch_size
     else:
-        batch_size = config.initial_batch_size
+        batch_size = config.max_batch_size
     train_size = int(0.8 * len(dataset_builder))  # split data into training and test sets
     test_size = len(dataset_builder) - train_size
 

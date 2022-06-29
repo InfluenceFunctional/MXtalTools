@@ -82,7 +82,7 @@ class MikesGraphNet(torch.nn.Module):
 
         self.output_layer = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, z, pos, batch=None):
+    def forward(self, z, pos, batch=None, return_dists = False):
         """"""
         if self.crystal_mode: # allow incoming edges from outside the central crystal but exclude outgoing edges
             atom_inds = z[:,-1].clone() # pull the atom-wise index per-molecule
@@ -129,8 +129,8 @@ class MikesGraphNet(torch.nn.Module):
             #x = x + global_agg(x, batch)  # aggregate global information to all nodes # CURRENTLY IDENTITY - DEPRECATED,
 
             if self.crystal_mode: # copy the in-cell feature vectors to all corresponding outside atoms (relatively simple due to consistent structure of centralcell:supercells
-                keep_cell_inds = torch.where(atom_inds == 1)[0]
-                n_repeats = len(x) // len(keep_cell_inds)
+                keep_cell_inds = torch.where(atom_inds == 1)[0] # find the indices for the reference cells
+                n_repeats = len(x) // len(keep_cell_inds) # find the ratio of total atoms to within-ref-cell atoms # should always be exactly 27
                 keep_cell_batch = batch[keep_cell_inds] # get the feature vectors we want to repeat
                 # might be able to do this in one step with something like torch.interleave
                 # else do it as a for loop if it's fast enough
@@ -141,7 +141,10 @@ class MikesGraphNet(torch.nn.Module):
                 else: # on the final convolutional block, do not broadcast the reference cell
                     x = x[keep_cell_inds] # reduce the output to only the nodes of the reference cell - outer nodes are just copies anyway, so this gets the same information with less memory / compute overhead
 
-        return self.output_layer(x)
+        if return_dists:
+            return self.output_layer(x), dist
+        else:
+            return self.output_layer(x)
 
 
 class SphericalBasisLayer(torch.nn.Module):

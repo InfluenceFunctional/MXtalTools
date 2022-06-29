@@ -72,11 +72,14 @@ class crystal_discriminator(nn.Module):
 
         self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
 
-    def forward(self, data):
+    def forward(self, data, return_dists = False):
         x = data.x
         pos = data.pos
 
-        x = self.graph_net(torch.cat((x[:, :self.n_atom_feats], x[:, -1:]), dim=1), pos, data.batch)  # extra dim for crystal indexing
+        if return_dists:
+            x, dists = self.graph_net(torch.cat((x[:, :self.n_atom_feats], x[:, -1:]), dim=1), pos, data.batch, return_dists = return_dists)  # extra dim for crystal indexing
+        else:
+            x = self.graph_net(torch.cat((x[:, :self.n_atom_feats], x[:, -1:]), dim=1), pos, data.batch)  # extra dim for crystal indexing
 
         keep_cell_inds = torch.where(data.x[:, -1] == 1)[0]
         data.batch = data.batch[keep_cell_inds]  # keep only atoms inside the reference cell
@@ -88,6 +91,9 @@ class crystal_discriminator(nn.Module):
         mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch).float())  # not actually pooling here, as the values are all the same for each molecule
 
         x = self.gnn_mlp(x, conditions=mol_feats)
-
-        return self.output_fc(x)
+        if return_dists:
+            # noinspection PyUnboundLocalVariable
+            return self.output_fc(x), dists # return pairwise distances on the molecule graph
+        else:
+            return self.output_fc(x)
 

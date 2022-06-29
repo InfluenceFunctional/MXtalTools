@@ -4,6 +4,7 @@ from nikos.rotations import rotation_matrix_from_vectors, euler_rotation, rodrig
 from utils import compute_principal_axes_np, compute_principal_axes_torch
 from scipy.spatial.transform import Rotation
 import torch
+import time
 
 
 def check_standardization(numbers, masses, coords0, T_fc, T_cf, sym_ops, new_rotation, new_centroid_frac):
@@ -373,7 +374,7 @@ def randomize_molecule_position_and_orientation(coords, masses, T_fc, T_cf, sym_
     return final_coords
 
 
-def randomize_molecule_position_and_orientation_torch(coords, masses, T_fc, sym_ops, set_position, set_rotation):
+def randomize_molecule_position_and_orientation_torch(coords, masses, T_fc, sym_ops, set_position, set_rotation, return_rot=False):
     '''
     :param coords:
     :param masses:
@@ -392,17 +393,19 @@ def randomize_molecule_position_and_orientation_torch(coords, masses, T_fc, sym_
     centroids = torch.stack(centroids_i).to(set_position.device)
 
     centroid_distance_from_origin_f = torch.linalg.norm(centroids, axis=1)
-    new_centroid_frac = centroids[torch.argmin(centroid_distance_from_origin_f)]  # todo this first part seems slow... not sure what to do about that
+    new_centroid_frac = centroids[torch.argmin(centroid_distance_from_origin_f)]
 
     # CoM =   # coords.T.dot(masses) / torch.sum(masses)
     CoM_coords = coords - torch.inner(coords.T, masses) / torch.sum(masses)
-    std_mat = get_standard_rotation_torch(masses, coords, T_fc)  # todo this could be pre-built in parallel
-    rot_mat = euler_XYZ_rotation_matrix(set_rotation)  # todo this could be pre-built in parallel
+    std_mat = get_standard_rotation_torch(masses, coords, T_fc)
+    rot_mat = euler_XYZ_rotation_matrix(set_rotation)
     std_rot_mat = torch.matmul(rot_mat, std_mat)  # compose standardizing and subsequent rotation
     rotated_coords = torch.inner(std_rot_mat, CoM_coords).T
     #
-
-    return rotated_coords + torch.inner(T_fc, new_centroid_frac)
+    if return_rot:
+        return (rotated_coords - rotated_coords.mean(0) + torch.inner(T_fc, new_centroid_frac), std_mat, rot_mat)
+    else:
+        return rotated_coords - rotated_coords.mean(0) + torch.inner(T_fc, new_centroid_frac)
 
 
 def axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
@@ -603,7 +606,7 @@ def ref_to_supercell_torch(reference_cell, z_value, atoms, cell_vectors, superce
 
     # tile the supercell
     # index the molecules as 'within main cell' vs 'outside'
-    supercell_coords = coords.clone()  # todo possible to vectorize this instead of 3x nested loops?
+    supercell_coords = coords.clone()
     for xx in range(-supercell_size, supercell_size + 1):
         for yy in range(-supercell_size, supercell_size + 1):
             for zz in range(-supercell_size, supercell_size + 1):
@@ -612,7 +615,7 @@ def ref_to_supercell_torch(reference_cell, z_value, atoms, cell_vectors, superce
 
     supercell_atoms = atoms.repeat((supercell_size * 2 + 1) ** 3, 1)
     ref_cell_inds = torch.ones(len(supercell_atoms)).to(reference_cell.device)[:, None]
-    ref_cell_inds[len(atoms):, 0] = 0
+    ref_cell_inds[len(atoms) * z_value:, 0] = 0
     supercell_atoms = torch.cat((supercell_atoms, ref_cell_inds), dim=1)  # inside main unit cell
     # supercell_atoms[len(atoms):, -1] = 0  # outside of main unit cell
 
@@ -638,7 +641,12 @@ def build_random_crystal_torch(T_cf, T_fc, coords, affine_ops, z_value):
     for zv in range(z_value):
         val = torch.inner(affine_points, affine_ops[zv])[..., :-1]
         # cell_coords_f.append(val - torch.floor(val))
-        cell_coords_f = val - torch.floor(val)
+        # if the translated centroid is outside of the cell, shift the molecule
+        centroid_f = val.mean(0)
+        if (any(centroid_f < 0)) or (any(centroid_f > 1)):
+            cell_coords_f = val - torch.floor(centroid_f)
+        else:
+            cell_coords_f = val
         # centroids.append(torch.mean(cell_coords_f[-1], dim=0))
         cell_coords_c.append(torch.inner(T_fc, cell_coords_f).T)
 
@@ -763,12 +771,76 @@ def fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles):
 
 
 def fast_differentiable_standard_rotation_matrix(masses_list, coords_list, T_fc_list):
-    # todo note option to fully pre-compute the inertial tensor for each conformer
+    # t00 = time.time()
     Ip_axes_list = torch.zeros((len(masses_list), 3, 3)).to(T_fc_list.device)
     for i, (masses, coords) in enumerate(zip(masses_list, coords_list)):
         Ip_axes_i, _, _ = compute_principal_axes_torch(masses, coords)
         Ip_axes_list[i] = Ip_axes_i
+    # t1 = time.time()
+    # next define 3 vectors to create alignment matrix
+    corner_point = torch.tensor((0, 1, 1)).to(T_fc_list.device).float()
+    top_corner_point = torch.ones(3).to(T_fc_list.device)
+    alignment_target_list = torch.zeros_like(Ip_axes_list)
+    for i, (T_fc, coords) in enumerate(zip(T_fc_list, coords_list)):
+        # alignment_target_list[i, 2, :] = torch.inner(T_fc, top_corner_point)
+        #
+        # t0 = torch.inner(torch.inner(T_fc, corner_point), alignment_target_list[i, 2, :]) / torch.inner(alignment_target_list[i, 2, :], alignment_target_list[i, 2, :])
+        # P0 = alignment_target_list[i, 2, :] * t0  # point nearest to (0,1,1)
 
+        vec = torch.inner(T_fc, top_corner_point)
+        vec2 = torch.inner(T_fc, corner_point)
+        target1 = vec / torch.linalg.norm(vec)
+        target2 = vec2 - target1 * torch.inner(vec2, target1)
+
+        # I3_direction = torch.sign(torch.dot(Ip_axes_list[i, 0], torch.cross(Ip_axes_list[i, 1], Ip_axes_list[i, 2])))
+        if torch.sign(torch.dot(Ip_axes_list[i, 0], torch.cross(Ip_axes_list[i, 1], Ip_axes_list[i, 2]))) > 0:
+            target3 = torch.cross(target2, target1)
+        else:
+            target3 = -torch.cross(target2, target1)
+
+        alignment_target_list[i] = torch.cat((target3[None,:],target2[None,:],target1[None,:]),dim=0)
+
+        #alignment_target_list[i, 2, :] = vec / torch.linalg.norm(vec)
+
+        # P0 = alignment_target_list[i, 2, :] * torch.inner(torch.inner(T_fc, corner_point), alignment_target_list[i, 2, :])  # point nearest to (0,1,1)
+        #alignment_target_list[i, 1, :] = torch.inner(T_fc, corner_point) - alignment_target_list[i, 2, :] * torch.inner(torch.inner(T_fc, corner_point), alignment_target_list[i, 2, :])
+
+        # I3_direction = torch.sign(torch.dot(Ip_axes_list[i, 0], torch.cross(Ip_axes_list[i, 1], Ip_axes_list[i, 2])))
+        # if torch.sign(torch.dot(Ip_axes_list[i, 0], torch.cross(Ip_axes_list[i, 1], Ip_axes_list[i, 2]))) > 0:
+        #     alignment_target_list[i, 0, :] = torch.cross(alignment_target_list[i, 1, :], alignment_target_list[i, 2, :])
+        # else:
+        #     alignment_target_list[i, 0, :] = -torch.cross(alignment_target_list[i, 1, :], alignment_target_list[i, 2, :])
+        # elif I3_direction < 0:
+        #     alignment_target_list[i, 0, :] = -torch.cross(alignment_target_list[i, 1, :], alignment_target_list[i, 2, :])
+        # else:
+        #     print('I3 is somehow perpendicular to itself! Bad!')
+        #     alignment_target_list[i, 0, :] = torch.cross(alignment_target_list[i, 1, :], alignment_target_list[i, 2, :])
+
+    # t2 = time.time()
+    normed_alignment_target_list = torch.div(alignment_target_list, torch.linalg.norm(alignment_target_list, dim=2)[:, :, None])
+
+    # t3 = time.time()
+    std_mat_list = torch.zeros_like(Ip_axes_list)
+    for i, (alignment_target, Ip_axes) in enumerate(zip(normed_alignment_target_list, Ip_axes_list)):
+        std_mat_list[i] = alignment_target.T @ torch.linalg.inv(Ip_axes).T
+    # t4 = time.time()
+
+    # tot_time = t4-t00
+    # print(f'inertial took {t1 - t00:.1f} or {(t1 - t00) / tot_time:.2f} fraction')
+    # print(f'alignment targets took {t2 - t1:.1f} or {(t2 - t1) / tot_time:.2f} fraction')
+    # print(f'alignment norming took {t3 - t2:.1f} or {(t3 - t2) / tot_time:.2f} fraction')
+    # print(f'std mat generation took {t4 - t3:.1f} or {(t4 - t3) / tot_time:.2f} fraction')
+
+    return std_mat_list
+
+
+def orig_fast_differentiable_standard_rotation_matrix(masses_list, coords_list, T_fc_list):
+    t00 = time.time()
+    Ip_axes_list = torch.zeros((len(masses_list), 3, 3)).to(T_fc_list.device)
+    for i, (masses, coords) in enumerate(zip(masses_list, coords_list)):
+        Ip_axes_i, _, _ = compute_principal_axes_torch(masses, coords)
+        Ip_axes_list[i] = Ip_axes_i
+    t1 = time.time()
     # next define 3 vectors to create alignment matrix
     corner_point = torch.tensor((0, 1, 1)).to(T_fc_list.device).float()
     top_corner_point = torch.ones(3).to(T_fc_list.device)
@@ -789,11 +861,20 @@ def fast_differentiable_standard_rotation_matrix(masses_list, coords_list, T_fc_
             print('I3 is somehow perpendicular to itself! Bad!')
             alignment_target_list[i, 0, :] = torch.cross(alignment_target_list[i, 1, :], alignment_target_list[i, 2, :])
 
+    t2 = time.time()
     normed_alignment_target_list = torch.div(alignment_target_list, torch.linalg.norm(alignment_target_list, dim=2)[:, :, None])
 
+    t3 = time.time()
     std_mat_list = torch.zeros_like(Ip_axes_list)
     for i, (alignment_target, Ip_axes) in enumerate(zip(normed_alignment_target_list, Ip_axes_list)):
         std_mat_list[i] = alignment_target.T @ torch.linalg.inv(Ip_axes).T
+    t4 = time.time()
+
+    tot_time = t4 - t00
+    print(f'inertial took {t1 - t00:.1f} or {(t1 - t00) / tot_time:.2f} fraction')
+    print(f'alignment targets took {t2 - t1:.1f} or {(t2 - t1) / tot_time:.2f} fraction')
+    print(f'alignment norming took {t3 - t2:.1f} or {(t3 - t2) / tot_time:.2f} fraction')
+    print(f'std mat generation took {t4 - t3:.1f} or {(t4 - t3) / tot_time:.2f} fraction')
 
     return std_mat_list
 
@@ -811,11 +892,10 @@ def fast_differentiable_applied_rotation_matrix(rotations_list):
 
     for i, angles in enumerate(rotations_list):
         rotation_matrix_list[i] = torch.matmul(
-            torch.Tensor(((cos_a[i, 0], -sin_a[i, 0], zero), (sin_a[i, 0], cos_a[i, 0], zero), (zero, zero, one))),
             torch.matmul(
-                torch.Tensor(((one, zero, zero), (zero, cos_a[i, 1], -sin_a[i, 1]), (zero, sin_a[i, 1], cos_a[i, 1]))),
-                torch.Tensor(((cos_a[i, 2], zero, sin_a[i, 2]), (zero, one, zero), (-sin_a[i, 2], zero, cos_a[i, 2])))
-            )
+                torch.Tensor(((one, zero, zero), (zero, cos_a[i, 0], -sin_a[i, 0]), (zero, sin_a[i, 0], cos_a[i, 0]))),
+                torch.Tensor(((cos_a[i, 1], zero, sin_a[i, 1]), (zero, one, zero), (-sin_a[i, 1], zero, cos_a[i, 1])))
+            ), torch.Tensor(((cos_a[i, 2], -sin_a[i, 2], zero), (sin_a[i, 2], cos_a[i, 2], zero), (zero, zero, one))),
         )
 
     return rotation_matrix_list
@@ -829,13 +909,40 @@ def fast_differentiable_get_canonical_coords(mol_position, sym_ops_list):
 
     canonical_fractional_positions_list = torch.zeros((len(mol_position), 3)).to(mol_position.device)
     for i, (set_position, sym_ops) in enumerate(zip(mol_position, sym_ops_list)):
+        # affine_points = torch.cat((set_position, torch.ones(set_position.shape[:-1] + (1,)).to(set_position.device)), dim=-1)
+        vals = torch.zeros((len(sym_ops), 3))
+        for zv in range(len(sym_ops)):
+            vals[zv] = torch.inner(sym_ops[zv], torch.cat((set_position, torch.ones(set_position.shape[:-1] + (1,)).to(set_position.device)), dim=-1).T).T[:-1]
+        if any(vals.flatten() < 0) or any(vals.flatten() > 1):
+            centroids = vals - torch.floor(vals)
+        else:
+            centroids = vals
+        # canonical_ind = torch.argmin(torch.linalg.norm(centroids, dim=1))
+        # canonical_fractional_positions_list[i] = centroids[canonical_ind]
+        canonical_fractional_positions_list[i] = centroids[torch.argmin(torch.linalg.norm(centroids, dim=1))]
+
+    return canonical_fractional_positions_list
+
+
+def prev_fast_differentiable_get_canonical_coords(mol_position, sym_ops_list):
+    '''
+    use point symmetry to determine which image is closest to (0,0,0)
+    this is the 'canonical' conformer, to which we apply rotations
+    '''
+
+    canonical_fractional_positions_list = torch.zeros((len(mol_position), 3)).to(mol_position.device)
+    for i, (set_position, sym_ops) in enumerate(zip(mol_position, sym_ops_list)):
         affine_points = torch.cat((set_position, torch.ones(set_position.shape[:-1] + (1,)).to(set_position.device)), dim=-1)
         vals = torch.zeros((len(sym_ops), 3))
         for zv in range(len(sym_ops)):
             vals[zv] = torch.inner(sym_ops[zv], affine_points.T).T[:-1]
-        centroids = vals - torch.floor(vals)
-        canonical_ind = torch.argmin(torch.linalg.norm(centroids, dim=1))
-        canonical_fractional_positions_list[i] = centroids[canonical_ind]
+        if any(vals < 0) or any(vals > 1):
+            centroids = vals - torch.floor(vals)
+        else:
+            centroids = vals
+        # canonical_ind = torch.argmin(torch.linalg.norm(centroids, dim=1))
+        # canonical_fractional_positions_list[i] = centroids[canonical_ind]
+        canonical_fractional_positions_list[i] = centroids[torch.argmin(torch.linalg.norm(centroids, dim=1))]
 
     return canonical_fractional_positions_list
 
@@ -872,7 +979,11 @@ def fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_
         ref_cell = torch.zeros((z_value, len(coords_f), 3)).to(coords.device)
         for zv in range(z_value):
             dup_f = torch.inner(affine_points, sym_ops[zv])[..., :-1]
-            image_f = dup_f - torch.floor(dup_f)
+            centroid_f = dup_f.mean(0)
+            if (any(centroid_f < 0)) or (any(centroid_f > 1)):
+                image_f = dup_f - torch.floor(centroid_f)
+            else:
+                image_f = dup_f
             ref_cell[zv] = torch.inner(T_fc, image_f).T
 
         reference_cell_list.append(ref_cell)
@@ -880,12 +991,36 @@ def fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_
     return reference_cell_list
 
 
+def prev_fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values):
+    '''
+    apply point symmetries to single molecules
+    '''
+
+    reference_cell_list = []
+    for i, (coords, sym_ops, T_cf, T_fc, z_value) in enumerate(zip(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)):
+        coords_f = torch.inner(T_cf, coords).T
+        affine_points = torch.cat((coords_f, torch.ones(coords_f.shape[:-1] + (1,)).to(coords.device)), dim=-1)
+
+        ref_cell = torch.zeros((z_value, len(coords_f), 3)).to(coords.device)
+        for zv in range(z_value):
+            dup_f = torch.inner(affine_points, sym_ops[zv])[..., :-1]
+            centroid_f = dup_f.mean(0)
+            if (any(centroid_f < 0)) or (any(centroid_f > 1)):
+                image_f = dup_f - torch.floor(centroid_f)
+            else:
+                image_f = dup_f
+            ref_cell[zv] = torch.inner(T_fc, image_f).T
+
+        reference_cell_list.append(ref_cell)
+
+    return reference_cell_list
+
 def fast_differentiable_cell_vectors(T_fc_list):
     '''
     convert fractional vectors (1,1,1) into cartesian cell vectors (a,b,c)
     '''
     eyevec = torch.tile(torch.eye(3).to(T_fc_list.device), (len(T_fc_list), 1, 1))
-    return torch.matmul(T_fc_list, eyevec)
+    return torch.matmul(T_fc_list, eyevec).permute(0, 2, 1)
 
 
 def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values):
@@ -900,7 +1035,7 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
 
     supercell_list = []
     supercell_atoms_list = []
-    for i, (ref_cell, cell_vectors, atoms,z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list,z_values)):
+    for i, (ref_cell, cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, z_values)):
         supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(27, 1)  # duplicate over 3x3x3 supercell
         cart_translations_i = torch.mul(cell_vectors.tile(27, 1), sorted_fractional_translations.reshape(81, 1))
         cart_translations = torch.stack(cart_translations_i.split(3, dim=0), dim=0).sum(1)
@@ -911,7 +1046,7 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
 
         supercell_atoms = atoms.repeat(27 * z_value, 1)
         ref_cell_inds = torch.ones(len(supercell_atoms)).to(ref_cell.device)[:, None]
-        ref_cell_inds[len(atoms):, 0] = 0
+        ref_cell_inds[len(atoms) * z_value:, 0] = 0
         supercell_atoms_w_ind = torch.cat((supercell_atoms, ref_cell_inds), dim=1)  # inside main unit cell
 
         supercell_atoms_list.append(

@@ -33,8 +33,7 @@ def set_lr(schedulers, optimizer, lr_schedule, learning_rate, max_lr, err_tr, hi
             if lr > learning_rate:
                 schedulers[2].step()  # start reducing lr
     lr = optimizer.param_groups[0]['lr']
-    print("Learning rate is {:.5f}".format(lr))
-    return optimizer
+    return optimizer, lr
 
 
 def computeF1(matrix, nClasses):
