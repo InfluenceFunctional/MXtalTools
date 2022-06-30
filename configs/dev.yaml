@@ -1,4 +1,4 @@
-test_mode: False
+test_mode: True
 machine: "local"
 device: "cuda"
 skip_run_init: False
@@ -53,7 +53,7 @@ include_pgs: null #[222, -1, 2/m, 2, mm2, mmm, m, 1, 422]
 # batching & convergence
 auto_batch_sizing: True
 max_batch_size: 2000
-auto_batch_reduction: 0.25
+auto_batch_reduction: 0.4
 max_epochs: 1000
 history: 200
 
@@ -104,7 +104,7 @@ generator:
   graph_model: mike
   graph_convolution_layers: 8
   graph_filters: 32
-  atom_embedding_size: 32
+  atom_embedding_size: 64
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
@@ -117,7 +117,7 @@ generator:
   pooling: attention
 
   num_fc_layers: 8
-  fc_depth: 32
+  fc_depth: 128
   activation: "gelu"
   fc_dropout_probability: 0.1
   fc_norm_mode: layer

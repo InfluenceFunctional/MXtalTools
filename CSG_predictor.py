@@ -525,7 +525,6 @@ class Predictor():
                 elif config.train_generator_density and not config.train_generator_adversarially:
                     g_losses = auxiliary_loss.float()
                     g_aux_losses.append(auxiliary_loss.cpu().detach().numpy())
-                    g_aux_losses.append(auxiliary_loss.cpu().detach().numpy())
                     g_aux_pred.append(auxiliary_prediction)
                     g_aux_true.append(auxiliary_target)
 
