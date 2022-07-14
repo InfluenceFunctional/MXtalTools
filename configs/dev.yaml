@@ -9,8 +9,9 @@ anomaly_detection: False
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
 gan_loss: standard
 train_generator_density: True
-train_generator_as_flow: False
+train_generator_as_flow: True
 train_generator_adversarially: True
+train_generator_range_cutoff: True # todo code this up
 train_discriminator_adversarially: True
 
 seeds:
@@ -29,7 +30,7 @@ wandb:
 
 # dataset curation
 target: crystal spacegroup setting # not currently used
-dataset_length: 10000
+dataset_length: 1000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 200
@@ -52,6 +53,7 @@ include_pgs: null #[222, -1, 2/m, 2, mm2, mmm, m, 1, 422]
 
 # batching & convergence
 auto_batch_sizing: True
+min_batch_size: 20
 max_batch_size: 2000
 auto_batch_reduction: 0.4
 max_epochs: 1000
@@ -85,26 +87,26 @@ discriminator:
 
   num_fc_layers: 4
   fc_depth: 16
-  activation: leaky relu
+  activation: gelu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer
 
 # generator optimizer and model
 generator:
   optimizer: "adamw"
-  learning_rate: 0.0001
-  max_lr: 0.001
+  learning_rate: 0.00005
+  max_lr: 0.0001
   lr_schedule: True
   beta1: 0.9
   beta2: 0.999
   weight_decay: 0.001
   convergence_eps: 0.00001
 
-  model_type: mlp # or nf
+  model_type: nf # mlp or nf
   graph_model: mike
   graph_convolution_layers: 8
-  graph_filters: 32
-  atom_embedding_size: 64
+  graph_filters: 16
+  atom_embedding_size: 16
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
@@ -116,19 +118,19 @@ generator:
   add_spherical_basis: False # mikenet only
   pooling: attention
 
-  num_fc_layers: 8
-  fc_depth: 128
-  activation: "gelu"
+  num_fc_layers: 4
+  fc_depth: 16
+  activation: gelu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer
 
-  num_samples: 10000
+  num_samples: 1000
   prior: multivariate normal
   conditional_modelling: True # false will likely not run at all
   conditioning_mode: graph model # molecule features or graph model
 
-  num_flow_layers: 4
-  flow_depth: 32
+  num_flow_layers: 8
+  flow_depth: 64
   flow_basis_fns: 8
   flow_type: nsf_cl
 

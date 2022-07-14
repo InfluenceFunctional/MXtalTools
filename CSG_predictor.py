@@ -123,13 +123,6 @@ class Predictor():
 
         return metrics_dict
 
-    def update_metrics(self, epoch, metrics_dict, err_tr, err_te, lr):
-        metrics_dict['train loss'].append(torch.mean(torch.stack(err_tr)).cpu().detach().numpy())
-        metrics_dict['test loss'].append(torch.mean(torch.stack(err_te)).cpu().detach().numpy())
-        metrics_dict['epoch'].append(epoch)
-        metrics_dict['learning rate'].append(lr)
-
-        return metrics_dict
 
     def update_gan_metrics(self, epoch, metrics_dict, d_err_tr, d_err_te, g_err_tr, g_err_te, d_lr, g_lr):
         metrics_dict['epoch'].append(epoch)
@@ -236,7 +229,7 @@ class Predictor():
         try larger batches until it crashes
         '''
         finished = False
-        init_batch_size = 2
+        init_batch_size = config.min_batch_size.real
         max_batch_size = config.max_batch_size.real
         batch_reduction_factor = config.auto_batch_reduction
 
@@ -260,7 +253,7 @@ class Predictor():
             try:
                 _ = self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
                                    g_optimizer=g_optimizer, d_optimizer=d_optimizer,
-                                   update_gradients=True, record_stats=True, iteration_override=2)  # train & compute test loss
+                                   update_gradients=True, record_stats=True, iteration_override=2)
 
                 # if successful, increase the batch and try again
                 batch_size = max(batch_size + 2, int(batch_size * increment))
@@ -299,7 +292,6 @@ class Predictor():
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=self.config.wandb.experiment_tag):
             # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken
             # print(config)
-            logging.info('test message')
 
             config = self.config  # go with hand-built config
 
@@ -328,6 +320,7 @@ class Predictor():
                 print('Getting dataloaders for pre-determined batch size')
                 train_loader, test_loader = get_dataloaders(dataset_builder, config)
                 config.final_batch_size = config.max_batch_size
+            del dataset_builder
 
             print("Training batch size set to {}".format(config.final_batch_size))
             # model, optimizer, schedulers
@@ -340,6 +333,7 @@ class Predictor():
             if config.device.lower() == 'cuda':
                 print('Putting models on CUDA')
                 torch.backends.cudnn.benchmark = True
+                torch.cuda.empty_cache()
                 generator.cuda()
                 discriminator.cuda()
 
@@ -351,9 +345,7 @@ class Predictor():
 
             # training loop
             d_hit_max_lr, g_hit_max_lr, converged, epoch = False, False, False, 0
-            # if config.anomaly_detection:
-            #     torch.autograd.set_detect_anomaly = True
-            with torch.autograd.set_detect_anomaly(True):
+            with torch.autograd.set_detect_anomaly(config.anomaly_detection):
                 while (epoch < config.max_epochs) and not converged:
                     # very cool
                     print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
@@ -362,68 +354,67 @@ class Predictor():
                     # very cool
                     print("Starting Epoch {}".format(epoch))  # index from 0, very cool
 
-                    if 'gan'.lower() in config.mode:
-                        '''
-                        train
-                        '''
-                        d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train, time_train_cell_gen = \
-                            self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
-                                           g_optimizer=g_optimizer, d_optimizer=d_optimizer,
-                                           update_gradients=True, record_stats=True)  # train & compute test loss
+                    '''
+                    train
+                    '''
+                    d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train, time_train_cell_gen = \
+                        self.gan_epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                                       g_optimizer=g_optimizer, d_optimizer=d_optimizer,
+                                       update_gradients=True, record_stats=True)  # train & compute test loss
 
-                        d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test, time_test_cell_gen = \
-                            self.gan_epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
-                                           update_gradients=False, record_stats=True)  # compute loss on test set
+                    d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test, time_test_cell_gen = \
+                        self.gan_epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
+                                       update_gradients=False, record_stats=True)  # compute loss on test set
 
-                        print('epoch={}; d_nll_tr={:.5f}; d_nll_te={:.5f}; g_nll_tr={:.5f}; g_nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s; time_tr_cell_gen={:.1f}s; time_te_cell_gen={:.1f}s'.format(
-                            epoch, torch.mean(torch.stack(d_err_tr)), torch.mean(torch.stack(d_err_te)),
-                            torch.mean(torch.stack(g_err_tr)), torch.mean(torch.stack(g_err_te)),
-                            time_train, time_test, time_train_cell_gen, time_test_cell_gen))
+                    print('epoch={}; d_nll_tr={:.5f}; d_nll_te={:.5f}; g_nll_tr={:.5f}; g_nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s; time_tr_cell_gen={:.1f}s; time_te_cell_gen={:.1f}s'.format(
+                        epoch, torch.mean(torch.stack(d_err_tr)), torch.mean(torch.stack(d_err_te)),
+                        torch.mean(torch.stack(g_err_tr)), torch.mean(torch.stack(g_err_te)),
+                        time_train, time_test, time_train_cell_gen, time_test_cell_gen))
 
-                        '''
-                        update LR
-                        '''
-                        # update learning rate
-                        d_optimizer, d_lr = set_lr(d_schedulers, d_optimizer, config.discriminator.lr_schedule,
-                                                   config.discriminator.learning_rate, config.discriminator.max_lr, d_err_tr, d_hit_max_lr)
-                        d_learning_rate = d_optimizer.param_groups[0]['lr']
-                        if d_learning_rate >= config.discriminator.max_lr: d_hit_max_lr = True
+                    '''
+                    update LR
+                    '''
+                    # update learning rate
+                    d_optimizer, d_lr = set_lr(d_schedulers, d_optimizer, config.discriminator.lr_schedule,
+                                               config.discriminator.learning_rate, config.discriminator.max_lr, d_err_tr, d_hit_max_lr)
+                    d_learning_rate = d_optimizer.param_groups[0]['lr']
+                    if d_learning_rate >= config.discriminator.max_lr: d_hit_max_lr = True
 
-                        # update learning rate
-                        g_optimizer, g_lr = set_lr(g_schedulers, g_optimizer, config.generator.lr_schedule,
-                                                   config.generator.learning_rate, config.generator.max_lr, g_err_tr, g_hit_max_lr)
-                        g_learning_rate = g_optimizer.param_groups[0]['lr']
-                        if g_learning_rate >= config.generator.max_lr: g_hit_max_lr = True
+                    # update learning rate
+                    g_optimizer, g_lr = set_lr(g_schedulers, g_optimizer, config.generator.lr_schedule,
+                                               config.generator.learning_rate, config.generator.max_lr, g_err_tr, g_hit_max_lr)
+                    g_learning_rate = g_optimizer.param_groups[0]['lr']
+                    if g_learning_rate >= config.generator.max_lr: g_hit_max_lr = True
 
-                        print(f"Learning rates are d={d_lr:.5f}, g={g_lr:.5f}")
+                    print(f"Learning rates are d={d_lr:.5f}, g={g_lr:.5f}")
 
-                        '''
-                        logging
-                        '''
-                        # logging
-                        metrics_dict = self.update_gan_metrics(
-                            epoch, metrics_dict, d_err_tr, d_err_te,
-                            g_err_tr, g_err_te, d_learning_rate, g_learning_rate)
+                    '''
+                    logging
+                    '''
+                    # logging
+                    metrics_dict = self.update_gan_metrics(
+                        epoch, metrics_dict, d_err_tr, d_err_te,
+                        g_err_tr, g_err_te, d_learning_rate, g_learning_rate)
 
-                        self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict, d_tr_record, d_te_record, g_tr_record, g_te_record)
-                        if epoch % config.wandb.sample_reporting_frequency == 0:
-                            self.log_gan_accuracy(epoch, dataset_builder, train_loader, test_loader,
-                                                  metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
-                                                  train_epoch_stats_dict, test_epoch_stats_dict, config,
-                                                  generator, discriminator, wandb_log_figures=config.wandb.log_figures)
+                    self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict, d_tr_record, d_te_record, g_tr_record, g_te_record)
+                    if epoch % config.wandb.sample_reporting_frequency == 0:
+                        self.log_gan_accuracy(epoch, train_loader, test_loader,
+                                              metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
+                                              train_epoch_stats_dict, test_epoch_stats_dict, config,
+                                              generator, discriminator, wandb_log_figures=config.wandb.log_figures)
 
-                        '''
-                        convergence checks
-                        '''
+                    '''
+                    convergence checks
+                    '''
 
-                        # check for convergence
-                        if checkConvergence(metrics_dict['generator test loss'], config.history, config.generator.convergence_eps) and (epoch > config.history + 2):
-                            config.finished = True
-                            self.log_gan_accuracy(epoch, dataset_builder, train_loader, test_loader,
-                                                  metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
-                                                  train_epoch_stats_dict, test_epoch_stats_dict, config,
-                                                  generator, discriminator, wandb_log_figures=config.wandb.log_figures)
-                            break
+                    # check for convergence
+                    if checkConvergence(metrics_dict['generator test loss'], config.history, config.generator.convergence_eps) and (epoch > config.history + 2):
+                        config.finished = True
+                        self.log_gan_accuracy(epoch, train_loader, test_loader,
+                                              metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
+                                              train_epoch_stats_dict, test_epoch_stats_dict, config,
+                                              generator, discriminator, wandb_log_figures=config.wandb.log_figures)
+                        break
 
                     epoch += 1
 
@@ -502,7 +493,7 @@ class Predictor():
             if any((config.train_generator_density, config.train_generator_adversarially)):
 
                 adversarial_score, generated_samples, auxiliary_loss, auxiliary_prediction, auxiliary_target, generated_pairwise_distances, cell_gen_time = \
-                    self.train_generator(generator, discriminator, config, data, i)
+                    self.train_generator(generator, discriminator, config, data.clone(), i)
 
                 total_cell_time += cell_gen_time
                 if adversarial_score is not None:
@@ -547,17 +538,22 @@ class Predictor():
                 g_loss_record.extend(torch.zeros(data.num_graphs))
 
             # flow loss # totally separate thing
-            if config.train_generator_as_flow and ('flow' in config.generator.model_type):
-                g_flow_losses = self.flow_iter(generator, data)
+            if config.train_generator_as_flow:
+                assert config.generator.model_type == 'nf'
+
+                g_flow_losses = self.flow_iter(generator, data.to(config.device))
 
                 g_flow_loss = g_flow_losses.mean()
                 g_flow_err.append(g_flow_loss.data.cpu())  # average loss
-                g_flow_loss_record.extend(g_flow_losses.cpu().detach().numpy())  # loss distribution
+                g_flow_loss_record.append(g_flow_losses.cpu().detach().numpy())  # loss distribution
 
                 if update_gradients:
                     g_optimizer.zero_grad()  # reset gradients from previous passes
                     g_flow_loss.backward()  # back-propagation
                     g_optimizer.step()  # update parameters
+
+                generated_samples = generator(len(data.y[0]), z=None, conditions=data.to(config.device))
+                generated_samples_list.append(generated_samples.cpu().detach().numpy())
 
             if record_stats:
                 epoch_stats_dict['tracking features'].extend(data.y[2])
@@ -589,7 +585,7 @@ class Predictor():
 
         # discriminator score
         if config.gan_loss == 'wasserstein':
-            scores = F.softplus(output[:, 0])  # critic score - higher meaning better
+            scores = output[:,0] #F.softplus(output[:, 0])  # critic score - higher meaning more plausible
 
         elif config.gan_loss == 'standard':
             scores = F.softmax(output, dim=1)[:, -1]  # probability of 'yes'
@@ -921,7 +917,7 @@ class Predictor():
         # t2 = time.time()
         applied_rotation_list = fast_differentiable_applied_rotation_matrix(mol_rotation)
         # t3 = time.time()
-        canonical_mol_position = fast_differentiable_get_canonical_coords(mol_position, sym_ops_list)
+        canonical_mol_position = fast_differentiable_get_canonical_coords(mol_position, sym_ops_list, z_values)
         # t4 = time.time()
         # final_coords_list = fast_differentiable_apply_rotations_and_translations(
         #     standardization_rotation_list, applied_rotation_list, coords_list, masses_list, T_fc_list, canonical_mol_position)
@@ -1046,7 +1042,7 @@ class Predictor():
 
         return ref_cell_coords_c
 
-    def log_gan_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
+    def log_gan_accuracy(self, epoch, train_loader, test_loader,
                          metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
                          train_epoch_stats_dict, test_epoch_stats_dict, config,
                          generator, discriminator, wandb_log_figures=True):
@@ -1061,7 +1057,6 @@ class Predictor():
         Future: FF evaluations, polymorphs ranking
 
         :param epoch:
-        :param dataset_builder:
         :param train_loader:
         :param test_loader:
         :param metrics_dict:
@@ -1223,6 +1218,7 @@ class Predictor():
         return None
 
     def train_discriminator(self, generator, discriminator, config, data, i):
+
         generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
 
         t0 = time.time()
@@ -1230,9 +1226,9 @@ class Predictor():
         fake_supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone().to(generated_samples.device), config, generated_samples)
         t1 = time.time()
         if i % 10 == 0:
-            print('Batch {} supercell generation took {:.1f} seconds for {} samples'.format(i, round(t1 - t0, 2), data.num_graphs))
+            print('Batch {} real + fake supercell generation took {:.2f} seconds for {} samples'.format(i, round(t1 - t0, 2), data.num_graphs))
 
-        if config.device.lower() == 'cuda':
+        if config.device.lower() == 'cuda': # redundant
             real_supercell_data = real_supercell_data.cuda()
             fake_supercell_data = fake_supercell_data.cuda()
 
@@ -1256,7 +1252,7 @@ class Predictor():
             t1 = time.time()
 
             if i % 10 == 0:
-                print('Batch {} supercell generation took {:.1f} seconds for {} samples'.format(i, round(t1 - t0, 2), data.num_graphs))
+                print('Batch {} fake supercell generation took {:.2f} seconds for {} samples'.format(i, round(t1 - t0, 2), data.num_graphs))
 
             if config.device.lower() == 'cuda':
                 supercell_data = supercell_data.cuda()
@@ -1268,8 +1264,8 @@ class Predictor():
 
         else:
             discriminator_score = None
-            t1 = 0
-            t0 = 0
+            t0, t1 = 0, 0
+
 
         if config.train_generator_density:
             if not config.train_generator_adversarially:
@@ -1323,7 +1319,7 @@ class Predictor():
         train the generator via standard normalizing flow loss
         '''
 
-        zs, prior_logprob, log_det = generator(data)
-        logprob = prior_logprob + log_det
+        zs, prior_logprob, log_det = generator.nf_forward(data.y[0], conditions=data)
+        logprob = prior_logprob + log_det  # log probability of samples, which we want to maximize
 
-        return -(logprob)  # , prior_logprob.cpu().detach().numpy()
+        return -(logprob)  #

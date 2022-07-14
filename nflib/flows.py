@@ -51,18 +51,18 @@ class AffineConstantFlow(nn.Module):
         self.t = nn.Parameter(torch.randn(1, dim, requires_grad=True)) if shift else None
 
     def forward(self, x):
-        s = self.s if self.s is not None else x.new_zeros(x.size())
-        t = self.t if self.t is not None else x.new_zeros(x.size())
-        z = x * torch.exp(s) + t
-        log_det = torch.sum(s, dim=1)
+        #s = self.s if self.s is not None else x.new_zeros(x.size())
+        #t = self.t if self.t is not None else x.new_zeros(x.size())
+        z = x * torch.exp(self.s) + self.t
+        log_det = torch.sum(self.s, dim=1)
 
         return z, log_det
 
     def backward(self, z):
-        s = self.s if self.s is not None else z.new_zeros(z.size())
-        t = self.t if self.t is not None else z.new_zeros(z.size())
-        x = (z - t) * torch.exp(-s)
-        log_det = torch.sum(-s, dim=1)
+        #s = self.s if self.s is not None else z.new_zeros(z.size())
+        #t = self.t if self.t is not None else z.new_zeros(z.size())
+        x = (z - self.t) * torch.exp(-self.s)
+        log_det = torch.sum(-self.s, dim=1)
         return x, log_det
 
 
@@ -78,13 +78,29 @@ class ActNorm(AffineConstantFlow):
         self.data_dep_init_done = False
 
     def forward(self, x):
-        # first batch is used for init
-        if not self.data_dep_init_done:
-            assert self.s is not None and self.t is not None  # for now
-            self.s.data = (-torch.log(x.std(dim=0, keepdim=True))).detach()
-            self.t.data = (-(x * torch.exp(self.s)).mean(dim=0, keepdim=True)).detach()
-            self.data_dep_init_done = True
+        # first batch is used for init - only if it will return finite answers
+        if any((x.std(dim=0, keepdim = True) == 0)[0]):
+            pass # skip data dependent initialization
+        else:
+            if not self.data_dep_init_done:
+                assert self.s is not None and self.t is not None  # for now
+                self.s.data = (-torch.log(x.std(dim=0, keepdim=True))).detach() # if batch size is small or otherwise constant, such dimensions will read zero variance
+                self.t.data = (-(x * torch.exp(self.s)).mean(dim=0, keepdim=True)).detach()
+                self.data_dep_init_done = True
         return super().forward(x)
+
+    def backward(self, z):
+        ''' in backward direction s and t are defined differently '''
+        # first batch is used for init - only if it will return finite answers
+        if any((z.std(dim=0, keepdim = True) == 0)[0]):
+            pass # skip data dependent initialization
+        else:
+            if not self.data_dep_init_done:
+                assert self.s is not None and self.t is not None  # for now
+                self.s.data = (torch.log(z.std(dim=0, keepdim=True))).detach() # if batch size is small or otherwise constant, such dimensions will read zero variance
+                self.t.data = (z.mean(dim=0, keepdim=True)).detach()
+                self.data_dep_init_done = True
+        return super().backward(z)
 
 
 class AffineHalfFlow(nn.Module):

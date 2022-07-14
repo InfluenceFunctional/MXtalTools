@@ -86,14 +86,6 @@ class crystal_generator(nn.Module):
     def sample_latent(self, n_samples):
         return self.prior.sample((n_samples,)).to(self.device)
 
-    def nf_forward(self, data):
-        '''
-        x-->z (forward, in the conventional sense)
-        '''
-        zs, prior_logprob, log_det = self.model(data.y[0], conditions=data)  # y[0] is are the flow dimensions
-
-        return zs, prior_logprob, log_det
-
     def forward(self, n_samples, z=None, conditions=None):
         if z is None:  # sample random numbers from simple prior
             z = self.sample_latent(n_samples)
@@ -103,11 +95,17 @@ class crystal_generator(nn.Module):
             conditions = self.conditioner(conditions)
 
         # run through model
-        if self.generator_model_type is not 'nf':
+        if not 'nf' in self.generator_model_type:
             return self.model(z, conditions=conditions)
         else:
             x, _ = self.model.backward(z, conditions=conditions)  # normalizing flow runs backwards from z->x
             return x
+
+    def nf_forward(self, x, conditions=None):
+        if conditions is not None:
+            conditions = self.conditioner(conditions)
+
+        return self.model.forward(x, conditions=conditions)
 
 
 class crystal_nf(nn.Module):
@@ -122,20 +120,7 @@ class crystal_nf(nn.Module):
         if config.generator.conditional_modelling:
             self.n_conditional_features = dataDims['n conditional features']
             if config.generator.conditioning_mode == 'graph model':
-                self.conditioner = molecule_graph_model(config, dataDims, return_latent=True)
-                self.n_conditional_features = config.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
-            elif config.generator.conditioning_mode == 'molecule features':
-                self.conditioner = general_MLP(layers=2,
-                                               filters=32,
-                                               norm=config.generator.fc_norm_mode,
-                                               dropout=config.generator.fc_dropout_probability,
-                                               input_dim=self.n_conditional_features,
-                                               output_dim=self.n_conditional_features,
-                                               conditioning_dim=0,
-                                               seed=config.seeds.model)
-            else:
-                print(config.generator.conditioning_mode + ' is not an implemented conditioner!')
-                sys.exit()
+                self.n_conditional_features = config.generator.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
         else:
             self.n_conditional_features = 0
 
@@ -158,29 +143,20 @@ class crystal_nf(nn.Module):
         self.flow = NormalizingFlow2(list(itertools.chain(*zip(norms, convs, flows))), self.n_conditional_features)
 
     def forward(self, x, conditions=None):
-        if conditions is not None:
-            conditions = self.conditioner(conditions)
+        zs, log_det = self.flow.forward(x.float(), conditions=conditions)
 
-        zs, log_det = self.flow.forward(x.y[0].float(), conditions=conditions)
-
-        prior_logprob = self.prior.log_prob(zs[-1].cpu()).view(x.y[0].size(0), -1).sum(1)
+        prior_logprob = self.prior.log_prob(zs.cpu()).view(x.size(0), -1).sum(1)
 
         return zs, prior_logprob.to(log_det.device), log_det
 
     def backward(self, z, conditions=None):
-        if conditions is not None:
-            conditions = self.conditioner(conditions)
-
-        xs, log_det = self.flow.backward(z.y[0].float(), conditions=conditions)
+        xs, log_det = self.flow.backward(z.float(), conditions=conditions)
 
         return xs, log_det
 
     def sample(self, num_samples, conditions=None):
         z = self.prior.sample((num_samples,)).to(self.device)
         prior_logprob = self.prior.log_prob(z.cpu())
-
-        if conditions is not None:
-            conditions = self.conditioner(conditions)
 
         xs, log_det = self.flow.backward(z.float(), conditions=conditions)
 
@@ -207,6 +183,7 @@ class NormalizingFlow2(nn.Module):
                 x, ld = flow.forward(torch.cat((x, conditions), dim=1))
             else:
                 x, ld = flow.forward(x)
+
             log_det += ld
 
         return x, log_det
@@ -214,11 +191,13 @@ class NormalizingFlow2(nn.Module):
     def backward(self, z, conditions=None):
         log_det = torch.zeros(len(z)).to(z.device)
 
-        for flow in self.flows[::-1]:
+        zz = []
+        for i, flow in enumerate(self.flows[::-1]):
             if ('nsf' in flow._get_name().lower()) and (self.conditioning_dims > 0):
                 z, ld = flow.backward(torch.cat((z, conditions), dim=1))
             else:
                 z, ld = flow.backward(z)
             log_det += ld
+            zz.append(z)
 
         return z, log_det

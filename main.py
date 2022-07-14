@@ -114,6 +114,7 @@ def add_args(parser):
     #  training settings
     parser.add_argument('--max_epochs', type=int, default=100)
     parser.add_argument('--history', type=int, default=5)
+    parser.add_argument('--min_batch_size', type=int, default=50)
     parser.add_argument('--max_batch_size', type=int, default=10000)
     add_bool_arg(parser, 'auto_batch_sizing', default=True)  # whether to densely connect dimenet outputs
     parser.add_argument('--auto_batch_reduction', type=float, default=0.2)  # leeway factor to reduce batch size at end of auto-sizing run
@@ -122,6 +123,7 @@ def add_args(parser):
 
     update_args2config(args2config, 'max_epochs')
     update_args2config(args2config, 'history')
+    update_args2config(args2config, 'min_batch_size')
     update_args2config(args2config, 'max_batch_size')
     update_args2config(args2config, 'auto_batch_sizing')
     update_args2config(args2config, 'auto_batch_reduction')
@@ -270,12 +272,14 @@ def add_args(parser):
     add_bool_arg(parser, 'train_generator_density', default=True)  # train on cell volume
     add_bool_arg(parser, 'train_generator_as_flow', default=False)  # train normalizing flow generator via flow loss
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
+    add_bool_arg(parser, 'train_generator_range_cutoff', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
 
     update_args2config(args2config, 'gan_loss')
     update_args2config(args2config, 'train_generator_density')
     update_args2config(args2config, 'train_generator_as_flow')
     update_args2config(args2config, 'train_generator_adversarially')
+    update_args2config(args2config, 'train_generator_range_cutoff')
     update_args2config(args2config, 'train_discriminator_adversarially')
 
     return parser, args2config
@@ -293,9 +297,9 @@ def process_config(config):
 
     if config.test_mode:
         config.max_batch_size = 50
-        config.auto_batch_sizing = False
+        #config.auto_batch_sizing = False
         config.num_samples = 1000
-        config.anomaly_detection = True
+        config.anomaly_detection = False
         if config.machine == 'cluster':
             config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
         else:
@@ -304,7 +308,7 @@ def process_config(config):
     return config
 
 
-# =====================================
+# ====================================
 if __name__ == '__main__':
     '''
     parse arguments and generate config namespace
