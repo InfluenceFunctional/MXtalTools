@@ -91,6 +91,7 @@ class crystal_discriminator(nn.Module):
         mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch).float())  # not actually pooling here, as the values are all the same for each molecule
 
         x = self.gnn_mlp(x, conditions=mol_feats)
+
         if return_dists:
             # noinspection PyUnboundLocalVariable
             return self.output_fc(x), dists # return pairwise distances on the molecule graph

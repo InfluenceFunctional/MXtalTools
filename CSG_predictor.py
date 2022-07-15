@@ -962,6 +962,58 @@ class Predictor():
 
         return supercell_data.to(config.device), z_values, generated_cell_volumes.to(config.device)
 
+
+    def fast_real_supercells(self, supercell_data, config, do_cpu=True):
+        '''
+        should be faster than the old way
+        '''
+        sg_numbers = [int(supercell_data.y[2][i][self.sg_number_ind]) for i in range(supercell_data.num_graphs)]
+        # lattices = [self.lattice_type[number] for number in sg_numbers]
+        # t0 = time.time()
+
+        if do_cpu:
+            supercell_data = supercell_data.cpu()
+
+        cell_lengths = torch.stack([torch.tensor(supercell_data.y[2][i][self.cell_length_inds]) for i in range(supercell_data.num_graphs)])
+        cell_angles = torch.stack([torch.tensor(supercell_data.y[2][i][self.cell_angle_inds]) for i in range(supercell_data.num_graphs)])
+
+        T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles)
+
+        coords_list = []
+        masses_list = []
+        atoms_list = []
+        for i in range(supercell_data.num_graphs):
+            atoms_i = supercell_data.x[supercell_data.batch == i]
+            atomic_numbers = atoms_i[:, 0]
+            # heavy_atom_inds = torch.argwhere(atomic_numbers > 1)[:, 0]
+            atoms_list.append(atoms_i)
+            coords_list.append(supercell_data.pos[supercell_data.batch == i])
+            masses_list.append(torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(supercell_data.x.device))
+
+        sym_ops_list = [torch.Tensor(self.sym_ops[sg_numbers[i]]).to(supercell_data.x.device) for i in range(len(sg_numbers))]
+        z_values = [len(sym_ops) for sym_ops in sym_ops_list]
+
+        reference_cell_list = [torch.tensor(supercell_data.y[3][i][:, :, :3]) for i in range(supercell_data.num_graphs)]
+        cell_vector_list = fast_differentiable_cell_vectors(T_fc_list)
+        supercell_list, supercell_atoms_list = fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values)
+
+        for i in range(supercell_data.num_graphs):
+            if i == 0:
+                new_batch = torch.ones(len(supercell_atoms_list[i])).int() * i
+                new_ptr = torch.zeros(supercell_data.num_graphs)
+            else:
+                new_batch = torch.cat((new_batch, torch.ones(len(supercell_atoms_list[i])).int() * i))
+                new_ptr[i] = new_ptr[-1] + len(supercell_list[i])
+
+        # update dataloader with cell info
+        supercell_data.x = torch.cat(supercell_atoms_list).type(dtype=torch.float32)
+        supercell_data.pos = torch.cat(supercell_list).type(dtype=torch.float32)
+        supercell_data.batch = new_batch.type(dtype=torch.int64)
+        supercell_data.ptr = new_ptr.type(dtype=torch.int64)
+
+        return supercell_data.to(config.device)
+
+
     def real_supercells(self, supercell_data, config):
         '''
         test code for on-the-fly cell generation
@@ -1236,7 +1288,7 @@ class Predictor():
         generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
 
         t0 = time.time()
-        real_supercell_data = self.real_supercells(data.clone(), config)
+        real_supercell_data = self.fast_real_supercells(data.clone(), config)
         fake_supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone().to(generated_samples.device), config, generated_samples)
         t1 = time.time()
         if i % 10 == 0:
@@ -1325,8 +1377,9 @@ class Predictor():
         # generated_packing_coefficients = raw_sample[:,0]
         csd_packing_coefficients = torch.Tensor(csd_packing).to(generated_packing_coefficients.device)
 
-        return (F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'),
-                generated_packing_coefficients.cpu().detach().numpy(), csd_packing_coefficients.cpu().detach().numpy())
+        aux_loss = torch.abs(torch.sqrt(F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))) # sqrt is a soft rescaling
+
+        return aux_loss, generated_packing_coefficients.cpu().detach().numpy(), csd_packing_coefficients.cpu().detach().numpy()
 
     def flow_iter(self, generator, data):
         '''

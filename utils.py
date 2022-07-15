@@ -46,16 +46,15 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     #mol_rotation[:, 1] = mol_rotation[:,1] / 2 # second rotation has half range by convention #torch.clip(mol_rotation[:, 1], min=-c_pi / 2, max=c_pi / 2)  # second rotation has shorter range
 
     # soft clipping to ensure correct range with finite gradients
-    cell_lengths = cell_lengths * stds[0:3] + means[0:3]
+    cell_lengths = cell_lengths * stds[0:3] + means[0:3] - 0.1 # compensate for adjustment in softplus below
     cell_angles = cell_angles * stds[3:6] + means[3:6]
     mol_position = mol_position * stds[6:9] + means[6:9]
     mol_rotation = mol_rotation * stds[9:12] + means[9:12]
 
-    cell_lengths = F.softplus(cell_lengths) # enforces positivity
-    cell_angles = F.tanh((cell_angles - means[3:6]) / torch.pi) * torch.pi + means[3:6] # tanh from 0 to pi  #
-    mol_position =  F.tanh(mol_position - means[6:9]) + means[6:9] # tanh from 0 to 1 #
+    cell_lengths = F.softplus(cell_lengths) + 0.1 # enforces positivity and nonzeroness
+    cell_angles = (F.tanh((cell_angles - torch.pi/2)*2)/2+torch.pi/2) # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
+    mol_position =  F.tanh((mol_position - 0.5)*2)/2 + 0.5 # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
     mol_rotation =  F.tanh(mol_rotation / torch.pi) * torch.pi # tanh from -pi to pi #
-
 
     for i in range(len(cell_lengths)):
         if enforce_crystal_system:  # can alternately enforce this via auxiliary loss on the generator itself
@@ -86,6 +85,8 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
             # todo we now need a symmetry analyzer to tell us what we're building
             # don't assume a crystal system, but snap angles close to 90, to assist in precise symmetry
             cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.02] = torch.pi / 2
+
+
 
     return cell_lengths, cell_angles, mol_position, mol_rotation
 

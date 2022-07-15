@@ -124,6 +124,7 @@ class MikesGraphNet(torch.nn.Module):
             else:
                 x = x + convolution(x, rbf, edge_index) # nodes up to max(j) are updated, others ignored
 
+
             x = x + fc(x)  # feature-wise 1D convolution
 
             #x = x + global_agg(x, batch)  # aggregate global information to all nodes # CURRENTLY IDENTITY - DEPRECATED,
@@ -140,6 +141,7 @@ class MikesGraphNet(torch.nn.Module):
                         x[unit_cell_inds[0]:unit_cell_inds[0] + len(unit_cell_inds) * n_repeats, :] = x[unit_cell_inds].repeat(n_repeats,1) # copy the first unit cell to all periodic images
                 else: # on the final convolutional block, do not broadcast the reference cell
                     x = x[keep_cell_inds] # reduce the output to only the nodes of the reference cell - outer nodes are just copies anyway, so this gets the same information with less memory / compute overhead
+
 
         if return_dists:
             return self.output_layer(x), dist

@@ -513,7 +513,6 @@ class general_MLP(nn.Module):
         self.output_layer = nn.Linear(self.n_filters, self.output_dim, bias=False)
 
     def forward(self, x, conditions=None):
-        #x = torch.zeros_like(x)
         if type(x) == torch_geometric.data.batch.DataBatch:  # extract conditions from trailing atomic features
             if len(x) == 1:
                 x = x.x[:,-self.input_dim:]
@@ -530,7 +529,11 @@ class general_MLP(nn.Module):
             x = torch.cat((x, conditions), dim=1)
 
         x = self.init_layer(x)
+
         for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
             x = x + dropout(activation(linear(norm(x)))) # residue
+
+
+
 
         return self.output_layer(x)
