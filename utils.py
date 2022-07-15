@@ -33,21 +33,32 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     # de-standardize everything
     means = torch.Tensor(dataDims['means']).to(cell_lengths.device)
     stds = torch.Tensor(dataDims['stds']).to(cell_lengths.device)
+    # cell_lengths = cell_lengths * stds[0:3] + means[0:3]
+    # cell_angles = cell_angles * stds[3:6] + means[3:6]
+    # mol_position = mol_position * stds[6:9] + means[6:9]
+    # mol_rotation = mol_rotation * stds[9:12] + means[9:12]
+
+    # apply appropriate limits to raw outputs
+    # cell_lengths = torch.clip(cell_lengths, min=1) # F.softplus(cell_lengths) # poisitive numbers #
+    # cell_angles = torch.clip(cell_angles, min=torch.pi * 0.1, max=c_pi) #F.sigmoid(cell_angles) * torch.pi # sigmoid from 0 to pi  #
+    # mol_position = torch.clip(mol_position, min=0, max=1) # F.sigmoid(mol_position) # sigmoid from 0 to 1 #
+    # mol_rotation =torch.clip(mol_rotation, min=-c_pi, max=c_pi) # F.tanh(mol_rotation) * torch.pi # tanh from -pi to pi #
+    #mol_rotation[:, 1] = mol_rotation[:,1] / 2 # second rotation has half range by convention #torch.clip(mol_rotation[:, 1], min=-c_pi / 2, max=c_pi / 2)  # second rotation has shorter range
+
+    # soft clipping to ensure correct range with finite gradients
     cell_lengths = cell_lengths * stds[0:3] + means[0:3]
     cell_angles = cell_angles * stds[3:6] + means[3:6]
-    cell_angles = cell_angles * torch.pi / 180
     mol_position = mol_position * stds[6:9] + means[6:9]
     mol_rotation = mol_rotation * stds[9:12] + means[9:12]
 
-    # apply appropriate limits to raw outputs
-    cell_lengths = torch.clip(cell_lengths, min=1) # F.softplus(cell_lengths) # poisitive numbers #
-    cell_angles = torch.clip(cell_angles, min=torch.pi * 0.1, max=c_pi) #F.sigmoid(cell_angles) * torch.pi # sigmoid from 0 to pi  #
-    mol_position = torch.clip(mol_position, min=0, max=1) # F.sigmoid(mol_position) # sigmoid from 0 to 1 #
-    mol_rotation =torch.clip(mol_rotation, min=-c_pi, max=c_pi) # F.tanh(mol_rotation) * torch.pi # tanh from -pi to pi #
-    #mol_rotation[:, 1] = mol_rotation[:,1] / 2 # second rotation has half range by convention #torch.clip(mol_rotation[:, 1], min=-c_pi / 2, max=c_pi / 2)  # second rotation has shorter range
+    cell_lengths = F.softplus(cell_lengths) # enforces positivity
+    cell_angles = F.tanh((cell_angles - means[3:6]) / torch.pi) * torch.pi + means[3:6] # tanh from 0 to pi  #
+    mol_position =  F.tanh(mol_position - means[6:9]) + means[6:9] # tanh from 0 to 1 #
+    mol_rotation =  F.tanh(mol_rotation / torch.pi) * torch.pi # tanh from -pi to pi #
+
 
     for i in range(len(cell_lengths)):
-        if enforce_crystal_system:  # todo can alternately enforce this via auxiliary loss on the generator itself
+        if enforce_crystal_system:  # can alternately enforce this via auxiliary loss on the generator itself
             lattice = lattices[i]
 
             # enforce agreement with crystal system
@@ -74,7 +85,7 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
         else:
             # todo we now need a symmetry analyzer to tell us what we're building
             # don't assume a crystal system, but snap angles close to 90, to assist in precise symmetry
-            cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.1] = torch.pi / 2
+            cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.02] = torch.pi / 2
 
     return cell_lengths, cell_angles, mol_position, mol_rotation
 

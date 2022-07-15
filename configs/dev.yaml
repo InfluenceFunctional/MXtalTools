@@ -1,4 +1,4 @@
-test_mode: True
+test_mode: False
 machine: "local"
 device: "cuda"
 skip_run_init: False
@@ -30,10 +30,10 @@ wandb:
 
 # dataset curation
 target: crystal spacegroup setting # not currently used
-dataset_length: 1000
+dataset_length: 10000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
-max_num_atoms: 200
+max_num_atoms: 80
 min_num_atoms: 20
 max_z_value: 10
 min_z_value: 0
@@ -104,9 +104,9 @@ generator:
 
   model_type: nf # mlp or nf
   graph_model: mike
-  graph_convolution_layers: 8
-  graph_filters: 16
-  atom_embedding_size: 16
+  graph_convolution_layers: 4
+  graph_filters: 32
+  atom_embedding_size: 32
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
@@ -119,7 +119,7 @@ generator:
   pooling: attention
 
   num_fc_layers: 4
-  fc_depth: 16
+  fc_depth: 32
   activation: gelu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer

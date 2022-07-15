@@ -1085,9 +1085,16 @@ class Predictor():
                 for i in range(self.dataset_cell_distribution.shape[1]):
                     self.dataset_cell_distribution[:, i] = self.dataset_cell_distribution[:, i] * stds[i] + means[i]
 
+            # raw outputs
             renormalized_samples = np.zeros_like(generated_samples)
             for i in range(generated_samples.shape[1]):
                 renormalized_samples[:, i] = generated_samples[:, i] * stds[i] + means[i]
+
+            # samples as the builder sees them
+            cell_lengths, cell_angles, rand_position, rand_rotation = torch.tensor(generated_samples).split(3, 1)
+            cell_lengths, cell_angles, rand_position, rand_rotation = clean_cell_output(
+                cell_lengths, cell_angles, rand_position, rand_rotation, None, config.dataDims, enforce_crystal_system=False)
+            cleaned_samples = torch.cat((cell_lengths, cell_angles, rand_position, rand_rotation),dim=1).detach().numpy()
 
             overlaps_1d = {}
             for i, key in enumerate(config.dataDims['crystal features']):
@@ -1125,7 +1132,7 @@ class Predictor():
                         x=self.dataset_cell_distribution[:, i],
                         histnorm='probability density',
                         nbinsx=100,
-                        name="Dataset",
+                        name="Dataset samples",
                         showlegend=True,
                     ))
 
@@ -1134,6 +1141,13 @@ class Predictor():
                         histnorm='probability density',
                         nbinsx=100,
                         name="Samples",
+                        showlegend=True,
+                    ))
+                    fig.add_trace(go.Histogram(
+                        x=cleaned_samples[:, i],
+                        histnorm='probability density',
+                        nbinsx=100,
+                        name="Cleaned Samples",
                         showlegend=True,
                     ))
                     fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
