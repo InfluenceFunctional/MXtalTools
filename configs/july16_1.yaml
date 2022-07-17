@@ -1,18 +1,18 @@
 test_mode: False
-machine: "local"
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 61
 anomaly_detection: False
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
 gan_loss: standard
-train_generator_density: False
+train_generator_density: True
 train_generator_as_flow: False
-train_generator_adversarially: True
+train_generator_adversarially: False
 train_generator_range_cutoff: False # todo minor fix implementation
-train_discriminator_adversarially: True
+train_discriminator_adversarially: False
 
 seeds:
   model: 0
@@ -71,9 +71,9 @@ discriminator:
   convergence_eps: 0.00001
 
   graph_model: mike
-  graph_convolution_layers: 8
-  graph_filters: 16
-  atom_embedding_size: 16
+  graph_convolution_layers: 12
+  graph_filters: 32
+  atom_embedding_size: 32
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
@@ -86,7 +86,7 @@ discriminator:
   pooling: attention
 
   num_fc_layers: 4
-  fc_depth: 16
+  fc_depth: 32
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer
@@ -105,8 +105,8 @@ generator:
   model_type: mlp # mlp or nf
   graph_model: mike
   graph_convolution_layers: 4
-  graph_filters: 32
-  atom_embedding_size: 32
+  graph_filters: 64
+  atom_embedding_size: 64
   graph_norm: layer
   num_spherical: 6
   num_radial: 12

@@ -73,22 +73,15 @@ class crystal_discriminator(nn.Module):
         self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
 
     def forward(self, data, return_dists = False):
-        x = data.x
-        pos = data.pos
-
         if return_dists:
-            x, dists = self.graph_net(torch.cat((x[:, :self.n_atom_feats], x[:, -1:]), dim=1), pos, data.batch, return_dists = return_dists)  # extra dim for crystal indexing
+            x, dists, keep_cell_inds = self.graph_net(torch.cat((data.x[:, :self.n_atom_feats], data.x[:, -1:]), dim=1), data.pos, data.batch, return_dists = return_dists)  # extra dim for crystal indexing
         else:
-            x = self.graph_net(torch.cat((x[:, :self.n_atom_feats], x[:, -1:]), dim=1), pos, data.batch)  # extra dim for crystal indexing
+            x, keep_cell_inds = self.graph_net(torch.cat((data.x[:, :self.n_atom_feats], data.x[:, -1:]), dim=1), data.pos, data.batch)  # extra dim for crystal indexing
 
-        keep_cell_inds = torch.where(data.x[:, -1] == 1)[0]
-        data.batch = data.batch[keep_cell_inds]  # keep only atoms inside the reference cell
-        data.x = data.x[keep_cell_inds]  # also apply to molecular_data
+        x = self.global_pool(x, data.batch[keep_cell_inds])  # aggregate atoms to molecule
 
-        x = self.global_pool(x, data.batch)  # aggregate atoms to molecule
-
-        mol_inputs = data.x[:, -self.n_mol_feats:]
-        mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch).float())  # not actually pooling here, as the values are all the same for each molecule
+        mol_inputs = data.x[keep_cell_inds, -self.n_mol_feats:]
+        mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch[keep_cell_inds]).float())  # not actually pooling here, as the values are all the same for each molecule
 
         x = self.gnn_mlp(x, conditions=mol_feats)
 

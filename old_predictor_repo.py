@@ -1129,3 +1129,61 @@ def log_accuracy(self, epoch, dataset_builder, train_loader, test_loader,
             mol2 = Atoms(numbers=fake_supercell_data.x[fake_supercell_data.batch == ind, 0].cpu().detach().numpy(), positions=fake_supercell_data.pos[fake_supercell_data.batch == ind, :].cpu().detach().numpy())
             view((mol1, mol2))
             '''
+
+
+
+    def real_supercells(self, supercell_data, config):
+        '''
+        test code for on-the-fly cell generation
+        data = self.build_supercells(data)
+        0. extract molecule and cell parameters
+        1. find centroid
+        2. find principal axis & angular component
+        3. place centroid & align axes
+        4. apply point symmetry
+        5. tile supercell
+        '''
+        for i in range(supercell_data.num_graphs):  # todo speed this up
+            # 0 extract molecule and cell parameters
+            atoms = np.asarray(supercell_data.x[supercell_data.batch == i])
+            # pre-enforce hydrogen cleanliness - shouldn't be necessary but you never know
+            atomic_numbers = np.asarray(atoms[:, 0])  # this is currently atomic number - convert to masses
+            heavy_inds = np.where(atomic_numbers != 1)
+            atoms = atoms[heavy_inds]
+
+            # get reference cell positions
+            # first 3 columns are cartesian coords, last 3 are fractional
+
+            cell_lengths = supercell_data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
+            cell_angles = supercell_data.y[2][i][self.cell_angle_inds]
+            z_value = int(supercell_data.y[2][i][self.z_value_ind])
+            T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
+            cell_vectors = T_fc.dot(np.eye(3)).T
+
+            reference_cell = supercell_data.y[3][i][:, :, :3]  # we're now pre-storing the packing rather than grabbing it from the CSD at runtime
+            # #self.get_CSD_crystal(reader, csd_identifier=csd_identifier, mol_n_atoms=len(coords), z_value=z_value) # use CSD directly - slow
+            # alternately, we could use the above random_coords functions with the known parameters to create the CSD cells (>99% accurate from a couple tests)
+
+            supercell_atoms, supercell_coords = ref_to_supercell(reference_cell, z_value, atoms, cell_vectors)
+
+            supercell_batch = torch.ones(len(supercell_atoms)).int() * i
+
+            # append supercell info to the supercell_data class
+            if i == 0:
+                new_x = supercell_atoms
+                new_coords = supercell_coords
+                new_batch = supercell_batch
+                new_ptr = torch.zeros(supercell_data.num_graphs)
+            else:
+                new_x = torch.cat((new_x, supercell_atoms), dim=0)
+                new_coords = torch.cat((new_coords, supercell_coords), dim=0)
+                new_batch = torch.cat((new_batch, supercell_batch))
+                new_ptr[i] = new_ptr[-1] + len(new_x)
+
+        # update dataloader with cell info
+        supercell_data.x = new_x.type(dtype=torch.float32)
+        supercell_data.pos = new_coords.type(dtype=torch.float32)
+        supercell_data.batch = new_batch.type(dtype=torch.int64)
+        supercell_data.ptr = new_ptr.type(dtype=torch.int64)
+
+        return supercell_data

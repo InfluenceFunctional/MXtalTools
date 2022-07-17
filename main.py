@@ -299,7 +299,7 @@ def process_config(config):
         config.max_batch_size = 50
         #config.auto_batch_sizing = False
         config.num_samples = 1000
-        config.anomaly_detection = False
+        #config.anomaly_detection = True
         if config.machine == 'cluster':
             config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
         else:

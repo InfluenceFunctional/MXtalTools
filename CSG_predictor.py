@@ -126,11 +126,11 @@ class Predictor():
 
     def update_gan_metrics(self, epoch, metrics_dict, d_err_tr, d_err_te, g_err_tr, g_err_te, d_lr, g_lr):
         metrics_dict['epoch'].append(epoch)
-        metrics_dict['discriminator train loss'].append(torch.mean(torch.stack(d_err_tr)).cpu().detach().numpy())
-        metrics_dict['discriminator test loss'].append(torch.mean(torch.stack(d_err_te)).cpu().detach().numpy())
+        metrics_dict['discriminator train loss'].append(np.mean(np.asarray(d_err_tr)))
+        metrics_dict['discriminator test loss'].append(np.mean(np.asarray(d_err_te)))
         metrics_dict['discriminator learning rate'].append(d_lr)
-        metrics_dict['generator train loss'].append(torch.mean(torch.stack(g_err_tr)).cpu().detach().numpy())
-        metrics_dict['generator test loss'].append(torch.mean(torch.stack(g_err_te)).cpu().detach().numpy())
+        metrics_dict['generator train loss'].append(np.mean(np.asarray(g_err_tr)))
+        metrics_dict['generator test loss'].append(np.mean(np.asarray(g_err_te)))
         metrics_dict['generator learning rate'].append(g_lr)
 
         return metrics_dict
@@ -237,7 +237,7 @@ class Predictor():
         g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
         train_loader, test_loader = get_dataloaders(dataset, config, override_batch_size=init_batch_size)
 
-        increment = 1.5  # what fraction by which to increment the batch size
+        increment = 1.2  # what fraction by which to increment the batch size
         batch_size = int(init_batch_size)
 
         while (not finished) and (batch_size < max_batch_size):
@@ -362,13 +362,14 @@ class Predictor():
                                        g_optimizer=g_optimizer, d_optimizer=d_optimizer,
                                        update_gradients=True, record_stats=True)  # train & compute test loss
 
-                    d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test, time_test_cell_gen = \
-                        self.gan_epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
-                                       update_gradients=False, record_stats=True)  # compute loss on test set
+                    with torch.no_grad:
+                        d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test, time_test_cell_gen = \
+                            self.gan_epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
+                                           update_gradients=False, record_stats=True)  # compute loss on test set
 
                     print('epoch={}; d_nll_tr={:.5f}; d_nll_te={:.5f}; g_nll_tr={:.5f}; g_nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s; time_tr_cell_gen={:.1f}s; time_te_cell_gen={:.1f}s'.format(
-                        epoch, torch.mean(torch.stack(d_err_tr)), torch.mean(torch.stack(d_err_te)),
-                        torch.mean(torch.stack(g_err_tr)), torch.mean(torch.stack(g_err_te)),
+                        epoch, np.mean(np.asarray(d_err_tr)), np.mean(np.asarray(d_err_te)),
+                        np.mean(np.asarray(g_err_tr)), np.mean(np.asarray(g_err_te)),
                         time_train, time_test, time_train_cell_gen, time_test_cell_gen))
 
                     '''
@@ -444,6 +445,7 @@ class Predictor():
         g_aux_pred = []
         g_aux_true = []
         g_pairwise_dist = []
+        g_short_range_losses = []
         real_pairwise_dist = []
         generated_samples_list = []
         epoch_stats_dict = {
@@ -472,7 +474,7 @@ class Predictor():
 
                 d_fake_losses.append(score_on_fake.cpu().detach().numpy())
                 d_loss = d_losses.mean()
-                d_err.append(d_loss.data.cpu())  # average overall loss
+                d_err.append(d_loss.data.cpu().detach().numpy())  # average overall loss
                 d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
 
                 if update_gradients:
@@ -480,8 +482,8 @@ class Predictor():
                     d_loss.backward()  # back-propagation
                     d_optimizer.step()  # update parameters
 
-                g_pairwise_dist.append(fake_pairwise_dists)
-                real_pairwise_dist.append(real_pairwise_dists)
+                g_pairwise_dist.append(fake_pairwise_dists.cpu().detach().numpy())
+                real_pairwise_dist.append(real_pairwise_dists.cpu().detach().numpy())
                 generated_samples_list.append(generated_samples)
             else:
                 d_err.append(torch.zeros(1))
@@ -493,7 +495,7 @@ class Predictor():
             if any((config.train_generator_density, config.train_generator_adversarially)):
 
                 adversarial_score, generated_samples, auxiliary_loss, auxiliary_prediction, auxiliary_target, generated_pairwise_distances, cell_gen_time = \
-                    self.train_generator(generator, discriminator, config, data.clone(), i)
+                    self.train_generator(generator, discriminator, config, data, i)
 
                 total_cell_time += cell_gen_time
                 if adversarial_score is not None:
@@ -505,27 +507,28 @@ class Predictor():
                         print(config.gan_loss + ' is not an implemented GAN loss function!')
                         sys.exit()
 
-                if config.train_generator_density and config.train_generator_adversarially:
-                    g_losses = adversarial_loss + auxiliary_loss.float()
-                    g_adv_losses.append(adversarial_loss.cpu().detach().numpy())
+                g_aux_pred.append(auxiliary_prediction)
+                g_aux_true.append(auxiliary_target)
+                g_losses_list = []
+                if config.train_generator_density:
+                    g_losses_list.append(auxiliary_loss.float())
                     g_aux_losses.append(auxiliary_loss.cpu().detach().numpy())
-                    g_aux_pred.append(auxiliary_prediction)
-                    g_aux_true.append(auxiliary_target)
-                    g_pairwise_dist.append(generated_pairwise_distances)
+                    g_pairwise_dist.append(generated_pairwise_distances.cpu().detach().numpy())
 
-                elif config.train_generator_density and not config.train_generator_adversarially:
-                    g_losses = auxiliary_loss.float()
-                    g_aux_losses.append(auxiliary_loss.cpu().detach().numpy())
-                    g_aux_pred.append(auxiliary_prediction)
-                    g_aux_true.append(auxiliary_target)
-
-                elif config.train_generator_adversarially and not config.train_generator_density:
-                    g_losses = adversarial_loss
+                elif config.train_generator_adversarially:
+                    g_losses_list.append(adversarial_loss)
                     g_adv_losses.append(adversarial_loss.cpu().detach().numpy())
-                    g_pairwise_dist.append(generated_pairwise_distances)
+
+                    if config.train_generator_range_cutoff: # todo averages over full batch
+                        g_short_range_loss = torch.tile(torch.sum(generated_pairwise_distances < 1) / len(generated_pairwise_distances),(len(adversarial_loss),1))[:,0]
+                        g_losses_list.append(g_short_range_loss)
+                        g_short_range_losses.append(g_short_range_loss.cpu().detach().numpy())
+
+
+                g_losses = torch.mean(torch.stack(g_losses_list),dim=0)
 
                 g_loss = g_losses.mean()
-                g_err.append(g_loss.data.cpu())  # average loss
+                g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
                 g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
                 generated_samples_list.append(generated_samples)
 
@@ -594,7 +597,7 @@ class Predictor():
             print(config.gan_loss + ' is not a valid GAN loss function!')
             sys.exit()
 
-        return scores, output, dists.cpu().detach().numpy()
+        return scores, output, dists
 
     def pairwise_correlations_analysis(self, dataset_builder, config):
         '''
@@ -1014,62 +1017,6 @@ class Predictor():
         return supercell_data.to(config.device)
 
 
-    def real_supercells(self, supercell_data, config):
-        '''
-        test code for on-the-fly cell generation
-        data = self.build_supercells(data)
-        0. extract molecule and cell parameters
-        1. find centroid
-        2. find principal axis & angular component
-        3. place centroid & align axes
-        4. apply point symmetry
-        5. tile supercell
-        '''
-        for i in range(supercell_data.num_graphs):  # todo speed this up
-            # 0 extract molecule and cell parameters
-            atoms = np.asarray(supercell_data.x[supercell_data.batch == i])
-            # pre-enforce hydrogen cleanliness - shouldn't be necessary but you never know
-            atomic_numbers = np.asarray(atoms[:, 0])  # this is currently atomic number - convert to masses
-            heavy_inds = np.where(atomic_numbers != 1)
-            atoms = atoms[heavy_inds]
-
-            # get reference cell positions
-            # first 3 columns are cartesian coords, last 3 are fractional
-
-            cell_lengths = supercell_data.y[2][i][self.cell_length_inds]  # pull cell params from tracking inds
-            cell_angles = supercell_data.y[2][i][self.cell_angle_inds]
-            z_value = int(supercell_data.y[2][i][self.z_value_ind])
-            T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
-            cell_vectors = T_fc.dot(np.eye(3)).T
-
-            reference_cell = supercell_data.y[3][i][:, :, :3]  # we're now pre-storing the packing rather than grabbing it from the CSD at runtime
-            # #self.get_CSD_crystal(reader, csd_identifier=csd_identifier, mol_n_atoms=len(coords), z_value=z_value) # use CSD directly - slow
-            # alternately, we could use the above random_coords functions with the known parameters to create the CSD cells (>99% accurate from a couple tests)
-
-            supercell_atoms, supercell_coords = ref_to_supercell(reference_cell, z_value, atoms, cell_vectors)
-
-            supercell_batch = torch.ones(len(supercell_atoms)).int() * i
-
-            # append supercell info to the supercell_data class
-            if i == 0:
-                new_x = supercell_atoms
-                new_coords = supercell_coords
-                new_batch = supercell_batch
-                new_ptr = torch.zeros(supercell_data.num_graphs)
-            else:
-                new_x = torch.cat((new_x, supercell_atoms), dim=0)
-                new_coords = torch.cat((new_coords, supercell_coords), dim=0)
-                new_batch = torch.cat((new_batch, supercell_batch))
-                new_ptr[i] = new_ptr[-1] + len(new_x)
-
-        # update dataloader with cell info
-        supercell_data.x = new_x.type(dtype=torch.float32)
-        supercell_data.pos = new_coords.type(dtype=torch.float32)
-        supercell_data.batch = new_batch.type(dtype=torch.int64)
-        supercell_data.ptr = new_ptr.type(dtype=torch.int64)
-
-        return supercell_data
-
     def params_f_to_c(self, cell_lengths, cell_angles):
         cell_vector_a, cell_vector_b, cell_vector_c = \
             torch.tensor(coor_trans('f_to_c', np.array((1, 0, 0)), cell_lengths, cell_angles)), \
@@ -1233,7 +1180,7 @@ class Predictor():
         '''
         auxiliary regression target
         '''
-        if config.train_generator_density:
+        if test_epoch_stats_dict['generator auxiliary target'] is not None: #config.train_generator_density:
             target_mean = 0.673  # pacing coefficient mean #config.dataDims['mean']
             target_std = 0.0271  # packing coefficient std dev #config.dataDims['std']
 
@@ -1285,13 +1232,13 @@ class Predictor():
 
     def train_discriminator(self, generator, discriminator, config, data, i):
 
-        generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.clone().to(generator.device))
+        generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
 
         t0 = time.time()
         real_supercell_data = self.fast_real_supercells(data.clone(), config)
         fake_supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone().to(generated_samples.device), config, generated_samples)
         t1 = time.time()
-        if i % 10 == 0:
+        if i == 0:
             print('Batch {} real + fake supercell generation took {:.2f} seconds for {} samples'.format(i, round(t1 - t0, 2), data.num_graphs))
 
         if config.device.lower() == 'cuda': # redundant
@@ -1327,21 +1274,16 @@ class Predictor():
                 assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
 
             discriminator_score, raw_output, pairwise_distances = self.adversarial_loss(discriminator, supercell_data, config)
+            auxiliary_loss, auxiliary_prediction, auxiliary_target = self.generator_auxiliary_loss(data, generated_samples, z_values, config.dataDims, precomputed_volumes=generated_cell_volumes)
 
         else:
+            sg_numbers = [int(data.y[2][i][self.sg_number_ind]) for i in range(data.num_graphs)]
+            z_values = [len(self.sym_ops[sg_numbers[i]]) for i in range(data.num_graphs)]
+            auxiliary_loss, auxiliary_prediction, auxiliary_target = self.generator_auxiliary_loss(data, generated_samples, z_values, config.dataDims)
+
             discriminator_score = None
             t0, t1 = 0, 0
 
-
-        if config.train_generator_density:
-            if not config.train_generator_adversarially:
-                sg_numbers = [int(data.y[2][i][self.sg_number_ind]) for i in range(data.num_graphs)]
-                z_values = [len(self.sym_ops[sg_numbers[i]]) for i in range(data.num_graphs)]
-                auxiliary_loss, auxiliary_prediction, auxiliary_target = self.generator_auxiliary_loss(data, generated_samples, z_values, config.dataDims)
-            else:
-                auxiliary_loss, auxiliary_prediction, auxiliary_target = self.generator_auxiliary_loss(data, generated_samples, z_values, config.dataDims, precomputed_volumes=generated_cell_volumes)
-        else:
-            auxiliary_loss, auxiliary_prediction, auxiliary_target = None, None, None
 
         return discriminator_score, generated_samples.cpu().detach().numpy(), auxiliary_loss, auxiliary_prediction, auxiliary_target, pairwise_distances, t1 - t0
 
