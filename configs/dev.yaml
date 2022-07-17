@@ -1,4 +1,4 @@
-test_mode: False
+test_mode: True
 machine: "local"
 device: "cuda"
 skip_run_init: False
@@ -8,11 +8,11 @@ run_num: 0
 anomaly_detection: False
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
 gan_loss: standard
-train_generator_density: False
+train_generator_density: True
 train_generator_as_flow: False
-train_generator_adversarially: True
+train_generator_adversarially: False
 train_generator_range_cutoff: False # todo minor fix implementation
-train_discriminator_adversarially: True
+train_discriminator_adversarially: False
 
 seeds:
   model: 0
