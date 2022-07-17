@@ -513,11 +513,11 @@ class Predictor():
                 if config.train_generator_density:
                     g_losses_list.append(auxiliary_loss.float())
                     g_aux_losses.append(auxiliary_loss.cpu().detach().numpy())
-                    g_pairwise_dist.append(generated_pairwise_distances.cpu().detach().numpy())
 
                 elif config.train_generator_adversarially:
                     g_losses_list.append(adversarial_loss)
                     g_adv_losses.append(adversarial_loss.cpu().detach().numpy())
+                    g_pairwise_dist.append(generated_pairwise_distances.cpu().detach().numpy())
 
                     if config.train_generator_range_cutoff: # todo averages over full batch
                         g_short_range_loss = torch.tile(torch.sum(generated_pairwise_distances < 1) / len(generated_pairwise_distances),(len(adversarial_loss),1))[:,0]
