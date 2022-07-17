@@ -22,7 +22,7 @@ def set_lr(schedulers, optimizer, lr_schedule, learning_rate, max_lr, err_tr, hi
     if lr_schedule:
         lr = optimizer.param_groups[0]['lr']
         if lr > 1e-4:
-            schedulers[0].step(torch.mean(torch.stack(err_tr)))  # plateau scheduler
+            schedulers[0].step(np.mean(np.asarray(err_tr)))  # plateau scheduler
 
         if not hit_max_lr:
             if lr <= max_lr:

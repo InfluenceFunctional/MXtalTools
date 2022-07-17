@@ -362,7 +362,7 @@ class Predictor():
                                        g_optimizer=g_optimizer, d_optimizer=d_optimizer,
                                        update_gradients=True, record_stats=True)  # train & compute test loss
 
-                    with torch.no_grad:
+                    with torch.no_grad():
                         d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test, time_test_cell_gen = \
                             self.gan_epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
                                            update_gradients=False, record_stats=True)  # compute loss on test set
@@ -486,8 +486,8 @@ class Predictor():
                 real_pairwise_dist.append(real_pairwise_dists.cpu().detach().numpy())
                 generated_samples_list.append(generated_samples)
             else:
-                d_err.append(torch.zeros(1))
-                d_loss_record.extend(torch.zeros(data.num_graphs))
+                d_err.append(np.zeros(1))
+                d_loss_record.extend(np.zeros(data.num_graphs))
 
             '''
             train_generator
@@ -537,8 +537,8 @@ class Predictor():
                     g_loss.backward()  # back-propagation
                     g_optimizer.step()  # update parameters
             else:
-                g_err.append(torch.zeros(1))
-                g_loss_record.extend(torch.zeros(data.num_graphs))
+                g_err.append(np.zeros(1))
+                g_loss_record.extend(np.zeros(data.num_graphs))
 
             # flow loss # totally separate thing
             if config.train_generator_as_flow:
