@@ -495,7 +495,7 @@ class Predictor():
             if any((config.train_generator_density, config.train_generator_adversarially)):
 
                 adversarial_score, generated_samples, auxiliary_loss, auxiliary_prediction, auxiliary_target, generated_pairwise_distances, cell_gen_time = \
-                    self.train_generator(generator, discriminator, config, data, i)
+                    self.train_generator(generator, discriminator, config, data, i) 
 
                 total_cell_time += cell_gen_time
                 if adversarial_score is not None:
@@ -1261,7 +1261,7 @@ class Predictor():
         if config.train_generator_adversarially:
 
             t0 = time.time()
-            supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data, config, generated_samples)
+            supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone(), config, generated_samples)
             t1 = time.time()
 
             if i % 10 == 0:

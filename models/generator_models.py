@@ -92,20 +92,24 @@ class crystal_generator(nn.Module):
             #z = torch.zeros_like(z0)
 
         if conditions is not None:
-            conditions = self.conditioner(conditions)
+            conditions_encoding = self.conditioner(conditions)
+        else:
+            conditions_encoding = None
 
         # run through model
         if not 'nf' in self.generator_model_type:
-            return self.model(z, conditions=conditions)
+            return self.model(z, conditions=conditions_encoding)
         else:
-            x, _ = self.model.backward(z, conditions=conditions)  # normalizing flow runs backwards from z->x
+            x, _ = self.model.backward(z, conditions=conditions_encoding)  # normalizing flow runs backwards from z->x
             return x
 
     def nf_forward(self, x, conditions=None):
         if conditions is not None:
-            conditions = self.conditioner(conditions)
+            conditions_encoding = self.conditioner(conditions)
+        else:
+            conditions_encoding = None
 
-        return self.model.forward(x, conditions=conditions)
+        return self.model.forward(x, conditions=conditions_encoding)
 
 
 class crystal_nf(nn.Module):
