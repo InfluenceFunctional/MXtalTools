@@ -747,6 +747,10 @@ def fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles):
 
     ''' Calculate volume of the unit cell '''
     val = 1.0 - cos_a[:, 0] ** 2 - cos_a[:, 1] ** 2 - cos_a[:, 2] ** 2 + 2.0 * cos_a[:, 0] * cos_a[:, 1] * cos_a[:, 2]
+
+    if torch.sum(val < 0) > 0:
+        aa = 1
+
     vol = torch.sign(val) * torch.prod(cell_lengths, dim=1) * torch.sqrt(torch.abs(val))  # technically a signed quanitity
 
     ''' Setting the transformation matrix '''
@@ -768,7 +772,7 @@ def fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles):
     T_fc_list[:, 1, 2] = cell_lengths[:, 2] * (cos_a[:, 0] - cos_a[:, 1] * cos_a[:, 2]) / sin_a[:, 2]
     T_fc_list[:, 2, 2] = vol / cell_lengths[:, 0] / cell_lengths[:, 1] / sin_a[:, 2]
 
-    return T_fc_list, T_cf_list, vol
+    return T_fc_list, T_cf_list, torch.abs(vol)
 
 
 def fast_differentiable_standard_rotation_matrix(masses_list, coords_list, T_fc_list):
@@ -778,8 +782,8 @@ def fast_differentiable_standard_rotation_matrix(masses_list, coords_list, T_fc_
         Ip_axes_list[i] = Ip_axes_i
 
     corner_point = torch.tensor((0, 1, 1)).to(T_fc_list.device).float()
-    top_corner_point = torch.ones(3).to(T_fc_list.device)
-    alignment_target_list = torch.zeros_like(Ip_axes_list)
+    #top_corner_point = torch.ones(3).to(T_fc_list.device)
+    #alignment_target_list = torch.zeros_like(Ip_axes_list)
 
     target1_list = torch.sum(T_fc_list, dim=2)
     normed_target1_list = torch.div(target1_list, torch.linalg.norm(target1_list, dim=1)[:, None])
@@ -903,7 +907,7 @@ def fast_differentiable_get_canonical_coords(mol_position, sym_ops_list, z_value
     # split it into z values and do each in parallel
 
     for i, (inds, z_value) in enumerate(zip(z_inds, unique_z_values)):
-        vals = torch.zeros((z_value, len(inds), 3))
+        vals = torch.zeros((z_value, len(inds), 3)).to(mol_position.device)
         # z_sym_ops = torch.stack([sym_ops_list[j] for j in inds])
         # affine_points = torch.cat((mol_position[inds],torch.ones(mol_position[inds].shape[:-1] + (1,)).to(mol_position.device)),dim=-1)
         for zv in range(z_value):
@@ -983,9 +987,9 @@ def fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_
         # padded_coords_c = rnn.pad_sequence(final_coords_list, batch_first=True)[inds]
         padded_coords_f = torch.einsum('nij,nmj->nmi',
                                        (T_cf_list[inds],
-                                        rnn.pad_sequence(final_coords_list, batch_first=True)[inds]))  # confirmed to work
+                                        rnn.pad_sequence(final_coords_list, batch_first=True)[inds]))
 
-        ref_cell = torch.zeros((z_value, len(inds), padded_coords_f.shape[1], 3))
+        ref_cell = torch.zeros((z_value, len(inds), padded_coords_f.shape[1], 3)).to(final_coords_list[0].device)
 
         z_sym_ops = torch.stack([sym_ops_list[j] for j in inds])
         affine_points = torch.cat((padded_coords_f, torch.ones(padded_coords_f.shape[:-1] + (1,)).to(padded_coords_f.device)), dim=-1)
@@ -1063,28 +1067,30 @@ def fast_differentiable_cell_vectors(T_fc_list):
     return torch.matmul(T_fc_list, eyevec).permute(0, 2, 1)
 
 
-def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values):
-    fractional_translations = torch.zeros((27, 3))  # initialize the translations in fractional coords
+def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values, supercell_scale = 2):
+    n_copies = (2*supercell_scale + 1)**3
+    fractional_translations = torch.zeros((n_copies, 3))  # initialize the translations in fractional coords
     i = 0
-    for xx in range(-1, 2):
-        for yy in range(-1, 2):
-            for zz in range(-1, 2):
+    for xx in range(-supercell_scale, supercell_scale + 1):
+        for yy in range(-supercell_scale, supercell_scale + 1):
+            for zz in range(-supercell_scale, supercell_scale + 1):
                 fractional_translations[i] = torch.tensor((xx, yy, zz))
                 i += 1
     sorted_fractional_translations = fractional_translations[torch.argsort(fractional_translations.abs().sum(1))].to(T_fc_list.device)
 
+
     supercell_list = []
     supercell_atoms_list = []
     for i, (ref_cell, cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, z_values)):
-        supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(27, 1)  # duplicate over 3x3x3 supercell
-        cart_translations_i = torch.mul(cell_vectors.tile(27, 1), sorted_fractional_translations.reshape(81, 1))
+        supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(n_copies, 1)  # duplicate over XxXxX supercell
+        cart_translations_i = torch.mul(cell_vectors.tile(n_copies, 1), sorted_fractional_translations.reshape(n_copies * 3, 1)) # 3 dimensions
         cart_translations = torch.stack(cart_translations_i.split(3, dim=0), dim=0).sum(1)
 
         supercell_list.append(
             supercell_coords + torch.repeat_interleave(cart_translations, ref_cell.shape[1] * ref_cell.shape[0], dim=0)
         )
 
-        supercell_atoms = atoms.repeat(27 * z_value, 1)
+        supercell_atoms = atoms.repeat(n_copies * z_value, 1)
         ref_cell_inds = torch.ones(len(supercell_atoms)).to(ref_cell.device)[:, None]
         ref_cell_inds[len(atoms) * z_value:, 0] = 0
         supercell_atoms_w_ind = torch.cat((supercell_atoms, ref_cell_inds), dim=1)  # inside main unit cell

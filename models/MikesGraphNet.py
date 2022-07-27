@@ -117,7 +117,6 @@ class MikesGraphNet(torch.nn.Module):
 
         # graph model starts here
         x = self.atom_embeddings(z)  # embed atomic numbers
-
         for n, (convolution, fc, global_agg) in enumerate(zip(self.interaction_blocks, self.fc_blocks, self.global_blocks)):
             if self.spherical_embedding:
                 x = x + convolution(x, rbf, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution with angular features

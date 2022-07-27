@@ -33,6 +33,7 @@ class Miner():
             self.max_temperature = 1000
             self.min_temperature = -10
             self.include_sgs = None
+            self.include_pgs = None
         else:
             self.max_z_prime = config.max_z_prime
             self.min_z_prime = config.min_z_prime
@@ -55,6 +56,7 @@ class Miner():
             self.max_temperature = config.max_crystal_temperature
             self.min_temperature = config.min_crystal_temperature
             self.include_sgs = config.include_sgs
+            self.include_pgs = config.include_pgs
 
         self.dataset_path = dataset_path
         self.collect_chunks = collect_chunks
@@ -187,12 +189,10 @@ class Miner():
         # todo filter samples where space groups explicitly disagree with given crystal system
 
         # samples with bad CSD-generated reference cells
-        if ('cell' in self.config.mode) or ('joint' in self.config.mode) or ('gan' in self.config.mode):
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:,0])
-            bad_inds.extend(np.argwhere(np.asarray(np.isnan(self.dataset['crystal reference cell centroid x'])))[:,0]) # missing orientation features
-            print('bad packing filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
+        n_bad_inds = len(bad_inds)
+        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:,0]) # missing coordinates
+        bad_inds.extend(np.argwhere(np.asarray(np.isnan(self.dataset['crystal reference cell centroid x'])))[:,0]) # missing orientation features
+        print('bad coordinates caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # cases where the csd has the wrong number of molecules
         n_bad_inds = len(bad_inds)
@@ -251,6 +251,12 @@ class Miner():
             n_bad_inds = len(bad_inds)
             bad_inds.extend(np.argwhere([self.dataset['crystal spacegroup symbol'][i] not in self.include_sgs for i in range(len(self.dataset['crystal spacegroup symbol']))])[:, 0])
             print('spacegroup filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
+        if self.include_pgs is not None:
+            # filter by point group
+            n_bad_inds = len(bad_inds)
+            bad_inds.extend(np.argwhere([self.dataset['crystal point group'][i] not in self.include_pgs for i in range(len(self.dataset['crystal point group']))])[:, 0]) # missing coordinates
+            print('unwanted point groups caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule organic
         if not self.include_organic:

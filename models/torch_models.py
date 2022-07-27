@@ -457,20 +457,27 @@ class Normalization(nn.Module):
 
 
 class independent_gaussian_model(nn.Module):
-    def __init__(self, input_dim, output_dim, means, stds):
+    def __init__(self, input_dim, means, stds):
         super(independent_gaussian_model, self).__init__()
 
-        self.output_dim = output_dim
         self.input_dim = input_dim
         self.register_buffer('means', torch.Tensor(means))
         self.register_buffer('stds', torch.Tensor(stds))
-
+        self.prior = MultivariateNormal(torch.zeros(input_dim), torch.eye(input_dim))
         self.dummy_params = nn.Parameter(torch.ones(100))
 
-    def forward(self, z, conditions=None):
+    def forward(self, num_samples):
         # conditions are unused - dummy
-        return z * self.stds + self.means  # pass random numbers through an appropriate standardization
 
+        return self.prior.sample((num_samples,)) * self.stds + self.means  # pass random numbers through an appropriate standardization
+
+    def backward(self,samples):
+
+        return (samples - self.means) / self.stds
+
+    def score(self,samples):
+
+        return self.prior.log_prob(samples)
 
 
 class general_MLP(nn.Module):

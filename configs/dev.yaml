@@ -7,12 +7,17 @@ skip_saving_and_loading: True
 run_num: 0
 anomaly_detection: False
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
-gan_loss: standard
-train_generator_density: True
-train_generator_as_flow: True
-train_generator_adversarially: True
-train_generator_range_cutoff: False # todo minor fix implementation
-train_discriminator_adversarially: True
+gan_loss: wasserstein #wasserstein # standard
+train_generator_density: False
+train_generator_as_flow: False
+train_generator_on_randn: False
+train_generator_adversarially: False
+train_generator_range_cutoff: True
+train_generator_packing: True
+train_discriminator_adversarially: False
+train_discriminator_on_randn: False # todo finish
+train_discriminator_on_noise: False # todo finish
+cut_flow_training_after: 5
 
 seeds:
   model: 0
@@ -30,10 +35,11 @@ wandb:
 
 # dataset curation
 target: crystal spacegroup setting # not currently used
+positional_noise: 0.05 # scaling for the randn noise added to all atom positions
 dataset_length: 10000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
-max_num_atoms: 80
+max_num_atoms: 40
 min_num_atoms: 20
 max_z_value: 10
 min_z_value: 0
@@ -46,24 +52,25 @@ include_organometallic: True
 max_atomic_number: 87
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
-exclude_polymorphs: False
+exclude_polymorphs: True
 exclude_nonstandard_settings: True
 include_sgs: null #[P-1, P21/c, P212121, C2/c, Pbca, P21]
-include_pgs: null #[222, -1, 2/m, 2, mm2, mmm, m, 1, 422]
+include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
+generate_pgs: '1'
 
 # batching & convergence
 auto_batch_sizing: True
 min_batch_size: 10
 max_batch_size: 2000
-auto_batch_reduction: .2
+auto_batch_reduction: .65
 max_epochs: 1000
 history: 200
 
 # discriminator optimizer and model
 discriminator:
   optimizer: "adamw"
-  learning_rate: 0.00005
-  max_lr: 0.0001
+  learning_rate: 0.00001
+  max_lr: 0.001
   lr_schedule: True
   beta1: 0.9
   beta2: 0.999
@@ -71,21 +78,21 @@ discriminator:
   convergence_eps: 0.00001
 
   graph_model: mike
-  graph_convolution_layers: 8
+  graph_convolution_layers: 1
   graph_filters: 16
   atom_embedding_size: 16
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
   graph_convolution_cutoff: 5
-  max_num_neighbors: 10
+  max_num_neighbors: 32
   radial_function: 'bessel' # mikenet only
   num_attention_heads: 1 # mikenet only
   graph_convolution: 'full message passing' # mikenet only
   add_spherical_basis: False # mikenet only
   pooling: attention
 
-  num_fc_layers: 4
+  num_fc_layers: 1
   fc_depth: 16
   activation: leaky relu
   fc_dropout_probability: 0.1
@@ -94,7 +101,7 @@ discriminator:
 # generator optimizer and model
 generator:
   optimizer: "adamw"
-  learning_rate: 0.00001
+  learning_rate: 0.000001
   max_lr: 0.0001
   lr_schedule: True
   beta1: 0.9
@@ -102,11 +109,11 @@ generator:
   weight_decay: 0.001
   convergence_eps: 0.00001
 
-  model_type: nf # mlp or nf
+  model_type: mlp # mlp or nf
   graph_model: mike
   graph_convolution_layers: 4
   graph_filters: 32
-  atom_embedding_size: 32
+  atom_embedding_size: 64
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
@@ -119,7 +126,7 @@ generator:
   pooling: attention
 
   num_fc_layers: 4
-  fc_depth: 64
+  fc_depth: 128
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer
@@ -129,8 +136,8 @@ generator:
   conditional_modelling: True # false will likely not run at all
   conditioning_mode: graph model # molecule features or graph model
 
-  num_flow_layers: 8
-  flow_depth: 64
+  num_flow_layers: 12
+  flow_depth: 128
   flow_basis_fns: 8
   flow_type: nsf_cl
 

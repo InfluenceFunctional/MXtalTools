@@ -18,7 +18,7 @@ general utilities
 '''
 
 
-def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lattices, dataDims, enforce_crystal_system=False):
+def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lattices, dataDims, enforce_crystal_system=False, recombine_to_vector = False):
     '''
     assert physically meaningful parameters
     :param cell_lengths:
@@ -52,7 +52,7 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     mol_rotation = mol_rotation * stds[9:12] + means[9:12]
 
     cell_lengths = F.softplus(cell_lengths) + 0.1 # enforces positivity and nonzeroness
-    cell_angles = (F.tanh((cell_angles - torch.pi/2)*2)/2+torch.pi/2) # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
+    cell_angles = (F.tanh((cell_angles - torch.pi/2))*torch.pi/2+torch.pi/2) # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
     mol_position =  F.tanh((mol_position - 0.5)*2)/2 + 0.5 # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
     mol_rotation =  F.tanh(mol_rotation / torch.pi) * torch.pi # tanh from -pi to pi #
 
@@ -87,8 +87,10 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
             cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.02] = torch.pi / 2
 
 
-
-    return cell_lengths, cell_angles, mol_position, mol_rotation
+    if recombine_to_vector:
+        return torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation),dim=1)
+    else:
+        return cell_lengths, cell_angles, mol_position, mol_rotation
 
 
 def initialize_metrics_dict(metrics):
@@ -173,6 +175,9 @@ def standardize(data, return_std=False, known_mean=None, known_std=None):
         std = known_std
     else:
         std = np.std(data)
+
+    if std == 0:
+        std = 0.01 # hard stop to backup all-one-value inputs
 
     std_data = (data - mean) / std
 

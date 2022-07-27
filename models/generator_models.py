@@ -10,7 +10,7 @@ from models.torch_models import molecule_graph_model, Normalization, ActNorm, ge
 
 
 class crystal_generator(nn.Module):
-    def __init__(self, config, dataDims):
+    def __init__(self, config, dataDims, model_override = None):
         super(crystal_generator, self).__init__()
 
         self.device = config.device

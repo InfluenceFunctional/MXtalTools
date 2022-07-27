@@ -113,7 +113,7 @@ class BuildDataset:
 
         # get crystal point groups and make an ordered dict
         if pg_dict is not None:
-            point_groups = dataset['crystal point group']#[pg_dict[dataset['crystal spacegroup number'][i]] for i in range(len(dataset))]
+            point_groups = dataset['crystal point group']
             point_group_elems = np.unique(point_groups)
             self.point_group_dict = {}
             for i, group in enumerate(point_group_elems):
@@ -123,10 +123,6 @@ class BuildDataset:
         dataset['crystal point group'] = [self.point_group_dict[pg] for pg in point_groups]
 
         # set angle units to natural
-        # dataset['crystal reference cell angle 1'] = dataset['crystal reference cell angle 1'] * np.pi / 180
-        # dataset['crystal reference cell angle 2'] = dataset['crystal reference cell angle 2'] * np.pi / 180
-        # dataset['crystal reference cell angle 3'] = dataset['crystal reference cell angle 3'] * np.pi / 180
-        #
         dataset['crystal alpha'] = dataset['crystal alpha'] * np.pi / 180
         dataset['crystal beta'] = dataset['crystal beta'] * np.pi / 180
         dataset['crystal gamma'] = dataset['crystal gamma'] * np.pi / 180
@@ -296,9 +292,12 @@ class BuildDataset:
         #     if len(hydrogen_inds[i]) > 0:
         #         coords_i = [dataset['atom coords'][i][j] for j in range(len(dataset['atom coords'][i])) if j not in hydrogen_inds[i]]
         #         dataset['atom coords'][i] = coords_i
-
+        add_features = []
+        point_group_features = [column for column in dataset.columns if 'pg is' in column]
+        add_features.extend(point_group_features)
+        add_features.append('crystal z value')
         molecule_features_array = self.concatenate_molecule_features(
-            dataset, extra_keys=['crystal point group','crystal z value'])
+            dataset, extra_keys=add_features)
 
         return self.generate_training_data(atom_coords=dataset['atom coords'],
                                            smiles=dataset['molecule smiles'],
@@ -315,7 +314,7 @@ class BuildDataset:
         # featurize
         means, stds = [], []
         feature_array = np.zeros((self.dataset_length, len(keys_to_add)), dtype=float)
-        raw_feature_array = np.zeros_like(feature_array)
+        #raw_feature_array = np.zeros_like(feature_array)
         for column, key in enumerate(keys_to_add):
             feature_vector = dataset[key]
             if type(feature_vector) is not np.ndarray:
@@ -326,9 +325,15 @@ class BuildDataset:
             else:
                 key_dtype.append(feature_vector.dtype)
 
-            raw_feature_array[:, column] = feature_vector
-            means.append(np.average(feature_vector))
-            stds.append(np.std(feature_vector))
+            #raw_feature_array[:, column] = feature_vector
+            mean = np.average(feature_vector)
+            std = np.std(feature_vector)
+            if (np.isnan(np.std(feature_vector))):
+                std = 1
+            if (np.std(feature_vector) == 0):
+                std = 0.01
+            means.append(mean)
+            stds.append(std)
             feature_vector = (feature_vector - means[-1]) / stds[-1]
             feature_array[:, column] = feature_vector
 
@@ -480,6 +485,7 @@ class BuildDataset:
             'n tracking features': self.n_tracking_features,
             'tracking features dict': self.tracking_dict_keys,
             'atom features': self.datapoints[0].x.shape[1],
+            'n atomwise features': len(self.atom_keys),
             'n mol features': self.n_mol_features,
             'mol features': self.mol_dict_keys,
             'atom embedding dict sizes': self.atom_dict_size,
@@ -525,6 +531,8 @@ def get_dataloaders(dataset_builder, config, override_batch_size=None):
 
     return tr, te
 
+def update_batch_size(loader, new_batch_size):
+    return DataLoader(loader.dataset, batch_size=new_batch_size, shuffle=True, num_workers=0, pin_memory=False)
 
 def delete_from_dataset(dataset, good_inds):
     print("Deleting unwanted entries")

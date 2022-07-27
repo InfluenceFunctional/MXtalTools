@@ -830,14 +830,21 @@ class CustomGraphFeaturizer():
             aa = 1
 
         elif feature == 'point group':
-            pg_list = np.zeros(len(df),dtype=str)
+            pg_list = np.zeros(len(df),dtype='U5')
             for i in tqdm.tqdm(range(len(df))):
                 # add point group
                 pg_list[i] = self.point_groups[df['crystal spacegroup number'][i]]
 
             df['crystal point group'] = pg_list
+
+            for key in np.unique(pg_list):
+                df['crystal pg is ' + key] = df['crystal point group'] == key
+                probs = sum(df['crystal pg is ' + key]) / len(df)
+                print(f'{key} accounts for {probs:.3f}')
+
             df.to_pickle('dataset_with_new_feature')
-            df.loc[0:1000].to_pickle('../../test_dataset_with_new_feature')
+            df.loc[0:10000].to_pickle('test_dataset_with_new_feature')
+
 
         elif feature == 'protons':
             '''

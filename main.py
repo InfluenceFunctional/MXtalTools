@@ -79,7 +79,8 @@ def add_args(parser):
 
     # dataset composition
     parser.add_argument('--include_sgs', type=str, default=['P21/c'])  # spacegroups to explicitly include in modelling - new!
-    parser.add_argument('--include_pgs', type=str, default=['222', '-1'])  # point groups to explore
+    parser.add_argument('--include_pgs', type=str, default=['222', '-1'])  # point groups to pull from dataset
+    parser.add_argument('--generate_pgs', type=str, default=['222', '-1'])  # point groups to generate
     parser.add_argument('--max_crystal_temperature', type=float, default=int(1e3))
     parser.add_argument('--min_crystal_temperature', type=int, default=0)
     parser.add_argument('--max_num_atoms', type=float, default=int(1e3))
@@ -98,6 +99,7 @@ def add_args(parser):
     update_args2config(args2config, 'dataset_length')
     update_args2config(args2config, 'include_sgs')
     update_args2config(args2config, 'include_pgs')
+    update_args2config(args2config, 'generate_pgs')
     update_args2config(args2config, 'max_crystal_temperature')
     update_args2config(args2config, 'min_crystal_temperature')
     update_args2config(args2config, 'max_num_atoms')
@@ -271,16 +273,26 @@ def add_args(parser):
     parser.add_argument('--gan_loss', type=str, default='wasserstein')  # 'wasserstein, 'standard'
     add_bool_arg(parser, 'train_generator_density', default=True)  # train on cell volume
     add_bool_arg(parser, 'train_generator_as_flow', default=False)  # train normalizing flow generator via flow loss
+    add_bool_arg(parser, 'train_generator_on_randn', default=False)  # train model to match appropriate multivariate gaussian
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_range_cutoff', default=False)  # train generator on adversarially
+    add_bool_arg(parser, 'train_generator_pure_packing', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
+    add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
+    add_bool_arg(parser, 'train_discriminator_on_noise', default=False)  # train generator on extremely unit cells
+    parser.add_argument('--cut_max_prob_training_after', type=int, default=10)  # stop applying flow losses after xx epochs
 
     update_args2config(args2config, 'gan_loss')
     update_args2config(args2config, 'train_generator_density')
     update_args2config(args2config, 'train_generator_as_flow')
+    update_args2config(args2config, 'train_generator_on_randn')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_range_cutoff')
+    update_args2config(args2config, 'train_generator_pure_packing')
     update_args2config(args2config, 'train_discriminator_adversarially')
+    update_args2config(args2config, 'train_discriminator_on_randn')
+    update_args2config(args2config, 'train_discriminator_on_noise')
+    update_args2config(args2config, 'cut_max_prob_training_after')
 
     return parser, args2config
 
