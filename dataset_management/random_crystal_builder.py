@@ -973,6 +973,9 @@ def fast_differentiable_apply_rotations_and_translations(
 def fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values):
     '''
     apply point symmetries to single molecules
+    1. compute fractional and cartesian centroids, accounting for sym ops & remaining within the unit cell
+    2. apply point symmetries within-molecule cartesian coordinates
+    3. apply translations
     '''
 
     z_values = torch.tensor(z_values)
@@ -983,27 +986,30 @@ def fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_
 
     for i, (inds, z_value) in enumerate(zip(z_inds, unique_z_values)):
         lens = torch.tensor([len(final_coords_list[ii]) for ii in inds])
-        # pad = torch.max(lens) - lens
-        # padded_coords_c = rnn.pad_sequence(final_coords_list, batch_first=True)[inds]
+        padded_coords_c = rnn.pad_sequence(final_coords_list, batch_first=True)[inds]
         padded_coords_f = torch.einsum('nij,nmj->nmi',
-                                       (T_cf_list[inds],
-                                        rnn.pad_sequence(final_coords_list, batch_first=True)[inds]))
+                                       (T_cf_list[inds],padded_coords_c))
 
-        ref_cell = torch.zeros((z_value, len(inds), padded_coords_f.shape[1], 3)).to(final_coords_list[0].device)
+        centroids_f = torch.stack([padded_coords_f[ii, :lens[ii]].mean(0) for ii in range(len(padded_coords_f))])
+
+        ref_cells = torch.zeros((z_value, len(inds), padded_coords_f.shape[1], 3)).to(final_coords_list[0].device)
 
         z_sym_ops = torch.stack([sym_ops_list[j] for j in inds])
-        affine_points = torch.cat((padded_coords_f, torch.ones(padded_coords_f.shape[:-1] + (1,)).to(padded_coords_f.device)), dim=-1)
+        affine_centroids_f = torch.cat((centroids_f, torch.ones(centroids_f.shape[:-1] + (1,)).to(padded_coords_f.device)), dim=-1)
 
         for zv in range(z_value):
-            dup_f = torch.einsum('nmj,nij->nmi', (affine_points, z_sym_ops[:, zv]))[:, :, :-1]
-            # centroids_f_z = torch.einsum('nj,nij->ni',(affine_centroids_f, z_sym_ops[:,zv]))[:,:-1]
-            centroids_f_z = torch.stack([dup_f[ii, :lens[ii]].mean(0) for ii in range(len(dup_f))])  # todo slow part
-            # image_f = dup_f - torch.floor(centroids_f_z)[:,None,:]
-            ref_cell[zv, :, :] = torch.einsum('nij,nmj->nmi', (T_fc_list[inds],
-                                                               dup_f - torch.floor(centroids_f_z)[:, None, :]))
+            centroids_f_z = torch.einsum('nj,nij->ni', (affine_centroids_f, z_sym_ops[:, zv]))[..., :-1]
+            centroids_f_z_in_cell = centroids_f_z - torch.floor(centroids_f_z)
+            rot_coords_c = torch.einsum('nmj,nij->nmi', (padded_coords_c, z_sym_ops[:, zv, :3, :3]))
+
+            # the total translation in fractional coordinates
+            trans_vecs_c = torch.einsum('nij,nj->ni', (T_fc_list[inds],centroids_f_z_in_cell - centroids_f))
+
+            # subtract initial centroid and add final position
+            ref_cells[zv, :, :, :] = rot_coords_c + trans_vecs_c[:,None,:]
 
         # cells = [ref_cell[:,jj,:lens[jj],:] for jj in range(len(lens))]
-        reference_cell_list_i.extend([ref_cell[:, jj, :lens[jj], :] for jj in range(len(lens))])
+        reference_cell_list_i.extend([ref_cells[:, jj, :lens[jj], :] for jj in range(len(lens))])
 
     sorted_z_inds = torch.argsort(torch.cat(z_inds))
 
@@ -1030,6 +1036,26 @@ def orig_fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_lis
             ref_cell[zv] = torch.inner(T_fc, image_f).T
 
         reference_cell_list.append(ref_cell)
+
+    reference_cell_list = []
+    for i, (coords, sym_ops, T_cf, T_fc, z_value) in enumerate(zip(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)):
+        coords_f = torch.inner(T_cf, coords).T
+
+        affine_points = torch.cat((coords_f, torch.ones(coords_f.shape[:-1] + (1,)).to(coords.device)), dim=-1)
+
+        ref_cell = torch.zeros((z_value, len(coords_f), 3)).to(coords.device)
+        for zv in range(z_value):
+            dup_f = torch.inner(affine_points, sym_ops[zv])[..., :-1]
+            ref_cell[zv] = torch.inner(T_fc, dup_f).T
+
+        reference_cell_list.append(ref_cell)
+
+    # accuracy check
+    mats = torch.stack([torch.cdist(reference_cell_list[0][ii], reference_cell_list[0][ii], p=2) for ii in range(z_value)])
+
+    diffs = [(mats[0] - mats[i]).abs().sum().cpu().detach().numpy() for i in range(len(mats))]
+
+    print(np.sum(diffs))
 
     return reference_cell_list
 

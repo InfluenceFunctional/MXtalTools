@@ -849,79 +849,6 @@ class Predictor():
                 special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
         wandb.log(special_losses)
 
-    def differentiable_generated_supercells(self, cell_sample, supercell_data, config, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None):
-        '''
-        convert cell parameters to reference cell
-        convert reference cell to 3x3 supercell
-        all using differentiable torch functions
-        '''
-        volumes = []
-        z_values = []
-        sg_numbers = [int(supercell_data.y[2][i][self.sg_number_ind]) for i in range(supercell_data.num_graphs)]
-        lattices = [self.lattice_type[number] for number in sg_numbers]
-
-        cell_lengths, cell_angles, rand_position, rand_rotation = cell_sample.split(3, 1)
-
-        cell_lengths, cell_angles, rand_position, rand_rotation = clean_cell_output(
-            cell_lengths, cell_angles, rand_position, rand_rotation, lattices, config.dataDims, enforce_crystal_system=False)
-
-        if override_position is not None:
-            rand_position = torch.tensor(override_position).to(rand_position.device)
-        if override_orientation is not None:
-            rand_rotation = torch.tensor(override_orientation).to(rand_rotation.device)
-        if override_cell_length is not None:
-            cell_lengths = torch.tensor(override_cell_length).to(rand_position.device)
-        if override_cell_angle is not None:
-            cell_angles = torch.tensor(override_cell_angle).to(rand_rotation.device)
-
-        for i in range(supercell_data.num_graphs):
-            atoms = supercell_data.x[supercell_data.batch == i]
-            atomic_numbers = atoms[:, 0]
-            # heavy_atom_inds = torch.argwhere(atomic_numbers > 1)[:, 0]
-            # assert torch.sum(atomic_numbers == 1) == 0, 'hydrogens in supercell_dataset!'
-            # atoms = atoms_i[heavy_atom_inds]
-            coords = supercell_data.pos[supercell_data.batch == i, :]
-            weights = torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(coords.device)
-
-            sym_ops = torch.tensor(self.sym_ops[sg_numbers[i]], dtype=coords.dtype).to(coords.device)
-            z_value = len(sym_ops)  # number of molecules in the reference cell
-            z_values.append(z_value)
-
-            T_fc, vol = coor_trans_matrix_torch('f_to_c', cell_lengths[i], cell_angles[i], return_vol=True)
-            T_fc = T_fc.to(coords.device)
-            T_cf = torch.linalg.inv(T_fc)  # faster #coor_trans_matrix_torch('c_to_f', cell_lengths[i], cell_angles[i]).to(config.device)
-            cell_vectors = torch.inner(T_fc, torch.eye(3).to(coords.device)).T  # T_fc.dot(torch.eye(3)).T
-            volumes.append(vol)
-
-            random_coords = randomize_molecule_position_and_orientation_torch(
-                coords, weights, T_fc, sym_ops,
-                set_position=rand_position[i], set_rotation=rand_rotation[i])
-
-            reference_cell = build_random_crystal_torch(T_cf, T_fc, random_coords, sym_ops, z_value)
-
-            supercell_atoms, supercell_coords = ref_to_supercell_torch(reference_cell, z_value, atoms, cell_vectors)
-
-            supercell_batch = torch.ones(len(supercell_atoms)).int() * i
-
-            # append supercell info to the data class #
-            if i == 0:
-                new_x = supercell_atoms
-                new_coords = supercell_coords
-                new_batch = supercell_batch
-                new_ptr = torch.zeros(supercell_data.num_graphs)
-            else:
-                new_x = torch.cat((new_x, supercell_atoms), dim=0)
-                new_coords = torch.cat((new_coords, supercell_coords), dim=0)
-                new_batch = torch.cat((new_batch, supercell_batch))
-                new_ptr[i] = new_ptr[-1] + len(new_x)
-
-        # update dataloader with cell info
-        supercell_data.x = new_x.type(dtype=torch.float32)
-        supercell_data.pos = new_coords.type(dtype=torch.float32)
-        supercell_data.batch = new_batch.type(dtype=torch.int64)
-        supercell_data.ptr = new_ptr.type(dtype=torch.int64)
-
-        return supercell_data, z_values, volumes
 
     def fast_differentiable_generated_supercells(self, supercell_data, config, cell_sample, do_cpu=True, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None, override_pg = None):
         '''
@@ -947,8 +874,7 @@ class Predictor():
             # update to correct Z values
             #z_value_vec = supercell_data.x[:,self.z_value_ind].clone()
             for i in range(len(z_values)):
-                supercell_data.x[supercell_data.batch==i, self.z_value_ind] = z_values[i]
-
+                supercell_data.x[supercell_data.batch==i, self.z_value_ind] = z_values[i] # todo norm/std
 
         else:
             sg_numbers = [int(supercell_data.y[2][i][self.sg_number_ind]) for i in range(supercell_data.num_graphs)]
@@ -956,8 +882,6 @@ class Predictor():
             z_values = [len(sym_ops) for sym_ops in sym_ops_list]
 
         # lattices = [self.lattice_type[number] for number in sg_numbers]
-
-
 
         cell_lengths, cell_angles, mol_position, mol_rotation = cell_sample.split(3, 1)
 
@@ -993,7 +917,7 @@ class Predictor():
             standardization_rotation_list, applied_rotation_list, coords_list, masses_list, T_fc_list, canonical_mol_position)
         reference_cell_list = fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)
         cell_vector_list = fast_differentiable_cell_vectors(T_fc_list)
-        supercell_list, supercell_atoms_list = fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values)
+        supercell_list, supercell_atoms_list = fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values, supercell_scale=config.supercell_size)
 
         # append supercell info to the data class #
         for i in range(supercell_data.num_graphs):
@@ -1046,7 +970,7 @@ class Predictor():
 
         reference_cell_list = [torch.tensor(supercell_data.y[3][i][:, :, :3]).to(supercell_data.x.device) for i in range(supercell_data.num_graphs)]
         cell_vector_list = fast_differentiable_cell_vectors(T_fc_list)
-        supercell_list, supercell_atoms_list = fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values)
+        supercell_list, supercell_atoms_list = fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values, supercell_scale = config.supercell_size)
 
         for i in range(supercell_data.num_graphs):
             if i == 0:
@@ -1330,7 +1254,7 @@ class Predictor():
             generated_samples = self.randn_generator.forward(data.num_graphs).to(generator.device)
         if not (sample_type == 'noisy'):
             real_supercell_data = self.fast_real_supercells(data.clone(), config)
-            fake_supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone().to(generated_samples.device), config, generated_samples)
+            fake_supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone().to(generated_samples.device), config, generated_samples, override_pg = config.generate_pgs)
         else:
             real_supercell_data = self.fast_real_supercells(data.clone(), config)
             fake_supercell_data = real_supercell_data.clone()

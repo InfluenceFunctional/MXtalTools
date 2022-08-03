@@ -11,10 +11,10 @@ gan_loss: wasserstein #wasserstein # standard
 train_generator_density: False
 train_generator_as_flow: False
 train_generator_on_randn: False
-train_generator_adversarially: False
+train_generator_adversarially: True
 train_generator_range_cutoff: True
 train_generator_packing: True
-train_discriminator_adversarially: False
+train_discriminator_adversarially: True
 train_discriminator_on_randn: False # todo finish
 train_discriminator_on_noise: False # todo finish
 cut_flow_training_after: 5
@@ -35,7 +35,7 @@ wandb:
 
 # dataset curation
 target: crystal spacegroup setting # not currently used
-positional_noise: 0.05 # scaling for the randn noise added to all atom positions
+positional_noise: 0 # scaling for the randn noise added to all atom positions
 dataset_length: 10000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
@@ -55,8 +55,9 @@ exclude_disordered_crystals: True
 exclude_polymorphs: True
 exclude_nonstandard_settings: True
 include_sgs: null #[P-1, P21/c, P212121, C2/c, Pbca, P21]
-include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
-generate_pgs: '1'
+include_pgs: ['2/m'] #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
+generate_pgs: '2/m' #'1'
+supercell_size: 3 # 1 = 3x3x3, 2 = 5x5x5 etc.
 
 # batching & convergence
 auto_batch_sizing: True
@@ -118,7 +119,7 @@ generator:
   num_spherical: 6
   num_radial: 12
   graph_convolution_cutoff: 5
-  max_num_neighbors: 10
+  max_num_neighbors: 32
   radial_function: 'bessel' # mikenet only
   num_attention_heads: 1 # mikenet only
   graph_convolution: 'full message passing' # mikenet only

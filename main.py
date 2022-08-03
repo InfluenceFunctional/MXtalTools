@@ -81,6 +81,7 @@ def add_args(parser):
     parser.add_argument('--include_sgs', type=str, default=['P21/c'])  # spacegroups to explicitly include in modelling - new!
     parser.add_argument('--include_pgs', type=str, default=['222', '-1'])  # point groups to pull from dataset
     parser.add_argument('--generate_pgs', type=str, default=['222', '-1'])  # point groups to generate
+    parser.add_argument('--supercell_size', type=int, default=1)  # point groups to generate
     parser.add_argument('--max_crystal_temperature', type=float, default=int(1e3))
     parser.add_argument('--min_crystal_temperature', type=int, default=0)
     parser.add_argument('--max_num_atoms', type=float, default=int(1e3))
@@ -100,6 +101,7 @@ def add_args(parser):
     update_args2config(args2config, 'include_sgs')
     update_args2config(args2config, 'include_pgs')
     update_args2config(args2config, 'generate_pgs')
+    update_args2config(args2config, 'supercell_size')
     update_args2config(args2config, 'max_crystal_temperature')
     update_args2config(args2config, 'min_crystal_temperature')
     update_args2config(args2config, 'max_num_atoms')

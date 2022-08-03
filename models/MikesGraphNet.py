@@ -87,7 +87,7 @@ class MikesGraphNet(torch.nn.Module):
         if self.crystal_mode: # allow incoming edges from outside the central crystal but exclude outgoing edges
             atom_inds = z[:,-1].clone() # pull the atom-wise index per-molecule
             z = z[:,:-1] # then delete it, since it's just an index, not used for modelling
-            inside_inds = torch.where(atom_inds == 1)[0] # todo I think this might be slow - maybe feed it?
+            inside_inds = torch.where(atom_inds == 1)[0] # todo might be slow
             edge_index = asymmetric_radius_graph(pos,pos[inside_inds],batch_x=batch, batch_y = batch[inside_inds],r=self.cutoff,
                                                  max_num_neighbors=self.max_num_neighbors, flow='source_to_target',inside_inds=inside_inds)
         else:
@@ -122,7 +122,6 @@ class MikesGraphNet(torch.nn.Module):
                 x = x + convolution(x, rbf, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution with angular features
             else:
                 x = x + convolution(x, rbf, edge_index) # nodes up to max(j) are updated, others ignored
-
 
             x = x + fc(x)  # feature-wise 1D convolution
 
