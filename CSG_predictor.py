@@ -49,15 +49,16 @@ class Predictor():
         if 'cell' in self.config.mode:
             print('Pre-generating spacegroup symmetries')
             self.sym_ops = {}
-            self.sym_ops_pg = {}
             self.point_groups = {}
             self.lattice_type = {}
+            self.space_groups = {}
             for i in tqdm.tqdm(range(1, 231)):
                 sym_group = symmetry.Group(i)
                 general_position_syms = sym_group.wyckoffs_organized[0][0]
                 self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
                 self.point_groups[i] = sym_group.point_group
                 self.lattice_type[i] = sym_group.lattice_type
+                self.space_groups[i] = sym_group.symbol
 
         miner = Miner(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)
 
@@ -293,17 +294,20 @@ class Predictor():
 
     def train(self):
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=self.config.wandb.experiment_tag):
-            # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken
+            # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken - look at the github thread
             # print(config)
 
             config = self.config  # go with hand-built config
 
             # dataset
-            dataset_builder = BuildDataset(config, self.point_groups, premade_dataset=self.prep_dataset)
+            dataset_builder = BuildDataset(config, pg_dict = self.point_groups,
+                                           sg_dict = self.space_groups,
+                                           lattice_dict = self.lattice_type,
+                                           premade_dataset=self.prep_dataset)
             del self.prep_dataset  # we don't actually want this huge thing floating around
 
-            config.dataDims = dataset_builder.get_dimension()
             self.dataDims = dataset_builder.get_dimension()
+            config.dataDims = self.dataDims
 
             self.cell_angle_keys = ['crystal alpha', 'crystal beta', 'crystal gamma']
             self.cell_angle_inds = [self.dataDims['tracking features dict'].index(key) for key in self.cell_angle_keys]
@@ -315,7 +319,9 @@ class Predictor():
             self.crystal_packing_ind = self.dataDims['tracking features dict'].index('crystal packing coefficient')
             self.crystal_density_ind = self.dataDims['tracking features dict'].index('crystal calculated density')
             self.mol_size_ind = self.dataDims['tracking features dict'].index('molecule num atoms')
-            self.pg_ind_dict = {thing[14:]:ind + self.dataDims['n atomwise features'] for ind,thing in enumerate(self.dataDims['mol features']) if 'pg' in thing}
+            self.pg_ind_dict = {thing[14:]:ind + self.dataDims['n atomwise features'] for ind,thing in enumerate(self.dataDims['mol features']) if 'pg is' in thing}
+            self.sg_ind_dict = {thing[14:]:ind + self.dataDims['n atomwise features'] for ind,thing in enumerate(self.dataDims['mol features']) if 'sg is' in thing} # todo simplify - allow all possibilities
+            self.crysys_ind_dict = {thing[18:]:ind + self.dataDims['n atomwise features'] for ind,thing in enumerate(self.dataDims['mol features']) if 'crystal system is' in thing}
 
             self.randn_generator = independent_gaussian_model(input_dim = self.dataDims['n crystal features'],
                                                               means = self.dataDims['means'],
@@ -850,7 +856,7 @@ class Predictor():
         wandb.log(special_losses)
 
 
-    def fast_differentiable_generated_supercells(self, supercell_data, config, cell_sample, do_cpu=True, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None, override_pg = None):
+    def fast_differentiable_generated_supercells(self, supercell_data, config, cell_sample, do_cpu=True, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None, override_sg = None):
         '''
         convert cell parameters to reference cell
         convert reference cell to 3x3 supercell
@@ -862,19 +868,28 @@ class Predictor():
             supercell_data = supercell_data.cpu()
             cell_sample = cell_sample.cpu()
 
-        if override_pg is not None:
-            pg_ind = self.pg_ind_dict[override_pg]
-            supercell_data.x[:,min(self.pg_ind_dict.values()):max(self.pg_ind_dict.values())] = 0 # set all pgs to 0
-            supercell_data.x[:,pg_ind] = 1 # set all molecules to the given pg
-            pick_sg_ind = list(self.point_groups.keys())[list(self.point_groups.values()).index(override_pg)]
-            sg_numbers = [pick_sg_ind for i in range(supercell_data.num_graphs)]
-            sym_ops_list = [torch.Tensor(self.sym_ops[sg_numbers[i]]).to(supercell_data.x.device) for i in range(len(sg_numbers))]
-            z_values = [len(sym_ops) for sym_ops in sym_ops_list]
+        if override_sg is not None:
+            # overrite point group one-hot
+            # overwrite space group one-hot
+            # overwrite crystal system one-hot
+            # overwrite z value
+            sg_num = list(self.space_groups.values()).index(override_sg) + 1 # indexing from 0
+            sg_ind = self.sg_ind_dict[self.space_groups[sg_num]]
+            pg_ind = self.pg_ind_dict[self.point_groups[sg_num]]
+            crysys_ind = self.crysys_ind_dict[self.lattice_type[sg_num]]
+            z_value_ind = max(list(self.crysys_ind_dict.values())) + 1 # todo hardcode
 
-            # update to correct Z values
-            #z_value_vec = supercell_data.x[:,self.z_value_ind].clone()
-            for i in range(len(z_values)):
-                supercell_data.x[supercell_data.batch==i, self.z_value_ind] = z_values[i] # todo norm/std
+            sym_ops_list = [torch.Tensor(self.sym_ops[sg_num]).to(supercell_data.x.device) for i in range(supercell_data.num_graphs)]
+            z_value = len(sym_ops_list[0]) # assume all single z value for now
+
+            supercell_data.x[:,-config.dataDims['n crystal generation features']] = 0 # set all crystal features to 0
+            supercell_data.x[:,pg_ind] = 1 # set all molecules to the given pg
+            supercell_data.x[:,sg_ind] = 1 # set all molecules to the given pg
+            supercell_data.x[:,crysys_ind] = 1 # set all molecules to the given pg
+            supercell_data.x[:,z_value_ind] = z_value
+
+            z_values = [z_value for i in range(supercell_data.num_graphs)]
+            sg_numbers = [sg_num for i in range(supercell_data.num_graphs)]
 
         else:
             sg_numbers = [int(supercell_data.y[2][i][self.sg_number_ind]) for i in range(supercell_data.num_graphs)]
@@ -916,23 +931,10 @@ class Predictor():
         final_coords_list = fast_differentiable_apply_rotations_and_translations(
             standardization_rotation_list, applied_rotation_list, coords_list, masses_list, T_fc_list, canonical_mol_position)
         reference_cell_list = fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)
-        cell_vector_list = fast_differentiable_cell_vectors(T_fc_list)
+        cell_vector_list = fast_differentiable_cell_vectors(T_fc_list) # I think this just IS the T_fc matrix
         supercell_list, supercell_atoms_list = fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values, supercell_scale=config.supercell_size)
 
-        # append supercell info to the data class #
-        for i in range(supercell_data.num_graphs):
-            if i == 0:
-                new_batch = torch.ones(len(supercell_atoms_list[i])).int() * i
-                new_ptr = torch.zeros(supercell_data.num_graphs)
-            else:
-                new_batch = torch.cat((new_batch, torch.ones(len(supercell_atoms_list[i])).int() * i))
-                new_ptr[i] = new_ptr[-1] + len(supercell_list[i])
-
-        # update dataloader with cell info
-        supercell_data.x = torch.cat(supercell_atoms_list).type(dtype=torch.float32)
-        supercell_data.pos = torch.cat(supercell_list).type(dtype=torch.float32)
-        supercell_data.batch = new_batch.type(dtype=torch.int64)
-        supercell_data.ptr = new_ptr.type(dtype=torch.int64)
+        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list)
 
         return supercell_data.to(config.device), z_values, generated_cell_volumes.to(config.device)
 
@@ -972,19 +974,7 @@ class Predictor():
         cell_vector_list = fast_differentiable_cell_vectors(T_fc_list)
         supercell_list, supercell_atoms_list = fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values, supercell_scale = config.supercell_size)
 
-        for i in range(supercell_data.num_graphs):
-            if i == 0:
-                new_batch = torch.ones(len(supercell_atoms_list[i])).int() * i
-                new_ptr = torch.zeros(supercell_data.num_graphs)
-            else:
-                new_batch = torch.cat((new_batch, torch.ones(len(supercell_atoms_list[i])).int() * i))
-                new_ptr[i] = new_ptr[-1] + len(supercell_list[i])
-
-        # update dataloader with cell info
-        supercell_data.x = torch.cat(supercell_atoms_list).type(dtype=torch.float32)
-        supercell_data.pos = torch.cat(supercell_list).type(dtype=torch.float32)
-        supercell_data.batch = new_batch.type(dtype=torch.int64)
-        supercell_data.ptr = new_ptr.type(dtype=torch.int64)
+        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list)
 
         return supercell_data.to(config.device)
 
@@ -1254,7 +1244,7 @@ class Predictor():
             generated_samples = self.randn_generator.forward(data.num_graphs).to(generator.device)
         if not (sample_type == 'noisy'):
             real_supercell_data = self.fast_real_supercells(data.clone(), config)
-            fake_supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone().to(generated_samples.device), config, generated_samples, override_pg = config.generate_pgs)
+            fake_supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone().to(generated_samples.device), config, generated_samples, override_sg = config.generate_sgs)
         else:
             real_supercell_data = self.fast_real_supercells(data.clone(), config)
             fake_supercell_data = real_supercell_data.clone()
@@ -1281,7 +1271,7 @@ class Predictor():
         generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
         if config.train_generator_adversarially or config.train_generator_packing or config.train_generator_range_cutoff:
 
-            supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone(), config, generated_samples, override_pg = config.generate_pgs)
+            supercell_data, z_values, generated_cell_volumes = self.fast_differentiable_generated_supercells(data.clone(), config, generated_samples, override_sg = config.generate_sgs)
 
             if False:#:i == 0:
                 print('Batch {} fake supercell generation took {:.2f} seconds for {} samples'.format(i, round(t1 - t0, 2), data.num_graphs))

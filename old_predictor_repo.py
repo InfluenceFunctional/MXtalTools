@@ -1305,3 +1305,74 @@ def fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_
     sorted_z_inds = torch.argsort(torch.cat(z_inds))
 
     return [reference_cell_list_i[ind] for ind in sorted_z_inds]
+
+
+
+def orig_fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values):
+    '''
+    apply point symmetries to single molecules
+    '''
+
+    reference_cell_list = []
+    for i, (coords, sym_ops, T_cf, T_fc, z_value) in enumerate(zip(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)):
+        coords_f = torch.inner(T_cf, coords).T
+        affine_points = torch.cat((coords_f, torch.ones(coords_f.shape[:-1] + (1,)).to(coords.device)), dim=-1)
+
+        ref_cell = torch.zeros((z_value, len(coords_f), 3)).to(coords.device)
+        for zv in range(z_value):
+            dup_f = torch.inner(affine_points, sym_ops[zv])[..., :-1]
+            centroid_f = dup_f.mean(0)
+            if (any(centroid_f < 0)) or (any(centroid_f > 1)):
+                image_f = dup_f - torch.floor(centroid_f)
+            else:
+                image_f = dup_f
+            ref_cell[zv] = torch.inner(T_fc, image_f).T
+
+        reference_cell_list.append(ref_cell)
+
+    reference_cell_list = []
+    for i, (coords, sym_ops, T_cf, T_fc, z_value) in enumerate(zip(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)):
+        coords_f = torch.inner(T_cf, coords).T
+
+        affine_points = torch.cat((coords_f, torch.ones(coords_f.shape[:-1] + (1,)).to(coords.device)), dim=-1)
+
+        ref_cell = torch.zeros((z_value, len(coords_f), 3)).to(coords.device)
+        for zv in range(z_value):
+            dup_f = torch.inner(affine_points, sym_ops[zv])[..., :-1]
+            ref_cell[zv] = torch.inner(T_fc, dup_f).T
+
+        reference_cell_list.append(ref_cell)
+
+    # accuracy check
+    mats = torch.stack([torch.cdist(reference_cell_list[0][ii], reference_cell_list[0][ii], p=2) for ii in range(z_value)])
+
+    diffs = [(mats[0] - mats[i]).abs().sum().cpu().detach().numpy() for i in range(len(mats))]
+
+    print(np.sum(diffs))
+
+    return reference_cell_list
+
+
+def prev_fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values):
+    '''
+    apply point symmetries to single molecules
+    '''
+
+    reference_cell_list = []
+    for i, (coords, sym_ops, T_cf, T_fc, z_value) in enumerate(zip(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)):
+        coords_f = torch.inner(T_cf, coords).T
+        affine_points = torch.cat((coords_f, torch.ones(coords_f.shape[:-1] + (1,)).to(coords.device)), dim=-1)
+
+        ref_cell = torch.zeros((z_value, len(coords_f), 3)).to(coords.device)
+        for zv in range(z_value):
+            dup_f = torch.inner(affine_points, sym_ops[zv])[..., :-1]
+            centroid_f = dup_f.mean(0)
+            if (any(centroid_f < 0)) or (any(centroid_f > 1)):
+                image_f = dup_f - torch.floor(centroid_f)
+            else:
+                image_f = dup_f
+            ref_cell[zv] = torch.inner(T_fc, image_f).T
+
+        reference_cell_list.append(ref_cell)
+
+    return reference_cell_list

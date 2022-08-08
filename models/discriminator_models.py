@@ -15,13 +15,14 @@ class crystal_discriminator(nn.Module):
         self.fc_depth = config.discriminator.fc_depth
         self.output_classes = 1 if config.gan_loss == 'wasserstein' else 2
         self.graph_filters = config.discriminator.graph_filters
-        self.n_mol_feats = dataDims['n mol features']
-        self.n_atom_feats = dataDims['atom features']
+        self.n_mol_feats = dataDims['n mol features'] - dataDims['n crystal generation features']
+        self.n_atom_feats = dataDims['atom features'] - dataDims['n crystal generation features']
         self.n_atom_feats -= self.n_mol_feats
         self.pool_type = config.discriminator.pooling
         self.fc_norm_mode = config.discriminator.fc_norm_mode
         self.embedding_dim = config.discriminator.atom_embedding_size
         self.crystal_mode = True
+        self.n_crystal_feats_to_ignore = dataDims['n crystal generation features']
 
         torch.manual_seed(config.seeds.model)
 
@@ -73,6 +74,9 @@ class crystal_discriminator(nn.Module):
         self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
 
     def forward(self, data, return_dists = False):
+        crystal_inds = data.x[:,-1]
+        data.x = data.x[:,:-(self.n_crystal_feats_to_ignore + 1)] # ignore knowledge about space group, crystal system, etc.
+        data.x = torch.cat((data.x, crystal_inds[:, None]), dim=1)  # keep last dim for crystal indexing
         if return_dists:
             x, dists, keep_cell_inds = self.graph_net(torch.cat((data.x[:, :self.n_atom_feats], data.x[:, -1:]), dim=1), data.pos, data.batch, return_dists = return_dists)  # extra dim for crystal indexing
         else:

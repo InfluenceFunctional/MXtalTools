@@ -2,7 +2,7 @@ from typing import Optional
 
 import torch
 
-#@torch.jit.script
+@torch.jit.script
 def radius(x: torch.Tensor, y: torch.Tensor, r: float,
            batch_x: Optional[torch.Tensor] = None,
            batch_y: Optional[torch.Tensor] = None, max_num_neighbors: int = 32,
@@ -75,7 +75,7 @@ def radius(x: torch.Tensor, y: torch.Tensor, r: float,
                                           max_num_neighbors, num_workers)
 
 
-#@torch.jit.script
+@torch.jit.script
 def asymmetric_radius_graph(x: torch.Tensor, y: torch.Tensor, r: float, inside_inds: torch.Tensor,
                             batch_x: Optional[torch.Tensor] = None, batch_y: Optional[torch.Tensor] = None,
                             loop: bool = False,

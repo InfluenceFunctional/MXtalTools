@@ -21,7 +21,7 @@ cut_flow_training_after: 5
 
 seeds:
   model: 0
-  dataset: 0
+  dataset: 1
 
 # opt - sweep details
 wandb:
@@ -36,7 +36,7 @@ wandb:
 # dataset curation
 target: crystal spacegroup setting # not currently used
 positional_noise: 0 # scaling for the randn noise added to all atom positions
-dataset_length: 10000
+dataset_length: 1000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 40
@@ -55,13 +55,15 @@ exclude_disordered_crystals: True
 exclude_polymorphs: True
 exclude_nonstandard_settings: True
 include_sgs: null #[P-1, P21/c, P212121, C2/c, Pbca, P21]
-include_pgs: ['2/m'] #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
-generate_pgs: '2/m' #'1'
+include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
+generate_sgs: null #'P2' #'P21/c'
 supercell_size: 3 # 1 = 3x3x3, 2 = 5x5x5 etc.
+
+# https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
 
 # batching & convergence
 auto_batch_sizing: True
-min_batch_size: 10
+min_batch_size: 25
 max_batch_size: 2000
 auto_batch_reduction: .65
 max_epochs: 1000
@@ -113,8 +115,8 @@ generator:
   model_type: mlp # mlp or nf
   graph_model: mike
   graph_convolution_layers: 4
-  graph_filters: 32
-  atom_embedding_size: 64
+  graph_filters: 12
+  atom_embedding_size: 2
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
@@ -127,7 +129,7 @@ generator:
   pooling: attention
 
   num_fc_layers: 4
-  fc_depth: 128
+  fc_depth: 12
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer

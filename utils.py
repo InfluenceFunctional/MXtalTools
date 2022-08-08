@@ -12,6 +12,7 @@ from pathlib import Path
 import torch
 import sys
 import torch.nn.functional as F
+from scipy.ndimage import gaussian_filter1d
 
 '''
 general utilities
@@ -2127,6 +2128,28 @@ def get_config(args, override_args, args2config):
         else:
             _update_config(k, v, config, override=False)
     return dict2namespace(config)
+
+def single_point_compute_rdf(dists, density = None, range=None, bins = None, sigma = None):
+    '''
+    compute the radial distribution for a single particle
+    dists: array of pairwise distances of nearby particles from the reference
+    '''
+    hist_range = [0.5,10] if range is None else range
+    hist_bins = 100 if bins is None else bins
+    gauss_sigma = 1 if sigma is None else sigma
+
+    if density is None: # estimate the density from the distances
+        sorted_dists = np.sort(dists)[:len(dists)//2] # we will use 1/2 the dist radius to avoid edge / cutoff effects
+        volume = np.ptp(sorted_dists[:,0]) * np.ptp(sorted_dists[:,1]) * np.ptp(sorted_dists[:,2])
+        rdf_density = len(sorted_dists) / volume # number of particles divided by the volume
+    else:
+        rdf_density = density
+
+    hh, rr = np.histogram(dists, range=hist_range, bins=hist_bins)
+    shell_volumes =  (4 / 3) * np.pi * ((rr[:-1] + np.diff(rr)) ** 3 - rr[:-1] ** 3) # volume of the shell at radius r+dr
+    rdf = gaussian_filter1d(hh / shell_volumes / rdf_density, sigma=gauss_sigma)  # radial distribution function
+
+    return rdf, rr[:-1] + np.diff(rr) # rdf and x-axis
 
 
 '''
