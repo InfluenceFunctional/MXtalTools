@@ -185,10 +185,17 @@ def add_args(parser):
     parser.add_argument('--generator_max_num_neighbors', type=int, default=32)  # dime default is 32
     parser.add_argument('--generator_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
     add_bool_arg(parser, 'generator_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    parser.add_argument('--generator_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
+
+
+    parser.add_argument('--generator_conditioner_num_fc_layers', type=int, default=1)  # number of layers in NN models
+    parser.add_argument('--generator_conditioner_fc_depth', type=int, default=27)  # number of neurons per NN layer
+    parser.add_argument('--generator_conditioner_activation', type=str, default='gelu')
+    parser.add_argument('--generator_conditioner_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
+    parser.add_argument('--generator_conditioner_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
 
     parser.add_argument('--generator_num_fc_layers', type=int, default=1)  # number of layers in NN models
     parser.add_argument('--generator_fc_depth', type=int, default=27)  # number of neurons per NN layer
-    parser.add_argument('--generator_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
     parser.add_argument('--generator_activation', type=str, default='gelu')
     parser.add_argument('--generator_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
     parser.add_argument('--generator_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
@@ -216,9 +223,14 @@ def add_args(parser):
     update_args2config(args2config, 'generator_max_num_neighbors', ['generator', 'max_num_neighbors'])
     update_args2config(args2config, 'generator_radial_function', ['generator', 'radial_function'])
     update_args2config(args2config, 'generator_add_spherical_basis', ['generator', 'add_spherical_basis'])
+    update_args2config(args2config, 'generator_pooling', ['generator', 'pooling'])
+    update_args2config(args2config, 'generator_conditioner_num_fc_layers', ['generator', 'conditioner_num_fc_layers'])
+    update_args2config(args2config, 'generator_conditioner_fc_depth', ['generator', 'conditioner_fc_depth'])
+    update_args2config(args2config, 'generator_conditioner_activation', ['generator', 'conditioner_activation'])
+    update_args2config(args2config, 'generator_conditioner_fc_dropout_probability', ['generator', 'conditioner_fc_dropout_probability'])
+    update_args2config(args2config, 'generator_conditioner_fc_norm_mode', ['generator', 'conditioner_fc_norm_mode'])
     update_args2config(args2config, 'generator_num_fc_layers', ['generator', 'num_fc_layers'])
     update_args2config(args2config, 'generator_fc_depth', ['generator', 'fc_depth'])
-    update_args2config(args2config, 'generator_pooling', ['generator', 'pooling'])
     update_args2config(args2config, 'generator_activation', ['generator', 'activation'])
     update_args2config(args2config, 'generator_fc_dropout_probability', ['generator', 'fc_dropout_probability'])
     update_args2config(args2config, 'generator_fc_norm_mode', ['generator', 'fc_norm_mode'])

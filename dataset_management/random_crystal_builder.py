@@ -1029,9 +1029,9 @@ def fast_differentiable_cell_vectors(T_fc_list):
     return torch.matmul(T_fc_list, eyevec).permute(0, 2, 1)
 
 
-def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values, supercell_scale=2):
-    n_copies = (2 * supercell_scale + 1) ** 3
-    fractional_translations = torch.zeros((n_copies, 3))  # initialize the translations in fractional coords
+def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values, supercell_scale=2, cutoff = 5):
+    n_cells = (2 * supercell_scale + 1) ** 3
+    fractional_translations = torch.zeros((n_cells, 3))  # initialize the translations in fractional coords
     i = 0
     for xx in range(-supercell_scale, supercell_scale + 1):
         for yy in range(-supercell_scale, supercell_scale + 1):
@@ -1043,27 +1043,41 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
     supercell_list = []
     supercell_atoms_list = []
     for i, (ref_cell, cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, z_values)):
-        supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(n_copies, 1)  # duplicate over XxXxX supercell
-        cart_translations_i = torch.mul(cell_vectors.tile(n_copies, 1), sorted_fractional_translations.reshape(n_copies * 3, 1))  # 3 dimensions
+        supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(n_cells, 1)  # duplicate over XxXxX supercell
+        cart_translations_i = torch.mul(cell_vectors.tile(n_cells, 1), sorted_fractional_translations.reshape(n_cells * 3, 1))  # 3 dimensions
         cart_translations = torch.stack(cart_translations_i.split(3, dim=0), dim=0).sum(1)
 
         supercell_list.append(
             supercell_coords + torch.repeat_interleave(cart_translations, ref_cell.shape[1] * ref_cell.shape[0], dim=0)
         )
 
-        supercell_atoms = atoms.repeat(n_copies * z_value, 1)
-        ref_cell_inds = torch.ones(len(supercell_atoms)).to(ref_cell.device)[:, None]
-        ref_cell_inds[len(atoms) * z_value:, 0] = 0
-        supercell_atoms_w_ind = torch.cat((supercell_atoms, ref_cell_inds), dim=1)  # inside main unit cell
+        supercell_atoms = atoms.repeat(n_cells * z_value, 1)
+        # ref_cell_inds = torch.ones(len(supercell_atoms)).to(ref_cell.device)[:, None]
+        # ref_cell_inds[len(atoms) * z_value:, 0] = 0
+        # supercell_atoms_w_ind = torch.cat((supercell_atoms, ref_cell_inds), dim=1)  # inside main unit cell
+        in_mol_inds = torch.arange(len(atoms))
+        ref_mol_inds = torch.ones(len(supercell_atoms),dtype=int).to(ref_cell.device)[:, None]
+        ref_mol_inds[in_mol_inds, 0] = 0
+
+        # also, note the atoms which are too far to ever appear in a convolution with this molecule, and generate an index to ignore them
+        ref_mol_centroid = ref_cell[0].mean(0)
+        ref_mol_max_dist = torch.max(torch.cdist(ref_mol_centroid[None,:],ref_cell[0],p=2)) # distance within the molecule
+        # ignore atoms which are more than max_dist + conv_cutoff + wiggle room
+        ignore_inds = torch.where((torch.cdist(ref_mol_centroid[None,:], supercell_coords, p=2) > (ref_mol_max_dist + cutoff))[0])[0]
+        ref_mol_inds[ignore_inds] = 2 # 2 is the index for completely ignoring these atoms in graph convolutions - haven't removed them entirely because it wrecks the crystal periodicity
+
+        supercell_atoms_w_ind = torch.cat((supercell_atoms, ref_mol_inds), dim=1)  # just a single asymmetric unit
 
         supercell_atoms_list.append(
             supercell_atoms_w_ind
         )
 
-    return supercell_list, supercell_atoms_list
+    n_copies = torch.tensor(z_values) * n_cells
+
+    return supercell_list, supercell_atoms_list, n_copies
 
 
-def update_supercell_data(supercell_data, supercell_atoms_list, supercell_list):
+def update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, n_copies):
     for i in range(supercell_data.num_graphs):
         if i == 0:
             new_batch = torch.ones(len(supercell_atoms_list[i])).int() * i
@@ -1078,4 +1092,6 @@ def update_supercell_data(supercell_data, supercell_atoms_list, supercell_list):
     supercell_data.pos = torch.cat(supercell_list).type(dtype=torch.float32)
     supercell_data.batch = new_batch.type(dtype=torch.int64)
     supercell_data.ptr = new_ptr.type(dtype=torch.int64)
+    supercell_data.y.append(n_copies) # number of duplicate atoms - always final index
+
     return supercell_data

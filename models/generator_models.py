@@ -30,11 +30,11 @@ class crystal_generator(nn.Module):
             self.conditioner = molecule_graph_model(dataDims,
                                                     seed=config.seeds.model,
                                                     output_dimension=config.generator.fc_depth,
-                                                    activation=config.generator.activation,
-                                                    num_fc_layers=config.generator.num_fc_layers,
-                                                    fc_depth=config.generator.fc_depth,
-                                                    fc_dropout_probability=config.generator.fc_dropout_probability,
-                                                    fc_norm_mode=config.generator.fc_norm_mode,
+                                                    activation=config.generator.conditioner_activation,
+                                                    num_fc_layers=config.generator.conditioner_num_fc_layers,
+                                                    fc_depth=config.generator.conditioner_fc_depth,
+                                                    fc_dropout_probability=config.generator.conditioner_fc_dropout_probability,
+                                                    fc_norm_mode=config.generator.conditioner_fc_norm_mode,
                                                     graph_model=config.generator.graph_model,
                                                     graph_filters=config.generator.graph_filters,
                                                     graph_convolutional_layers=config.generator.graph_convolution_layers,
@@ -52,10 +52,10 @@ class crystal_generator(nn.Module):
                                                     convolution_cutoff=config.generator.graph_convolution_cutoff,
                                                     )
         elif config.generator.conditioning_mode == 'molecule features':
-            self.conditioner = general_MLP(layers=config.generator.num_fc_layers,
-                                           filters=config.generator.fc_depth,
-                                           norm=config.generator.fc_norm_mode,
-                                           dropout=config.generator.fc_dropout_probability,
+            self.conditioner = general_MLP(layers=config.generator.conditioner_num_fc_layers,
+                                           filters=config.generator.conditioner_fc_depth,
+                                           norm=config.generator.conditioner_fc_norm_mode,
+                                           dropout=config.generator.conditioner_fc_dropout_probability,
                                            input_dim=dataDims['n conditional features'],
                                            output_dim=config.generator.fc_depth,
                                            conditioning_dim=0,
@@ -84,6 +84,7 @@ class crystal_generator(nn.Module):
             sys.exit()
 
     def sample_latent(self, n_samples):
+        #return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
         return self.prior.sample((n_samples,)).to(self.device)
 
     def forward(self, n_samples, z=None, conditions=None):

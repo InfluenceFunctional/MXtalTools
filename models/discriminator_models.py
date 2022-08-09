@@ -74,11 +74,15 @@ class crystal_discriminator(nn.Module):
         self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
 
     def forward(self, data, return_dists = False):
+        if self.crystal_mode:
+            n_repeats = data.y[4] # number of periodic copies
+        else:
+            n_repeats = None
         crystal_inds = data.x[:,-1]
         data.x = data.x[:,:-(self.n_crystal_feats_to_ignore + 1)] # ignore knowledge about space group, crystal system, etc.
         data.x = torch.cat((data.x, crystal_inds[:, None]), dim=1)  # keep last dim for crystal indexing
         if return_dists:
-            x, dists, keep_cell_inds = self.graph_net(torch.cat((data.x[:, :self.n_atom_feats], data.x[:, -1:]), dim=1), data.pos, data.batch, return_dists = return_dists)  # extra dim for crystal indexing
+            x, dists, keep_cell_inds = self.graph_net(torch.cat((data.x[:, :self.n_atom_feats], data.x[:, -1:]), dim=1), data.pos, batch = data.batch, return_dists = return_dists, n_repeats=n_repeats)  # extra dim for crystal indexing
         else:
             x, keep_cell_inds = self.graph_net(torch.cat((data.x[:, :self.n_atom_feats], data.x[:, -1:]), dim=1), data.pos, data.batch)  # extra dim for crystal indexing
 

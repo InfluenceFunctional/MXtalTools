@@ -540,7 +540,4 @@ class general_MLP(nn.Module):
         for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
             x = x + dropout(activation(linear(norm(x)))) # residue
 
-
-
-
         return self.output_layer(x)

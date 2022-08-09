@@ -202,10 +202,7 @@ class BuildDataset:
 
             input_features = torch.Tensor(input_features)
             assert torch.sum(torch.isnan(input_features)) == 0, "NaN in training input"
-            if 'cell' in self.model_mode:
-                datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i], reference_cells[i]]))
-            else:
-                datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i]]))
+            datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i], reference_cells[i]]))
 
         return datapoints
 

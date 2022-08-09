@@ -2,10 +2,11 @@ from typing import Optional
 
 import torch
 
-@torch.jit.script
+#@torch.jit.script
 def radius(x: torch.Tensor, y: torch.Tensor, r: float,
            batch_x: Optional[torch.Tensor] = None,
-           batch_y: Optional[torch.Tensor] = None, max_num_neighbors: int = 32,
+           batch_y: Optional[torch.Tensor] = None,
+           max_num_neighbors: int = 32,
            num_workers: int = 1) -> torch.Tensor:
     r"""Finds for each element in :obj:`y` all points in :obj:`x` within
     distance :obj:`r`.
@@ -75,9 +76,10 @@ def radius(x: torch.Tensor, y: torch.Tensor, r: float,
                                           max_num_neighbors, num_workers)
 
 
-@torch.jit.script
-def asymmetric_radius_graph(x: torch.Tensor, y: torch.Tensor, r: float, inside_inds: torch.Tensor,
-                            batch_x: Optional[torch.Tensor] = None, batch_y: Optional[torch.Tensor] = None,
+#@torch.jit.script
+def asymmetric_radius_graph(x: torch.Tensor, r: float,
+                            inside_inds: torch.Tensor, convolve_inds: torch.Tensor,
+                            batch: torch.Tensor,
                             loop: bool = False,
                             max_num_neighbors: int = 32, flow: str = 'source_to_target',
                             num_workers: int = 1) -> torch.Tensor:
@@ -117,20 +119,25 @@ def asymmetric_radius_graph(x: torch.Tensor, y: torch.Tensor, r: float, inside_i
         batch = torch.tensor([0, 0, 0, 0])
         edge_index = radius_graph(x, r=1.5, batch=batch, loop=False)
     """
+    if convolve_inds is None: # indexes of items within x to convolve against y
+        convolve_inds = torch.arange(len(x))
 
     assert flow in ['source_to_target', 'target_to_source']
-    edge_index = radius(x, y, r, batch_x, batch_y,
+    edge_index = radius(x[convolve_inds], x[inside_inds], r, batch[convolve_inds], batch[inside_inds],
                         max_num_neighbors if loop else max_num_neighbors + 1,
                         num_workers)
-    if flow == 'source_to_target':
-        row, col = edge_index[1], edge_index[0]
-    else:
-        row, col = edge_index[0], edge_index[1]
+
+    target, source = edge_index[0], edge_index[1]
 
     #edge_index[1] = inside_inds[edge_index[1, :]] # reindex
-    col = inside_inds[col] # contains correct indexes
+    target = inside_inds[target] # contains correct indexes
+    source = convolve_inds[source]
 
-    # this only works if x and y are the same (symmetric radius graph) - fixed by reindexing
+    if flow == 'source_to_target':
+        row, col = source, target
+    else:
+        row, col = target, source
+
     if not loop: # now properly deletes self-loops
         mask = row != col
         row, col = row[mask], col[mask]

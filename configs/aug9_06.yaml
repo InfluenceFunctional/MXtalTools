@@ -1,20 +1,20 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: False
 skip_saving_and_loading: True
-run_num: 0
+run_num: 106
 anomaly_detection: False
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
 gan_loss: wasserstein #wasserstein # standard
-train_generator_density: False
+train_generator_density: True
 train_generator_as_flow: False
 train_generator_on_randn: False
 train_generator_range_cutoff: False
-train_generator_packing: True
-train_generator_adversarially: True
-train_discriminator_adversarially: True
+train_generator_packing: False
+train_generator_adversarially: False
+train_discriminator_adversarially: False
 train_discriminator_on_randn: False # todo finish
 train_discriminator_on_noise: False # todo finish
 cut_flow_training_after: 5
@@ -28,23 +28,23 @@ wandb:
   sweep_config_file: "sweep_test.yaml"
   experiment_tag: "new_clean_data_testing"
   log_figures: True
-  sample_reporting_frequency: 5
+  sample_reporting_frequency: 1
   sweep: False
   sweep_id: null
   sweep_num_runs: 50
 
 # batching & convergence
 auto_batch_sizing: True
-min_batch_size: 9
-max_batch_size: 10
+min_batch_size: 10
+max_batch_size: 1000
 auto_batch_reduction: .65
-max_epochs: 5000
-history: 2000
+max_epochs: 2000
+history: 200
 
 # dataset curation
 target: crystal spacegroup setting # not currently used
 positional_noise: 0 # scaling for the randn noise added to all atom positions
-dataset_length: 100
+dataset_length: 300000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 40
