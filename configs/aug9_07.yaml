@@ -4,7 +4,7 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 107
+run_num: 108
 anomaly_detection: False
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
 gan_loss: wasserstein #wasserstein # standard
