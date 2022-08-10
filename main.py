@@ -294,6 +294,7 @@ def add_args(parser):
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
     add_bool_arg(parser, 'train_discriminator_on_noise', default=False)  # train generator on extremely unit cells
+    parser.add_argument('--generator_similarity_penalty', type=float, default = 0) # coefficient weighting penalty for self-similarity in generator batches
     parser.add_argument('--cut_max_prob_training_after', type=int, default=10)  # stop applying flow losses after xx epochs
 
     update_args2config(args2config, 'gan_loss')
@@ -306,6 +307,7 @@ def add_args(parser):
     update_args2config(args2config, 'train_discriminator_adversarially')
     update_args2config(args2config, 'train_discriminator_on_randn')
     update_args2config(args2config, 'train_discriminator_on_noise')
+    update_args2config(args2config, 'generator_similarity_penalty')
     update_args2config(args2config, 'cut_max_prob_training_after')
 
     return parser, args2config

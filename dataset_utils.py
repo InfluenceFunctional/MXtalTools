@@ -77,7 +77,6 @@ class BuildDataset:
         self.datapoints, self.means, self.stds, self.dtypes = self.get_joint_features(dataset)
         self.datapoints = self.generate_joint_training_datapoints(dataset, config)
 
-
         self.shuffle_datapoints()
 
     def set_keys(self):

@@ -1,10 +1,10 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 107
 anomaly_detection: False
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
 gan_loss: wasserstein #wasserstein # standard
@@ -45,7 +45,7 @@ history: 2000
 # dataset curation
 target: crystal spacegroup setting # not currently used
 positional_noise: 0 # scaling for the randn noise added to all atom positions
-dataset_length: 100
+dataset_length: 300000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 40
@@ -65,7 +65,7 @@ exclude_polymorphs: False
 exclude_nonstandard_settings: True
 include_sgs: null #[P-1, P21/c, P212121, C2/c, Pbca, P21]
 include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: 'P1' #'P2' #'P21/c' # can only do one at a time right now
+generate_sgs: 'P-1' #'P2' #'P21/c' # can only do one at a time right now
 supercell_size: 5 # 1 = 3x3x3, 2 = 5x5x5 etc.
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups

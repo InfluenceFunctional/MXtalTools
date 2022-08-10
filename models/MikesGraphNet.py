@@ -84,7 +84,7 @@ class MikesGraphNet(torch.nn.Module):
 
         self.output_layer = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, z, pos, batch=None, return_dists=False, n_repeats=None):
+    def forward(self, z, pos, batch=None, return_dists=False, return_latent = False, n_repeats=None):
         """"""
         if self.crystal_mode:  # allow incoming edges from outside the central crystal but exclude outgoing edges
             t0 = time.time()
@@ -168,12 +168,18 @@ class MikesGraphNet(torch.nn.Module):
             if self.crystal_mode:
                 return self.output_layer(x), dist, keep_cell_inds
             else:
-                return self.output_layer(x), dist
+                if return_latent:
+                    return self.output_layer(x), dist, x
+                else:
+                    return self.output_layer(x), dist
         else:
             if self.crystal_mode:
                 return self.output_layer(x), keep_cell_inds
             else:
-                return self.output_layer(x)
+                if return_latent:
+                    return self.output_layer(x), x
+                else:
+                    return self.output_layer(x)
 
 
 class SphericalBasisLayer(torch.nn.Module):

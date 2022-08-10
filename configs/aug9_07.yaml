@@ -1,10 +1,10 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 107
 anomaly_detection: False
 mode: cell gan # 'single molecule regression' 'single molecule classification' 'joint modelling' 'cell classification' 'cell gan'
 gan_loss: wasserstein #wasserstein # standard
@@ -45,7 +45,7 @@ history: 2000
 # dataset curation
 target: crystal spacegroup setting # not currently used
 positional_noise: 0 # scaling for the randn noise added to all atom positions
-dataset_length: 100
+dataset_length: 300000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 40

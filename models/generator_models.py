@@ -87,7 +87,7 @@ class crystal_generator(nn.Module):
         #return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
         return self.prior.sample((n_samples,)).to(self.device)
 
-    def forward(self, n_samples, z=None, conditions=None):
+    def forward(self, n_samples, z=None, conditions=None, return_latent = False, return_condition = False, return_prior = False):
         if z is None:  # sample random numbers from simple prior
             z = self.sample_latent(n_samples)
             #z = torch.zeros_like(z0)
@@ -98,11 +98,20 @@ class crystal_generator(nn.Module):
             conditions_encoding = None
 
         # run through model
-        if not 'nf' in self.generator_model_type:
-            return self.model(z, conditions=conditions_encoding)
+        if any((return_condition, return_prior, return_latent)):
+            output = [self.model(z, conditions=conditions_encoding, return_latent = return_latent)]
+            if return_prior:
+                output.append(z)
+            if return_condition:
+                output.append(conditions_encoding)
+            return output
+
         else:
-            x, _ = self.model.backward(z, conditions=conditions_encoding)  # normalizing flow runs backwards from z->x
-            return x
+            if not 'nf' in self.generator_model_type: # todo implement latent return in NF model
+                return self.model(z, conditions=conditions_encoding, return_latent = return_latent)
+            else:
+                x, _ = self.model.backward(z, conditions=conditions_encoding)  # normalizing flow runs backwards from z->x
+                return x
 
     def nf_forward(self, x, conditions=None):
         if conditions is not None:

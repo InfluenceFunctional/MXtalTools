@@ -483,6 +483,7 @@ class Predictor():
         g_pairwise_dist = []
         g_short_range_losses = []
         g_packing_losses = []
+        g_similarity_losses = []
         real_pairwise_dist = []
         generated_samples_list = []
         epoch_stats_dict = {
@@ -538,7 +539,8 @@ class Predictor():
             '''
             if any((config.train_generator_density, config.train_generator_adversarially, config.train_generator_range_cutoff, config.train_generator_packing)):
 
-                adversarial_score, generated_samples, density_loss, density_prediction, density_target, packing_loss, short_range_loss, generated_pairwise_distances, supercell_examples, generated_T_fc_list = \
+                adversarial_score, generated_samples, density_loss, density_prediction, density_target, \
+                packing_loss, short_range_loss, generated_pairwise_distances, supercell_examples, generated_T_fc_list, similarity_penalty = \
                     self.train_generator(generator, discriminator, config, data, i)
 
                 if (supercell_examples is not None) and (i == rand_batch_ind):  # for a random batch in the epoch
@@ -551,7 +553,7 @@ class Predictor():
 
                 if adversarial_score is not None:
                     if config.gan_loss == 'wasserstein':
-                        adversarial_loss = -adversarial_score  # generator wants to maximize the score
+                        adversarial_loss = -adversarial_score  # generator wants to maximize the score (minimize the negative score)
                     elif config.gan_loss == 'standard':
                         adversarial_loss = 1 - adversarial_score
                     else:
@@ -576,6 +578,13 @@ class Predictor():
                 if config.train_generator_packing:
                     g_losses_list.append(packing_loss)
                     g_packing_losses.append(packing_loss.cpu().detach().numpy())
+
+                if config.generator_similarity_penalty != 0:
+                    if similarity_penalty is not None:
+                        g_losses_list.append(similarity_penalty)
+                        g_similarity_losses.append(similarity_penalty.cpu().detach().numpy())
+                    else:
+                        print('similarity penalty was none')
 
                 if config.train_generator_adversarially or config.train_generator_range_cutoff:
                     g_pairwise_dist.append(generated_pairwise_distances.cpu().detach().numpy())
@@ -646,6 +655,7 @@ class Predictor():
             epoch_stats_dict['generator packing loss'] = np.concatenate(g_packing_losses) if g_packing_losses != [] else None
             epoch_stats_dict['generator density prediction'] = np.concatenate(g_den_pred) if g_den_pred != [] else None
             epoch_stats_dict['generator density target'] = np.concatenate(g_den_true) if g_den_true != [] else None
+            epoch_stats_dict['generator similarity penalty'] = np.concatenate(g_similarity_losses) if g_similarity_losses != [] else None
             epoch_stats_dict['generated pairwise distance hist'] = np.histogram(np.concatenate(g_pairwise_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if g_pairwise_dist != [] else None
             epoch_stats_dict['real pairwise distance hist'] = np.histogram(np.concatenate(real_pairwise_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if real_pairwise_dist != [] else None
             epoch_stats_dict['generated cell parameters'] = np.concatenate(generated_samples_list) if generated_samples_list != [] else None
@@ -1304,7 +1314,22 @@ class Predictor():
     def train_generator(self, generator, discriminator, config, data, i):
         pairwise_distances = None
         # data, raw_generation = self.generated_supercells(data, config, generator = generator)
-        generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
+        [[generated_samples, latent], prior, condition] = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device), return_latent = True, return_condition = True, return_prior = True)
+        if (config.generator_similarity_penalty != 0) and (len(generated_samples) > 5):
+            similarity_penalty_i = config.generator_similarity_penalty * F.mse_loss(generated_samples.std(0),prior.std(0)) # match variance with the input noise
+            similarity_penalty = torch.ones(len(generated_samples)).to(generated_samples.device) * similarity_penalty_i  # copy across batch
+
+            # penalty2 =
+            #
+            # prior_dists = torch.cdist(prior,prior,p=2)
+            # condition_dists = torch.cdist(condition,condition,p=2)
+            # latent_dists = torch.cdist(latent,latent,p=2)
+            # sample_dists = torch.cdist(generated_samples, generated_samples, p=2)
+            # apply a penalty if the generator outputs are too self-similar
+        else:
+            similarity_penalty = None
+
+
         if config.train_generator_adversarially or config.train_generator_packing or config.train_generator_range_cutoff:
             supercell_data, z_values, generated_cell_volumes, T_fc_list = self.fast_differentiable_generated_supercells(data.clone(), config, generated_samples, override_sg=config.generate_sgs, return_T_fc=True)
         else:
@@ -1324,6 +1349,8 @@ class Predictor():
 
             if self.config.test_mode:
                 assert torch.sum(torch.isnan(short_range_loss)) == 0
+                if similarity_penalty is not None:
+                    assert torch.sum(torch.isnan(similarity_penalty)) == 0
 
         else:
             discriminator_score = None
@@ -1339,7 +1366,7 @@ class Predictor():
             return_T_fc_list = None
 
         return discriminator_score, generated_samples.cpu().detach().numpy(), density_loss, density_prediction, \
-               density_target, packing_loss, short_range_loss, pairwise_distances, return_supercell_data, return_T_fc_list
+               density_target, packing_loss, short_range_loss, pairwise_distances, return_supercell_data, return_T_fc_list, similarity_penalty
 
     def generator_density_loss(self, data, raw_sample, z_values, dataDims, precomputed_volumes=None):
         # compute proposed density and evaluate loss against known volume
