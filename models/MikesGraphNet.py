@@ -48,7 +48,6 @@ class MikesGraphNet(torch.nn.Module):
             self.rbf = BesselBasisLayer(num_radial, cutoff, envelope_exponent)
         elif radial_embedding == 'gaussian':
             self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
-
         if spherical_embedding:
             self.sbf = SphericalBasisLayer(num_spherical, num_radial, cutoff, envelope_exponent)
 
@@ -84,40 +83,13 @@ class MikesGraphNet(torch.nn.Module):
 
         self.output_layer = nn.Linear(hidden_channels, out_channels)
 
-    def forward(self, z, pos, batch=None, return_dists=False, return_latent = False, n_repeats=None):
-        """"""
-        if self.crystal_mode:  # allow incoming edges from outside the central crystal but exclude outgoing edges
-            t0 = time.time()
-
-            atom_inds = z[:, -1].clone()  # pull the atom-wise index per-molecule
-            z = z[:, :-1]  # then delete it, since it's just an index, not used for modelling
-
-            # t1 = time.time()
-
-            inside_inds = torch.where(atom_inds == 0)[0]  # todo might be slow
-            all_convolve_inds = torch.where(atom_inds < 2)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
-            # t2 = time.time()
-
-            edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,
-                                                 max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
-                                                 inside_inds=inside_inds, convolve_inds=all_convolve_inds)
-            # t3 = time.time()
-        else:
-            edge_index = gnn.radius_graph(pos, r=self.cutoff, batch=batch,
-                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target')
-
+    def get_geom_embedding(self, edge_index, pos, num_nodes):
+        '''
+        compute elements for radial & spherical embeddings
+        '''
         if self.spherical_embedding:
             i, j, idx_i, idx_j, idx_k, idx_kj, idx_ji = \
-                triplets(edge_index, num_nodes=z.size(0))
-        else:
-            i, j = edge_index
-
-        # Calculate distances.
-        dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
-        rbf = self.rbf(dist)
-
-        # get spherical embedding
-        if self.spherical_embedding:
+                triplets(edge_index, num_nodes=num_nodes)
             # Calculate angles.
             pos_i = pos[idx_i]
             pos_ji, pos_ki = pos[idx_j] - pos_i, pos[idx_k] - pos_i
@@ -125,61 +97,67 @@ class MikesGraphNet(torch.nn.Module):
             b = torch.cross(pos_ji, pos_ki).norm(dim=-1)
             angle = torch.atan2(b, a)
 
+            dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
+
             sbf = self.sbf(dist, angle, idx_kj)
+        else:
+            i, j = edge_index
+            dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
+            sbf, idx_kj, idx_ji = None, None, None
+
+        return self.rbf(dist), dist, sbf, idx_kj, idx_ji
+
+    def forward(self, z, pos, batch, ptr, ref_mol_inds=None, return_dists=False, n_repeats=None):
+        """"""
+
+        if self.crystal_mode:
+            inside_inds = torch.where(ref_mol_inds == 0)[0]
+            outside_inds = torch.where(ref_mol_inds == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
+            inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
+            n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]
+            # intramolecular edges
+            edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,
+                                                 max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
+                                                 inside_inds=inside_inds, convolve_inds=inside_inds)
+            # intermolecular edges
+            edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,
+                                                       max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
+                                                       inside_inds=inside_inds, convolve_inds=outside_inds)
+
+        else:
+            edge_index = gnn.radius_graph(pos, r=self.cutoff, batch=batch,
+                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target')
+
+        rbf, dist, sbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
 
         # graph model starts here
-        x = self.atom_embeddings(z)  # embed atomic numbers
+        x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector
         for n, (convolution, fc, global_agg) in enumerate(zip(self.interaction_blocks, self.fc_blocks, self.global_blocks)):
-            if self.spherical_embedding:
-                x = x + convolution(x, rbf, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution with angular features
-            else:
-                x = x + convolution(x, rbf, dist, edge_index)  # nodes up to max(j) are updated, others ignored
-
-            # todo rework the below, replacing where calls with ptr calls, where possible
-            # todo rework and benchmark global agg
-            if self.crystal_mode:  # copy the in-cell feature vectors to all corresponding outside atoms (relatively simple due to consistent structure of centralcell:supercells
-                # keep_cell_inds = torch.where(atom_inds == 1)[0] # find the indices for the reference cells
-                # n_repeats = len(x) // len(keep_cell_inds) # find the ratio of total atoms to within-ref-cell atoms
-                # keep_cell_batch = batch[keep_cell_inds] # get the feature vectors we want to repeat
-
-                keep_cell_inds = torch.where(atom_inds == 0)[0]  # find the indices for the reference cells
-                # n_repeats = len(x) // len(keep_cell_inds) # find the ratio of total atoms to within-ref-cell atoms
-                keep_cell_batch = batch[keep_cell_inds]  # get the feature vectors we want to repeat
-
-                x[keep_cell_inds] = x[keep_cell_inds] + fc(x[keep_cell_inds])  # feature-wise 1D convolution on only relevant atoms - massive memory savings
-                # x = x + global_agg(x, batch)  # aggregate global information to all nodes # CURRENTLY IDENTITY - DEPRECATED,
-
+            if self.crystal_mode:
                 if n < (self.num_blocks - 1):  # to do this molecule-wise, we need to multiply n_repeats by Z for each crystal
-                    for ii in range(batch[-1]):
-                        unit_cell_inds = keep_cell_inds[keep_cell_batch == ii]
-                        x[unit_cell_inds[0]:unit_cell_inds[0] + len(unit_cell_inds) * n_repeats[ii], :] = x[unit_cell_inds].repeat(n_repeats[ii], 1)  # copy the first unit cell to all periodic images
-                else:  # on the final convolutional block, do not broadcast the reference cell
-                    x = x[keep_cell_inds]  # reduce the output to only the nodes of the reference cell - outer nodes are just copies anyway, so this gets the same information with less memory / compute overhead
-                # t4 = time.time()
-                # print(f'setup {(t1-t0)/(t4-t0):.2f}')
-                # print(f'inds {(t2-t1)/(t4-t0):.2f}')
-                # print(f'radius {(t3-t2)/(t4-t0):.2f}')
-                # print(f'rest of function {(t4-t3)/(t4-t0):.2f}')
+                    x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
+                    x[inside_inds] = x[inside_inds] + fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms
+                    for ii in range(len(ptr) - 1):  # for each crystal
+                        x[ptr[ii]:ptr[ii + 1], :] = x[inside_inds[inside_batch == ii]].repeat(n_repeats[ii], 1)  # copy the first unit cell to all periodic images
+
+                else:  # on the final convolutional block, do not broadcast the reference cell, and include intermolecular interactions
+                    rbf_inter, dist_inter, sbf_inter, idx_kj_inter, idx_ji_inter = self.get_geom_embedding(edge_index_inter, pos, num_nodes=len(z))
+                    x = convolution(x, rbf_inter, dist_inter, edge_index_inter, sbf=sbf_inter, idx_kj=idx_kj_inter, idx_ji=idx_ji_inter)  # return only the results of the intermolecular convolution, omitting intermolecular features
+                    x = x[inside_inds] + fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, and return only those atoms
 
             else:
+                x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
                 x = x + fc(x)  # feature-wise 1D convolution
-                # x = x + global_agg(x, batch)  # aggregate global information to all nodes # CURRENTLY IDENTITY - DEPRECATED,
-        if return_dists:
+
+        if return_dists:  # return dists, batch #, and inside/outside identity
+            dist_output = {}
+            dist_output['intramolecular dist'] = dist
+            dist_output['intramolecular dist batch'] = batch[edge_index[0]]
             if self.crystal_mode:
-                return self.output_layer(x), dist, keep_cell_inds
-            else:
-                if return_latent:
-                    return self.output_layer(x), dist, x
-                else:
-                    return self.output_layer(x), dist
-        else:
-            if self.crystal_mode:
-                return self.output_layer(x), keep_cell_inds
-            else:
-                if return_latent:
-                    return self.output_layer(x), x
-                else:
-                    return self.output_layer(x)
+                dist_output['intermolecular dist'] = dist_inter
+                dist_output['intermolecular dist batch'] = batch[edge_index_inter[0]]
+
+        return self.output_layer(x), dist_output if return_dists else None
 
 
 class SphericalBasisLayer(torch.nn.Module):
@@ -310,7 +288,7 @@ class GCBlock(torch.nn.Module):
         if convolution_mode == 'self attention':
             self.GConv = gnn.GATv2Conv(
                 in_channels=graph_convolution_filters,
-                out_channels=graph_convolution_filters,
+                out_channels=graph_convolution_filters // heads,
                 heads=heads,
                 dropout=dropout,
                 add_self_loops=True,
@@ -322,14 +300,14 @@ class GCBlock(torch.nn.Module):
                 out_channels=graph_convolution_filters,
                 edge_dim=graph_convolution_filters,
             )
-        elif convolution_mode.lower() == 'schnet': #
+        elif convolution_mode.lower() == 'schnet':  #
             assert not spherical, 'schnet currently only works with pure radial bases'
             self.GConv = CFConv(
                 in_channels=graph_convolution_filters,
                 out_channels=graph_convolution_filters,
                 num_filters=graph_convolution_filters,
                 cutoff=5
-                ,)
+                , )
 
     def forward(self, x, rbf, dists, edge_index, sbf=None, idx_kj=None, idx_ji=None):
         # convert local information into edge weights
@@ -365,6 +343,7 @@ class CFConv(gnn.MessagePassing):
     '''
     ~~the graph convolution used in the popular SchNet~~
     '''
+
     def __init__(self, in_channels, out_channels, num_filters, cutoff):
         super(CFConv, self).__init__(aggr='add')
         self.lin1 = nn.Linear(in_channels, num_filters, bias=False)
@@ -373,8 +352,8 @@ class CFConv(gnn.MessagePassing):
 
     def forward(self, x, edge_index, edge_weight, edge_attr):
         C = 0.5 * (torch.cos(edge_weight * PI / self.cutoff) + 1.0)  # de-weight distant nodes
-        #W = self.nn(edge_attr) * C.view(-1, 1)
-        W = edge_attr * C.view(-1, 1) # in my method, edge_attr are pre-featurized
+        # W = self.nn(edge_attr) * C.view(-1, 1)
+        W = edge_attr * C.view(-1, 1)  # in my method, edge_attr are pre-featurized
 
         x = self.lin1(x)
         x = self.propagate(edge_index, x=x, W=W)
@@ -387,17 +366,17 @@ class CFConv(gnn.MessagePassing):
 
 
 class MPConv(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, edge_dim, activation = 'leaky relu'):
+    def __init__(self, in_channels, out_channels, edge_dim, activation='leaky relu'):
         super(MPConv, self).__init__()
         self.linear1 = nn.Linear(in_channels * 2 + edge_dim, out_channels)
         self.linear2 = nn.Linear(out_channels, out_channels)
         self.norm = nn.LayerNorm(out_channels)
-        self.activation = Activation(activation, filters = None)
+        self.activation = Activation(activation, filters=None)
 
     def forward(self, x, edge_index, edge_attr):
-        #i, j = edge_index
-        #m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[i], x[j], edge_attr), dim=-1)))))
-        #return scatter(m, j, dim=0, dim_size=len(x))  # send directional messages from i to j, enforcing the size of the output dimension
+        # i, j = edge_index
+        # m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[i], x[j], edge_attr), dim=-1)))))
+        # return scatter(m, j, dim=0, dim_size=len(x))  # send directional messages from i to j, enforcing the size of the output dimension
 
         m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1)))))
         # m = self.linear1(torch.cat((x[i], x[j], edge_attr), dim=-1))
@@ -519,6 +498,7 @@ class Normalization(nn.Module):
 
     def forward(self, input):
         return self.norm(input)
+
 
 class Activation(nn.Module):
     def __init__(self, activation_func, filters, *args, **kwargs):

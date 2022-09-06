@@ -13,85 +13,11 @@ import torch
 import sys
 import torch.nn.functional as F
 from scipy.ndimage import gaussian_filter1d
+from ase import Atoms
 
 '''
 general utilities
 '''
-
-
-def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lattices, dataDims, enforce_crystal_system=False, recombine_to_vector = False):
-    '''
-    assert physically meaningful parameters
-    :param cell_lengths:
-    :param cell_angles:
-    :param mol_position:
-    :param mol_rotation:
-    :return:
-    '''
-
-    c_pi = torch.pi * 0.9
-
-    # de-standardize everything
-    means = torch.Tensor(dataDims['means']).to(cell_lengths.device)
-    stds = torch.Tensor(dataDims['stds']).to(cell_lengths.device)
-    # cell_lengths = cell_lengths * stds[0:3] + means[0:3]
-    # cell_angles = cell_angles * stds[3:6] + means[3:6]
-    # mol_position = mol_position * stds[6:9] + means[6:9]
-    # mol_rotation = mol_rotation * stds[9:12] + means[9:12]
-
-    # apply appropriate limits to raw outputs
-    # cell_lengths = torch.clip(cell_lengths, min=1) # F.softplus(cell_lengths) # poisitive numbers #
-    # cell_angles = torch.clip(cell_angles, min=torch.pi * 0.1, max=c_pi) #F.sigmoid(cell_angles) * torch.pi # sigmoid from 0 to pi  #
-    # mol_position = torch.clip(mol_position, min=0, max=1) # F.sigmoid(mol_position) # sigmoid from 0 to 1 #
-    # mol_rotation =torch.clip(mol_rotation, min=-c_pi, max=c_pi) # F.tanh(mol_rotation) * torch.pi # tanh from -pi to pi #
-    #mol_rotation[:, 1] = mol_rotation[:,1] / 2 # second rotation has half range by convention #torch.clip(mol_rotation[:, 1], min=-c_pi / 2, max=c_pi / 2)  # second rotation has shorter range
-
-    # soft clipping to ensure correct range with finite gradients
-    cell_lengths = cell_lengths * stds[0:3] + means[0:3] - 0.1 # compensate for adjustment in softplus below
-    cell_angles = cell_angles * stds[3:6] + means[3:6]
-    mol_position = mol_position * stds[6:9] + means[6:9]
-    mol_rotation = mol_rotation * stds[9:12] + means[9:12]
-
-    cell_lengths = F.softplus(cell_lengths) + 0.1 # enforces positivity and nonzeroness
-    cell_angles = (F.tanh((cell_angles - torch.pi/2))*torch.pi/2+torch.pi/2) # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
-    mol_position =  F.tanh((mol_position - 0.5)*2)/2 + 0.5 # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
-    mol_rotation =  F.tanh(mol_rotation / torch.pi) * torch.pi # tanh from -pi to pi #
-
-    for i in range(len(cell_lengths)):
-        if enforce_crystal_system:  # can alternately enforce this via auxiliary loss on the generator itself
-            lattice = lattices[i]
-
-            # enforce agreement with crystal system
-            if lattice.lower() == 'triclinic':
-                pass
-            elif lattice.lower() == 'monoclinic':  # fix alpha and gamma
-                cell_angles[i, 0], cell_angles[i, 2] = torch.pi / 2, torch.pi / 2
-            elif lattice.lower() == 'orthorhombic':  # fix all angles
-                cell_angles[i] = torch.ones(3) * torch.pi / 2
-            elif (lattice.lower() == 'tetragonal'):  # fix all angles and a & b vectors
-                cell_angles[i] = torch.ones(3) * torch.pi / 2
-                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2)
-            elif (lattice.lower() == 'hexagonal'):  # for rhombohedral, all angles and lengths equal, but not 90.
-                # for truly hexagonal, alpha=90, gamma is 120, a=b!=c
-                # todo figure out how to properly deal with this
-                print('hexagonal lattice is not yet implemented!')
-                pass
-            elif (lattice.lower() == 'cubic'):  # all angles 90 all lengths equal
-                cell_lengths[i] = cell_lengths[i].mean() * torch.ones(3)
-                cell_angles[i] = torch.pi * torch.ones(3) / 2
-            else:
-                print(lattice + ' is not a valid crystal lattice!')
-                sys.exit()
-        else:
-            # todo we now need a symmetry analyzer to tell us what we're building
-            # don't assume a crystal system, but snap angles close to 90, to assist in precise symmetry
-            cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.02] = torch.pi / 2
-
-
-    if recombine_to_vector:
-        return torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation),dim=1)
-    else:
-        return cell_lengths, cell_angles, mol_position, mol_rotation
 
 
 def initialize_metrics_dict(metrics):
@@ -178,7 +104,7 @@ def standardize(data, return_std=False, known_mean=None, known_std=None):
         std = np.std(data)
 
     if std == 0:
-        std = 0.01 # hard stop to backup all-one-value inputs
+        std = 0.01  # hard stop to backup all-one-value inputs
 
     std_data = (data - mean) / std
 
@@ -1917,7 +1843,7 @@ def delete_from_dataframe(df, inds):
     return df
 
 
-#@nb.jit(nopython=True)
+# @nb.jit(nopython=True)
 def compute_principal_axes_np(masses, coords):
     points = (coords - coords.T.dot(masses) / np.sum(masses))
     x, y, z = points.T
@@ -1940,9 +1866,9 @@ def compute_principal_axes_np(masses, coords):
     max_equivs = np.argwhere(np.round(dists, 8) == np.round(dists[max_ind], 8))[:, 0]  # if there are multiple equidistant atoms - pick the one with the lowest index
     max_ind = int(np.amin(max_equivs))
     direction = points[max_ind]
-    direction = np.divide(direction,np.linalg.norm(direction))
+    direction = np.divide(direction, np.linalg.norm(direction))
     overlaps = Ip.dot(direction)  # check if the principal components point towards or away from the CoG
-    #if any(overlaps == 0):  # exactly zero is invalid
+    # if any(overlaps == 0):  # exactly zero is invalid
     #    overlaps[overlaps == 0] = 1e-9
     if np.any(np.abs(overlaps) < 1e-8):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
         # align the 'good' vectors
@@ -1959,7 +1885,7 @@ def compute_principal_axes_np(masses, coords):
 
 
 def compute_principal_axes_torch(masses, coords, return_direction=False):
-    points = (coords - torch.inner(coords.T, masses) / torch.sum(masses))
+    points = coords - torch.inner(coords.T, masses) / torch.sum(masses)
     x, y, z = points.T
     Ixx = torch.sum(masses * (y ** 2 + z ** 2))  # todo switch to single-step
     Iyy = torch.sum(masses * (x ** 2 + z ** 2))
@@ -1975,12 +1901,12 @@ def compute_principal_axes_torch(masses, coords, return_direction=False):
     Ip = Ip.T[sort_inds]  # want eigenvectors to be sorted row-wise (rather than column-wise)
 
     # cardinal direction is vector from CoM to farthest atom
-    dists = torch.linalg.norm(points, axis=1)
+    dists = torch.linalg.norm(points, axis=1)  # CoM is at 0,0,0
     max_ind = torch.argmax(dists)
-    max_equivs = torch.where(dists==dists[max_ind])[0]#torch.where(torch.round(dists, decimals=8) == torch.round(dists[max_ind], decimals=8))[0]  # if there are multiple equidistant atoms - pick the one with the lowest index
+    max_equivs = torch.where(dists == dists[max_ind])[0]  # torch.where(torch.round(dists, decimals=8) == torch.round(dists[max_ind], decimals=8))[0]  # if there are multiple equidistant atoms - pick the one with the lowest index
     max_ind = int(torch.amin(max_equivs))
     direction = points[max_ind]
-    direction = direction / torch.linalg.norm(direction)
+    # direction = direction / torch.linalg.norm(direction) # magnitude doesn't matter, only the sign
     overlaps = torch.inner(Ip, direction)  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
     if any(overlaps == 0):  # exactly zero is invalid #
         overlaps[overlaps == 0] = 1e-9
@@ -2046,7 +1972,6 @@ def cell_vol_torch(v, a):
     return vol
 
 
-
 def dict2namespace(data_dict):
     """
     Recursively converts a dictionary and its internal dictionaries into an
@@ -2070,7 +1995,6 @@ def dict2namespace(data_dict):
     data_namespace = Namespace(**data_dict)
 
     return data_namespace
-
 
 
 def get_config(args, override_args, args2config):
@@ -2129,27 +2053,107 @@ def get_config(args, override_args, args2config):
             _update_config(k, v, config, override=False)
     return dict2namespace(config)
 
-def single_point_compute_rdf(dists, density = None, range=None, bins = None, sigma = None):
+
+def single_point_compute_rdf(dists, density=None, range=None, bins=None, sigma=None):
     '''
     compute the radial distribution for a single particle
     dists: array of pairwise distances of nearby particles from the reference
     '''
-    hist_range = [0.5,10] if range is None else range
+    hist_range = [0.5, 10] if range is None else range
     hist_bins = 100 if bins is None else bins
     gauss_sigma = 1 if sigma is None else sigma
 
-    if density is None: # estimate the density from the distances
-        sorted_dists = np.sort(dists)[:len(dists)//2] # we will use 1/2 the dist radius to avoid edge / cutoff effects
-        volume = np.ptp(sorted_dists[:,0]) * np.ptp(sorted_dists[:,1]) * np.ptp(sorted_dists[:,2])
-        rdf_density = len(sorted_dists) / volume # number of particles divided by the volume
+    if density is None:  # estimate the density from the distances
+        sorted_dists = np.sort(dists)[:len(dists) // 2]  # we will use 1/2 the dist radius to avoid edge / cutoff effects
+        volume = 4 / 3 * np.pi * np.ptp(sorted_dists) ** 3  # volume of a sphere #np.ptp(sorted_dists[:, 0]) * np.ptp(sorted_dists[:, 1]) * np.ptp(sorted_dists[:, 2])
+        rdf_density = len(sorted_dists) / volume  # number of particles divided by the volume
     else:
         rdf_density = density
 
     hh, rr = np.histogram(dists, range=hist_range, bins=hist_bins)
-    shell_volumes =  (4 / 3) * np.pi * ((rr[:-1] + np.diff(rr)) ** 3 - rr[:-1] ** 3) # volume of the shell at radius r+dr
+    shell_volumes = (4 / 3) * np.pi * ((rr[:-1] + np.diff(rr)) ** 3 - rr[:-1] ** 3)  # volume of the shell at radius r+dr
     rdf = gaussian_filter1d(hh / shell_volumes / rdf_density, sigma=gauss_sigma)  # radial distribution function
 
-    return rdf, rr[:-1] + np.diff(rr) # rdf and x-axis
+    return rdf, rr[:-1] + np.diff(rr)  # rdf and x-axis
+
+
+def single_point_compute_rdf_torch(dists, density=None, range=None, bins=None):
+    '''
+    compute the radial distribution for a single particle
+    dists: array of pairwise distances of nearby particles from the reference
+    '''
+    hist_range = [0.5, 10] if range is None else range
+    hist_bins = 100 if bins is None else bins
+
+    if density is None:  # estimate the density from the distances
+        sorted_dists = torch.sort(dists)[0][:len(dists) // 2]  # we will use 1/2 the dist radius to avoid edge / cutoff effects
+        volume = 4 / 3 * torch.pi * torch_ptp(sorted_dists) ** 3  # volume of a sphere #np.ptp(sorted_dists[:, 0]) * np.ptp(sorted_dists[:, 1]) * np.ptp(sorted_dists[:, 2])
+        rdf_density = len(sorted_dists) / volume  # number of particles divided by the volume
+    else:
+        rdf_density = density
+
+    hh = torch.histc(dists, min=hist_range[0], max=hist_range[1], bins=hist_bins)
+    rr = torch.linspace(hist_range[0], hist_range[1], hist_bins + 1).to(hh.device)
+    shell_volumes = (4 / 3) * torch.pi * ((rr[:-1] + torch.diff(rr)) ** 3 - rr[:-1] ** 3)  # volume of the shell at radius r+dr
+    rdf = hh / shell_volumes / rdf_density  # un-smoothed radial density
+
+    return rdf, rr[:-1] + torch.diff(rr)  # rdf and x-axis
+
+
+def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None):
+    '''
+    compute the radial distribution for a single particle
+    dists: array of pairwise distances of nearby particles from the reference
+    '''
+    hist_range = [0.5, 10] if rrange is None else rrange
+    hist_bins = 100 if bins is None else bins
+
+    if density is None:  # estimate the density from the distances
+        rdf_density = torch.zeros(len(dists_list)).to(dists_list[0].device)
+        for i in range(len(dists_list)):
+            dists = dists_list[i]
+            sorted_dists = torch.sort(dists)[0][:len(dists) // 2]  # we will use 1/2 the dist radius to avoid edge / cutoff effects
+            volume = 4 / 3 * torch.pi * torch_ptp(sorted_dists) ** 3  # volume of a sphere #np.ptp(sorted_dists[:, 0]) * np.ptp(sorted_dists[:, 1]) * np.ptp(sorted_dists[:, 2])
+            # number of particles divided by the volume
+            rdf_density[i] = len(sorted_dists) / volume
+    else:
+        rdf_density = density
+
+    hh_list = torch.stack([torch.histc(dists, min=hist_range[0], max=hist_range[1], bins=hist_bins) for dists in dists_list])
+    rr = torch.linspace(hist_range[0], hist_range[1], hist_bins + 1).to(hh_list.device)
+    shell_volumes = (4 / 3) * torch.pi * ((rr[:-1] + torch.diff(rr)) ** 3 - rr[:-1] ** 3)  # volume of the shell at radius r+dr
+    rdf = hh_list / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
+
+    return rdf, (rr[:-1] + torch.diff(rr)).requires_grad_()  # rdf and x-axis
+
+
+def torch_ptp(tensor):
+    return torch.max(tensor) - torch.min(tensor)
+
+
+def ase_mol_from_crystaldata(data, index, highlight_aux=False, exclusion_level=None):
+    '''
+    generate an ASE Atoms object from a crystaldata object
+    '''
+    atom_inds = torch.where(data.batch == index)[0]
+    if exclusion_level == 'ref only':
+        inside_inds = torch.where(data.aux_ind == 0)[0]
+        new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
+        atom_inds = new_atom_inds
+    elif exclusion_level == 'convolve with':
+        inside_inds = torch.where(data.aux_ind < 2)[0]
+        new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
+        atom_inds = new_atom_inds
+
+    coords = data.pos[atom_inds].cpu().detach().numpy()
+    if highlight_aux:  # highlight the atom aux index
+        numbers = data.aux_ind[atom_inds].cpu().detach().numpy() + 6
+    else:
+        numbers = data.x[atom_inds, 0].cpu().detach().numpy()
+
+    cell = data.T_fc[index].T.cpu().detach().numpy()
+    mol = Atoms(symbols=numbers, positions=coords, cell=cell)
+    return mol
 
 
 '''

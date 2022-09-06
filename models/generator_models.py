@@ -10,7 +10,7 @@ from models.torch_models import molecule_graph_model, Normalization, ActNorm, ge
 
 
 class crystal_generator(nn.Module):
-    def __init__(self, config, dataDims, model_override = None):
+    def __init__(self, config, dataDims):
         super(crystal_generator, self).__init__()
 
         self.device = config.device
@@ -45,7 +45,7 @@ class crystal_generator(nn.Module):
                                                     num_radial=config.generator.num_radial,
                                                     graph_convolution=config.generator.graph_convolution,
                                                     num_attention_heads=config.generator.num_attention_heads,
-                                                    add_spherical_basis=config.generator.add_spherical_basis,
+                                                    add_radial_basis=config.generator.add_radial_basis,
                                                     atom_embedding_size=config.generator.atom_embedding_size,
                                                     radial_function=config.generator.radial_function,
                                                     max_num_neighbors=config.generator.max_num_neighbors,

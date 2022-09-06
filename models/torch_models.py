@@ -14,6 +14,8 @@ from nflib.spline_flows import *
 from torch.distributions import MultivariateNormal, Uniform
 import itertools
 from sklearn.decomposition import PCA
+from models.asymmetric_radius_graph import asymmetric_radius_graph
+from utils import single_point_compute_rdf_torch, parallel_compute_rdf_torch
 
 
 class FlowModel(nn.Module):
@@ -125,7 +127,7 @@ class FlowModel(nn.Module):
             pc_prior[:, i] = np.random.randn(len(pc_prior)) * np.sqrt(pca.explained_variance_[i])
         return pca.inverse_transform(pc_prior)
 
-    def forward(self, x):
+    def forward(self, x):  # todo fix y
         if self.n_conditional_features > 0:
             conditions = self.get_conditions(x)
             if self.conditioner is not None:
@@ -135,7 +137,7 @@ class FlowModel(nn.Module):
         prior_logprob = self.prior.log_prob(zs[-1].cpu()).view(x.y[0].size(0), -1).sum(1)
         return zs[-1], prior_logprob.to(log_det.device), log_det
 
-    def backward(self, z):
+    def backward(self, z):  # todo fix y
         if self.n_conditional_features > 0:
             conditions = self.get_conditions(z)
             if self.conditioner is not None:
@@ -158,7 +160,7 @@ class FlowModel(nn.Module):
         _, prior_logprob, log_det = self.forward(x)
         return (prior_logprob + log_det)
 
-    def get_conditions(self, x):
+    def get_conditions(self, x):  # todo fix y
         if self.conditioner is not None:
             return self.conditioner(x)
         else:
@@ -224,14 +226,15 @@ class molecule_graph_model(nn.Module):
                  num_radial,
                  graph_convolution,
                  num_attention_heads,
-                 add_spherical_basis,
+                 add_radial_basis,
                  atom_embedding_size,
                  radial_function,
                  max_num_neighbors,
                  convolution_cutoff,
-                 return_latent=False, crystal_mode=False):
+                 return_latent=False, crystal_mode=False, device='cuda'):
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
+        self.device = device
         self.return_latent = return_latent
         self.activation = activation
         self.num_fc_layers = num_fc_layers
@@ -247,9 +250,9 @@ class molecule_graph_model(nn.Module):
         self.num_spherical = num_spherical
         self.num_radial = num_radial
         self.num_attention_heads = num_attention_heads
-        self.add_spherical_basis = add_spherical_basis
+        self.add_radial_basis = add_radial_basis
         self.n_mol_feats = dataDims['n mol features']
-        self.n_atom_feats = dataDims['atom features']
+        self.n_atom_feats = dataDims['n atom features']
         self.radial_function = radial_function
         self.max_num_neighbors = max_num_neighbors
         self.graph_convolution_cutoff = convolution_cutoff
@@ -263,42 +266,7 @@ class molecule_graph_model(nn.Module):
         torch.manual_seed(seed)
 
         if self.graph_model is not None:
-            if self.graph_model == 'dime':
-                self.graph_net = CustomDimeNet(
-                    crystal_mode=self.crystal_mode,
-                    graph_filters=self.graph_filters,
-                    hidden_channels=self.fc_depth,
-                    out_channels=self.classes,
-                    num_blocks=self.graph_convolution_layers,
-                    num_spherical=self.num_spherical,
-                    num_radial=self.num_radial,
-                    cutoff=self.graph_convolution_cutoff,
-                    max_num_neighbors=self.max_num_neighbors,
-                    num_output_layers=1,
-                    dense=False,
-                    num_atom_features=self.n_atom_feats,
-                    atom_embedding_dims=dataDims['atom embedding dict sizes'],
-                    embedding_hidden_dimension=self.embedding_dim,
-                    norm=self.graph_norm,
-                    dropout=self.fc_dropout_probability
-                )
-            elif self.graph_model == 'schnet':
-                self.graph_net = CustomSchNet(
-                    crystal_mode=crystal_mode,
-                    hidden_channels=self.fc_depth,
-                    num_filters=self.graph_filters,
-                    num_interactions=self.graph_convolution_layers,
-                    num_gaussians=self.num_radial,
-                    cutoff=self.graph_convolution_cutoff,
-                    max_num_neighbors=self.max_num_neighbors,
-                    readout='mean',
-                    num_atom_features=self.n_atom_feats,
-                    embedding_hidden_dimension=self.embedding_dim,
-                    atom_embedding_dims=dataDims['atom embedding dict sizes'],
-                    norm=self.graph_norm,
-                    dropout=self.fc_dropout_probability
-                )
-            elif self.graph_model == 'mike':  # mike's net
+            if self.graph_model == 'mike':  # mike's net - others currently deprecated. For future, implement new convolutions in the mikenet class
                 self.graph_net = MikesGraphNet(
                     crystal_mode=crystal_mode,
                     graph_convolution_filters=self.graph_filters,
@@ -315,7 +283,7 @@ class molecule_graph_model(nn.Module):
                     num_atom_features=self.n_atom_feats,
                     norm=self.graph_norm,
                     dropout=self.fc_dropout_probability,
-                    spherical_embedding=self.add_spherical_basis,
+                    spherical_embedding=self.add_radial_basis,
                     radial_embedding=self.radial_function,
                     atom_embedding_dims=dataDims['atom embedding dict sizes'],
                     attention_heads=self.num_attention_heads
@@ -330,17 +298,13 @@ class molecule_graph_model(nn.Module):
 
         # initialize global pooling operation
         if self.graph_model is not None:
-            if self.pooling == 'mean':
-                self.global_pool = gnn.global_mean_pool
-            elif self.pooling == 'sum':
-                self.global_pool = gnn.global_add_pool
-            elif self.pooling == 'attention':
-                self.global_pool = gnn.GlobalAttention(nn.Sequential(nn.Linear(self.fc_depth, self.fc_depth), nn.GELU(), nn.Linear(self.fc_depth, 1)))
+            self.global_pool = global_aggregation(self.pooling, self.fc_depth)
 
         # molecule features FC layer
         if self.n_mol_feats != 0:
             self.mol_fc = nn.Linear(self.n_mol_feats, self.n_mol_feats)
 
+        # FC model to post-process graph fingerprint
         self.gnn_mlp = general_MLP(layers=self.num_fc_layers,
                                    filters=self.fc_depth,
                                    norm=self.fc_norm_mode,
@@ -353,34 +317,36 @@ class molecule_graph_model(nn.Module):
 
         self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
 
-    def forward(self, data):
+    def forward(self, data, return_latent=False, return_dists=False):
+        extra_outputs = {}
         if self.graph_model is not None:
-            x = data.x
-            pos = data.pos
-            if self.crystal_mode:
-                x = self.graph_net(torch.cat((x[:, :self.n_atom_feats], x[:, -1:]), dim=1), pos, data.batch)  # extra dim for crystal indexing
+            x, dists_dict = self.graph_net(data.x[:, :self.n_atom_feats], data.pos, data.batch, ptr=data.ptr, ref_mol_inds=data.aux_ind, return_dists=return_dists)  # get atoms encoding
+            if self.crystal_mode:  # model only outputs ref mol atoms - many fewer
+                x = self.global_pool(x, data.batch[torch.where(data.aux_ind == 0)[0]])
             else:
-                x = self.graph_net(x[:, :self.n_atom_feats], pos, data.batch)  # get atoms encoding
+                x = self.global_pool(x, data.batch)  # aggregate atoms to molecule
 
-            if self.crystal_mode:
-                keep_cell_inds = torch.where(data.x[:, -1] == 1)[0]
-                data.batch = data.batch[keep_cell_inds]  # keep only atoms inside the reference cell
-                data.x = data.x[keep_cell_inds]  # also apply to molecular_data
-
-            x = self.global_pool(x, data.batch)  # aggregate atoms to molecule
-
-        mol_inputs = data.x[:, -self.n_mol_feats:]
-        mol_feats = self.mol_fc(gnn.global_max_pool(mol_inputs, data.batch).float())  # not actually pooling here, as the values are all the same for each molecule
+        mol_feats = self.mol_fc(data.x[data.ptr[:-1], -self.n_mol_feats:])  # molecule features are repeated, only need one per molecule (hence data.ptr)
 
         if self.graph_model is not None:
-            x = self.gnn_mlp(x, conditions=mol_feats)
+            x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
         else:
             x = self.gnn_mlp(mol_feats)
 
-        if self.return_latent:  # immediately return the latent space prediction
-            return x
+        output = self.output_fc(x)
+
+        if return_dists:
+            if self.graph_model is not None:
+                extra_outputs['dists dict'] = dists_dict
+            else:
+                extra_outputs['dists dict'] = None
+        if return_latent:
+            extra_outputs['latent'] = output.cpu().detach().numpy()
+
+        if len(extra_outputs) > 0:
+            return output, extra_outputs
         else:
-            return self.output_fc(x)
+            return output
 
 
 class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation of activation as a linear combination of basis functions
@@ -457,31 +423,33 @@ class Normalization(nn.Module):
 
 
 class independent_gaussian_model(nn.Module):
-    def __init__(self, input_dim, means, stds):
+    def __init__(self, input_dim, means, stds, cov_mat=None):
         super(independent_gaussian_model, self).__init__()
 
         self.input_dim = input_dim
         self.register_buffer('means', torch.Tensor(means))
         self.register_buffer('stds', torch.Tensor(stds))
-        self.prior = MultivariateNormal(torch.zeros(input_dim), torch.eye(input_dim))
+        if cov_mat is not None:
+            pass
+        else:
+            cov_mat = torch.diag(torch.Tensor(stds).pow(2))
+
+        self.prior = MultivariateNormal(torch.Tensor(means), torch.Tensor(cov_mat))  # apply standardization
         self.dummy_params = nn.Parameter(torch.ones(100))
 
     def forward(self, num_samples):
         # conditions are unused - dummy
+        return (self.prior.sample((num_samples,)) - self.means) / self.stds  # we want samples in standardized basis
 
-        return self.prior.sample((num_samples,)) * self.stds + self.means  # pass random numbers through an appropriate standardization
+    def backward(self, samples):
+        return samples * self.stds + self.means
 
-    def backward(self,samples):
-
-        return (samples - self.means) / self.stds
-
-    def score(self,samples):
-
+    def score(self, samples):
         return self.prior.log_prob(samples)
 
 
 class general_MLP(nn.Module):
-    def __init__(self, layers, filters, input_dim, output_dim, activation = 'gelu', seed=0, dropout=0, conditioning_dim=0, norm=None):
+    def __init__(self, layers, filters, input_dim, output_dim, activation='gelu', seed=0, dropout=0, conditioning_dim=0, norm=None):
         super(general_MLP, self).__init__()
         # initialize constants and layers
         self.n_layers = layers
@@ -494,7 +462,6 @@ class general_MLP(nn.Module):
         self.activation = activation
 
         torch.manual_seed(seed)
-
 
         self.fc_layers = torch.nn.ModuleList([
             nn.Linear(self.n_filters, self.n_filters)
@@ -516,15 +483,15 @@ class general_MLP(nn.Module):
             for _ in range(self.n_layers)
         ])
 
-        self.init_layer = nn.Linear(self.input_dim, self.n_filters) # set appropriate sizing
+        self.init_layer = nn.Linear(self.input_dim, self.n_filters)  # set appropriate sizing
         self.output_layer = nn.Linear(self.n_filters, self.output_dim, bias=False)
 
-    def forward(self, x, conditions=None, return_latent = False):
-        if type(x) == torch_geometric.data.batch.DataBatch:  # extract conditions from trailing atomic features
+    def forward(self, x, conditions=None, return_latent=False):
+        if type(x) == torch_geometric.data.batch.CrystalDataBatch:  # extract conditions from trailing atomic features
             if len(x) == 1:
-                x = x.x[:,-self.input_dim:]
+                x = x.x[:, -self.input_dim:]
             else:
-                x = gnn.global_max_pool(x.x,x.batch)[:,-self.input_dim:] #x.x[x.ptr[:-1]][:, -self.input_dim:]
+                x = gnn.global_max_pool(x.x, x.batch)[:, -self.input_dim:]  # x.x[x.ptr[:-1]][:, -self.input_dim:]
 
         if conditions is not None:
             # if type(conditions) == torch_geometric.data.batch.DataBatch: # extract conditions from trailing atomic features
@@ -538,9 +505,71 @@ class general_MLP(nn.Module):
         x = self.init_layer(x)
 
         for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
-            x = x + dropout(activation(linear(norm(x)))) # residue
+            x = x + dropout(activation(linear(norm(x))))  # residue
 
         if return_latent:
             return self.output_layer(x), x
         else:
             return self.output_layer(x)
+
+
+class global_aggregation(nn.Module):
+    '''
+    wrapper for several types of global aggregation functions
+    '''
+
+    def __init__(self, agg_func, filters):
+        super(global_aggregation, self).__init__()
+        self.agg_func = agg_func
+        if agg_func == 'mean':
+            self.agg = gnn.global_mean_pool
+        elif agg_func == 'sum':
+            self.agg = gnn.global_add_pool
+        elif agg_func == 'attention':
+            self.agg = gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))
+        elif agg_func == 'set2set':
+            self.agg = gnn.Set2Set(in_channels=filters, processing_steps=4)
+            self.agg_fc = nn.Linear(filters * 2, filters)  # condense to correct number of filters
+        elif agg_func == 'combo':
+            self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
+            self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))])  # aggregation functions requiring parameters
+            self.agg_fc = nn.Linear(filters * (len(self.agg_list1) + len(self.agg_list2)), filters)  # condense to correct number of filters
+
+    def forward(self, x, batch):
+        if self.agg_func == 'set2set':
+            x = self.agg(x, batch)
+            return self.agg_fc(x)
+        elif self.agg_func == 'combo':
+            output1 = [agg(x, batch) for agg in self.agg_list1]
+            output2 = [agg(x, batch) for agg in self.agg_list2]
+            return self.agg_fc(torch.cat((output1 + output2), dim=1))
+        else:
+            return self.agg(x, batch)
+
+
+def crystal_rdf(crystaldata, rrange = [0,10], bins = 100, intermolecular=False):
+    '''
+    compute the RDF for all the supercells in a CrystalData object
+    without respect for atom type
+    '''
+
+    in_inds = torch.where(crystaldata.aux_ind == 0)[0]
+    if intermolecular:
+        out_inds = torch.where(crystaldata.aux_ind == 1)[0].to(crystaldata.pos.device)
+    else:
+        out_inds = torch.arange(len(crystaldata.pos)).to(crystaldata.pos.device)
+
+    edges = asymmetric_radius_graph(crystaldata.pos,
+                                    batch=crystaldata.batch,
+                                    inside_inds=in_inds,
+                                    convolve_inds=out_inds,
+                                    r=max(rrange), max_num_neighbors=500, flow='source_to_target')
+
+    crystal_number = crystaldata.batch[edges[0]]
+
+    dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
+
+    rdfs, rr = parallel_compute_rdf_torch([dists[crystal_number == n] for n in range(crystaldata.num_graphs)],
+                                          rrange=rrange, bins=bins)
+
+    return rdfs, rr

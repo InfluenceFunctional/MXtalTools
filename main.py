@@ -33,7 +33,7 @@ def add_args(parser):
     parser.add_argument('--machine', type=str, default='local')  # 'local' (local windows venv) or 'cluster' (linux env)
     parser.add_argument("--device", default="cuda", type=str)  # 'cuda' or 'cpu'
     add_bool_arg(parser, 'skip_run_init', default=False)
-    parser.add_argument("--mode", default="cell gan", type=str)  # 'single molecule classification' 'joint modelling' 'single molecule regresion' 'cell classification', 'cell gan'
+    parser.add_argument("--mode", default="gan", type=str)  # 'gan' or 'regression'
     add_bool_arg(parser, 'skip_saving_and_loading', default=True)
 
     update_args2config(args2config, 'yaml_config')
@@ -94,6 +94,7 @@ def add_args(parser):
     add_bool_arg(parser, 'exclude_polymorphs', default=True)
     add_bool_arg(parser, 'exclude_nonstandard_settings', default=True)
     add_bool_arg(parser, 'exclude_missing_r_factor', default=True)
+    parser.add_argument('--exclude_crystal_systems', type=list, default=['hexagonal'])
 
     update_args2config(args2config, 'target')
     update_args2config(args2config, 'dataset_path')
@@ -114,6 +115,8 @@ def add_args(parser):
     update_args2config(args2config, 'exclude_polymorphs')
     update_args2config(args2config, 'exclude_nonstandard_settings')
     update_args2config(args2config, 'exclude_missing_r_factor')
+    update_args2config(args2config, 'exclude_crystal_systems')
+
 
     #  training settings
     parser.add_argument('--max_epochs', type=int, default=100)
@@ -142,7 +145,9 @@ def add_args(parser):
     parser.add_argument('--discriminator_beta2', type=float, default=0.999)  # adam and adamw opt
     parser.add_argument('--discriminator_weight_decay', type=float, default=0.01)  # for opt
     parser.add_argument('--discriminator_convergence_eps', type=float, default=1e-5)
+    parser.add_argument('--discriminator_training_period', type=int, default=5) # period between discriminator training
     add_bool_arg(parser, 'discriminator_lr_schedule', default=False)
+    parser.add_argument('--discriminator_positional_noise', type=float, default=0)
 
     parser.add_argument('--generator_optimizer', type=str, default='adamw')  # adam, adamw, sgd
     parser.add_argument('--generator_learning_rate', type=float, default=1e-5)  # base learning rate
@@ -152,6 +157,7 @@ def add_args(parser):
     parser.add_argument('--generator_weight_decay', type=float, default=0.01)  # for opt
     parser.add_argument('--generator_convergence_eps', type=float, default=1e-5)
     add_bool_arg(parser, 'generator_lr_schedule', default=False)
+    parser.add_argument('--generator_positional_noise', type=float, default=0)
 
     update_args2config(args2config, 'discriminator_optimizer', ['discriminator', 'optimizer'])
     update_args2config(args2config, 'discriminator_learning_rate', ['discriminator', 'learning_rate'])
@@ -160,7 +166,9 @@ def add_args(parser):
     update_args2config(args2config, 'discriminator_beta2', ['discriminator', 'beta2'])
     update_args2config(args2config, 'discriminator_weight_decay', ['discriminator', 'weight_decay'])
     update_args2config(args2config, 'discriminator_convergence_eps', ['discriminator', 'convergence_eps'])
+    update_args2config(args2config, 'discriminator_training_period', ['discriminator', 'training_period'])
     update_args2config(args2config, 'discriminator_lr_schedule', ['discriminator', 'lr_schedule'])
+    update_args2config(args2config, 'discriminator_positional_noise', ['discriminator', 'positional_noise'])
 
     update_args2config(args2config, 'generator_optimizer', ['generator', 'optimizer'])
     update_args2config(args2config, 'generator_learning_rate', ['generator', 'learning_rate'])
@@ -170,6 +178,7 @@ def add_args(parser):
     update_args2config(args2config, 'generator_weight_decay', ['generator', 'weight_decay'])
     update_args2config(args2config, 'generator_convergence_eps', ['generator', 'convergence_eps'])
     update_args2config(args2config, 'generator_lr_schedule', ['generator', 'lr_schedule'])
+    update_args2config(args2config, 'generator_positional_noise', ['generator', 'positional_noise'])
 
     # generator model settings
     parser.add_argument('--generator_model_type', type=str, default='mlp')  # random, 'csd cell', 'model'
@@ -184,7 +193,7 @@ def add_args(parser):
     parser.add_argument('--generator_graph_convolution_cutoff', type=int, default=5)  # dime default is 5.0 A, schnet default is 10
     parser.add_argument('--generator_max_num_neighbors', type=int, default=32)  # dime default is 32
     parser.add_argument('--generator_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
-    add_bool_arg(parser, 'generator_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    add_bool_arg(parser, 'generator_add_radial_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
     parser.add_argument('--generator_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
 
 
@@ -222,7 +231,7 @@ def add_args(parser):
     update_args2config(args2config, 'generator_graph_convolution_cutoff', ['generator', 'graph_convolution_cutoff'])
     update_args2config(args2config, 'generator_max_num_neighbors', ['generator', 'max_num_neighbors'])
     update_args2config(args2config, 'generator_radial_function', ['generator', 'radial_function'])
-    update_args2config(args2config, 'generator_add_spherical_basis', ['generator', 'add_spherical_basis'])
+    update_args2config(args2config, 'generator_add_radial_basis', ['generator', 'add_radial_basis'])
     update_args2config(args2config, 'generator_pooling', ['generator', 'pooling'])
     update_args2config(args2config, 'generator_conditioner_num_fc_layers', ['generator', 'conditioner_num_fc_layers'])
     update_args2config(args2config, 'generator_conditioner_fc_depth', ['generator', 'conditioner_fc_depth'])
@@ -255,7 +264,7 @@ def add_args(parser):
     parser.add_argument('--discriminator_graph_convolution_cutoff', type=int, default=5)  # dime default is 5.0 A, schnet default is 10
     parser.add_argument('--discriminator_max_num_neighbors', type=int, default=32)  # dime default is 32
     parser.add_argument('--discriminator_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
-    add_bool_arg(parser, 'discriminator_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    add_bool_arg(parser, 'discriminator_add_radial_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
 
     parser.add_argument('--discriminator_num_fc_layers', type=int, default=1)  # number of layers in NN models
     parser.add_argument('--discriminator_fc_depth', type=int, default=27)  # number of neurons per NN layer
@@ -275,7 +284,7 @@ def add_args(parser):
     update_args2config(args2config, 'discriminator_graph_convolution_cutoff', ['discriminator', 'graph_convolution_cutoff'])
     update_args2config(args2config, 'discriminator_max_num_neighbors', ['discriminator', 'max_num_neighbors'])
     update_args2config(args2config, 'discriminator_radial_function', ['discriminator', 'radial_function'])
-    update_args2config(args2config, 'discriminator_add_spherical_basis', ['discriminator', 'add_spherical_basis'])
+    update_args2config(args2config, 'discriminator_add_radial_basis', ['discriminator', 'add_radial_basis'])
     update_args2config(args2config, 'discriminator_num_fc_layers', ['discriminator', 'num_fc_layers'])
     update_args2config(args2config, 'discriminator_fc_depth', ['discriminator', 'fc_depth'])
     update_args2config(args2config, 'discriminator_pooling', ['discriminator', 'pooling'])
@@ -289,7 +298,7 @@ def add_args(parser):
     add_bool_arg(parser, 'train_generator_as_flow', default=False)  # train normalizing flow generator via flow loss
     add_bool_arg(parser, 'train_generator_on_randn', default=False)  # train model to match appropriate multivariate gaussian
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
-    add_bool_arg(parser, 'train_generator_range_cutoff', default=False)  # train generator on adversarially
+    add_bool_arg(parser, 'train_generator_g2', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_pure_packing', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
@@ -302,7 +311,7 @@ def add_args(parser):
     update_args2config(args2config, 'train_generator_as_flow')
     update_args2config(args2config, 'train_generator_on_randn')
     update_args2config(args2config, 'train_generator_adversarially')
-    update_args2config(args2config, 'train_generator_range_cutoff')
+    update_args2config(args2config, 'train_generator_g2')
     update_args2config(args2config, 'train_generator_pure_packing')
     update_args2config(args2config, 'train_discriminator_adversarially')
     update_args2config(args2config, 'train_discriminator_on_randn')
@@ -324,9 +333,9 @@ def process_config(config):
     config.seeds.dataset = config.seeds.dataset % 10
 
     if config.test_mode:
-        config.max_batch_size = 50
+        config.max_batch_size = min((config.max_batch_size,50))
         #config.auto_batch_sizing = False
-        config.num_samples = 1000
+        config.num_samples = 1000 # not used anywhere
         #config.anomaly_detection = True
         if config.machine == 'cluster':
             config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
@@ -365,15 +374,17 @@ if __name__ == '__main__':
     '''
 
     predictor = Predictor(config)
-
-    if config.wandb.sweep:  # todo sweep won't work in new no-save-and-load method, since we delete dataset at first instance
-        for sweep_run in range(config.wandb.sweep_num_runs):
-            wandb.login()
-            if config.wandb.sweep_id is not None:  # continue a prior sweep
-                sweep_id = config.wandb.sweep_id
-            else:
-                sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
-                config.wandb.sweep_id = sweep_id
-            wandb.agent(sweep_id, predictor.train, project=config.wandb.project_name, count=1)
+    if config.mode == 'diagnostic':
+        predictor.cell_diagnostic()
     else:
         predictor.train()
+        # if config.wandb.sweep:  # todo sweep won't work in new no-save-and-load method, since we delete dataset at first instance, also since nested namespaces are broken in wandb configs
+        #     for sweep_run in range(config.wandb.sweep_num_runs):
+        #         wandb.login()
+        #         if config.wandb.sweep_id is not None:  # continue a prior sweep
+        #             sweep_id = config.wandb.sweep_id
+        #         else:
+        #             sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
+        #             config.wandb.sweep_id = sweep_id
+        #         wandb.agent(sweep_id, predictor.train, project=config.wandb.project_name, count=1)
+        # else:

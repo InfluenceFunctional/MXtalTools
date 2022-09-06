@@ -57,6 +57,7 @@ class Miner():
             self.min_temperature = config.min_crystal_temperature
             self.include_sgs = config.include_sgs
             self.include_pgs = config.include_pgs
+            self.exclude_crystal_systems = config.exclude_crystal_systems
 
         self.dataset_path = dataset_path
         self.collect_chunks = collect_chunks
@@ -251,6 +252,11 @@ class Miner():
             n_bad_inds = len(bad_inds)
             bad_inds.extend(np.argwhere([self.dataset['crystal spacegroup symbol'][i] not in self.include_sgs for i in range(len(self.dataset['crystal spacegroup symbol']))])[:, 0])
             print('spacegroup filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
+        if self.exclude_crystal_systems is not None:
+            n_bad_inds = len(bad_inds)
+            bad_inds.extend(np.argwhere([self.dataset['crystal system'][i]  in self.exclude_crystal_systems for i in range(len(self.dataset['crystal system']))])[:, 0])
+            print('crystal system filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         if self.include_pgs is not None:
             # filter by point group

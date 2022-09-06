@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from utils import standardize
+from dataset_management.CrystalData import CrystalData
 from torch_geometric.data import Data
 import sys
 from torch_geometric.loader import DataLoader
@@ -16,7 +17,7 @@ class BuildDataset:
     build dataset object
     """
 
-    def __init__(self, config, pg_dict=None, sg_dict=None, lattice_dict = None, premade_dataset=None):
+    def __init__(self, config, pg_dict=None, sg_dict=None, lattice_dict=None, premade_dataset=None):
         self.target = config.target
         self.max_atomic_number = config.max_atomic_number
         self.atom_dict_size = {'atom z': self.max_atomic_number + 1}  # for embeddings
@@ -37,25 +38,7 @@ class BuildDataset:
         self.include_pgs = config.include_pgs
 
         self.set_keys()
-
-        # get crystal symmetry factors
-        if pg_dict is not None:
-            self.pg_dict = pg_dict
-            self.sg_dict = sg_dict
-            self.lattice_dict = lattice_dict
-        else:
-            # get crystal symmetry factors
-            self.pg_dict = {}
-            self.sg_dict = {}
-            self.lattice_dict = {}
-            for i in range(1, 231):
-                sym_group = symmetry.Group(i)
-                self.pg_dict[i] = sym_group.point_group
-                self.sg_dict[i] = sym_group.symbol
-                self.lattice_dict[i] = sym_group.lattice_type
-
-        if self.include_sgs is not None:
-            print("Modelling with crystals from " + str(self.include_sgs))
+        self.get_syms(pg_dict, sg_dict, lattice_dict)
 
         '''
         actually load the dataset
@@ -68,14 +51,15 @@ class BuildDataset:
         self.dataset_length = len(dataset)
         self.final_dataset_length = min(self.dataset_length, config.dataset_length)
 
-        dataset = self.add_last_minute_features_quickly(dataset, config)
+        dataset = self.add_last_minute_features_quickly(dataset, config)  # add a few odds & ends
 
         '''
         prep for modelling
         '''
 
-        self.datapoints, self.means, self.stds, self.dtypes = self.get_joint_features(dataset)
-        self.datapoints = self.generate_joint_training_datapoints(dataset, config)
+        lattice_features, self.lattice_means, self.lattice_stds, self.lattice_dtypes, self.covariance_matrix = self.get_cell_features(dataset)
+        targets = self.get_targets(dataset)
+        self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets, config)
 
         self.shuffle_datapoints()
 
@@ -102,13 +86,34 @@ class BuildDataset:
         self.lattice_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal alpha', 'crystal beta', 'crystal gamma',
                              'crystal reference cell centroid x', 'crystal reference cell centroid y', 'crystal reference cell centroid z',
-                             'crystal reference cell angle 1', 'crystal reference cell angle 2', 'crystal reference cell angle 3',
+                             'crystal reference cell rotvec 1', 'crystal reference cell rotvec 2', 'crystal reference cell rotvec 3',
                              ]
 
         if len(self.lattice_keys) % 2 != 0:  # coupling flow model requires an even number of dimensions
             print('For coupling flow, expect # latent dimensions to be even!')
 
         return
+
+    def get_syms(self, pg_dict=None, sg_dict=None, lattice_dict=None):
+        # get crystal symmetry factors
+        if pg_dict is not None:
+            self.pg_dict = pg_dict
+            self.sg_dict = sg_dict
+            self.lattice_dict = lattice_dict
+        else:
+            # get crystal symmetry factors
+            self.pg_dict = {}
+            self.sg_dict = {}
+            self.lattice_dict = {}
+            for i in range(1, 231):
+                sym_group = symmetry.Group(i)
+                self.pg_dict[i] = sym_group.point_group
+                self.sg_dict[i] = sym_group.symbol
+                self.lattice_dict[i] = sym_group.lattice_type
+
+        if self.include_sgs is not None:
+            print("Modelling with crystals from " + str(self.include_sgs))
+
 
     def add_last_minute_features_quickly(self, dataset, config):
         '''
@@ -130,7 +135,7 @@ class BuildDataset:
         space group
         '''
         if self.include_sgs is not None:
-            self.include_sgs.append(config.generate_sgs) # make sure the searching group is always present
+            self.include_sgs.append(config.generate_sgs)  # make sure the searching group is always present
 
             for key in self.include_sgs:
                 dataset['crystal sg is ' + key] = dataset['crystal spacegroup symbol'] == key
@@ -156,9 +161,10 @@ class BuildDataset:
         '''
         # set angle units to natural
         '''
-        dataset['crystal alpha'] = dataset['crystal alpha'] * np.pi / 180
-        dataset['crystal beta'] = dataset['crystal beta'] * np.pi / 180
-        dataset['crystal gamma'] = dataset['crystal gamma'] * np.pi / 180
+        if (max(dataset['crystal alpha']) > np.pi) or (max(dataset['crystal beta']) > np.pi) or (max(dataset['crystal gamma']) > np.pi):
+            dataset['crystal alpha'] = dataset['crystal alpha'] * np.pi / 180
+            dataset['crystal beta'] = dataset['crystal beta'] * np.pi / 180
+            dataset['crystal gamma'] = dataset['crystal gamma'] * np.pi / 180
 
         return dataset
 
@@ -169,14 +175,7 @@ class BuildDataset:
 
         self.datapoints = [self.datapoints[i] for i in good_inds]
 
-    def shuffle_final_dataset(self, atom_features_list, molecule_features_array, targets, smiles, coords, tracking_features):
-        np.random.seed(self.dataset_seed)
-        good_inds = np.random.choice(self.dataset_length, size=self.final_dataset_length, replace=False)
-        self.dataset_length = len(good_inds)
-        return [atom_features_list[i] for i in good_inds], molecule_features_array[good_inds], targets[good_inds], \
-               [smiles[i] for i in good_inds], [coords[i] for i in good_inds], tracking_features[good_inds]
-
-    def generate_training_data(self, atom_coords, smiles, atom_features_list, mol_features, targets, tracking_features, reference_cells=None):
+    def generate_training_data(self, atom_coords, smiles, atom_features_list, mol_features, targets, tracking_features, reference_cells, lattice_features, T_fc_list, identifiers):
         '''
         convert feature, target and tracking vectors into torch.geometric data objects
         :param atom_coords:
@@ -189,6 +188,11 @@ class BuildDataset:
         '''
         datapoints = []
 
+        z_value_ind = self.tracking_dict_keys.index('crystal z value')
+        sg_ind_value_ind = self.tracking_dict_keys.index('crystal spacegroup number')
+        mol_size_ind = self.tracking_dict_keys.index('molecule num atoms')
+
+        tracking_features = torch.Tensor(tracking_features)
         print("Generating final training datapoints")
         for i in tqdm.tqdm(range(self.final_dataset_length)):
             if targets[i].ndim == 1:
@@ -201,7 +205,19 @@ class BuildDataset:
 
             input_features = torch.Tensor(input_features)
             assert torch.sum(torch.isnan(input_features)) == 0, "NaN in training input"
-            datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i], reference_cells[i]]))
+            # datapoints.append(Data(x=input_features.float(), pos=torch.Tensor(atom_coords[i]), y=[target, smiles[i], tracking_features[i], reference_cells[i]]))
+            datapoints.append(CrystalData(x=input_features.float(),
+                                          pos=torch.Tensor(atom_coords[i]),
+                                          y=target,
+                                          smiles=smiles[i],
+                                          tracking=tracking_features[i, None, :],
+                                          ref_cell_pos=reference_cells[i][:,:,:3],
+                                          Z=tracking_features[i, z_value_ind].int(),
+                                          sg_ind=tracking_features[i, sg_ind_value_ind].int(),
+                                          cell_params=torch.Tensor(lattice_features[i, None, :]),
+                                          T_fc = torch.Tensor(T_fc_list[i])[None,...],
+                                          mol_size = torch.Tensor(tracking_features[i, mol_size_ind]),
+                                          csd_identifier = identifiers[i]))
 
         return datapoints
 
@@ -244,7 +260,7 @@ class BuildDataset:
 
         return atom_features_list
 
-    def concatenate_molecule_features(self, dataset, mol_keys=True, extra_keys=None):
+    def concatenate_molecule_features(self, dataset, mol_keys=True, extra_keys=None, add_lattice_overlaps = False):
         """
         collect features of 'molecules' and append to atom-level data
         """
@@ -255,6 +271,11 @@ class BuildDataset:
 
         if extra_keys is not None:
             keys_to_add.extend(extra_keys)
+
+        if False: #add_lattice_overlaps: # todo not ready yet - also make sure only the discriminator sees this, and it gets properly updated when new cells are built
+            lattice_overlap_keys = [key for key in dataset.columns if 'inertial overlap' in key]
+            keys_to_add.extend(lattice_overlap_keys)
+            #overlaps = np.asarray([dataset[key] for key in lattice_overlap_keys]).T
 
         print("Preparing molcule-wise features")
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it
@@ -285,40 +306,43 @@ class BuildDataset:
         assert np.sum(np.isnan(molecule_feature_array)) == 0
         return molecule_feature_array
 
-    def generate_joint_training_datapoints(self, dataset, config):
+    def generate_training_datapoints(self, dataset, lattice_features, targets, config):
         tracking_features = self.gather_tracking_features(dataset)
 
-        ref_coords = dataset['crystal reference cell coords']
-
-        atom_features_list = self.concatenate_atom_features(dataset)
-
-        # add crystal features for generator
-        self.crystal_generation_features = []
-        point_group_features = [column for column in dataset.columns if 'pg is' in column]
-        space_group_features = [column for column in dataset.columns if 'sg is' in column]
-        crystal_system_features = [column for column in dataset.columns if 'crystal system is' in column]
-        self.crystal_generation_features.extend(point_group_features)
-        self.crystal_generation_features.extend(space_group_features)
-        self.crystal_generation_features.extend(crystal_system_features)
-        self.crystal_generation_features.append('crystal z value') # todo norm this
+        # add symmetry features for generator
+        self.crystal_generation_features = []  # todo need an option to turn this off
+        if config.mode == 'gan':
+            point_group_features = [column for column in dataset.columns if 'pg is' in column]
+            space_group_features = [column for column in dataset.columns if 'sg is' in column]
+            crystal_system_features = [column for column in dataset.columns if 'crystal system is' in column]
+            self.crystal_generation_features.extend(point_group_features)
+            self.crystal_generation_features.extend(space_group_features)
+            self.crystal_generation_features.extend(crystal_system_features)
+            self.crystal_generation_features.append('crystal z value')  # todo norm this
 
         molecule_features_array = self.concatenate_molecule_features(
-            dataset, extra_keys=self.crystal_generation_features)
+            dataset, extra_keys=self.crystal_generation_features, add_lattice_overlaps = True)
+
+        atom_features_list = self.concatenate_atom_features(dataset)
 
         return self.generate_training_data(atom_coords=dataset['atom coords'],
                                            smiles=dataset['molecule smiles'],
                                            atom_features_list=atom_features_list,
                                            mol_features=molecule_features_array,
-                                           targets=self.datapoints,
+                                           targets=targets,
                                            tracking_features=tracking_features,
-                                           reference_cells=ref_coords)
+                                           reference_cells = dataset['crystal reference cell coords'],
+                                           lattice_features=lattice_features,
+                                           T_fc_list = dataset['crystal fc transform'],
+                                           identifiers = dataset['identifier'])
 
-    def get_joint_features(self, dataset):
+    def get_cell_features(self, dataset):
         keys_to_add = self.lattice_keys
         key_dtype = []
         # featurize
         means, stds = [], []
         feature_array = np.zeros((self.dataset_length, len(keys_to_add)), dtype=float)
+        unstandardized_feature_array = np.zeros_like(feature_array)
         # raw_feature_array = np.zeros_like(feature_array)
         for column, key in enumerate(keys_to_add):
             feature_vector = dataset[key]
@@ -339,15 +363,42 @@ class BuildDataset:
                 std = 0.01
             means.append(mean)
             stds.append(std)
-            feature_vector = (feature_vector - means[-1]) / stds[-1]
+            # feature_vector = (feature_vector - means[-1]) / stds[-1] # no need to standardize here
             feature_array[:, column] = feature_vector
+            unstandardized_feature_array[:,column] = dataset[key]
 
             assert np.sum(np.isnan(feature_vector)) == 0
+
+        '''
+        compute full covariance matrix
+        '''
+        covariance_matrix = np.cov(unstandardized_feature_array,rowvar=False)
+        for i in range(len(covariance_matrix)): # ensure it's well-conditioned
+            covariance_matrix[i,i] = max((0.01,covariance_matrix[i,i]))
 
         assert np.sum(np.isnan(stds)) == 0
         assert np.sum(np.asarray(stds) == 0) == 0
 
-        return feature_array, means, stds, key_dtype
+        return feature_array, means, stds, key_dtype, covariance_matrix
+
+    def get_targets(self, dataset):
+        if self.target == 'packing':
+            targets = dataset['crystal packing coefficient']
+        elif self.target == 'density':
+            conversion = 1660 # 1 amu / cubic angstrom is 1.660 kg / m^3
+            targets = dataset['molecule mass'] * dataset['crystal packing coefficient'] / dataset['molecule volume'] * conversion # this is per-molecule, divide by Z to get the full crystal
+        elif self.target == 'volume':
+            targets = dataset['molecule volume'] / dataset['crystal packing coefficient'] # this is per-molecule, multiply by Z to get the full crystal value
+        elif self.target == 'lattice vector':
+            targets = dataset['crystal inertial overlap 2 to 0']
+        else:
+            print(f'{self.target} is not an implemented regression target!')
+            sys.exit()
+
+        self.target_std = targets.std()
+        self.target_mean = targets.mean()
+
+        return (targets - self.target_mean) / self.target_std
 
     def gather_tracking_features(self, dataset):
         """
@@ -400,12 +451,15 @@ class BuildDataset:
             'crystal features': self.lattice_keys,
             'n crystal features': len(self.lattice_keys),
             'dataset length': len(self.datapoints),
-            'means': self.means,
-            'stds': self.stds,
-            'dtypes': self.dtypes,
+            'means': self.lattice_means,
+            'stds': self.lattice_stds,
+            'cov mat': self.covariance_matrix,
+            'target mean': self.target_mean,
+            'target std': self.target_std,
+            'dtypes': self.lattice_dtypes,
             'n tracking features': self.n_tracking_features,
             'tracking features dict': self.tracking_dict_keys,
-            'atom features': self.datapoints[0].x.shape[1],
+            'n atom features': self.datapoints[0].x.shape[1],
             'n atomwise features': len(self.atom_keys),
             'n mol features': self.n_mol_features,
             'mol features': self.mol_dict_keys,

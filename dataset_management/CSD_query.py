@@ -28,7 +28,7 @@ class CCDC_helper():
                 'crystal cell angles', 'crystal cell lengths', 'crystal cell volume',
                 'crystal lattice centring', 'crystal system', 'crystal z value', 'crystal z prime',
                 'crystal spacegroup number', 'crystal spacegroup setting', 'crystal spacegroup symbol',
-                'crystal symmetry operators',
+                #'crystal symmetry operators',
                 'crystal reference cell coords',
             ]
 
@@ -47,15 +47,15 @@ class CCDC_helper():
 
         chunklist = np.arange(start=chunk_inds[0], stop=chunk_inds[1])
 
-        chunks = chunkify(allhits, 100)[chunk_inds[0]:chunk_inds[1]]
+        chunks = chunkify(allhits, max(chunk_inds))[chunk_inds[0]:chunk_inds[1]]
         del allhits
 
         print('Getting identifiers')
         for i in tqdm.tqdm(range(len(chunks))):
             if not os.path.exists(self.chunk_path + 'identifiers/chunk_{}_identifiers'.format(chunklist[i]) + '.npy'):
-                print('doing chunk {}'.format(chunklist[i]))
+                print('Grepping crystal identifiers for chunk {}'.format(chunklist[i]))
                 identifiers = []
-                for j in tqdm.tqdm(range(len(chunks[i]))):
+                for j in range(len(chunks[i])):
                     identifiers.append(chunks[i][j].entry.identifier)
                 np.save(self.chunk_path + 'identifiers/chunk_{}_identifiers'.format(chunklist[i]), identifiers)
 
@@ -70,13 +70,13 @@ class CCDC_helper():
 
         identifiers = list(set(identifiers))
         df = pd.DataFrame(data=identifiers, index=np.arange(len(identifiers)), columns=['identifier'])
-        df.to_pickle('../../csd_dataframe2')
+        df.to_pickle('../../new_csd_dataframe')
 
     def get_crystal_features(self, n_chunks=100, chunk_inds=[0, 100],source_dataset = None):
         if source_dataset is None:
             os.chdir(self.chunk_path)
             os.chdir('../')
-            df = pd.read_pickle('csd_dataframe2')
+            df = pd.read_pickle('new_csd_dataframe')
         else:
             df = pd.DataFrame.from_dict(np.load(source_dataset,allow_pickle=True).item())
 
@@ -97,7 +97,7 @@ class CCDC_helper():
                     entry = csd_reader.entry(chunk['identifier'][i])
                     molecule = entry.molecule
                     crystal = entry.crystal
-                    ma = crystal.asymmetric_unit_molecule
+                    #ma = crystal.asymmetric_unit_molecule
                     if (len(molecule.atoms) > 0) and (len(molecule.components) == 1) and (not entry.is_polymeric) and (entry.has_3d_structure):
                         #try:
                         new_features = self.featurize_crystal(new_features, crystal, entry)
@@ -122,7 +122,7 @@ class CCDC_helper():
                 assert [lens[0]] * len(lens) == lens
 
                 chunk = chunk.drop(chunk.index[bad_inds])
-                if 'level_0' in chunk.columns:  # delete unwanted samples
+                if 'level_0' in chunk.columns: # hygiene
                     chunk = chunk.drop(columns='level_0')
                 # delete unwanted samples
                 chunk = chunk.reset_index()
@@ -130,7 +130,7 @@ class CCDC_helper():
                     chunk[feature] = new_features[i]
 
                 if 'crystal temperature' in self.features:
-                    chunk['crystal temperature'] = self.fix_temperature(chunk['crystal temperature'])  # post-fix temperature
+                    chunk['crystal temperature'] = self.fix_temperature(chunk['crystal temperature'])  # post-fix temperatures
 
                 chunk.to_pickle(self.chunk_path + 'crystal_features/{}'.format(n + chunk_inds[0]))
 
@@ -274,7 +274,21 @@ def visualizeEntry(identifier):
 
 
 if __name__ == '__main__':
-    helper = CCDC_helper('C:/Users\mikem\Desktop\CSP_runs\datasets\may_new_pull2/', 'CSD',add_features='crystal reference cell coords')
+
+    helper = CCDC_helper('C:/Users\mikem\Desktop\CSP_runs\datasets/august_refeaturization/', 'CSD')
+
+    # grep identifiers
+    #helper.grep_crystal_identifiers()
+    helper.collect_chunks_and_initialize_df()
+
+    # featurize crystals
+    offset = 0
+    gap = 10
+    helper.get_crystal_features(n_chunks=100, chunk_inds=[offset + 0, offset + gap])
+
+
+    # add single feature
+    #helper = CCDC_helper('C:/Users\mikem\Desktop\CSP_runs\datasets/august_refeaturization/', 'CSD',add_features='crystal reference cell coords')
 
     # # #pull identifiers
     # ind = 0
@@ -290,4 +304,5 @@ if __name__ == '__main__':
     # helper.get_crystal_features(n_chunks=100, chunk_inds=[offset + 0, offset + gap])
 
     # optionally, store all the packings
-    helper.get_crystal_features(source_dataset = 'C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset.npy')
+    #helper.get_crystal_features(source_dataset = 'C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset.npy')
+

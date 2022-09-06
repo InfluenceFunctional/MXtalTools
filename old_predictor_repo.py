@@ -1376,3 +1376,447 @@ def prev_fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_lis
         reference_cell_list.append(ref_cell)
 
     return reference_cell_list
+
+
+
+def prev_fast_differentiable_get_canonical_coords(mol_position, sym_ops_list):
+    '''
+    use point symmetry to determine which image is closest to (0,0,0)
+    this is the 'canonical' conformer, to which we apply rotations
+    '''
+
+    canonical_fractional_positions_list = torch.zeros((len(mol_position), 3)).to(mol_position.device)
+    for i, (set_position, sym_ops) in enumerate(zip(mol_position, sym_ops_list)):
+        affine_points = torch.cat((set_position, torch.ones(set_position.shape[:-1] + (1,)).to(set_position.device)), dim=-1)
+        vals = torch.zeros((len(sym_ops), 3))
+        for zv in range(len(sym_ops)):
+            vals[zv] = torch.inner(sym_ops[zv], affine_points.T).T[:-1]
+        if any(vals < 0) or any(vals > 1):
+            centroids = vals - torch.floor(vals)
+        else:
+            centroids = vals
+        # canonical_ind = torch.argmin(torch.linalg.norm(centroids, dim=1))
+        # canonical_fractional_positions_list[i] = centroids[canonical_ind]
+        canonical_fractional_positions_list[i] = centroids[torch.argmin(torch.linalg.norm(centroids, dim=1))]
+
+    return canonical_fractional_positions_list
+
+
+
+def orig_fast_differentiable_standard_rotation_matrix(masses_list, coords_list, T_fc_list):
+    t00 = time.time()
+    Ip_axes_list = torch.zeros((len(masses_list), 3, 3)).to(T_fc_list.device)
+    for i, (masses, coords) in enumerate(zip(masses_list, coords_list)):
+        Ip_axes_i, _, _ = compute_principal_axes_torch(masses, coords)
+        Ip_axes_list[i] = Ip_axes_i
+    t1 = time.time()
+    # next define 3 vectors to create alignment matrix
+    corner_point = torch.tensor((0, 1, 1)).to(T_fc_list.device).float()
+    top_corner_point = torch.ones(3).to(T_fc_list.device)
+    alignment_target_list = torch.zeros_like(Ip_axes_list)
+    for i, (T_fc, coords) in enumerate(zip(T_fc_list, coords_list)):
+        alignment_target_list[i, 2, :] = torch.inner(T_fc, top_corner_point)
+
+        t0 = torch.inner(torch.inner(T_fc, corner_point), alignment_target_list[i, 2, :]) / torch.inner(alignment_target_list[i, 2, :], alignment_target_list[i, 2, :])
+        P0 = alignment_target_list[i, 2, :] * t0  # point nearest to (0,1,1)
+        alignment_target_list[i, 1, :] = torch.inner(T_fc, corner_point) - P0
+
+        I3_direction = torch.sign(torch.dot(Ip_axes_list[i, 0], torch.cross(Ip_axes_list[i, 1], Ip_axes_list[i, 2])))
+        if I3_direction > 0:
+            alignment_target_list[i, 0, :] = torch.cross(alignment_target_list[i, 1, :], alignment_target_list[i, 2, :])
+        elif I3_direction < 0:
+            alignment_target_list[i, 0, :] = -torch.cross(alignment_target_list[i, 1, :], alignment_target_list[i, 2, :])
+        else:
+            print('I3 is somehow perpendicular to itself! Bad!')
+            alignment_target_list[i, 0, :] = torch.cross(alignment_target_list[i, 1, :], alignment_target_list[i, 2, :])
+
+    t2 = time.time()
+    normed_alignment_target_list = torch.div(alignment_target_list, torch.linalg.norm(alignment_target_list, dim=2)[:, :, None])
+
+    t3 = time.time()
+    std_mat_list = torch.zeros_like(Ip_axes_list)
+    for i, (alignment_target, Ip_axes) in enumerate(zip(normed_alignment_target_list, Ip_axes_list)):
+        std_mat_list[i] = alignment_target.T @ torch.linalg.inv(Ip_axes).T
+    t4 = time.time()
+
+    tot_time = t4 - t00
+    print(f'inertial took {t1 - t00:.1f} or {(t1 - t00) / tot_time:.2f} fraction')
+    print(f'alignment targets took {t2 - t1:.1f} or {(t2 - t1) / tot_time:.2f} fraction')
+    print(f'alignment norming took {t3 - t2:.1f} or {(t3 - t2) / tot_time:.2f} fraction')
+    print(f'std mat generation took {t4 - t3:.1f} or {(t4 - t3) / tot_time:.2f} fraction')
+
+    return std_mat_list
+
+
+
+# look at the ref cell
+'''
+cell_vectors = np.transpose(np.dot(T_fc, np.transpose(np.eye(3)))
+# single molecule
+amol = Atoms(numbers=atoms[:, 0], positions=coords, cell=np.concatenate((cell_lengths,cell_angles)),pbc=True)
+# unit cell
+amol = Atoms(numbers=atoms[:, 0].repeat(z_value), positions=cell_coords_c.reshape(z_value * len(atoms), 3), cell=np.concatenate((cell_lengths,cell_angles)))
+ase.visualize.view(amol)
+'''
+
+'''
+need to copy effectively this code
+
+def _get_coords_and_species(self, absolute=False, PBC=False, first=False, unitcell=False):
+"""
+Used to generate coords and species for get_coords_and_species
+
+Args:
+absolute: return absolute or relative coordinates 
+PBC: whether or not to add coordinates in neighboring unit cells, 
+first: whether or not to extract the information from only the first site
+unitcell: whether or not to move the molecular center to the unit cell
+
+Returns:
+atomic coords: a numpy array of atomic coordinates in the site
+species: a list of atomic species for the atomic coords
+"""
+coord0 = self.mol.cart_coords.dot(self.orientation.matrix.T)  #
+wp_atomic_sites = []
+wp_atomic_coords = None
+
+for point_index, op2 in enumerate(self.wp.ops):
+# Obtain the center in absolute coords
+center_relative = op2.operate(self.position)
+if unitcell:
+    center_relative -= np.floor(center_relative)
+center_absolute = np.dot(center_relative, self.lattice.matrix)
+
+# Rotate the molecule (Euclidean metric)
+#op2_m = self.wp.generators_m[point_index]
+
+op2_m = self.wp.get_euclidean_generator(self.lattice.matrix, point_index)
+rot = op2_m.affine_matrix[:3, :3].T
+#if self.diag and self.wp.index > 0:
+#    tau = op2.translation_vector
+#else:
+#    tau = op2_m.translation_vector
+tmp = np.dot(coord0, rot) #+ tau
+
+# Add absolute center to molecule
+tmp += center_absolute
+tmp = tmp.dot(self.lattice.inv_matrix)
+if wp_atomic_coords is None:
+    wp_atomic_coords = tmp
+else:
+    wp_atomic_coords = np.append(wp_atomic_coords, tmp, axis=0)
+wp_atomic_sites.extend(self.symbols)
+
+if first:
+    break
+
+if PBC:
+# Filter PBC of wp_atomic_coords
+wp_atomic_coords = filtered_coords(wp_atomic_coords, PBC=self.PBC)
+# Add PBC copies of coords
+m = create_matrix(PBC=self.PBC, omit=True)
+# Move [0,0,0] PBC vector to first position in array
+m2 = [[0, 0, 0]]
+for v in m:
+    m2.append(v)
+new_coords = np.vstack([wp_atomic_coords + v for v in m2])
+wp_atomic_coords = new_coords
+
+if absolute:
+wp_atomic_coords = wp_atomic_coords.dot(self.lattice.matrix)
+
+
+'''
+
+
+def ref_to_supercell(reference_cell, z_value, atoms, cell_vectors, supercell_size=1):
+    # pattern molecule into reference cell, assuming consistent ordering between dataset (drawn from CSD) and CSD crystals
+    coords = torch.tensor(reference_cell.reshape(z_value * reference_cell.shape[1], 3))  # assign reference cell coordinates to the coords array
+    atoms = torch.tensor(np.tile(atoms, (z_value, 1)))  # simply copy the feature vectors
+    # assert len(atoms) == len(coords) # assert everyone is the same size
+
+    # look at the thing
+    # amol = Atoms(numbers = atoms[:,0], positions = coords,cell=np.concatenate((cell_lengths,cell_angles)),pbc=True)
+    # visualize.view(amol)
+    # 5 tile the supercell
+    # index the molecules as 'within main cell' vs 'outside'
+    supercell_coords = coords.clone()
+    for xx in range(-supercell_size, supercell_size + 1):
+        for yy in range(-supercell_size, supercell_size + 1):
+            for zz in range(-supercell_size, supercell_size + 1):
+                if not all([xx == 0, yy == 0, zz == 0]):
+                    supercell_coords = torch.cat((supercell_coords, coords + (cell_vectors[0] * xx + cell_vectors[1] * yy + cell_vectors[2] * zz)), dim=0)
+
+    supercell_atoms = atoms.repeat((supercell_size * 2 + 1) ** 3, 1)
+    supercell_atoms = torch.cat((supercell_atoms, torch.ones(len(supercell_atoms))[:, None]), dim=1)  # inside main unit cell
+    supercell_atoms[len(atoms):, -1] = 0  # outside of main unit cell
+
+    return supercell_atoms, supercell_coords
+
+
+def ref_to_supercell_torch(reference_cell, z_value, atoms, cell_vectors, supercell_size=1):
+    # pattern molecule into reference cell, assuming consistent ordering between dataset (drawn from CSD) and CSD crystals
+    coords = reference_cell.reshape(z_value * reference_cell.shape[1], 3)  # assign reference cell coordinates to the coords array
+    atoms = torch.tile(atoms, (z_value, 1))  # simply copy the feature vectors
+
+    # tile the supercell
+    # index the molecules as 'within main cell' vs 'outside'
+    supercell_coords = coords.clone()
+    for xx in range(-supercell_size, supercell_size + 1):
+        for yy in range(-supercell_size, supercell_size + 1):
+            for zz in range(-supercell_size, supercell_size + 1):
+                if not all([xx == 0, yy == 0, zz == 0]):
+                    supercell_coords = torch.cat((supercell_coords, coords + (cell_vectors[0] * xx + cell_vectors[1] * yy + cell_vectors[2] * zz)), dim=0)
+
+    supercell_atoms = atoms.repeat((supercell_size * 2 + 1) ** 3, 1)
+    ref_cell_inds = torch.ones(len(supercell_atoms)).to(reference_cell.device)[:, None]
+    ref_cell_inds[len(atoms) * z_value:, 0] = 0
+    supercell_atoms = torch.cat((supercell_atoms, ref_cell_inds), dim=1)  # inside main unit cell
+    # supercell_atoms[len(atoms):, -1] = 0  # outside of main unit cell
+
+    # assert len(supercell_coords) == len(supercell_atoms), 'different numbers of atoms & coordinates!'
+
+    return supercell_atoms, supercell_coords
+
+
+
+
+def old_randomize_molecule_position_and_orientation(coords, masses, T_fc, set_position=None, set_orientation=None, set_rotation=None):
+    '''
+    :param coords:
+    :param masses:
+    :param T_fc:
+    :param set_position:
+    :param set_orientation:
+    :param set_rotation:
+    :return:
+    '''
+    # random direction & rotation
+    if set_orientation is not None:
+        new_orientation = np.asarray(set_orientation, dtype=float)
+    else:
+        new_orientation = np.random.uniform(-1, 1, size=3)
+    if set_rotation is not None:
+        new_rotation = np.asarray(set_rotation, dtype=float)
+    else:
+        new_rotation = np.random.uniform(-1, 1, size=1)
+    if set_position is not None:
+        new_centroid_frac = np.asarray(set_position, dtype=float)
+    else:
+        new_centroid_frac = np.random.uniform(0, 1, size=(3))
+
+    CoM = coords.T.dot(masses) / np.sum(masses)
+    coords -= CoM
+    Ip_axes, Ip_moments, I_tensor = compute_principal_axes_np(masses, coords)  # third row of the Ip_axes matrix is the principal moment axis
+
+    # align molecule principal axis to new orientation
+    rot_mat = rotation_matrix_from_vectors(Ip_axes[-1], T_fc.dot(np.eye(3)[0] - new_orientation))  # define as difference from a vector
+    coords = (rot_mat.dot((coords).T)).T  # apply rotation matrix (add and subtract CoM if not already done)    #coords = euler_rotation(rot_mat, coords)
+
+    # rotate about the principal axis by theta
+    coords = rodrigues_rotation(Ip_axes[-1], coords, np.prod((new_rotation, 180)))
+
+    # move centroid to new location
+    new_centroid_cart = T_fc.dot(new_centroid_frac)  # np.transpose(np.dot(T_fc, np.transpose(new_centroid_frac)))
+    coords = coords - np.average(coords, axis=0) + new_centroid_cart
+
+    return coords
+
+
+'''
+# test for rotation inversion
+for i in range(10000):
+    points = np.random.uniform(-1,1,size=(30,3))
+
+    points -= np.average(points,axis=0)
+
+    angles = np.random.uniform(-np.pi,np.pi,size=3)
+    angles[1] /= 2
+
+    rotation = Rotation.from_euler('xyz', angles)
+    rot_points = rotation.apply(points)
+
+    rmat = (rot_points[:3].T @ np.linalg.inv(points[:3]).T)
+    new_rot = Rotation.from_matrix(rmat)
+    new_angles = new_rot.as_euler('xyz')
+    if np.linalg.norm(angles - new_angles).astype('float16') > 0.001:
+        print(f'error at {i}')
+
+'''
+
+
+
+def check_standardization(numbers, masses, coords0, T_fc, T_cf, sym_ops, new_rotation, new_centroid_frac):
+    '''
+    test the repeatability of our standardization algo
+    :param masses:
+    :param coords0:
+    :param T_fc:
+    :param T_cf:
+    :param sym_ops:
+    :param new_rotation:
+    :param new_centroid_frac:
+    :return:
+    '''
+    coords = coords0.copy()  # some coords
+    coords -= coords.mean(0)
+    rotation = Rotation.from_euler('XYZ', new_rotation)
+    rot_coords = rotation.apply(coords)  # some rotated coords
+
+    '''
+    get alignment
+    '''
+    # I1 alignment
+    I1_alignment_vec = T_fc.dot(np.ones(3))
+    I1_alignment_vec /= np.linalg.norm(I1_alignment_vec)
+
+    # I2 alignment
+    corner_point = np.array((0, 1, 1))
+    t0 = T_fc.dot(corner_point).dot(I1_alignment_vec) / (I1_alignment_vec.dot(I1_alignment_vec))
+    P0 = I1_alignment_vec * t0  # point nearest to (0,1,1)
+    I2_alignment_vec = T_fc.dot(corner_point) - P0  # vector between two P0 and (0,1,1)
+    I2_alignment_vec /= np.linalg.norm(I2_alignment_vec)
+
+    # I3 alignment
+    # I3_alignment_vec = np.cross(I1_alignment_vec,I2_alignment_vec)
+
+    alignment_matrix = np.array((I2_alignment_vec, I1_alignment_vec))
+    '''
+    do standardization
+    '''
+    # center coordinates on the center of mass
+    CoM = coords.T.dot(masses) / np.sum(masses)
+    coords -= CoM
+    Ip_axes, Ip_moments, I_tensor = compute_principal_axes_np(masses, coords)
+
+    # Apply standardization
+    double_rot, rmsd = Rotation.align_vectors(b=Ip_axes[1:], a=alignment_matrix, return_sensitivity=False)  # align our two vectors
+    if rmsd > 0.1:
+        print('bad rmsd')
+
+    coords = double_rot.apply(coords)
+    I1_trans = double_rot.apply(Ip_axes)
+    I1, _, _ = compute_principal_axes_np(masses, coords)
+    coords -= coords.mean(0)  # set CoG at (0,0,0)
+
+    # center coordinates on the center of mass
+    CoM = rot_coords.T.dot(masses) / np.sum(masses)
+    rot_coords -= CoM
+    Ip_axes2, Ip_moments, I_tensor = compute_principal_axes_np(masses, rot_coords)
+
+    # Apply standardization
+    double_rot2, rmsd = Rotation.align_vectors(b=Ip_axes2[1:], a=alignment_matrix, return_sensitivity=False)  # align our two vectors
+    if rmsd > 0.1:
+        print('bad rmsd')
+
+    rot_coords = double_rot2.apply(rot_coords)
+    I2_trans = double_rot2.apply(Ip_axes)
+    I2, _, _ = compute_principal_axes_np(masses, rot_coords)
+    rot_coords -= rot_coords.mean(0)  # set CoG at (0,0,0)
+
+    error = 0
+    if np.sum(np.abs(coords - rot_coords)) > (0.1 * len(coords)):
+        print('bad standardization')
+        error += 1
+        from ase import Atoms
+        from ase.visualize import view
+        mol1 = Atoms(numbers=numbers, positions=coords)
+        mol2 = Atoms(numbers=numbers, positions=rot_coords)
+        view((mol1, mol2))
+
+    return error
+
+
+
+    def fast_differentiable_generated_supercells(self, supercell_data, config, cell_sample, do_cpu=True, override_sg=None, skip_cell_cleaning=False):
+        '''
+        convert cell parameters to reference cell
+        convert reference cell to 3x3 supercell
+        all using differentiable torch functions
+        note: currently it seems a bit faster on CPU
+        BROKEN - DOES NOT WORK
+        '''
+
+        if do_cpu:
+            supercell_data = supercell_data.cpu()
+            cell_sample = cell_sample.cpu()
+
+        if override_sg is not None:
+            # overrite point group one-hot
+            # overwrite space group one-hot
+            # overwrite crystal system one-hot
+            # overwrite z value
+            sg_num = list(self.space_groups.values()).index(override_sg) + 1  # indexing from 0
+            sg_ind = self.sg_ind_dict[self.space_groups[sg_num]]
+            pg_ind = self.pg_ind_dict[self.point_groups[sg_num]]
+            crysys_ind = self.crysys_ind_dict[self.lattice_type[sg_num]]
+            z_value_ind = max(list(self.crysys_ind_dict.values())) + 1  # todo hardcode
+
+            sym_ops_list = [torch.Tensor(self.sym_ops[sg_num]).to(supercell_data.x.device) for i in range(supercell_data.num_graphs)]
+            z_value = len(sym_ops_list[0])  # assume all single z value for now
+            z_values = [z_value for i in range(supercell_data.num_graphs)]
+            supercell_data.sg_ind = [sg_num for i in range(supercell_data.num_graphs)]
+
+            supercell_data.x[:, -config.dataDims['n crystal generation features']] = 0  # set all crystal features to 0
+            supercell_data.x[:, pg_ind] = 1  # set all molecules to the given pg
+            supercell_data.x[:, sg_ind] = 1  # set all molecules to the given pg
+            supercell_data.x[:, crysys_ind] = 1  # set all molecules to the given pg
+            supercell_data.x[:, z_value_ind] = z_value
+            supercell_data.Z = z_value * torch.ones_like(supercell_data.Z)
+            supercell_data.sg_ind = sg_num * torch.ones_like(supercell_data.sg_ind)
+
+        else:
+            sg_numbers = supercell_data.sg_ind
+            sym_ops_list = [torch.Tensor(self.sym_ops[int(sg_numbers[i])]).to(supercell_data.x.device) for i in range(len(sg_numbers))]
+            z_values = [len(sym_ops) for sym_ops in sym_ops_list]  # todo alternatively set from Z itself
+            supercell_data.Z = torch.tensor(z_values).to(supercell_data.Z.device)
+
+        cell_lengths, cell_angles, mol_position, mol_rotation = cell_sample.split(3, 1)
+        if skip_cell_cleaning:  # don't clean up, but still destandardize
+            means = torch.Tensor(self.dataDims['means']).to(cell_lengths.device)
+            stds = torch.Tensor(self.dataDims['stds']).to(cell_lengths.device)
+
+            # soft clipping to ensure correct range with finite gradients
+            cell_lengths = cell_lengths * stds[0:3] + means[0:3] - 0.1  # compensate for adjustment in softplus below
+            cell_angles = cell_angles * stds[3:6] + means[3:6]
+            mol_position = mol_position * stds[6:9] + means[6:9]
+            mol_rotation = mol_rotation * stds[9:12] + means[9:12]
+        else:
+            cell_lengths, cell_angles, mol_position, mol_rotation, _, _, _ = clean_cell_output(
+                cell_lengths, cell_angles, mol_position, mol_rotation, None, config.dataDims, enforce_crystal_system=False, return_transforms=True)
+
+        # todo - get this inside the above function, without breaking everything
+        T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles)  # this is the troublemaker
+
+        # update cell params
+        del (supercell_data.ref_cell_pos)
+        supercell_data.T_fc = T_fc_list
+        supercell_data.cell_params = torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation), dim=1)
+
+        coords_list = []
+        masses_list = []
+        atoms_list = []
+        for i in range(supercell_data.num_graphs):
+            atoms_i = supercell_data.x[supercell_data.batch == i]
+            atomic_numbers = atoms_i[:, 0]
+            # heavy_atom_inds = torch.argwhere(atomic_numbers > 1)[:, 0]
+            atoms_list.append(atoms_i)
+            coords_list.append(supercell_data.pos[supercell_data.batch == i])
+            masses_list.append(torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(supercell_data.x.device))
+
+        # generate supercells
+        standardization_rotation_list = fast_differentiable_standard_rotation_matrix(masses_list, coords_list, T_fc_list)
+        applied_rotation_list = fast_differentiable_applied_rotation_matrix(mol_rotation)
+        canonical_mol_position = fast_differentiable_get_canonical_coords(mol_position, sym_ops_list, z_values)
+        final_coords_list = fast_differentiable_apply_rotations_and_translations(
+            standardization_rotation_list, applied_rotation_list, coords_list, masses_list, T_fc_list, canonical_mol_position)
+        reference_cell_list = fast_differentiable_apply_point_symmetry(final_coords_list, sym_ops_list, T_cf_list, T_fc_list, z_values)
+        cell_vector_list = T_fc_list.permute(0, 2, 1)  # fast_differentiable_cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix
+        supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
+            fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values,
+                                                 supercell_scale=config.supercell_size, cutoff=config.discriminator.graph_convolution_cutoff)
+
+        overlaps_list = compute_lattice_vector_overlap(masses_list, final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors)
+
+        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
+        return supercell_data.to(config.device), z_values, generated_cell_volumes.to(config.device), overlaps_list

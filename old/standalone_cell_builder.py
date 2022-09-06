@@ -1,7 +1,7 @@
 import torch
 import numpy as np
-from utils import clean_cell_output, coor_trans_matrix_torch
-from dataset_management.random_crystal_builder import (randomize_molecule_position_and_orientation_torch,build_random_crystal_torch,ref_to_supercell_torch)
+from utils import coor_trans_matrix_torch
+from dataset_management.random_crystal_builder import (randomize_molecule_position_and_orientation_torch,build_random_crystal_torch,ref_to_supercell_torch, clean_cell_output)
 
 
 def parallel_differentiable_cell_builder(x,y,pos, num_graphs,batch, dataDims, cell_sample, sg_number_ind, atom_weights, sym_ops_list, override_position=None, override_orientation=None, override_cell_length=None, override_cell_angle=None):
