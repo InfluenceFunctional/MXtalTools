@@ -81,12 +81,12 @@ def checkConvergence(record, history, convergence_eps):
         record = np.asarray(record)
 
     if len(record) > (history + 2):
-        if all(record[-history:] > np.amin(record)):
+        if all(record[-history:] >= np.amin(record)):
             converged = True
             print("Model converged, target diverging")
 
         criteria = np.var(record[-history:]) / np.abs(np.average(record[-history:]))
-        print('Convergence criteria at {:.3f}'.format(np.log10(criteria)))
+        print('Convergence criteria at {:.3f}'.format(np.log10(criteria))) # todo better rolling metric here - trailing exponential something
         if criteria < convergence_eps:
             converged = True
             print("Model converged, target stabilized")

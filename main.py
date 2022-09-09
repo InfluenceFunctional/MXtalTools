@@ -305,6 +305,7 @@ def add_args(parser):
     add_bool_arg(parser, 'train_discriminator_on_noise', default=False)  # train generator on extremely unit cells
     parser.add_argument('--generator_similarity_penalty', type=float, default = 0) # coefficient weighting penalty for self-similarity in generator batches
     parser.add_argument('--cut_max_prob_training_after', type=int, default=10)  # stop applying flow losses after xx epochs
+    add_bool_arg(parser, 'sample_after_training', default=False)  # run sampler after model converges
 
     update_args2config(args2config, 'gan_loss')
     update_args2config(args2config, 'train_generator_density')
@@ -318,6 +319,8 @@ def add_args(parser):
     update_args2config(args2config, 'train_discriminator_on_noise')
     update_args2config(args2config, 'generator_similarity_penalty')
     update_args2config(args2config, 'cut_max_prob_training_after')
+    update_args2config(args2config, 'sample_after_training')
+
 
     return parser, args2config
 

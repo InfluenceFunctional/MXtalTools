@@ -23,7 +23,8 @@ from models.discriminator_models import crystal_discriminator
 import ase.io
 from scipy.spatial.distance import cdist
 from scipy.stats import linregress
-from dataset_management.random_crystal_builder import (build_supercells, build_supercells_from_dataset)
+from supercell_builders import SupercellBuilder
+from STUN_MC import Sampler
 
 
 class Predictor():
@@ -42,6 +43,10 @@ class Predictor():
         :return:
         '''
 
+        '''
+        load lots of relevant physical data
+        '''
+
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
 
@@ -56,6 +61,12 @@ class Predictor():
             self.point_groups = sym_info['point_groups']
             self.lattice_type = sym_info['lattice_type']
             self.space_groups = sym_info['space_groups']
+
+            self.sym_info = {}
+            self.sym_info['sym_ops'] = self.sym_ops
+            self.sym_info['point_groups'] = self.point_groups
+            self.sym_info['lattice_type'] = self.lattice_type
+            self.sym_info['space_groups'] = self.space_groups
         else:
             print('Pre-generating spacegroup symmetries')
             self.sym_ops = {}
@@ -75,7 +86,7 @@ class Predictor():
             self.sym_info['point_groups'] = self.point_groups
             self.sym_info['lattice_type'] = self.lattice_type
             self.sym_info['space_groups'] = self.space_groups
-            #np.save('symmetry_info', self.sym_info)
+            np.save('symmetry_info', self.sym_info)
 
         # initialize fractional lattice vectors - should be exactly identical to what's in featurize_crystal_data.py
         supercell_scale = 2  # t
@@ -91,6 +102,9 @@ class Predictor():
         self.lattice_vectors = torch.Tensor(fractional_translations[np.argsort(np.abs(fractional_translations).sum(1))][1:])  # leave out the 0,0,0 element
         self.normed_lattice_vectors = self.lattice_vectors / torch.linalg.norm(self.lattice_vectors, axis=1)[:, None]
 
+        '''
+        prepare to load dataset
+        '''
         miner = Miner(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)
 
         if not self.config.skip_run_init:
@@ -351,9 +365,9 @@ class Predictor():
         config.batch_size = 250
         train_loader, test_loader = get_dataloaders(dataset_builder, config)
 
-        '''
-        slow cell-by-cell analysis & rebuild
-        '''
+        # '''
+        # slow cell-by-cell analysis & rebuild
+        # '''
         # from models.cell_generation_analysis import parallel_cell_build_analyze
         #
         # overlaps, good_fit, inds = [], [], []
@@ -370,32 +384,29 @@ class Predictor():
         csd_overlaps, rebuild_overlaps, random_overlaps = [], [], []
         for i, data in enumerate(train_loader):
             # build supercells from the dataset, and compute their properties
-            csd_supercells = build_supercells_from_dataset(data.clone(), config, return_overlaps=False)
-            csd_rdf_i, rr = crystal_rdf(csd_supercells, rrange=[0, 10], bins=100)
+            csd_supercells = self.supercell_builder.build_supercells_from_dataset(data.clone(), config, return_overlaps=False)
+            csd_rdf_i, rr = crystal_rdf(csd_supercells, rrange=[0, 10], bins=100, intermolecular = True)
             csd_rdf.extend(csd_rdf_i.cpu().detach().numpy())
             # csd_overlaps.extend(csd_overlaps_i)
 
             rebuild_supercells, vol, rebuild_overlaps_i = \
-                build_supercells(data.clone(), config, None, self.dataDims, self.atom_weights, self.sym_info, skip_cell_cleaning=True, ref_data=csd_supercells)
+                self.supercell_builder.build_supercells(data.clone(), None,
+                                                        config.supercell_size, config.discriminator.graph_convolution_cutoff,
+                                                        skip_cell_cleaning=True, ref_data=csd_supercells, debug = True)
 
             rebuild_supercells = rebuild_supercells.cpu()
-            # compare supercell centroids # DISCOVERY some CSD cells were built with incorrect symmetry
-            # for ind in range(rebuild_supercells.num_graphs):
-            #     rebuild_molwise_pos = torch.stack(rebuild_supercells.pos[rebuild_supercells.batch == ind].split(len(data.x[data.batch == ind])))
-            #     csd_molwise_pos = torch.stack(csd_supercells.pos[csd_supercells.batch == ind].split(len(data.x[data.batch == ind])))
-            #     rebuild_centroids = rebuild_molwise_pos.mean(1)
-            #     csd_centroids = csd_molwise_pos.mean(1)
-            #     distmat = torch.cdist(rebuild_centroids, csd_centroids, p=2)
-            #     assert (torch.sum(distmat < 0.05) / len(rebuild_centroids)) > 0.99
 
-            rebuild_rdf_i, rr = crystal_rdf(rebuild_supercells, rrange=[0, 10], bins=100)
+            rebuild_rdf_i, rr = crystal_rdf(rebuild_supercells, rrange=[0, 10], bins=100, intermolecular = True)
             rebuild_rdf.extend(rebuild_rdf_i.cpu().detach().numpy())
             rebuild_overlaps.extend(rebuild_overlaps_i.cpu().detach().numpy())
 
+            assert torch.sum(torch.abs(rebuild_rdf_i.to(csd_rdf_i.device) - csd_rdf_i)) / torch.sum(csd_rdf_i) < 0.01
+
             # build random supercells and compute their properties
-            random_supercells, vol, random_overlaps_i = build_supercells(data.clone(), config, self.randn_generator(data.num_graphs), self.dataDims, self.atom_weights, self.sym_info)
+            random_supercells, vol, random_overlaps_i = self.supercell_builder.build_supercells(data.clone(), self.randn_generator(data.num_graphs),
+                                                                                                config.supercell_size, config.discriminator.graph_convolution_cutoff)
             random_supercells = random_supercells.cpu()
-            random_rdf_i, rr = crystal_rdf(random_supercells, rrange=[0, 10], bins=100)
+            random_rdf_i, rr = crystal_rdf(random_supercells, rrange=[0, 10], bins=100, intermolecular = True)
 
             random_rdf.extend(random_rdf_i.cpu().detach().numpy())
             random_overlaps.extend(random_overlaps_i.cpu().detach().numpy())
@@ -410,14 +421,7 @@ class Predictor():
         frac_correct = np.mean(np.sum(np.abs(csd_rdf - rebuild_rdf), axis=1) / np.sum(csd_rdf, axis=1) < 0.01)
         print(f'RDF {frac_correct:.3f} accurate on a per-sample basis at 99%')
         print(f'vs a random divergence of {np.sum(np.abs(csd_rdf - random_rdf)) / np.sum(csd_rdf):.3f}')
-        flag = 0
-        #
-        # # visualize
-        # mol1 = Atoms(symbols=csd_supercells.x[csd_supercells.batch == 0, 0].cpu().detach().numpy(), positions=csd_supercells.pos[csd_supercells.batch == 0].cpu().detach().numpy(), cell=csd_supercells.T_fc[0].T.cpu().detach().numpy())
-        # mol2 = Atoms(symbols=rebuild_supercells.x[rebuild_supercells.batch == 0, 0].cpu().detach().numpy(), positions=rebuild_supercells.pos[rebuild_supercells.batch == 0].cpu().detach().numpy(),
-        #              cell=rebuild_supercells.T_fc[0].T.cpu().detach().numpy())
-        # view((mol1, mol2))
-        # # compare the above
+        stop = 1
 
     def train(self):
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=self.config.wandb.experiment_tag):
@@ -523,12 +527,25 @@ class Predictor():
                         '''
 
                         # check for convergence
-                        if checkConvergence(metrics_dict['generator test loss'], config.history, config.generator.convergence_eps) and (epoch > config.history + 2):
+                        generator_convergence = checkConvergence(metrics_dict['generator test loss'], config.history, config.generator.convergence_eps)
+                        discriminator_convergence = checkConvergence(metrics_dict['discriminator test loss'], config.history, config.discriminator.convergence_eps)
+
+                        if generator_convergence:
+                            print('generator converged!')
+                        if discriminator_convergence:
+                            print('discriminator converged!')
+
+                        if (generator_convergence and discriminator_convergence) and (epoch > config.history + 2):
                             config.finished = True
                             self.log_gan_accuracy(epoch, train_loader, test_loader,
                                                   metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
                                                   train_epoch_stats_dict, test_epoch_stats_dict, config,
                                                   generator, discriminator, wandb_log_figures=config.wandb.log_figures)
+
+                            # for working with a trained model
+                            if config.sample_after_training:
+                                sampling_results = self.MCMC_sampling(generator, discriminator, test_loader)
+
                             break
 
                         if epoch % 5 == 0:
@@ -552,10 +569,6 @@ class Predictor():
                         else:
                             raise e
                     epoch += 1
-
-                    # for working with a trained model
-                    if np.mean(np.asarray(d_err_te)) < 0.1:
-                        self.MCMC_sampling()
 
                 if config.device.lower() == 'cuda':
                     torch.cuda.empty_cache()  # clear GPU
@@ -1056,7 +1069,6 @@ class Predictor():
                 special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
         wandb.log(special_losses)
 
-
     def params_f_to_c(self, cell_lengths, cell_angles):
         cell_vector_a, cell_vector_b, cell_vector_c = \
             torch.tensor(coor_trans('f_to_c', np.array((1, 0, 0)), cell_lengths, cell_angles)), \
@@ -1365,16 +1377,14 @@ class Predictor():
         elif config.train_discriminator_on_randn:
             generated_samples = self.randn_generator.forward(data.num_graphs).to(generator.device)
 
-        real_supercell_data = build_supercells_from_dataset(data.clone(), config)
+        real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config)
         if not config.train_discriminator_on_noise:
             fake_supercell_data, generated_cell_volumes, overlaps_list = \
-                build_supercells(data.clone().to(generated_samples.device), config, generated_samples, override_sg=config.generate_sgs)
+                self.supercell_builder.build_supercells(data.clone().to(generated_samples.device), generated_samples, config.supercell_size, config.discriminator.graph_convolution_cutoff, override_sg=config.generate_sgs)
         else:
             generated_samples = self.randn_generator.forward(data.num_graphs).to(generator.device)  # placeholder
             fake_supercell_data = real_supercell_data.clone()
             fake_supercell_data.pos += torch.randn_like(fake_supercell_data.pos) * 10  # huge amount of noise - should be basically nonsense
-        if False:  # i == 0:
-            print('Batch {} real + fake supercell generation took {:.2f} seconds for {} samples'.format(i, round(t1 - t0, 2), data.num_graphs))
 
         if config.device.lower() == 'cuda':  # redundant
             real_supercell_data = real_supercell_data.cuda()
@@ -1407,7 +1417,8 @@ class Predictor():
             similarity_penalty = None
 
         if config.train_generator_adversarially or config.train_generator_packing or config.train_generator_g2 or config.train_generator_density:
-            supercell_data, generated_cell_volumes, overlaps_list = build_supercells(data.clone(), config, generated_samples, self.dataDims, self.atom_weights, self.sym_info, override_sg=config.generate_sgs)
+            supercell_data, generated_cell_volumes, overlaps_list = self.supercell_builder.build_supercells(data.clone(), generated_samples, config.supercell_size, config.discriminator.graph_convolution_cutoff,
+                                                                                                            override_sg=config.generate_sgs)
             data.cell_params = supercell_data.cell_params
         else:
             supercell_data = None
@@ -1486,10 +1497,9 @@ class Predictor():
         # den_loss = F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none') # raw value
         # den_loss = torch.abs(torch.sqrt(F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))) # abs(sqrt()) is a soft rescaling to avoid gigantic losses
         den_loss = torch.log(1 + F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))  # log(1+loss) is a better soft rescaling to avoid gigantic losses
-        #cutoff = (0.6 - self.dataDims['target mean']) / self.dataDims['target std']  # cutoff (0.55) in standardized basis
-        #packing_loss = F.mse_loss(-(generated_packing_coefficients - cutoff))  # linear loss below a cutoff
-        packing_loss = F.mse_loss(generated_packing_coefficients, torch.zeros_like(generated_packing_coefficients),reduction='none')  # since the data is standardized, we want it to regress towards 0 (the mean)
-
+        # cutoff = (0.6 - self.dataDims['target mean']) / self.dataDims['target std']  # cutoff (0.55) in standardized basis
+        # packing_loss = F.mse_loss(-(generated_packing_coefficients - cutoff))  # linear loss below a cutoff
+        packing_loss = F.mse_loss(generated_packing_coefficients, torch.zeros_like(generated_packing_coefficients), reduction='none')  # since the data is standardized, we want it to regress towards 0 (the mean)
 
         if self.config.test_mode:
             assert torch.sum(torch.isnan(packing_loss)) == 0
@@ -1526,6 +1536,11 @@ class Predictor():
         self.dataDims = dataset_builder.get_dimension()
         config.dataDims = self.dataDims
 
+        '''
+        init supercell builder class
+        '''
+        self.supercell_builder = SupercellBuilder(self.sym_ops, self.sym_info, self.normed_lattice_vectors, self.atom_weights, self.dataDims)
+
         self.mol_volume_ind = self.dataDims['tracking features dict'].index('molecule volume')
         self.crystal_packing_ind = self.dataDims['tracking features dict'].index('crystal packing coefficient')
         self.crystal_density_ind = self.dataDims['tracking features dict'].index('crystal calculated density')
@@ -1547,22 +1562,14 @@ class Predictor():
 
         return config, dataset_builder
 
-
     def MCMC_sampling(self, generator, discriminator, test_loader):
         '''
         Stun MC annealing on a pretrained discriminator
         '''
         from torch_geometric.loader.dataloader import Collater
-        from STUN_MC import Sampler
 
-        raw_scores = []
-        samples = []
-        too_close_frac = []
-        volumes = []
-        rdfs = []
-        n_samples = 100
+        n_samples = self.config.final_batch_size
         single_mol_data = test_loader.dataset[0]
-        # set single_mol_data to a bunch of copies of just the first molecule
         collater = Collater(None, None)
         single_mol_data = collater([single_mol_data for n in range(n_samples)])
         self.randn_generator.cpu()
@@ -1570,26 +1577,68 @@ class Predictor():
         '''
         initialize sampler
         '''
-        real_params = single_mol_data[0].cell_params
         smc_sampler = Sampler(
-            gammas=np.logspace(-5, -1, n_samples),
+            gammas=np.logspace(-7, 2, n_samples),
             seedInd=0,
             acceptance_mode='stun',
             debug=True,
             init_temp=1,
+            random_generator=self.randn_generator,
+            move_size=.5,
+            supercell_size=self.config.supercell_size,
+            graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff
         )
 
         '''
         random batch of initial conditions
         '''
-        init_samples = self.randn_generator.forward(n_samples).to(generator.device)
-        init_samples = generated_samples * self.randn_generator.stds.to(generator.device) + self.randn_generator.means.to(generator.device)
+        init_samples = self.randn_generator.forward(n_samples).cpu().detach().numpy()
+
+        # debug test
+        supercells1, _, _ = self.supercell_builder.build_supercells(
+            supercell_data=single_mol_data.clone(), cell_sample=torch.Tensor(init_samples), supercell_size=3, graph_convolution_cutoff=7, target_handedness=torch.ones(10))
+
+        supercells2, _, _ = self.supercell_builder.build_supercells(
+            supercell_data=single_mol_data.clone(), cell_sample=torch.Tensor(init_samples), supercell_size=3, graph_convolution_cutoff=7, target_handedness=-torch.ones(10))
 
         '''
         run sampling
         '''
-        sampling_dict = smc_sampler(discriminator, single_mol_data, init_samples)
+        num_iters = 1000
+        sampling_dict = smc_sampler(discriminator, self.supercell_builder,
+                                    single_mol_data, init_samples, num_iters)
 
+        flag = 1
         '''
         analyze outputs
         '''
+
+        plt.figure(5)
+        plt.clf()
+        plt.subplot(2, 3, 1)
+        plt.plot(sampling_dict['scores'].T)
+        plt.ylabel('scores')
+        plt.subplot(2, 3, 2)
+        plt.plot(sampling_dict['stun score'].T)
+        plt.ylabel('stun score')
+        plt.ylim([-5, 5])
+        plt.subplot(2, 3, 3)
+        plt.plot(np.exp(-sampling_dict['scores'].T))
+        plt.ylabel('probabilities')
+        plt.subplot(2, 2, 3)
+        plt.plot(sampling_dict['acceptance ratio'].T)
+        plt.ylabel('acc rat')
+        plt.subplot(2, 2, 4)
+        plt.semilogy(sampling_dict['temperature'].T)
+        plt.ylabel('temps')
+        plt.tight_layout()
+
+        best_inds = np.argsort(sampling_dict['scores'].flatten())
+        best_samples = sampling_dict['samples'].reshape(12, n_samples * num_iters)[:, best_inds[:n_samples]].T
+
+        best_supercells, _, _ = self.supercell_builder.build_supercells(single_mol_data.clone(), torch.Tensor(best_samples).cuda(),
+                                                                        supercell_size=1, graph_convolution_cutoff=7)
+
+        best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular = True)
+
+        return sampling_dict

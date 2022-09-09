@@ -13,6 +13,7 @@ import torch
 import sys
 import torch.nn.functional as F
 from scipy.ndimage import gaussian_filter1d
+from scipy.spatial.transform import Rotation
 from ase import Atoms
 
 '''
@@ -2155,6 +2156,10 @@ def ase_mol_from_crystaldata(data, index, highlight_aux=False, exclusion_level=N
     mol = Atoms(symbols=numbers, positions=coords, cell=cell)
     return mol
 
+
+def invert_rotvec_handedness(rotvec):
+    rot_mat = Rotation.from_rotvec(rotvec).as_matrix()
+    return Rotation.from_matrix(-rot_mat).as_rotvec() # negative of the rotation matrix gives the accurate rotation for opposite handed object
 
 '''
 # look at all kinds of activations

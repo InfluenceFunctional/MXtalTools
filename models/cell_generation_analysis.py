@@ -113,7 +113,6 @@ def parallel_cell_build_analyze(data, sym_ops, atom_weights):
     standardized_csd_canonical_coords = torch.inner(rot_matrix, csd_canonical_mol_coords - csd_canonical_mol_coords.mean(0)).T  # standard, non-inverted rotation
     Ip_axes_csd_std, _, _ = compute_principal_axes_torch(masses, standardized_csd_canonical_coords)
 
-
     '''
     get std rotation for the generated conformer
     '''

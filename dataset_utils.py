@@ -135,7 +135,8 @@ class BuildDataset:
         space group
         '''
         if self.include_sgs is not None:
-            self.include_sgs.append(config.generate_sgs)  # make sure the searching group is always present
+            if config.generate_sgs is not None:
+                self.include_sgs.append(config.generate_sgs)  # make sure the searching group is always present
 
             for key in self.include_sgs:
                 dataset['crystal sg is ' + key] = dataset['crystal spacegroup symbol'] == key
@@ -289,6 +290,8 @@ class BuildDataset:
 
             if feature_vector.dtype == bool:
                 pass
+            elif key == 'crystal z value':
+                pass # don't normalize Z value, for now
             elif (feature_vector.dtype == float) or (np.issubdtype(feature_vector.dtype, np.floating)):
                 feature_vector = standardize(feature_vector)
             elif (feature_vector.dtype == int) or (np.issubdtype(feature_vector.dtype, np.integer)):

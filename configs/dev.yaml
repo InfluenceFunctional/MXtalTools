@@ -6,7 +6,7 @@ explicit_run_enumeration: False
 skip_saving_and_loading: True
 run_num: 0
 anomaly_detection: False
-mode: gan # 'gan' or 'regression' or 'diagnostic'
+mode: diagnostic # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard
 train_generator_density: False
 train_generator_as_flow: False
@@ -17,8 +17,9 @@ train_generator_adversarially: False
 train_discriminator_adversarially: False # note - can only do one discriminator training mode at a time
 train_discriminator_on_randn: True
 train_discriminator_on_noise: False
-generator_similarity_penalty: 1 # todo reimpliment NF
+generator_similarity_penalty: 0 # todo reimpliment NF
 cut_flow_training_after: 3
+sample_after_training: True
 
 seeds:
   model: 0
@@ -26,7 +27,7 @@ seeds:
 
 # opt - sweep details
 wandb:
-  sample_reporting_frequency: 10
+  sample_reporting_frequency: 1
   experiment_tag: "mcrygan_dev"
   log_figures: True
   sweep_config_file: "sweep_test.yaml"
@@ -36,11 +37,11 @@ wandb:
 
 # batching & convergence
 auto_batch_sizing: False
-min_batch_size: 5
-max_batch_size: 5
+min_batch_size: 10
+max_batch_size: 10
 auto_batch_reduction: .65
 max_epochs: 5000
-history: 2000
+history: 2
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
@@ -48,7 +49,7 @@ dataset_length: 100
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 20
-min_num_atoms: 5
+min_num_atoms: 10
 max_z_value: 10
 min_z_value: 0
 max_z_prime: 1
@@ -63,13 +64,12 @@ exclude_disordered_crystals: True
 exclude_polymorphs: True
 exclude_nonstandard_settings: True
 exclude_crystal_systems: ['hexagonal','trigonal','rhombohedral']
-include_sgs: ['P21/c'] #[P-1, P21/c, P212121, C2/c, Pbca, P21]
+include_sgs: ['P21/c'] #["P-1", "P21/c", "P212121", "C2/c", "Pbca", "P21"]
 include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
 generate_sgs: 'P21/c' #'P2' #'P21/c' # can only do one at a time right now
 supercell_size: 1 # 1 = 3x3x3, 2 = 5x5x5 etc.
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
-
 
 # discriminator optimizer and model
 discriminator:
@@ -80,17 +80,17 @@ discriminator:
   beta1: 0.9
   beta2: 0.999
   weight_decay: 0.001
-  convergence_eps: 0.00001
+  convergence_eps: 0.01
   training_period: 1
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   graph_model: mike
-  graph_convolution_layers: 6
-  graph_filters: 32
-  atom_embedding_size: 64
-  graph_norm: null
-  num_spherical: 6
-  num_radial: 12
+  graph_convolution_layers: 4
+  graph_filters: 128
+  atom_embedding_size: 256
+  graph_norm: layer
+  num_spherical: 12
+  num_radial: 24
   graph_convolution_cutoff: 7
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
@@ -100,10 +100,10 @@ discriminator:
   pooling: combo
 
   num_fc_layers: 4
-  fc_depth: 32
+  fc_depth: 128
   activation: leaky relu
   fc_dropout_probability: 0
-  fc_norm_mode: null
+  fc_norm_mode: layer
 
 # generator optimizer and model
 generator:
@@ -121,7 +121,7 @@ generator:
   graph_model: mike
   graph_convolution_layers: 6
   graph_filters: 32
-  atom_embedding_size: 256
+  atom_embedding_size: 64
   graph_norm: null
   num_spherical: 12
   num_radial: 24
