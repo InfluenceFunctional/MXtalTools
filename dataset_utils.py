@@ -17,7 +17,8 @@ class BuildDataset:
     build dataset object
     """
 
-    def __init__(self, config, pg_dict=None, sg_dict=None, lattice_dict=None, premade_dataset=None):
+    def __init__(self, config, dataset_path=None, pg_dict=None, sg_dict=None, lattice_dict=None,
+                 premade_dataset=None, replace_dataDims=None):
         self.target = config.target
         self.max_atomic_number = config.max_atomic_number
         self.atom_dict_size = {'atom z': self.max_atomic_number + 1}  # for embeddings
@@ -36,6 +37,7 @@ class BuildDataset:
         self.include_sgs = config.include_sgs
         self.conditioning_mode = config.generator.conditioning_mode
         self.include_pgs = config.include_pgs
+        self.replace_dataDims = replace_dataDims
 
         self.set_keys()
         self.get_syms(pg_dict, sg_dict, lattice_dict)
@@ -45,7 +47,10 @@ class BuildDataset:
         '''
 
         if premade_dataset is None:
-            dataset = pd.read_pickle('datasets/dataset')
+            if dataset_path is None:
+                dataset = pd.read_pickle('datasets/dataset')
+            else:
+                dataset = pd.read_pickle(dataset_path)
         else:
             dataset = premade_dataset
         self.dataset_length = len(dataset)
@@ -67,26 +72,26 @@ class BuildDataset:
         # define relevant features for analysis
         self.atom_keys = ['atom Z', 'atom mass', 'atom is H bond donor', 'atom is H bond acceptor',
                           'atom is aromatic', 'atom valence', 'atom vdW radius',
-                          'atom on a ring', 'atom chirality', 'atom degree', 'atom electronegativity']
+                          'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
 
         self.crystal_keys = ['crystal spacegroup symbol', 'crystal spacegroup number',
                              'crystal calculated density', 'crystal packing coefficient',
                              'crystal lattice centring', 'crystal system',
                              'crystal alpha', 'crystal beta', 'crystal gamma',
                              'crystal cell a', 'crystal cell b', 'crystal cell c',
-                             'crystal z value', 'crystal z prime', 'crystal point group',
+                             'crystal z value', 'crystal z prime',  # 'crystal point group',
                              ]
         self.molecule_keys = ['molecule point group is C1', 'molecule mass', 'molecule num atoms', 'molecule volume',
-                              'molecule num rings', 'molecule n donors', 'molecule n acceptors',
-                              'molecule n rotatable bonds', 'molecule planarity', 'molecule polarity',
+                              'molecule num rings', 'molecule num donors', 'molecule num acceptors',
+                              'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                               'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
                               'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
                               ]
         # for coupling NF models, must be an even number of these
         self.lattice_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal alpha', 'crystal beta', 'crystal gamma',
-                             'crystal reference cell centroid x', 'crystal reference cell centroid y', 'crystal reference cell centroid z',
-                             'crystal reference cell rotvec 1', 'crystal reference cell rotvec 2', 'crystal reference cell rotvec 3',
+                             'crystal asymmetric unit centroid x', 'crystal asymmetric unit centroid y', 'crystal asymmetric unit centroid z',
+                             'crystal asymmetric unit rotvec 1', 'crystal asymmetric unit rotvec 2', 'crystal asymmetric unit rotvec 3',
                              ]
 
         if len(self.lattice_keys) % 2 != 0:  # coupling flow model requires an even number of dimensions
@@ -114,7 +119,6 @@ class BuildDataset:
         if self.include_sgs is not None:
             print("Modelling with crystals from " + str(self.include_sgs))
 
-
     def add_last_minute_features_quickly(self, dataset, config):
         '''
         add some missing one-hot features
@@ -134,17 +138,9 @@ class BuildDataset:
         '''
         space group
         '''
-        if self.include_sgs is not None:
-            if config.generate_sgs is not None:
-                self.include_sgs.append(config.generate_sgs)  # make sure the searching group is always present
+        for i, symbol in enumerate(np.unique(list(self.sg_dict.values()))):
+            dataset['crystal sg is ' + symbol] = dataset['crystal spacegroup symbol'] == symbol
 
-            for key in self.include_sgs:
-                dataset['crystal sg is ' + key] = dataset['crystal spacegroup symbol'] == key
-
-        else:
-            self.include_sgs = list(np.unique(dataset['crystal spacegroup symbol']))
-            for key in self.include_sgs:
-                dataset['crystal sg is ' + key] = dataset['crystal spacegroup symbol'] == key
         '''
         crystal system
         '''
@@ -152,12 +148,12 @@ class BuildDataset:
         for i, system in enumerate(np.unique(list(self.lattice_dict.values()))):
             dataset['crystal system is ' + system] = dataset['crystal system'] == system
 
-        '''
-        crystal point group
-        '''
-        # get crystal point groups and make an ordered dict
-        for i, group in enumerate(np.unique(list(self.pg_dict.values()))):
-            dataset['crystal pg is ' + group] = dataset['crystal point group'] == group
+        # '''
+        # crystal point group
+        # '''
+        # # get crystal point groups and make an ordered dict
+        # for i, group in enumerate(np.unique(list(self.pg_dict.values()))):
+        #     dataset['crystal pg is ' + group] = dataset['crystal point group'] == group
 
         '''
         # set angle units to natural
@@ -212,13 +208,13 @@ class BuildDataset:
                                           y=target,
                                           smiles=smiles[i],
                                           tracking=tracking_features[i, None, :],
-                                          ref_cell_pos=reference_cells[i][:,:,:3],
+                                          ref_cell_pos=reference_cells[i][:, :, :3],
                                           Z=tracking_features[i, z_value_ind].int(),
                                           sg_ind=tracking_features[i, sg_ind_value_ind].int(),
                                           cell_params=torch.Tensor(lattice_features[i, None, :]),
-                                          T_fc = torch.Tensor(T_fc_list[i])[None,...],
-                                          mol_size = torch.Tensor(tracking_features[i, mol_size_ind]),
-                                          csd_identifier = identifiers[i]))
+                                          T_fc=torch.Tensor(T_fc_list[i])[None, ...],
+                                          mol_size=torch.Tensor(tracking_features[i, mol_size_ind]),
+                                          csd_identifier=identifiers[i]))
 
         return datapoints
 
@@ -231,13 +227,18 @@ class BuildDataset:
 
         keys_to_add = self.atom_keys
         print("Preparing atom-wise features")
-        stds, means = {}, {}
+        if self.replace_dataDims is not None:
+            stds = self.replace_dataDims['atom stds']
+            means = self.replace_dataDims['atom means']
+        else:
+            stds, means = {}, {}
         atom_features_list = [np.zeros((len(dataset['atom Z'][i]), len(keys_to_add))) for i in range(self.dataset_length)]
 
         for column, key in enumerate(keys_to_add):
             flat_feature = np.concatenate(dataset[key])
-            stds[key] = np.std(flat_feature)
-            means[key] = np.mean(flat_feature)
+            if self.replace_dataDims is None:
+                stds[key] = np.std(flat_feature)
+                means[key] = np.mean(flat_feature)
             for i in range(self.dataset_length):
                 feature_vector = dataset[key][i]
 
@@ -258,10 +259,11 @@ class BuildDataset:
 
                 assert np.sum(np.isnan(feature_vector)) == 0
                 atom_features_list[i][:, column] = feature_vector
-
+        self.atom_means = means
+        self.atom_stds = stds
         return atom_features_list
 
-    def concatenate_molecule_features(self, dataset, mol_keys=True, extra_keys=None, add_lattice_overlaps = False):
+    def concatenate_molecule_features(self, dataset, mol_keys=True, extra_keys=None, add_lattice_overlaps=False):
         """
         collect features of 'molecules' and append to atom-level data
         """
@@ -273,39 +275,49 @@ class BuildDataset:
         if extra_keys is not None:
             keys_to_add.extend(extra_keys)
 
-        if False: #add_lattice_overlaps: # todo not ready yet - also make sure only the discriminator sees this, and it gets properly updated when new cells are built
+        if False:  # add_lattice_overlaps: # todo not ready yet - also make sure only the discriminator sees this, and it gets properly updated when new cells are built
             lattice_overlap_keys = [key for key in dataset.columns if 'inertial overlap' in key]
             keys_to_add.extend(lattice_overlap_keys)
-            #overlaps = np.asarray([dataset[key] for key in lattice_overlap_keys]).T
+            # overlaps = np.asarray([dataset[key] for key in lattice_overlap_keys]).T
 
         print("Preparing molcule-wise features")
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it
             keys_to_add.remove(self.target)
 
+        if self.replace_dataDims is not None:
+            stds = self.replace_dataDims['mol stds']
+            means = self.replace_dataDims['mol means']
+        else:
+            stds, means = {}, {}
+
         molecule_feature_array = np.zeros((self.dataset_length, len(keys_to_add)), dtype=float)
         for column, key in enumerate(keys_to_add):
             feature_vector = dataset[key]
+            if self.replace_dataDims is None:
+                stds[key] = np.std(feature_vector)
+                means[key] = np.mean(feature_vector)
+
             if type(feature_vector) is not np.ndarray:
                 feature_vector = np.asarray(feature_vector)
 
             if feature_vector.dtype == bool:
                 pass
             elif key == 'crystal z value':
-                pass # don't normalize Z value, for now
+                pass  # don't normalize Z value, for now
             elif (feature_vector.dtype == float) or (np.issubdtype(feature_vector.dtype, np.floating)):
-                feature_vector = standardize(feature_vector)
+                feature_vector = standardize(feature_vector, known_mean=means[key], known_std=stds[key])
             elif (feature_vector.dtype == int) or (np.issubdtype(feature_vector.dtype, np.integer)):
                 if len(np.unique(feature_vector)) > 2:
-                    feature_vector = standardize(feature_vector)
+                    feature_vector = standardize(feature_vector, known_mean=means[key], known_std=stds[key])
                 else:
                     feature_vector = np.asarray(feature_vector == np.amax(feature_vector))  # turn it into a bool
 
             molecule_feature_array[:, column] = feature_vector
 
-        self.n_mol_features = len(keys_to_add)
-        # store known info for training analysis
-        self.mol_dict_keys = keys_to_add
-
+        self.num_mol_features = len(keys_to_add)
+        self.mol_keys = keys_to_add
+        self.mol_means = means
+        self.mol_stds = stds
         assert np.sum(np.isnan(molecule_feature_array)) == 0
         return molecule_feature_array
 
@@ -313,18 +325,18 @@ class BuildDataset:
         tracking_features = self.gather_tracking_features(dataset)
 
         # add symmetry features for generator
-        self.crystal_generation_features = []  # todo need an option to turn this off
+        self.crystal_generation_features = []  # todo need an option to turn this off for certain models
         if config.mode == 'gan':
-            point_group_features = [column for column in dataset.columns if 'pg is' in column]
+            #point_group_features = [column for column in dataset.columns if 'pg is' in column]
             space_group_features = [column for column in dataset.columns if 'sg is' in column]
             crystal_system_features = [column for column in dataset.columns if 'crystal system is' in column]
-            self.crystal_generation_features.extend(point_group_features)
+            #self.crystal_generation_features.extend(point_group_features)
             self.crystal_generation_features.extend(space_group_features)
             self.crystal_generation_features.extend(crystal_system_features)
             self.crystal_generation_features.append('crystal z value')  # todo norm this
 
         molecule_features_array = self.concatenate_molecule_features(
-            dataset, extra_keys=self.crystal_generation_features, add_lattice_overlaps = True)
+            dataset, extra_keys=self.crystal_generation_features, add_lattice_overlaps=True)
 
         atom_features_list = self.concatenate_atom_features(dataset)
 
@@ -334,16 +346,20 @@ class BuildDataset:
                                            mol_features=molecule_features_array,
                                            targets=targets,
                                            tracking_features=tracking_features,
-                                           reference_cells = dataset['crystal reference cell coords'],
+                                           reference_cells=dataset['crystal reference cell coords'],
                                            lattice_features=lattice_features,
-                                           T_fc_list = dataset['crystal fc transform'],
-                                           identifiers = dataset['identifier'])
+                                           T_fc_list=dataset['crystal fc transform'],
+                                           identifiers=dataset['identifier'])
 
     def get_cell_features(self, dataset):
         keys_to_add = self.lattice_keys
         key_dtype = []
         # featurize
-        means, stds = [], []
+        if self.replace_dataDims is not None:
+            stds = self.replace_dataDims['lattice stds']
+            means = self.replace_dataDims['lattice means']
+        else:
+            stds, means = [], []
         feature_array = np.zeros((self.dataset_length, len(keys_to_add)), dtype=float)
         unstandardized_feature_array = np.zeros_like(feature_array)
         # raw_feature_array = np.zeros_like(feature_array)
@@ -357,27 +373,28 @@ class BuildDataset:
             else:
                 key_dtype.append(feature_vector.dtype)
 
-            # raw_feature_array[:, column] = feature_vector
-            mean = np.average(feature_vector)
-            std = np.std(feature_vector)
-            if (np.isnan(np.std(feature_vector))):
-                std = 1
-            if (np.std(feature_vector) == 0):
-                std = 0.01
-            means.append(mean)
-            stds.append(std)
+            if self.replace_dataDims is None:
+                mean = np.average(feature_vector)
+                std = np.std(feature_vector)
+                if (np.isnan(np.std(feature_vector))):
+                    std = 1
+                if (np.std(feature_vector) == 0):
+                    std = 0.01
+                means.append(mean)
+                stds.append(std)
+
             # feature_vector = (feature_vector - means[-1]) / stds[-1] # no need to standardize here
             feature_array[:, column] = feature_vector
-            unstandardized_feature_array[:,column] = dataset[key]
+            unstandardized_feature_array[:, column] = dataset[key]
 
             assert np.sum(np.isnan(feature_vector)) == 0
 
         '''
         compute full covariance matrix
         '''
-        covariance_matrix = np.cov(unstandardized_feature_array,rowvar=False)
-        for i in range(len(covariance_matrix)): # ensure it's well-conditioned
-            covariance_matrix[i,i] = max((0.01,covariance_matrix[i,i]))
+        covariance_matrix = np.cov(unstandardized_feature_array, rowvar=False)
+        for i in range(len(covariance_matrix)):  # ensure it's well-conditioned
+            covariance_matrix[i, i] = max((0.01, covariance_matrix[i, i]))
 
         assert np.sum(np.isnan(stds)) == 0
         assert np.sum(np.asarray(stds) == 0) == 0
@@ -388,10 +405,10 @@ class BuildDataset:
         if self.target == 'packing':
             targets = dataset['crystal packing coefficient']
         elif self.target == 'density':
-            conversion = 1660 # 1 amu / cubic angstrom is 1.660 kg / m^3
-            targets = dataset['molecule mass'] * dataset['crystal packing coefficient'] / dataset['molecule volume'] * conversion # this is per-molecule, divide by Z to get the full crystal
+            conversion = 1660  # 1 amu / cubic angstrom is 1.660 kg / m^3
+            targets = dataset['molecule mass'] * dataset['crystal packing coefficient'] / dataset['molecule volume'] * conversion  # this is per-molecule, divide by Z to get the full crystal
         elif self.target == 'volume':
-            targets = dataset['molecule volume'] / dataset['crystal packing coefficient'] # this is per-molecule, multiply by Z to get the full crystal value
+            targets = dataset['molecule volume'] / dataset['crystal packing coefficient']  # this is per-molecule, multiply by Z to get the full crystal value
         elif self.target == 'lattice vector':
             targets = dataset['crystal inertial overlap 2 to 0']
         else:
@@ -451,25 +468,39 @@ class BuildDataset:
     def get_dimension(self):
 
         dim = {
-            'crystal features': self.lattice_keys,
-            'n crystal features': len(self.lattice_keys),
             'dataset length': len(self.datapoints),
-            'means': self.lattice_means,
-            'stds': self.lattice_stds,
-            'cov mat': self.covariance_matrix,
+
+            'lattice features': self.lattice_keys,
+            'num lattice features': len(self.lattice_keys),
+            'lattice means': self.lattice_means,
+            'lattice stds': self.lattice_stds,
+            'lattice cov mat': self.covariance_matrix,
+            'lattice dtypes': self.lattice_dtypes,
+
             'target mean': self.target_mean,
             'target std': self.target_std,
-            'dtypes': self.lattice_dtypes,
-            'n tracking features': self.n_tracking_features,
+
+            'num tracking features': self.n_tracking_features,
             'tracking features dict': self.tracking_dict_keys,
-            'n atom features': self.datapoints[0].x.shape[1],
-            'n atomwise features': len(self.atom_keys),
-            'n mol features': self.n_mol_features,
-            'mol features': self.mol_dict_keys,
+
+            'num atom features': len(self.atom_keys) + len(self.mol_keys),
+            'num atomwise features': len(self.atom_keys),
+            'atom means': self.atom_means,
+            'atom stds': self.atom_stds,
+
+            'num mol features': len(self.mol_keys),
+            'mol features': self.mol_keys,
+            'mol means': self.mol_means,
+            'mol stds': self.mol_stds,
+
             'atom embedding dict sizes': self.atom_dict_size,
+
             'conditional features': self.molecule_keys + self.crystal_generation_features,
-            'n conditional features': len(self.crystal_generation_features + self.molecule_keys),
-            'n crystal generation features': len(self.crystal_generation_features),
+            'num conditional features': len(self.crystal_generation_features + self.molecule_keys),
+
+            'crystal generation features': self.crystal_generation_features,
+            'num crystal generation features': len(self.crystal_generation_features),
+
             'space groups to search': self.include_sgs,
         }
 
@@ -518,3 +549,15 @@ def delete_from_dataset(dataset, good_inds):
             dataset[key] = dataset[key][np.asarray(good_inds)]
 
     return dataset
+
+
+def get_extra_test_loader(dataset, config, dataDims, pg_dict=None, sg_dict=None, lattice_dict=None):
+    extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
+                                          sg_dict=sg_dict,
+                                          lattice_dict=lattice_dict,
+                                          replace_dataDims=dataDims,
+                                          premade_dataset = dataset)
+
+    extra_test_loader = DataLoader(extra_test_set_builder.datapoints, batch_size=config.final_batch_size, shuffle=False, num_workers=0, pin_memory=False)
+
+    return extra_test_loader

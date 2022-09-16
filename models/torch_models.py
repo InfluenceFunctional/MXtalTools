@@ -24,10 +24,10 @@ class FlowModel(nn.Module):
         torch.manual_seed(config.seeds.model)
         # https://github.com/karpathy/pytorch-normalizing-flows/blob/master/nflib1.ipynb
         # nice review https://arxiv.org/pdf/1912.02762.pdf
-        self.flow_dimension = dataDims['n crystal features']
+        self.flow_dimension = dataDims['num lattice features']
 
         if config.generator.conditional_modelling:
-            self.n_conditional_features = dataDims['n conditional features']
+            self.n_conditional_features = dataDims['num conditional features']
             if config.generator.conditioning_mode == 'graph model':
                 self.conditioner = molecule_graph_model(config, dataDims, return_latent=True)
                 self.n_conditional_features = config.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
@@ -46,7 +46,7 @@ class FlowModel(nn.Module):
             self.device = 'cpu'
         # prior
         if config.generator.prior == 'multivariate normal':
-            self.prior = MultivariateNormal(torch.zeros(dataDims['n crystal features']), torch.eye(dataDims['n crystal features']))
+            self.prior = MultivariateNormal(torch.zeros(dataDims['num lattice features']), torch.eye(dataDims['num lattice features']))
         else:
             print(config.generator.prior + ' is not an implemented prior!!')
             sys.exit()
@@ -54,25 +54,25 @@ class FlowModel(nn.Module):
         # flows
         if config.flow_type == 'nsf':
             nsf_flow = NSF_CL if True else NSF_AR
-            flows = [nsf_flow(dim=dataDims['n crystal features'],
+            flows = [nsf_flow(dim=dataDims['num lattice features'],
                               K=config.flow_basis_fns,
                               B=3,
                               hidden_dim=config.flow_depth,
                               conditioning_dim=self.n_conditional_features
                               ) for _ in range(config.num_flow_layers)]
-            convs = [Invertible1x1Conv(dim=dataDims['n crystal features']) for _ in flows]
-            norms = [ActNorm(dim=dataDims['n crystal features']) for _ in flows]
+            convs = [Invertible1x1Conv(dim=dataDims['num lattice features']) for _ in flows]
+            norms = [ActNorm(dim=dataDims['num lattice features']) for _ in flows]
             self.flow = NormalizingFlow(list(itertools.chain(*zip(norms, convs, flows))), self.n_conditional_features)
         elif config.flow_type.lower() == 'glow':
-            flows = [AffineHalfFlow(dim=dataDims['n crystal features'], nh=config.flow_depth, parity=i % 2)
+            flows = [AffineHalfFlow(dim=dataDims['num lattice features'], nh=config.flow_depth, parity=i % 2)
                      for i in range(config.num_flow_layers)]
-            convs = [Invertible1x1Conv(dim=dataDims['n crystal features']) for _ in flows]
-            norms = [ActNorm(dim=dataDims['n crystal features']) for _ in flows]
+            convs = [Invertible1x1Conv(dim=dataDims['num lattice features']) for _ in flows]
+            norms = [ActNorm(dim=dataDims['num lattice features']) for _ in flows]
             self.flow = NormalizingFlow(list(itertools.chain(*zip(norms, convs, flows))), self.n_conditional_features)
         elif config.flow_type.lower() == 'made':
-            flows = [MAF(dim=dataDims['n crystal features'], nh=config.flow_depth, parity=i % 2)
+            flows = [MAF(dim=dataDims['num lattice features'], nh=config.flow_depth, parity=i % 2)
                      for i in range(config.num_flow_layers)]
-            norms = [ActNorm(dim=dataDims['n crystal features']) for _ in flows]
+            norms = [ActNorm(dim=dataDims['num lattice features']) for _ in flows]
             self.flow = NormalizingFlow(list(itertools.chain(*zip(norms, flows))), self.n_conditional_features)
         else:
             print(config.flow_type + ' is not an implemented flow!!')
@@ -80,7 +80,7 @@ class FlowModel(nn.Module):
 
     def destandardize_samples(self, x, dataDims, do_rounding=True):
         y = x.copy()
-        for i in range(dataDims['n crystal features']):
+        for i in range(dataDims['num lattice features']):
             if y.ndim == 2:
                 vec = x[:, i]
             elif y.ndim == 3:
@@ -89,12 +89,12 @@ class FlowModel(nn.Module):
                 print("Array has wrong number of dims!")
                 sys.exit()
 
-            vec = vec * dataDims['stds'][i] + dataDims['means'][i]
+            vec = vec * dataDims['lattice stds'][i] + dataDims['lattice means'][i]
 
             if do_rounding:
-                if dataDims['dtypes'][i] == 'bool':
+                if dataDims['lattice dtypes'][i] == 'bool':
                     vec = np.round(np.clip(vec, a_min=0, a_max=1))
-                elif dataDims['dtypes'][i] == 'int32':
+                elif dataDims['lattice dtypes'][i] == 'int32':
                     vec = np.round(vec)
 
             if y.ndim == 2:
@@ -106,11 +106,11 @@ class FlowModel(nn.Module):
 
     def standardize_samples(self, x, dataDims):
         y = x.copy()
-        for i in range(dataDims['n crystal features']):
+        for i in range(dataDims['num lattice features']):
             if y.ndim == 2:
-                y[:, i] = (y[:, i] - dataDims['means'][i]) / dataDims['stds'][i]
+                y[:, i] = (y[:, i] - dataDims['lattice means'][i]) / dataDims['lattice stds'][i]
             elif y.ndim == 3:
-                y[:, :, i] = (y[:, :, i] - dataDims['means'][i]) / dataDims['stds'][i]
+                y[:, :, i] = (y[:, :, i] - dataDims['lattice means'][i]) / dataDims['lattice stds'][i]
         return y
 
     def fit_pca(self, data, print_variance=False):
@@ -251,8 +251,8 @@ class molecule_graph_model(nn.Module):
         self.num_radial = num_radial
         self.num_attention_heads = num_attention_heads
         self.add_radial_basis = add_radial_basis
-        self.n_mol_feats = dataDims['n mol features']
-        self.n_atom_feats = dataDims['n atom features']
+        self.n_mol_feats = dataDims['num mol features']
+        self.n_atom_feats = dataDims['num atom features']
         self.radial_function = radial_function
         self.max_num_neighbors = max_num_neighbors
         self.graph_convolution_cutoff = convolution_cutoff

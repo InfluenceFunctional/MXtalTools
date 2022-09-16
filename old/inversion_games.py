@@ -67,7 +67,7 @@ for i in range(1000):
     # init two positions
     # position 1
     coords -= coords.T.dot(masses) / masses.sum()
-    Ip1, _, _, D1 = compute_principal_axes_np(masses, coords, return_direction=True)
+    Ip1, _, _, D1 = compute_principal_axes_np(coords, masses, return_direction=True)
     mol1 = Atoms(symbols=symbols + 'Cl', positions=np.concatenate((coords, D1[None, :] * 5)), cell=Ip1 * 10)  # [10,10,10,90,90,90])
 
     # position 2
@@ -75,7 +75,7 @@ for i in range(1000):
     rot_coords = prep_rot.apply(coords)  # np.array((coords[:,0],coords[:,2],coords[:,1])).T
     rot_coords -= rot_coords.T.dot(masses) / masses.sum()
     I2_trans = prep_rot.apply(Ip1)
-    Ip2, _, _, D2 = compute_principal_axes_np(masses, rot_coords, return_direction=True)
+    Ip2, _, _, D2 = compute_principal_axes_np(rot_coords, masses, return_direction=True)
     mol2 = Atoms(symbols=symbols + 'Cl', positions=np.concatenate((rot_coords, D2[None, :] * 5)), cell=Ip2 * 10)  # [10,10,10,90,90,90])
 
     # alignment matrix
@@ -94,8 +94,8 @@ for i in range(1000):
 
     coords_std = rot1.apply(coords)
     rot_coords_std = rot2.apply(rot_coords)
-    Ip1_std, _, _, D1_std = compute_principal_axes_np(masses, coords_std, return_direction=True)
-    Ip2_std, _, _, D2_std = compute_principal_axes_np(masses, rot_coords_std, return_direction=True)
+    Ip1_std, _, _, D1_std = compute_principal_axes_np(coords_std, masses, return_direction=True, )
+    Ip2_std, _, _, D2_std = compute_principal_axes_np(rot_coords_std, masses, return_direction=True)
     I1_std = rot1.apply(Ip1)
     I2_std = rot2.apply(Ip2)
 
@@ -192,7 +192,7 @@ for i in range(1000):
 ''' # functional - rotate back and forth
 # center on CoM
 coords -= coords.T.dot(masses) / masses.sum()
-Ip, Ipm, I = compute_principal_axes_np(masses, coords)
+Ip, Ipm, I = compute_principal_axes_np(coords,masses)
 mol1 = Atoms(symbols='OCN2C2NCNC', positions=coords,cell=[10,10,10,90,90,90])
 
 rot = Rotation.from_euler('XYZ', rand_rot)

@@ -6,7 +6,7 @@ explicit_run_enumeration: False
 skip_saving_and_loading: True
 run_num: 0
 anomaly_detection: False
-mode: diagnostic # 'gan' or 'regression' or 'diagnostic'
+mode: gan # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard
 train_generator_density: False
 train_generator_as_flow: False
@@ -19,7 +19,10 @@ train_discriminator_on_randn: True
 train_discriminator_on_noise: False
 generator_similarity_penalty: 0 # todo reimpliment NF
 cut_flow_training_after: 3
-sample_after_training: True
+sample_after_training: False
+extra_test_set_path: 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset'
+d_model_path: null
+g_model_path: null
 
 seeds:
   model: 0
@@ -28,7 +31,7 @@ seeds:
 # opt - sweep details
 wandb:
   sample_reporting_frequency: 1
-  experiment_tag: "mcrygan_dev"
+  experiment_tag: "discriminator_dev"
   log_figures: True
   sweep_config_file: "sweep_test.yaml"
   sweep: False
@@ -36,19 +39,19 @@ wandb:
   sweep_num_runs: 50
 
 # batching & convergence
-auto_batch_sizing: False
+auto_batch_sizing: True
 min_batch_size: 10
-max_batch_size: 10
+max_batch_size: 1000
 auto_batch_reduction: .65
 max_epochs: 5000
-history: 2
+history: 1000
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 100
+dataset_length: 1000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
-max_num_atoms: 20
+max_num_atoms: 40
 min_num_atoms: 10
 max_z_value: 10
 min_z_value: 0
@@ -58,16 +61,16 @@ max_packing_coefficient: 0.85
 min_packing_coefficient: 0.58
 include_organic: True
 include_organometallic: True
-max_atomic_number: 20 #87
+max_atomic_number: 87
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
 exclude_polymorphs: True
 exclude_nonstandard_settings: True
 exclude_crystal_systems: ['hexagonal','trigonal','rhombohedral']
-include_sgs: ['P21/c'] #["P-1", "P21/c", "P212121", "C2/c", "Pbca", "P21"]
+include_sgs: null #["P-1", "P21/c", "P212121", "C2/c", "Pbca", "P21"]
 include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: 'P21/c' #'P2' #'P21/c' # can only do one at a time right now
-supercell_size: 1 # 1 = 3x3x3, 2 = 5x5x5 etc.
+generate_sgs: null #'P2' #'P21/c' # can only do one at a time right now
+supercell_size: 2 # 1 = 3x3x3, 2 = 5x5x5 etc. note 1 is too small for small molecules or P1 cells
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
 
@@ -80,27 +83,27 @@ discriminator:
   beta1: 0.9
   beta2: 0.999
   weight_decay: 0.001
-  convergence_eps: 0.01
+  convergence_eps: 0.00001
   training_period: 1
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   graph_model: mike
   graph_convolution_layers: 4
-  graph_filters: 128
-  atom_embedding_size: 256
+  graph_filters: 16
+  atom_embedding_size: 32
   graph_norm: layer
-  num_spherical: 12
-  num_radial: 24
+  num_spherical: 6
+  num_radial: 12
   graph_convolution_cutoff: 7
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 4 # mikenet self attention mode only - must evenly divide graph filters
+  num_attention_heads: 1 # mikenet self attention mode only - must evenly divide graph filters
   graph_convolution: self attention # 'full message passing' or schnet or 'self attention'
   add_spherical_basis: True # mikenet only
   pooling: combo
 
-  num_fc_layers: 4
-  fc_depth: 128
+  num_fc_layers: 1
+  fc_depth: 32
   activation: leaky relu
   fc_dropout_probability: 0
   fc_norm_mode: layer
@@ -119,9 +122,9 @@ generator:
 
   model_type: mlp # mlp or nf
   graph_model: mike
-  graph_convolution_layers: 6
+  graph_convolution_layers: 1
   graph_filters: 32
-  atom_embedding_size: 64
+  atom_embedding_size: 32
   graph_norm: null
   num_spherical: 12
   num_radial: 24
@@ -134,13 +137,13 @@ generator:
   pooling: combo
 
   conditioner_num_fc_layers: 1
-  conditioner_fc_depth: 256
+  conditioner_fc_depth: 16
   conditioner_activation: leaky relu
   conditioner_fc_dropout_probability: 0.1
   conditioner_fc_norm_mode: layer
 
-  num_fc_layers: 8
-  fc_depth: 128
+  num_fc_layers: 1
+  fc_depth: 16
   activation: leaky relu
   fc_dropout_probability: 0
   fc_norm_mode: null

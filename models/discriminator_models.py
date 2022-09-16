@@ -35,6 +35,8 @@ class crystal_discriminator(nn.Module):
             convolution_cutoff=config.discriminator.graph_convolution_cutoff,
             crystal_mode=True,
         )
+        self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
 
     def forward(self, data, return_dists=False, return_latent=False):
+        data.x = data.x[:,:-self.crystal_features_to_ignore] # leave out the trailing N features, which give information on the crystal lattice
         return self.model(data, return_dists=return_dists, return_latent=return_latent)

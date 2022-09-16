@@ -17,7 +17,7 @@ class crystal_generator(nn.Module):
         self.generator_model_type = config.generator.model_type
 
         if config.generator.prior == 'multivariate normal':
-            self.prior = MultivariateNormal(torch.zeros(dataDims['n crystal features']), torch.eye(dataDims['n crystal features']))
+            self.prior = MultivariateNormal(torch.zeros(dataDims['num lattice features']), torch.eye(dataDims['num lattice features']))
         elif config.generator.prior.lower() == 'uniform':
             self.prior = Uniform(low=0, high=1)
         else:
@@ -56,7 +56,7 @@ class crystal_generator(nn.Module):
                                            filters=config.generator.conditioner_fc_depth,
                                            norm=config.generator.conditioner_fc_norm_mode,
                                            dropout=config.generator.conditioner_fc_dropout_probability,
-                                           input_dim=dataDims['n conditional features'],
+                                           input_dim=dataDims['num conditional features'],
                                            output_dim=config.generator.fc_depth,
                                            conditioning_dim=0,
                                            seed=config.seeds.model
@@ -69,8 +69,8 @@ class crystal_generator(nn.Module):
                                      filters=config.generator.fc_depth,
                                      norm=config.generator.fc_norm_mode,
                                      dropout=config.generator.fc_dropout_probability,
-                                     input_dim=dataDims['n crystal features'],
-                                     output_dim=dataDims['n crystal features'],
+                                     input_dim=dataDims['num lattice features'],
+                                     output_dim=dataDims['num lattice features'],
                                      conditioning_dim=config.generator.fc_depth,
                                      seed=config.seeds.model
                                      )
@@ -78,7 +78,7 @@ class crystal_generator(nn.Module):
             self.model = crystal_nf(config, dataDims, self.prior)
         elif self.generator_model_type.lower() == 'fit normal':
             assert config.generator.prior.lower() == 'multivariate normal'
-            self.model = independent_gaussian_model(config, dataDims, dataDims['means'], dataDims['stds'])
+            self.model = independent_gaussian_model(config, dataDims, dataDims['lattice means'], dataDims['lattice stds'])
         else:
             print(self.generator_model_type + ' is not an implemented generator model!')
             sys.exit()
@@ -128,11 +128,11 @@ class crystal_nf(nn.Module):
         torch.manual_seed(config.seeds.model)
         # https://github.com/karpathy/pytorch-normalizing-flows/blob/master/nflib1.ipynb
         # nice review https://arxiv.org/pdf/1912.02762.pdf
-        self.flow_dimension = dataDims['n crystal features']
+        self.flow_dimension = dataDims['num lattice features']
         self.prior = prior
 
         if config.generator.conditional_modelling:
-            self.n_conditional_features = dataDims['n conditional features']
+            self.n_conditional_features = dataDims['num conditional features']
             if config.generator.conditioning_mode == 'graph model':
                 self.n_conditional_features = config.generator.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
         else:
@@ -146,14 +146,14 @@ class crystal_nf(nn.Module):
 
         # flows
         nsf_flow = NSF_CL
-        flows = [nsf_flow(dim=dataDims['n crystal features'],
+        flows = [nsf_flow(dim=dataDims['num lattice features'],
                           K=config.generator.flow_basis_fns,
                           B=3,
                           hidden_dim=config.generator.flow_depth,
                           conditioning_dim=self.n_conditional_features
                           ) for _ in range(config.generator.num_flow_layers)]
-        convs = [Invertible1x1Conv(dim=dataDims['n crystal features']) for _ in flows]
-        norms = [ActNorm(dim=dataDims['n crystal features']) for _ in flows]
+        convs = [Invertible1x1Conv(dim=dataDims['num lattice features']) for _ in flows]
+        norms = [ActNorm(dim=dataDims['num lattice features']) for _ in flows]
         self.flow = NormalizingFlow2(list(itertools.chain(*zip(norms, convs, flows))), self.n_conditional_features)
 
     def forward(self, x, conditions=None):

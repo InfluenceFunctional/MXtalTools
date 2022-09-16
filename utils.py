@@ -1845,7 +1845,9 @@ def delete_from_dataframe(df, inds):
 
 
 # @nb.jit(nopython=True)
-def compute_principal_axes_np(masses, coords):
+def compute_principal_axes_np(coords, masses=None):
+    if masses is None:
+        masses = np.ones(len(coords))
     points = (coords - coords.T.dot(masses) / np.sum(masses))
     x, y, z = points.T
     Ixx = np.sum(masses * (y ** 2 + z ** 2))
@@ -1876,16 +1878,18 @@ def compute_principal_axes_np(masses, coords):
         Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
         fix_ind = np.argmin(np.abs(overlaps))
         other_vectors = np.delete(np.arange(3), fix_ind)
-        check_direction = np.cross(Ip[other_vectors[0]], Ip[other_vectors[1]])
-        # align the 'bad' vector
-        Ip[fix_ind] = np.prod(Ip[fix_ind], np.sign(np.dot(check_direction, Ip[fix_ind])))
+        check_direction = np.cross(Ip[other_vectors[0]], Ip[other_vectors[1]])  # todo definition of 'right handed' changes depending on which vector has no overlap
+        # align the 'bad' vector to be right handed w.r.t. the others
+        Ip[fix_ind] = check_direction  # Ip[fix_ind] * np.sign(np.dot(check_direction, Ip[fix_ind]))
     else:
         Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
 
     return Ip, Ipm, I
 
 
-def compute_principal_axes_torch(masses, coords, return_direction=False):
+def compute_principal_axes_torch(coords, masses=None, return_direction=False):
+    if masses == None:
+        masses = torch.ones(len(coords)).to(coords.device)
     points = coords - torch.inner(coords.T, masses) / torch.sum(masses)
     x, y, z = points.T
     Ixx = torch.sum(masses * (y ** 2 + z ** 2))  # todo switch to single-step
@@ -1918,7 +1922,7 @@ def compute_principal_axes_torch(masses, coords, return_direction=False):
         other_vectors = np.delete(np.arange(3), fix_ind)
         check_direction = torch.cross(Ip[other_vectors[0]], Ip[other_vectors[1]])
         # align the 'bad' vector
-        Ip[fix_ind] = Ip[fix_ind] * torch.sign(torch.dot(check_direction, Ip[fix_ind]))
+        Ip[fix_ind] = check_direction  # Ip[fix_ind] * torch.sign(torch.dot(check_direction, Ip[fix_ind]))
     else:
         Ip = (Ip.T * torch.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
 
@@ -2159,7 +2163,64 @@ def ase_mol_from_crystaldata(data, index, highlight_aux=False, exclusion_level=N
 
 def invert_rotvec_handedness(rotvec):
     rot_mat = Rotation.from_rotvec(rotvec).as_matrix()
-    return Rotation.from_matrix(-rot_mat).as_rotvec() # negative of the rotation matrix gives the accurate rotation for opposite handed object
+    return Rotation.from_matrix(-rot_mat).as_rotvec()  # negative of the rotation matrix gives the accurate rotation for opposite handed object
+
+
+def compute_Ip_handedness(Ip):
+    if isinstance(Ip, np.ndarray):
+        return np.sign(np.dot(Ip[0], np.cross(Ip[1], Ip[2])).sum())
+    elif torch.is_tensor(Ip):
+        return torch.sign(torch.mul(Ip[0], torch.cross(Ip[1], Ip[2])).sum()).float()
+
+
+def initialize_fractional_vectors(scale=2):
+    # initialize fractional cell vectors
+    supercell_scale = scale
+    n_cells = (2 * supercell_scale + 1) ** 3
+
+    fractional_translations = np.zeros((n_cells, 3))  # initialize the translations in fractional coords
+    i = 0
+    for xx in range(-supercell_scale, supercell_scale + 1):
+        for yy in range(-supercell_scale, supercell_scale + 1):
+            for zz in range(-supercell_scale, supercell_scale + 1):
+                fractional_translations[i] = np.array((xx, yy, zz))
+                i += 1
+    sorted_fractional_translations = fractional_translations[np.argsort(np.abs(fractional_translations).sum(1))][1:]  # leave out the 0,0,0 element
+    normed_fractional_translations = sorted_fractional_translations / np.linalg.norm(sorted_fractional_translations, axis=1)[:, None]
+
+    return sorted_fractional_translations, normed_fractional_translations
+
+
+def save_checkpoint(epoch, model, optimizer, config, model_name):
+    torch.save({'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'config':config},
+               '../models/' + model_name)
+
+
+def load_checkpoint(model, optimizer, model_path, config):
+    checkpoint = torch.load(model_path)
+
+    if list(checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+        for i in list(checkpoint['model_state_dict']):
+            checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
+
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    if config.device.lower() == 'cuda':
+        model.cuda()  # move model to GPU
+        for state in optimizer.state.values():  # move optimizer to GPU
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.cuda()
+
+    model.eval()
+    print('Reloaded model: ', model_path[:])
+
+    return model, optimizer, config
+
 
 '''
 # look at all kinds of activations

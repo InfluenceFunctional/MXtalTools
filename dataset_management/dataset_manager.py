@@ -2,22 +2,19 @@ from utils import *
 import matplotlib.pyplot as plt
 import tqdm
 import pandas as pd
-from dataset_management.random_crystal_builder import *
+from crystal_builder_tools import *
 from pyxtal import symmetry
-from nikos.coordinate_transformations import cell_vol, coor_trans_matrix
+from nikos.coordinate_transformations import coor_trans_matrix
 import matplotlib.colors as colors
-from ase import Atoms
-from ase.visualize import view
-from ase.geometry.analysis import Analysis
-from ase.ga.utilities import get_rdf
+
 
 class Miner():
-    def __init__(self, dataset_path, config=None, collect_chunks=False):
+    def __init__(self, dataset_path, config=None, collect_chunks=False, database='csd'):
         self.config = config
         if config is None:
             self.max_z_prime = 1
             self.min_z_prime = 1
-            self.max_z_value = 10
+            self.max_z_value = 50
             self.min_z_value = 1
             self.max_num_atoms = 1000
             self.min_num_atoms = 5
@@ -34,6 +31,7 @@ class Miner():
             self.min_temperature = -10
             self.include_sgs = None
             self.include_pgs = None
+            self.exclude_crystal_systems = None
         else:
             self.max_z_prime = config.max_z_prime
             self.min_z_prime = config.min_z_prime
@@ -61,8 +59,9 @@ class Miner():
 
         self.dataset_path = dataset_path
         self.collect_chunks = collect_chunks
+        self.database = database
 
-    def load_for_modelling(self, return_dataset = False, save_dataset = True):
+    def load_for_modelling(self, return_dataset=False, save_dataset=True):
         self.dataset = pd.read_pickle(self.dataset_path)
         self.dataset_keys = list(self.dataset.columns)
         self.filter_dataset()
@@ -93,13 +92,13 @@ class Miner():
         self.numerize_dataset()
         self.curate_dataset()
 
-        self.dataset.to_pickle('../../full_dataset')
-        self.dataset.loc[0:10000].to_pickle('../../test_dataset')
+        self.dataset.to_pickle('../../new_full_dataset')
+        self.dataset.loc[0:10000].to_pickle('../../new_test_dataset')
 
     def load_dataset(self, dataset_path, collect_chunks=False, test_mode=False):
 
         if collect_chunks:
-            os.chdir(dataset_path)
+            os.chdir(dataset_path + '/molecule_features')
             chunks = os.listdir()
             print('collecting chunks')
 
@@ -118,7 +117,6 @@ class Miner():
             self.dataset = pd.read_pickle(dataset_path)
 
         self.finished_numerization = False
-
         self.dataset_keys = list(self.dataset.columns)
         self.dataset_length = len(self.dataset)
 
@@ -141,46 +139,57 @@ class Miner():
         :return:
         '''
 
-        main_symbol = {}
+        # main_symbol = {}
+        # for i in tqdm.tqdm(range(self.dataset_length)):
+        #     element = self.dataset['crystal spacegroup number'][i], self.dataset['crystal spacegroup setting'][i],
+        #     if element[1] == 1:  # extract only the main or primary setting - if there are entries for which we are missing the primary setting, ignore them for now (assume marginal)
+        #         if str(element[0]) not in main_symbol.keys():
+        #             main_symbol[str(element[0])] = [self.dataset['crystal spacegroup symbol'][i]]
+        #         else:
+        #             main_symbol[str(element[0])].append(self.dataset['crystal spacegroup symbol'][i])
+        #
+        # # confirm they're all unique
+        # sg_dict = {}
+        # for key in main_symbol.keys():
+        #     # if len(np.unique(main_symbol[key])) > 1: # the only groups where this doesn't work are with or without minus signs (chiral groups?)
+        #     sg_dict[key] = np.unique(main_symbol[key])[0]
+        print('Pre-generating spacegroup symmetries')
+
+        self.space_groups = {}
+        self.sg_numbers = {}
+        for i in tqdm.tqdm(range(1, 231)):
+            sym_group = symmetry.Group(i)
+            self.space_groups[i] = sym_group.symbol
+            self.sg_numbers[sym_group.symbol] = i
+
+        # standardize SG symbols
         for i in tqdm.tqdm(range(self.dataset_length)):
-            element = self.dataset['crystal spacegroup number'][i], self.dataset['crystal spacegroup setting'][i],
-            if element[1] == 1:  # extract only the main or primary setting - if there are entries for which we are missing the primary setting, ignore them for now (assume marginal)
-                if str(element[0]) not in main_symbol.keys():
-                    main_symbol[str(element[0])] = [self.dataset['crystal spacegroup symbol'][i]]
-                else:
-                    main_symbol[str(element[0])].append(self.dataset['crystal spacegroup symbol'][i])
+            if self.dataset['crystal spacegroup number'][i] != 0: # sometimes the sg number is broken
+                self.dataset['crystal spacegroup symbol'][i] = self.space_groups[self.dataset['crystal spacegroup number'][i]]
+            else: # in which case, try reverse assigning the number, given the space group
+                self.dataset['crystal spacegroup number'][i] = self.sg_numbers[self.dataset['crystal spacegroup symbol'][i]]
 
-        # confirm they're all unique
-        sg_dict = {}
-        for key in main_symbol.keys():
-            # if len(np.unique(main_symbol[key])) > 1: # the only groups where this doesn't work are with or without minus signs (chiral groups?)
-            sg_dict[key] = np.unique(main_symbol[key])[0]
-
-        # standardize SGs
-        for i in tqdm.tqdm(range(self.dataset_length)):
-            if str(self.dataset['crystal spacegroup number'][i]) in sg_dict.keys():
-                self.dataset['crystal spacegroup symbol'][i] = sg_dict[str(self.dataset['crystal spacegroup number'][i])]
-
-        self.sg_probabilities = {}
-        key = 'crystal spacegroup symbol'
-        self.dataset[key] = np.asarray(self.dataset[key])  # convert molecule and crystal features to numpy arrays for easy processing
-        unique_entries = np.unique(self.dataset[key])
-        print("One-hotting " + key + " with unique entries {}".format(unique_entries))
-        for entry in unique_entries:
-            self.dataset[key + ' is ' + entry] = self.dataset[key] == entry
-            self.sg_probabilities[entry] = np.average(self.dataset[key + ' is ' + entry])
-            self.modellable_keys.append(key + ' is ' + entry)
-
-        # identify majority and minority SGs
-        self.majority_sgs = []
-        self.minority_sgs = []
-        for key in self.sg_probabilities:
-            if self.sg_probabilities[key] >= 0.01:
-                self.majority_sgs.append(key)
-            elif self.sg_probabilities[key] < 0.01:
-                self.minority_sgs.append(key)
-
-        self.dataset['crystal spacegroup is minority'] = np.asarray([spacegroup not in self.majority_sgs for spacegroup in self.dataset['crystal spacegroup symbol']])
+        #
+        # self.sg_probabilities = {}
+        # key = 'crystal spacegroup symbol'
+        # self.dataset[key] = np.asarray(self.dataset[key])  # convert molecule and crystal features to numpy arrays for easy processing
+        # unique_entries = np.unique(self.dataset[key])
+        # print("One-hotting " + key + " with unique entries {}".format(unique_entries))
+        # for entry in unique_entries:
+        #     self.dataset[key + ' is ' + entry] = self.dataset[key] == entry
+        #     self.sg_probabilities[entry] = np.average(self.dataset[key + ' is ' + entry])
+        #     self.modellable_keys.append(key + ' is ' + entry)
+        #
+        # # identify majority and minority SGs
+        # self.majority_sgs = []
+        # self.minority_sgs = []
+        # for key in self.sg_probabilities:
+        #     if self.sg_probabilities[key] >= 0.01:
+        #         self.majority_sgs.append(key)
+        #     elif self.sg_probabilities[key] < 0.01:
+        #         self.minority_sgs.append(key)
+        #
+        # self.dataset['crystal spacegroup is minority'] = np.asarray([spacegroup not in self.majority_sgs for spacegroup in self.dataset['crystal spacegroup symbol']])
 
     def filter_dataset(self):
         print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
@@ -191,19 +200,19 @@ class Miner():
 
         # samples with bad CSD-generated reference cells
         n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:,0]) # missing coordinates
-        bad_inds.extend(np.argwhere(np.asarray(np.isnan(self.dataset['crystal reference cell centroid x'])))[:,0]) # missing orientation features
+        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:, 0])  # missing coordinates
+        bad_inds.extend(np.argwhere(np.asarray(np.isnan(self.dataset['crystal asymmetric unit centroid x'])))[:, 0])  # missing orientation features
         print('bad coordinates caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # cases where the csd has the wrong number of molecules
         n_bad_inds = len(bad_inds)
         lens = [len(item) for item in self.dataset['crystal reference cell coords']]
-        bad_inds.extend(np.argwhere(np.asarray(lens != self.dataset['crystal z value']))[:,0])
+        bad_inds.extend(np.argwhere(np.asarray(lens != self.dataset['crystal z value']))[:, 0])
         print('improper CSD Z value filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
-        # exclude samples with atoms on special positions
+        # exclude samples with atoms on special positions # todo eventually relax this
         n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal atoms on special positions'].ne([[] for _ in range(len(self.dataset))])))[:,0])
+        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal atoms on special positions'].ne([[] for _ in range(len(self.dataset))])))[:, 0])
         print('special positions filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # Z prime
@@ -255,25 +264,25 @@ class Miner():
 
         if self.exclude_crystal_systems is not None:
             n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere([self.dataset['crystal system'][i]  in self.exclude_crystal_systems for i in range(len(self.dataset['crystal system']))])[:, 0])
+            bad_inds.extend(np.argwhere([self.dataset['crystal system'][i] in self.exclude_crystal_systems for i in range(len(self.dataset['crystal system']))])[:, 0])
             print('crystal system filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         if self.include_pgs is not None:
             # filter by point group
             n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere([self.dataset['crystal point group'][i] not in self.include_pgs for i in range(len(self.dataset['crystal point group']))])[:, 0]) # missing coordinates
+            bad_inds.extend(np.argwhere([self.dataset['crystal point group'][i] not in self.include_pgs for i in range(len(self.dataset['crystal point group']))])[:, 0])  # missing coordinates
             print('unwanted point groups caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule organic
         if not self.include_organic:
             n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule is organic']))[:, 0])
+            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organic']))[:, 0])
             print('organic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule organometallic
         if not self.include_organometallic:
             n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule is organometallic']))[:, 0])
+            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organometallic']))[:, 0])
             print('organometallic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule has disorder
@@ -308,7 +317,8 @@ class Miner():
         :return:
         '''
         # use CSD identifiers to pick out polymorphs
-        duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_CSD_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
+        duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
+        # todo delete blind test and any extra CSP samples from the training dataset
 
         # now, the 'representative structure' is the highest resolution structure which as the same space group as the oldest structure
         # we will add all others to 'bad_inds', and filter them out at our leisure
@@ -328,20 +338,32 @@ class Miner():
 
         self.dataset = delete_from_dataframe(self.dataset, bad_inds)
 
-    def get_CSD_identifier_duplicates(self):
+    def get_identifier_duplicates(self):
         # by CSD identifier
         # CSD entries with numbers on the end are subsequent additions
         print('getting identifier duplicates')
         all_identifiers = {}
-        for i in tqdm.tqdm(range(len(self.dataset['identifier']))):
-            item = self.dataset['identifier'][i]
-            if item[-1].isdigit():
-                item = item[:-2]  # cut off trailing digits, if any
-            if item not in all_identifiers.keys():
-                all_identifiers[item] = []
-            all_identifiers[item].append(i)
+        if self.database.lower() == 'csd':
+            for i in tqdm.tqdm(range(len(self.dataset['identifier']))):
+                item = self.dataset['identifier'][i]
+                if item[-1].isdigit():
+                    item = item[:-2]  # cut off trailing digits, if any
+                if item not in all_identifiers.keys():
+                    all_identifiers[item] = []
+                all_identifiers[item].append(i)
+        elif self.database.lower() == 'cif':
+            blind_test_targets = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+                                  'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
+                                  'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
+            all_identifiers = {key:[] for key in blind_test_targets}
+            for i in tqdm.tqdm(range(len(self.dataset['identifier']))):
+                item = self.dataset['identifier'][i]
+                for j in range(len(blind_test_targets)): # go in reverse to account for roman numerals system of duplication
+                    if blind_test_targets[-1 - j] in item:
+                        all_identifiers[blind_test_targets[-1 - j]].append(i)
+                        break
 
-        # delete identifiers with only one entry, despite having an index attache
+        # delete identifiers with only one entry, despite having an index attached
         duplicate_lists = [all_identifiers[key] for key in all_identifiers.keys() if len(all_identifiers[key]) > 1]
         duplicate_list_extension = []
         for d_list in duplicate_lists:
@@ -364,7 +386,7 @@ class Miner():
 
         self.modellable_keys = []
 
-        # manually add this one
+        # manually add this one to get started
         self.dataset['molecule num atoms'] = np.asarray(self.dataset['molecule num atoms'])
         self.modellable_keys.append('molecule num atoms')
 
@@ -383,11 +405,11 @@ class Miner():
                     and ('axes' not in key):  # leave atom features as lists, as well as things we don't want to be categorized
                 self.dataset[key] = np.asarray(self.dataset[key])  # convert molecule and crystal features to numpy arrays for easy processing
 
-                if self.dataset[key].dtype == bool:  # now, process categorial strings into one-hots
+                if self.dataset[key].dtype == bool:  # keep bools
                     self.modellable_keys.append(key)
                     pass  # already effectively 'one-hot'
 
-                elif self.dataset[key].dtype.type is np.str_:
+                elif self.dataset[key].dtype.type is np.str_:  # now, process categorial strings into one-hots
                     unique_entries = np.unique(self.dataset[key])
                     print("One-hotting " + key + " with unique entries {}".format(unique_entries))
                     for entry in unique_entries:
@@ -560,8 +582,8 @@ class Miner():
                 # confirm we have good syms
                 z_value = int(self.dataset['crystal z value'][i])
                 sg_number = self.dataset['crystal spacegroup number'][i]
-                #sym_group = symmetry.Group(self.dataset['crystal spacegroup number'][i])
-                if z_value != len(self.sym_ops[sg_number]):#sym_group[0]): # if there's something wrong with the symmetry
+                # sym_group = symmetry.Group(self.dataset['crystal spacegroup number'][i])
+                if z_value != len(self.sym_ops[sg_number]):  # sym_group[0]): # if there's something wrong with the symmetry
                     continue
                 '''
                 SETUP & BOILERPLATE
@@ -575,7 +597,7 @@ class Miner():
 
                 # get all the transforms
                 T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
-                T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles) #np.linalg.inv(T_fc)#
+                T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)  # np.linalg.inv(T_fc)#
 
                 atomic_numbers = np.asarray(self.dataset['atom Z'][i])
                 heavy_atom_inds = np.argwhere(atomic_numbers > 1)[:, 0]
@@ -584,7 +606,7 @@ class Miner():
 
                 if study_cells:
                     # atoms in cartesian coords
-                    from_csd = np.random.randint(0,2,size=1)
+                    from_csd = np.random.randint(0, 2, size=1)
                     if from_csd:
                         csd_inds.append(ind)
 
@@ -596,14 +618,13 @@ class Miner():
                         rand_inds.append(ind)
                         # reference cell coords
                         coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
-                        random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc, T_cf, np.asarray(self.sym_ops[sg_number]),confirm_transform = False)
-                        #tests.append(np.average(T_cf.dot(random_coords.T).T,axis=0))
+                        random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc, T_cf, np.asarray(self.sym_ops[sg_number]), confirm_transform=False)
+                        # tests.append(np.average(T_cf.dot(random_coords.T).T,axis=0))
                         cell_coords_c, cell_coords_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
-
 
                     self.get_cell_data(i, masses, T_cf, T_fc, cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f)
                 if compare_cells:
-                    #check against CSD cell
+                    # check against CSD cell
                     #
                     # # get csd corrected for centroids outside the reference cell
                     # cell_coords_c = self.dataset['crystal reference cell coords'][i][:, :, :3]
@@ -626,7 +647,7 @@ class Miner():
                     #     CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
                     #
                     # coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
-                    # x, y, z = self.dataset['crystal reference cell centroid x'][i], self.dataset['crystal reference cell centroid y'][i], self.dataset['crystal reference cell centroid z'][i]
+                    # x, y, z = self.dataset['crystal asymmetric unit centroid x'][i], self.dataset['crystal asymmetric unit centroid y'][i], self.dataset['crystal asymmetric unit centroid z'][i]
                     # #ang1, ang2, ang3 = self.dataset['crystal reference cell angle 1'][i], self.dataset['crystal reference cell angle 2'][i], self.dataset['crystal reference cell angle 3'][i]
                     # ang1, ang2, ang3 = orientation_angles
                     # random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc, confirm_transform=False, set_position=(x, y, z), set_rotation=(ang1, ang2, ang3))
@@ -673,25 +694,24 @@ class Miner():
                     #
                     # if np.linalg.norm(orientation_angles - angs) > 1e-6:
                     #     aa = 1
-                    #view((mol1,mol2))
-
+                    # view((mol1,mol2))
 
         if study_cells:
             results_dict = {
-                'csd_centroids_f' : np.asarray(self.centroids_f)[csd_inds],
-                #'csd_supercell_angles' : np.asarray(self.supercell_angle_overlaps)[csd_inds],
-                'csd_centroid_fractional_displacement' : np.asarray(self.centroid_fractional_displacement)[csd_inds],
-                'csd_centroid_cartesian_displacement' : np.asarray(self.centroid_cartesian_displacement)[csd_inds],
-                #'csd_inertial_angles' : np.asarray(self.inertial_angles)[csd_inds],
+                'csd_centroids_f': np.asarray(self.centroids_f)[csd_inds],
+                # 'csd_supercell_angles' : np.asarray(self.supercell_angle_overlaps)[csd_inds],
+                'csd_centroid_fractional_displacement': np.asarray(self.centroid_fractional_displacement)[csd_inds],
+                'csd_centroid_cartesian_displacement': np.asarray(self.centroid_cartesian_displacement)[csd_inds],
+                # 'csd_inertial_angles' : np.asarray(self.inertial_angles)[csd_inds],
                 'csd_orientation_angles': np.asarray(self.orientation_angles)[csd_inds],
                 'rand_centroids_f': np.asarray(self.centroids_f)[rand_inds],
-                #'rand_supercell_angles': np.asarray(self.supercell_angle_overlaps)[rand_inds],
+                # 'rand_supercell_angles': np.asarray(self.supercell_angle_overlaps)[rand_inds],
                 'rand_centroid_fractional_displacement': np.asarray(self.centroid_fractional_displacement)[rand_inds],
                 'rand_centroid_cartesian_displacement': np.asarray(self.centroid_cartesian_displacement)[rand_inds],
-                #'rand_inertial_angles': np.asarray(self.inertial_angles)[rand_inds],
+                # 'rand_inertial_angles': np.asarray(self.inertial_angles)[rand_inds],
                 'rand_orientation_angles': np.asarray(self.orientation_angles)[rand_inds],
             }
-            np.save('cell_analysis',results_dict)
+            np.save('cell_analysis', results_dict)
         if compare_cells:
             diffs = np.asarray(diff_list)
         debug_stop = 1
@@ -700,8 +720,8 @@ class Miner():
             plt.figure(1)
             plt.clf()
             plt.title('Canonical molecule centroid fractional distance')
-            plt.hist(results_dict['csd_centroid_fractional_displacement'], density=True, bins=100, alpha=0.5,label='csd')
-            plt.hist(results_dict['rand_centroid_fractional_displacement'], density=True, bins=100, alpha=0.5,label='random')
+            plt.hist(results_dict['csd_centroid_fractional_displacement'], density=True, bins=100, alpha=0.5, label='csd')
+            plt.hist(results_dict['rand_centroid_fractional_displacement'], density=True, bins=100, alpha=0.5, label='random')
             plt.legend()
 
             # # nearest alignment of inertial axis to one of a,b,c
@@ -724,51 +744,49 @@ class Miner():
             plt.clf()
             plt.subplot(2, 2, 1)
             plt.title('CSD fractional x-y centroid')
-            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 1], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 1], bins=100, norm=colors.LogNorm())
             plt.subplot(2, 2, 2)
             plt.title('Random fractional x-y centroid')
-            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 1], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 1], bins=100, norm=colors.LogNorm())
             plt.subplot(2, 2, 3)
             plt.title('CSD fractional x-z centroid')
-            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 2], bins=100, norm=colors.LogNorm())
             plt.subplot(2, 2, 4)
             plt.title('Random fractional x-z centroid')
-            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 2], bins=100, norm=colors.LogNorm())
             plt.tight_layout()
 
             plt.figure(5)
             plt.clf()
             for i in range(3):
-                plt.subplot(1,3,i+1)
+                plt.subplot(1, 3, i + 1)
                 plt.title('angle {}'.format(i))
-                plt.hist(results_dict['csd_orientation_angles'][:,i],density=True,bins=100)
-                plt.hist(results_dict['rand_orientation_angles'][:,i],density=True,bins=100,alpha=0.35)
+                plt.hist(results_dict['csd_orientation_angles'][:, i], density=True, bins=100)
+                plt.hist(results_dict['rand_orientation_angles'][:, i], density=True, bins=100, alpha=0.35)
 
             plt.figure(6)
             plt.clf()
             plt.subplot(2, 3, 1)
             plt.title('CSD 0-1 angles')
-            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 0], y=results_dict['csd_orientation_angles'][:, 1], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 0], y=results_dict['csd_orientation_angles'][:, 1], bins=100, norm=colors.LogNorm())
             plt.subplot(2, 3, 4)
             plt.title('Random 0-1 angles')
-            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 0], y=results_dict['rand_orientation_angles'][:, 1], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 0], y=results_dict['rand_orientation_angles'][:, 1], bins=100, norm=colors.LogNorm())
             plt.subplot(2, 3, 2)
             plt.title('CSD 0-2 angles')
-            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 0], y=results_dict['csd_orientation_angles'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 0], y=results_dict['csd_orientation_angles'][:, 2], bins=100, norm=colors.LogNorm())
             plt.subplot(2, 3, 5)
             plt.title('Random 0-2 angles')
-            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 0], y=results_dict['rand_orientation_angles'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 0], y=results_dict['rand_orientation_angles'][:, 2], bins=100, norm=colors.LogNorm())
             plt.subplot(2, 3, 3)
             plt.title('CSD 1-2 angles')
-            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 1], y=results_dict['csd_orientation_angles'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 1], y=results_dict['csd_orientation_angles'][:, 2], bins=100, norm=colors.LogNorm())
             plt.subplot(2, 3, 6)
             plt.title('Random 1-2 angles')
-            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 1], y=results_dict['rand_orientation_angles'][:, 2], bins=100,norm=colors.LogNorm())
+            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 1], y=results_dict['rand_orientation_angles'][:, 2], bins=100, norm=colors.LogNorm())
             plt.tight_layout()
 
-
-
-    def get_cell_data(self, i, masses, T_cf, T_fc,cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f):
+    def get_cell_data(self, i, masses, T_cf, T_fc, cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f):
 
         # # confirm my fractional coords agree with CSD
         # my_cell_coords_f = np.zeros_like(cell_coords_f)
@@ -799,9 +817,9 @@ class Miner():
         # manually enforce our style of centroid
         flag = 0
         for i in range(z_value):
-            if (np.amin(CoG_f[i])) < 0 or (np.amax(CoG_f[i])> 1):
+            if (np.amin(CoG_f[i])) < 0 or (np.amax(CoG_f[i]) > 1):
                 flag = 1
-                #print('Sample found with molecule out of cell')
+                # print('Sample found with molecule out of cell')
                 floor = np.floor(CoG_f[i])
                 new_fractional_coords = cell_coords_f[i] - floor
                 cell_coords_c[i] = T_fc.dot(new_fractional_coords.T).T
@@ -836,7 +854,6 @@ class Miner():
         # for n in range(len(supercell_ref_vectors_c)):
         #     supercell_vector_angles[n] = np.arccos(np.dot(supercell_ref_vectors_c[n] / np.linalg.norm(supercell_ref_vectors_c[n]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
 
-
         '''
         ORIENTATION ANALYSIS
         Compute the rotations necessary to achieve the 'standard' orientation (I1 aligned with (1,1,1)-(0,0,0), 
@@ -845,11 +862,11 @@ class Miner():
         _, orientation_angles = retrieve_alignment_parameters(masses, cell_coords_c[canonical_mol_ind], T_fc, T_cf)
 
         self.centroids_f.append(CoG_f[canonical_mol_ind])
-        #self.supercell_angle_overlaps.append(supercell_vector_angles)
+        # self.supercell_angle_overlaps.append(supercell_vector_angles)
         self.centroid_fractional_displacement.append(centroid_distance_from_origin_f[canonical_mol_ind])
         self.centroid_cartesian_displacement.append(centroid_distance_from_origin_c[canonical_mol_ind])
-        #self.inertial_angles.append([inertial_angle1, inertial_angle2, inertial_angle3])
-        #self.inertial_axes.append(Ip_axes_c)
+        # self.inertial_angles.append([inertial_angle1, inertial_angle2, inertial_angle3])
+        # self.inertial_axes.append(Ip_axes_c)
         self.orientation_angles.append(orientation_angles)
 
 

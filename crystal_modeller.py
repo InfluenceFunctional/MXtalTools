@@ -2,24 +2,21 @@ import wandb
 from utils import *
 import glob
 from model_utils import *
-from dataset_management.CSD_data_manager import Miner
+from dataset_management.dataset_manager import Miner
 from torch import backends, optim
-import torch
-from dataset_utils import BuildDataset, get_dataloaders, update_batch_size
-import time
+from dataset_utils import BuildDataset, get_dataloaders, update_batch_size, get_extra_test_loader
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
-from plotly.colors import n_colors
 import tqdm
 import torch.optim.lr_scheduler as lr_scheduler
 from nikos.coordinate_transformations import coor_trans, cell_vol
 from pyxtal import symmetry
 from ase import Atoms
-from ase.visualize import view
 import rdkit.Chem as Chem
-from dataset_management.random_crystal_builder import *
+from crystal_builder_tools import *
 from models.generator_models import crystal_generator
 from models.discriminator_models import crystal_discriminator
+from models.regression_models import molecule_regressor
 import ase.io
 from scipy.spatial.distance import cdist
 from scipy.stats import linregress
@@ -27,7 +24,7 @@ from supercell_builders import SupercellBuilder
 from STUN_MC import Sampler
 
 
-class Predictor():
+class Modeller():
     def __init__(self, config):
         self.config = config
         setup_outputs = self.setup()
@@ -88,7 +85,7 @@ class Predictor():
             self.sym_info['space_groups'] = self.space_groups
             np.save('symmetry_info', self.sym_info)
 
-        # initialize fractional lattice vectors - should be exactly identical to what's in featurize_crystal_data.py
+        # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
         supercell_scale = 2  # t
         n_cells = (2 * supercell_scale + 1) ** 3
 
@@ -183,37 +180,22 @@ class Predictor():
         :return:
         '''
         # init model
+        if config.g_model_path is not None:
+            g_checkpoint = torch.load(config.g_model_path)
+            config.generator = g_checkpoint['config']  # overwrite the settings for the model
+        if config.d_model_path is not None:
+            d_checkpoint = torch.load(config.d_model_path)
+            config.discriminator = d_checkpoint['config']
         print("Initializing models for " + config.mode)
         if config.mode == 'gan':
             generator = crystal_generator(config, dataDims)
             discriminator = crystal_discriminator(config, dataDims)
         elif config.mode == 'regression':
-            generator = molecule_graph_model(dataDims,
-                                             seed=config.seeds.model,
-                                             output_dimension=1,  # single-target regression
-                                             activation=config.generator.conditioner_activation,
-                                             num_fc_layers=config.generator.conditioner_num_fc_layers,
-                                             fc_depth=config.generator.conditioner_fc_depth,
-                                             fc_dropout_probability=config.generator.conditioner_fc_dropout_probability,
-                                             fc_norm_mode=config.generator.conditioner_fc_norm_mode,
-                                             graph_model=config.generator.graph_model,
-                                             graph_filters=config.generator.graph_filters,
-                                             graph_convolutional_layers=config.generator.graph_convolution_layers,
-                                             concat_mol_to_atom_features=True,
-                                             pooling=config.generator.pooling,
-                                             graph_norm=config.generator.graph_norm,
-                                             num_spherical=config.generator.num_spherical,
-                                             num_radial=config.generator.num_radial,
-                                             graph_convolution=config.generator.graph_convolution,
-                                             num_attention_heads=config.generator.num_attention_heads,
-                                             add_radial_basis=config.generator.add_radial_basis,
-                                             atom_embedding_size=config.generator.atom_embedding_size,
-                                             radial_function=config.generator.radial_function,
-                                             max_num_neighbors=config.generator.max_num_neighbors,
-                                             convolution_cutoff=config.generator.graph_convolution_cutoff,
-                                             device=config.device,
-                                             )
+            generator = molecule_regressor(config, dataDims)
             discriminator = nn.Linear(1, 1)  # dummy model
+        else:
+            print(f'{config.mode} is not an implemented method!')
+            sys.exit()
 
         if config.device == 'cuda':
             generator = generator.cuda()
@@ -251,6 +233,21 @@ class Predictor():
         else:
             print(config.discriminator.optimizer + ' is not a valid optimizer')
             sys.exit()
+
+        if config.g_model_path is not None:
+            if list(g_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+                for i in list(g_checkpoint['model_state_dict']):
+                    g_checkpoint['model_state_dict'][i[7:]] = g_checkpoint['model_state_dict'].pop(i)
+
+            generator.load_state_dict(g_checkpoint['model_state_dict'])
+            g_optimizer.load_state_dict(g_checkpoint['optimizer_state_dict'])
+
+        if config.d_model_path is not None:
+            if list(d_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+                for i in list(d_checkpoint['model_state_dict']):
+                    d_checkpoint['model_state_dict'][i[7:]] = d_checkpoint['model_state_dict'].pop(i)
+            discriminator.load_state_dict(d_checkpoint['model_state_dict'])
+            d_optimizer.load_state_dict(d_checkpoint['optimizer_state_dict'])
 
         # init schedulers
         scheduler1 = lr_scheduler.ReduceLROnPlateau(
@@ -385,28 +382,30 @@ class Predictor():
         for i, data in enumerate(train_loader):
             # build supercells from the dataset, and compute their properties
             csd_supercells = self.supercell_builder.build_supercells_from_dataset(data.clone(), config, return_overlaps=False)
-            csd_rdf_i, rr = crystal_rdf(csd_supercells, rrange=[0, 10], bins=100, intermolecular = True)
+
+            csd_rdf_i, rr = crystal_rdf(csd_supercells, rrange=[0, 10], bins=100, intermolecular=True)
+
             csd_rdf.extend(csd_rdf_i.cpu().detach().numpy())
             # csd_overlaps.extend(csd_overlaps_i)
 
             rebuild_supercells, vol, rebuild_overlaps_i = \
                 self.supercell_builder.build_supercells(data.clone(), None,
                                                         config.supercell_size, config.discriminator.graph_convolution_cutoff,
-                                                        skip_cell_cleaning=True, ref_data=csd_supercells, debug = True)
+                                                        skip_cell_cleaning=True, ref_data=csd_supercells, debug=True)
 
             rebuild_supercells = rebuild_supercells.cpu()
 
-            rebuild_rdf_i, rr = crystal_rdf(rebuild_supercells, rrange=[0, 10], bins=100, intermolecular = True)
+            rebuild_rdf_i, rr = crystal_rdf(rebuild_supercells, rrange=[0, 10], bins=100, intermolecular=True)
             rebuild_rdf.extend(rebuild_rdf_i.cpu().detach().numpy())
             rebuild_overlaps.extend(rebuild_overlaps_i.cpu().detach().numpy())
 
-            assert torch.sum(torch.abs(rebuild_rdf_i.to(csd_rdf_i.device) - csd_rdf_i)) / torch.sum(csd_rdf_i) < 0.01
+            assert torch.sum(torch.abs(rebuild_rdf_i.to(csd_rdf_i.device) - csd_rdf_i)) / torch.sum(csd_rdf_i) < 0.05
 
             # build random supercells and compute their properties
             random_supercells, vol, random_overlaps_i = self.supercell_builder.build_supercells(data.clone(), self.randn_generator(data.num_graphs),
                                                                                                 config.supercell_size, config.discriminator.graph_convolution_cutoff)
             random_supercells = random_supercells.cpu()
-            random_rdf_i, rr = crystal_rdf(random_supercells, rrange=[0, 10], bins=100, intermolecular = True)
+            random_rdf_i, rr = crystal_rdf(random_supercells, rrange=[0, 10], bins=100, intermolecular=True)
 
             random_rdf.extend(random_rdf_i.cpu().detach().numpy())
             random_overlaps.extend(random_overlaps_i.cpu().detach().numpy())
@@ -438,6 +437,17 @@ class Predictor():
                 train_loader, test_loader = get_dataloaders(dataset_builder, config)
                 config.final_batch_size = config.max_batch_size
             del dataset_builder
+
+            if config.extra_test_set_path is not None:
+                miner = Miner(config=self.config, dataset_path=self.config.extra_test_set_path, collect_chunks=False)
+                miner.exclude_nonstandard_settings = False
+                miner.exclude_crystal_systems = None
+                miner.exclude_polymorphs = False
+                miner.exclude_missing_r_factor = False
+                dataset = miner.load_for_modelling(save_dataset = False, return_dataset = True)
+                extra_test_loader = get_extra_test_loader(dataset, config, dataDims = self.dataDims,
+                                                          pg_dict=self.point_groups, sg_dict=self.space_groups, lattice_dict=self.lattice_type)
+                del (dataset, miner)
 
             print("Training batch size set to {}".format(config.final_batch_size))
             # model, optimizer, schedulers
@@ -485,6 +495,13 @@ class Predictor():
                                 self.epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
                                            update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
 
+                            if config.extra_test_set_path is not None:
+                                d_err_te_ex, d_te_record_ex, g_err_te_ex, g_te_record_ex, extra_test_epoch_stats_dict, time_test_ex = \
+                                    self.epoch(config, dataLoader=extra_test_loader, generator=generator, discriminator=discriminator,
+                                               update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
+                            else:
+                                extra_test_epoch_stats_dict = None
+
                         print('epoch={}; d_nll_tr={:.5f}; d_nll_te={:.5f}; g_nll_tr={:.5f}; g_nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(
                             epoch, np.mean(np.asarray(d_err_tr)), np.mean(np.asarray(d_err_te)),
                             np.mean(np.asarray(g_err_tr)), np.mean(np.asarray(g_err_te)),
@@ -512,10 +529,14 @@ class Predictor():
                         '''
                         # logging
                         metrics_dict = self.update_gan_metrics(
-                            epoch, metrics_dict, d_err_tr, d_err_te,
-                            g_err_tr, g_err_te, d_learning_rate, g_learning_rate)
+                            epoch, metrics_dict,
+                            d_err_tr, d_err_te,
+                            g_err_tr, g_err_te,
+                            d_learning_rate, g_learning_rate)
 
-                        self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict, d_tr_record, d_te_record, g_tr_record, g_te_record)
+                        self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
+                                          d_tr_record, d_te_record, g_tr_record, g_te_record,
+                                          extra_test_epoch_stats_dict = extra_test_epoch_stats_dict)
                         if epoch % config.wandb.sample_reporting_frequency == 0:
                             self.log_gan_accuracy(epoch, train_loader, test_loader,
                                                   metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
@@ -523,10 +544,16 @@ class Predictor():
                                                   generator, discriminator, wandb_log_figures=config.wandb.log_figures)
 
                         '''
+                        save model if best
+                        '''  # todo add more sophisticated convergence stat
+                        if np.average(d_err_te) < np.amin(d_te_record):
+                            save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
+                        if np.average(g_err_te) < np.amin(g_te_record):
+                            save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num))
+
+                        '''
                         convergence checks
                         '''
-
-                        # check for convergence
                         generator_convergence = checkConvergence(metrics_dict['generator test loss'], config.history, config.generator.convergence_eps)
                         discriminator_convergence = checkConvergence(metrics_dict['discriminator test loss'], config.history, config.discriminator.convergence_eps)
 
@@ -536,11 +563,16 @@ class Predictor():
                             print('discriminator converged!')
 
                         if (generator_convergence and discriminator_convergence) and (epoch > config.history + 2):
+                            print('Training has converged!')
                             config.finished = True
                             self.log_gan_accuracy(epoch, train_loader, test_loader,
                                                   metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
                                                   train_epoch_stats_dict, test_epoch_stats_dict, config,
                                                   generator, discriminator, wandb_log_figures=config.wandb.log_figures)
+
+                            '''
+                            save final model
+                            '''
 
                             # for working with a trained model
                             if config.sample_after_training:
@@ -553,6 +585,8 @@ class Predictor():
                                 increment = max(4, int(train_loader.batch_size * 0.05))  # increment batch size
                                 train_loader = update_batch_size(train_loader, train_loader.batch_size + increment)
                                 test_loader = update_batch_size(test_loader, test_loader.batch_size + increment)
+                                if config.extra_test_set_path is not None:
+                                    extra_test_loader = update_batch_size(extra_test_loader, extra_test_loader.batch_size + increment)
                                 print(f'Batch size incremented to {train_loader.batch_size}')
                             wandb.log({'batch size': train_loader.batch_size})
 
@@ -878,7 +912,7 @@ class Predictor():
         :return:
         '''
         data = dataset_builder.datapoints
-        keys = self.dataDims['crystal features']
+        keys = self.dataDims['lattice features']
         if config.generator.conditional_modelling:
             if (config.generator.conditioning_mode != 'graph model'):
                 keys.extend(self.dataDims['conditional features'])
@@ -926,23 +960,23 @@ class Predictor():
         samples = renormalized_samples[:len(targets)]
         targets = np.asarray(targets)[:len(samples)]
         renormalized_targets = np.zeros_like(targets)
-        for i in range(dataDims['n crystal features']):
-            renormalized_targets[:, i] = targets[:, i] * dataDims['stds'][i] + dataDims['means'][i]
+        for i in range(dataDims['num lattice features']):
+            renormalized_targets[:, i] = targets[:, i] * dataDims['lattice stds'][i] + dataDims['lattice means'][i]
 
         targets_rep = np.repeat(renormalized_targets[:, None, :], samples.shape[1], axis=1)
         # denominator = np.repeat(np.repeat(np.quantile(renormalized_targets,0.95,axis=0)[None,None,:],samples.shape[0],axis=0),samples.shape[1],axis=1)
         denominator = targets_rep.copy()
-        for i in range(dataDims['n crystal features']):
-            if dataDims['dtypes'][i] == 'bool':
+        for i in range(dataDims['num lattice features']):
+            if dataDims['lattice dtypes'][i] == 'bool':
                 denominator[:, :, i] = 1
 
         errors = np.abs((targets_rep - samples) / denominator)
         feature_mae = np.mean(errors, axis=(0, 1))
 
-        for i in range(dataDims['n crystal features']):
-            feature_accuracy_dict[sampler + ' ' + dataDims['crystal features'][i] + ' mae'] = feature_mae[i]
+        for i in range(dataDims['num lattice features']):
+            feature_accuracy_dict[sampler + ' ' + dataDims['lattice features'][i] + ' mae'] = feature_mae[i]
             for cutoff in [0.01, 0.025, 0.05, 0.075, 0.1, 0.2, 0.3]:
-                feature_accuracy_dict[sampler + ' ' + dataDims['crystal features'][i] + ' efficiency at {}'.format(cutoff)] = np.average(errors[:, :, i] < cutoff)
+                feature_accuracy_dict[sampler + ' ' + dataDims['lattice features'][i] + ' efficiency at {}'.format(cutoff)] = np.average(errors[:, :, i] < cutoff)
 
         mae_error = np.mean(errors, axis=2)
 
@@ -1021,7 +1055,8 @@ class Predictor():
 
         return nf_scores_dict
 
-    def log_gan_loss(self, metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict, d_tr_record, d_te_record, g_tr_record, g_te_record):
+    def log_gan_loss(self, metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict, d_tr_record, d_te_record, g_tr_record, g_te_record,
+                     extra_test_epoch_stats_dict = None):
         current_metrics = {}
         for key in metrics_dict.keys():
             current_metrics[key] = float(metrics_dict[key][-1])
@@ -1035,9 +1070,9 @@ class Predictor():
 
         for key in current_metrics.keys():
             current_metrics[key] = np.amax(current_metrics[key])  # just a formatting thing - nothing to do with the max of anything
+        wandb.log(current_metrics)
 
         # log discriminator losses
-        wandb.log(current_metrics)
         hist = np.histogram(d_tr_record, bins=256, range=(np.amin(d_tr_record), np.quantile(d_tr_record, 0.9)))
         wandb.log({"Discriminator Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
         hist = np.histogram(d_te_record, bins=256, range=(np.amin(d_te_record), np.quantile(d_te_record, 0.9)))
@@ -1067,6 +1102,11 @@ class Predictor():
                 special_losses['Train ' + key] = np.average(train_epoch_stats_dict[key])
             if ('score' in key) and (test_epoch_stats_dict[key] is not None):
                 special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
+            if extra_test_epoch_stats_dict is not None:
+                if ('loss' in key) and (test_epoch_stats_dict[key] is not None):
+                    special_losses['Extra Test ' + key] = np.average(extra_test_epoch_stats_dict[key])
+                if ('score' in key) and (train_epoch_stats_dict[key] is not None):
+                    special_losses['Extra Test ' + key] = np.average(extra_test_epoch_stats_dict[key])
         wandb.log(special_losses)
 
     def params_f_to_c(self, cell_lengths, cell_angles):
@@ -1152,10 +1192,10 @@ class Predictor():
             # todo rebuild - make sure this is meaningful
             # # correlate losses with molecular features
             # tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
-            # g_loss_correlations = np.zeros(config.dataDims['n tracking features'])
-            # d_loss_correlations = np.zeros(config.dataDims['n tracking features'])
+            # g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+            # d_loss_correlations = np.zeros(config.dataDims['num tracking features'])
             # features = []
-            # for i in range(config.dataDims['n tracking features']):  # not that interesting
+            # for i in range(config.dataDims['num tracking features']):  # not that interesting
             #     features.append(config.dataDims['tracking features dict'][i])
             #     g_loss_correlations[i] = np.corrcoef(g_te_record, tracking_features[:, i], rowvar=False)[0, 1]
             #     d_loss_correlations[i] = np.corrcoef(d_te_record, tracking_features[:, i], rowvar=False)[0, 1]
@@ -1168,15 +1208,15 @@ class Predictor():
             #
             # if config.wandb.log_figures:
             #     fig = go.Figure(go.Bar(
-            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['n tracking features'])],
-            #         x=[g_loss_correlations[i] for i in range(config.dataDims['n tracking features'])],
+            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
+            #         x=[g_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
             #         orientation='h',
             #     ))
             #     wandb.log({'G Loss correlations': fig})
             #
             #     fig = go.Figure(go.Bar(
-            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['n tracking features'])],
-            #         x=[d_loss_correlations[i] for i in range(config.dataDims['n tracking features'])],
+            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
+            #         x=[d_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
             #         orientation='h',
             #     ))
             #     wandb.log({'D Loss correlations': fig})
@@ -1185,10 +1225,10 @@ class Predictor():
             cell parameter analysis
             '''
             if train_epoch_stats_dict['generated cell parameters'] is not None:
-                n_crystal_features = config.dataDims['n crystal features']
+                n_crystal_features = config.dataDims['num lattice features']
                 generated_samples = test_epoch_stats_dict['generated cell parameters']
-                means = config.dataDims['means']
-                stds = config.dataDims['stds']
+                means = config.dataDims['lattice means']
+                stds = config.dataDims['lattice stds']
 
                 # slightly expensive to do this every time
                 dataset_cell_distribution = np.asarray([train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
@@ -1207,7 +1247,7 @@ class Predictor():
                 overlaps_1d = {}
                 sample_means = {}
                 sample_stds = {}
-                for i, key in enumerate(config.dataDims['crystal features']):
+                for i, key in enumerate(config.dataDims['lattice features']):
                     mini, maxi = np.amin(dataset_cell_distribution[:, i]), np.amax(dataset_cell_distribution[:, i])
                     h1, r1 = np.histogram(dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
                     h1 = h1 / len(dataset_cell_distribution[:, i])
@@ -1268,7 +1308,7 @@ class Predictor():
                         fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                         fig.update_traces(opacity=0.5)
 
-                        fig_dict[self.dataDims['crystal features'][i] + ' distribution'] = fig
+                        fig_dict[self.dataDims['lattice features'][i] + ' distribution'] = fig
 
                     wandb.log(fig_dict)
 
@@ -1545,9 +1585,9 @@ class Predictor():
         self.crystal_packing_ind = self.dataDims['tracking features dict'].index('crystal packing coefficient')
         self.crystal_density_ind = self.dataDims['tracking features dict'].index('crystal calculated density')
         self.mol_size_ind = self.dataDims['tracking features dict'].index('molecule num atoms')
-        self.pg_ind_dict = {thing[14:]: ind + self.dataDims['n atomwise features'] for ind, thing in enumerate(self.dataDims['mol features']) if 'pg is' in thing}
-        self.sg_ind_dict = {thing[14:]: ind + self.dataDims['n atomwise features'] for ind, thing in enumerate(self.dataDims['mol features']) if 'sg is' in thing}  # todo simplify - allow all possibilities
-        self.crysys_ind_dict = {thing[18:]: ind + self.dataDims['n atomwise features'] for ind, thing in enumerate(self.dataDims['mol features']) if 'crystal system is' in thing}
+        self.pg_ind_dict = {thing[14:]: ind + self.dataDims['num atomwise features'] for ind, thing in enumerate(self.dataDims['mol features']) if 'pg is' in thing}
+        self.sg_ind_dict = {thing[14:]: ind + self.dataDims['num atomwise features'] for ind, thing in enumerate(self.dataDims['mol features']) if 'sg is' in thing}  # todo simplify - allow all possibilities
+        self.crysys_ind_dict = {thing[18:]: ind + self.dataDims['num atomwise features'] for ind, thing in enumerate(self.dataDims['mol features']) if 'crystal system is' in thing}
 
         self.sym_info['pg_ind_dict'] = self.pg_ind_dict
         self.sym_info['sg_ind_dict'] = self.sg_ind_dict
@@ -1555,10 +1595,10 @@ class Predictor():
 
         ''' independent gaussian model to approximate the problem
         '''
-        self.randn_generator = independent_gaussian_model(input_dim=self.dataDims['n crystal features'],
-                                                          means=self.dataDims['means'],
-                                                          stds=self.dataDims['stds'],
-                                                          cov_mat=self.dataDims['cov mat'])
+        self.randn_generator = independent_gaussian_model(input_dim=self.dataDims['num lattice features'],
+                                                          means=self.dataDims['lattice means'],
+                                                          stds=self.dataDims['lattice stds'],
+                                                          cov_mat=self.dataDims['lattice cov mat'])
 
         return config, dataset_builder
 
@@ -1639,6 +1679,6 @@ class Predictor():
         best_supercells, _, _ = self.supercell_builder.build_supercells(single_mol_data.clone(), torch.Tensor(best_samples).cuda(),
                                                                         supercell_size=1, graph_convolution_cutoff=7)
 
-        best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular = True)
+        best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular=True)
 
         return sampling_dict

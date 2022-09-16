@@ -1,13 +1,9 @@
 from ccdc.search import EntryReader
 from utils import *
-from dataset_management.random_crystal_builder import *
+from crystal_builder_tools import *
 from pymatgen.symmetry import analyzer
 from pymatgen.analysis import structure_matcher
 from pymatgen.core import (structure, lattice)
-from ase import Atoms
-from ase.visualize import view
-import matplotlib.pyplot as plt
-import rdkit.Chem
 import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # annoying numpy error
@@ -101,8 +97,8 @@ def parallel_cell_build_analyze(data, sym_ops, atom_weights):
     '''
     retrieve the rotation of the target
     '''
-    Ip_axes, _, _ = compute_principal_axes_torch(masses, csd_canonical_mol_coords)
-    target_handedness = torch.sign(torch.mul(Ip_axes[0], torch.cross(Ip_axes[1], Ip_axes[2])).sum()).float()
+    Ip_axes, _, _ = compute_principal_axes_torch(csd_canonical_mol_coords, masses)
+    target_handedness = compute_Ip_handedness(Ip_axes)
 
     normed_alignment_target = torch.eye(3)
     normed_alignment_target[0,0] = target_handedness # don't invert during rotation
@@ -111,16 +107,16 @@ def parallel_cell_build_analyze(data, sym_ops, atom_weights):
     components = torch.Tensor(Rotation.from_matrix(torch.linalg.inv(rot_matrix)).as_rotvec())  # CRITICAL we want the inverse transform here
 
     standardized_csd_canonical_coords = torch.inner(rot_matrix, csd_canonical_mol_coords - csd_canonical_mol_coords.mean(0)).T  # standard, non-inverted rotation
-    Ip_axes_csd_std, _, _ = compute_principal_axes_torch(masses, standardized_csd_canonical_coords)
+    Ip_axes_csd_std, _, _ = compute_principal_axes_torch(standardized_csd_canonical_coords, masses)
 
     '''
     get std rotation for the generated conformer
     '''
-    Ip_axes, _, _ = compute_principal_axes_torch(masses, gen_canonical_coords)
-    handedness = torch.sign(torch.mul(Ip_axes[0], torch.cross(Ip_axes[1], Ip_axes[2])).sum()).float()
+    Ip_axes, _, _ = compute_principal_axes_torch(gen_canonical_coords, masses)
+    handedness = compute_Ip_handedness(Ip_axes)
     if handedness != target_handedness:
         gen_canonical_coords = -(gen_canonical_coords - gen_canonical_coords.mean(0)) + gen_canonical_coords.mean(0)
-        Ip_axes, _, _ = compute_principal_axes_torch(masses, gen_canonical_coords)
+        Ip_axes, _, _ = compute_principal_axes_torch(gen_canonical_coords, masses)
 
     normed_alignment_target = torch.eye(3)
     normed_alignment_target[0,0] = target_handedness # don't invert during rotation
@@ -128,7 +124,7 @@ def parallel_cell_build_analyze(data, sym_ops, atom_weights):
     std_rotation_matrix = torch.matmul(normed_alignment_target.T, torch.linalg.inv(Ip_axes).T)  # rotation matrix between target and current Ip axes
 
     standardized_gen_canonical_coords = torch.inner(std_rotation_matrix, gen_canonical_coords - gen_canonical_coords.mean(0)).T
-    Ip_axes_gen_std, _, _ = compute_principal_axes_torch(masses, standardized_gen_canonical_coords)
+    Ip_axes_gen_std, _, _ = compute_principal_axes_torch(standardized_gen_canonical_coords, masses)
 
     assert torch.sum(torch.abs(normed_alignment_target - Ip_axes_gen_std)) < 0.1  # confirm the rotation was done correctly
     assert torch.sum(torch.abs(normed_alignment_target - Ip_axes_csd_std)) < 0.1  # confirm the rotation was done correctly

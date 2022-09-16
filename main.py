@@ -7,7 +7,7 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)  # annoying numpy err
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # annoying numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # annoying w&b error
 from utils import load_yaml, add_bool_arg, get_config
-from CSG_predictor import Predictor
+from crystal_modeller import Modeller
 
 '''
 Predict crystal features given atom and molecule-level information
@@ -35,6 +35,9 @@ def add_args(parser):
     add_bool_arg(parser, 'skip_run_init', default=False)
     parser.add_argument("--mode", default="gan", type=str)  # 'gan' or 'regression'
     add_bool_arg(parser, 'skip_saving_and_loading', default=True)
+    parser.add_argument("--d_model_path", default=None, type=str)
+    parser.add_argument("--g_model_path", default=None, type=str)
+    parser.add_argument("--extra_test_set_path", default=None, type=str)
 
     update_args2config(args2config, 'yaml_config')
     update_args2config(args2config, 'run_num')
@@ -47,6 +50,9 @@ def add_args(parser):
     update_args2config(args2config, 'skip_run_init')
     update_args2config(args2config, 'mode')
     update_args2config(args2config, 'skip_saving_and_loading')
+    update_args2config(args2config, 'd_model_path')
+    update_args2config(args2config, 'g_model_path')
+    update_args2config(args2config, 'extra_test_set_path')
 
     # wandb login
     parser.add_argument('--wandb_experiment_tag', type=str, default='MCryGAN_dev')
@@ -376,7 +382,7 @@ if __name__ == '__main__':
     run the code
     '''
 
-    predictor = Predictor(config)
+    predictor = Modeller(config)
     if config.mode == 'diagnostic':
         predictor.cell_diagnostic()
     else:
