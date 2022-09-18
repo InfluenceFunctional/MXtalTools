@@ -308,5 +308,5 @@ class Sampler:
             if (self.iter - self.resetInd[i]) > 1e3:  # within xx of the last reset
                 if (self.iter - self.new_optima_inds[i][-1]) > 1e3:  # haven't seen a new near-minimum in xx steps
                     self.resetInd[i] = self.iter
-                    self.resetConfig(i)  # re-randomize
+                    self.resetConfig(i)  # re-randomize # TODO this is broken under new randn generator normalization
                     self.temperature[i] = self.temp0  # boost temperature

@@ -51,7 +51,7 @@ target: packing # 'density' or 'packing' or 'volume'
 dataset_length: 1000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
-max_num_atoms: 40
+max_num_atoms: 100
 min_num_atoms: 10
 max_z_value: 10
 min_z_value: 0
@@ -89,21 +89,21 @@ discriminator:
 
   graph_model: mike
   graph_convolution_layers: 4
-  graph_filters: 16
-  atom_embedding_size: 32
+  graph_filters: 64
+  atom_embedding_size: 128
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
   graph_convolution_cutoff: 7
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 1 # mikenet self attention mode only - must evenly divide graph filters
+  num_attention_heads: 4 # mikenet self attention mode only - must evenly divide graph filters
   graph_convolution: self attention # 'full message passing' or schnet or 'self attention'
   add_spherical_basis: True # mikenet only
   pooling: combo
 
-  num_fc_layers: 1
-  fc_depth: 32
+  num_fc_layers: 4
+  fc_depth: 128
   activation: leaky relu
   fc_dropout_probability: 0
   fc_norm_mode: layer

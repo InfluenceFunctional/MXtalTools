@@ -2221,6 +2221,12 @@ def load_checkpoint(model, optimizer, model_path, config):
 
     return model, optimizer, config
 
+def normed_score(x):
+    return (x[:,1] - x[:,0])/x[:,1]
+
+
+def np_softmax(x):
+    return F.softmax(torch.Tensor(x), dim=1).cpu().detach().numpy()
 
 '''
 # look at all kinds of activations

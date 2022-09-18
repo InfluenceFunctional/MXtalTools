@@ -27,30 +27,33 @@ class crystal_generator(nn.Module):
         conditioning model
         '''
         if config.generator.conditioning_mode == 'graph model':  # molecular graph model
-            self.conditioner = molecule_graph_model(dataDims,
-                                                    seed=config.seeds.model,
-                                                    output_dimension=config.generator.fc_depth,
-                                                    activation=config.generator.conditioner_activation,
-                                                    num_fc_layers=config.generator.conditioner_num_fc_layers,
-                                                    fc_depth=config.generator.conditioner_fc_depth,
-                                                    fc_dropout_probability=config.generator.conditioner_fc_dropout_probability,
-                                                    fc_norm_mode=config.generator.conditioner_fc_norm_mode,
-                                                    graph_model=config.generator.graph_model,
-                                                    graph_filters=config.generator.graph_filters,
-                                                    graph_convolutional_layers=config.generator.graph_convolution_layers,
-                                                    concat_mol_to_atom_features=True,
-                                                    pooling=config.generator.pooling,
-                                                    graph_norm=config.generator.graph_norm,
-                                                    num_spherical=config.generator.num_spherical,
-                                                    num_radial=config.generator.num_radial,
-                                                    graph_convolution=config.generator.graph_convolution,
-                                                    num_attention_heads=config.generator.num_attention_heads,
-                                                    add_radial_basis=config.generator.add_radial_basis,
-                                                    atom_embedding_size=config.generator.atom_embedding_size,
-                                                    radial_function=config.generator.radial_function,
-                                                    max_num_neighbors=config.generator.max_num_neighbors,
-                                                    convolution_cutoff=config.generator.graph_convolution_cutoff,
-                                                    )
+            self.conditioner = molecule_graph_model(
+                dataDims,
+                seed=config.seeds.model,
+                num_atom_feats=dataDims['num atom features'],
+                num_mol_feats=dataDims['num mol features'],
+                output_dimension=config.generator.fc_depth,
+                activation=config.generator.conditioner_activation,
+                num_fc_layers=config.generator.conditioner_num_fc_layers,
+                fc_depth=config.generator.conditioner_fc_depth,
+                fc_dropout_probability=config.generator.conditioner_fc_dropout_probability,
+                fc_norm_mode=config.generator.conditioner_fc_norm_mode,
+                graph_model=config.generator.graph_model,
+                graph_filters=config.generator.graph_filters,
+                graph_convolutional_layers=config.generator.graph_convolution_layers,
+                concat_mol_to_atom_features=True,
+                pooling=config.generator.pooling,
+                graph_norm=config.generator.graph_norm,
+                num_spherical=config.generator.num_spherical,
+                num_radial=config.generator.num_radial,
+                graph_convolution=config.generator.graph_convolution,
+                num_attention_heads=config.generator.num_attention_heads,
+                add_radial_basis=config.generator.add_radial_basis,
+                atom_embedding_size=config.generator.atom_embedding_size,
+                radial_function=config.generator.radial_function,
+                max_num_neighbors=config.generator.max_num_neighbors,
+                convolution_cutoff=config.generator.graph_convolution_cutoff,
+            )
         elif config.generator.conditioning_mode == 'molecule features':
             self.conditioner = general_MLP(layers=config.generator.conditioner_num_fc_layers,
                                            filters=config.generator.conditioner_fc_depth,
@@ -84,13 +87,13 @@ class crystal_generator(nn.Module):
             sys.exit()
 
     def sample_latent(self, n_samples):
-        #return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
+        # return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
         return self.prior.sample((n_samples,)).to(self.device)
 
-    def forward(self, n_samples, z=None, conditions=None, return_latent = False, return_condition = False, return_prior = False):
+    def forward(self, n_samples, z=None, conditions=None, return_latent=False, return_condition=False, return_prior=False):
         if z is None:  # sample random numbers from simple prior
             z = self.sample_latent(n_samples)
-            #z = torch.zeros_like(z0)
+            # z = torch.zeros_like(z0)
 
         if conditions is not None:
             conditions_encoding = self.conditioner(conditions)
@@ -99,7 +102,7 @@ class crystal_generator(nn.Module):
 
         # run through model
         if any((return_condition, return_prior, return_latent)):
-            output = [self.model(z, conditions=conditions_encoding, return_latent = return_latent)]
+            output = [self.model(z, conditions=conditions_encoding, return_latent=return_latent)]
             if return_prior:
                 output.append(z)
             if return_condition:
@@ -107,8 +110,8 @@ class crystal_generator(nn.Module):
             return output
 
         else:
-            if not 'nf' in self.generator_model_type: # todo implement latent return in NF model
-                return self.model(z, conditions=conditions_encoding, return_latent = return_latent)
+            if not 'nf' in self.generator_model_type:  # todo implement latent return in NF model
+                return self.model(z, conditions=conditions_encoding, return_latent=return_latent)
             else:
                 x, _ = self.model.backward(z, conditions=conditions_encoding)  # normalizing flow runs backwards from z->x
                 return x

@@ -76,9 +76,6 @@ def fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles):
     ''' Calculate volume of the unit cell '''
     val = 1.0 - cos_a[:, 0] ** 2 - cos_a[:, 1] ** 2 - cos_a[:, 2] ** 2 + 2.0 * cos_a[:, 0] * cos_a[:, 1] * cos_a[:, 2]
 
-    # if torch.sum(val < 0) > 0:
-    #     aa = 1 # todo what is this doing here
-
     vol = torch.sign(val) * torch.prod(cell_lengths, dim=1) * torch.sqrt(torch.abs(val))  # technically a signed quanitity
 
     ''' Setting the transformation matrix '''
@@ -155,6 +152,8 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
         # ignore atoms which are more than mol_radius + conv_cutoff
         ignore_inds = torch.where((torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1], p=2) > (ref_mol_max_dist + cutoff))[0])[0]
         ref_mol_inds[ignore_inds] = 2  # 2 is the index for completely ignoring these atoms in graph convolutions - haven't removed them entirely because it wrecks the crystal periodicity
+
+        # if the crystal is too diffuse, we will have no intermolecular convolution inds - we need a failure mode which accounts for this
 
         supercell_atoms_list.append(supercell_atoms)
         ref_mol_inds_list.append(ref_mol_inds)

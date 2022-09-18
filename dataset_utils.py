@@ -188,6 +188,8 @@ class BuildDataset:
         z_value_ind = self.tracking_dict_keys.index('crystal z value')
         sg_ind_value_ind = self.tracking_dict_keys.index('crystal spacegroup number')
         mol_size_ind = self.tracking_dict_keys.index('molecule num atoms')
+        mol_volume_ind = self.tracking_dict_keys.index('molecule volume')
+
 
         tracking_features = torch.Tensor(tracking_features)
         print("Generating final training datapoints")
@@ -214,6 +216,7 @@ class BuildDataset:
                                           cell_params=torch.Tensor(lattice_features[i, None, :]),
                                           T_fc=torch.Tensor(T_fc_list[i])[None, ...],
                                           mol_size=torch.Tensor(tracking_features[i, mol_size_ind]),
+                                          mol_volume=torch.Tensor(tracking_features[i, mol_volume_ind]),
                                           csd_identifier=identifiers[i]))
 
         return datapoints
@@ -392,7 +395,12 @@ class BuildDataset:
         '''
         compute full covariance matrix
         '''
+        # normalize the cell lengths against molecule volume & z value
+        lengths = unstandardized_feature_array[:,:3]
+        normed_lengths = lengths / (dataset['molecule volume'][:,None]**(1/3) * (dataset['crystal z value'][:, None] ** (1/3)))
+        unstandardized_feature_array[:,:3] = normed_lengths
         covariance_matrix = np.cov(unstandardized_feature_array, rowvar=False)
+
         for i in range(len(covariance_matrix)):  # ensure it's well-conditioned
             covariance_matrix[i, i] = max((0.01, covariance_matrix[i, i]))
 

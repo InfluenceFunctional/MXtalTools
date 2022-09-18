@@ -7,6 +7,7 @@ from torch import backends, optim
 from dataset_utils import BuildDataset, get_dataloaders, update_batch_size, get_extra_test_loader
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
+import plotly.express as px
 import tqdm
 import torch.optim.lr_scheduler as lr_scheduler
 from nikos.coordinate_transformations import coor_trans, cell_vol
@@ -402,8 +403,9 @@ class Modeller():
             assert torch.sum(torch.abs(rebuild_rdf_i.to(csd_rdf_i.device) - csd_rdf_i)) / torch.sum(csd_rdf_i) < 0.05
 
             # build random supercells and compute their properties
-            random_supercells, vol, random_overlaps_i = self.supercell_builder.build_supercells(data.clone(), self.randn_generator(data.num_graphs),
-                                                                                                config.supercell_size, config.discriminator.graph_convolution_cutoff)
+            random_supercells, vol, random_overlaps_i = \
+                self.supercell_builder.build_supercells(data.clone(), self.randn_generator(data, data.num_graphs),
+                                                        config.supercell_size, config.discriminator.graph_convolution_cutoff)
             random_supercells = random_supercells.cpu()
             random_rdf_i, rr = crystal_rdf(random_supercells, rrange=[0, 10], bins=100, intermolecular=True)
 
@@ -444,8 +446,8 @@ class Modeller():
                 miner.exclude_crystal_systems = None
                 miner.exclude_polymorphs = False
                 miner.exclude_missing_r_factor = False
-                dataset = miner.load_for_modelling(save_dataset = False, return_dataset = True)
-                extra_test_loader = get_extra_test_loader(dataset, config, dataDims = self.dataDims,
+                dataset = miner.load_for_modelling(save_dataset=False, return_dataset=True)
+                extra_test_loader = get_extra_test_loader(dataset, config, dataDims=self.dataDims,
                                                           pg_dict=self.point_groups, sg_dict=self.space_groups, lattice_dict=self.lattice_type)
                 del (dataset, miner)
 
@@ -496,9 +498,8 @@ class Modeller():
                                            update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
 
                             if config.extra_test_set_path is not None:
-                                d_err_te_ex, d_te_record_ex, g_err_te_ex, g_te_record_ex, extra_test_epoch_stats_dict, time_test_ex = \
-                                    self.epoch(config, dataLoader=extra_test_loader, generator=generator, discriminator=discriminator,
-                                               update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
+                                extra_test_epoch_stats_dict, time_test_ex = \
+                                    self.discriminator_evaluation(config, dataLoader=extra_test_loader, discriminator=discriminator)  # compute loss on test set
                             else:
                                 extra_test_epoch_stats_dict = None
 
@@ -535,20 +536,21 @@ class Modeller():
                             d_learning_rate, g_learning_rate)
 
                         self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
-                                          d_tr_record, d_te_record, g_tr_record, g_te_record,
-                                          extra_test_epoch_stats_dict = extra_test_epoch_stats_dict)
+                                          d_tr_record, d_te_record, g_tr_record, g_te_record)
+
                         if epoch % config.wandb.sample_reporting_frequency == 0:
                             self.log_gan_accuracy(epoch, train_loader, test_loader,
                                                   metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
                                                   train_epoch_stats_dict, test_epoch_stats_dict, config,
-                                                  generator, discriminator, wandb_log_figures=config.wandb.log_figures)
+                                                  generator, discriminator, wandb_log_figures=config.wandb.log_figures,
+                                                  extra_test_dict=extra_test_epoch_stats_dict)
 
                         '''
                         save model if best
                         '''  # todo add more sophisticated convergence stat
-                        if np.average(d_err_te) < np.amin(d_te_record):
+                        if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss']): # todo fix this
                             save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
-                        if np.average(g_err_te) < np.amin(g_te_record):
+                        if np.average(g_err_te) < np.amin(metrics_dict['generator test loss']):
                             save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num))
 
                         '''
@@ -568,7 +570,8 @@ class Modeller():
                             self.log_gan_accuracy(epoch, train_loader, test_loader,
                                                   metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
                                                   train_epoch_stats_dict, test_epoch_stats_dict, config,
-                                                  generator, discriminator, wandb_log_figures=config.wandb.log_figures)
+                                                  generator, discriminator, wandb_log_figures=config.wandb.log_figures,
+                                                  extra_test_dict=extra_test_epoch_stats_dict)
 
                             '''
                             save final model
@@ -701,6 +704,7 @@ class Modeller():
         generated_samples_list = []
         epoch_stats_dict = {
             'tracking features': [],
+            'identifiers': [],
         }
         generated_supercell_examples_dict = {}
 
@@ -714,17 +718,20 @@ class Modeller():
                 if config.train_discriminator_adversarially or config.train_discriminator_on_randn or config.train_discriminator_on_noise:
                     score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict \
                         = self.train_discriminator(generator, discriminator, config, data, i)  # alternately trains on real and fake samples
+
+                    d_real_scores.extend(score_on_real.cpu().detach().numpy())
+                    d_fake_scores.extend(score_on_fake.cpu().detach().numpy())
+
                     if config.gan_loss == 'wasserstein':
                         d_losses = -score_on_real + score_on_fake  # maximize score on real, minimize score on fake
-                        d_real_scores.append(score_on_real.cpu().detach().numpy())
-                        d_fake_scores.append(score_on_fake.cpu().detach().numpy())
 
                     elif config.gan_loss == 'standard':
                         prediction = torch.cat((score_on_real, score_on_fake))
                         target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
                         d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
-                        d_real_scores.append(F.softmax(score_on_real, dim=1)[:, 1].cpu().detach().numpy())
-                        d_fake_scores.append(F.softmax(score_on_fake, dim=1)[:, 1].cpu().detach().numpy())
+
+                        #d_real_scores.append(F.softmax(score_on_real, dim=1)[:, 1].cpu().detach().numpy())
+                        #d_fake_scores.append(F.softmax(score_on_fake, dim=1)[:, 1].cpu().detach().numpy())
 
                     else:
                         print(config.gan_loss + ' is not an implemented GAN loss function!')
@@ -858,6 +865,7 @@ class Modeller():
 
             if record_stats:
                 epoch_stats_dict['tracking features'].extend(data.tracking.cpu().detach().numpy())
+                epoch_stats_dict['identifiers'].extend(data.csd_identifier)
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -866,8 +874,8 @@ class Modeller():
         total_time = time.time() - t0
 
         if record_stats:
-            epoch_stats_dict['discriminator real score'] = np.concatenate(d_real_scores) if d_real_scores != [] else None
-            epoch_stats_dict['discriminator fake score'] = np.concatenate(d_fake_scores) if d_fake_scores != [] else None
+            epoch_stats_dict['discriminator real score'] = np.stack(d_real_scores) if d_real_scores != [] else None
+            epoch_stats_dict['discriminator fake score'] = np.stack(d_fake_scores) if d_fake_scores != [] else None
             epoch_stats_dict['generator density loss'] = np.concatenate(g_den_losses) if g_den_losses != [] else None
             epoch_stats_dict['generator adversarial score'] = np.concatenate(g_adv_scores) if g_adv_scores != [] else None
             epoch_stats_dict['generator flow loss'] = np.concatenate(g_flow_loss_record) if g_flow_loss_record != [] else None
@@ -887,6 +895,46 @@ class Modeller():
         else:
             return d_err, d_loss_record, g_err, g_loss_record, total_time
 
+    def discriminator_evaluation(self, config, dataLoader=None, discriminator=None, iteration_override=None):
+        t0 = time.time()
+        discriminator.eval()
+
+        epoch_stats_dict = {
+            'tracking features': [],
+            'identifiers': [],
+            'scores': [],
+        }
+
+        for i, data in enumerate(dataLoader):
+            '''
+            train discriminator
+            '''
+
+            real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config)
+
+            if config.device.lower() == 'cuda':  # redundant
+                real_supercell_data = real_supercell_data.cuda()
+
+            if config.test_mode or config.anomaly_detection:
+                assert torch.sum(torch.isnan(real_supercell_data.x)) == 0, "NaN in training input"
+
+            score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
+
+            epoch_stats_dict['tracking features'].extend(data.tracking.cpu().detach().numpy())
+            epoch_stats_dict['identifiers'].extend(data.csd_identifier)
+            epoch_stats_dict['scores'].extend(score_on_real.cpu().detach().numpy())
+
+            if iteration_override is not None:
+                if i >= iteration_override:
+                    break  # stop training early - for debugging purposes
+
+        epoch_stats_dict['scores'] = np.stack(epoch_stats_dict['scores'])
+        epoch_stats_dict['tracking features'] = np.stack(epoch_stats_dict['tracking features'])
+
+        total_time = time.time() - t0
+
+        return epoch_stats_dict, total_time
+
     def adversarial_loss(self, discriminator, data, config):
 
         output, extra_outputs = discriminator(data, return_dists=True)  # reshape output from flat filters to channels * filters per channel
@@ -902,7 +950,7 @@ class Modeller():
             print(config.gan_loss + ' is not a valid GAN loss function!')
             sys.exit()
 
-        return scores, output, extra_outputs['dists dict']
+        return scores, extra_outputs['dists dict']
 
     def pairwise_correlations_analysis(self, dataset_builder, config):
         '''
@@ -1055,8 +1103,8 @@ class Modeller():
 
         return nf_scores_dict
 
-    def log_gan_loss(self, metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict, d_tr_record, d_te_record, g_tr_record, g_te_record,
-                     extra_test_epoch_stats_dict = None):
+    def log_gan_loss(self, metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
+                     d_tr_record, d_te_record, g_tr_record, g_te_record):
         current_metrics = {}
         for key in metrics_dict.keys():
             current_metrics[key] = float(metrics_dict[key][-1])
@@ -1099,14 +1147,17 @@ class Modeller():
             if ('loss' in key) and (test_epoch_stats_dict[key] is not None):
                 special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
             if ('score' in key) and (train_epoch_stats_dict[key] is not None):
-                special_losses['Train ' + key] = np.average(train_epoch_stats_dict[key])
+                if self.config.gan_loss == 'wasserstein':
+                    score = train_epoch_stats_dict[key]
+                elif self.config.gan_loss == 'standard':
+                    score = np_softmax(train_epoch_stats_dict[key])[:,0]
+                special_losses['Train ' + key] = np.average(score)
             if ('score' in key) and (test_epoch_stats_dict[key] is not None):
-                special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
-            if extra_test_epoch_stats_dict is not None:
-                if ('loss' in key) and (test_epoch_stats_dict[key] is not None):
-                    special_losses['Extra Test ' + key] = np.average(extra_test_epoch_stats_dict[key])
-                if ('score' in key) and (train_epoch_stats_dict[key] is not None):
-                    special_losses['Extra Test ' + key] = np.average(extra_test_epoch_stats_dict[key])
+                if self.config.gan_loss == 'wasserstein':
+                    score = test_epoch_stats_dict[key]
+                elif self.config.gan_loss == 'standard':
+                    score = np_softmax(test_epoch_stats_dict[key])[:,0]
+                special_losses['Test ' + key] = np.average(score)
         wandb.log(special_losses)
 
     def params_f_to_c(self, cell_lengths, cell_angles):
@@ -1136,7 +1187,8 @@ class Modeller():
     def log_gan_accuracy(self, epoch, train_loader, test_loader,
                          metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
                          train_epoch_stats_dict, test_epoch_stats_dict, config,
-                         generator, discriminator, wandb_log_figures=True):
+                         generator, discriminator, wandb_log_figures=True,
+                         extra_test_dict=None):
         '''
         Do analysis and upload results to w&b
 
@@ -1349,7 +1401,7 @@ class Modeller():
 
         '''
         auxiliary regression target
-        '''  # todo plot anything that we have here
+        '''
         if test_epoch_stats_dict['generator density target'] is not None:  # config.train_generator_density:
             target_mean = self.dataDims['target mean']
             target_std = self.dataDims['target std']
@@ -1407,22 +1459,91 @@ class Modeller():
                 fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
                 wandb.log({'Train Packing Coefficient': fig})
 
+        if extra_test_dict is not None:
+            # need to identify targets
+            # need to distinguish between experimental and proposed structures
+            blind_test_targets = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+                                  'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
+                                  'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
+            all_identifiers = {key: [] for key in blind_test_targets}
+            for i in range(len(extra_test_dict['identifiers'])):
+                item = extra_test_dict['identifiers'][i]
+                for j in range(len(blind_test_targets)):  # go in reverse to account for roman numerals system of duplication
+                    if blind_test_targets[-1 - j] in item:
+                        all_identifiers[blind_test_targets[-1 - j]].append(i)
+                        break
+
+
+            scores_list = []
+            if self.config.gan_loss == 'wasserstein':
+                scores_list.append(train_epoch_stats_dict['discriminator real score'])
+                scores_list.append(test_epoch_stats_dict['discriminator real score'])
+                #scores_list.append(train_epoch_stats_dict['discriminator fake score'])
+
+            elif self.config.gan_loss == 'standard':
+                scores_list.append(normed_score(train_epoch_stats_dict['discriminator real score']))
+                scores_list.append(normed_score(test_epoch_stats_dict['discriminator real score']))
+                #scores_list.append(normed_score(train_epoch_stats_dict['discriminator fake score']))
+
+                probs_list = []
+                probs_list.append(np_softmax(train_epoch_stats_dict['discriminator real score'])[:,-1])
+                probs_list.append(np_softmax(test_epoch_stats_dict['discriminator real score'])[:,-1])
+                #probs_list.append(np_softmax(train_epoch_stats_dict['discriminator fake score'])[:,-1])
+
+                wandb.log({'Average Train probability': np.average(probs_list[0])})
+                wandb.log({'Average Test probability': np.average(probs_list[1])})
+                #wandb.log({'Average Fake probability': np.average(probs_list[2])})
+
+            wandb.log({'Average Train score': np.average(scores_list[0])})
+            wandb.log({'Average Test score': np.average(scores_list[1])})
+            #wandb.log({'Average Fake score': np.average(scores_list[2])})
+
+
+            labels = []
+            labels.append('Train CSD Data')
+            labels.append('Test CSD Data')
+            #labels.append('Test Fake Data')
+
+            for target in all_identifiers.keys():  # run the analysis for each target
+                if all_identifiers[target] != []:
+                    target_indices = all_identifiers[target]
+                    raw_scores = extra_test_dict['scores'][target_indices]
+                    if self.config.gan_loss == 'wasserstein':
+                        scores = raw_scores
+                        scores_list.append(scores)
+                    elif self.config.gan_loss == 'standard':
+                        scores = normed_score(raw_scores)
+                        probs = np_softmax(raw_scores)[:, 1]
+                        scores_list.append(scores)
+                        probs_list.append(probs)
+                        wandb.log({f'Average {target} probability': np.average(probs)})
+
+                    labels.append(target)
+                    wandb.log({f'Average {target} score': np.average(scores)})
+
+
+            if self.config.gan_loss == 'standard':
+                fig = px.histogram(probs_list, color=labels, marginal="rug", nbins=100, histnorm='probability density', opacity=1)
+                wandb.log({'Discriminator Test Probabilities': fig})
+
+            fig = px.histogram(scores_list, color=labels, marginal="rug", nbins=100, histnorm='probability density', opacity=1)
+            wandb.log({'Discriminator Test Scores': fig})
+
         return None
 
     def train_discriminator(self, generator, discriminator, config, data, i):
-
         # generate fakes & create supercell data
         if config.train_discriminator_adversarially:
             generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
         elif config.train_discriminator_on_randn:
-            generated_samples = self.randn_generator.forward(data.num_graphs).to(generator.device)
+            generated_samples = self.randn_generator.forward(data, data.num_graphs).to(generator.device)
 
         real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config)
         if not config.train_discriminator_on_noise:
             fake_supercell_data, generated_cell_volumes, overlaps_list = \
                 self.supercell_builder.build_supercells(data.clone().to(generated_samples.device), generated_samples, config.supercell_size, config.discriminator.graph_convolution_cutoff, override_sg=config.generate_sgs)
         else:
-            generated_samples = self.randn_generator.forward(data.num_graphs).to(generator.device)  # placeholder
+            generated_samples = self.randn_generator.forward(data, data.num_graphs).to(generator.device)  # placeholder
             fake_supercell_data = real_supercell_data.clone()
             fake_supercell_data.pos += torch.randn_like(fake_supercell_data.pos) * 10  # huge amount of noise - should be basically nonsense
 
@@ -1438,10 +1559,10 @@ class Modeller():
             real_supercell_data.pos += torch.randn_like(real_supercell_data.pos) * config.discriminator.positional_noise
             fake_supercell_data.pos += torch.randn_like(fake_supercell_data.pos) * config.discriminator.positional_noise
 
-        score_on_real, raw_output_on_real, real_intra_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
-        score_on_fake, raw_output_on_fake, fake_pairwise_distances_dict = self.adversarial_loss(discriminator, fake_supercell_data, config)
+        score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
+        score_on_fake, fake_pairwise_distances_dict = self.adversarial_loss(discriminator, fake_supercell_data, config)
 
-        return score_on_real, score_on_fake, generated_samples.cpu().detach().numpy(), real_intra_distances_dict, fake_pairwise_distances_dict
+        return score_on_real, score_on_fake, generated_samples.cpu().detach().numpy(), real_distances_dict, fake_pairwise_distances_dict
 
     def train_generator(self, generator, discriminator, config, data, i):
         # noise injection
@@ -1470,7 +1591,7 @@ class Modeller():
             if config.test_mode or config.anomaly_detection:
                 assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
 
-            discriminator_score, raw_output, dist_dict = self.adversarial_loss(discriminator, supercell_data, config)
+            discriminator_score, dist_dict = self.adversarial_loss(discriminator, supercell_data, config)
 
             rdf_inter, bin_range = parallel_compute_rdf_torch([dist_dict['intermolecular dist'][dist_dict['intermolecular dist batch'] == n] for n in range(supercell_data.num_graphs)],
                                                               bins=50, density=torch.ones(supercell_data.num_graphs).to(config.device), rrange=[0, self.config.generator.graph_convolution_cutoff])
@@ -1632,7 +1753,7 @@ class Modeller():
         '''
         random batch of initial conditions
         '''
-        init_samples = self.randn_generator.forward(n_samples).cpu().detach().numpy()
+        init_samples = self.randn_generator.forward(single_mol_data, n_samples).cpu().detach().numpy()
 
         # debug test
         supercells1, _, _ = self.supercell_builder.build_supercells(

@@ -10,8 +10,9 @@ class crystal_discriminator(nn.Module):
         super(crystal_discriminator, self).__init__()
         self.model = molecule_graph_model(
             dataDims=dataDims,
-            device=config.device,
             seed=config.seeds.model,
+            num_atom_feats=dataDims['num atom features'] - dataDims['num crystal generation features'],
+            num_mol_feats=dataDims['num mol features'] - dataDims['num crystal generation features'],
             output_dimension=2, # 'yes' and 'no'
             activation=config.discriminator.activation,
             num_fc_layers=config.discriminator.num_fc_layers,
@@ -34,6 +35,7 @@ class crystal_discriminator(nn.Module):
             max_num_neighbors=config.discriminator.max_num_neighbors,
             convolution_cutoff=config.discriminator.graph_convolution_cutoff,
             crystal_mode=True,
+            device=config.device,
         )
         self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
 

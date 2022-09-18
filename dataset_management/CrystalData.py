@@ -71,7 +71,7 @@ class CrystalData(BaseData):
                  smiles: OptTensor = None, ref_cell_pos: OptTensor = None,
                  cell_params: OptTensor = None, T_fc: OptTensor = None,
                  aux_ind: OptTensor = None, mol_size: OptTensor = None,
-                 csd_identifier: OptTensor = None,
+                 csd_identifier: OptTensor = None, mol_volume: OptTensor = None,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
@@ -106,6 +106,8 @@ class CrystalData(BaseData):
             self.mol_size = mol_size
         if csd_identifier is not None:
             self.csd_identifier = csd_identifier
+        if mol_volume is not None:
+            self.mol_volume = mol_volume
 
 
         for key, value in kwargs.items():
@@ -466,6 +468,10 @@ class CrystalData(BaseData):
     @property
     def csd_identifier(self) -> Any:
         return self['csd_identifier'] if 'csd_identifier' in self._store else None
+
+    @property
+    def mol_volume(self) -> Any:
+        return self['mol_volume'] if 'mol_volume' in self._store else None
 
     # Deprecated functions ####################################################
 
