@@ -669,6 +669,10 @@ class CustomGraphFeaturizer():
                 for j in tqdm.tqdm(range(len(df))):
                     # hydrogens are completely inconsistent, and can't be efficiently added either by CSD or rdkit
                     mol = Chem.MolFromMol2Block(df['xyz'][j], sanitize=True, removeHs=True)
+                    try:
+                        mol = Chem.RemoveAllHs(mol)  # strictly clean the molecule of all hydrogens
+                    except:
+                        mol = None
 
                     if mol is None:
                         bad_inds.append(j)
@@ -677,7 +681,6 @@ class CustomGraphFeaturizer():
                     elif mol.GetNumAtoms() < 3:
                         bad_inds.append(j)
                     else:
-                        mol = Chem.RemoveAllHs(mol)  # strictly clean the molecule of all hydrogens
                         mol_data = self.featurize_molecule(mol)
                         crystal_data = self.featurize_crystal(df.loc[j])
                         mol_data['molecule volume'] = df['crystal packing coefficient'][j] * df['crystal cell volume'][j]/ df['crystal z value'][j] # much faster this way
@@ -738,7 +741,7 @@ class CustomGraphFeaturizer():
         dataset['molecule mass'] = Descriptors.MolWt(mol)
         dataset['molecule num atoms'] = len(dataset['atom Z'])  # mol.GetNumAtoms()
         dataset['molecule num rings'] = mol.GetRingInfo().NumRings()
-        dataset['molecule point group'] = self.pointGroupAnalysis(dataset['atom Z'], dataset['atom coords'])  # this is also slow, approx 30% of total effort
+        #dataset['molecule point group'] = self.pointGroupAnalysis(dataset['atom Z'], dataset['atom coords'])  # this is also slow, approx 30% of total effort
         #dataset['molecule volume'] = AllChem.ComputeMolVolume(mol)  # this is very slow - approx 50% of total effort - fill this in later from the CSD
         dataset['molecule num donors'] = len(h_donors)
         dataset['molecule num acceptors'] = len(h_acceptors)
@@ -838,7 +841,7 @@ class CustomGraphFeaturizer():
         atoms = [self.element_symbols[str(number)] for number in numbers]
         try:
             molecule = Molecule(atoms, coords)
-            analyzer = PointGroupAnalyzer(molecule)
+            analyzer = PointGroupAnalyzer(molecule, matrix_tolerance = 0.2)
             return str(analyzer.get_pointgroup())  # , analyzer.get_symmetry_operations()
         except:
             return 'error'  # , 'error'

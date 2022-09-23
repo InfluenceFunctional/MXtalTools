@@ -10,6 +10,7 @@ import time
 import matplotlib.pyplot as plt
 import pandas as pd
 from pyxtal import symmetry
+from dataset_management.dataset_manager import Miner
 
 
 class BuildDataset:
@@ -18,7 +19,7 @@ class BuildDataset:
     """
 
     def __init__(self, config, dataset_path=None, pg_dict=None, sg_dict=None, lattice_dict=None,
-                 premade_dataset=None, replace_dataDims=None):
+                 premade_dataset=None, replace_dataDims=None, override_length=None):
         self.target = config.target
         self.max_atomic_number = config.max_atomic_number
         self.atom_dict_size = {'atom z': self.max_atomic_number + 1}  # for embeddings
@@ -38,6 +39,10 @@ class BuildDataset:
         self.conditioning_mode = config.generator.conditioning_mode
         self.include_pgs = config.include_pgs
         self.replace_dataDims = replace_dataDims
+        if override_length is not None:
+            self.max_dataset_length = override_length
+        else:
+            self.max_dataset_length = config.dataset_length
 
         self.set_keys()
         self.get_syms(pg_dict, sg_dict, lattice_dict)
@@ -54,7 +59,7 @@ class BuildDataset:
         else:
             dataset = premade_dataset
         self.dataset_length = len(dataset)
-        self.final_dataset_length = min(self.dataset_length, config.dataset_length)
+        self.final_dataset_length = min(self.dataset_length, self.max_dataset_length)
 
         dataset = self.add_last_minute_features_quickly(dataset, config)  # add a few odds & ends
 
@@ -62,7 +67,7 @@ class BuildDataset:
         prep for modelling
         '''
 
-        lattice_features, self.lattice_means, self.lattice_stds, self.lattice_dtypes, self.covariance_matrix = self.get_cell_features(dataset)
+        lattice_features = self.get_cell_features(dataset)
         targets = self.get_targets(dataset)
         self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets, config)
 
@@ -70,9 +75,9 @@ class BuildDataset:
 
     def set_keys(self):
         # define relevant features for analysis
-        self.atom_keys = ['atom Z', 'atom mass', 'atom is H bond donor', 'atom is H bond acceptor',
-                          'atom is aromatic', 'atom valence', 'atom vdW radius',
-                          'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
+        self.atom_keys = ['atom Z']  # 'atom mass', 'atom is H bond acceptor',
+        # 'atom valence', 'atom vdW radius', # 'atom is aromatic', # issue with aromaticity in test sets
+        # 'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
 
         self.crystal_keys = ['crystal spacegroup symbol', 'crystal spacegroup number',
                              'crystal calculated density', 'crystal packing coefficient',
@@ -81,12 +86,13 @@ class BuildDataset:
                              'crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal z value', 'crystal z prime',  # 'crystal point group',
                              ]
-        self.molecule_keys = ['molecule point group is C1', 'molecule mass', 'molecule num atoms', 'molecule volume',
-                              'molecule num rings', 'molecule num donors', 'molecule num acceptors',
-                              'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
-                              'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
-                              'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
-                              ]
+        self.molecule_keys = ['molecule volume']
+        # 'molecule mass', 'molecule num atoms', 'molecule volume', # 'molecule point group is C1', mostly unnecessary / noisy
+        # 'molecule num rings', 'molecule num donors', 'molecule num acceptors',
+        # 'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
+        # 'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
+        # 'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
+        # ]
         # for coupling NF models, must be an even number of these
         self.lattice_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal alpha', 'crystal beta', 'crystal gamma',
@@ -190,7 +196,6 @@ class BuildDataset:
         mol_size_ind = self.tracking_dict_keys.index('molecule num atoms')
         mol_volume_ind = self.tracking_dict_keys.index('molecule volume')
 
-
         tracking_features = torch.Tensor(tracking_features)
         print("Generating final training datapoints")
         for i in tqdm.tqdm(range(self.final_dataset_length)):
@@ -241,7 +246,10 @@ class BuildDataset:
             flat_feature = np.concatenate(dataset[key])
             if self.replace_dataDims is None:
                 stds[key] = np.std(flat_feature)
+                if stds[key] < 0.01:
+                    stds[key] = 0.01  # make sure it well-conditioned
                 means[key] = np.mean(flat_feature)
+
             for i in range(self.dataset_length):
                 feature_vector = dataset[key][i]
 
@@ -255,13 +263,14 @@ class BuildDataset:
                 elif (feature_vector.dtype == float) or (np.issubdtype(feature_vector.dtype, np.floating)):
                     feature_vector = standardize(feature_vector, known_std=stds[key], known_mean=means[key])
                 elif (feature_vector.dtype == int) or (np.issubdtype(feature_vector.dtype, np.integer)):
-                    if len(np.unique(feature_vector)) > 2:
-                        feature_vector = standardize(feature_vector, known_std=stds[key], known_mean=means[key])
-                    else:
-                        feature_vector = np.asarray(feature_vector == np.amax(feature_vector))  # turn it into a bool
+                    # if len(np.unique(feature_vector)) > 2:
+                    feature_vector = standardize(feature_vector, known_std=stds[key], known_mean=means[key])
+                    # else:
+                    #     feature_vector = np.asarray(feature_vector == np.amax(feature_vector))  # turn it into a bool
 
                 assert np.sum(np.isnan(feature_vector)) == 0
                 atom_features_list[i][:, column] = feature_vector
+
         self.atom_means = means
         self.atom_stds = stds
         return atom_features_list
@@ -288,8 +297,8 @@ class BuildDataset:
             keys_to_add.remove(self.target)
 
         if self.replace_dataDims is not None:
-            stds = self.replace_dataDims['mol stds']
-            means = self.replace_dataDims['mol means']
+            stds = self.replace_dataDims['molecule stds']
+            means = self.replace_dataDims['molecule means']
         else:
             stds, means = {}, {}
 
@@ -298,6 +307,8 @@ class BuildDataset:
             feature_vector = dataset[key]
             if self.replace_dataDims is None:
                 stds[key] = np.std(feature_vector)
+                if stds[key] < 0.01:
+                    stds[key] = 0.01  # make sure it's well conditioned
                 means[key] = np.mean(feature_vector)
 
             if type(feature_vector) is not np.ndarray:
@@ -310,10 +321,10 @@ class BuildDataset:
             elif (feature_vector.dtype == float) or (np.issubdtype(feature_vector.dtype, np.floating)):
                 feature_vector = standardize(feature_vector, known_mean=means[key], known_std=stds[key])
             elif (feature_vector.dtype == int) or (np.issubdtype(feature_vector.dtype, np.integer)):
-                if len(np.unique(feature_vector)) > 2:
-                    feature_vector = standardize(feature_vector, known_mean=means[key], known_std=stds[key])
-                else:
-                    feature_vector = np.asarray(feature_vector == np.amax(feature_vector))  # turn it into a bool
+                # if len(np.unique(feature_vector)) > 2:
+                feature_vector = standardize(feature_vector, known_mean=means[key], known_std=stds[key])
+                # else:
+                #     feature_vector = np.asarray(feature_vector == np.amax(feature_vector))  # turn it into a bool
 
             molecule_feature_array[:, column] = feature_vector
 
@@ -330,10 +341,10 @@ class BuildDataset:
         # add symmetry features for generator
         self.crystal_generation_features = []  # todo need an option to turn this off for certain models
         if config.mode == 'gan':
-            #point_group_features = [column for column in dataset.columns if 'pg is' in column]
+            # point_group_features = [column for column in dataset.columns if 'pg is' in column]
             space_group_features = [column for column in dataset.columns if 'sg is' in column]
             crystal_system_features = [column for column in dataset.columns if 'crystal system is' in column]
-            #self.crystal_generation_features.extend(point_group_features)
+            # self.crystal_generation_features.extend(point_group_features)
             self.crystal_generation_features.extend(space_group_features)
             self.crystal_generation_features.extend(crystal_system_features)
             self.crystal_generation_features.append('crystal z value')  # todo norm this
@@ -358,14 +369,13 @@ class BuildDataset:
         keys_to_add = self.lattice_keys
         key_dtype = []
         # featurize
-        if self.replace_dataDims is not None:
+        if self.replace_dataDims is not None:  # use mean & std from an external dataset
             stds = self.replace_dataDims['lattice stds']
             means = self.replace_dataDims['lattice means']
         else:
             stds, means = [], []
+
         feature_array = np.zeros((self.dataset_length, len(keys_to_add)), dtype=float)
-        unstandardized_feature_array = np.zeros_like(feature_array)
-        # raw_feature_array = np.zeros_like(feature_array)
         for column, key in enumerate(keys_to_add):
             feature_vector = dataset[key]
             if type(feature_vector) is not np.ndarray:
@@ -376,7 +386,7 @@ class BuildDataset:
             else:
                 key_dtype.append(feature_vector.dtype)
 
-            if self.replace_dataDims is None:
+            if self.replace_dataDims is None:  # record mean & std for each feature
                 mean = np.average(feature_vector)
                 std = np.std(feature_vector)
                 if (np.isnan(np.std(feature_vector))):
@@ -386,20 +396,22 @@ class BuildDataset:
                 means.append(mean)
                 stds.append(std)
 
-            # feature_vector = (feature_vector - means[-1]) / stds[-1] # no need to standardize here
+            # no need to standardize here
             feature_array[:, column] = feature_vector
-            unstandardized_feature_array[:, column] = dataset[key]
 
             assert np.sum(np.isnan(feature_vector)) == 0
 
         '''
-        compute full covariance matrix
+        compute full covariance matrix, in normalized basis
         '''
         # normalize the cell lengths against molecule volume & z value
-        lengths = unstandardized_feature_array[:,:3]
-        normed_lengths = lengths / (dataset['molecule volume'][:,None]**(1/3) * (dataset['crystal z value'][:, None] ** (1/3)))
-        unstandardized_feature_array[:,:3] = normed_lengths
-        covariance_matrix = np.cov(unstandardized_feature_array, rowvar=False)
+        normed_cell_lengths = feature_array[:, :3] / (dataset['crystal z value'][:, None] ** (1 / 3)) / (dataset['molecule volume'][:, None] ** (1 / 3))
+        feature_array_with_normed_lengths = feature_array.copy()
+        feature_array_with_normed_lengths[:, :3] = normed_cell_lengths
+
+        self.normed_lengths_means = np.mean(normed_cell_lengths, axis=0)
+        self.normed_lengths_stds = np.std(normed_cell_lengths, axis=0)
+        covariance_matrix = np.cov(feature_array_with_normed_lengths, rowvar=False)  # we want the randn model to generate samples with normed lengths
 
         for i in range(len(covariance_matrix)):  # ensure it's well-conditioned
             covariance_matrix[i, i] = max((0.01, covariance_matrix[i, i]))
@@ -407,7 +419,10 @@ class BuildDataset:
         assert np.sum(np.isnan(stds)) == 0
         assert np.sum(np.asarray(stds) == 0) == 0
 
-        return feature_array, means, stds, key_dtype, covariance_matrix
+        self.lattice_means, self.lattice_stds, self.lattice_dtypes, self.covariance_matrix = \
+            means, stds, key_dtype, covariance_matrix
+
+        return feature_array
 
     def get_targets(self, dataset):
         if self.target == 'packing':
@@ -434,7 +449,12 @@ class BuildDataset:
         """
         # normalize everything
         keys_to_add = []
-        keys_to_add.extend(self.molecule_keys)
+        keys_to_add.extend(['molecule volume', 'molecule mass', 'molecule num atoms', 'molecule volume',  # 'molecule point group is C1', mostly unnecessary / noisy
+                            'molecule num rings', 'molecule num donors', 'molecule num acceptors',
+                            'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
+                            'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
+                            'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
+                            ])
         keys_to_add.extend(self.crystal_keys)
         if 'crystal spacegroup symbol' in keys_to_add:
             keys_to_add.remove('crystal spacegroup symbol')  # we don't want to deal with strings
@@ -483,6 +503,8 @@ class BuildDataset:
             'lattice means': self.lattice_means,
             'lattice stds': self.lattice_stds,
             'lattice cov mat': self.covariance_matrix,
+            'lattice normed length means': self.normed_lengths_means,
+            'lattice normed length stds': self.normed_lengths_stds,
             'lattice dtypes': self.lattice_dtypes,
 
             'target mean': self.target_mean,
@@ -497,9 +519,9 @@ class BuildDataset:
             'atom stds': self.atom_stds,
 
             'num mol features': len(self.mol_keys),
-            'mol features': self.mol_keys,
-            'mol means': self.mol_means,
-            'mol stds': self.mol_stds,
+            'molecule features': self.mol_keys,
+            'molecule means': self.mol_means,
+            'molecule stds': self.mol_stds,
 
             'atom embedding dict sizes': self.atom_dict_size,
 
@@ -559,13 +581,31 @@ def delete_from_dataset(dataset, good_inds):
     return dataset
 
 
-def get_extra_test_loader(dataset, config, dataDims, pg_dict=None, sg_dict=None, lattice_dict=None):
+def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, lattice_dict=None):
+    datasets = []
+    for path in paths:
+        miner = Miner(config=config, dataset_path=path, collect_chunks=False)
+        miner.exclude_nonstandard_settings = False
+        miner.exclude_crystal_systems = None
+        miner.exclude_polymorphs = False
+        miner.exclude_missing_r_factor = False
+        miner.exclude_blind_test_targets = False
+        datasets.append(miner.load_for_modelling(save_dataset=False, return_dataset=True))
+        del miner
+    dataset = pd.concat(datasets)
+    if 'level_0' in dataset.columns:  # housekeeping
+        dataset = dataset.drop(columns='level_0')
+    dataset = dataset.reset_index()
+
+    dlen = 1000000
+
     extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
                                           sg_dict=sg_dict,
                                           lattice_dict=lattice_dict,
                                           replace_dataDims=dataDims,
-                                          premade_dataset = dataset)
+                                          override_length=dlen,
+                                          premade_dataset=dataset)
 
     extra_test_loader = DataLoader(extra_test_set_builder.datapoints, batch_size=config.final_batch_size, shuffle=False, num_workers=0, pin_memory=False)
-
+    del dataset
     return extra_test_loader

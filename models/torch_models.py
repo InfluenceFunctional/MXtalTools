@@ -235,25 +235,38 @@ class Normalization(nn.Module):
 
 
 class independent_gaussian_model(nn.Module):
-    def __init__(self, input_dim, means, stds, cov_mat=None):
+    def __init__(self, input_dim, means, stds, normed_length_means, normed_length_stds, cov_mat=None):
         super(independent_gaussian_model, self).__init__()
 
         self.input_dim = input_dim
         self.register_buffer('means', torch.Tensor(means))
         self.register_buffer('stds', torch.Tensor(stds))
+        self.register_buffer('normed length means', torch.Tensor(normed_length_means))
+        self.register_buffer('normed length stds', torch.Tensor(normed_length_stds))
+
         if cov_mat is not None:
             pass
         else:
-            cov_mat = torch.diag(torch.Tensor(stds).pow(2))
+            fixed_stds = normed_length_stds.copy()
+            fixed_stds[:3] = normed_length_stds
+            cov_mat = torch.diag(torch.Tensor(fixed_stds).pow(2))
 
-        self.prior = MultivariateNormal(torch.Tensor(means), torch.Tensor(cov_mat))  # apply standardization
+        fixed_means = means.copy()
+        fixed_means[:3] = normed_length_means
+        self.prior = MultivariateNormal(torch.Tensor(fixed_means), torch.Tensor(cov_mat))  # apply standardization
         self.dummy_params = nn.Parameter(torch.ones(100))
 
     def forward(self, data, num_samples):
+        '''
+        sample comes out in non-standardized basis, but with normalized cell lengths
+        so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
+        then standardize
+        '''
         # conditions are unused - dummy
-        sample = self.prior.sample((num_samples,))
-        sample[:,0:3] = sample[:, 0:3] * (data.Z[:,None]**(1/3) * (data.mol_volume[:,None]**(1/3)))
-        return (sample - self.means) / self.stds  # we want samples in standardized basis
+        # denormalize sample before standardizing
+        samples = self.prior.sample((num_samples,))
+        samples[:,:3] = samples[:,:3] * (data.Z[:,None] ** (1/3)) * (data.mol_volume[:,None] ** (1/3))
+        return (samples - self.means) / self.stds  # we want samples in standardized basis
 
     def backward(self, samples):
         return samples * self.stds + self.means

@@ -2136,7 +2136,7 @@ def torch_ptp(tensor):
     return torch.max(tensor) - torch.min(tensor)
 
 
-def ase_mol_from_crystaldata(data, index, highlight_aux=False, exclusion_level=None):
+def ase_mol_from_crystaldata(data, index, highlight_aux=False, exclusion_level=None, sub_ref_cell = False):
     '''
     generate an ASE Atoms object from a crystaldata object
     '''
@@ -2222,10 +2222,12 @@ def load_checkpoint(model, optimizer, model_path, config):
     return model, optimizer, config
 
 def normed_score(x):
-    return (x[:,1] - x[:,0])/x[:,1]
+    return (x[:,1] - x[:,0])/np.abs(x[:,1])
 
 
 def np_softmax(x):
+    if x.ndim == 1:
+        x = x[None,:]
     return F.softmax(torch.Tensor(x), dim=1).cpu().detach().numpy()
 
 '''

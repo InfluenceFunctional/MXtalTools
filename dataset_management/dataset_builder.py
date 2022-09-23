@@ -36,77 +36,91 @@ class CCDC_helper():
                 'crystal reference cell coords',
             ]
 
-    def grep_crystal_identifiers(self, file_path=None, chunk_inds=[0, 100]):
+    def grep_crystal_identifiers(self, file_path=None, chunk_inds=[0, 100], identifiers = None):
         print('Getting hits')
         allhits = []
-        if self.database.lower() == 'csd':
-            for i in range(1921, 2023):  # pull the entire CSD
-                searcher = TextNumericSearch()
-                searcher.add_citation(year=i)
-                hitlist = searcher.search()
-                allhits.extend(hitlist)
-                del hitlist
-        elif self.database.lower() == 'cif':  # drawing from one or more .cif files
-            here = os.getcwd()
-            os.chdir(file_path)
-            for ind, file in enumerate(os.listdir(file_path)):
-                crystal_reader = io.CrystalReader(file, format='cif')
-                for ind2, crystal in enumerate(crystal_reader):
-                    crystal.identifier = file.split('.cif')[0] + '_' + str(ind2)
-                    allhits.append(crystal)
-            os.chdir(here)
-        elif self.database.lower() == 'cod': #grepping cifs from the COD
-            paths_list = []
-            for root, subdirs, files in os.walk(file_path):
-                paths_list.extend([root + '/' + files[_] for _ in range(len(files))])
+        if target_identifiers is not None:
+            np.save(self.chunk_path + 'identifiers/chunk_{}_identifiers'.format(0), identifiers)
+        else:
+            if self.database.lower() == 'csd':
+                for i in range(1921, 2023):  # pull the entire CSD
+                    searcher = TextNumericSearch()
+                    searcher.add_citation(year=i)
+                    hitlist = searcher.search()
+                    allhits.extend(hitlist)
+                    del hitlist
+            elif self.database.lower() == 'cif':  # drawing from one or more .cif files
+                print('No cif database - skipping identifiers grep')
+                return None
+                # here = os.getcwd()
+                # os.chdir(file_path)
+                # for ind, file in enumerate(os.listdir(file_path)):
+                #     crystal_reader = io.CrystalReader(file, format='cif')
+                #     for ind2, crystal in enumerate(crystal_reader):
+                #         crystal.identifier = file.split('.cif')[0] + '_' + crystal.identifier + '_' + str(ind2)
+                #         allhits.append(crystal)
+                # os.chdir(here)
 
-            for ind, file in enumerate(paths_list):
-                crystal_reader = io.CrystalReader(file, format='cif')
-                # some cifs are empty or unreadable
-                try:
-                    for ind2, crystal in enumerate(crystal_reader):
-                        allhits.append(crystal)
-                except:
-                    pass
+            elif self.database.lower() == 'cod':  # grepping cifs from the COD
+                print('No cif database - skipping identifiers grep')
+                return None
+                # paths_list = []
+                # for root, subdirs, files in os.walk(file_path):
+                #     paths_list.extend([root + '/' + files[_] for _ in range(len(files))])
+                #
+                # for ind, file in enumerate(paths_list):
+                #     crystal_reader = io.CrystalReader(file, format='cif')
+                #     # some cifs are empty or unreadable
+                #     try:
+                #         for ind2, crystal in enumerate(crystal_reader):
+                #             allhits.append(crystal)
+                #     except:
+                #         pass
 
-        max_chunks = len(allhits) // 1000  # minimum of 1000 entries per chunk
-        chunk_inds[1] = max(min(max_chunks, chunk_inds[1]), 1)  # at least one chunk
-        chunklist = np.arange(start=chunk_inds[0], stop=chunk_inds[1])
-        chunks = chunkify(allhits, max(chunk_inds))[chunk_inds[0]:chunk_inds[1]]
-        del allhits
+            max_chunks = len(allhits) // 1000  # minimum of 1000 entries per chunk
+            chunk_inds[1] = max(min(max_chunks, chunk_inds[1]), 1)  # at least one chunk
+            chunklist = np.arange(start=chunk_inds[0], stop=chunk_inds[1])
+            chunks = chunkify(allhits, max(chunk_inds))[chunk_inds[0]:chunk_inds[1]]
+            del allhits
 
-        print('Getting identifiers')
-        for i in tqdm.tqdm(range(len(chunks))):
-            if not os.path.exists(self.chunk_path + 'identifiers/chunk_{}_identifiers'.format(chunklist[i]) + '.npy'):
-                print('Grepping crystal identifiers for chunk {}'.format(chunklist[i]))
-                identifiers = []
-                for j in range(len(chunks[i])):
-                    if self.database.lower() == 'csd':
-                        identifiers.append(chunks[i][j].entry.identifier)
-                    elif self.database.lower() == 'cif':
-                        identifiers.append(chunks[i][j].identifier)
-                np.save(self.chunk_path + 'identifiers/chunk_{}_identifiers'.format(chunklist[i]), identifiers)
+            print('Getting identifiers')
+            for i in tqdm.tqdm(range(len(chunks))):
+                if not os.path.exists(self.chunk_path + 'identifiers/chunk_{}_identifiers'.format(chunklist[i]) + '.npy'):
+                    print('Grepping crystal identifiers for chunk {}'.format(chunklist[i]))
+                    identifiers = []
+                    for j in range(len(chunks[i])):
+                        if self.database.lower() == 'csd':
+                            identifiers.append(chunks[i][j].entry.identifier)
+                        elif self.database.lower() == 'cif':
+                            identifiers.append(chunks[i][j].identifier)
+                    np.save(self.chunk_path + 'identifiers/chunk_{}_identifiers'.format(chunklist[i]), identifiers)
 
     def collect_chunks_and_initialize_df(self):
-        os.chdir(self.chunk_path + 'identifiers')
-        chunks = os.listdir()
+        if self.database.lower() == 'cif':  # drawing from one or more .cif files
+            print('No cif database - skipping identifiers grep')
+            return None
+        else:
+            os.chdir(self.chunk_path + 'identifiers')
+            chunks = os.listdir()
 
-        identifiers = []
-        for chunk in chunks:  # collect entries from all chunks
-            identifiers.extend(np.load(chunk, allow_pickle=True))
+            identifiers = []
+            for chunk in chunks:  # collect entries from all chunks
+                identifiers.extend(np.load(chunk, allow_pickle=True))
 
-        identifiers = list(set(identifiers))  # kill any duplicates
-        df = pd.DataFrame(data=identifiers, index=np.arange(len(identifiers)), columns=['identifier'])  # initialize dataframe
-        df.to_pickle(self.chunk_path + 'new_dataframe')
+            identifiers = list(set(identifiers))  # kill any duplicates
+            df = pd.DataFrame(data=identifiers, index=np.arange(len(identifiers)), columns=['identifier'])  # initialize dataframe
+            df.to_pickle(self.chunk_path + 'new_dataframe')
 
     def get_crystal_features(self, n_chunks=100, chunk_inds=[0, 100], file_path=None):
         os.chdir(self.chunk_path)
-        df = pd.read_pickle('new_dataframe')
-        chunks = chunkify(df, n_chunks)[chunk_inds[0]:chunk_inds[1]]  # featurize a subset of chunks on this pass
 
         allhits = []
         if self.database.lower() == 'csd':
+
+            df = pd.read_pickle('new_dataframe')
+            chunks = chunkify(df, n_chunks)[chunk_inds[0]:chunk_inds[1]]  # featurize a subset of chunks on this pass
             csd_reader = EntryReader('CSD')
+
         elif self.database.lower() == 'cif':  # drawing from one or more .cif files
             allhits = []
             all_identifiers = []
@@ -115,13 +129,17 @@ class CCDC_helper():
             for file in os.listdir(file_path):
                 crystal_reader = io.CrystalReader(file, format='cif')
                 for ind2, crystal in enumerate(crystal_reader):
-                    crystal.identifier = file.split('.cif')[0] + '_' + str(ind2)
+                    crystal.identifier = file.split('.cif')[0] + '_' + crystal.identifier + '_' + str(ind2)
                     allhits.append(crystal)
                     all_identifiers.append(crystal.identifier)
             os.chdir(here)
-            assert len(list(set(all_identifiers))) == len(all_identifiers)  # assert all unique identifiers
+            self.features = ['identifier'] + self.features
 
-        elif self.database.lower() == 'cod': #grepping cifs from the COD
+            assert len(list(set(all_identifiers))) == len(all_identifiers)  # assert all unique identifiers
+            chunks = chunkify(allhits, n_chunks)[chunk_inds[0]:chunk_inds[1]]  # featurize a subset of chunks on this pass
+
+
+        elif self.database.lower() == 'cod':  # grepping cifs from the COD # todo WIP
             paths_list = []
             all_identifiers = []
 
@@ -138,19 +156,24 @@ class CCDC_helper():
 
                 except:
                     pass
-            assert len(list(set(all_identifiers))) == len(all_identifiers)  # assert all unique identifiers
 
+            self.features = ['identifier'] + self.features
+
+            assert len(list(set(all_identifiers))) == len(all_identifiers)  # assert all unique identifiers
 
         for n, chunk in enumerate(chunks):
             if not os.path.exists(self.chunk_path + 'crystal_features/{}'.format(n + chunk_inds[0])):  # don't repeat
 
-                print('doing chunk {} with {} entries'.format(n + chunk_inds[0], len(chunk)))
+                print('doing crystal chunk {} out of {} with {} entries'.format(n + chunk_inds[0], len(chunks), len(chunk)))
 
-                if 'level_0' in chunk.columns:  # delete unwanted samples
-                    chunk = chunk.drop(columns='level_0')
-                chunk = chunk.reset_index()
+                if self.database.lower() == 'csd':
+                    if 'level_0' in chunk.columns:  # delete unwanted samples
+                        chunk = chunk.drop(columns='level_0')
+                    chunk = chunk.reset_index()
+                    new_features = [[] for _ in range(len(self.features))]
+                else:
+                    new_features = [[] for _ in range(len(self.features))] # add identifier
 
-                new_features = [[] for _ in range(len(self.features))]
                 bad_inds = []
                 good_inds = []
                 for i in tqdm.tqdm(range(len(chunk))):
@@ -159,9 +182,8 @@ class CCDC_helper():
                         crystal = entry.crystal
                         molecule = entry.molecule
 
-
-                    elif (self.database.lower() == 'cif') or (self.database.lower() == 'cod'):
-                        crystal = allhits[all_identifiers.index(df['identifier'][i])]
+                    elif (self.database.lower() == 'cif') or (self.database.lower() == 'cod'): # DEPRECATED
+                        crystal = chunk[i]
                         molecule = crystal.molecule
                         entry = None  # cifs don't have 'entries' as such
 
@@ -180,27 +202,31 @@ class CCDC_helper():
                     else:  # several available failure modes
                         bad_inds.append(i)
                         if len(molecule.atoms) == 0:
-                            pass#print('molecule had no atoms')
+                            pass  # print('molecule had no atoms')
                         if crystal.z_prime != 1:
-                            pass#print('zprime not 1')
+                            pass  # print('zprime not 1')
                         elif len(molecule.components) > 1:
-                            pass#print('more than one molecule')
+                            pass  # print('more than one molecule')
                         if entry is not None:  # cifs don't come with entries, we will assume they are 'good' for now
                             if entry.is_polymeric:
-                                pass#print('entry was polymeric')
+                                pass  # print('entry was polymeric')
                             if not entry.has_3d_structure:
-                                pass#print('molecule had no 3d structure')
+                                pass  # print('molecule had no 3d structure')
 
                 lens = [len(feat) for feat in new_features]
                 assert [lens[0]] * len(lens) == lens  # confirm all the crystal features are the same length
 
-                # delete unwanted samples
-                chunk = chunk.drop(chunk.index[bad_inds])
-                if 'level_0' in chunk.columns:  # hygiene
-                    chunk = chunk.drop(columns='level_0')
-                chunk = chunk.reset_index()
+                if self.database.lower() == 'csd':
+                    # delete unwanted samples
+                    chunk = chunk.drop(chunk.index[bad_inds])
+                    if 'level_0' in chunk.columns:  # hygiene
+                        chunk = chunk.drop(columns='level_0')
+                    chunk = chunk.reset_index()
+                    # load new features into the dataframe
 
-                # load new features into the dataframe
+                else:
+                    chunk = pd.DataFrame() # fresh empty dataframe
+
                 for i, feature in enumerate(self.features):
                     chunk[feature] = new_features[i]
 
@@ -214,6 +240,8 @@ class CCDC_helper():
         for i, feature in enumerate(self.features):
             if feature == 'xyz':
                 value = molecule.to_string('mol2')
+            elif feature == 'identifier':
+                value = crystal.identifier
             elif feature == 'crystal atoms on special positions':
                 value = [atom.index for atom in crystal.atoms_on_special_positions()]
             elif feature == 'crystal date':
@@ -302,7 +330,7 @@ class CCDC_helper():
 
                     value = ref_cell_coords_c  # np.concatenate((ref_cell_coords_c, ref_cell_coords_f), axis=-1)
                 else:
-                    #print('Crystal components not equal to Z value or has incorrect number of heavy atoms in each molecule or had atoms added by the packer for no reason')
+                    # print('Crystal components not equal to Z value or has incorrect number of heavy atoms in each molecule or had atoms added by the packer for no reason')
                     value = 'error'
             else:
                 print(feature + ' is not an implemented crystal feature!!')
@@ -375,18 +403,32 @@ def visualizeEntry(identifier):
     img.show()
 
 
-mode = 'csd'  #
-chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/sept_refeaturization/'  # where the chunks should be saved during featurization
-cifs_directory_path = None
+# mode = 'csd'  #
+# chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/sept_refeaturization/'  # where the chunks should be saved during featurization
+# cifs_directory_path = None
+# mode = 'csd'
+# chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/bt_targets/'
+# cifs_directory_path = None
+# target_identifiers = [
+#     'OBEQUJ', 'OBEQOD', 'OBEQET', 'OBEQIX',
+#     'NACJAF', 'XAFPAY', 'XAFQIH'
+# ]
+
 # mode = 'cif'
 # chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6/'  # where the chunks should be saved during featurization
 # cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_6/gp5080sup2'
-# mode = 'cif'
-# chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5/'  # where the chunks should be saved during featurization
-# cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2'
+# target_identifiers = None
+
+mode = 'cif'
+chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5/'  # where the chunks should be saved during featurization
+cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/file_dump'
+target_identifiers = None
+
 # mode = 'cod'
 # chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/COD/'  # where the chunks should be saved during featurization
 # cifs_directory_path = 'F:/cod-cifs-mysql'
+#target_identifiers = None
+
 
 if __name__ == '__main__':
     if not os.path.exists(chunk_path):  # need to initialize relevant directories
@@ -396,12 +438,20 @@ if __name__ == '__main__':
         os.mkdir(chunk_path + '/molecule_features')
 
     helper = CCDC_helper(chunk_path, mode)
-    helper.grep_crystal_identifiers(file_path=cifs_directory_path)
+    helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
     helper.collect_chunks_and_initialize_df()
-    helper.get_crystal_features(n_chunks=1000, chunk_inds=[800, 900], file_path=cifs_directory_path)
+    #helper.get_crystal_features(n_chunks=100, chunk_inds=[0, 100], file_path=cifs_directory_path)
+    #helper.get_crystal_features(n_chunks=100, chunk_inds=[25, 50], file_path=cifs_directory_path)
+    #helper.get_crystal_features(n_chunks=100, chunk_inds=[50, 75], file_path=cifs_directory_path)
+    helper.get_crystal_features(n_chunks=100, chunk_inds=[75, 100], file_path=cifs_directory_path)
 
     featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
-    featurizer.featurize(chunk_inds=[800, 900])
+    #featurizer.featurize(chunk_inds=[0, 25])
+    #featurizer.featurize(chunk_inds=[25, 50])
+    #featurizer.featurize(chunk_inds=[50, 75])
+    featurizer.featurize(chunk_inds=[75, 100])
 
-    miner = Miner(chunk_path, collect_chunks=True, database = 'cif')
+
+
+    miner = Miner(chunk_path, collect_chunks=True, database='cif')
     miner.process_new_dataset()

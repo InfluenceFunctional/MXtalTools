@@ -32,6 +32,7 @@ class Miner():
             self.include_sgs = None
             self.include_pgs = None
             self.exclude_crystal_systems = None
+            self.exclude_blind_test_targets = False
         else:
             self.max_z_prime = config.max_z_prime
             self.min_z_prime = config.min_z_prime
@@ -56,6 +57,7 @@ class Miner():
             self.include_sgs = config.include_sgs
             self.include_pgs = config.include_pgs
             self.exclude_crystal_systems = config.exclude_crystal_systems
+            self.exclude_blind_test_targets = config.exclude_blind_test_targets
 
         self.dataset_path = dataset_path
         self.collect_chunks = collect_chunks
@@ -198,11 +200,43 @@ class Miner():
 
         # todo filter samples where space groups explicitly disagree with given crystal system
 
-        # samples with bad CSD-generated reference cells
+        # exclude samples with extremely close atoms
         n_bad_inds = len(bad_inds)
+        for j in range(len(self.dataset)):
+            coords = self.dataset['crystal reference cell coords'][j]
+            coords = coords.reshape(coords.shape[0] * coords.shape[1],3)
+            distmat = torch.cdist(torch.Tensor(coords), torch.Tensor(coords), p=2) + torch.eye(len(coords))
+            if torch.amin(distmat) < 0.1:
+                print('bad')
+                bad_inds.extend(j)
+        print('overlapping atoms caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
+
+        # samples with bad CSD-generated reference cells
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:, 0])  # missing coordinates
         bad_inds.extend(np.argwhere(np.asarray(np.isnan(self.dataset['crystal asymmetric unit centroid x'])))[:, 0])  # missing orientation features
         print('bad coordinates caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
+        if self.exclude_blind_test_targets:
+            # CSD blind test 5 and 6 targets
+            blind_test_identifiers = [
+                'OBEQUJ','OBEQOD','OBEQET','XATJOT','OBEQIX','KONTIQ',
+                'NACJAF','XAFPAY','XAFQON','XAFQIH'
+            ]
+            blind_test_identifiers.remove('XATJOT') # multi-component
+            blind_test_identifiers.remove('XAFQON') # multi-component
+            blind_test_identifiers.remove('KONTIQ') # multi-component
+
+            # samples with bad CSD-generated reference cells
+            n_bad_inds = len(bad_inds)
+            for j in range(len(self.dataset)):
+                item = self.dataset['identifier'][j] # do it this way to remove the target, including any of its polymorphs
+                if item[-1].isdigit():
+                    item = item[:-2]  # cut off trailing digits, if any
+                if item in blind_test_identifiers:
+                    bad_inds.append(j)
+            print('Blind test targets caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
 
         # cases where the csd has the wrong number of molecules
         n_bad_inds = len(bad_inds)
@@ -318,6 +352,10 @@ class Miner():
         '''
         # use CSD identifiers to pick out polymorphs
         duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
+
+        #duplicate_groups_identifiers = {ident:[self.dataset['identifier'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
+        #duplicate_groups_packings = {ident:[self.dataset['crystal packing coefficient'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
+
         # todo delete blind test and any extra CSP samples from the training dataset
 
         # now, the 'representative structure' is the highest resolution structure which as the same space group as the oldest structure
@@ -351,7 +389,7 @@ class Miner():
                 if item not in all_identifiers.keys():
                     all_identifiers[item] = []
                 all_identifiers[item].append(i)
-        elif self.database.lower() == 'cif':
+        elif self.database.lower() == 'cif': # todo unfinished
             blind_test_targets = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
                                   'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
                                   'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
@@ -381,8 +419,8 @@ class Miner():
         convert dataset features such as strings into purely numerical vectors (not normed etc yet)
         :return:
         '''
-        if type(self.dataset['molecule point group']) is not str:
-            self.dataset['molecule point group'] = [str(pg) for pg in self.dataset['molecule point group']]
+        # if type(self.dataset['molecule point group']) is not str:
+        #     self.dataset['molecule point group'] = [str(pg) for pg in self.dataset['molecule point group']]
 
         self.modellable_keys = []
 
@@ -446,7 +484,7 @@ class Miner():
                 if 'molecule' in key:
                     correlates_list.append(key)
 
-        correlates_list.append('molecule point group is C1')
+        #correlates_list.append('molecule point group is C1')
 
         for key in self.modellable_keys:
             key_good = True

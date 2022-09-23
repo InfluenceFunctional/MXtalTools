@@ -63,7 +63,7 @@ class SupercellBuilder():
         if copying a reference, extract its parameters
         '''
         if ref_data is not None:  # extract parameters directly from the ref_data
-            cell_sample_i, target_handedness, ref_final_coords = cell_analysis(supercell_data.clone(), self.atom_weights, debug=debug, return_final_coords = True)
+            cell_sample_i, target_handedness, ref_final_coords = cell_analysis(supercell_data.clone(), self.atom_weights, debug=debug, return_final_coords=True)
             if standardized_sample:
                 cell_sample = (cell_sample_i - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
             else:
@@ -79,9 +79,10 @@ class SupercellBuilder():
 
         '''
         process the cell parameters
+        & denormalize the cell length
         '''
         cell_lengths, cell_angles, mol_position, mol_rotation = \
-            self.process_cell_params(cell_sample, skip_cell_cleaning, standardized_sample)
+            self.process_cell_params(supercell_data, cell_sample, skip_cell_cleaning, standardized_sample)
 
         # todo - for fractional rotations, get this inside the above function, without breaking autograd. Good Luck
         T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles)  # this is the troublemaker
@@ -90,7 +91,7 @@ class SupercellBuilder():
         update cell params
         '''
         supercell_data.T_fc = T_fc_list
-        supercell_data.cell_params = torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation), dim=1)
+        supercell_data.cell_params = torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation), dim=1) # lengths are destandardized here
 
         '''
         collect molecule info
@@ -112,7 +113,7 @@ class SupercellBuilder():
         '''
         # we want all rotations from right-handed orientations to right-handed orientations
         Ip_axes_list = compute_principal_axes_list(coords_list)
-        mol_handedness = compute_Ip_handedness(Ip_axes_list) #torch.sign(torch.mul(Ip_axes_list[:, 0], torch.cross(Ip_axes_list[:, 1], Ip_axes_list[:, 2], dim=1)).sum(1))
+        mol_handedness = compute_Ip_handedness(Ip_axes_list)  # torch.sign(torch.mul(Ip_axes_list[:, 0], torch.cross(Ip_axes_list[:, 1], Ip_axes_list[:, 2], dim=1)).sum(1))
         if target_handedness is not None:  # if we are supplied with a certain handedness, enforce it
             disagreements = torch.where(mol_handedness != target_handedness)[0]
             for n in range(len(disagreements)):  # invert molecules which disagree
@@ -120,7 +121,7 @@ class SupercellBuilder():
 
         if debug:
             Ip_axes_list = compute_principal_axes_list(coords_list)
-            mol_handedness = compute_Ip_handedness(Ip_axes_list) #torch.sign(torch.mul(Ip_axes_list[:, 0], torch.cross(Ip_axes_list[:, 1], Ip_axes_list[:, 2], dim=1)).sum(1))
+            mol_handedness = compute_Ip_handedness(Ip_axes_list)  # torch.sign(torch.mul(Ip_axes_list[:, 0], torch.cross(Ip_axes_list[:, 1], Ip_axes_list[:, 2], dim=1)).sum(1))
             assert torch.sum(mol_handedness == target_handedness) == len(mol_handedness)
 
         normed_alignment_target_list = torch.stack([torch.eye(3) for n in range(len(coords_list))]).to(coords_list[0].device)
@@ -162,7 +163,7 @@ class SupercellBuilder():
             target_Ip_axes_list = compute_principal_axes_list(ref_final_coords)
 
             assert F.l1_loss(Ip_axes_list, target_Ip_axes_list, reduction='mean') < 0.001
-            #assert F.l1_loss(ref_final_coords[i], final_coords_list[i], reduction='mean') < 0.001
+            # assert F.l1_loss(ref_final_coords[i], final_coords_list[i], reduction='mean') < 0.001
         '''
         apply point symmetry in z-batches for speed
         '''
@@ -201,13 +202,12 @@ class SupercellBuilder():
         T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(
             cell_lengths=supercell_data.cell_params[:, 0:3], cell_angles=supercell_data.cell_params[:, 3:6])
 
-        #masses_list = []
+        # masses_list = []
         atoms_list = []
         for i in range(supercell_data.num_graphs):
             atoms_i = supercell_data.x[supercell_data.batch == i]
             atoms_list.append(atoms_i)
-            #atomic_numbers = atoms_i[:, 0]
-            #masses_list.append(torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(supercell_data.x.device))
+            # atomic_numbers = atoms_i[:, 0]
 
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # fast_differentiable_cell_vectors(T_fc_list)
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
@@ -222,7 +222,7 @@ class SupercellBuilder():
         # else:
         return supercell_data.to(config.device)
 
-    def process_cell_params(self, cell_sample, skip_cell_cleaning=False, standardized_sample=True):
+    def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True):
         if skip_cell_cleaning:  # don't clean up
             if standardized_sample:
                 destandardized_cell_sample = (cell_sample * torch.Tensor(self.dataDims['lattice stds'])) + torch.Tensor(self.dataDims['lattice means'])  # destandardize
@@ -235,6 +235,7 @@ class SupercellBuilder():
             cell_lengths, cell_angles, mol_position, mol_rotation, _, _, _ = clean_cell_output(
                 cell_lengths, cell_angles, mol_position, mol_rotation, None, self.dataDims,
                 enforce_crystal_system=False, return_transforms=True, standardized_sample=standardized_sample)
+
 
         return cell_lengths, cell_angles, mol_position, mol_rotation
 
@@ -279,7 +280,7 @@ class SupercellBuilder():
 
         return applied_rotation_list
 
-    def apply_point_symmetry(self,supercell_data, final_coords_list, T_fc_list, T_cf_list, sym_ops_list):
+    def apply_point_symmetry(self, supercell_data, final_coords_list, T_fc_list, T_cf_list, sym_ops_list):
         reference_cell_list_i = []
 
         unique_z_values = torch.unique(supercell_data.Z)

@@ -37,7 +37,7 @@ def add_args(parser):
     add_bool_arg(parser, 'skip_saving_and_loading', default=True)
     parser.add_argument("--d_model_path", default=None, type=str)
     parser.add_argument("--g_model_path", default=None, type=str)
-    parser.add_argument("--extra_test_set_path", default=None, type=str)
+    parser.add_argument("--extra_test_set_paths", default=None, type=list)
 
     update_args2config(args2config, 'yaml_config')
     update_args2config(args2config, 'run_num')
@@ -52,7 +52,7 @@ def add_args(parser):
     update_args2config(args2config, 'skip_saving_and_loading')
     update_args2config(args2config, 'd_model_path')
     update_args2config(args2config, 'g_model_path')
-    update_args2config(args2config, 'extra_test_set_path')
+    update_args2config(args2config, 'extra_test_set_paths')
 
     # wandb login
     parser.add_argument('--wandb_experiment_tag', type=str, default='MCryGAN_dev')
@@ -101,6 +101,7 @@ def add_args(parser):
     add_bool_arg(parser, 'exclude_nonstandard_settings', default=True)
     add_bool_arg(parser, 'exclude_missing_r_factor', default=True)
     parser.add_argument('--exclude_crystal_systems', type=list, default=['hexagonal'])
+    add_bool_arg(parser, 'exclude_blind_test_targets', default=True)
 
     update_args2config(args2config, 'target')
     update_args2config(args2config, 'dataset_path')
@@ -122,7 +123,7 @@ def add_args(parser):
     update_args2config(args2config, 'exclude_nonstandard_settings')
     update_args2config(args2config, 'exclude_missing_r_factor')
     update_args2config(args2config, 'exclude_crystal_systems')
-
+    update_args2config(args2config, 'exclude_blind_test_targets')
 
     #  training settings
     parser.add_argument('--max_epochs', type=int, default=100)
@@ -151,7 +152,7 @@ def add_args(parser):
     parser.add_argument('--discriminator_beta2', type=float, default=0.999)  # adam and adamw opt
     parser.add_argument('--discriminator_weight_decay', type=float, default=0.01)  # for opt
     parser.add_argument('--discriminator_convergence_eps', type=float, default=1e-5)
-    parser.add_argument('--discriminator_training_period', type=int, default=5) # period between discriminator training
+    parser.add_argument('--discriminator_training_period', type=int, default=5)  # period between discriminator training
     add_bool_arg(parser, 'discriminator_lr_schedule', default=False)
     parser.add_argument('--discriminator_positional_noise', type=float, default=0)
 
@@ -201,7 +202,6 @@ def add_args(parser):
     parser.add_argument('--generator_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
     add_bool_arg(parser, 'generator_add_radial_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
     parser.add_argument('--generator_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
-
 
     parser.add_argument('--generator_conditioner_num_fc_layers', type=int, default=1)  # number of layers in NN models
     parser.add_argument('--generator_conditioner_fc_depth', type=int, default=27)  # number of neurons per NN layer
@@ -309,8 +309,9 @@ def add_args(parser):
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
     add_bool_arg(parser, 'train_discriminator_on_noise', default=False)  # train generator on extremely unit cells
-    parser.add_argument('--generator_similarity_penalty', type=float, default = 0) # coefficient weighting penalty for self-similarity in generator batches
+    parser.add_argument('--generator_similarity_penalty', type=float, default=0)  # coefficient weighting penalty for self-similarity in generator batches
     parser.add_argument('--cut_max_prob_training_after', type=int, default=10)  # stop applying flow losses after xx epochs
+    parser.add_argument('--extra_test_period', type=int, default=10)  # how often to report stats on the extra test data
     add_bool_arg(parser, 'sample_after_training', default=False)  # run sampler after model converges
 
     update_args2config(args2config, 'gan_loss')
@@ -325,8 +326,8 @@ def add_args(parser):
     update_args2config(args2config, 'train_discriminator_on_noise')
     update_args2config(args2config, 'generator_similarity_penalty')
     update_args2config(args2config, 'cut_max_prob_training_after')
+    update_args2config(args2config, 'extra_test_period')
     update_args2config(args2config, 'sample_after_training')
-
 
     return parser, args2config
 
@@ -342,10 +343,10 @@ def process_config(config):
     config.seeds.dataset = config.seeds.dataset % 10
 
     if config.test_mode:
-        config.max_batch_size = min((config.max_batch_size,50))
-        #config.auto_batch_sizing = False
-        config.num_samples = 1000 # not used anywhere
-        #config.anomaly_detection = True
+        config.max_batch_size = min((config.max_batch_size, 50))
+        # config.auto_batch_sizing = False
+        config.num_samples = 1000  # not used anywhere
+        # config.anomaly_detection = True
         if config.machine == 'cluster':
             config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
         else:
