@@ -231,10 +231,10 @@ class SupercellBuilder():
                 cell_lengths, cell_angles, mol_position, mol_rotation = cell_sample.split(3, 1)
         else:
             cell_lengths, cell_angles, mol_position, mol_rotation = cell_sample.split(3, 1)
-
+            lattices = [self.symmetries_dict['lattice_type'][int(supercell_data.sg_ind[n])] for n in range(supercell_data.num_graphs)]
             cell_lengths, cell_angles, mol_position, mol_rotation, _, _, _ = clean_cell_output(
-                cell_lengths, cell_angles, mol_position, mol_rotation, None, self.dataDims,
-                enforce_crystal_system=False, return_transforms=True, standardized_sample=standardized_sample)
+                cell_lengths, cell_angles, mol_position, mol_rotation, lattices, self.dataDims,
+                enforce_crystal_system=True, return_transforms=True, standardized_sample=standardized_sample)
 
 
         return cell_lengths, cell_angles, mol_position, mol_rotation

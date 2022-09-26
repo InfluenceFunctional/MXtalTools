@@ -1,10 +1,10 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 113
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard
@@ -19,11 +19,14 @@ train_discriminator_on_randn: True
 train_discriminator_on_noise: False
 generator_similarity_penalty: 0 # todo reimpliment NF
 cut_max_prob_training_after: 3
-extra_test_period: 10
+extra_test_period: 3
 sample_after_training: False
-extra_test_set_paths: [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
-                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
-                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets' ]
+extra_test_set_paths: [ '/scratch/mk8347/csd_runs/datasets/blind_test_5_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_6_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_targets' ]
+#                         [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
+#                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
+#                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets' ]
 d_model_path: null
 g_model_path: null
 
@@ -34,7 +37,7 @@ seeds:
 # opt - sweep details
 wandb:
   sample_reporting_frequency: 1
-  experiment_tag: "discriminator_dev"
+  experiment_tag: "discriminator_tests_sept26"
   log_figures: True
   sweep_config_file: "sweep_test.yaml"
   sweep: False
@@ -51,7 +54,7 @@ history: 1000
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 100
+dataset_length: 10000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 100
@@ -95,11 +98,11 @@ discriminator:
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
   graph_convolution_layers: 4
   graph_filters: 32
-  atom_embedding_size: 32
+  atom_embedding_size: 64
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
-  graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
+  graph_convolution_cutoff: 7
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
   num_attention_heads: 4 # mikenet self attention mode only - must evenly divide graph filters
@@ -107,8 +110,8 @@ discriminator:
   add_spherical_basis: True # mikenet only
   pooling: combo
 
-  num_fc_layers: 1
-  fc_depth: 32
+  num_fc_layers: 4
+  fc_depth: 64
   activation: leaky relu
   fc_dropout_probability: 0
   fc_norm_mode: layer
@@ -119,8 +122,8 @@ generator:
   learning_rate: 0.00001
   max_lr: 0.0001
   lr_schedule: True
-  beta1: 0.9 #0.9
-  beta2: 0.999 #0.999
+  beta1: 0.3 #0.9
+  beta2: 0.5 #0.999
   weight_decay: 0.001
   convergence_eps: 0.00001
   positional_noise: 0 # scaling for the randn noise added to all atom positions

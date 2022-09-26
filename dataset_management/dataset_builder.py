@@ -429,29 +429,28 @@ target_identifiers = None
 # cifs_directory_path = 'F:/cod-cifs-mysql'
 #target_identifiers = None
 
-
+#mode = 'build dataset'
+mode = 'cell analyzer'
 if __name__ == '__main__':
     if not os.path.exists(chunk_path):  # need to initialize relevant directories
         os.mkdir(chunk_path)
         os.mkdir(chunk_path + '/identifiers')
         os.mkdir(chunk_path + '/crystal_features')
         os.mkdir(chunk_path + '/molecule_features')
+    if mode == 'build dataset':
+        helper = CCDC_helper(chunk_path, mode)
+        helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
+        helper.collect_chunks_and_initialize_df()
 
-    helper = CCDC_helper(chunk_path, mode)
-    helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
-    helper.collect_chunks_and_initialize_df()
-    #helper.get_crystal_features(n_chunks=100, chunk_inds=[0, 100], file_path=cifs_directory_path)
-    #helper.get_crystal_features(n_chunks=100, chunk_inds=[25, 50], file_path=cifs_directory_path)
-    #helper.get_crystal_features(n_chunks=100, chunk_inds=[50, 75], file_path=cifs_directory_path)
-    helper.get_crystal_features(n_chunks=100, chunk_inds=[75, 100], file_path=cifs_directory_path)
+        helper.get_crystal_features(n_chunks=100, chunk_inds=[0, 100], file_path=cifs_directory_path)
 
-    featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
-    #featurizer.featurize(chunk_inds=[0, 25])
-    #featurizer.featurize(chunk_inds=[25, 50])
-    #featurizer.featurize(chunk_inds=[50, 75])
-    featurizer.featurize(chunk_inds=[75, 100])
+        featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
+
+        featurizer.featurize(chunk_inds=[0, 100])
 
 
 
-    miner = Miner(chunk_path, collect_chunks=True, database='cif')
-    miner.process_new_dataset()
+        miner = Miner(chunk_path, collect_chunks=True, database='cif')
+        miner.process_new_dataset()
+    elif mode == 'cell analyzer': # confirm our cell builder works the same as the CSD's packer even for hexagonal cells
+        aa = 1

@@ -241,11 +241,10 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
             elif (lattice.lower() == 'tetragonal'):  # fix all angles and a & b vectors
                 cell_angles[i] = torch.ones(3) * torch.pi / 2
                 cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2)
-            elif (lattice.lower() == 'hexagonal'):  # for rhombohedral, all angles and lengths equal, but not 90.
-                # for truly hexagonal, alpha=90, gamma is 120, a=b!=c
-                # todo implement 3&6 fold lattices
-                print('hexagonal lattice is not yet implemented!')
-                pass
+            elif (lattice.lower() == 'hexagonal') or (lattice.lower() == 'trigonal') or (lattice.lower() == 'rhombohedral'):
+                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2)
+                cell_angles[i,0:2] = torch.pi/2
+                cell_angles[i,2] = torch.pi * 2/3
             elif (lattice.lower() == 'cubic'):  # all angles 90 all lengths equal
                 cell_lengths[i] = cell_lengths[i].mean() * torch.ones(3)
                 cell_angles[i] = torch.pi * torch.ones(3) / 2
@@ -253,7 +252,6 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
                 print(lattice + ' is not a valid crystal lattice!')
                 sys.exit()
         else:
-            # todo we now need a symmetry analyzer to tell us what we're building
             # don't assume a crystal system, but snap angles close to 90, to assist in precise symmetry
             cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.01] = torch.pi / 2
 

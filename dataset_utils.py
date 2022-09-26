@@ -75,9 +75,10 @@ class BuildDataset:
 
     def set_keys(self):
         # define relevant features for analysis
-        self.atom_keys = ['atom Z']  # 'atom mass', 'atom is H bond acceptor',
-        # 'atom valence', 'atom vdW radius', # 'atom is aromatic', # issue with aromaticity in test sets
-        # 'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
+        self.atom_keys = ['atom Z',
+                          'atom mass', 'atom is H bond acceptor',
+                          'atom valence', 'atom vdW radius',  # 'atom is aromatic', # issue with aromaticity in test sets
+                          'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
 
         self.crystal_keys = ['crystal spacegroup symbol', 'crystal spacegroup number',
                              'crystal calculated density', 'crystal packing coefficient',
@@ -86,13 +87,13 @@ class BuildDataset:
                              'crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal z value', 'crystal z prime',  # 'crystal point group',
                              ]
-        self.molecule_keys = ['molecule volume']
-        # 'molecule mass', 'molecule num atoms', 'molecule volume', # 'molecule point group is C1', mostly unnecessary / noisy
-        # 'molecule num rings', 'molecule num donors', 'molecule num acceptors',
-        # 'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
-        # 'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
-        # 'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
-        # ]
+        self.molecule_keys = ['molecule volume',
+                              'molecule mass', 'molecule num atoms', 'molecule volume',  # 'molecule point group is C1', mostly unnecessary / noisy
+                              'molecule num rings', 'molecule num donors', 'molecule num acceptors',
+                              'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
+                              'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
+                              'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
+                              ]
         # for coupling NF models, must be an even number of these
         self.lattice_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal alpha', 'crystal beta', 'crystal gamma',
@@ -590,20 +591,23 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
         miner.exclude_polymorphs = False
         miner.exclude_missing_r_factor = False
         miner.exclude_blind_test_targets = False
-        datasets.append(miner.load_for_modelling(save_dataset=False, return_dataset=True))
-        del miner
+        dataset_i = miner.load_for_modelling(save_dataset=False, return_dataset=True)
+        if config.test_mode:
+            randinds = np.random.choice(len(dataset_i), min(len(dataset_i), 500), replace=False)
+            dataset_i = dataset_i.loc[randinds]
+        datasets.append(dataset_i)
+        del miner, dataset_i
+
     dataset = pd.concat(datasets)
     if 'level_0' in dataset.columns:  # housekeeping
         dataset = dataset.drop(columns='level_0')
     dataset = dataset.reset_index()
 
-    dlen = 1000000
-
     extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
                                           sg_dict=sg_dict,
                                           lattice_dict=lattice_dict,
                                           replace_dataDims=dataDims,
-                                          override_length=dlen,
+                                          override_length=len(dataset),
                                           premade_dataset=dataset)
 
     extra_test_loader = DataLoader(extra_test_set_builder.datapoints, batch_size=config.final_batch_size, shuffle=False, num_workers=0, pin_memory=False)

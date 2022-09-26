@@ -905,6 +905,8 @@ class Modeller():
             'tracking features': [],
             'identifiers': [],
             'scores': [],
+            'intermolecular rdf': [],
+            'full rdf': [],
         }
 
         for i, data in enumerate(dataLoader):
@@ -921,10 +923,14 @@ class Modeller():
                 assert torch.sum(torch.isnan(real_supercell_data.x)) == 0, "NaN in training input"
 
             score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
+            full_rdfs, rr = crystal_rdf(real_supercell_data)
+            intermolecular_rdfs, rr = crystal_rdf(real_supercell_data, intermolecular = True)
 
             epoch_stats_dict['tracking features'].extend(data.tracking.cpu().detach().numpy())
             epoch_stats_dict['identifiers'].extend(data.csd_identifier)
             epoch_stats_dict['scores'].extend(score_on_real.cpu().detach().numpy())
+            epoch_stats_dict['intermolecular rdf'].extend(intermolecular_rdfs.cpu().detach().numpy())
+            epoch_stats_dict['full rdf'].extend(full_rdfs.cpu().detach().numpy())
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -932,6 +938,8 @@ class Modeller():
 
         epoch_stats_dict['scores'] = np.stack(epoch_stats_dict['scores'])
         epoch_stats_dict['tracking features'] = np.stack(epoch_stats_dict['tracking features'])
+        epoch_stats_dict['full rdf'] = np.stack(epoch_stats_dict['full rdf'])
+        epoch_stats_dict['intermolecular rdf'] = np.stack(epoch_stats_dict['intermolecular rdf'])
 
         total_time = time.time() - t0
 
@@ -1522,30 +1530,34 @@ class Modeller():
 
             colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
 
-
             plot_color = []
             plot_color.append('rgb(100,100,200)')
             plot_color.append('rgb(50,200,100)')
             plot_color.append('rgb(200,100,50)')
 
             loss_correlations_dict = {}
+            rdf_full_distance_dict = {}
+            rdf_inter_distance_dict = {}
+            submissions_scores_dict = {}
             i = -1
             for target in all_identifiers.keys():  # run the analysis for each target
                 if target_identifiers_inds[target] != []:
                     i += 1
 
                     plot_color.append(colors[i])
-                    target_indices = target_identifiers_inds[target]
-                    raw_scores = extra_test_dict['scores'][target_indices]
+                    target_index = target_identifiers_inds[target]
+                    raw_scores = extra_test_dict['scores'][target_index]
                     if self.config.gan_loss == 'wasserstein':
                         scores = raw_scores
-                        scores_list.append(scores)
                     elif self.config.gan_loss == 'standard':
                         scores = np_softmax(raw_scores)[:, 1]
-                        scores_list.append(scores)
+                    scores_list.append(scores)
 
                     labels.append(target + ' exp')
                     wandb.log({f'Average {target} score': np.average(scores)})
+
+                    target_full_rdf = extra_test_dict['full rdf'][target_index]
+                    target_inter_rdf = extra_test_dict['intermolecular rdf'][target_index]
 
                 if all_identifiers[target] != []:
                     plot_color.append(colors[i])
@@ -1554,12 +1566,24 @@ class Modeller():
                     raw_scores = extra_test_dict['scores'][target_indices]
                     if self.config.gan_loss == 'wasserstein':
                         scores = raw_scores
-                        scores_list.append(scores)
                     elif self.config.gan_loss == 'standard':
                         scores = np_softmax(raw_scores)[:, 1]
-                        scores_list.append(scores)
+                    scores_list.append(scores)
 
-                    assert np.sum(np.isnan(scores)) == 0
+                    submissions_scores_dict[target] = scores
+                    submission_full_rdf = extra_test_dict['full rdf'][target_indices]
+                    submission_inter_rdf = extra_test_dict['intermolecular rdf'][target_indices]
+
+                    # compute distance between target & submission RDFs
+                    rr = np.linspace(0,10,100)
+                    sigma = 0.1
+                    smoothed_target_full_rdf = gaussian_filter1d(target_full_rdf,sigma=sigma)
+                    smoothed_target_inter_rdf = gaussian_filter1d(target_inter_rdf,sigma=sigma)
+                    smoothed_submission_full_rdf = gaussian_filter1d(submission_full_rdf,sigma=sigma)
+                    smoothed_submission_inter_rdf = gaussian_filter1d(submission_inter_rdf,sigma=sigma)
+                    rdf_full_distance_dict[target] = np.abs(smoothed_target_full_rdf - smoothed_submission_full_rdf).mean(1)
+                    rdf_inter_distance_dict[target] = np.abs(smoothed_target_inter_rdf - smoothed_submission_inter_rdf).mean(1)
+
 
                     # correlate losses with molecular features
                     tracking_features = np.asarray(extra_test_dict['tracking features'])
@@ -1575,9 +1599,15 @@ class Modeller():
                     wandb.log({f'Average {target} score': np.average(scores)})
 
             fig = go.Figure()
+            if self.config.gan_loss == 'wasserstein':
+                bandwidth = np.std(scores_list[0]) / 10
+            elif self.config.gan_loss == 'standard':
+                bandwidth = 0.01
             for i in range(len(labels)):
-                fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i]))
-            fig.update_traces(side='positive', orientation='h', width=4, meanline_visible=True)
+                if 'exp' in labels[i]:
+                    fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i],side='positive', orientation='h', width=6))
+                else:
+                    fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i],side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth))
             fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
             wandb.log({'Discriminator Test Scores': fig})
 
@@ -1627,6 +1657,25 @@ class Modeller():
             fig.update_layout(showlegend=True)
             wandb.log({'Test loss correlates': fig})
 
+            '''
+            rdf distance vs score
+            '''
+            fig = go.Figure()
+            for i,target in enumerate(rdf_full_distance_dict.keys()):
+                xline = np.asarray([np.amin(rdf_full_distance_dict[target]), np.amax(rdf_full_distance_dict[target])])
+                linreg_result = linregress(rdf_full_distance_dict[target], submissions_scores_dict[target])
+                yline = xline * linreg_result.slope + linreg_result.intercept
+                fig.add_trace(go.Scatter(x=rdf_full_distance_dict[target], y = submissions_scores_dict[target], mode='markers',marker_color=colors[i], name = target))
+                fig.add_trace(go.Scatter(x = xline, y = yline, marker_color = colors[i], name = f'R={linreg_result.rvalue:.3f}'))
+            wandb.log({'Full RDF distance-score correlations': fig})
+            fig = go.Figure()
+            for i,target in enumerate(rdf_inter_distance_dict.keys()):
+                xline = np.asarray([np.amin(rdf_inter_distance_dict[target]), np.amax(rdf_inter_distance_dict[target])])
+                linreg_result = linregress(rdf_inter_distance_dict[target], submissions_scores_dict[target])
+                yline = xline * linreg_result.slope + linreg_result.intercept
+                fig.add_trace(go.Scatter(x=rdf_inter_distance_dict[target], y = submissions_scores_dict[target], mode='markers',marker_color=colors[i], name = target))
+                fig.add_trace(go.Scatter(x = xline, y = yline, marker_color = colors[i], name = f'R={linreg_result.rvalue:.3f}'))
+            wandb.log({'Intermolecular RDF distance-score correlations': fig})
         return None
 
     def train_discriminator(self, generator, discriminator, config, data, i):

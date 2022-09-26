@@ -260,6 +260,7 @@ def add_args(parser):
 
     # crystal cell graph Net
     parser.add_argument('--discriminator_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
+    parser.add_argument('--discriminator_crystal_convolution_type', type=int, default=1)  # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
     parser.add_argument('--discriminator_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
     parser.add_argument('--discriminator_graph_filters', type=int, default=28)  # number of neurons per graph convolution
     parser.add_argument('--discriminator_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'self attention' 'full message passing'
@@ -280,6 +281,7 @@ def add_args(parser):
     parser.add_argument('--discriminator_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
 
     update_args2config(args2config, 'discriminator_graph_model', ['discriminator', 'graph_model'])
+    update_args2config(args2config, 'discriminator_crystal_convolution_type', ['discriminator', 'crystal_convolution_type'])
     update_args2config(args2config, 'discriminator_atom_embedding_size', ['discriminator', 'atom_embedding_size'])
     update_args2config(args2config, 'discriminator_graph_filters', ['discriminator', 'graph_filters'])
     update_args2config(args2config, 'discriminator_graph_convolution', ['discriminator', 'graph_convolution'])

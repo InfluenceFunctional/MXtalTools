@@ -43,7 +43,7 @@ class molecule_graph_model(nn.Module):
                  radial_function,
                  max_num_neighbors,
                  convolution_cutoff,
-                 return_latent=False, crystal_mode=False, device='cuda'):
+                 return_latent=False, crystal_mode=False, crystal_convolution_type=None, device='cuda'):
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
         self.device = device
@@ -63,8 +63,8 @@ class molecule_graph_model(nn.Module):
         self.num_radial = num_radial
         self.num_attention_heads = num_attention_heads
         self.add_radial_basis = add_radial_basis
-        self.n_mol_feats = num_mol_feats #dataDims['num mol features']
-        self.n_atom_feats = num_atom_feats #dataDims['num atom features']
+        self.n_mol_feats = num_mol_feats  # dataDims['num mol features']
+        self.n_atom_feats = num_atom_feats  # dataDims['num atom features']
         self.radial_function = radial_function
         self.max_num_neighbors = max_num_neighbors
         self.graph_convolution_cutoff = convolution_cutoff
@@ -74,6 +74,7 @@ class molecule_graph_model(nn.Module):
         self.fc_norm_mode = fc_norm_mode
         self.embedding_dim = atom_embedding_size
         self.crystal_mode = crystal_mode
+        self.crystal_convolution_type = crystal_convolution_type
 
         torch.manual_seed(seed)
 
@@ -81,6 +82,7 @@ class molecule_graph_model(nn.Module):
             if self.graph_model == 'mike':  # mike's net - others currently deprecated. For future, implement new convolutions in the mikenet class
                 self.graph_net = MikesGraphNet(
                     crystal_mode=crystal_mode,
+                    crystal_convolution_type=self.crystal_convolution_type,
                     graph_convolution_filters=self.graph_filters,
                     graph_convolution=self.graph_convolution,
                     out_channels=self.fc_depth,
@@ -98,7 +100,7 @@ class molecule_graph_model(nn.Module):
                     spherical_embedding=self.add_radial_basis,
                     radial_embedding=self.radial_function,
                     atom_embedding_dims=dataDims['atom embedding dict sizes'],
-                    attention_heads=self.num_attention_heads
+                    attention_heads=self.num_attention_heads,
                 )
             else:
                 print(self.graph_model + ' is not a valid graph model!!')
@@ -265,7 +267,7 @@ class independent_gaussian_model(nn.Module):
         # conditions are unused - dummy
         # denormalize sample before standardizing
         samples = self.prior.sample((num_samples,))
-        samples[:,:3] = samples[:,:3] * (data.Z[:,None] ** (1/3)) * (data.mol_volume[:,None] ** (1/3))
+        samples[:, :3] = samples[:, :3] * (data.Z[:, None] ** (1 / 3)) * (data.mol_volume[:, None] ** (1 / 3))
         return (samples - self.means) / self.stds  # we want samples in standardized basis
 
     def backward(self, samples):
@@ -374,7 +376,7 @@ class global_aggregation(nn.Module):
             return self.agg(x, batch)
 
 
-def crystal_rdf(crystaldata, rrange = [0,10], bins = 100, intermolecular=False):
+def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False):
     '''
     compute the RDF for all the supercells in a CrystalData object
     without respect for atom type
