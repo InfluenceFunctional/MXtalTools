@@ -54,7 +54,7 @@ history: 1000
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 100000000
+dataset_length: 10000
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
 max_num_atoms: 100
