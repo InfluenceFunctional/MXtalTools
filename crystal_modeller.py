@@ -544,10 +544,13 @@ class Modeller():
                         '''
                         save model if best
                         '''  # todo add more sophisticated convergence stat
-                        if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss']):  # todo fix this
-                            save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
-                        if np.average(g_err_te) < np.amin(metrics_dict['generator test loss']):
-                            save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num))
+                        if epoch > 0:
+                            if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss'][:-1]):  # todo fix this
+                                print("Saving discriminator checkpoint")
+                                save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
+                            if np.average(g_err_te) < np.amin(metrics_dict['generator test loss'][:-1]):
+                                print("Saving generator checkpoint")
+                                save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num))
 
                         '''
                         convergence checks

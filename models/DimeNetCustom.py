@@ -11,7 +11,8 @@ from torch_scatter import scatter
 from torch_sparse import SparseTensor
 from torch_geometric.nn import radius_graph, GraphNorm, LayerNorm
 
-from torch_geometric.nn.acts import swish
+#from torch_geometric.nn.acts import swish
+from torch.nn.functional import gelu
 from torch_geometric.nn.inits import glorot_orthogonal
 
 
@@ -96,7 +97,7 @@ class SphericalBasisLayer(torch.nn.Module):
 
 
 class EmbeddingBlock(torch.nn.Module):
-    def __init__(self, num_radial, hidden_channels, num_atom_features, embedding_size, embedding_dimension, act=swish):
+    def __init__(self, num_radial, hidden_channels, num_atom_features, embedding_size, embedding_dimension, act=gelu):
         super(EmbeddingBlock, self).__init__()
         self.act = act
         self.num_embeddings = len(embedding_size)
@@ -133,7 +134,7 @@ class EmbeddingBlock(torch.nn.Module):
 
 
 class CustomEmbeddingBlock(torch.nn.Module):
-    def __init__(self, hidden_channels, num_atom_features, embedding_dim, act=swish):
+    def __init__(self, hidden_channels, num_atom_features, embedding_dim, act=gelu):
         super(CustomEmbeddingBlock, self).__init__()
         self.act = act
         self.emb1 = Embedding(embedding_dim, hidden_channels)
@@ -158,7 +159,7 @@ class CustomEmbeddingBlock(torch.nn.Module):
 
 
 class ResidualLayer(torch.nn.Module):
-    def __init__(self, hidden_channels, act=swish):
+    def __init__(self, hidden_channels, act=gelu):
         super(ResidualLayer, self).__init__()
         self.act = act
         self.lin1 = Linear(hidden_channels, hidden_channels)
@@ -178,7 +179,7 @@ class ResidualLayer(torch.nn.Module):
 
 class InteractionBlock(torch.nn.Module):
     def __init__(self, hidden_channels, num_bilinear, num_spherical,
-                 num_radial, num_before_skip, num_after_skip, act=swish):
+                 num_radial, num_before_skip, num_after_skip, act=gelu):
         super(InteractionBlock, self).__init__()
         self.act = act
 
@@ -240,7 +241,7 @@ class InteractionBlock(torch.nn.Module):
 
 class InteractionBlockPP(torch.nn.Module):
     def __init__(self, hidden_channels, graph_convolution_filters, num_spherical,
-                 num_radial, num_before_skip, num_after_skip, act=swish):
+                 num_radial, num_before_skip, num_after_skip, act=gelu):
         super(InteractionBlockPP, self).__init__()
         self.act = act
         int_hidden_channels = graph_convolution_filters
@@ -317,7 +318,7 @@ from torch_geometric.nn import DimeNet
 
 class OutputBlock(torch.nn.Module):
     def __init__(self, num_radial, hidden_channels, out_channels, num_layers,
-                 act=swish):
+                 act=gelu):
         super(OutputBlock, self).__init__()
         self.act = act
 
@@ -346,7 +347,7 @@ class OutputBlock(torch.nn.Module):
 
 class OutputBlockPP(torch.nn.Module):
     def __init__(self, num_radial, hidden_channels, out_channels, num_layers,
-                 act=swish):
+                 act=gelu):
         super(OutputBlockPP, self).__init__()
         self.act = act
 
@@ -409,7 +410,7 @@ class CustomDimeNet(torch.nn.Module):
         num_output_layers: (int, optional): Number of linear layers for the
             output blocks. (default: :obj:`3`)
         act: (Callable, optional): The activation funtion.
-            (default: :obj:`swish`)
+            (default: :obj:`gelu`)
     """
 
     url = ('https://github.com/klicperajo/dimenet/raw/master/pretrained/'
@@ -421,7 +422,7 @@ class CustomDimeNet(torch.nn.Module):
                  envelope_exponent: int = 5, num_before_skip: int = 1,
                  num_after_skip: int = 1, num_output_layers: int = 1,
                  dense: bool = True,
-                 act: Callable = swish,
+                 act: Callable = gelu,
                  num_atom_features=1,
                  atom_embedding_dims=np.ones(1),
                  embedding_hidden_dimension=5,

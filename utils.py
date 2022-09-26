@@ -2197,6 +2197,7 @@ def save_checkpoint(epoch, model, optimizer, config, model_name):
                 'optimizer_state_dict': optimizer.state_dict(),
                 'config':config},
                '../models/' + model_name)
+    return None
 
 
 def load_checkpoint(model, optimizer, model_path, config):
