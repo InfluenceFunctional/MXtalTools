@@ -241,21 +241,24 @@ class independent_gaussian_model(nn.Module):
         super(independent_gaussian_model, self).__init__()
 
         self.input_dim = input_dim
+        fixed_norms = torch.Tensor(means)
+        fixed_norms[:3] = torch.Tensor(normed_length_means)
+        fixed_stds = torch.Tensor(stds)
+        fixed_stds[:3] = torch.Tensor(normed_length_stds)
+
         self.register_buffer('means', torch.Tensor(means))
-        self.register_buffer('stds', torch.Tensor(stds))
-        self.register_buffer('normed length means', torch.Tensor(normed_length_means))
-        self.register_buffer('normed length stds', torch.Tensor(normed_length_stds))
+        self.register_buffer('stds', torch.Tensor(means))
+        self.register_buffer('fixed_norms', torch.Tensor(fixed_norms))
+        self.register_buffer('fixed_stds', torch.Tensor(fixed_stds))
 
         if cov_mat is not None:
             pass
         else:
-            fixed_stds = normed_length_stds.copy()
-            fixed_stds[:3] = normed_length_stds
             cov_mat = torch.diag(torch.Tensor(fixed_stds).pow(2))
 
         fixed_means = means.copy()
         fixed_means[:3] = normed_length_means
-        self.prior = MultivariateNormal(torch.Tensor(fixed_means), torch.Tensor(cov_mat))  # apply standardization
+        self.prior = MultivariateNormal(fixed_norms, torch.Tensor(cov_mat))  # apply standardization
         self.dummy_params = nn.Parameter(torch.ones(100))
 
     def forward(self, data, num_samples):
@@ -266,9 +269,9 @@ class independent_gaussian_model(nn.Module):
         '''
         # conditions are unused - dummy
         # denormalize sample before standardizing
-        samples = self.prior.sample((num_samples,))
+        samples = self.prior.sample((num_samples,)).to(data.x.device)
         samples[:, :3] = samples[:, :3] * (data.Z[:, None] ** (1 / 3)) * (data.mol_volume[:, None] ** (1 / 3))
-        return (samples - self.means) / self.stds  # we want samples in standardized basis
+        return (samples - self.means.to(samples.device)) / self.stds.to(samples.device)  # we want samples in standardized basis
 
     def backward(self, samples):
         return samples * self.stds + self.means
@@ -317,10 +320,10 @@ class general_MLP(nn.Module):
 
     def forward(self, x, conditions=None, return_latent=False):
         if type(x) == torch_geometric.data.batch.CrystalDataBatch:  # extract conditions from trailing atomic features
-            if len(x) == 1:
-                x = x.x[:, -self.input_dim:]
-            else:
-                x = gnn.global_max_pool(x.x, x.batch)[:, -self.input_dim:]  # x.x[x.ptr[:-1]][:, -self.input_dim:]
+            # if x.num_graphs == 1:
+            #     x = x.x[:, -self.input_dim:]
+            # else:
+            x = gnn.global_max_pool(x.x, x.batch)[:, -self.input_dim:]  # x.x[x.ptr[:-1]][:, -self.input_dim:]
 
         if conditions is not None:
             # if type(conditions) == torch_geometric.data.batch.DataBatch: # extract conditions from trailing atomic features

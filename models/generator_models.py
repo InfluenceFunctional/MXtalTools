@@ -114,7 +114,15 @@ class crystal_generator(nn.Module):
                 return self.model(z, conditions=conditions_encoding, return_latent=return_latent)
             else:
                 x, _ = self.model.backward(z, conditions=conditions_encoding)  # normalizing flow runs backwards from z->x
-                return x
+
+                # destandardize with denormalized length norm
+                x = x * self.model.fixed_stds + self.model.fixed_norms
+
+                # denormalize
+                x[:, :3] = x[:, :3] * (conditions.Z[:, None] ** (1 / 3)) * (conditions.mol_volume[:, None] ** (1 / 3))
+
+                # restandardize with standard norms & means
+                return  (x - self.model.means) / self.model.stds
 
     def nf_forward(self, x, conditions=None):
         if conditions is not None:
@@ -134,10 +142,21 @@ class crystal_nf(nn.Module):
         self.flow_dimension = dataDims['num lattice features']
         self.prior = prior
 
+        fixed_norms = torch.Tensor(dataDims['lattice means'])
+        fixed_norms[:3] = torch.Tensor(dataDims['lattice normed length means'])
+        fixed_stds = torch.Tensor(dataDims['lattice stds'])
+        fixed_stds[:3] = torch.Tensor(dataDims['lattice normed length stds'])
+
+        self.register_buffer('means', torch.Tensor(dataDims['lattice means']))
+        self.register_buffer('stds', torch.Tensor(dataDims['lattice stds']))
+        self.register_buffer('fixed_norms', torch.Tensor(fixed_norms))
+        self.register_buffer('fixed_stds', torch.Tensor(fixed_stds))
+
         if config.generator.conditional_modelling:
-            self.n_conditional_features = dataDims['num conditional features']
-            if config.generator.conditioning_mode == 'graph model':
-                self.n_conditional_features = config.generator.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
+            # if config.generator.conditioning_mode == 'graph model':
+            self.n_conditional_features = config.generator.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
+            # else:
+            #    self.n_conditional_features = dataDims['num conditional features']
         else:
             self.n_conditional_features = 0
 
@@ -171,7 +190,7 @@ class crystal_nf(nn.Module):
 
         return xs, log_det
 
-    def sample(self, num_samples, conditions=None):
+    def sample(self, num_samples, conditions):
         z = self.prior.sample((num_samples,)).to(self.device)
         prior_logprob = self.prior.log_prob(z.cpu())
 

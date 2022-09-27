@@ -293,8 +293,8 @@ class SupercellBuilder():
             centroids_c = torch.stack([final_coords_list[inds[ii]].mean(0) for ii in range(len(inds))])
             centroids_f = torch.einsum('nij,nj->ni', (T_cf_list[inds], centroids_c))
 
-            assert torch.sum(centroids_f > 1) == 0  # debugging
-            assert torch.sum(centroids_f < 0) == 0
+            #assert torch.sum(centroids_f > 1) == 0  # debugging
+            #assert torch.sum(centroids_f < 0) == 0
 
             ref_cells = torch.zeros((z_value, len(inds), padded_coords_c.shape[1], 3)).to(final_coords_list[0].device)
 

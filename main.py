@@ -82,6 +82,7 @@ def add_args(parser):
                         default='molecule spherical defect')  # 'rings', 'groups', 'screw', 'inversion','rotoinversion','mirror','rotation','glide', 'crystal system', 'lattice centering', 'spherical', 'planar'(not in Jan17 dataset)
     parser.add_argument("--dataset_path", type=str, default='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset')
     parser.add_argument('--dataset_length', type=int, default=int(1e3))  # maximum number of items in the dataset before filtration
+    parser.add_argument('--feature_richness', type=str, default='minimal')  # atom & molecule feature richness
 
     # dataset composition
     parser.add_argument('--include_sgs', type=str, default=['P21/c'])  # spacegroups to explicitly include in modelling - new!
@@ -106,6 +107,7 @@ def add_args(parser):
     update_args2config(args2config, 'target')
     update_args2config(args2config, 'dataset_path')
     update_args2config(args2config, 'dataset_length')
+    update_args2config(args2config, 'feature_richness')
     update_args2config(args2config, 'include_sgs')
     update_args2config(args2config, 'include_pgs')
     update_args2config(args2config, 'generate_sgs')

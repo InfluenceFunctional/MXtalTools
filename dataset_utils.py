@@ -43,6 +43,7 @@ class BuildDataset:
             self.max_dataset_length = override_length
         else:
             self.max_dataset_length = config.dataset_length
+        self.feature_richness = config.feature_richness
 
         self.set_keys()
         self.get_syms(pg_dict, sg_dict, lattice_dict)
@@ -75,10 +76,21 @@ class BuildDataset:
 
     def set_keys(self):
         # define relevant features for analysis
-        self.atom_keys = ['atom Z',
-                          'atom mass', 'atom is H bond acceptor',
-                          'atom valence', 'atom vdW radius',  # 'atom is aromatic', # issue with aromaticity in test sets
-                          'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
+        if self.feature_richness == 'full':
+            self.atom_keys = ['atom Z',
+                              'atom mass', 'atom is H bond acceptor',
+                              'atom valence', 'atom vdW radius',  # 'atom is aromatic', # issue with aromaticity in test sets
+                              'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
+            self.molecule_keys = ['molecule volume',
+                                  'molecule mass', 'molecule num atoms', 'molecule volume',  # 'molecule point group is C1', mostly unnecessary / noisy
+                                  'molecule num rings', 'molecule num donors', 'molecule num acceptors',
+                                  'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
+                                  'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
+                                  'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
+                                  ]
+        elif self.feature_richness == 'minimal':
+            self.atom_keys = ['atom Z']
+            self.molecule_keys = ['molecule volume']
 
         self.crystal_keys = ['crystal spacegroup symbol', 'crystal spacegroup number',
                              'crystal calculated density', 'crystal packing coefficient',
@@ -87,13 +99,7 @@ class BuildDataset:
                              'crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal z value', 'crystal z prime',  # 'crystal point group',
                              ]
-        self.molecule_keys = ['molecule volume',
-                              'molecule mass', 'molecule num atoms', 'molecule volume',  # 'molecule point group is C1', mostly unnecessary / noisy
-                              'molecule num rings', 'molecule num donors', 'molecule num acceptors',
-                              'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
-                              'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
-                              'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
-                              ]
+
         # for coupling NF models, must be an even number of these
         self.lattice_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal alpha', 'crystal beta', 'crystal gamma',
@@ -105,6 +111,7 @@ class BuildDataset:
             print('For coupling flow, expect # latent dimensions to be even!')
 
         return
+
 
     def get_syms(self, pg_dict=None, sg_dict=None, lattice_dict=None):
         # get crystal symmetry factors
@@ -495,7 +502,6 @@ class BuildDataset:
         return feature_array
 
     def get_dimension(self):
-
         dim = {
             'dataset length': len(self.datapoints),
 
@@ -542,7 +548,6 @@ class BuildDataset:
 
     def __len__(self):
         return len(self.datapoints)
-
 
 def get_dataloaders(dataset_builder, config, override_batch_size=None):
     if override_batch_size is not None:

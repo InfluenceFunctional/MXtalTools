@@ -703,6 +703,8 @@ class Modeller():
         real_intra_dist = []
         real_inter_dist = []
         generated_samples_list = []
+        final_generated_samples_list = []
+        sample_source_list = []
         epoch_stats_dict = {
             'tracking features': [],
             'identifiers': [],
@@ -716,10 +718,26 @@ class Modeller():
             train discriminator
             '''
             if epoch % config.discriminator.training_period == 0:  # only train the discriminator every XX epochs
-                if config.train_discriminator_adversarially or config.train_discriminator_on_randn or config.train_discriminator_on_noise:
-                    score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict \
-                        = self.train_discriminator(generator, discriminator, config, data, i)  # alternately trains on real and fake samples
+                if config.train_discriminator_adversarially or config.train_discriminator_on_noise:
 
+                    if config.train_discriminator_adversarially and config.train_discriminator_on_randn:  # if doing both, alternate
+                        if i % 2 == 0:
+                            generated_samples_i = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
+                            sample_source_list.extend(np.zeros(len(generated_samples_i)))
+                        else:
+                            generated_samples_i = self.randn_generator.forward(data, data.num_graphs).to(generator.device)
+                            sample_source_list.extend(np.ones(len(generated_samples_i)))
+                    else:
+                        if config.train_discriminator_adversarially:
+                            generated_samples_i = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
+                            sample_source_list.extend(np.zeros(len(generated_samples_i)))
+
+                        if config.train_discriminator_on_randn:
+                            generated_samples_i = self.randn_generator.forward(data, data.num_graphs).to(generator.device)
+                            sample_source_list.extend(np.ones(len(generated_samples_i)))
+
+                    score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict \
+                        = self.train_discriminator(generated_samples_i, discriminator, config, data, i)  # alternately trains on real and fake samples
                     d_real_scores.extend(score_on_real.cpu().detach().numpy())
                     d_fake_scores.extend(score_on_fake.cpu().detach().numpy())
 
@@ -730,9 +748,6 @@ class Modeller():
                         prediction = torch.cat((score_on_real, score_on_fake))
                         target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
                         d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
-
-                        # d_real_scores.append(F.softmax(score_on_real, dim=1)[:, 1].cpu().detach().numpy())
-                        # d_fake_scores.append(F.softmax(score_on_fake, dim=1)[:, 1].cpu().detach().numpy())
 
                     else:
                         print(config.gan_loss + ' is not an implemented GAN loss function!')
@@ -753,7 +768,9 @@ class Modeller():
                     real_intra_dist.append(real_dist_dict['intramolecular dist'].cpu().detach().numpy())
                     real_inter_dist.append(real_dist_dict['intermolecular dist'].cpu().detach().numpy())
 
-                    generated_samples_list.append(generated_samples)
+                    generated_samples_list.append(generated_samples_i.cpu().detach().numpy())
+                    final_generated_samples_list.append(generated_samples)
+
                 else:
                     d_err.append(np.zeros(1))
                     d_loss_record.extend(np.zeros(data.num_graphs))
@@ -891,7 +908,9 @@ class Modeller():
             epoch_stats_dict['real intra distance hist'] = np.histogram(np.concatenate(real_intra_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if real_intra_dist != [] else None
             epoch_stats_dict['real inter distance hist'] = np.histogram(np.concatenate(real_inter_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if real_inter_dist != [] else None
             epoch_stats_dict['generated cell parameters'] = np.concatenate(generated_samples_list) if generated_samples_list != [] else None
+            epoch_stats_dict['final generated cell parameters'] = np.concatenate(final_generated_samples_list) if final_generated_samples_list != [] else None
             epoch_stats_dict['generated supercell examples dict'] = generated_supercell_examples_dict if generated_supercell_examples_dict != {} else None
+            epoch_stats_dict['generator sample source'] = np.asarray(sample_source_list) if sample_source_list != [] else None
 
             return d_err, d_loss_record, g_err, g_loss_record, epoch_stats_dict, total_time
         else:
@@ -924,7 +943,7 @@ class Modeller():
 
             score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
             full_rdfs, rr = crystal_rdf(real_supercell_data)
-            intermolecular_rdfs, rr = crystal_rdf(real_supercell_data, intermolecular = True)
+            intermolecular_rdfs, rr = crystal_rdf(real_supercell_data, intermolecular=True)
 
             epoch_stats_dict['tracking features'].extend(data.tracking.cpu().detach().numpy())
             epoch_stats_dict['identifiers'].extend(data.csd_identifier)
@@ -1303,11 +1322,7 @@ class Modeller():
                 for i in range(generated_samples.shape[1]):
                     renormalized_samples[:, i] = generated_samples[:, i] * stds[i] + means[i]
 
-                # samples as the builder sees them
-                cell_lengths, cell_angles, rand_position, rand_rotation = torch.tensor(generated_samples).split(3, 1)
-                cell_lengths, cell_angles, rand_position, rand_rotation = clean_cell_output(
-                    cell_lengths, cell_angles, rand_position, rand_rotation, None, config.dataDims, enforce_crystal_system=False)
-                cleaned_samples = torch.cat((cell_lengths, cell_angles, rand_position, rand_rotation), dim=1).detach().numpy()
+                cleaned_samples = test_epoch_stats_dict['final generated cell parameters']
 
                 overlaps_1d = {}
                 sample_means = {}
@@ -1475,9 +1490,9 @@ class Modeller():
         if (extra_test_dict is not None) and (epoch % config.extra_test_period == 0):
             # need to identify targets
             # need to distinguish between experimental and proposed structures
-            blind_test_targets = [#'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
-                                  'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
-                                  'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
+            blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+                'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
+                'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
             all_identifiers = {key: [] for key in blind_test_targets}
             for i in range(len(extra_test_dict['identifiers'])):
                 item = extra_test_dict['identifiers'][i]
@@ -1508,32 +1523,45 @@ class Modeller():
                         target_identifiers_inds[key] = i
 
             scores_list = []
+            randn_inds = np.where(train_epoch_stats_dict['generator sample source'] == 0)
+            nf_inds = np.where(train_epoch_stats_dict['generator sample source'] == 1)
+
             if self.config.gan_loss == 'wasserstein':
                 scores_list.append(train_epoch_stats_dict['discriminator real score'])
                 scores_list.append(test_epoch_stats_dict['discriminator real score'])
-                scores_list.append(train_epoch_stats_dict['discriminator fake score'])
+                scores_list.append(train_epoch_stats_dict['discriminator fake score'][randn_inds])
+                scores_list.append(train_epoch_stats_dict['discriminator fake score'][nf_inds])
+
 
             elif self.config.gan_loss == 'standard':
                 scores_list.append(np_softmax(train_epoch_stats_dict['discriminator real score'])[:, -1])
                 scores_list.append(np_softmax(test_epoch_stats_dict['discriminator real score'])[:, -1])
                 scores_list.append(np_softmax(train_epoch_stats_dict['discriminator fake score'])[:, -1])
+                scores_list.append(np_softmax(train_epoch_stats_dict['discriminator fake score'])[:, -1])
+
 
             wandb.log({'Average Train score': np.average(scores_list[0])})
             wandb.log({'Average Test score': np.average(scores_list[1])})
-            wandb.log({'Average Fake score': np.average(scores_list[2])})
+            wandb.log({'Average Randn Fake score': np.average(scores_list[2])})
+            wandb.log({'Average NF Fake score': np.average(scores_list[3])})
+
 
             labels = []
             labels.append('Train CSD Data')
             labels.append('Test CSD Data')
-            labels.append('Test Fake Data')
+            labels.append('Test randn Data')
+            labels.append('Test nf data')
+
             lens = [len(val) for val in all_identifiers.values()]
 
             colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
 
             plot_color = []
-            plot_color.append('rgb(100,100,200)')
-            plot_color.append('rgb(50,200,100)')
-            plot_color.append('rgb(200,100,50)')
+            plot_color.append('rgb(250,50,50)')
+            plot_color.append('rgb(150,150,50)')
+            plot_color.append('rgb(50,200,50)')
+            plot_color.append('rgb(150,50,150)')
+
 
             loss_correlations_dict = {}
             rdf_full_distance_dict = {}
@@ -1575,15 +1603,14 @@ class Modeller():
                     submission_inter_rdf = extra_test_dict['intermolecular rdf'][target_indices]
 
                     # compute distance between target & submission RDFs
-                    rr = np.linspace(0,10,100)
+                    rr = np.linspace(0, 10, 100)
                     sigma = 0.1
-                    smoothed_target_full_rdf = gaussian_filter1d(target_full_rdf,sigma=sigma)
-                    smoothed_target_inter_rdf = gaussian_filter1d(target_inter_rdf,sigma=sigma)
-                    smoothed_submission_full_rdf = gaussian_filter1d(submission_full_rdf,sigma=sigma)
-                    smoothed_submission_inter_rdf = gaussian_filter1d(submission_inter_rdf,sigma=sigma)
+                    smoothed_target_full_rdf = gaussian_filter1d(target_full_rdf, sigma=sigma)
+                    smoothed_target_inter_rdf = gaussian_filter1d(target_inter_rdf, sigma=sigma)
+                    smoothed_submission_full_rdf = gaussian_filter1d(np.clip(submission_full_rdf, a_min=0, a_max=10), sigma=sigma)
+                    smoothed_submission_inter_rdf = gaussian_filter1d(np.clip(submission_inter_rdf, a_min=0, a_max=10), sigma=sigma)
                     rdf_full_distance_dict[target] = np.abs(smoothed_target_full_rdf - smoothed_submission_full_rdf).mean(1)
                     rdf_inter_distance_dict[target] = np.abs(smoothed_target_inter_rdf - smoothed_submission_inter_rdf).mean(1)
-
 
                     # correlate losses with molecular features
                     tracking_features = np.asarray(extra_test_dict['tracking features'])
@@ -1600,14 +1627,14 @@ class Modeller():
 
             fig = go.Figure()
             if self.config.gan_loss == 'wasserstein':
-                bandwidth = np.std(scores_list[0]) / 10
+                bandwidth = np.std(scores_list[0]) / 100
             elif self.config.gan_loss == 'standard':
-                bandwidth = 0.01
+                bandwidth = 0.0025
             for i in range(len(labels)):
                 if 'exp' in labels[i]:
-                    fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i],side='positive', orientation='h', width=6))
+                    fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i], side='positive', orientation='h', width=6))
                 else:
-                    fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i],side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth))
+                    fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth))
             fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
             wandb.log({'Discriminator Test Scores': fig})
 
@@ -1615,7 +1642,7 @@ class Modeller():
             features = []
             for j in range(config.dataDims['num tracking features']):  # not that interesting
                 features.append(config.dataDims['tracking features dict'][j])
-                loss_correlations[j] = np.corrcoef(scores_list[0], train_epoch_stats_dict['tracking features'][:,j], rowvar=False)[0, 1]
+                loss_correlations[j] = np.corrcoef(scores_list[0], train_epoch_stats_dict['tracking features'][:, j], rowvar=False)[0, 1]
 
             loss_correlations_dict['Train Real'] = loss_correlations
 
@@ -1623,7 +1650,7 @@ class Modeller():
             features = []
             for j in range(config.dataDims['num tracking features']):  # not that interesting
                 features.append(config.dataDims['tracking features dict'][j])
-                loss_correlations[j] = np.corrcoef(scores_list[1], test_epoch_stats_dict['tracking features'][:,j], rowvar=False)[0, 1]
+                loss_correlations[j] = np.corrcoef(scores_list[1], test_epoch_stats_dict['tracking features'][:, j], rowvar=False)[0, 1]
 
             loss_correlations_dict['Test Real'] = loss_correlations
 
@@ -1661,41 +1688,34 @@ class Modeller():
             rdf distance vs score
             '''
             fig = go.Figure()
-            for i,target in enumerate(rdf_full_distance_dict.keys()):
+            for i, target in enumerate(rdf_full_distance_dict.keys()):
                 xline = np.asarray([np.amin(rdf_full_distance_dict[target]), np.amax(rdf_full_distance_dict[target])])
                 linreg_result = linregress(rdf_full_distance_dict[target], submissions_scores_dict[target])
                 yline = xline * linreg_result.slope + linreg_result.intercept
-                fig.add_trace(go.Scatter(x=rdf_full_distance_dict[target], y = submissions_scores_dict[target], mode='markers',marker_color=colors[i], name = target))
-                fig.add_trace(go.Scatter(x = xline, y = yline, marker_color = colors[i], name = f'R={linreg_result.rvalue:.3f}'))
+                fig.add_trace(go.Scatter(x=rdf_full_distance_dict[target], y=submissions_scores_dict[target], mode='markers', marker_color=colors[i], name=target))
+                fig.add_trace(go.Scatter(x=xline, y=yline, marker_color=colors[i], name=f'R={linreg_result.rvalue:.3f}'))
             wandb.log({'Full RDF distance-score correlations': fig})
             fig = go.Figure()
-            for i,target in enumerate(rdf_inter_distance_dict.keys()):
+            for i, target in enumerate(rdf_inter_distance_dict.keys()):
                 xline = np.asarray([np.amin(rdf_inter_distance_dict[target]), np.amax(rdf_inter_distance_dict[target])])
                 linreg_result = linregress(rdf_inter_distance_dict[target], submissions_scores_dict[target])
                 yline = xline * linreg_result.slope + linreg_result.intercept
-                fig.add_trace(go.Scatter(x=rdf_inter_distance_dict[target], y = submissions_scores_dict[target], mode='markers',marker_color=colors[i], name = target))
-                fig.add_trace(go.Scatter(x = xline, y = yline, marker_color = colors[i], name = f'R={linreg_result.rvalue:.3f}'))
+                fig.add_trace(go.Scatter(x=rdf_inter_distance_dict[target], y=submissions_scores_dict[target], mode='markers', marker_color=colors[i], name=target))
+                fig.add_trace(go.Scatter(x=xline, y=yline, marker_color=colors[i], name=f'R={linreg_result.rvalue:.3f}'))
             wandb.log({'Intermolecular RDF distance-score correlations': fig})
         return None
 
-    def train_discriminator(self, generator, discriminator, config, data, i):
+    def train_discriminator(self, generated_samples, discriminator, config, data, i):
         # generate fakes & create supercell data
-        if config.train_discriminator_adversarially:
-            generated_samples = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
-            # denormalize sample cell lengths
-            # generated_samples[:,:3] *= data.Z[:, None].to(generated_samples.device) ** (1 / 3) * data.mol_volume[:, None].to(generated_samples.device) ** (1 / 3) # todo reimplement
-
-        elif config.train_discriminator_on_randn:
-            generated_samples = self.randn_generator.forward(data, data.num_graphs).to(generator.device)
-
         real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config)
-        if not config.train_discriminator_on_noise:
-            fake_supercell_data, generated_cell_volumes, overlaps_list = \
-                self.supercell_builder.build_supercells(data.clone().to(generated_samples.device), generated_samples, config.supercell_size, config.discriminator.graph_convolution_cutoff, override_sg=config.generate_sgs)
-        else:
-            generated_samples = self.randn_generator.forward(data, data.num_graphs).to(generator.device)  # placeholder
-            fake_supercell_data = real_supercell_data.clone()
-            fake_supercell_data.pos += torch.randn_like(fake_supercell_data.pos) * 10  # huge amount of noise - should be basically nonsense
+        # if not config.train_discriminator_on_noise:
+        fake_supercell_data, generated_cell_volumes, overlaps_list = \
+            self.supercell_builder.build_supercells(data.clone().to(generated_samples.device), generated_samples,
+                                                    config.supercell_size, config.discriminator.graph_convolution_cutoff, override_sg=config.generate_sgs)
+        # else:
+        #     generated_samples = self.randn_generator.forward(data, data.num_graphs).to(generator.device)  # placeholder
+        #     fake_supercell_data = real_supercell_data.clone()
+        #     fake_supercell_data.pos += torch.randn_like(fake_supercell_data.pos) * 10  # huge amount of noise - should be basically nonsense
 
         if config.device.lower() == 'cuda':  # redundant
             real_supercell_data = real_supercell_data.cuda()
@@ -1712,7 +1732,7 @@ class Modeller():
         score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
         score_on_fake, fake_pairwise_distances_dict = self.adversarial_loss(discriminator, fake_supercell_data, config)
 
-        return score_on_real, score_on_fake, generated_samples.cpu().detach().numpy(), real_distances_dict, fake_pairwise_distances_dict
+        return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), real_distances_dict, fake_pairwise_distances_dict
 
     def train_generator(self, generator, discriminator, config, data, i):
         # noise injection
@@ -1823,7 +1843,17 @@ class Modeller():
         train the generator via standard normalizing flow loss
         # todo note that this approach will push to model toward good **raw** samples, not accounting for cell 'cleaning'
         '''
-        zs, prior_logprob, log_det = generator.nf_forward(data.y[0], conditions=data)
+        normed_lengths = data.cell_params[:, 0:3] / (data.Z[:, None] ** (1 / 3)) / (data.mol_volume[:, None] ** (1 / 3))
+        normed_samples = data.cell_params.clone()
+        normed_samples[:, :3] = normed_lengths
+
+        means = torch.Tensor(self.dataDims['lattice means'])
+        stds = torch.Tensor(self.dataDims['lattice stds'])
+        means[:3] = torch.Tensor(self.dataDims['lattice normed length means'])
+        stds[:3] = torch.Tensor(self.dataDims['lattice normed length stds'])
+        std_samples = (normed_samples - means.to(normed_samples.device)) / stds.to(normed_samples.device)
+
+        zs, prior_logprob, log_det = generator.nf_forward(std_samples, conditions=data)
         logprob = prior_logprob + log_det  # log probability of samples, which we want to maximize
 
         return -(logprob)  #
