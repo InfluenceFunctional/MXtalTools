@@ -952,8 +952,9 @@ class Modeller():
                 assert torch.sum(torch.isnan(real_supercell_data.x)) == 0, "NaN in training input"
 
             score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
-            full_rdfs, rr = crystal_rdf(real_supercell_data)
-            intermolecular_rdfs, rr = crystal_rdf(real_supercell_data, intermolecular=True)
+
+            full_rdfs, rr, self.elementwise_correlations_labels = crystal_rdf(real_supercell_data, elementwise = True, raw_density = True)
+            intermolecular_rdfs, rr, _ = crystal_rdf(real_supercell_data, intermolecular=True, elementwise = True, raw_density = True)
 
             epoch_stats_dict['tracking features'].extend(data.tracking.cpu().detach().numpy())
             epoch_stats_dict['identifiers'].extend(data.csd_identifier)
@@ -1616,13 +1617,14 @@ class Modeller():
 
                     # compute distance between target & submission RDFs
                     rr = np.linspace(0, 10, 100)
-                    sigma = 0.1
+                    sigma = 1
                     smoothed_target_full_rdf = gaussian_filter1d(target_full_rdf, sigma=sigma)
                     smoothed_target_inter_rdf = gaussian_filter1d(target_inter_rdf, sigma=sigma)
                     smoothed_submission_full_rdf = gaussian_filter1d(np.clip(submission_full_rdf, a_min=0, a_max=10), sigma=sigma)
                     smoothed_submission_inter_rdf = gaussian_filter1d(np.clip(submission_inter_rdf, a_min=0, a_max=10), sigma=sigma)
-                    rdf_full_distance_dict[target] = np.abs(smoothed_target_full_rdf - smoothed_submission_full_rdf).mean(1)
-                    rdf_inter_distance_dict[target] = np.abs(smoothed_target_inter_rdf - smoothed_submission_inter_rdf).mean(1)
+
+                    rdf_full_distance_dict[target] = np.sum(np.minimum(smoothed_target_full_rdf, smoothed_submission_full_rdf),axis=(1,2)) / np.sum(smoothed_target_full_rdf) # get histogram overlap over all atom pairs & scale by total target density
+                    rdf_inter_distance_dict[target] = np.sum(np.minimum(smoothed_target_inter_rdf, smoothed_submission_inter_rdf),axis=(1,2)) / np.sum(smoothed_target_inter_rdf)
 
                     # correlate losses with molecular features
                     tracking_features = np.asarray(extra_test_dict['tracking features'])

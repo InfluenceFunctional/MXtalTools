@@ -2105,7 +2105,7 @@ def single_point_compute_rdf_torch(dists, density=None, range=None, bins=None):
     return rdf, rr[:-1] + torch.diff(rr)  # rdf and x-axis
 
 
-def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None):
+def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None, remove_radial_scaling = False):
     '''
     compute the radial distribution for a single particle
     dists: array of pairwise distances of nearby particles from the reference
@@ -2126,8 +2126,11 @@ def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None)
 
     hh_list = torch.stack([torch.histc(dists, min=hist_range[0], max=hist_range[1], bins=hist_bins) for dists in dists_list])
     rr = torch.linspace(hist_range[0], hist_range[1], hist_bins + 1).to(hh_list.device)
-    shell_volumes = (4 / 3) * torch.pi * ((rr[:-1] + torch.diff(rr)) ** 3 - rr[:-1] ** 3)  # volume of the shell at radius r+dr
-    rdf = hh_list / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
+    if remove_radial_scaling:
+        rdf = hh_list / rdf_density[:, None]  # un-smoothed radial density
+    else:
+        shell_volumes = (4 / 3) * torch.pi * ((rr[:-1] + torch.diff(rr)) ** 3 - rr[:-1] ** 3)  # volume of the shell at radius r+dr
+        rdf = hh_list / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
 
     return rdf, (rr[:-1] + torch.diff(rr)).requires_grad_()  # rdf and x-axis
 
