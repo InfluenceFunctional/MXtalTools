@@ -8,11 +8,18 @@ import torch.nn.functional as F
 import sys
 
 
-def compute_Ip_handedness(Ip):
-    if Ip.ndim == 2:
-        return torch.sign(torch.mul(Ip[0], torch.cross(Ip[1], Ip[2])).sum()).float()
-    elif Ip.ndim == 3:
-        return torch.sign(torch.mul(Ip[:, 0], torch.cross(Ip[:, 1], Ip[:, 2], dim=1)).sum(1))
+def compute_Ip_handedness(Ip): # todo remove duplicate function
+    if isinstance(Ip, np.ndarray):
+        if Ip.ndim == 2:
+            return np.sign(np.dot(Ip[0], np.cross(Ip[1], Ip[2])).sum())
+        elif Ip.ndim == 3:
+            return np.sign(np.dot(Ip[:, 0], np.cross(Ip[:, 1], Ip[:, 2])).sum())
+
+    elif torch.is_tensor(Ip):
+        if Ip.ndim == 2:
+            return torch.sign(torch.mul(Ip[0], torch.cross(Ip[1], Ip[2])).sum()).float()
+        elif Ip.ndim == 3:
+            return torch.sign(torch.mul(Ip[:, 0], torch.cross(Ip[:, 1], Ip[:, 2], dim=1)).sum(1))
 
 
 def axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
@@ -154,6 +161,8 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
         ref_mol_inds[ignore_inds] = 2  # 2 is the index for completely ignoring these atoms in graph convolutions - haven't removed them entirely because it wrecks the crystal periodicity
 
         # if the crystal is too diffuse, we will have no intermolecular convolution inds - we need a failure mode which accounts for this
+        if torch.sum(ref_mol_inds == 1) == 0:
+            ref_mol_inds[ignore_inds] = 1 # un-ignore too-far interactions (just so the model doesn't crash)
 
         supercell_atoms_list.append(supercell_atoms)
         ref_mol_inds_list.append(ref_mol_inds)
@@ -206,22 +215,27 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
         mol_position = mol_position * stds[6:9] + means[6:9]
         mol_rotation = mol_rotation * stds[9:12] + means[9:12]
 
+    tanh_cutoff = 9
+
     cell_lengths = F.softplus(cell_lengths - 0.1) + 0.1  # enforces positive nonzero
+    # mix of tanh and hardtanh allows us to get close to the limits, but still with a finite gradient outside the range
     norm1 = torch.pi / 2
-    cell_angles = F.tanh((cell_angles - norm1) / norm1) * norm1 + norm1  # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
-    mol_position = F.tanh((mol_position - 0.5) * 2) / 2 + 0.5  # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
+    cell_angles = F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1#(tanh_cutoff*(F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1) + (F.tanh((cell_angles - norm1) / norm1) * norm1 + norm1)) / (tanh_cutoff + 1)  # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
+    norm2 = 0.5
+    mol_position = F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2#(tanh_cutoff*(F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2) + (F.tanh((mol_position - norm2) / norm2) * norm2 + norm2)) / (tanh_cutoff + 1)  # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
 
     if (rotation_type == 'fractional rotvec') or return_transforms:
         pass  # T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles)
 
-    if rotation_type == 'fractional rotvec':  # todo implement
-        mol_rotation = torch.einsum('nij,nj->ni', (T_fc_list, mol_rotation))
+    # if rotation_type == 'fractional rotvec':  # todo implement fractional rotation
+    #     mol_rotation = torch.einsum('nij,nj->ni', (T_fc_list, mol_rotation))
 
     elif rotation_type == 'cartesian rotvec':
         pass
 
     norms = torch.linalg.norm(mol_rotation, dim=1)
-    normed_norms = F.tanh(norms / torch.pi) * torch.pi  # the norm should be between -pi to pi
+    norm3 = torch.pi
+    normed_norms = F.hardtanh((norms - norm3) / norm3) * norm3 + norm3#(tanh_cutoff*(F.hardtanh((norms - norm3) / norm3) * norm3 + norm3) + (F.tanh((norms - norm3) / norm3) * norm3 + norm3)) / (tanh_cutoff + 1) #F.tanh(norms / torch.pi) * torch.pi  # the norm should be between -pi to pi
     mol_rotation = mol_rotation / norms[:, None] * normed_norms[:, None]  # renormalize
 
     # old - euler rotations
@@ -354,6 +368,7 @@ def cell_analysis(data, atom_weights, debug=False, return_final_coords = False):
         allow each molecule to stick with its given handedness
         '''
         coords = torch.Tensor(data.ref_cell_pos[i][canonical_centroids_inds[i]]).to(data.x.device)
+        coords -= coords.mean(0)
         Ip_axes, _, _ = compute_principal_axes_torch(coords)
         target_handedness[i] = compute_Ip_handedness(Ip_axes)
         normed_alignment_target = torch.eye(3)
@@ -363,9 +378,9 @@ def cell_analysis(data, atom_weights, debug=False, return_final_coords = False):
         components = torch.Tensor(Rotation.from_matrix(rot_matrix.T).as_rotvec())  # CRITICAL we want the inverse transform here (transpose is the inverse for unitary rotation matrix)
         mol_orientations_list.append(torch.Tensor(components))
         if debug:  # confirm this rotation gets the desired orientation
-            std_coords = torch.inner(rot_matrix, coords - coords.mean(0)).T
+            std_coords = torch.inner(rot_matrix, coords).T
             Ip_axes, _, _ = compute_principal_axes_torch(std_coords)
-            assert F.l1_loss(Ip_axes, normed_alignment_target, reduction='sum') < 0.01
+            assert F.l1_loss(Ip_axes, normed_alignment_target, reduction='sum') < 0.05
 
         final_coords_list.append(coords)  # will record if we had to invert
 

@@ -1,10 +1,10 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 129
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard
@@ -16,15 +16,18 @@ train_generator_packing: False
 train_generator_adversarially: False
 train_discriminator_adversarially: True
 train_discriminator_on_randn: True
-train_discriminator_on_noise: True
-generator_noise_level: 0.1
-generator_similarity_penalty: 0
-cut_max_prob_training_after: 100
-extra_test_period: 5
+train_discriminator_on_noise: True # deprecated
+generator_noise_level: 0.01
+generator_similarity_penalty: 0 # todo reimpliment NF
+cut_max_prob_training_after: 100000
+extra_test_period: 1
 sample_after_training: False
-extra_test_set_paths: [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
-                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
-                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets' ]
+extra_test_set_paths: [ '/scratch/mk8347/csd_runs/datasets/blind_test_5_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_6_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_targets' ]
+#                         [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
+#                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
+#                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets' ]
 d_model_path: null
 g_model_path: null
 
@@ -35,7 +38,7 @@ seeds:
 # opt - sweep details
 wandb:
   sample_reporting_frequency: 1
-  experiment_tag: "discriminator_dev"
+  experiment_tag: "discriminator_tests_sept27"
   log_figures: True
   sweep_config_file: "sweep_test.yaml"
   sweep: False
@@ -52,7 +55,7 @@ history: 1000
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+dataset_length: 100000
 feature_richness: minimal # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
@@ -76,7 +79,7 @@ exclude_blind_test_targets: True
 include_sgs: null #["P-1", "P21/c", "P212121", "C2/c", "Pbca", "P21"]
 include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
 generate_sgs: null #'P2' #'P21/c' # can only do one at a time right now
-supercell_size: 1 # 1 = 3x3x3, 2 = 5x5x5 etc. note 1 is too small for small molecules or P1 cells
+supercell_size: 2 # 1 = 3x3x3, 2 = 5x5x5 etc. note 1 is too small for small molecules or P1 cells
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
 
@@ -97,10 +100,10 @@ discriminator:
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
   graph_convolution_layers: 4
   graph_filters: 32
-  atom_embedding_size: 64
+  atom_embedding_size: 256
   graph_norm: null
-  num_spherical: 6
-  num_radial: 12
+  num_spherical: 12
+  num_radial: 24
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
@@ -109,8 +112,8 @@ discriminator:
   add_spherical_basis: True # mikenet only
   pooling: combo
 
-  num_fc_layers: 2
-  fc_depth: 64
+  num_fc_layers: 4
+  fc_depth: 128
   activation: leaky relu
   fc_dropout_probability: 0
   fc_norm_mode: null
@@ -160,7 +163,7 @@ generator:
   conditional_modelling: True # false will likely not run at all
   conditioning_mode: graph model # molecule features or graph model
 
-  num_flow_layers: 20
+  num_flow_layers: 24
   flow_depth: 128
   flow_basis_fns: 8
   flow_type: nsf_cl

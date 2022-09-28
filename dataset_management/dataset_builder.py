@@ -403,9 +403,10 @@ def visualizeEntry(identifier):
     img.show()
 
 
-# mode = 'csd'  #
-# chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/sept_refeaturization/'  # where the chunks should be saved during featurization
-# cifs_directory_path = None
+mode = 'csd'  #
+chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/sept_refeaturization/'  # where the chunks should be saved during featurization
+cifs_directory_path = None
+
 # mode = 'csd'
 # chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/bt_targets/'
 # cifs_directory_path = None
@@ -419,38 +420,30 @@ def visualizeEntry(identifier):
 # cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_6/gp5080sup2'
 # target_identifiers = None
 
-mode = 'cif'
-chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5/'  # where the chunks should be saved during featurization
-cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/file_dump'
-target_identifiers = None
+# mode = 'cif'
+# chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5/'  # where the chunks should be saved during featurization
+# cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/file_dump'
+# target_identifiers = None
 
 # mode = 'cod'
 # chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/COD/'  # where the chunks should be saved during featurization
 # cifs_directory_path = 'F:/cod-cifs-mysql'
 #target_identifiers = None
 
-#mode = 'build dataset'
-mode = 'cell analyzer'
 if __name__ == '__main__':
     if not os.path.exists(chunk_path):  # need to initialize relevant directories
         os.mkdir(chunk_path)
         os.mkdir(chunk_path + '/identifiers')
         os.mkdir(chunk_path + '/crystal_features')
         os.mkdir(chunk_path + '/molecule_features')
-    if mode == 'build dataset':
-        helper = CCDC_helper(chunk_path, mode)
-        helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
-        helper.collect_chunks_and_initialize_df()
 
-        helper.get_crystal_features(n_chunks=100, chunk_inds=[0, 100], file_path=cifs_directory_path)
+    helper = CCDC_helper(chunk_path, mode)
+    # helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
+    # helper.collect_chunks_and_initialize_df()
+    # helper.get_crystal_features(n_chunks=1, chunk_inds=[0, 1], file_path=cifs_directory_path)
+    #
+    # featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
+    # featurizer.featurize(chunk_inds=[0, 1])
 
-        featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
-
-        featurizer.featurize(chunk_inds=[0, 100])
-
-
-
-        miner = Miner(chunk_path, collect_chunks=True, database='cif')
-        miner.process_new_dataset()
-    elif mode == 'cell analyzer': # confirm our cell builder works the same as the CSD's packer even for hexagonal cells
-        aa = 1
+    miner = Miner(chunk_path, collect_chunks=True, database=mode)
+    miner.process_new_dataset(dataset_name = 'full_dataset')

@@ -1,3 +1,4 @@
+import torch
 import wandb
 from utils import *
 import glob
@@ -393,7 +394,7 @@ class Modeller():
             rebuild_supercells, vol, rebuild_overlaps_i = \
                 self.supercell_builder.build_supercells(data.clone(), None,
                                                         config.supercell_size, config.discriminator.graph_convolution_cutoff,
-                                                        skip_cell_cleaning=True, ref_data=csd_supercells, debug=True)
+                                                        skip_cell_cleaning=True, ref_data=data.clone(), debug=True)
 
             rebuild_supercells = rebuild_supercells.cpu()
 
@@ -718,26 +719,35 @@ class Modeller():
             train discriminator
             '''
             if epoch % config.discriminator.training_period == 0:  # only train the discriminator every XX epochs
-                if config.train_discriminator_adversarially or config.train_discriminator_on_noise:
+                if config.train_discriminator_adversarially or config.train_discriminator_on_noise or config.train_discriminator_on_randn:
+                    n_generators = sum([config.train_discriminator_adversarially, config.train_discriminator_on_noise, config.train_discriminator_on_randn])
+                    gen_random_number = np.random.uniform(0, 1, 1)
+                    gen_randn_range = np.linspace(0, 1, n_generators + 1)
 
-                    if config.train_discriminator_adversarially and config.train_discriminator_on_randn:  # if doing both, alternate
-                        if i % 2 == 0:
+                    if config.train_discriminator_adversarially:
+                        ii = i % n_generators
+                        if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:  # randomly sample which generator to use at each iteration
                             generated_samples_i = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
-                            sample_source_list.extend(np.zeros(len(generated_samples_i)))
-                        else:
-                            generated_samples_i = self.randn_generator.forward(data, data.num_graphs).to(generator.device)
-                            sample_source_list.extend(np.ones(len(generated_samples_i)))
-                    else:
-                        if config.train_discriminator_adversarially:
-                            generated_samples_i = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
+                            handedness = None
                             sample_source_list.extend(np.zeros(len(generated_samples_i)))
 
-                        if config.train_discriminator_on_randn:
+                    if config.train_discriminator_on_randn:
+                        ii = (i + 1) % n_generators
+                        if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
                             generated_samples_i = self.randn_generator.forward(data, data.num_graphs).to(generator.device)
+                            handedness = None
                             sample_source_list.extend(np.ones(len(generated_samples_i)))
+
+                    if config.train_discriminator_on_noise:
+                        ii = (i + 2) % n_generators
+                        if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
+                            generated_samples_ii = (data.cell_params - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
+                            generated_samples_i = ((generated_samples_ii + torch.randn_like(generated_samples_ii) * config.generator_noise_level)).to(generator.device)  # add jitter and return in standardized basis
+                            handedness = data.asym_unit_handedness
+                            sample_source_list.extend(np.ones(len(generated_samples_i)) * 2)
 
                     score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict \
-                        = self.train_discriminator(generated_samples_i, discriminator, config, data, i)  # alternately trains on real and fake samples
+                        = self.train_discriminator(generated_samples_i, discriminator, config, data, i, handedness)  # alternately trains on real and fake samples
                     d_real_scores.extend(score_on_real.cpu().detach().numpy())
                     d_fake_scores.extend(score_on_fake.cpu().detach().numpy())
 
@@ -1525,43 +1535,45 @@ class Modeller():
             scores_list = []
             randn_inds = np.where(train_epoch_stats_dict['generator sample source'] == 0)
             nf_inds = np.where(train_epoch_stats_dict['generator sample source'] == 1)
+            distorted_inds = np.where(train_epoch_stats_dict['generator sample source'] == 2)
 
             if self.config.gan_loss == 'wasserstein':
                 scores_list.append(train_epoch_stats_dict['discriminator real score'])
                 scores_list.append(test_epoch_stats_dict['discriminator real score'])
                 scores_list.append(train_epoch_stats_dict['discriminator fake score'][randn_inds])
                 scores_list.append(train_epoch_stats_dict['discriminator fake score'][nf_inds])
-
+                scores_list.append(train_epoch_stats_dict['discriminator fake score'][distorted_inds])
 
             elif self.config.gan_loss == 'standard':
                 scores_list.append(np_softmax(train_epoch_stats_dict['discriminator real score'])[:, -1])
                 scores_list.append(np_softmax(test_epoch_stats_dict['discriminator real score'])[:, -1])
-                scores_list.append(np_softmax(train_epoch_stats_dict['discriminator fake score'])[:, -1])
-                scores_list.append(np_softmax(train_epoch_stats_dict['discriminator fake score'])[:, -1])
-
+                scores_list.append(np_softmax(train_epoch_stats_dict['discriminator fake score'][randn_inds])[:, -1])
+                scores_list.append(np_softmax(train_epoch_stats_dict['discriminator fake score'][nf_inds])[:, -1])
+                scores_list.append(np_softmax(train_epoch_stats_dict['discriminator fake score'][distorted_inds])[:, -1])
 
             wandb.log({'Average Train score': np.average(scores_list[0])})
             wandb.log({'Average Test score': np.average(scores_list[1])})
             wandb.log({'Average Randn Fake score': np.average(scores_list[2])})
             wandb.log({'Average NF Fake score': np.average(scores_list[3])})
-
+            wandb.log({'Average Distorted Fake score': np.average(scores_list[4])})
 
             labels = []
             labels.append('Train CSD Data')
             labels.append('Test CSD Data')
             labels.append('Test randn Data')
             labels.append('Test nf data')
+            labels.append('Test distorted data')
 
             lens = [len(val) for val in all_identifiers.values()]
 
             colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
 
             plot_color = []
-            plot_color.append('rgb(250,50,50)')
-            plot_color.append('rgb(150,150,50)')
-            plot_color.append('rgb(50,200,50)')
-            plot_color.append('rgb(150,50,150)')
-
+            plot_color.append('rgb(250,50,50)') # train
+            plot_color.append('rgb(250,150,50)') # test
+            plot_color.append('rgb(0,50,0)') # fake csd
+            plot_color.append('rgb(0,150,0)') # fake nf
+            plot_color.append('rgb(0,250,0)') # fake distortion
 
             loss_correlations_dict = {}
             rdf_full_distance_dict = {}
@@ -1625,16 +1637,16 @@ class Modeller():
                     labels.append(target)
                     wandb.log({f'Average {target} score': np.average(scores)})
 
-            fig = go.Figure()
             if self.config.gan_loss == 'wasserstein':
                 bandwidth = np.std(scores_list[0]) / 100
             elif self.config.gan_loss == 'standard':
                 bandwidth = 0.0025
+            fig = go.Figure()
             for i in range(len(labels)):
                 if 'exp' in labels[i]:
                     fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i], side='positive', orientation='h', width=6))
                 else:
-                    fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth))
+                    fig.add_trace(go.Violin(x=np.array(scores_list[i]), name=labels[i], line_color=plot_color[i], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
             fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
             wandb.log({'Discriminator Test Scores': fig})
 
@@ -1705,17 +1717,12 @@ class Modeller():
             wandb.log({'Intermolecular RDF distance-score correlations': fig})
         return None
 
-    def train_discriminator(self, generated_samples, discriminator, config, data, i):
+    def train_discriminator(self, generated_samples, discriminator, config, data, i, target_handedness = None):
         # generate fakes & create supercell data
         real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config)
-        # if not config.train_discriminator_on_noise:
         fake_supercell_data, generated_cell_volumes, overlaps_list = \
             self.supercell_builder.build_supercells(data.clone().to(generated_samples.device), generated_samples,
-                                                    config.supercell_size, config.discriminator.graph_convolution_cutoff, override_sg=config.generate_sgs)
-        # else:
-        #     generated_samples = self.randn_generator.forward(data, data.num_graphs).to(generator.device)  # placeholder
-        #     fake_supercell_data = real_supercell_data.clone()
-        #     fake_supercell_data.pos += torch.randn_like(fake_supercell_data.pos) * 10  # huge amount of noise - should be basically nonsense
+                                                    config.supercell_size, config.discriminator.graph_convolution_cutoff, override_sg=config.generate_sgs, target_handedness=target_handedness)
 
         if config.device.lower() == 'cuda':  # redundant
             real_supercell_data = real_supercell_data.cuda()

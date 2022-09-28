@@ -63,7 +63,7 @@ class SupercellBuilder():
         if copying a reference, extract its parameters
         '''
         if ref_data is not None:  # extract parameters directly from the ref_data
-            cell_sample_i, target_handedness, ref_final_coords = cell_analysis(supercell_data.clone(), self.atom_weights, debug=debug, return_final_coords=True)
+            cell_sample_i, target_handedness, ref_final_coords = cell_analysis(ref_data.clone(), self.atom_weights, debug=debug, return_final_coords=True)
             if standardized_sample:
                 cell_sample = (cell_sample_i - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
             else:

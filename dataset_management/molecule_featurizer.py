@@ -672,7 +672,10 @@ class CustomGraphFeaturizer():
                     try:
                         mol = Chem.RemoveAllHs(mol)  # strictly clean the molecule of all hydrogens
                     except:
-                        mol = None
+                        if mol is not None:
+                            bad_inds.append(j)
+                            mol = None
+                            print("Error kekulizing")
 
                     if mol is None:
                         bad_inds.append(j)
@@ -762,6 +765,7 @@ class CustomGraphFeaturizer():
         dataset['molecule principal moment 1'] = Ipm[0]
         dataset['molecule principal moment 2'] = Ipm[1]
         dataset['molecule principal moment 3'] = Ipm[2]
+        dataset['molecule point group is C1'] = not Ipm[0] == Ipm[1] == Ipm[2]
 
         # rings = mol.GetRingInfo().AtomRings()
         # if len(rings) > 0:
@@ -810,12 +814,10 @@ class CustomGraphFeaturizer():
         canonical_mol_coords = cell_coords[canonical_centroid_ind] - np.floor(fractional_centroids[canonical_centroid_ind])
         Ip, _, _ = compute_principal_axes_np(canonical_mol_coords) # ignore masses, as we are interested in the geometric property rather than the inertial one
         target_handedness = int(compute_Ip_handedness(Ip))
-        if target_handedness == -1:
-            rotation_target = np.eye(3) # if the molecule is left handed, allow it to do a left handed rotation
-            rotation_target[0,0] = -1
-        else:
-            rotation_target = np.eye(3)
-        rotation_matrix = rotation_target @ np.linalg.inv(Ip)
+        rotation_target = np.eye(3) # if the molecule is left handed, allow it to do a left handed rotation
+        rotation_target[0,0] = target_handedness
+
+        rotation_matrix = rotation_target.T @ np.linalg.inv(Ip).T # need transposes to agree with cell builder
         rotvec = Rotation.from_matrix(rotation_matrix.T).as_rotvec() # transposed because we actually want the inverse transform
         dataset['crystal asymmetric unit rotvec 1'] = rotvec[0]
         dataset['crystal asymmetric unit rotvec 2'] = rotvec[1]

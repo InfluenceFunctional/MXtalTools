@@ -88,14 +88,14 @@ class Miner():
         self.dataset.to_pickle(self.datasetPath)
         del (self.dataset)
 
-    def process_new_dataset(self, test_mode=False):
+    def process_new_dataset(self, dataset_name = 'new_dataset', test_mode=False):
 
         self.load_dataset(self.dataset_path, self.collect_chunks, test_mode=test_mode)
         self.numerize_dataset()
         self.curate_dataset()
 
-        self.dataset.to_pickle('../../new_full_dataset')
-        self.dataset.loc[0:10000].to_pickle('../../new_test_dataset')
+        self.dataset.to_pickle('../../new_dataset')#'../../' + dataset_name)
+        self.dataset.loc[0:10000].to_pickle('../../test_new_dataset')
 
     def load_dataset(self, dataset_path, collect_chunks=False, test_mode=False):
 
@@ -200,19 +200,20 @@ class Miner():
 
         # todo filter samples where space groups explicitly disagree with given crystal system
 
-        # exclude samples with extremely close atoms
-        n_bad_inds = len(bad_inds)
-        for j in range(len(self.dataset)):
-            coords = self.dataset['crystal reference cell coords'][j]
-            coords = coords.reshape(coords.shape[0] * coords.shape[1],3)
-            distmat = torch.cdist(torch.Tensor(coords), torch.Tensor(coords), p=2) + torch.eye(len(coords))
-            if torch.amin(distmat) < 0.1:
-                print('bad')
-                bad_inds.extend(j)
-        print('overlapping atoms caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
+        # # exclude samples with extremely close atoms
+        # n_bad_inds = len(bad_inds)
+        # for j in range(len(self.dataset)):
+        #     coords = self.dataset['crystal reference cell coords'][j]
+        #     coords = coords.reshape(coords.shape[0] * coords.shape[1],3)
+        #     distmat = torch.cdist(torch.Tensor(coords), torch.Tensor(coords), p=2) + torch.eye(len(coords))
+        #     if torch.amin(distmat) < 0.1:
+        #         #print('bad')
+        #         bad_inds.append(j)
+        # print('overlapping atoms caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+        #
 
         # samples with bad CSD-generated reference cells
+        n_bad_inds = len(bad_inds)
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:, 0])  # missing coordinates
         bad_inds.extend(np.argwhere(np.asarray(np.isnan(self.dataset['crystal asymmetric unit centroid x'])))[:, 0])  # missing orientation features
         print('bad coordinates caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))

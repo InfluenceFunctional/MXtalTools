@@ -2168,9 +2168,16 @@ def invert_rotvec_handedness(rotvec):
 
 def compute_Ip_handedness(Ip):
     if isinstance(Ip, np.ndarray):
-        return np.sign(np.dot(Ip[0], np.cross(Ip[1], Ip[2])).sum())
+        if Ip.ndim == 2:
+            return np.sign(np.dot(Ip[0], np.cross(Ip[1], Ip[2])).sum())
+        elif Ip.ndim == 3:
+            return np.sign(np.dot(Ip[:, 0], np.cross(Ip[:, 1], Ip[:, 2])).sum())
+
     elif torch.is_tensor(Ip):
-        return torch.sign(torch.mul(Ip[0], torch.cross(Ip[1], Ip[2])).sum()).float()
+        if Ip.ndim == 2:
+            return torch.sign(torch.mul(Ip[0], torch.cross(Ip[1], Ip[2])).sum()).float()
+        elif Ip.ndim == 3:
+            return torch.sign(torch.mul(Ip[:, 0], torch.cross(Ip[:, 1], Ip[:, 2], dim=1)).sum(1))
 
 
 def initialize_fractional_vectors(scale=2):

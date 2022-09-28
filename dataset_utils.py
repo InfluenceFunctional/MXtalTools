@@ -82,7 +82,7 @@ class BuildDataset:
                               'atom valence', 'atom vdW radius',  # 'atom is aromatic', # issue with aromaticity in test sets
                               'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
             self.molecule_keys = ['molecule volume',
-                                  'molecule mass', 'molecule num atoms', 'molecule volume',  # 'molecule point group is C1', mostly unnecessary / noisy
+                                  'molecule mass', 'molecule num atoms', 'molecule volume', 'molecule point group is C1',
                                   'molecule num rings', 'molecule num donors', 'molecule num acceptors',
                                   'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                                   'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
@@ -143,11 +143,6 @@ class BuildDataset:
         '''
         for i in range(config.min_z_value + 1, config.max_z_value + 1):
             dataset['crystal z is {}'.format(i)] = dataset['crystal z value'] == i
-        '''
-        molecule symmetry
-        '''
-
-        dataset['molecule point group is C1'] = dataset['molecule point group'] == 'C1'
 
         '''
         space group
@@ -186,7 +181,9 @@ class BuildDataset:
 
         self.datapoints = [self.datapoints[i] for i in good_inds]
 
-    def generate_training_data(self, atom_coords, smiles, atom_features_list, mol_features, targets, tracking_features, reference_cells, lattice_features, T_fc_list, identifiers):
+    def generate_training_data(self, atom_coords, smiles, atom_features_list, mol_features,
+                               targets, tracking_features, reference_cells, lattice_features,
+                               T_fc_list, identifiers, asymmetric_unit_handedness):
         '''
         convert feature, target and tracking vectors into torch.geometric data objects
         :param atom_coords:
@@ -230,7 +227,9 @@ class BuildDataset:
                                           T_fc=torch.Tensor(T_fc_list[i])[None, ...],
                                           mol_size=torch.Tensor(tracking_features[i, mol_size_ind]),
                                           mol_volume=torch.Tensor(tracking_features[i, mol_volume_ind]),
-                                          csd_identifier=identifiers[i]))
+                                          csd_identifier=identifiers[i],
+                                          asym_unit_handedness=torch.Tensor(np.asarray(asymmetric_unit_handedness[i])[None])
+                                          ))
 
         return datapoints
 
@@ -371,7 +370,8 @@ class BuildDataset:
                                            reference_cells=dataset['crystal reference cell coords'],
                                            lattice_features=lattice_features,
                                            T_fc_list=dataset['crystal fc transform'],
-                                           identifiers=dataset['identifier'])
+                                           identifiers=dataset['identifier'],
+                                           asymmetric_unit_handedness=dataset['crystal asymmetric unit handedness'])
 
     def get_cell_features(self, dataset):
         keys_to_add = self.lattice_keys
@@ -457,7 +457,7 @@ class BuildDataset:
         """
         # normalize everything
         keys_to_add = []
-        keys_to_add.extend(['molecule volume', 'molecule mass', 'molecule num atoms', 'molecule volume',  # 'molecule point group is C1', mostly unnecessary / noisy
+        keys_to_add.extend(['molecule volume', 'molecule mass', 'molecule num atoms', 'molecule volume', 'molecule point group is C1',
                             'molecule num rings', 'molecule num donors', 'molecule num acceptors',
                             'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                             'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',

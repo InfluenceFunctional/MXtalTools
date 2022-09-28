@@ -247,7 +247,7 @@ class independent_gaussian_model(nn.Module):
         fixed_stds[:3] = torch.Tensor(normed_length_stds)
 
         self.register_buffer('means', torch.Tensor(means))
-        self.register_buffer('stds', torch.Tensor(means))
+        self.register_buffer('stds', torch.Tensor(stds))
         self.register_buffer('fixed_norms', torch.Tensor(fixed_norms))
         self.register_buffer('fixed_stds', torch.Tensor(fixed_stds))
 
