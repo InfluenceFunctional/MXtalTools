@@ -1,5 +1,8 @@
 from math import sqrt, pi as PI
 import sys
+import sympy as sym
+from torch_geometric.nn.models.dimenet_utils import (bessel_basis,
+                                                     real_sph_harm)
 import time
 
 import numpy as np
@@ -52,6 +55,7 @@ class MikesGraphNet(torch.nn.Module):
             self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
         if spherical_embedding:
             self.sbf = SphericalBasisLayer(num_spherical, num_radial, cutoff, envelope_exponent)
+        aa = 1
 
         self.atom_embeddings = EmbeddingBlock(hidden_channels, atom_embedding_dims, num_atom_features, embedding_hidden_dimension, activation)
 
@@ -111,46 +115,6 @@ class MikesGraphNet(torch.nn.Module):
 
     def forward(self, z, pos, batch, ptr, ref_mol_inds=None, return_dists=False, n_repeats=None):
         """"""
-        #
-        # if self.crystal_mode:
-        #     inside_inds = torch.where(ref_mol_inds == 0)[0]
-        #     outside_inds = torch.where(ref_mol_inds == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
-        #     inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
-        #     n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]
-        #     # intramolecular edges
-        #     edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,
-        #                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
-        #                                          inside_inds=inside_inds, convolve_inds=inside_inds)
-        #     # intermolecular edges
-        #     edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,
-        #                                                max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
-        #                                                inside_inds=inside_inds, convolve_inds=outside_inds)
-        #
-        # else:
-        #     edge_index = gnn.radius_graph(pos, r=self.cutoff, batch=batch,
-        #                                   max_num_neighbors=self.max_num_neighbors, flow='source_to_target')
-        #
-        # rbf, dist, sbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
-        #
-        # # graph model starts here
-        # x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector
-        # for n, (convolution, fc, global_agg) in enumerate(zip(self.interaction_blocks, self.fc_blocks, self.global_blocks)):
-        #     if self.crystal_mode:
-        #         if n < (self.num_blocks - 1):  # to do this molecule-wise, we need to multiply n_repeats by Z for each crystal
-        #             x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
-        #             x[inside_inds] = x[inside_inds] + fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms
-        #             for ii in range(len(ptr) - 1):  # for each crystal
-        #                 x[ptr[ii]:ptr[ii + 1], :] = x[inside_inds[inside_batch == ii]].repeat(n_repeats[ii], 1)  # copy the first unit cell to all periodic images
-        #
-        #         else:  # on the final convolutional block, do not broadcast the reference cell, and include intermolecular interactions
-        #             rbf_inter, dist_inter, sbf_inter, idx_kj_inter, idx_ji_inter = self.get_geom_embedding(edge_index_inter, pos, num_nodes=len(z))
-        #             x = convolution(x, rbf_inter, dist_inter, edge_index_inter, sbf=sbf_inter, idx_kj=idx_kj_inter, idx_ji=idx_ji_inter)  # return only the results of the intermolecular convolution, omitting intermolecular features
-        #             x = x[inside_inds] + fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, and return only those atoms
-        #
-        #     else:
-        #         x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
-        #         x = x + fc(x)  # feature-wise 1D convolution
-        #
         if self.crystal_mode:
             inside_inds = torch.where(ref_mol_inds == 0)[0]
             outside_inds = torch.where(ref_mol_inds == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
@@ -219,9 +183,6 @@ class SphericalBasisLayer(torch.nn.Module):
     def __init__(self, num_spherical, num_radial, cutoff=5.0,
                  envelope_exponent=5):
         super(SphericalBasisLayer, self).__init__()
-        import sympy as sym
-        from torch_geometric.nn.models.dimenet_utils import (bessel_basis,
-                                                             real_sph_harm)
 
         assert num_radial <= 64
         self.num_spherical = num_spherical
@@ -256,6 +217,47 @@ class SphericalBasisLayer(torch.nn.Module):
 
         n, k = self.num_spherical, self.num_radial
         out = (rbf[idx_kj].view(-1, n, k) * cbf.view(-1, n, 1)).view(-1, n * k)
+        return out
+
+
+class torsion_emb(torch.nn.Module):
+    def __init__(self, num_spherical, num_radial, cutoff=5.0,
+                 envelope_exponent=5):
+        super(torsion_emb, self).__init__()
+        assert num_radial <= 64
+        self.num_spherical = num_spherical #
+        self.num_radial = num_radial
+        self.cutoff = cutoff
+        # self.envelope = Envelope(envelope_exponent)
+
+        bessel_forms = bessel_basis(num_spherical, num_radial)
+        sph_harm_forms = real_sph_harm(num_spherical, zero_m_only=False)
+        self.sph_funcs = []
+        self.bessel_funcs = []
+
+        x = sym.symbols('x')
+        theta = sym.symbols('theta')
+        phi = sym.symbols('phi')
+        modules = {'sin': torch.sin, 'cos': torch.cos}
+        for i in range(self.num_spherical):
+            if i == 0:
+                sph1 = sym.lambdify([theta, phi], sph_harm_forms[i][0], modules)
+                self.sph_funcs.append(lambda x, y: torch.zeros_like(x) + torch.zeros_like(y) + sph1(0,0)) #torch.zeros_like(x) + torch.zeros_like(y)
+            else:
+                for k in range(-i, i + 1):
+                    sph = sym.lambdify([theta, phi], sph_harm_forms[i][k+i], modules)
+                    self.sph_funcs.append(sph)
+            for j in range(self.num_radial):
+                bessel = sym.lambdify([x], bessel_forms[i][j], modules)
+                self.bessel_funcs.append(bessel)
+
+    def forward(self, dist, angle, phi, idx_kj):
+        dist = dist / self.cutoff
+        rbf = torch.stack([f(dist) for f in self.bessel_funcs], dim=1)
+        cbf = torch.stack([f(angle, phi) for f in self.sph_funcs], dim=1)
+
+        n, k = self.num_spherical, self.num_radial
+        out = (rbf[idx_kj].view(-1, 1, n, k) * cbf.view(-1, n, n, 1)).view(-1, n * n * k)
         return out
 
 

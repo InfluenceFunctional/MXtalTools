@@ -384,8 +384,6 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
     compute the RDF for all the supercells in a CrystalData object
     without respect for atom type
     '''
-    if raw_density:
-        density = torch.ones(crystaldata.num_graphs)
 
     in_inds = torch.where(crystaldata.aux_ind == 0)[0]
     if intermolecular:
@@ -403,6 +401,11 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
 
     dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
 
+    if raw_density:
+        density = torch.ones(crystaldata.num_graphs).to(dists.device)
+    else:
+        density = None
+
     if elementwise:
         relevant_elements = [5, 6, 7, 8, 9, 15, 16, 17, 35]
         element_symbols = {5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F', 15: 'P', 16: 'S', 17: 'Cl', 35: 'Br'}
@@ -414,11 +417,9 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
             for j, element2 in enumerate(relevant_elements):
                 if j >= i:
                     rdfs_dict[ind] = element_symbols[element1] + ' to ' + element_symbols[element2]
-                    rdfs_array[:,ind], rr = parallel_compute_rdf_torch([dists[(crystal_number == n) * (elements[0] == element1) * (elements[1] == element2)] for n in range(crystaldata.num_graphs)],
-                                                                     rrange=rrange, bins=bins, density=density.to(dists.device))
+                    rdfs_array[:, ind], rr = parallel_compute_rdf_torch([dists[(crystal_number == n) * (elements[0] == element1) * (elements[1] == element2)] for n in range(crystaldata.num_graphs)],
+                                                                        rrange=rrange, bins=bins, density=density)
                     ind += 1
         return rdfs_array, rr, rdfs_dict
     else:
-        return parallel_compute_rdf_torch([dists[crystal_number == n] for n in range(crystaldata.num_graphs)], rrange=rrange, bins=bins, density=density.to(dists.device))
-
-
+        return parallel_compute_rdf_torch([dists[crystal_number == n] for n in range(crystaldata.num_graphs)], rrange=rrange, bins=bins, density=density)

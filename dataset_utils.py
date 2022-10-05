@@ -183,7 +183,7 @@ class BuildDataset:
 
     def generate_training_data(self, atom_coords, smiles, atom_features_list, mol_features,
                                targets, tracking_features, reference_cells, lattice_features,
-                               T_fc_list, identifiers, asymmetric_unit_handedness):
+                               T_fc_list, identifiers, asymmetric_unit_handedness, crystal_symmetries):
         '''
         convert feature, target and tracking vectors into torch.geometric data objects
         :param atom_coords:
@@ -228,7 +228,8 @@ class BuildDataset:
                                           mol_size=torch.Tensor(tracking_features[i, mol_size_ind]),
                                           mol_volume=torch.Tensor(tracking_features[i, mol_volume_ind]),
                                           csd_identifier=identifiers[i],
-                                          asym_unit_handedness=torch.Tensor(np.asarray(asymmetric_unit_handedness[i])[None])
+                                          asym_unit_handedness=torch.Tensor(np.asarray(asymmetric_unit_handedness[i])[None]),
+                                          symmetry_operators=crystal_symmetries[i]
                                           ))
 
         return datapoints
@@ -347,19 +348,22 @@ class BuildDataset:
 
         # add symmetry features for generator
         self.crystal_generation_features = []  # todo need an option to turn this off for certain models
-        if config.mode == 'gan':
-            # point_group_features = [column for column in dataset.columns if 'pg is' in column]
-            space_group_features = [column for column in dataset.columns if 'sg is' in column]
-            crystal_system_features = [column for column in dataset.columns if 'crystal system is' in column]
-            # self.crystal_generation_features.extend(point_group_features)
-            self.crystal_generation_features.extend(space_group_features)
-            self.crystal_generation_features.extend(crystal_system_features)
-            self.crystal_generation_features.append('crystal z value')  # todo norm this
+        # point_group_features = [column for column in dataset.columns if 'pg is' in column]
+        space_group_features = [column for column in dataset.columns if 'sg is' in column]
+        crystal_system_features = [column for column in dataset.columns if 'crystal system is' in column]
+        # self.crystal_generation_features.extend(point_group_features)
+        self.crystal_generation_features.extend(space_group_features)
+        self.crystal_generation_features.extend(crystal_system_features)
+        self.crystal_generation_features.append('crystal z value')  # todo norm this
 
         molecule_features_array = self.concatenate_molecule_features(
             dataset, extra_keys=self.crystal_generation_features, add_lattice_overlaps=True)
 
         atom_features_list = self.concatenate_atom_features(dataset)
+
+        if 'crystal symmetries' not in dataset.columns:
+            dataset['crystal symmetries'] = [None for _ in range(len(dataset))]
+            print('No crystal symmetries in the dataset!')
 
         return self.generate_training_data(atom_coords=dataset['atom coords'],
                                            smiles=dataset['molecule smiles'],
@@ -371,7 +375,8 @@ class BuildDataset:
                                            lattice_features=lattice_features,
                                            T_fc_list=dataset['crystal fc transform'],
                                            identifiers=dataset['identifier'],
-                                           asymmetric_unit_handedness=dataset['crystal asymmetric unit handedness'])
+                                           asymmetric_unit_handedness=dataset['crystal asymmetric unit handedness'],
+                                           crystal_symmetries = dataset['crystal symmetries'])
 
     def get_cell_features(self, dataset):
         keys_to_add = self.lattice_keys

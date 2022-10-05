@@ -26,13 +26,13 @@ class CCDC_helper():
                 'crystal pressure',
                 'crystal r factor',
                 'crystal polymorph',
+                'crystal symmetries'
                 'crystal has disorder',
                 'crystal is organic', 'crystal is organometallic',
                 'crystal calculated density', 'crystal packing coefficient', 'crystal void volume',
                 'crystal cell angles', 'crystal cell lengths', 'crystal cell volume',
                 'crystal lattice centring', 'crystal system', 'crystal z value', 'crystal z prime',
                 'crystal spacegroup number', 'crystal spacegroup setting', 'crystal spacegroup symbol',
-                # 'crystal symmetry operators',
                 'crystal reference cell coords',
             ]
 
@@ -254,6 +254,8 @@ class CCDC_helper():
                     value = str(entry.temperature)
                 else:
                     value = 0
+            elif feature == 'crystal symmetries':
+                value = self.get_crystal_sym_ops(crystal)
             elif feature == 'crystal r factor':
                 if entry is not None:
                     value = str(entry.r_factor)
@@ -389,6 +391,28 @@ class CCDC_helper():
 
         return list(t2)
 
+    def add_single_feature_to_dataset(self,dataset_path, feature):
+        df = pd.read_pickle(dataset_path)
+        if feature == 'crystal symmetries':
+            feature = [[] for n in range(len(df))]
+            csd_reader = EntryReader('CSD')
+            for i in tqdm.tqdm(range(len(df))):
+                crystal = csd_reader.crystal(df['identifier'][i])
+                feature[i] = self.get_crystal_sym_ops(crystal)
+            df['crystal symmetries'] = feature
+
+        df.to_pickle(dataset_path + '_with_new_feature')
+
+    def get_crystal_sym_ops(self,crystal):
+        sym_ops = crystal.symmetry_operators  # get symmetry operators
+        sym_elements = [np.eye(4) for m in range(len(sym_ops))]
+        for j in range(1, len(sym_ops)):  # convert to affine transform
+            sym_elements[j][:3, :3] = np.asarray(crystal.symmetry_rotation(sym_ops[j])).reshape(3, 3)
+            sym_elements[j][:3, -1] = np.asarray(crystal.symmetry_translation(sym_ops[j]))
+
+        return sym_elements
+
+
 
 def visualizeEntry(identifier):
     csd_reader = EntryReader('CSD')
@@ -438,6 +462,8 @@ if __name__ == '__main__':
         os.mkdir(chunk_path + '/molecule_features')
 
     helper = CCDC_helper(chunk_path, mode)
+    helper.add_single_feature_to_dataset(dataset_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/full_dataset',
+                                         feature = 'crystal symmetries')
     # helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
     # helper.collect_chunks_and_initialize_df()
     # helper.get_crystal_features(n_chunks=1, chunk_inds=[0, 1], file_path=cifs_directory_path)
@@ -445,5 +471,5 @@ if __name__ == '__main__':
     # featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
     # featurizer.featurize(chunk_inds=[0, 1])
 
-    miner = Miner(chunk_path, collect_chunks=True, database=mode)
-    miner.process_new_dataset(dataset_name = 'full_dataset')
+    # miner = Miner(chunk_path, collect_chunks=True, database=mode)
+    # miner.process_new_dataset(dataset_name = 'full_dataset')

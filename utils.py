@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from scipy.ndimage import gaussian_filter1d
 from scipy.spatial.transform import Rotation
 from ase import Atoms
+from ase.calculators import lj
 
 '''
 general utilities
@@ -2139,11 +2140,15 @@ def torch_ptp(tensor):
     return torch.max(tensor) - torch.min(tensor)
 
 
-def ase_mol_from_crystaldata(data, index, highlight_aux=False, exclusion_level=None, sub_ref_cell = False):
+def ase_mol_from_crystaldata(data, index = None, highlight_aux=False, exclusion_level=None, sub_ref_cell = False):
     '''
     generate an ASE Atoms object from a crystaldata object
     '''
-    atom_inds = torch.where(data.batch == index)[0]
+    if data.batch is not None: # more than one crystal in the datafile
+        atom_inds = torch.where(data.batch == index)[0]
+    else:
+        atom_inds = torch.arange(len(data.x))
+
     if exclusion_level == 'ref only':
         inside_inds = torch.where(data.aux_ind == 0)[0]
         new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
@@ -2168,6 +2173,12 @@ def invert_rotvec_handedness(rotvec):
     rot_mat = Rotation.from_rotvec(rotvec).as_matrix()
     return Rotation.from_matrix(-rot_mat).as_rotvec()  # negative of the rotation matrix gives the accurate rotation for opposite handed object
 
+def normalize(x):
+    min_x = np.amin(x)
+    max_x = np.amax(x)
+    span = max_x - min_x
+    normed_x = (x - min_x) / span
+    return normed_x
 
 def compute_Ip_handedness(Ip):
     if isinstance(Ip, np.ndarray):
@@ -2236,10 +2247,37 @@ def normed_score(x):
     return (x[:,1] - x[:,0])/np.abs(x[:,1])
 
 
-def np_softmax(x):
+def np_softmax(x, temperature = 1):
     if x.ndim == 1:
         x = x[None,:]
-    return F.softmax(torch.Tensor(x), dim=1).cpu().detach().numpy()
+    # return F.softmax(torch.Tensor(x), dim=1).cpu().detach().numpy()
+    probabilities = np.exp(x / temperature)/np.sum(np.exp(x / temperature),axis=1)[:,None]
+
+    return probabilities
+
+def crystal_pot_calculation(refcells, calculator = 'lj'):
+    mols = [ase_mol_from_crystaldata(refcells,n) for n in range(refcells.num_graphs)]
+    pot_en = np.zeros(len(mols))
+    for i,mol in enumerate(mols):
+        if calculator == 'lj':
+            mol.calc = lj.LennardJones()
+
+        mol.set_pbc([True,True,True])
+        pot_en[i] = mol.get_potential_energy()
+    return pot_en
+
+def saturating_tanh(x, norm):
+    return F.hardtanh((x - norm) / norm) * norm + norm
+
+def np_sigmoid(x):
+    return (np.tanh(x) + 1)/2
+
+def np_hardsigmoid(x):
+    return ((F.hardtanh(torch.Tensor(x)) + 1) / 2).detach().numpy()
+
+def np_hardtanh(x):
+    return F.hardtanh(torch.Tensor(x)).detach().numpy()
+
 
 '''
 # look at all kinds of activations

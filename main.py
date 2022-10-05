@@ -202,7 +202,7 @@ def add_args(parser):
     parser.add_argument('--generator_graph_convolution_cutoff', type=int, default=5)  # dime default is 5.0 A, schnet default is 10
     parser.add_argument('--generator_max_num_neighbors', type=int, default=32)  # dime default is 32
     parser.add_argument('--generator_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
-    add_bool_arg(parser, 'generator_add_radial_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    add_bool_arg(parser, 'generator_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
     parser.add_argument('--generator_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
 
     parser.add_argument('--generator_conditioner_num_fc_layers', type=int, default=1)  # number of layers in NN models

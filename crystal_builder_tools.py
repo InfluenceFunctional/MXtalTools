@@ -6,6 +6,9 @@ import time
 import torch.nn.utils.rnn as rnn
 import torch.nn.functional as F
 import sys
+from pymatgen.symmetry import analyzer
+from pymatgen.core import (structure, lattice)
+import tqdm
 
 
 def compute_Ip_handedness(Ip): # todo remove duplicate function
@@ -156,8 +159,8 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
         ref_mol_centroid = supercell_coords_list[-1][in_mol_inds].mean(0)
         ref_mol_max_dist = torch.max(torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1][in_mol_inds], p=2))
 
-        # ignore atoms which are more than mol_radius + conv_cutoff
-        ignore_inds = torch.where((torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1], p=2) > (ref_mol_max_dist + cutoff))[0])[0]
+        # ignore atoms which are more than mol_radius + conv_cutoff + buffer
+        ignore_inds = torch.where((torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1], p=2) > (ref_mol_max_dist + cutoff + 0.5))[0])[0]
         ref_mol_inds[ignore_inds] = 2  # 2 is the index for completely ignoring these atoms in graph convolutions - haven't removed them entirely because it wrecks the crystal periodicity
 
         # if the crystal is too diffuse, we will have no intermolecular convolution inds - we need a failure mode which accounts for this
@@ -221,7 +224,7 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     # mix of tanh and hardtanh allows us to get close to the limits, but still with a finite gradient outside the range
     norm1 = torch.pi / 2
     cell_angles = F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1#(tanh_cutoff*(F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1) + (F.tanh((cell_angles - norm1) / norm1) * norm1 + norm1)) / (tanh_cutoff + 1)  # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
-    norm2 = 0.5
+    norm2 = 0.5 # todo make sure this is 0-1 not -0.5 to 0.5
     mol_position = F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2#(tanh_cutoff*(F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2) + (F.tanh((mol_position - norm2) / norm2) * norm2 + norm2)) / (tanh_cutoff + 1)  # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
 
     if (rotation_type == 'fractional rotvec') or return_transforms:
@@ -340,9 +343,7 @@ def f_c_transform(coords, T_fc):
             return torch.einsum('nmj,ij->nmi', (coords, T_fc))
 
 
-
-
-def cell_analysis(data, atom_weights, debug=False, return_final_coords = False):
+def cell_analysis(data, atom_weights, debug=False, return_final_coords = False, return_sym_ops = False):
     cell_lengths = data.cell_params[:, 0:3]
     cell_angles = data.cell_params[:, 3:6]
 
@@ -380,16 +381,34 @@ def cell_analysis(data, atom_weights, debug=False, return_final_coords = False):
         if debug:  # confirm this rotation gets the desired orientation
             std_coords = torch.inner(rot_matrix, coords).T
             Ip_axes, _, _ = compute_principal_axes_torch(std_coords)
-            assert F.l1_loss(Ip_axes, normed_alignment_target, reduction='sum') < 0.05
+            assert F.l1_loss(Ip_axes, normed_alignment_target, reduction='sum') < 0.5
 
         final_coords_list.append(coords)  # will record if we had to invert
 
     mol_orientations = torch.stack(mol_orientations_list)
 
+    if return_sym_ops:
+        sym_ops_list = []
+        for i in tqdm.tqdm(range(data.num_graphs)):
+            struc_lattice = lattice.Lattice(data.T_fc[i].T.type(dtype=torch.float16))
+            pymat_struc1 = structure.IStructure(species=data.x[data.batch == i, 0].repeat(data.Z[i]),
+                                                coords=data.ref_cell_pos[i].reshape(int(data.Z[i] * len(data.pos[data.batch == i])), 3),
+                                                lattice=struc_lattice, coords_are_cartesian=True)
+            sg_analyzer1 = analyzer.SpacegroupAnalyzer(pymat_struc1)
+            sym_ops = sg_analyzer1.get_symmetry_operations()
+            sym_ops_list.append([torch.Tensor(sym_ops[n].affine_matrix).to(data.x.device) for n in range(len(sym_ops))])
+
     if return_final_coords:
-        return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, final_coords_list
+        if return_sym_ops:
+            return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, final_coords_list, sym_ops_list
+        else:
+            return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, final_coords_list
     else:
-        return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness
+        if return_sym_ops:
+            return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, sym_ops_list
+        else:
+            return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness
+
 
 
 def flip_I3(coords, Ip):

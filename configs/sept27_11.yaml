@@ -6,8 +6,8 @@ explicit_run_enumeration: True
 skip_saving_and_loading: True
 run_num: 131
 anomaly_detection: False
-mode: gan # 'gan' or 'regression' or 'diagnostic'
-gan_loss: wasserstein #wasserstein # standard
+mode: diagnostic # 'gan' or 'regression' or 'diagnostic'
+gan_loss: standard #wasserstein # standard
 train_generator_density: False
 train_generator_as_flow: True
 train_generator_on_randn: False

@@ -19,13 +19,13 @@ train_discriminator_on_randn: True
 train_discriminator_on_noise: True
 generator_noise_level: 0.1
 generator_similarity_penalty: 0
-cut_max_prob_training_after: 100
-extra_test_period: 5
+cut_max_prob_training_after: 1000
+extra_test_period: 10
 sample_after_training: False
 extra_test_set_paths: [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
                         'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
                         'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets' ]
-d_model_path: null
+d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminator_129'
 g_model_path: null
 
 seeds:
@@ -35,7 +35,7 @@ seeds:
 # opt - sweep details
 wandb:
   sample_reporting_frequency: 1
-  experiment_tag: "discriminator_dev"
+  experiment_tag: model_121_eval
   log_figures: True
   sweep_config_file: "sweep_test.yaml"
   sweep: False
@@ -47,12 +47,12 @@ auto_batch_sizing: True
 min_batch_size: 10
 max_batch_size: 1000
 auto_batch_reduction: .65
-max_epochs: 5000
+max_epochs: 5000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 
 # dataset curation
-target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+target: density # 'density' or 'packing' or 'volume'
+dataset_length: 10000
 feature_richness: minimal # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
@@ -97,7 +97,7 @@ discriminator:
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
   graph_convolution_layers: 4
   graph_filters: 32
-  atom_embedding_size: 64
+  atom_embedding_size: 128
   graph_norm: null
   num_spherical: 6
   num_radial: 12
@@ -105,12 +105,12 @@ discriminator:
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
   num_attention_heads: 4 # mikenet self attention mode only - must evenly divide graph filters
-  graph_convolution: self attention # 'full message passing' or schnet or 'self attention'
+  graph_convolution: schnet # 'full message passing' or schnet or 'self attention'
   add_spherical_basis: True # mikenet only
   pooling: combo
 
-  num_fc_layers: 2
-  fc_depth: 64
+  num_fc_layers: 4
+  fc_depth: 128
   activation: leaky relu
   fc_dropout_probability: 0
   fc_norm_mode: null
@@ -129,9 +129,9 @@ generator:
 
   model_type: nf # mlp or nf
   graph_model: mike
-  graph_convolution_layers: 4
+  graph_convolution_layers: 8
   graph_filters: 32
-  atom_embedding_size: 32
+  atom_embedding_size: 64
   graph_norm: null
   num_spherical: 12
   num_radial: 24
@@ -149,7 +149,7 @@ generator:
   conditioner_fc_dropout_probability: 0
   conditioner_fc_norm_mode: null
 
-  num_fc_layers: 2
+  num_fc_layers: 4
   fc_depth: 64
   activation: leaky relu
   fc_dropout_probability: 0
@@ -158,10 +158,10 @@ generator:
   num_samples: 1000
   prior: multivariate normal
   conditional_modelling: True # false will likely not run at all
-  conditioning_mode: graph model # molecule features or graph model
+  conditioning_mode: molecule features # molecule features or graph model
 
-  num_flow_layers: 20
-  flow_depth: 128
+  num_flow_layers: 8
+  flow_depth: 64
   flow_basis_fns: 8
   flow_type: nsf_cl
 
