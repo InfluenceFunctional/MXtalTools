@@ -2,7 +2,8 @@ from math import sqrt, pi as PI
 import sys
 import sympy as sym
 from torch_geometric.nn.models.dimenet_utils import (bessel_basis,
-                                                     real_sph_harm)
+                                                     associated_legendre_polynomials,
+                                                     sph_harm_prefactor)
 import time
 
 import numpy as np
@@ -14,6 +15,54 @@ from torch_scatter import scatter
 from torch_sparse import SparseTensor
 import torch_geometric.nn as gnn
 from models.asymmetric_radius_graph import asymmetric_radius_graph
+
+
+def real_sph_harm(k, zero_m_only=True, spherical_coordinates=True):
+    if not zero_m_only:
+        S_m = [0]
+        C_m = [1]
+        for i in range(1, k):
+            x = sym.symbols('x')
+            y = sym.symbols('y')
+            S_m += [x * S_m[i - 1] + y * C_m[i - 1]]
+            C_m += [x * C_m[i - 1] - y * S_m[i - 1]]
+
+    P_l_m = associated_legendre_polynomials(k, zero_m_only)
+    if spherical_coordinates:
+        theta = sym.symbols('theta')
+        z = sym.symbols('z')
+        for i in range(len(P_l_m)):
+            for j in range(len(P_l_m[i])):
+                if type(P_l_m[i][j]) != int:
+                    P_l_m[i][j] = P_l_m[i][j].subs(z, sym.cos(theta))
+        if not zero_m_only:
+            phi = sym.symbols('phi')
+            for i in range(1,len(S_m)): # todo mk range from 1
+                S_m[i] = S_m[i].subs(x,
+                                     sym.sin(theta) * sym.cos(phi)).subs(
+                    y,
+                    sym.sin(theta) * sym.sin(phi))
+            for i in range(1,len(C_m)): # todo mk range from 1
+                C_m[i] = C_m[i].subs(x,
+                                     sym.sin(theta) * sym.cos(phi)).subs(
+                    y,
+                    sym.sin(theta) * sym.sin(phi))
+
+    Y_func_l_m = [['0'] * (2 * j + 1) for j in range(k)]
+    for i in range(k):
+        Y_func_l_m[i][0] = sym.simplify(sph_harm_prefactor(i, 0) * P_l_m[i][0])
+
+    if not zero_m_only:
+        for i in range(1, k):
+            for j in range(1, i + 1):
+                Y_func_l_m[i][j] = sym.simplify(
+                    2 ** 0.5 * sph_harm_prefactor(i, j) * C_m[j] * P_l_m[i][j])
+        for i in range(1, k):
+            for j in range(1, i + 1):
+                Y_func_l_m[i][-j] = sym.simplify(
+                    2 ** 0.5 * sph_harm_prefactor(i, -j) * S_m[j] * P_l_m[i][j])
+
+    return Y_func_l_m
 
 
 class MikesGraphNet(torch.nn.Module):
