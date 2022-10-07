@@ -295,7 +295,7 @@ class Modeller():
 
         return generator, discriminator, g_optimizer, g_scheduler, d_optimizer, d_scheduler, params1, params2
 
-    def get_batch_size(self, dataset, config):
+    def get_batch_size(self, generator, discriminator, g_optimizer, d_optimizer, dataset, config):
         '''
         try larger batches until it crashes
         '''
@@ -304,8 +304,6 @@ class Modeller():
         max_batch_size = config.max_batch_size.real
         batch_reduction_factor = config.auto_batch_reduction
 
-        generator, discriminator, g_optimizer, \
-        g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
         train_loader, test_loader = get_dataloaders(dataset, config, override_batch_size=init_batch_size)
 
         increment = 1.5  # what fraction by which to increment the batch size
@@ -316,10 +314,6 @@ class Modeller():
                 torch.cuda.empty_cache()  # clear GPU cache
                 generator.cuda()
                 discriminator.cuda()
-
-            # if config.add_radial_basis is False:  # initializing spherical basis is too expensive to do repetitively
-            #     generator, discriminator, g_optimizer, \
-            #     g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
 
             try:
                 _ = self.epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
@@ -455,11 +449,14 @@ class Modeller():
             # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken - look at the github thread
 
             config, dataset_builder = self.train_boilerplate()
+            generator, discriminator, g_optimizer, g_schedulers, d_optimizer, d_schedulers, params1, params2 \
+                = self.init_gan(config, self.dataDims) # todo change this to just resetting all the parameters of existing models
 
             # get batch size
             if config.auto_batch_sizing:
                 print('Finding optimal batch size')
-                train_loader, test_loader, config.final_batch_size = self.get_batch_size(dataset_builder, config)
+                train_loader, test_loader, config.final_batch_size = self.get_batch_size(generator, discriminator, g_optimizer, d_optimizer,
+                                                                                         dataset_builder, config)
             else:
                 print('Getting dataloaders for pre-determined batch size')
                 train_loader, test_loader = get_dataloaders(dataset_builder, config)
@@ -473,8 +470,8 @@ class Modeller():
             print("Training batch size set to {}".format(config.final_batch_size))
             # model, optimizer, schedulers
             print('Reinitializing model and optimizer')
-            generator, discriminator, g_optimizer, \
-            g_schedulers, d_optimizer, d_schedulers, params1, params2 = self.init_gan(config, self.dataDims)
+            generator.apply(weight_reset)
+            discriminator.apply(weight_reset)
             n_params = params1 + params2
 
             # cuda
@@ -505,6 +502,7 @@ class Modeller():
                     '''
                     train
                     '''
+                    extra_test_epoch_stats_dict = None
                     try:
                         d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
                             self.epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
@@ -1860,6 +1858,71 @@ class Modeller():
             fig.update_xaxes(title_text='Intermolecular RDF Distance', row=1, col=3)
             wandb.log({f'Target Analysis': fig})
 
+            '''
+            within-submission score vs rankings
+            file formats are different between BT 5 and BT6
+            '''
+            target_identifiers = {}
+            rankings = {}
+            group = {}
+            list_num = {}
+            for label in ['XXII', 'XXIII', 'XXVI']:
+                target_identifiers[label] = [extra_test_dict['identifiers'][all_identifiers[label][n]] for n in range(len(all_identifiers[label]))]
+                rankings[label] = []
+                group[label] = []
+                list_num[label] = []
+                for ident in target_identifiers[label]:
+                    if 'edited' in ident:
+                        ident = ident[7:]
+
+                    long_ident = ident.split('_')
+                    list_num[label].append(int(ident[len(label) + 1]))
+                    rankings[label].append(int(long_ident[-1]) + 1)
+                    group[label].append(long_ident[1])
+
+            fig = make_subplots(rows=1, cols=3,
+                                subplot_titles=(['XXII', 'XXIII', 'XXVI']))
+
+            for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+                xline = np.asarray([0, 100])
+                linreg_result = linregress(rankings[label], scores_dict[label])
+                yline = xline * linreg_result.slope + linreg_result.intercept
+
+                fig.add_trace(go.Scattergl(x=rankings[label], y=scores_dict[label], showlegend=False,
+                                           mode='markers', marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                              row=1, col=i + 1)
+
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=1, col=i + 1)
+            fig.update_xaxes(title_text='Submission Rank', row=1, col=1)
+            fig.update_yaxes(title_text='Model score', row=1, col=1)
+            fig.update_xaxes(title_text='Submission Rank', row=1, col=2)
+            fig.update_xaxes(title_text='Submission Rank', row=1, col=3)
+
+            # fig.show()
+            wandb.log({'Target Score Rankings': fig})
+
+            for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+                names = np.unique(list(group[label]))
+                uniques = len(names)
+                rows = int(np.floor(np.sqrt(uniques)))
+                cols = int(np.ceil(np.sqrt(uniques)) + 1)
+                fig = make_subplots(rows=rows, cols=cols,
+                                    subplot_titles=(names))
+
+                for j, group_name in enumerate(np.unique(group[label])):
+                    good_inds = np.where(np.asarray(group[label]) == group_name)
+                    xline = np.asarray([0, 100])
+                    linreg_result = linregress(np.asarray(rankings[label])[good_inds], np.asarray(scores_dict[label])[good_inds])
+                    yline = xline * linreg_result.slope + linreg_result.intercept
+
+                    fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
+                                               mode='markers', marker=dict(size=6, color=np.asarray(list_num[label])[good_inds], colorscale='portland', cmax=2, cmin=1, showscale=False)),
+                                  row=j // cols + 1, col=j % cols + 1)
+
+                    fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=j // cols + 1, col=j % cols + 1)
+
+                fig.update_layout(title=label)
+                wandb.log({f"{label} Groupwise Analysis": fig})
 
         return None
 

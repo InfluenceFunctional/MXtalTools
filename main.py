@@ -203,6 +203,7 @@ def add_args(parser):
     parser.add_argument('--generator_max_num_neighbors', type=int, default=32)  # dime default is 32
     parser.add_argument('--generator_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
     add_bool_arg(parser, 'generator_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    add_bool_arg(parser, 'generator_add_torsional_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
     parser.add_argument('--generator_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
 
     parser.add_argument('--generator_conditioner_num_fc_layers', type=int, default=1)  # number of layers in NN models
@@ -239,7 +240,8 @@ def add_args(parser):
     update_args2config(args2config, 'generator_graph_convolution_cutoff', ['generator', 'graph_convolution_cutoff'])
     update_args2config(args2config, 'generator_max_num_neighbors', ['generator', 'max_num_neighbors'])
     update_args2config(args2config, 'generator_radial_function', ['generator', 'radial_function'])
-    update_args2config(args2config, 'generator_add_radial_basis', ['generator', 'add_radial_basis'])
+    update_args2config(args2config, 'generator_add_spherical_basis', ['generator', 'add_spherical_basis'])
+    update_args2config(args2config, 'generator_add_torsional_basis', ['generator', 'add_torsional_basis'])
     update_args2config(args2config, 'generator_pooling', ['generator', 'pooling'])
     update_args2config(args2config, 'generator_conditioner_num_fc_layers', ['generator', 'conditioner_num_fc_layers'])
     update_args2config(args2config, 'generator_conditioner_fc_depth', ['generator', 'conditioner_fc_depth'])
@@ -273,7 +275,8 @@ def add_args(parser):
     parser.add_argument('--discriminator_graph_convolution_cutoff', type=int, default=5)  # dime default is 5.0 A, schnet default is 10
     parser.add_argument('--discriminator_max_num_neighbors', type=int, default=32)  # dime default is 32
     parser.add_argument('--discriminator_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
-    add_bool_arg(parser, 'discriminator_add_radial_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    add_bool_arg(parser, 'discriminator_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    add_bool_arg(parser, 'discriminator_add_torsional_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
 
     parser.add_argument('--discriminator_num_fc_layers', type=int, default=1)  # number of layers in NN models
     parser.add_argument('--discriminator_fc_depth', type=int, default=27)  # number of neurons per NN layer
@@ -294,7 +297,8 @@ def add_args(parser):
     update_args2config(args2config, 'discriminator_graph_convolution_cutoff', ['discriminator', 'graph_convolution_cutoff'])
     update_args2config(args2config, 'discriminator_max_num_neighbors', ['discriminator', 'max_num_neighbors'])
     update_args2config(args2config, 'discriminator_radial_function', ['discriminator', 'radial_function'])
-    update_args2config(args2config, 'discriminator_add_radial_basis', ['discriminator', 'add_radial_basis'])
+    update_args2config(args2config, 'discriminator_add_spherical_basis', ['discriminator', 'add_spherical_basis'])
+    update_args2config(args2config, 'discriminator_add_torsional_basis', ['discriminator', 'add_torsional_basis'])
     update_args2config(args2config, 'discriminator_num_fc_layers', ['discriminator', 'num_fc_layers'])
     update_args2config(args2config, 'discriminator_fc_depth', ['discriminator', 'fc_depth'])
     update_args2config(args2config, 'discriminator_pooling', ['discriminator', 'pooling'])

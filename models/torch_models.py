@@ -38,7 +38,8 @@ class molecule_graph_model(nn.Module):
                  num_radial,
                  graph_convolution,
                  num_attention_heads,
-                 add_radial_basis,
+                 add_spherical_basis,
+                 add_torsional_basis,
                  atom_embedding_size,
                  radial_function,
                  max_num_neighbors,
@@ -62,7 +63,8 @@ class molecule_graph_model(nn.Module):
         self.num_spherical = num_spherical
         self.num_radial = num_radial
         self.num_attention_heads = num_attention_heads
-        self.add_radial_basis = add_radial_basis
+        self.add_spherical_basis = add_spherical_basis
+        self.add_torsional_basis = add_torsional_basis
         self.n_mol_feats = num_mol_feats  # dataDims['num mol features']
         self.n_atom_feats = num_atom_feats  # dataDims['num atom features']
         self.radial_function = radial_function
@@ -97,7 +99,8 @@ class molecule_graph_model(nn.Module):
                     num_atom_features=self.n_atom_feats,
                     norm=self.graph_norm,
                     dropout=self.fc_dropout_probability,
-                    spherical_embedding=self.add_radial_basis,
+                    spherical_embedding=self.add_spherical_basis,
+                    torsional_embedding=self.add_torsional_basis,
                     radial_embedding=self.radial_function,
                     atom_embedding_dims=dataDims['atom embedding dict sizes'],
                     attention_heads=self.num_attention_heads,

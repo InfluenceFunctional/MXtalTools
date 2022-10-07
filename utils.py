@@ -10,6 +10,7 @@ from argparse import Namespace
 import yaml
 from pathlib import Path
 import torch
+import torch.nn as nn
 import sys
 import torch.nn.functional as F
 from scipy.ndimage import gaussian_filter1d
@@ -20,7 +21,9 @@ from ase.calculators import lj
 '''
 general utilities
 '''
-
+def weight_reset(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+        m.reset_parameters()
 
 def initialize_metrics_dict(metrics):
     m_dict = {}
