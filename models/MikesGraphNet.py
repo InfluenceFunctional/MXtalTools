@@ -217,24 +217,18 @@ class MikesGraphNet(torch.nn.Module):
             outside_inds = torch.where(ref_mol_inds == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
             inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
             n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]
-            if self.crystal_convolution_type == 2:
-                # intramolecular edges
-                edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # intramolecular interactions - stack over range 3 convolutions
-                                                     max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
-                                                     inside_inds=inside_inds, convolve_inds=inside_inds)
-            elif self.crystal_convolution_type == 1:
-                # all edges
-                edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,
-                                                     max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
-                                                     inside_inds=inside_inds, convolve_inds=torch.cat((inside_inds, outside_inds)))
-            else:
-                print('INVALID CRYSTAL CONVOLUTION')
-                sys.exit()
-
+            # intramolecular edges
+            edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # intramolecular interactions - stack over range 3 convolutions
+                                                 max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
+                                                 inside_inds=inside_inds, convolve_inds=inside_inds)
             # intermolecular edges
             edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # extra radius for intermolecular graph convolution
                                                        max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
                                                        inside_inds=inside_inds, convolve_inds=outside_inds)  # outside_inds)
+
+            if self.crystal_convolution_type == 1:
+                edge_index = torch.cat((edge_index, edge_index_inter),dim=1)
+
 
         else:
             edge_index = gnn.radius_graph(pos, r=self.cutoff, batch=batch,
