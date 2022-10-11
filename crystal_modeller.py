@@ -812,10 +812,10 @@ class Modeller():
                     d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
 
                     if update_gradients:
-                        if True:  # epoch < 50:
-                            d_optimizer.zero_grad()  # reset gradients from previous passes
-                            d_loss.backward()  # back-propagation
-                            d_optimizer.step()  # update parameters
+                        d_optimizer.zero_grad()  # reset gradients from previous passes
+                        d_loss.backward()  # back-propagation
+                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), config.gradient_norm_clip) # gradient clipping
+                        d_optimizer.step()  # update parameters
 
                     generated_intra_dist.append(fake_dist_dict['intramolecular dist'].cpu().detach().numpy())
                     generated_inter_dist.append(fake_dist_dict['intermolecular dist'].cpu().detach().numpy())
