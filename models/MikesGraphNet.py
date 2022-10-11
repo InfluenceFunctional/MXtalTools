@@ -37,12 +37,12 @@ def real_sph_harm(k, zero_m_only=True, spherical_coordinates=True):
                     P_l_m[i][j] = P_l_m[i][j].subs(z, sym.cos(theta))
         if not zero_m_only:
             phi = sym.symbols('phi')
-            for i in range(1,len(S_m)): # todo mk range from 1
+            for i in range(1, len(S_m)):  # todo mk range from 1
                 S_m[i] = S_m[i].subs(x,
                                      sym.sin(theta) * sym.cos(phi)).subs(
                     y,
                     sym.sin(theta) * sym.sin(phi))
-            for i in range(1,len(C_m)): # todo mk range from 1
+            for i in range(1, len(C_m)):  # todo mk range from 1
                 C_m[i] = C_m[i].subs(x,
                                      sym.sin(theta) * sym.cos(phi)).subs(
                     y,
@@ -149,7 +149,7 @@ class MikesGraphNet(torch.nn.Module):
         if self.spherical_embedding:
             i, j = edge_index  # j->i source-to-target
 
-            #value = torch.arange(j.size(0), device=j.device)
+            # value = torch.arange(j.size(0), device=j.device)
             adj_t = SparseTensor(row=i, col=j, value=torch.arange(j.size(0), device=j.device),
                                  sparse_sizes=(num_nodes, num_nodes))
             adj_t_row = adj_t[j]
@@ -169,8 +169,8 @@ class MikesGraphNet(torch.nn.Module):
             # Calculate angles. 0 to pi
             pos_ji = pos[idx_i] - pos[idx_j]
             pos_jk = pos[idx_k] - pos[idx_j]
-            #a = (pos_ji * pos_jk).sum(dim=-1)  # cos_angle * |pos_ji| * |pos_jk|
-            #b = torch.cross(pos_ji, pos_jk).norm(dim=-1)  # sin_angle * |pos_ji| * |pos_jk|
+            # a = (pos_ji * pos_jk).sum(dim=-1)  # cos_angle * |pos_ji| * |pos_jk|
+            # b = torch.cross(pos_ji, pos_jk).norm(dim=-1)  # sin_angle * |pos_ji| * |pos_jk|
             angle = torch.atan2(torch.cross(pos_ji, pos_jk).norm(dim=-1), (pos_ji * pos_jk).sum(dim=-1))
 
             dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
@@ -227,7 +227,7 @@ class MikesGraphNet(torch.nn.Module):
                                                        inside_inds=inside_inds, convolve_inds=outside_inds)  # outside_inds)
 
             if self.crystal_convolution_type == 1:
-                edge_index = torch.cat((edge_index, edge_index_inter),dim=1)
+                edge_index = torch.cat((edge_index, edge_index_inter), dim=1)
 
 
         else:
@@ -248,9 +248,9 @@ class MikesGraphNet(torch.nn.Module):
 
                 else:  # on the final convolutional block, do not broadcast the reference cell, and include intermolecular interactions
                     dist_inter, rbf_inter, sbf_inter, tbf_inter, idx_kj_inter, idx_ji_inter = \
-                        self.get_geom_embedding(torch.cat((edge_index,edge_index_inter),dim=1), pos, num_nodes=len(z))  # compute for tracking
+                        self.get_geom_embedding(torch.cat((edge_index, edge_index_inter), dim=1), pos, num_nodes=len(z))  # compute for tracking
                     if self.crystal_convolution_type == 2:
-                        x = convolution(x, rbf_inter, dist_inter, torch.cat((edge_index,edge_index_inter),dim=1),
+                        x = convolution(x, rbf_inter, dist_inter, torch.cat((edge_index, edge_index_inter), dim=1),
                                         sbf=sbf_inter, tbf=tbf_inter, idx_kj=idx_kj_inter, idx_ji=idx_ji_inter)  # return only the results of the intermolecular convolution, omitting intermolecular features
                     elif self.crystal_convolution_type == 1:
                         x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
@@ -472,6 +472,7 @@ class GCBlock(torch.nn.Module):
             # aggregate spherical and torsional messages to radial
             edge_attr = self.radial_spherical_torsional_aggregation(
                 torch.cat((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf), self.torsional_to_message(tbf)), dim=1))  # combine radial and spherical info in triplet space
+            # torch.sum(torch.stack((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf), self.torsional_to_message(tbf))),dim=0)
             edge_attr = scatter(edge_attr, idx_ji, dim=0)  # collect triplets back down to pair space
 
         elif sbf is not None:
