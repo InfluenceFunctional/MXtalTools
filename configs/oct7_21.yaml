@@ -4,7 +4,7 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 61
+run_num: 161
 anomaly_detection: False
 mode: regression # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard

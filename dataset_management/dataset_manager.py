@@ -200,17 +200,17 @@ class Miner():
 
         # todo filter samples where space groups explicitly disagree with given crystal system
 
-        # # exclude samples with extremely close atoms
-        # n_bad_inds = len(bad_inds)
-        # for j in range(len(self.dataset)):
-        #     coords = self.dataset['crystal reference cell coords'][j]
-        #     coords = coords.reshape(coords.shape[0] * coords.shape[1],3)
-        #     distmat = torch.cdist(torch.Tensor(coords), torch.Tensor(coords), p=2) + torch.eye(len(coords))
-        #     if torch.amin(distmat) < 0.1:
-        #         #print('bad')
-        #         bad_inds.append(j)
-        # print('overlapping atoms caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-        #
+        # exclude samples with extremely close atoms
+        n_bad_inds = len(bad_inds)
+        for j in range(len(self.dataset)):
+            coords = self.dataset['crystal reference cell coords'][j]
+            coords = coords.reshape(coords.shape[0] * coords.shape[1],3)
+            distmat = torch.cdist(torch.Tensor(coords), torch.Tensor(coords), p=2) + torch.eye(len(coords))
+            if torch.amin(distmat) < 0.1:
+                #print('bad')
+                bad_inds.append(j)
+        print('overlapping atoms caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
 
         # samples with bad CSD-generated reference cells
         n_bad_inds = len(bad_inds)

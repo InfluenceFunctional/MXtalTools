@@ -146,8 +146,19 @@ class MikesGraphNet(torch.nn.Module):
         '''
         compute elements for radial & spherical embeddings
         '''
+        i, j = edge_index  # i->j source-to-target
+        dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
+        sbf, tbf, idx_kj, idx_ji = None, None, None, None
+
+        if torch.sum(dist == 0) > 0:
+            zeros_at = torch.where(dist == 0) # add a little jitter, we absolutely cannot have zero distances
+            pos[i[zeros_at]] += (torch.ones_like(pos[i[zeros_at]]) / 5)
+            dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
+
+        assert torch.sum(dist == 0) == 0
+
         if self.spherical_embedding:
-            i, j = edge_index  # j->i source-to-target
+            i, j = edge_index
 
             # value = torch.arange(j.size(0), device=j.device)
             adj_t = SparseTensor(row=i, col=j, value=torch.arange(j.size(0), device=j.device),
@@ -172,8 +183,6 @@ class MikesGraphNet(torch.nn.Module):
             # a = (pos_ji * pos_jk).sum(dim=-1)  # cos_angle * |pos_ji| * |pos_jk|
             # b = torch.cross(pos_ji, pos_jk).norm(dim=-1)  # sin_angle * |pos_ji| * |pos_jk|
             angle = torch.atan2(torch.cross(pos_ji, pos_jk).norm(dim=-1), (pos_ji * pos_jk).sum(dim=-1))
-
-            dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
 
             sbf = self.sbf(dist, angle, idx_kj)
 
@@ -203,10 +212,6 @@ class MikesGraphNet(torch.nn.Module):
                 tbf = self.tbf(dist, angle, torsion, idx_kj)
             else:
                 tbf = None
-        else:
-            i, j = edge_index
-            dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
-            sbf, tbf, idx_kj, idx_ji = None, None, None, None
 
         return dist, self.rbf(dist), sbf, tbf, idx_kj, idx_ji
 
@@ -269,7 +274,10 @@ class MikesGraphNet(torch.nn.Module):
                 dist_output['intermolecular dist'] = dist_inter
                 dist_output['intermolecular dist batch'] = batch[edge_index_inter[0]]
 
-        return self.output_layer(x), dist_output if return_dists else None
+        out = self.output_layer(x)
+        assert torch.sum(torch.isnan(out)) == 0
+
+        return out, dist_output if return_dists else None
 
 
 class SphericalBasisLayer(torch.nn.Module):

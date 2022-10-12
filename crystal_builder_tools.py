@@ -157,10 +157,11 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
 
         # also, note the atoms which are too far to ever appear in a convolution with this molecule, and generate an index to ignore them
         ref_mol_centroid = supercell_coords_list[-1][in_mol_inds].mean(0)
-        ref_mol_max_dist = torch.max(torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1][in_mol_inds], p=2))
+        centroid_dists = torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1][in_mol_inds], p=2)
+        ref_mol_max_dist = torch.max(centroid_dists)
 
         # ignore atoms which are more than mol_radius + conv_cutoff + buffer
-        ignore_inds = torch.where((torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1], p=2) > (ref_mol_max_dist + cutoff + 0.5))[0])[0]
+        ignore_inds = torch.where((centroid_dists > (ref_mol_max_dist + cutoff + 0.5))[0])[0]
         ref_mol_inds[ignore_inds] = 2  # 2 is the index for completely ignoring these atoms in graph convolutions - haven't removed them entirely because it wrecks the crystal periodicity
 
         # if the crystal is too diffuse, we will have no intermolecular convolution inds - we need a failure mode which accounts for this

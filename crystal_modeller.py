@@ -1028,8 +1028,7 @@ class Modeller():
             print(config.gan_loss + ' is not a valid GAN loss function!')
             sys.exit()
 
-        if torch.sum(torch.isnan(scores)) > 0:
-            scores[torch.where(torch.isnan(scores))] = 0.5
+        assert torch.sum(torch.isnan(scores)) == 0
 
         return scores, extra_outputs['dists dict']
 
