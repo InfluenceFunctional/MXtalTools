@@ -450,7 +450,7 @@ class Modeller():
 
             config, dataset_builder = self.train_boilerplate()
             generator, discriminator, g_optimizer, g_schedulers, d_optimizer, d_schedulers, params1, params2 \
-                = self.init_gan(config, self.dataDims) # todo change this to just resetting all the parameters of existing models
+                = self.init_gan(config, self.dataDims)  # todo change this to just resetting all the parameters of existing models
 
             # get batch size
             if config.auto_batch_sizing:
@@ -658,8 +658,8 @@ class Modeller():
 
         g_err = []
         g_loss_record = []
-        g_den_pred = []
-        g_den_true = []
+        epoch_stats_dict['generator density prediction'] = []
+        epoch_stats_dict['generator density target'] = []
         epoch_stats_dict = {
             'tracking features': [],
         }
@@ -672,8 +672,8 @@ class Modeller():
                 data.pos += torch.randn_like(data.pos) * config.generator.positional_noise
 
             regression_losses_list, predictions, targets = self.regression_loss(generator, data)
-            g_den_pred.append(predictions.cpu().detach().numpy())
-            g_den_true.append(targets.cpu().detach().numpy())
+            epoch_stats_dict['generator density prediction'].append(predictions.cpu().detach().numpy())
+            epoch_stats_dict['generator density target'].append(targets.cpu().detach().numpy())
 
             g_loss = regression_losses_list.mean()
             g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
@@ -695,8 +695,8 @@ class Modeller():
         epoch_stats_dict['tracking features'] = np.stack(epoch_stats_dict['tracking features'])
 
         if record_stats:
-            epoch_stats_dict['generator density prediction'] = np.concatenate(g_den_pred) if g_den_pred != [] else None
-            epoch_stats_dict['generator density target'] = np.concatenate(g_den_true) if g_den_true != [] else None
+            epoch_stats_dict['generator density prediction'] = np.concatenate(epoch_stats_dict['generator density prediction']) if epoch_stats_dict['generator density prediction'] != [] else None
+            epoch_stats_dict['generator density target'] = np.concatenate(epoch_stats_dict['generator density target']) if epoch_stats_dict['generator density target'] != [] else None
             return g_err, g_loss_record, g_err, g_loss_record, epoch_stats_dict, total_time
         else:
             return g_err, g_loss_record, g_err, g_loss_record, total_time
@@ -713,30 +713,33 @@ class Modeller():
 
         d_err = []
         d_loss_record = []
-        d_real_scores = []
-        d_fake_scores = []
         g_err = []
         g_loss_record = []
         g_flow_err = []
-        g_flow_loss_record = []
-        g_den_losses = []
-        g_adv_scores = []
-        g_den_pred = []
-        g_den_true = []
-        generated_intra_dist = []
-        generated_inter_dist = []
-        g_g2_losses = []
-        g_packing_losses = []
-        g_similarity_losses = []
-        real_intra_dist = []
-        real_inter_dist = []
-        generated_samples_list = []
-        final_generated_samples_list = []
-        sample_source_list = []
+
         epoch_stats_dict = {
             'tracking features': [],
             'identifiers': [],
+            'discriminator real score': [],
+            'discriminator fake score': [],
+            'generator density loss': [],
+            'generator adversarial score': [],
+            'generator flow loss': [],
+            'generator short range loss': [],
+            'generator packing loss': [],
+            'generator density prediction': [],
+            'generator density target': [],
+            'generator similarity loss': [],
+            'generator intra distance hist': [],
+            'generator inter distance hist': [],
+            'real intra distance hist': [],
+            'real inter distance hist': [],
+            'generated cell parameters': [],
+            'final generated cell parameters': [],
+            'generated supercell examples dict': [],
+            'generator sample source': [],
         }
+
         generated_supercell_examples_dict = {}
 
         rand_batch_ind = np.random.randint(0, len(dataLoader))
@@ -752,7 +755,7 @@ class Modeller():
 
                     g_flow_loss = g_flow_losses.mean()
                     g_flow_err.append(g_flow_loss.data.cpu())  # average loss
-                    g_flow_loss_record.append(g_flow_losses.cpu().detach().numpy())  # loss distribution
+                    epoch_stats_dict['generator flow loss'].append(g_flow_losses.cpu().detach().numpy())  # loss distribution
 
                     if update_gradients:
                         g_optimizer.zero_grad()  # reset gradients from previous passes
@@ -764,36 +767,13 @@ class Modeller():
             '''
             if epoch % config.discriminator.training_period == 0:  # only train the discriminator every XX epochs
                 if config.train_discriminator_adversarially or config.train_discriminator_on_noise or config.train_discriminator_on_randn:
-                    n_generators = sum([config.train_discriminator_adversarially, config.train_discriminator_on_noise, config.train_discriminator_on_randn])
-                    gen_random_number = np.random.uniform(0, 1, 1)
-                    gen_randn_range = np.linspace(0, 1, n_generators + 1)
-
-                    if config.train_discriminator_adversarially:
-                        ii = i % n_generators
-                        if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:  # randomly sample which generator to use at each iteration
-                            generated_samples_i = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
-                            handedness = None
-                            sample_source_list.extend(np.zeros(len(generated_samples_i)))
-
-                    if config.train_discriminator_on_randn:
-                        ii = (i + 1) % n_generators
-                        if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
-                            generated_samples_i = self.randn_generator.forward(data, data.num_graphs).to(generator.device)
-                            handedness = None
-                            sample_source_list.extend(np.ones(len(generated_samples_i)))
-
-                    if config.train_discriminator_on_noise:
-                        ii = (i + 2) % n_generators
-                        if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
-                            generated_samples_ii = (data.cell_params - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
-                            generated_samples_i = ((generated_samples_ii + torch.randn_like(generated_samples_ii) * config.generator_noise_level)).to(generator.device)  # add jitter and return in standardized basis
-                            handedness = data.asym_unit_handedness
-                            sample_source_list.extend(np.ones(len(generated_samples_i)) * 2)
+                    generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, config, data, generator, i)
 
                     score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict \
                         = self.train_discriminator(generated_samples_i, discriminator, config, data, i, handedness)  # alternately trains on real and fake samples
-                    d_real_scores.extend(score_on_real.cpu().detach().numpy())
-                    d_fake_scores.extend(score_on_fake.cpu().detach().numpy())
+
+                    epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
+                    epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
 
                     if config.gan_loss == 'wasserstein':
                         d_losses = -score_on_real + score_on_fake  # maximize score on real, minimize score on fake
@@ -814,16 +794,16 @@ class Modeller():
                     if update_gradients:
                         d_optimizer.zero_grad()  # reset gradients from previous passes
                         d_loss.backward()  # back-propagation
-                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), config.gradient_norm_clip) # gradient clipping
+                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), config.gradient_norm_clip)  # gradient clipping
                         d_optimizer.step()  # update parameters
 
-                    generated_intra_dist.append(fake_dist_dict['intramolecular dist'].cpu().detach().numpy())
-                    generated_inter_dist.append(fake_dist_dict['intermolecular dist'].cpu().detach().numpy())
-                    real_intra_dist.append(real_dist_dict['intramolecular dist'].cpu().detach().numpy())
-                    real_inter_dist.append(real_dist_dict['intermolecular dist'].cpu().detach().numpy())
+                    # generated_intra_dist.append(fake_dist_dict['intramolecular dist'].cpu().detach().numpy())
+                    # generated_inter_dist.append(fake_dist_dict['intermolecular dist'].cpu().detach().numpy())
+                    # real_intra_dist.append(real_dist_dict['intramolecular dist'].cpu().detach().numpy())
+                    # real_inter_dist.append(real_dist_dict['intermolecular dist'].cpu().detach().numpy())
 
-                    generated_samples_list.append(generated_samples_i.cpu().detach().numpy())
-                    final_generated_samples_list.append(generated_samples)
+                    epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
+                    epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
 
                 else:
                     d_err.append(np.zeros(1))
@@ -858,42 +838,44 @@ class Modeller():
                         print(config.gan_loss + ' is not an implemented GAN loss function!')
                         sys.exit()
 
-                g_den_pred.append(density_prediction)
-                g_den_true.append(density_target)
+                epoch_stats_dict['generator density prediction'].append(density_prediction)
+                epoch_stats_dict['generator density target'].append(density_target)
                 g_losses_list = []
                 if config.train_generator_density:
                     g_losses_list.append(density_loss.float())
-                    g_den_losses.append(density_loss.cpu().detach().numpy())
+                    epoch_stats_dict['generator density loss'].append(density_loss.cpu().detach().numpy())
 
                 if config.train_generator_adversarially:
                     g_losses_list.append(adversarial_loss)
-                    g_adv_scores.append(adversarial_score.cpu().detach().numpy())
+                    epoch_stats_dict['generator adversarial score'].append(adversarial_score.cpu().detach().numpy())
 
                 if config.train_generator_g2:
                     g_losses_list.append(g2_loss)
-                    g_g2_losses.append(g2_loss.cpu().detach().numpy())
+                    epoch_stats_dict['generator short range loss'].append(g2_loss.cpu().detach().numpy())
 
                 if config.train_generator_packing:
                     g_losses_list.append(packing_loss)
-                    g_packing_losses.append(packing_loss.cpu().detach().numpy())
+                    epoch_stats_dict['generator packing loss'].append(packing_loss.cpu().detach().numpy())
 
                 if config.generator_similarity_penalty != 0:
                     if similarity_penalty is not None:
                         g_losses_list.append(similarity_penalty)
-                        g_similarity_losses.append(similarity_penalty.cpu().detach().numpy())
+                        epoch_stats_dict['generator similarity loss'].append(similarity_penalty.cpu().detach().numpy())
                     else:
                         print('similarity penalty was none')
 
                 if config.train_generator_adversarially or config.train_generator_g2:
-                    generated_intra_dist.append(generated_dist_dict['intramolecular dist'].cpu().detach().numpy())
-                    generated_inter_dist.append(generated_dist_dict['intermolecular dist'].cpu().detach().numpy())
+                    print('deprecated!')
+                    sys.exit()
+                    # generated_intra_dist.append(generated_dist_dict['intramolecular dist'].cpu().detach().numpy())
+                    # generated_inter_dist.append(generated_dist_dict['intermolecular dist'].cpu().detach().numpy())
 
                 g_losses = torch.sum(torch.stack(g_losses_list), dim=0)
 
                 g_loss = g_losses.mean()
                 g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
                 g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
-                generated_samples_list.append(generated_samples)
+                epoch_stats_dict['generated cell parameters'].append(generated_samples)
 
                 if update_gradients:
                     g_optimizer.zero_grad()  # reset gradients from previous passes
@@ -916,9 +898,9 @@ class Modeller():
                         g_max_prob_loss.backward()  # back-propagation
                         g_optimizer.step()  # update parameters
 
-            if (len(generated_samples_list) < i) and record_stats:  # make some samples for analysis if we have none so far from this step
+            if (len(epoch_stats_dict['generated cell parameters']) < i) and record_stats:  # make some samples for analysis if we have none so far from this step
                 generated_samples = generator(len(data.y), z=None, conditions=data.to(config.device))
-                generated_samples_list.append(generated_samples.cpu().detach().numpy())
+                epoch_stats_dict['generated cell parameters'].append(generated_samples.cpu().detach().numpy())
 
             if record_stats:
                 epoch_stats_dict['tracking features'].extend(data.tracking.cpu().detach().numpy())
@@ -929,33 +911,28 @@ class Modeller():
                     break  # stop training early - for debugging purposes
 
         total_time = time.time() - t0
-        epoch_stats_dict['tracking features'] = np.stack(epoch_stats_dict['tracking features'])
+
+        # epoch_stats_dict['generated intra distance hist'] = np.histogram(np.concatenate(generated_intra_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if generated_intra_dist != [] else None
+        # epoch_stats_dict['generated inter distance hist'] = np.histogram(np.concatenate(generated_inter_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if generated_inter_dist != [] else None
+        # epoch_stats_dict['real intra distance hist'] = np.histogram(np.concatenate(real_intra_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if real_intra_dist != [] else None
+        # epoch_stats_dict['real inter distance hist'] = np.histogram(np.concatenate(real_inter_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if real_inter_dist != [] else None
 
         if record_stats:
-            epoch_stats_dict['discriminator real score'] = np.stack(d_real_scores) if d_real_scores != [] else None
-            epoch_stats_dict['discriminator fake score'] = np.stack(d_fake_scores) if d_fake_scores != [] else None
-            epoch_stats_dict['generator density loss'] = np.concatenate(g_den_losses) if g_den_losses != [] else None
-            epoch_stats_dict['generator adversarial score'] = np.concatenate(g_adv_scores) if g_adv_scores != [] else None
-            epoch_stats_dict['generator flow loss'] = np.concatenate(g_flow_loss_record) if g_flow_loss_record != [] else None
-            epoch_stats_dict['generator short range loss'] = np.concatenate(g_g2_losses) if g_g2_losses != [] else None
-            epoch_stats_dict['generator packing loss'] = np.concatenate(g_packing_losses) if g_packing_losses != [] else None
-            epoch_stats_dict['generator density prediction'] = np.concatenate(g_den_pred) if g_den_pred != [] else None
-            epoch_stats_dict['generator density target'] = np.concatenate(g_den_true) if g_den_true != [] else None
-            epoch_stats_dict['generator similarity loss'] = np.concatenate(g_similarity_losses) if g_similarity_losses != [] else None
-            epoch_stats_dict['generated intra distance hist'] = np.histogram(np.concatenate(generated_intra_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if generated_intra_dist != [] else None
-            epoch_stats_dict['generated inter distance hist'] = np.histogram(np.concatenate(generated_inter_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if generated_inter_dist != [] else None
-            epoch_stats_dict['real intra distance hist'] = np.histogram(np.concatenate(real_intra_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if real_intra_dist != [] else None
-            epoch_stats_dict['real inter distance hist'] = np.histogram(np.concatenate(real_inter_dist), bins=100, range=(0, config.discriminator.graph_convolution_cutoff), density=True) if real_inter_dist != [] else None
-            epoch_stats_dict['generated cell parameters'] = np.concatenate(generated_samples_list) if generated_samples_list != [] else None
-            epoch_stats_dict['final generated cell parameters'] = np.concatenate(final_generated_samples_list) if final_generated_samples_list != [] else None
+            for key in epoch_stats_dict.keys():
+                if 'supercell' not in key:
+                    feature = epoch_stats_dict[key]
+                    if (feature == []) or (feature is None):
+                        epoch_stats_dict[key] = None
+                    else:
+                        epoch_stats_dict[key] = np.asarray(feature)
+
             epoch_stats_dict['generated supercell examples dict'] = generated_supercell_examples_dict if generated_supercell_examples_dict != {} else None
-            epoch_stats_dict['generator sample source'] = np.asarray(sample_source_list) if sample_source_list != [] else None
 
             return d_err, d_loss_record, g_err, g_loss_record, epoch_stats_dict, total_time
         else:
             return d_err, d_loss_record, g_err, g_loss_record, total_time
 
-    def discriminator_evaluation(self, config, dataLoader=None, discriminator=None, iteration_override=None, compute_LJ_energy = False):
+    def discriminator_evaluation(self, config, dataLoader=None, discriminator=None, iteration_override=None, compute_LJ_energy=False):
         t0 = time.time()
         discriminator.eval()
 
@@ -1439,40 +1416,40 @@ class Modeller():
 
                     wandb.log(fig_dict)
 
-            '''
-            cell atomic distances
-            '''
-            if train_epoch_stats_dict['generated inter distance hist'] is not None:  # todo update this
-                hh2_test, rr = test_epoch_stats_dict['generated inter distance hist']
-                hh2_train, _ = train_epoch_stats_dict['generated inter distance hist']
-                if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
-                    hh1, rr = train_epoch_stats_dict['real inter distance hist']
-                else:
-                    hh1 = hh2_test
-
-                shell_volumes = (4 / 3) * torch.pi * ((rr[:-1] + np.diff(rr)) ** 3 - rr[:-1] ** 3)
-                rdf1 = hh1 / shell_volumes
-                rdf2 = hh2_test / shell_volumes
-                rdf3 = hh2_train / shell_volumes
-                fig = go.Figure()
-                fig.add_trace(go.Scattergl(x=rr, y=rdf1, name='real'))
-                fig.add_trace(go.Scattergl(x=rr, y=rdf2, name='gen, test'))
-                fig.add_trace(go.Scattergl(x=rr, y=rdf3, name='gen, train'))
-
-                if config.wandb.log_figures:
-                    wandb.log({'G2 Comparison': fig})
-
-                range_analysis_dict = {}
-                if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
-                    # get histogram overlaps
-                    range_analysis_dict['tr g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf3[None, :] / rdf1.sum()), axis=0), axis=0).sum()
-                    range_analysis_dict['te g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf2[None, :] / rdf1.sum()), axis=0), axis=0).sum()
-
-                # get probability mass at too-close range (should be ~zero)
-                range_analysis_dict['tr short range density fraction'] = np.sum(rdf3[rr[1:] < 1.2] / rdf3.sum())
-                range_analysis_dict['te short range density fraction'] = np.sum(rdf2[rr[1:] < 1.2] / rdf2.sum())
-
-                wandb.log(range_analysis_dict)
+            # '''
+            # cell atomic distances
+            # '''
+            # if train_epoch_stats_dict['generated inter distance hist'] is not None:  # todo update this
+            #     hh2_test, rr = test_epoch_stats_dict['generated inter distance hist']
+            #     hh2_train, _ = train_epoch_stats_dict['generated inter distance hist']
+            #     if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
+            #         hh1, rr = train_epoch_stats_dict['real inter distance hist']
+            #     else:
+            #         hh1 = hh2_test
+            #
+            #     shell_volumes = (4 / 3) * torch.pi * ((rr[:-1] + np.diff(rr)) ** 3 - rr[:-1] ** 3)
+            #     rdf1 = hh1 / shell_volumes
+            #     rdf2 = hh2_test / shell_volumes
+            #     rdf3 = hh2_train / shell_volumes
+            #     fig = go.Figure()
+            #     fig.add_trace(go.Scattergl(x=rr, y=rdf1, name='real'))
+            #     fig.add_trace(go.Scattergl(x=rr, y=rdf2, name='gen, test'))
+            #     fig.add_trace(go.Scattergl(x=rr, y=rdf3, name='gen, train'))
+            #
+            #     if config.wandb.log_figures:
+            #         wandb.log({'G2 Comparison': fig})
+            #
+            #     range_analysis_dict = {}
+            #     if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
+            #         # get histogram overlaps
+            #         range_analysis_dict['tr g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf3[None, :] / rdf1.sum()), axis=0), axis=0).sum()
+            #         range_analysis_dict['te g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf2[None, :] / rdf1.sum()), axis=0), axis=0).sum()
+            #
+            #     # get probability mass at too-close range (should be ~zero)
+            #     range_analysis_dict['tr short range density fraction'] = np.sum(rdf3[rr[1:] < 1.2] / rdf3.sum())
+            #     range_analysis_dict['te short range density fraction'] = np.sum(rdf2[rr[1:] < 1.2] / rdf2.sum())
+            #
+            #     wandb.log(range_analysis_dict)
 
         '''
         auxiliary regression target
@@ -1609,28 +1586,28 @@ class Modeller():
             record all the stats for the CSD data
             '''
             scores_dict = {}
-            randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
-            nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)
+            # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
+            randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)
             distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)
 
             if self.config.gan_loss == 'wasserstein':
                 scores_dict['Train Real'] = train_epoch_stats_dict['discriminator real score']
                 scores_dict['Test Real'] = test_epoch_stats_dict['discriminator real score']
                 scores_dict['Test Randn'] = test_epoch_stats_dict['discriminator fake score'][randn_inds]
-                scores_dict['Test NF'] = test_epoch_stats_dict['discriminator fake score'][nf_inds]
+                # scores_dict['Test NF'] = test_epoch_stats_dict['discriminator fake score'][nf_inds]
                 scores_dict['Test Distorted'] = test_epoch_stats_dict['discriminator fake score'][distorted_inds]
 
             elif self.config.gan_loss == 'standard':
                 scores_dict['Train Real'] = np_softmax(train_epoch_stats_dict['discriminator real score'])[:, 1]
                 scores_dict['Test Real'] = np_softmax(test_epoch_stats_dict['discriminator real score'])[:, 1]
                 scores_dict['Test Randn'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][randn_inds])[:, 1]
-                scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
+                # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
                 scores_dict['Test Distorted'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][distorted_inds])[:, 1]
 
             wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
             wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
             wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})
-            wandb.log({'Average NF Fake score': np.average(scores_dict['Test NF'])})
+            # wandb.log({'Average NF Fake score': np.average(scores_dict['Test NF'])})
             wandb.log({'Average Distorted Fake score': np.average(scores_dict['Test Distorted'])})
 
             loss_correlations_dict = {}
@@ -1936,7 +1913,7 @@ class Modeller():
         softmax_temperature = 10
 
         # load up precomputed lennard-jones energies for the blind test submissions
-        bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy',allow_pickle=True).item()
+        bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy', allow_pickle=True).item()
         extra_test_dict['atomistic energy'] = np.asarray([bt_lj_energy_dict[ident] for ident in extra_test_dict['identifiers']])
 
         # need to identify targets
@@ -2152,7 +2129,6 @@ class Modeller():
                 rankings[label].append(int(long_ident[-1]) + 1)
                 group[label].append(long_ident[1])
 
-
         fig = make_subplots(rows=1, cols=3,
                             subplot_titles=(['XXII', 'XXIII', 'XXVI']))
 
@@ -2171,7 +2147,7 @@ class Modeller():
         fig.update_xaxes(title_text='Submission Rank', row=1, col=2)
         fig.update_xaxes(title_text='Submission Rank', row=1, col=3)
 
-        #fig.show()
+        # fig.show()
         wandb.log({'Target Score Rankings': fig})
 
         for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
@@ -2197,7 +2173,7 @@ class Modeller():
                 fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=j // cols + 1, col=j % cols + 1)
 
             fig.update_layout(title=label)
-            wandb.log({f"{label} Groupwise Analysis":fig})
+            wandb.log({f"{label} Groupwise Analysis": fig})
 
         finished = 1
         return None
@@ -2477,3 +2453,32 @@ class Modeller():
         best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular=True)
 
         return sampling_dict
+
+    def generate_discriminator_negatives(self, epoch_stats_dict, config, data, generator, i):
+        n_generators = sum([config.train_discriminator_adversarially, config.train_discriminator_on_noise, config.train_discriminator_on_randn])
+        gen_random_number = np.random.uniform(0, 1, 1)
+        gen_randn_range = np.linspace(0, 1, n_generators + 1)
+
+        if config.train_discriminator_adversarially:
+            ii = i % n_generators
+            if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:  # randomly sample which generator to use at each iteration
+                generated_samples_i = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
+                handedness = None
+                epoch_stats_dict['generator sample source'].extend(np.zeros(len(generated_samples_i)))
+
+        if config.train_discriminator_on_randn:
+            ii = (i + 1) % n_generators
+            if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
+                generated_samples_i = self.randn_generator.forward(data, data.num_graphs).to(generator.device)
+                handedness = None
+                epoch_stats_dict['generator sample source'].extend(np.ones(len(generated_samples_i)))
+
+        if config.train_discriminator_on_noise:
+            ii = (i + 2) % n_generators
+            if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
+                generated_samples_ii = (data.cell_params - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
+                generated_samples_i = ((generated_samples_ii + torch.randn_like(generated_samples_ii) * config.generator_noise_level)).to(generator.device)  # add jitter and return in standardized basis
+                handedness = data.asym_unit_handedness
+                epoch_stats_dict['generator sample source'].extend(np.ones(len(generated_samples_i)) * 2)
+
+        return generated_samples_i, handedness, epoch_stats_dict
