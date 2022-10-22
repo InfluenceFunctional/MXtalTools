@@ -1140,8 +1140,8 @@ class Modeller():
         '''
 
         from pymatgen.core import (structure, lattice)
-        from ccdc.crystal import PackingSimilarity
-        from ccdc.io import CrystalReader
+        #from ccdc.crystal import PackingSimilarity
+        #from ccdc.io import CrystalReader
         from pymatgen.io import cif
         import warnings
 

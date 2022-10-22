@@ -18,8 +18,8 @@ from scipy.spatial.transform import Rotation
 from ase import Atoms
 from ase.calculators import lj
 from pymatgen.core import (structure, lattice)
-from ccdc.crystal import PackingSimilarity
-from ccdc.io import CrystalReader
+#from ccdc.crystal import PackingSimilarity
+#from ccdc.io import CrystalReader
 from pymatgen.io import cif
 
 
