@@ -114,7 +114,7 @@ discriminator:
   fc_depth: 512
   activation: leaky relu
   fc_dropout_probability: 0
-  fc_norm_mode: hull
+  fc_norm_mode: null
 
 # generator optimizer and model
 generator:
