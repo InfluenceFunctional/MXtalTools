@@ -105,7 +105,7 @@ discriminator:
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
   num_attention_heads: 1 # mikenet self attention mode only - must evenly divide graph filters
-  graph_convolution: 'sfull message passing' # 'full message passing' or schnet or 'self attention'
+  graph_convolution: 'full message passing' # 'full message passing' or schnet or 'self attention'
   add_spherical_basis: True # mikenet only
   add_torsional_basis: True #
   pooling: combo
@@ -113,7 +113,7 @@ discriminator:
   num_fc_layers: 4
   fc_depth: 512
   activation: leaky relu
-  fc_dropout_probability: null
+  fc_dropout_probability: 0
   fc_norm_mode: hull
 
 # generator optimizer and model
