@@ -123,9 +123,14 @@ def asymmetric_radius_graph(x: torch.Tensor, r: float,
         convolve_inds = torch.arange(len(x))
 
     assert flow in ['source_to_target', 'target_to_source']
-    edge_index = radius(x[convolve_inds], x[inside_inds], r, batch[convolve_inds], batch[inside_inds],
-                        max_num_neighbors if loop else max_num_neighbors + 1,
-                        num_workers)
+    if batch is not None:
+        edge_index = radius(x[convolve_inds], x[inside_inds], r, batch[convolve_inds], batch[inside_inds],
+                            max_num_neighbors if loop else max_num_neighbors + 1,
+                            num_workers)
+    else:
+        edge_index = radius(x[convolve_inds], x[inside_inds], r, None, None,
+                            max_num_neighbors if loop else max_num_neighbors + 1,
+                            num_workers)
 
     target, source = edge_index[0], edge_index[1]
 

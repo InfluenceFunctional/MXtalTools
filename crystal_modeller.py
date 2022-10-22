@@ -26,6 +26,7 @@ from scipy.stats import linregress
 from supercell_builders import SupercellBuilder
 from STUN_MC import Sampler
 from plotly.colors import n_colors
+import scipy.signal
 
 
 class Modeller():
@@ -468,10 +469,14 @@ class Modeller():
                                                           pg_dict=self.point_groups, sg_dict=self.space_groups, lattice_dict=self.lattice_type)
 
             print("Training batch size set to {}".format(config.final_batch_size))
+            #self.get_dists(config, extra_test_loader) # todo get rid of this when finished
+
             # model, optimizer, schedulers
             print('Reinitializing model and optimizer')
-            generator.apply(weight_reset)
-            discriminator.apply(weight_reset)
+            if config.g_model_path is None:
+                generator.apply(weight_reset)
+            if config.d_model_path is None:
+                discriminator.apply(weight_reset)
             n_params = params1 + params2
 
             # cuda
@@ -568,6 +573,11 @@ class Modeller():
                         save model if best
                         '''  # todo add more sophisticated convergence stat
                         if epoch > 0:
+                            if epoch % 5 == 0: # every 5 epochs, save a checkpoint
+                                # saving early-stopping checkpoint
+                                save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
+                                save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num) + f'_epoch_{epoch}')
+
                             if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss'][:-1]):  # todo fix this
                                 print("Saving discriminator checkpoint")
                                 save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
@@ -658,10 +668,11 @@ class Modeller():
 
         g_err = []
         g_loss_record = []
-        epoch_stats_dict['generator density prediction'] = []
-        epoch_stats_dict['generator density target'] = []
         epoch_stats_dict = {
             'tracking features': [],
+            'generator density target':[],
+            'generator density prediction':[],
+
         }
 
         for i, data in enumerate(tqdm.tqdm(dataLoader)):
@@ -738,6 +749,7 @@ class Modeller():
             'final generated cell parameters': [],
             'generated supercell examples dict': [],
             'generator sample source': [],
+            'generated sample distances': [],
         }
 
         generated_supercell_examples_dict = {}
@@ -770,7 +782,7 @@ class Modeller():
                     generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, config, data, generator, i)
 
                     score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict \
-                        = self.train_discriminator(generated_samples_i, discriminator, config, data, i, handedness)  # alternately trains on real and fake samples
+                        = self.train_discriminator(generated_samples_i, discriminator, config, data, i, handedness, return_rdf = config.gan_loss == 'distance')  # alternately trains on real and fake samples
 
                     epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
                     epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
@@ -782,6 +794,24 @@ class Modeller():
                         prediction = torch.cat((score_on_real, score_on_fake))
                         target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
                         d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
+
+                    elif config.gan_loss == 'distance':
+                        real_rdf, fake_rdf, rr = real_dist_dict['rdf'], \
+                                                 fake_dist_dict['rdf'],\
+                                                 real_dist_dict['range']
+                        #width = 1
+                        # diffs = np.sum(np.abs(gaussian_filter1d(real_rdf,sigma=1) - gaussian_filter1d(fake_rdf,sigma=1)),axis=(1,2)) \
+                        #         / np.sum(gaussian_filter1d(real_rdf,sigma=1),axis=(1,2))
+
+                        real_autocorrelation = np.asarray([np.asarray([scipy.signal.convolve(real_rdf[i,j],real_rdf[i,j],mode='same') for j in range(real_rdf.shape[1])]) for i in range(real_rdf.shape[0])])
+                        real_fake_correlation = np.asarray([np.asarray([scipy.signal.convolve(real_rdf[i,j],fake_rdf[i,j],mode='same') for j in range(real_rdf.shape[1])]) for i in range(real_rdf.shape[0])])
+
+                        diffs = np.sum(np.abs(real_autocorrelation - real_fake_correlation),axis=(1,2)) / np.sum(real_autocorrelation,axis=(1,2))
+
+                        epoch_stats_dict['generated sample distances'].extend(diffs)
+
+                        d_losses = F.smooth_l1_loss(score_on_fake, torch.Tensor(diffs).to(score_on_fake.device), reduction='none') \
+                                   + F.smooth_l1_loss(score_on_real, torch.zeros_like(score_on_real), reduction='none')
 
                     else:
                         print(config.gan_loss + ' is not an implemented GAN loss function!')
@@ -834,6 +864,8 @@ class Modeller():
                         adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
                         # adversarial_loss = torch.log(1-adversarial_score) # standard minimax
                         adversarial_loss = -torch.log(adversarial_score)  # modified minimax
+                    elif config.gan_loss == 'distance':
+                        assert False # implement something here
                     else:
                         print(config.gan_loss + ' is not an implemented GAN loss function!')
                         sys.exit()
@@ -1000,7 +1032,8 @@ class Modeller():
 
         elif config.gan_loss == 'standard':
             scores = output  # F.softmax(output, dim=1)[:, -1]  # 'no' and 'yes' unnormalized activations
-
+        elif config.gan_loss == 'distance':
+            scores = output[:,0] # the raw distance output
         else:
             print(config.gan_loss + ' is not a valid GAN loss function!')
             sys.exit()
@@ -1008,6 +1041,285 @@ class Modeller():
         assert torch.sum(torch.isnan(scores)) == 0
 
         return scores, extra_outputs['dists dict']
+
+    def compute_dataset_rmsd(self,target_identifiers, target_identifiers_list, extra_test_loader):
+
+        if os.path.exists('../../test_data_rmsds.npy'):
+            rmsd_dict = np.load('../../test_data_rmsds.npy',allow_pickle=True).item()
+        else:
+            rmsd_dict = {}
+
+        '''
+        initialize analyzer
+        '''
+
+        sim_engine = PackingSimilarity()
+        sim_engine.settings.packing_shell_size = 20
+        sim_engine.settings.allow_molecular_differences = True
+
+        target_crystals = {}
+        target_inds = {}
+
+        '''
+        pre generate all the reference structures & print CIFs & collect crystal objects
+        '''
+
+        for i, data in enumerate(tqdm.tqdm(extra_test_loader.dataset)):
+            item = data.csd_identifier
+            for key in target_identifiers.keys():
+                if item == target_identifiers[key]:
+                    target_inds[key] = i
+
+        for key in target_inds.keys():
+            data = extra_test_loader.dataset[target_inds[key]]
+            pymat_struct = structure.IStructure(species=data.x[:, 0].repeat(data.Z),
+                                                coords=data.ref_cell_pos.reshape(int(data.Z * len(data.pos)), 3),
+                                                lattice=lattice.Lattice(data.T_fc.T.type(dtype=torch.float16)),
+                                                coords_are_cartesian=True)
+            writer1 = cif.CifWriter(pymat_struct, symprec=0.1)
+            writer1.write_file(key + '.cif')
+            target_crystals[key] = CrystalReader(key + '.cif', format='cif')[0]
+
+        '''
+        do the rmsd calculation for each sample in the dataset
+        '''
+
+        identifiers_inds = {key: [] for key in target_identifiers_list}
+
+        for i, data in enumerate(tqdm.tqdm(extra_test_loader.dataset)):
+            '''
+            identify the reference
+            -> need also to account for the 3 structures of target 31
+            '''
+            crystal_target = None
+            item = data.csd_identifier
+            if item not in list(rmsd_dict.keys()):
+                for j in range(len(target_identifiers_list)):  # go in reverse to account for roman numerals system of duplication
+                    if target_identifiers_list[-1 - j] in item:
+                        crystal_target = target_identifiers_list[-1 - j]
+                        identifiers_inds[crystal_target].append(i)
+                        break
+
+                try:
+                    '''
+                    generate cif & compare
+                    '''
+                    pymat_struct = structure.IStructure(species=data.x[:, 0].repeat(data.Z),
+                                                        coords=data.ref_cell_pos.reshape(int(data.Z * len(data.pos)), 3),
+                                                        lattice=lattice.Lattice(data.T_fc.T.type(dtype=torch.float16)),
+                                                        coords_are_cartesian=True)
+                    writer1 = cif.CifWriter(pymat_struct, symprec=0.1)
+                    writer1.write_file('crystal.cif')
+
+                    test_crystal = CrystalReader('crystal.cif', format='cif')[0]
+
+                    if crystal_target == 't31':
+                        comparison_output1 = sim_engine.compare(target_crystals['XXXI_1'], test_crystal)
+                        comparison_output2 = sim_engine.compare(target_crystals['XXXI_2'], test_crystal)
+                        #comparison_output3 = sim_engine.compare(target_crystals['XXXI_3'], test_crystal)
+                        rmsd_dict[data.csd_identifier] = [comparison_output1.rmsd,
+                                                          comparison_output2.rmsd,]
+                                                          #comparison_output3.rmsd]
+
+                    elif crystal_target is not None:
+                        comparison_output = sim_engine.compare(target_crystals[crystal_target], test_crystal)
+                        rmsd_dict[data.csd_identifier] = comparison_output.rmsd
+                except:
+                    rmsd_dict[data.csd_identifier] = 'error'  # todo pymatgen and ccdc disagree on some space group names
+
+            if i % 1000 == 0:
+                np.save('../../test_data_rmsds', rmsd_dict)
+
+        np.save('../../test_data_rmsds', rmsd_dict)
+        return rmsd_dict
+
+    def get_dists(self, config, extra_test_loader):
+        '''
+        compute distance metrics for extra test data
+        run from the end of dataset_utils
+        '''
+
+        from pymatgen.core import (structure, lattice)
+        from ccdc.crystal import PackingSimilarity
+        from ccdc.io import CrystalReader
+        from pymatgen.io import cif
+        import warnings
+
+        warnings.filterwarnings("ignore", category=RuntimeWarning)  # annoying numpy error
+        warnings.filterwarnings("ignore", category=DeprecationWarning)  # annoying numpy error
+
+        blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+            'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
+            'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
+
+        target_identifiers = {
+            'XVI': 'OBEQUJ',
+            'XVII': 'OBEQOD',
+            'XVIII': 'OBEQET',
+            'XIX': 'XATJOT',
+            'XX': 'OBEQIX',
+            'XXI': 'KONTIQ',
+            'XXII': 'NACJAF',
+            'XXIII': 'XAFPAY',
+            'XXIV': 'XAFQON',
+            'XXVI': 'XAFQIH',
+            'XXXI_1': '2199671_p10167_1_0',
+            'XXXI_2': '2199673_1_0',
+            #'XXXI_3': '2199672_1_0',
+        }
+
+        target_identifiers_list = [
+            'XVI',
+            'XVII',
+            'XVIII',
+            'XIX',
+            'XX',
+            'XXI',
+            'XXII',
+            'XXIII',
+            'XXIV',
+            'XXVI',
+            't31']
+
+        rmsd_dict = self.compute_dataset_rmsd(target_identifiers, target_identifiers_list, extra_test_loader)
+
+        '''
+        Get our RDF metric
+        '''
+        builder = SupercellBuilder(self.sym_ops, self.sym_info, self.normed_lattice_vectors, self.atom_weights, config.dataDims)
+
+        rdfs_dict = {}
+
+        for i, data in enumerate(tqdm.tqdm(extra_test_loader)):
+            supercell_data = builder.build_supercells_from_dataset(data.clone(), config, return_energy=False, override_supercell_size = 1)
+            rdfs, rr, corr_labels = crystal_rdf(supercell_data, rrange=[0,5],bins=500, elementwise=True, atomwise = False, intermolecular=False, raw_density=True)
+
+            for j, ident in enumerate(supercell_data.csd_identifier):
+                rdfs_dict[ident] = rdfs[j].cpu().detach().numpy()
+            if i % 1000 == 0:
+                np.save('../../test_data_rdfs', rdfs_dict)
+
+        np.save('../../test_data_rdfs', rdfs_dict)
+        '''
+        generate rdf diffs
+        '''
+        rdf_diffs_dict = {}
+        sigma = 10
+
+        compare = lambda a,b : np.sum(np.abs(a-b)) / np.sum(np.abs(a))
+
+        for i, key in enumerate(tqdm.tqdm(rdfs_dict)):
+            '''
+            identify the reference
+            -> need also to account for the 3 structures of target 31
+            '''
+            crystal_target = None
+            item = key
+            for j in range(len(target_identifiers_list)):  # go in reverse to account for roman numerals system of duplication
+                if target_identifiers_list[-1 - j] in item:
+                    crystal_target = target_identifiers_list[-1 - j]
+                    break
+
+            '''
+            compare rdfs
+            '''
+
+            sample_rdf = gaussian_filter1d(rdfs_dict[key], sigma=sigma)
+            if crystal_target == 't31':
+                target_rdf1 = gaussian_filter1d(rdfs_dict['2199671_p10167_1_0'], sigma=sigma)
+                target_rdf2 = gaussian_filter1d(rdfs_dict['2199673_1_0'], sigma=sigma)
+                #target_rdf3 = gaussian_filter1d(rdfs_dict['2199672_1_0'], sigma=sigma)
+
+                rdf_diffs_dict[key] = [compare(target_rdf1, sample_rdf),
+                                       compare(target_rdf2, sample_rdf)]
+                                       #compare(target_rdf3, sample_rdf),]
+
+            elif crystal_target is not None:
+                target_rdf1 = gaussian_filter1d(rdfs_dict[target_identifiers[crystal_target]], sigma=sigma)
+                rdf_diffs_dict[key] = compare(target_rdf1, sample_rdf)
+
+        '''
+        collate & generate diffs
+        '''
+
+        # omit the third entry, as it's not the right molecule
+        datapoints = {key: [] for key in target_identifiers_list}
+
+        for i, key in enumerate(rdf_diffs_dict):
+            if rmsd_dict[key] != 'error':
+                crystal_target = None
+                item = key
+                for j in range(len(target_identifiers_list)):  # go in reverse to account for roman numerals system of duplication
+                    if target_identifiers_list[-1 - j] in item:
+                        crystal_target = target_identifiers_list[-1 - j]
+                        if crystal_target == 't31':
+                            datapoints[crystal_target].append([rmsd_dict[key][:2], rdf_diffs_dict[key]])
+                        else:
+                            datapoints[crystal_target].append([rmsd_dict[key], rdf_diffs_dict[key]])
+                        break
+        ll = list(datapoints.keys())
+        for key in ll:
+            if len(datapoints[key]) == 0:
+                datapoints.pop(key)
+            else:
+                datapoints[key] = np.asarray(datapoints[key])
+
+        plt.figure(3)
+        plt.clf()
+        vals = []
+        [vals.extend(aa[:, 1].flatten()) for aa in list(datapoints.values())]
+        vals2 = []
+        [vals2.extend(aa[:, 0].flatten()) for aa in list(datapoints.values())]
+        ylim = max(vals)
+        xlim = max(vals2)
+        ind = 1
+        for i, key in enumerate(datapoints.keys()):
+            if key != 't31':
+                if datapoints[key] != []:
+                    data = datapoints[key]
+                    plt.subplot(3, 3, ind)
+                    ind += 1
+                    plt.title(key)
+                    plt.scatter(data[:, 0], data[:, 1], marker='.')
+                    xline = np.asarray([0, np.amax(data[:, 0])])
+                    linreg_result = linregress(data[:, 0], data[:, 1])
+                    yline = xline * linreg_result.slope + linreg_result.intercept
+                    plt.plot(xline, yline, label=f'R={linreg_result.rvalue:.3f}')
+                    plt.legend()
+                    plt.axis([0, xlim, 0, ylim])
+
+            else:
+                data1 = datapoints[key][..., 0]
+                data2 = datapoints[key][..., 1]
+                #data3 = datapoints[key][..., 2]
+
+                plt.subplot(3, 3, ind)
+                plt.title('XXXI_1')
+                ind += 1
+                plt.scatter(data1[:, 0], data1[:, 1], marker='.')
+                xline = np.asarray([0, np.amax(data1[:, 0])])
+                linreg_result = linregress(data1[:, 0], data1[:, 1])
+                yline = xline * linreg_result.slope + linreg_result.intercept
+                plt.plot(xline, yline, label=f'R={linreg_result.rvalue:.3f}')
+                plt.legend()
+                plt.axis([0, xlim, 0, ylim])
+
+                plt.subplot(3, 3, ind)
+                plt.title('XXXI_2')
+                ind += 1
+                plt.scatter(data2[:, 0], data2[:, 1], marker='.')
+                xline = np.asarray([0, np.amax(data2[:, 0])])
+                linreg_result = linregress(data2[:, 0], data2[:, 1])
+                yline = xline * linreg_result.slope + linreg_result.intercept
+                plt.plot(xline, yline, label=f'R={linreg_result.rvalue:.3f}')
+                plt.legend()
+                plt.axis([0, xlim, 0, ylim])
+
+        plt.tight_layout()
+
+
+        return None
+
 
     def pairwise_correlations_analysis(self, dataset_builder, config):
         '''
@@ -1204,13 +1516,13 @@ class Modeller():
             if ('loss' in key) and (test_epoch_stats_dict[key] is not None):
                 special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
             if ('score' in key) and (train_epoch_stats_dict[key] is not None):
-                if self.config.gan_loss == 'wasserstein':
+                if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
                     score = train_epoch_stats_dict[key]
                 elif self.config.gan_loss == 'standard':
                     score = np_softmax(train_epoch_stats_dict[key])[:, 0]
                 special_losses['Train ' + key] = np.average(score)
             if ('score' in key) and (test_epoch_stats_dict[key] is not None):
-                if self.config.gan_loss == 'wasserstein':
+                if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
                     score = test_epoch_stats_dict[key]
                 elif self.config.gan_loss == 'standard':
                     score = np_softmax(test_epoch_stats_dict[key])[:, 0]
@@ -1329,6 +1641,46 @@ class Modeller():
             #     ))
             #     wandb.log({'D Loss correlations': fig})
 
+            '''
+            distance regression analysis
+            '''
+            if self.config.gan_loss == 'distance':
+                test_fake_predictions = test_epoch_stats_dict['discriminator fake score']
+                test_real_predictions = test_epoch_stats_dict['discriminator real score']
+                test_fake_distances = test_epoch_stats_dict['generated sample distances']
+                test_real_distances = np.zeros_like(test_real_predictions)
+                orig_target = np.concatenate((test_fake_distances, test_real_distances))
+                orig_prediction = np.concatenate((test_fake_predictions, test_real_predictions))
+
+                xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
+                fig = go.Figure()
+                fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
+                fig.update_traces(contours_coloring="fill")
+                fig.update_traces(contours_showlines=False)
+                fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
+                fig.add_trace(go.Scattergl(x=xline, y=xline))
+                fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+                wandb.log({'Distance Trace':fig})
+
+                losses = ['normed error', 'abs normed error', 'squared error']
+                loss_dict = {}
+                losses_dict = {}
+                for loss in losses:
+                    if loss == 'normed error':
+                        loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
+                    elif loss == 'abs normed error':
+                        loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
+                    elif loss == 'squared error':
+                        loss_i = (orig_target - orig_prediction) ** 2
+                    losses_dict[loss] = loss_i  # huge unnecessary upload
+                    loss_dict[loss + ' mean'] = np.mean(loss_i)
+                    loss_dict[loss + ' std'] = np.std(loss_i)
+                    print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
+
+                linreg_result = linregress(orig_target, orig_prediction)
+                loss_dict['Regression R2'] = linreg_result.rvalue
+                loss_dict['Regression slope'] = linreg_result.slope
+                wandb.log(loss_dict)
             '''
             cell parameter analysis
             '''
@@ -1604,6 +1956,9 @@ class Modeller():
                 # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
                 scores_dict['Test Distorted'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][distorted_inds])[:, 1]
 
+            elif self.config.gan_loss == 'distance':
+                assert False # todo implement something
+
             wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
             wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
             wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})
@@ -1707,9 +2062,9 @@ class Modeller():
             fig = go.Figure()
             for i, label in enumerate(scores_dict.keys()):
                 if 'exp' in label:
-                    fig.add_trace(go.Violin(x=np.array(scores_dict[label]), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
+                    fig.add_trace(go.Violin(x=1-np.log10(np.array(scores_dict[label])), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
                 else:
-                    fig.add_trace(go.Violin(x=np.array(scores_dict[label]), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
+                    fig.add_trace(go.Violin(x=1-np.log10(np.array(scores_dict[label])), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
             fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
             wandb.log({'Discriminator Test Scores': fig})
 
@@ -1910,11 +2265,23 @@ class Modeller():
         Do analysis and upload results to w&b
         '''
 
-        softmax_temperature = 10
+        softmax_temperature = 1
 
         # load up precomputed lennard-jones energies for the blind test submissions
         bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy', allow_pickle=True).item()
-        extra_test_dict['atomistic energy'] = np.asarray([bt_lj_energy_dict[ident] for ident in extra_test_dict['identifiers']])
+        target_31_ff_dict = np.load('../datasets/sapt_energy_dict.npy',allow_pickle=True).item()
+        energy = []
+        bt_list = list(bt_lj_energy_dict.keys())
+        t_31_list = list(target_31_ff_dict.keys())
+        for ident in extra_test_dict['identifiers']:
+            if ident in bt_list:
+                energy.append(bt_lj_energy_dict[ident])
+            elif ident in t_31_list:
+                energy.append(target_31_ff_dict[ident])
+            else:
+                energy.append(-1) # error or missing code
+
+        extra_test_dict['atomistic energy'] = np.asarray(energy) #np.asarray([bt_lj_energy_dict[ident] for ident in extra_test_dict['identifiers']])
 
         # need to identify targets
         # need to distinguish between experimental and proposed structures
@@ -1933,252 +2300,370 @@ class Modeller():
                     all_identifiers[blind_test_targets[-1 - j]].append(i)
                     break
 
-        '''
-        get the identifiers for all the BT targets
-        '''
-        # CSD identifiers for the blind test targets
-        target_identifiers = {
-            'XVI': 'OBEQUJ',
-            'XVII': 'OBEQOD',
-            'XVIII': 'OBEQET',
-            'XIX': 'XATJOT',
-            'XX': 'OBEQIX',
-            'XXI': 'KONTIQ',
-            'XXII': 'NACJAF',
-            'XXIII': 'XAFPAY',
-            'XXIV': 'XAFQON',
-            'XXVI': 'XAFQIH'
-        }
 
-        target_identifiers_inds = {key: [] for key in blind_test_targets}
-        for i in range(len(extra_test_dict['identifiers'])):
-            item = extra_test_dict['identifiers'][i]
-            for key in target_identifiers.keys():
-                if item == target_identifiers[key]:
-                    target_identifiers_inds[key] = i
+        if len(np.concatenate(list(all_identifiers.values()))) > 0:
+            '''
+            get the identifiers for all the BT targets
+            '''
+            # CSD identifiers for the blind test targets
+            target_identifiers = {
+                'XVI': 'OBEQUJ',
+                'XVII': 'OBEQOD',
+                'XVIII': 'OBEQET',
+                'XIX': 'XATJOT',
+                'XX': 'OBEQIX',
+                'XXI': 'KONTIQ',
+                'XXII': 'NACJAF',
+                'XXIII': 'XAFPAY',
+                'XXIV': 'XAFQON',
+                'XXVI': 'XAFQIH'
+            }
 
-        '''
-        record all the stats for the CSD data
-        '''
-        scores_dict = {}
+            target_identifiers_inds = {key: [] for key in blind_test_targets}
+            for i in range(len(extra_test_dict['identifiers'])):
+                item = extra_test_dict['identifiers'][i]
+                for key in target_identifiers.keys():
+                    if item == target_identifiers[key]:
+                        target_identifiers_inds[key] = i
 
-        if self.config.gan_loss == 'wasserstein':
-            scores_dict['Test Real'] = test_epoch_stats_dict['scores']
+            '''
+            record all the stats for the CSD data
+            '''
+            scores_dict = {}
 
-        elif self.config.gan_loss == 'standard':
-            scores_dict['Test Real'] = np_softmax(test_epoch_stats_dict['scores'], temperature=softmax_temperature)[:, 1]
+            if self.config.gan_loss == 'wasserstein':
+                scores_dict['Test Real'] = test_epoch_stats_dict['scores']
 
-        wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
+            elif self.config.gan_loss == 'standard':
+                scores_dict['Test Real'] = np_softmax(test_epoch_stats_dict['scores'], temperature=softmax_temperature)[:, 1]
 
-        loss_correlations_dict = {}
-        rdf_full_distance_dict = {}
-        rdf_inter_distance_dict = {}
-        energy_dict = {}
+            wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
 
-        '''
-        build property dicts for the submissions and BT targets
-        '''
-        for target in all_identifiers.keys():  # run the analysis for each target
-            if target_identifiers_inds[target] != []:
+            loss_correlations_dict = {}
+            rdf_full_distance_dict = {}
+            rdf_inter_distance_dict = {}
+            energy_dict = {}
 
-                target_index = target_identifiers_inds[target]
-                raw_scores = extra_test_dict['scores'][target_index]
-                if self.config.gan_loss == 'wasserstein':
-                    scores = raw_scores
-                elif self.config.gan_loss == 'standard':
-                    scores = np_softmax(raw_scores, temperature=softmax_temperature)[:, 1]
-                scores_dict[target + ' exp'] = scores
-                energy_dict[target + ' exp'] = extra_test_dict['atomistic energy'][target_index]
+            '''
+            build property dicts for the submissions and BT targets
+            '''
+            for target in all_identifiers.keys():  # run the analysis for each target
+                if target_identifiers_inds[target] != []:
 
-                wandb.log({f'Average {target} exp score': np.average(scores)})
+                    target_index = target_identifiers_inds[target]
+                    raw_scores = extra_test_dict['scores'][target_index]
+                    if self.config.gan_loss == 'wasserstein':
+                        scores = raw_scores
+                    elif self.config.gan_loss == 'standard':
+                        scores = np_softmax(raw_scores, temperature=softmax_temperature)[:, 1]
+                    scores_dict[target + ' exp'] = scores
+                    energy_dict[target + ' exp'] = extra_test_dict['atomistic energy'][target_index]
 
-                target_full_rdf = extra_test_dict['full rdf'][target_index]
-                target_inter_rdf = extra_test_dict['intermolecular rdf'][target_index]
+                    wandb.log({f'Average {target} exp score': np.average(scores)})
 
-            if all_identifiers[target] != []:
+                    target_full_rdf = extra_test_dict['full rdf'][target_index]
+                    target_inter_rdf = extra_test_dict['intermolecular rdf'][target_index]
 
-                target_indices = all_identifiers[target]
-                raw_scores = extra_test_dict['scores'][target_indices]
-                if self.config.gan_loss == 'wasserstein':
-                    scores = raw_scores
-                elif self.config.gan_loss == 'standard':
-                    scores = np_softmax(raw_scores, temperature=softmax_temperature)[:, 1]
-                scores_dict[target] = scores
-                energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
+                if all_identifiers[target] != []:
 
-                wandb.log({f'Average {target} score': np.average(scores)})
+                    target_indices = all_identifiers[target]
+                    raw_scores = extra_test_dict['scores'][target_indices]
+                    if self.config.gan_loss == 'wasserstein':
+                        scores = raw_scores
+                    elif self.config.gan_loss == 'standard':
+                        scores = np_softmax(raw_scores, temperature=softmax_temperature)[:, 1]
+                    scores_dict[target] = scores
+                    energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
 
-                submission_full_rdf = extra_test_dict['full rdf'][target_indices]
-                submission_inter_rdf = extra_test_dict['intermolecular rdf'][target_indices]
+                    wandb.log({f'Average {target} score': np.average(scores)})
 
-                # compute distance between target & submission RDFs
-                rr = np.linspace(0, 10, 100)
-                sigma = 1
-                smoothed_target_full_rdf = gaussian_filter1d(target_full_rdf, sigma=sigma)
-                smoothed_target_inter_rdf = gaussian_filter1d(target_inter_rdf, sigma=sigma)
-                smoothed_submission_full_rdf = gaussian_filter1d(np.clip(submission_full_rdf, a_min=0, a_max=10), sigma=sigma)
-                smoothed_submission_inter_rdf = gaussian_filter1d(np.clip(submission_inter_rdf, a_min=0, a_max=10), sigma=sigma)
+                    submission_full_rdf = extra_test_dict['full rdf'][target_indices]
+                    submission_inter_rdf = extra_test_dict['intermolecular rdf'][target_indices]
 
-                rdf_full_distance_dict[target] = 1 - np.sum(np.minimum(smoothed_target_full_rdf, smoothed_submission_full_rdf), axis=(1, 2)) / np.sum(
-                    smoothed_target_full_rdf)  # get histogram overlap over all atom pairs & scale by total target density
-                rdf_inter_distance_dict[target] = 1 - np.sum(np.minimum(smoothed_target_inter_rdf, smoothed_submission_inter_rdf), axis=(1, 2)) / np.sum(smoothed_target_inter_rdf)
+                    # compute distance between target & submission RDFs
+                    rr = np.linspace(0, 10, 100)
+                    sigma = 1
+                    smoothed_target_full_rdf = gaussian_filter1d(target_full_rdf, sigma=sigma)
+                    smoothed_target_inter_rdf = gaussian_filter1d(target_inter_rdf, sigma=sigma)
+                    smoothed_submission_full_rdf = gaussian_filter1d(np.clip(submission_full_rdf, a_min=0, a_max=10), sigma=sigma)
+                    smoothed_submission_inter_rdf = gaussian_filter1d(np.clip(submission_inter_rdf, a_min=0, a_max=10), sigma=sigma)
 
-                # correlate losses with molecular features
-                tracking_features = np.asarray(extra_test_dict['tracking features'])
-                loss_correlations = np.zeros(config.dataDims['num tracking features'])
-                features = []
-                for j in range(config.dataDims['num tracking features']):  # not that interesting
-                    features.append(config.dataDims['tracking features dict'][j])
-                    loss_correlations[j] = np.corrcoef(scores, tracking_features[target_indices, j], rowvar=False)[0, 1]
+                    rdf_full_distance_dict[target] = 1 - np.sum(np.minimum(smoothed_target_full_rdf, smoothed_submission_full_rdf), axis=(1, 2)) / np.sum(
+                        smoothed_target_full_rdf)  # get histogram overlap over all atom pairs & scale by total target density
+                    rdf_inter_distance_dict[target] = 1 - np.sum(np.minimum(smoothed_target_inter_rdf, smoothed_submission_inter_rdf), axis=(1, 2)) / np.sum(smoothed_target_inter_rdf)
 
-                loss_correlations_dict[target] = loss_correlations
+                    # correlate losses with molecular features
+                    tracking_features = np.asarray(extra_test_dict['tracking features'])
+                    loss_correlations = np.zeros(config.dataDims['num tracking features'])
+                    features = []
+                    for j in range(config.dataDims['num tracking features']):  # not that interesting
+                        features.append(config.dataDims['tracking features dict'][j])
+                        loss_correlations[j] = np.corrcoef(scores, tracking_features[target_indices, j], rowvar=False)[0, 1]
 
-        # normed_energy_dict = {key: normalize(energy_dict[key]) for key in energy_dict.keys() if 'exp' not in key}
-        normed_energy_dict = {key: standardize(energy_dict[key]) for key in energy_dict.keys() if 'exp' not in key}
+                    loss_correlations_dict[target] = loss_correlations
 
-        '''
-        prep violin figure colors
-        '''
-        lens = [len(val) for val in all_identifiers.values()]
-        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
+            # normed_energy_dict = {key: normalize(energy_dict[key]) for key in energy_dict.keys() if 'exp' not in key}
+            normed_energy_dict = {key: standardize(energy_dict[key]) for key in energy_dict.keys() if 'exp' not in key}
 
-        plot_color_dict = {}
-        plot_color_dict['Test Real'] = ('rgb(250,150,50)')  # test
+            '''
+            prep violin figure colors
+            '''
+            lens = [len(val) for val in all_identifiers.values()]
+            colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
 
-        ind = 0
-        for target in all_identifiers.keys():
-            if all_identifiers[target] != []:
-                plot_color_dict[target] = colors[ind]
-                plot_color_dict[target + ' exp'] = colors[ind]
+            plot_color_dict = {}
+            plot_color_dict['Test Real'] = ('rgb(250,150,50)')  # test
 
-                ind += 1
+            ind = 0
+            for target in all_identifiers.keys():
+                if all_identifiers[target] != []:
+                    plot_color_dict[target] = colors[ind]
+                    plot_color_dict[target + ' exp'] = colors[ind]
 
-        '''
-        violin scores plot
-        '''
-        if self.config.gan_loss == 'wasserstein':
-            bandwidth = np.concatenate(list(scores_dict.values())).std()
-        elif self.config.gan_loss == 'standard':
-            bandwidth = 0.0025
+                    ind += 1
 
-        fig = go.Figure()
-        for i, label in enumerate(scores_dict.keys()):
-            if 'exp' in label:
-                fig.add_trace(go.Violin(x=np.array(scores_dict[label]), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
-            else:
-                fig.add_trace(go.Violin(x=np.array(scores_dict[label]), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
-        fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
-        wandb.log({'Discriminator Test Scores': fig})
+            '''
+            violin scores plot
+            '''
+            if self.config.gan_loss == 'wasserstein':
+                bandwidth = np.concatenate(list(scores_dict.values())).std()
+            elif self.config.gan_loss == 'standard':
+                bandwidth = 0.0025
 
-        '''
-        rdf distance vs score vs energy
-        for each target
-        '''
+            fig = go.Figure()
+            for i, label in enumerate(scores_dict.keys()):
+                if 'exp' in label:
+                    fig.add_trace(go.Violin(x=np.array(scores_dict[label]), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
+                else:
+                    fig.add_trace(go.Violin(x=np.array(scores_dict[label]), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
+            fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
+            wandb.log({'Discriminator Test Scores': fig})
 
-        energies = np.concatenate([val for val in normed_energy_dict.values()])
-        full_rdf = np.concatenate([val for val in rdf_full_distance_dict.values()])
-        inter_rdf = np.concatenate([val for val in rdf_inter_distance_dict.values()])
-        normed_score = np.concatenate([normalize(scores_dict[key]) for key in scores_dict.keys() if key in normed_energy_dict.keys()])
+            '''
+            rdf distance vs score vs energy
+            for each target
+            '''
 
-        fig = make_subplots(rows=2, cols=4,
-                            subplot_titles=(list(rdf_full_distance_dict.keys())) + ['All'])
+            energies = np.concatenate([val for val in normed_energy_dict.values()])
+            full_rdf = np.concatenate([val for val in rdf_full_distance_dict.values()])
+            inter_rdf = np.concatenate([val for val in rdf_inter_distance_dict.values()])
+            normed_score = np.concatenate([normalize(scores_dict[key]) for key in scores_dict.keys() if key in normed_energy_dict.keys()])
 
-        for i, label in enumerate(rdf_full_distance_dict.keys()):
-            row = i // 4 + 1
-            col = i % 4 + 1
-            xline = np.asarray([np.amin(rdf_full_distance_dict[label]), np.amax(rdf_full_distance_dict[label])])
-            linreg_result = linregress(rdf_full_distance_dict[label], scores_dict[label])
-            yline = xline * linreg_result.slope + linreg_result.intercept
+            fig = make_subplots(rows=2, cols=4,
+                                subplot_titles=(list(rdf_full_distance_dict.keys())) + ['All'])
 
-            fig.add_trace(go.Scattergl(x=rdf_full_distance_dict[label], y=scores_dict[label], showlegend=False,
-                                       mode='markers', marker=dict(size=4, color=normed_energy_dict[label], colorscale='Viridis', showscale=False)),
-                          row=row, col=col)
-
-            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=row, col=col)
-
-        xline = np.asarray([np.amin(full_rdf), np.amax(full_rdf)])
-        linreg_result = linregress(full_rdf, normed_score)
-        yline = xline * linreg_result.slope + linreg_result.intercept
-        fig.add_trace(go.Scattergl(x=full_rdf, y=normed_score, showlegend=False,
-                                   mode='markers', marker=dict(size=4, color=energies, colorscale='Viridis', showscale=False)),
-                      row=2, col=4)
-        fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'All Targets R={linreg_result.rvalue:.3f}'), row=2, col=4)
-
-        # fig.show()
-        wandb.log({f'Target Analysis': fig})
-
-        '''
-        within-submission score vs rankings
-        file formats are different between BT 5 and BT6
-        '''
-        target_identifiers = {}
-        rankings = {}
-        group = {}
-        list_num = {}
-        for label in ['XXII', 'XXIII', 'XXVI']:
-            target_identifiers[label] = [extra_test_dict['identifiers'][all_identifiers[label][n]] for n in range(len(all_identifiers[label]))]
-            rankings[label] = []
-            group[label] = []
-            list_num[label] = []
-            for ident in target_identifiers[label]:
-                if 'edited' in ident:
-                    ident = ident[7:]
-
-                long_ident = ident.split('_')
-                list_num[label].append(int(ident[len(label) + 1]))
-                rankings[label].append(int(long_ident[-1]) + 1)
-                group[label].append(long_ident[1])
-
-        fig = make_subplots(rows=1, cols=3,
-                            subplot_titles=(['XXII', 'XXIII', 'XXVI']))
-
-        for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
-            xline = np.asarray([0, 100])
-            linreg_result = linregress(rankings[label], scores_dict[label])
-            yline = xline * linreg_result.slope + linreg_result.intercept
-
-            fig.add_trace(go.Scattergl(x=rankings[label], y=scores_dict[label], showlegend=False,
-                                       mode='markers', marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
-                          row=1, col=i + 1)
-
-            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=1, col=i + 1)
-        fig.update_xaxes(title_text='Submission Rank', row=1, col=1)
-        fig.update_yaxes(title_text='Model score', row=1, col=1)
-        fig.update_xaxes(title_text='Submission Rank', row=1, col=2)
-        fig.update_xaxes(title_text='Submission Rank', row=1, col=3)
-
-        # fig.show()
-        wandb.log({'Target Score Rankings': fig})
-
-        for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
-            names = np.unique(list(group[label]))
-            uniques = len(names)
-            rows = int(np.floor(np.sqrt(uniques)))
-            cols = int(np.ceil(np.sqrt(uniques)) + 1)
-            fig = make_subplots(rows=rows, cols=cols,
-                                subplot_titles=(names))
-            colormap = {1: 'rgb(0,0,100)',
-                        2: 'rgb(100,0,0)'}
-
-            for j, group_name in enumerate(np.unique(group[label])):
-                good_inds = np.where(np.asarray(group[label]) == group_name)
-                xline = np.asarray([0, 100])
-                linreg_result = linregress(np.asarray(rankings[label])[good_inds], np.asarray(scores_dict[label])[good_inds])
+            for i, label in enumerate(rdf_full_distance_dict.keys()):
+                row = i // 4 + 1
+                col = i % 4 + 1
+                xline = np.asarray([np.amin(rdf_full_distance_dict[label]), np.amax(rdf_full_distance_dict[label])])
+                linreg_result = linregress(rdf_full_distance_dict[label], scores_dict[label])
                 yline = xline * linreg_result.slope + linreg_result.intercept
 
-                fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
-                                           mode='markers', marker=dict(size=6, color=np.asarray(list_num[label])[good_inds], colorscale='portland', cmax=2, cmin=1, showscale=False)),
-                              row=j // cols + 1, col=j % cols + 1)
+                fig.add_trace(go.Scattergl(x=rdf_full_distance_dict[label], y=scores_dict[label], showlegend=False,
+                                           mode='markers', marker=dict(size=4, color=normed_energy_dict[label], colorscale='Viridis', showscale=False)),
+                              row=row, col=col)
 
-                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=j // cols + 1, col=j % cols + 1)
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=row, col=col)
 
-            fig.update_layout(title=label)
-            wandb.log({f"{label} Groupwise Analysis": fig})
+            xline = np.asarray([np.amin(full_rdf), np.amax(full_rdf)])
+            linreg_result = linregress(full_rdf, normed_score)
+            yline = xline * linreg_result.slope + linreg_result.intercept
+            fig.add_trace(go.Scattergl(x=full_rdf, y=normed_score, showlegend=False,
+                                       mode='markers', marker=dict(size=4, color=energies, colorscale='Viridis', showscale=False)),
+                          row=2, col=4)
+            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'All Targets R={linreg_result.rvalue:.3f}'), row=2, col=4)
+
+            # fig.show()
+            wandb.log({f'Target Analysis': fig})
+
+            '''
+            within-submission score vs rankings
+            file formats are different between BT 5 and BT6
+            '''
+            target_identifiers = {}
+            rankings = {}
+            group = {}
+            list_num = {}
+            for label in ['XXII', 'XXIII', 'XXVI']:
+                target_identifiers[label] = [extra_test_dict['identifiers'][all_identifiers[label][n]] for n in range(len(all_identifiers[label]))]
+                rankings[label] = []
+                group[label] = []
+                list_num[label] = []
+                for ident in target_identifiers[label]:
+                    if 'edited' in ident:
+                        ident = ident[7:]
+
+                    long_ident = ident.split('_')
+                    list_num[label].append(int(ident[len(label) + 1]))
+                    rankings[label].append(int(long_ident[-1]) + 1)
+                    group[label].append(long_ident[1])
+
+            fig = make_subplots(rows=1, cols=3,
+                                subplot_titles=(['XXII', 'XXIII', 'XXVI']))
+
+            for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+                xline = np.asarray([0, 100])
+                linreg_result = linregress(rankings[label], scores_dict[label])
+                yline = xline * linreg_result.slope + linreg_result.intercept
+
+                fig.add_trace(go.Scattergl(x=rankings[label], y=scores_dict[label], showlegend=False,
+                                           mode='markers', marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                              row=1, col=i + 1)
+
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=1, col=i + 1)
+            fig.update_xaxes(title_text='Submission Rank', row=1, col=1)
+            fig.update_yaxes(title_text='Model score', row=1, col=1)
+            fig.update_xaxes(title_text='Submission Rank', row=1, col=2)
+            fig.update_xaxes(title_text='Submission Rank', row=1, col=3)
+
+            # fig.show()
+            wandb.log({'Target Score Rankings': fig})
+
+            for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+                names = np.unique(list(group[label]))
+                uniques = len(names)
+                rows = int(np.floor(np.sqrt(uniques)))
+                cols = int(np.ceil(np.sqrt(uniques)) + 1)
+                fig = make_subplots(rows=rows, cols=cols,
+                                    subplot_titles=(names))
+                colormap = {1: 'rgb(0,0,100)',
+                            2: 'rgb(100,0,0)'}
+
+                for j, group_name in enumerate(np.unique(group[label])):
+                    good_inds = np.where(np.asarray(group[label]) == group_name)
+                    xline = np.asarray([0, 100])
+                    linreg_result = linregress(np.asarray(rankings[label])[good_inds], np.asarray(scores_dict[label])[good_inds])
+                    yline = xline * linreg_result.slope + linreg_result.intercept
+
+                    fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
+                                               mode='markers', marker=dict(size=6, color=np.asarray(list_num[label])[good_inds], colorscale='portland', cmax=2, cmin=1, showscale=False)),
+                                  row=j // cols + 1, col=j % cols + 1)
+
+                    fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=j // cols + 1, col=j % cols + 1)
+
+                fig.update_layout(title=label)
+                wandb.log({f"{label} Groupwise Analysis": fig})
+
+        '''
+        CSP pipeline analysis
+        '''
+        sapt_inds = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if ('\sapt' in ind) and ('-220224' not in ind)])
+        sapt_22_inds = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if '\sapt-220224' in ind])
+
+
+        if len(sapt_inds > 0):
+
+            sapt_energies = extra_test_dict['atomistic energy'][sapt_inds]
+            sapt_22_energies = extra_test_dict['atomistic energy'][sapt_22_inds]
+
+            outlier_inds = np.concatenate((np.where(sapt_energies > 0)[0], np.where(sapt_energies < -150)[0]))
+            sapt_inds = np.asarray([ind for i, ind in enumerate(sapt_inds) if not (i in outlier_inds)])
+            sapt_energies = extra_test_dict['atomistic energy'][sapt_inds]
+
+            outlier_inds = np.concatenate((np.where(sapt_22_energies > 0)[0], np.where(sapt_22_energies < -150)[0]))
+            sapt_22_inds = np.asarray([ind for i, ind in enumerate(sapt_22_inds) if not (i in outlier_inds)])
+            sapt_22_energies = extra_test_dict['atomistic energy'][sapt_22_inds]
+
+            if config.gan_loss == 'standard':
+                sapt_scores = np_softmax(extra_test_dict['scores'][sapt_inds], temperature=softmax_temperature)[:,1]
+                sapt_22_scores = np_softmax(extra_test_dict['scores'][sapt_22_inds], temperature=softmax_temperature)[:,1]
+            elif config.gan_loss == 'wasserstein':
+                sapt_scores = extra_test_dict['scores'][sapt_inds]
+                sapt_22_scores = extra_test_dict['scores'][sapt_22_inds]
+
+            '''
+            plot overall energy-score correlation
+            '''
+            fig = make_subplots(rows=1, cols=2,
+                                subplot_titles=(['Sapt','Sapt 22']))
+
+            xline = np.asarray([min(sapt_energies), max(sapt_energies)])
+            linreg_result = linregress(sapt_energies, sapt_scores)
+            yline = xline * linreg_result.slope + linreg_result.intercept
+
+            fig.add_trace(go.Scattergl(x=sapt_energies, y=sapt_scores, showlegend=False,
+                                       mode='markers'),#, marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                          row=1, col=1)
+
+            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt R={linreg_result.rvalue:.3f}'), row=1, col=1)
+
+            xline = np.asarray([min(sapt_22_energies), max(sapt_22_energies)])
+            linreg_result = linregress(sapt_22_energies, sapt_22_scores)
+            yline = xline * linreg_result.slope + linreg_result.intercept
+
+            fig.add_trace(go.Scattergl(x=sapt_22_energies, y=sapt_22_scores, showlegend=False,
+                                       mode='markers'),#, marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                          row=1, col=2)
+
+            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt-22 R={linreg_result.rvalue:.3f}'), row=1, col=2)
+            wandb.log({'Target 31 analysis': fig})
+
+            '''
+            plot within-conformer energy-score correlation
+            '''
+            conformers = ['c01','c02','c03','c04','c05','c06','c07','c08','c09','c10']
+            conformers_inds_dict = {}
+            conformers_inds_dict_22 = {}
+            conformers_energies_dict = {}
+            conformers_energies_dict_22 = {}
+            conformers_scores_dict = {}
+            conformers_scores_dict_22 = {}
+            for conformer in conformers:
+                conformers_inds_dict[conformer] = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if ('\sapt' in ind) and ('-220224' not in ind) and (conformer in ind)])
+                conformers_inds_dict_22[conformer] = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if ('\sapt-220224' in ind) and (conformer in ind)])
+                conformers_energies_dict[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict[conformer]]
+
+                outlier_inds = np.concatenate((np.where(conformers_energies_dict[conformer] > 0)[0], np.where(conformers_energies_dict[conformer] < -150)[0]))
+                conformers_inds_dict[conformer] = np.asarray([ind for i, ind in enumerate(conformers_inds_dict[conformer]) if not (i in outlier_inds)])
+                conformers_energies_dict[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict[conformer]]
+
+                conformers_energies_dict_22[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict_22[conformer]]
+
+                outlier_inds = np.concatenate((np.where(conformers_energies_dict_22[conformer] > 0)[0], np.where(conformers_energies_dict_22[conformer] < -150)[0]))
+                conformers_inds_dict_22[conformer] = np.asarray([ind for i, ind in enumerate(conformers_inds_dict_22[conformer]) if not (i in outlier_inds)])
+                conformers_energies_dict_22[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict_22[conformer]]
+
+
+                conformers_scores_dict[conformer] = np_softmax(extra_test_dict['scores'][conformers_inds_dict[conformer]],temperature = softmax_temperature)[:,1]
+                conformers_scores_dict_22[conformer] = np_softmax(extra_test_dict['scores'][conformers_inds_dict_22[conformer]], temperature = softmax_temperature)[:,1]
+
+            fig = make_subplots(rows=2, cols=10,
+                                )#subplot_titles=(['Sapt','Sapt 22']))
+
+            for ii, conformer in enumerate(conformers_inds_dict.keys()):
+                score = conformers_scores_dict[conformer]
+                score_22 = conformers_scores_dict_22[conformer]
+                energy = conformers_energies_dict[conformer]
+                energy_22 = conformers_energies_dict_22[conformer]
+
+                xline = np.asarray([min(energy), max(energy)])
+                linreg_result = linregress(energy, score)
+                yline = xline * linreg_result.slope + linreg_result.intercept
+
+                fig.add_trace(go.Scattergl(x=energy, y=score, showlegend=False,
+                                           mode='markers'),#, marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                              row=1, col=ii + 1)
+
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt R={linreg_result.rvalue:.3f}'), row=1, col=ii+1)
+
+                xline = np.asarray([min(energy_22), max(energy_22)])
+                linreg_result = linregress(energy_22, score_22)
+                yline = xline * linreg_result.slope + linreg_result.intercept
+
+                fig.add_trace(go.Scattergl(x=energy_22, y=score_22, showlegend=False,
+                                           mode='markers'),#, marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                              row=2, col=ii + 1)
+
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt-22 R={linreg_result.rvalue:.3f}'), row=2, col=ii+1)
+
+            wandb.log({'Conformer-wise analysis': fig})
+
+            target_31_inds = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if ('219967' in ind)])
 
         finished = 1
         return None
 
-    def train_discriminator(self, generated_samples, discriminator, config, data, i, target_handedness=None):
+    def train_discriminator(self, generated_samples, discriminator, config, data, i, target_handedness=None, return_rdf = False):
         # generate fakes & create supercell data
         real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config)
         fake_supercell_data, generated_cell_volumes, overlaps_list = \
@@ -2200,7 +2685,17 @@ class Modeller():
         score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
         score_on_fake, fake_pairwise_distances_dict = self.adversarial_loss(discriminator, fake_supercell_data, config)
 
-        return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), real_distances_dict, fake_pairwise_distances_dict
+        if return_rdf:
+            real_rdf, rr, rdf_label_dict = crystal_rdf(real_supercell_data, rrange = [0,6], bins = 1000, intermolecular = True, elementwise=True, raw_density=True)
+            fake_rdf, rr, rdf_label_dict = crystal_rdf(fake_supercell_data, rrange = [0,6], bins = 1000, intermolecular=True, elementwise=True, raw_density=True)
+
+            real_rdf_dict = {'rdf': real_rdf, 'range': rr, 'labels': rdf_label_dict}
+            fake_rdf_dict = {'rdf': fake_rdf, 'range': rr, 'labels': rdf_label_dict}
+
+            return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), real_rdf_dict, fake_rdf_dict
+
+        else:
+            return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), real_distances_dict, fake_pairwise_distances_dict
 
     def train_generator(self, generator, discriminator, config, data, i):
         # noise injection

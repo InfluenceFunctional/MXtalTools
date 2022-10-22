@@ -362,7 +362,7 @@ class BuildDataset:
         atom_features_list = self.concatenate_atom_features(dataset)
 
         if 'crystal symmetries' not in dataset.columns:
-            dataset['crystal symmetries'] = [None for _ in range(len(dataset))]
+            dataset['crystal symmetries'] = [[] for _ in range(len(dataset))]
             print('No crystal symmetries in the dataset!')
 
         return self.generate_training_data(atom_coords=dataset['atom coords'],
@@ -613,6 +613,8 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
         dataset = dataset.drop(columns='level_0')
     dataset = dataset.reset_index()
 
+    dataset = dataset.drop('crystal symmetries', axis=1) # can't mix nicely # todo delete this after next BT refeaturization
+
     extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
                                           sg_dict=sg_dict,
                                           lattice_dict=lattice_dict,
@@ -621,5 +623,5 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
                                           premade_dataset=dataset)
 
     extra_test_loader = DataLoader(extra_test_set_builder.datapoints, batch_size=config.final_batch_size, shuffle=False, num_workers=0, pin_memory=False)
-    del dataset
+    del dataset, extra_test_set_builder
     return extra_test_loader

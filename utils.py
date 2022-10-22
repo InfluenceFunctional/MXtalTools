@@ -1,6 +1,6 @@
 """import statement"""
+import tqdm
 import numpy as np
-import numba as nb
 import os
 import pandas as pd
 from rdkit import Chem
@@ -17,6 +17,11 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.spatial.transform import Rotation
 from ase import Atoms
 from ase.calculators import lj
+from pymatgen.core import (structure, lattice)
+from ccdc.crystal import PackingSimilarity
+from ccdc.io import CrystalReader
+from pymatgen.io import cif
+
 
 '''
 general utilities
@@ -2170,6 +2175,51 @@ def ase_mol_from_crystaldata(data, index = None, highlight_aux=False, exclusion_
     cell = data.T_fc[index].T.cpu().detach().numpy()
     mol = Atoms(symbols=numbers, positions=coords, cell=cell)
     return mol
+
+def ref_cell_to_pymatgen_istruc(data, i):
+    pymat_struct = structure.IStructure(species=data.x[data.batch == i, 0].repeat(data.Z[i]),
+                                        coords=data.ref_cell_pos[i].reshape(int(data.Z[i] * len(data.pos[data.batch == i])), 3),
+                                        lattice=lattice.Lattice(data.T_fc[i].T.type(dtype=torch.float16)),
+                                        coords_are_cartesian=True)
+    return pymat_struct
+
+def pairwise_crystaldata_rmsd20(data1, ind1, data2, ind2, shell_size = 20):
+    struct1 = ref_cell_to_pymatgen_istruc(data1, ind1)
+    struct2 = ref_cell_to_pymatgen_istruc(data2, ind2)
+    writer1 = cif.CifWriter(struct1, symprec = 0.1)
+    writer2 = cif.CifWriter(struct2, symprec = 0.1)
+    writer1.write_file('crystal1.cif')
+    writer2.write_file('crystal2.cif')
+
+    crystal1 = CrystalReader('crystal1.cif',format='cif')[0]
+    crystal2 = CrystalReader('crystal2.cif',format='cif')[0]
+
+    sim_engine = PackingSimilarity()
+    sim_engine.settings.packing_shell_size=shell_size
+    out = sim_engine.compare(crystal1,crystal2) # reference, target
+
+    return out.rmsd, out.nmatched_molecules
+
+def many_to_one_rmsd20(data1, data2, ind2, shell_size = 20):
+    struct2 = ref_cell_to_pymatgen_istruc(data2, ind2) # target_structure
+    writer2 = cif.CifWriter(struct2, symprec = 0.1)
+    writer2.write_file('crystal2.cif')
+    crystal2 = CrystalReader('crystal2.cif',format='cif')[0]
+
+    sim_engine = PackingSimilarity()
+    sim_engine.settings.packing_shell_size=shell_size
+
+    outputs = []
+    for i in tqdm.tqdm(range(data1.num_graphs)):
+        struct1 = ref_cell_to_pymatgen_istruc(data1, i)
+        writer1 = cif.CifWriter(struct1, symprec = 0.1)
+        writer1.write_file('crystal1.cif')
+        crystal1 = CrystalReader('crystal1.cif',format='cif')[0]
+        out = sim_engine.compare(crystal1, crystal2)  # reference, target
+
+        outputs.append([out.rmsd, out.nmatched_molecules])
+
+    return out
 
 
 def invert_rotvec_handedness(rotvec):

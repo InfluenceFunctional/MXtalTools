@@ -6,6 +6,7 @@ import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)  # annoying numpy error
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # annoying numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # annoying w&b error
+warnings.filterwarnings("ignore", category=FutureWarning)
 from utils import load_yaml, add_bool_arg, get_config
 from crystal_modeller import Modeller
 

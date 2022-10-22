@@ -157,8 +157,8 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
 
         # also, note the atoms which are too far to ever appear in a convolution with this molecule, and generate an index to ignore them
         ref_mol_centroid = supercell_coords_list[-1][in_mol_inds].mean(0)
-        centroid_dists = torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1][in_mol_inds], p=2)
-        ref_mol_max_dist = torch.max(centroid_dists)
+        centroid_dists = torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1], p=2)
+        ref_mol_max_dist = torch.max(centroid_dists[:,in_mol_inds])
 
         # ignore atoms which are more than mol_radius + conv_cutoff + buffer
         ignore_inds = torch.where((centroid_dists > (ref_mol_max_dist + cutoff + 0.5))[0])[0]

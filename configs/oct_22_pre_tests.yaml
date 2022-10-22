@@ -1,10 +1,10 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 170
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard #distance
@@ -22,12 +22,10 @@ generator_similarity_penalty: 0
 cut_max_prob_training_after: 1000
 extra_test_period: 10
 sample_after_training: False
-extra_test_set_paths: [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
-                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
-                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
-                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_dataset',
-                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_targets',]
-d_model_path: 'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminator_150'
+extra_test_set_paths: [ '/scratch/mk8347/csd_runs/datasets/blind_test_5_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_6_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_targets']
+d_model_path: null
 g_model_path: null
 
 seeds:
@@ -36,7 +34,7 @@ seeds:
 
 # opt - sweep details
 wandb:
-  sample_reporting_frequency: 1
+  sample_reporting_frequency: 10
   experiment_tag: test_tag
   log_figures: True
   sweep_config_file: "sweep_test.yaml"
@@ -49,12 +47,12 @@ auto_batch_sizing: True
 min_batch_size: 10
 max_batch_size: 1000
 auto_batch_reduction: .5
-max_epochs: 0 # 0 epochs takes us straight to evaluation mode
+max_epochs: 5000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 
 # dataset curation
 target: density # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
@@ -85,8 +83,8 @@ supercell_size: 1 # 1 = 3x3x3, 2 = 5x5x5 etc. note 1 is too small for small mole
 # discriminator optimizer and model
 discriminator:
   optimizer: "adamw"
-  learning_rate: 0.00001
-  max_lr: 0.0001
+  learning_rate: 0.0001
+  max_lr: 0.001
   lr_schedule: True
   beta1: 0.9
   beta2: 0.999
@@ -98,25 +96,25 @@ discriminator:
   graph_model: mike
   crystal_convolution_type: 1 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
   graph_convolution_layers: 6
-  graph_filters: 32
-  atom_embedding_size: 64
-  graph_norm: layer
+  graph_filters: 128
+  atom_embedding_size: 256
+  graph_norm: null
   num_spherical: 6
   num_radial: 12
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
   num_attention_heads: 1 # mikenet self attention mode only - must evenly divide graph filters
-  graph_convolution: 'self attention' # 'full message passing' or schnet or 'self attention'
-  add_spherical_basis: False # mikenet only
-  add_torsional_basis: False #
+  graph_convolution: 'sfull message passing' # 'full message passing' or schnet or 'self attention'
+  add_spherical_basis: True # mikenet only
+  add_torsional_basis: True #
   pooling: combo
 
-  num_fc_layers: 2
-  fc_depth: 128
+  num_fc_layers: 4
+  fc_depth: 512
   activation: leaky relu
-  fc_dropout_probability: 0.1
-  fc_norm_mode: layer
+  fc_dropout_probability: null
+  fc_norm_mode: hull
 
 # generator optimizer and model
 generator:

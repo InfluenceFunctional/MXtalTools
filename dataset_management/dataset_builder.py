@@ -26,7 +26,7 @@ class CCDC_helper():
                 'crystal pressure',
                 'crystal r factor',
                 'crystal polymorph',
-                'crystal symmetries'
+                'crystal symmetries',
                 'crystal has disorder',
                 'crystal is organic', 'crystal is organometallic',
                 'crystal calculated density', 'crystal packing coefficient', 'crystal void volume',
@@ -61,7 +61,7 @@ class CCDC_helper():
                 #         allhits.append(crystal)
                 # os.chdir(here)
 
-            elif self.database.lower() == 'cod':  # grepping cifs from the COD
+            elif self.database.lower() == 'csp':  # grepping cifs from the COD
                 print('No cif database - skipping identifiers grep')
                 return None
                 # paths_list = []
@@ -111,7 +111,7 @@ class CCDC_helper():
             df = pd.DataFrame(data=identifiers, index=np.arange(len(identifiers)), columns=['identifier'])  # initialize dataframe
             df.to_pickle(self.chunk_path + 'new_dataframe')
 
-    def get_crystal_features(self, n_chunks=100, chunk_inds=[0, 100], file_path=None):
+    def get_crystal_features(self, n_chunks=100, chunk_inds=[0, 100], file_path=None, get_pot_energy_from_cif = False):
         os.chdir(self.chunk_path)
 
         allhits = []
@@ -139,27 +139,57 @@ class CCDC_helper():
             chunks = chunkify(allhits, n_chunks)[chunk_inds[0]:chunk_inds[1]]  # featurize a subset of chunks on this pass
 
 
-        elif self.database.lower() == 'cod':  # grepping cifs from the COD # todo WIP
+        elif self.database.lower() == 'csp':  # grepping cifs from the COD, or a nested set of directories containing .cifs
             paths_list = []
             all_identifiers = []
+            energies = []
+            flag = 'UPACK energy:'
 
             for root, subdirs, files in os.walk(file_path):
                 paths_list.extend([root + '/' + files[_] for _ in range(len(files))])
 
-            for ind, file in enumerate(paths_list):
-                crystal_reader = io.CrystalReader(file, format='cif')
-                # some cifs are empty or unreadable
-                try:
-                    for ind2, crystal in enumerate(crystal_reader):
-                        allhits.append(crystal)
-                        all_identifiers.append(crystal.identifier)
+            paths_list_cleaned = []
+            for path in paths_list:
+                if path[-4:] == '.cif':
+                    paths_list_cleaned.append(path)
 
-                except:
-                    pass
+            path_chunks = chunkify(paths_list_cleaned, n_chunks)[chunk_inds[0]:chunk_inds[1]]
+            for path_chunk in path_chunks:
+                for ind, file in enumerate(tqdm.tqdm(path_chunk)):
+                    try:
+                        crystal_reader = io.CrystalReader(file, format='cif')
+
+                        # some cifs are empty or unreadable
+                        for ind2, crystal in enumerate(crystal_reader):
+                            crystal.identifier = file.split('.cif')[0] + '_' + crystal.identifier + '_' + str(ind2)
+                            allhits.append(crystal)
+                            all_identifiers.append(crystal.identifier)
+
+                        f = open(file)
+                        text = f.read()
+                        f.close()
+                        found = 0
+                        for i, line in enumerate(text.split('\n')):
+                            if flag in line:
+                                found = 1
+                                energy = float(line.split(' ')[-1])
+                                energies.append(energy)
+                                break
+                        if found == 0:
+                            energies.append(666666) # error code
+
+
+                    except:
+                        pass
 
             self.features = ['identifier'] + self.features
+                # if get_pot_energy_from_cif:
+                #     np.save('potential_energy_dict', {ident: en for ident, en in zip(all_identifiers, energies)})
+                #
 
             assert len(list(set(all_identifiers))) == len(all_identifiers)  # assert all unique identifiers
+            chunks = chunkify(allhits, len(path_chunks))  # featurize a subset of chunks on this pass
+
 
         for n, chunk in enumerate(chunks):
             if not os.path.exists(self.chunk_path + 'crystal_features/{}'.format(n + chunk_inds[0])):  # don't repeat
@@ -182,7 +212,7 @@ class CCDC_helper():
                         crystal = entry.crystal
                         molecule = entry.molecule
 
-                    elif (self.database.lower() == 'cif') or (self.database.lower() == 'cod'): # DEPRECATED
+                    elif (self.database.lower() == 'cif') or (self.database.lower() == 'csp'):
                         crystal = chunk[i]
                         molecule = crystal.molecule
                         entry = None  # cifs don't have 'entries' as such
@@ -427,9 +457,9 @@ def visualizeEntry(identifier):
     img.show()
 
 
-mode = 'csd'  #
-chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/sept_refeaturization/'  # where the chunks should be saved during featurization
-cifs_directory_path = None
+# mode = 'csd'  #
+# chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/sept_refeaturization/'  # where the chunks should be saved during featurization
+# cifs_directory_path = None
 
 # mode = 'csd'
 # chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/bt_targets/'
@@ -444,15 +474,25 @@ cifs_directory_path = None
 # cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_6/gp5080sup2'
 # target_identifiers = None
 
-# mode = 'cif'
-# chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5/'  # where the chunks should be saved during featurization
-# cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/file_dump'
-# target_identifiers = None
+mode = 'cif' # FYI the sheraga extended submissions and Kendrick submissions for BT5 are mislabelled. Have to manually fix them
+chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5/'  # where the chunks should be saved during featurization
+cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/file_dump'
+target_identifiers = None
 
 # mode = 'cod'
 # chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/COD/'  # where the chunks should be saved during featurization
 # cifs_directory_path = 'F:/cod-cifs-mysql'
 #target_identifiers = None
+
+# mode = 'csp'
+# chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/sapt_full/'  # where the chunks should be saved during featurization
+# cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_csp'
+# target_identifiers = None
+
+# mode = 'cif'
+# chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_target_data/'  # where the chunks should be saved during featurization
+# cifs_directory_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_target'
+# target_identifiers = None
 
 if __name__ == '__main__':
     if not os.path.exists(chunk_path):  # need to initialize relevant directories
@@ -462,14 +502,14 @@ if __name__ == '__main__':
         os.mkdir(chunk_path + '/molecule_features')
 
     helper = CCDC_helper(chunk_path, mode)
-    helper.add_single_feature_to_dataset(dataset_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/full_dataset',
-                                         feature = 'crystal symmetries')
-    # helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
-    # helper.collect_chunks_and_initialize_df()
-    # helper.get_crystal_features(n_chunks=1, chunk_inds=[0, 1], file_path=cifs_directory_path)
-    #
-    # featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
-    # featurizer.featurize(chunk_inds=[0, 1])
+    # helper.add_single_feature_to_dataset(dataset_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/full_dataset',
+    #                                      feature = 'crystal symmetries')
+    helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
+    helper.collect_chunks_and_initialize_df()
+    helper.get_crystal_features(n_chunks=100, chunk_inds=[75, 100], file_path=cifs_directory_path)
 
-    # miner = Miner(chunk_path, collect_chunks=True, database=mode)
-    # miner.process_new_dataset(dataset_name = 'full_dataset')
+    featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
+    featurizer.featurize(chunk_inds=[75, 100])
+
+    miner = Miner(chunk_path, collect_chunks=True, database=mode)
+    miner.process_new_dataset(dataset_name = 'full_dataset')
