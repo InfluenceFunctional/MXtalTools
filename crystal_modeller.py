@@ -638,6 +638,9 @@ class Modeller():
                 extra_test_epoch_stats_dict, time_test_ex = \
                     self.discriminator_evaluation(config, dataLoader=extra_test_loader, discriminator=discriminator)  # compute loss on test set
 
+                np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)
+                np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
+
             self.log_discriminator_analysis(epoch, test_loader, extra_test_loader,
                                             metrics_dict,
                                             test_epoch_stats_dict, config,
@@ -1519,13 +1522,13 @@ class Modeller():
                 if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
                     score = train_epoch_stats_dict[key]
                 elif self.config.gan_loss == 'standard':
-                    score = np_softmax(train_epoch_stats_dict[key])[:, 0]
+                    score = -np.log10(1-np_softmax(train_epoch_stats_dict[key])[:, 0])
                 special_losses['Train ' + key] = np.average(score)
             if ('score' in key) and (test_epoch_stats_dict[key] is not None):
                 if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
                     score = test_epoch_stats_dict[key]
                 elif self.config.gan_loss == 'standard':
-                    score = np_softmax(test_epoch_stats_dict[key])[:, 0]
+                    score = -np.log10(1-np_softmax(test_epoch_stats_dict[key])[:, 0])
                 special_losses['Test ' + key] = np.average(score)
         wandb.log(special_losses)
 
@@ -1896,8 +1899,8 @@ class Modeller():
                 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
                 'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
 
-            bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy', allow_pickle=True).item()
-            extra_test_dict['atomistic energy'] = np.asarray([bt_lj_energy_dict[ident] for ident in extra_test_dict['identifiers']])
+            #bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy', allow_pickle=True).item()
+            #extra_test_dict['atomistic energy'] = np.asarray([bt_lj_energy_dict[ident] for ident in extra_test_dict['identifiers']])
 
             '''
             determine which samples go with which targets
@@ -1950,11 +1953,11 @@ class Modeller():
                 scores_dict['Test Distorted'] = test_epoch_stats_dict['discriminator fake score'][distorted_inds]
 
             elif self.config.gan_loss == 'standard':
-                scores_dict['Train Real'] = np_softmax(train_epoch_stats_dict['discriminator real score'])[:, 1]
-                scores_dict['Test Real'] = np_softmax(test_epoch_stats_dict['discriminator real score'])[:, 1]
-                scores_dict['Test Randn'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][randn_inds])[:, 1]
+                scores_dict['Train Real'] = -np.log10(1-np_softmax(train_epoch_stats_dict['discriminator real score'])[:, 1])
+                scores_dict['Test Real'] = -np.log10(1-np_softmax(test_epoch_stats_dict['discriminator real score'])[:, 1])
+                scores_dict['Test Randn'] = -np.log10(1-np_softmax(test_epoch_stats_dict['discriminator fake score'][randn_inds])[:, 1])
                 # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
-                scores_dict['Test Distorted'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][distorted_inds])[:, 1]
+                scores_dict['Test Distorted'] = -np.log10(1-np_softmax(test_epoch_stats_dict['discriminator fake score'][distorted_inds])[:, 1])
 
             elif self.config.gan_loss == 'distance':
                 assert False # todo implement something
@@ -1981,9 +1984,9 @@ class Modeller():
                     if self.config.gan_loss == 'wasserstein':
                         scores = raw_scores
                     elif self.config.gan_loss == 'standard':
-                        scores = np_softmax(raw_scores)[:, 1]
+                        scores = -np.log10(1-np_softmax(raw_scores)[:, 1])
                     scores_dict[target + ' exp'] = scores
-                    energy_dict[target + ' exp'] = extra_test_dict['atomistic energy'][target_index]
+                    #energy_dict[target + ' exp'] = extra_test_dict['atomistic energy'][target_index]
 
                     wandb.log({f'Average {target} exp score': np.average(scores)})
 
@@ -1997,9 +2000,9 @@ class Modeller():
                     if self.config.gan_loss == 'wasserstein':
                         scores = raw_scores
                     elif self.config.gan_loss == 'standard':
-                        scores = np_softmax(raw_scores)[:, 1]
+                        scores = -np.log10(1-np_softmax(raw_scores)[:, 1])
                     scores_dict[target] = scores
-                    energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
+                    #energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
 
                     wandb.log({f'Average {target} score': np.average(scores)})
 
@@ -2029,7 +2032,7 @@ class Modeller():
                     loss_correlations_dict[target] = loss_correlations
 
             # normed_energy_dict = {key: normalize(energy_dict[key]) for key in energy_dict.keys() if 'exp' not in key}
-            normed_energy_dict = {key: standardize(energy_dict[key]) for key in energy_dict.keys() if 'exp' not in key}
+            # normed_energy_dict = {key: standardize(energy_dict[key]) for key in energy_dict.keys() if 'exp' not in key}
 
             '''
             prep violin figure colors
@@ -2057,7 +2060,7 @@ class Modeller():
             if self.config.gan_loss == 'wasserstein':
                 bandwidth = np.concatenate(list(scores_dict.values())).std()
             elif self.config.gan_loss == 'standard':
-                bandwidth = 0.0025
+                bandwidth = 0.02
 
             fig = go.Figure()
             for i, label in enumerate(scores_dict.keys()):
@@ -2113,50 +2116,49 @@ class Modeller():
             '''
             rdf distance vs score vs energy
             '''
-            '''
-            for each target
-            '''
-            for i, label in enumerate(rdf_full_distance_dict.keys()):
-                fig = make_subplots(rows=1, cols=3)
-                xline = np.asarray([np.amin(normed_energy_dict[label]), np.amax(normed_energy_dict[label])])
-                linreg_result = linregress((normed_energy_dict[label]), scores_dict[label])
-                yline = xline * linreg_result.slope + linreg_result.intercept
-                fig.add_trace(go.Scattergl(x=normed_energy_dict[label], y=scores_dict[label], showlegend=False,
-                                           mode='markers', marker=dict(size=4, color=rdf_full_distance_dict[label], colorscale='Viridis', showscale=False)),
-                              row=1, col=1)
-                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Energy R={linreg_result.rvalue:.3f}'), row=1, col=1)
 
-                xline = np.asarray([np.amin(rdf_full_distance_dict[label]), np.amax(rdf_full_distance_dict[label])])
-                linreg_result = linregress(rdf_full_distance_dict[label], scores_dict[label])
-                yline = xline * linreg_result.slope + linreg_result.intercept
-                fig.add_trace(go.Scattergl(x=rdf_full_distance_dict[label], y=scores_dict[label], showlegend=False,
-                                           mode='markers', marker=dict(size=4, color=normed_energy_dict[label], colorscale='Viridis', showscale=False)),
-                              row=1, col=2)
-                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Full RDF R={linreg_result.rvalue:.3f}'), row=1, col=2)
-
-                xline = np.asarray([np.amin(rdf_inter_distance_dict[label]), np.amax(rdf_inter_distance_dict[label])])
-                linreg_result = linregress(rdf_inter_distance_dict[label], scores_dict[label])
-                yline = xline * linreg_result.slope + linreg_result.intercept
-                fig.add_trace(go.Scattergl(x=rdf_inter_distance_dict[label], y=scores_dict[label], showlegend=False,
-                                           mode='markers', marker=dict(size=4, color=normed_energy_dict[label], colorscale='Viridis', showscale=False)),
-                              row=1, col=3)
-                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Intermolecular RDF R={linreg_result.rvalue:.3f}'), row=1, col=3)
-                fig.update_layout(title=label)
-                fig.update_xaxes(title_text='Normed LJ Energy', row=1, col=1)
-                fig.update_yaxes(title_text='Model score', row=1, col=1)
-                fig.update_xaxes(title_text='Full RDF Distance', row=1, col=2)
-                fig.update_xaxes(title_text='Intermolecular RDF Distance', row=1, col=3)
-
-                # fig.show()
-                wandb.log({f'Target Analysis': fig})
+            # for i, label in enumerate(rdf_full_distance_dict.keys()):
+            #     fig = make_subplots(rows=1, cols=3)
+            #     xline = np.asarray([np.amin(normed_energy_dict[label]), np.amax(normed_energy_dict[label])])
+            #     linreg_result = linregress((normed_energy_dict[label]), scores_dict[label])
+            #     yline = xline * linreg_result.slope + linreg_result.intercept
+            #     fig.add_trace(go.Scattergl(x=normed_energy_dict[label], y=scores_dict[label], showlegend=False,
+            #                                mode='markers', marker=dict(size=4, color=rdf_full_distance_dict[label], colorscale='Viridis', showscale=False)),
+            #                   row=1, col=1)
+            #     fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Energy R={linreg_result.rvalue:.3f}'), row=1, col=1)
+            #
+            #     xline = np.asarray([np.amin(rdf_full_distance_dict[label]), np.amax(rdf_full_distance_dict[label])])
+            #     linreg_result = linregress(rdf_full_distance_dict[label], scores_dict[label])
+            #     yline = xline * linreg_result.slope + linreg_result.intercept
+            #     fig.add_trace(go.Scattergl(x=rdf_full_distance_dict[label], y=scores_dict[label], showlegend=False,
+            #                                mode='markers', marker=dict(size=4, color=normed_energy_dict[label], colorscale='Viridis', showscale=False)),
+            #                   row=1, col=2)
+            #     fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Full RDF R={linreg_result.rvalue:.3f}'), row=1, col=2)
+            #
+            #     xline = np.asarray([np.amin(rdf_inter_distance_dict[label]), np.amax(rdf_inter_distance_dict[label])])
+            #     linreg_result = linregress(rdf_inter_distance_dict[label], scores_dict[label])
+            #     yline = xline * linreg_result.slope + linreg_result.intercept
+            #     fig.add_trace(go.Scattergl(x=rdf_inter_distance_dict[label], y=scores_dict[label], showlegend=False,
+            #                                mode='markers', marker=dict(size=4, color=normed_energy_dict[label], colorscale='Viridis', showscale=False)),
+            #                   row=1, col=3)
+            #     fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Intermolecular RDF R={linreg_result.rvalue:.3f}'), row=1, col=3)
+            #     fig.update_layout(title=label)
+            #     fig.update_xaxes(title_text='Normed LJ Energy', row=1, col=1)
+            #     fig.update_yaxes(title_text='Model score', row=1, col=1)
+            #     fig.update_xaxes(title_text='Full RDF Distance', row=1, col=2)
+            #     fig.update_xaxes(title_text='Intermolecular RDF Distance', row=1, col=3)
+            #
+            #     # fig.show()
+            #     wandb.log({f'Target Analysis': fig})
             '''
             for all targets
             '''
             fig = make_subplots(rows=1, cols=3)
-            energies = np.concatenate([val for val in normed_energy_dict.values()])
             full_rdf = np.concatenate([val for val in rdf_full_distance_dict.values()])
             inter_rdf = np.concatenate([val for val in rdf_inter_distance_dict.values()])
-            normed_score = np.concatenate([normalize(scores_dict[key]) for key in scores_dict.keys() if key in normed_energy_dict.keys()])
+            normed_score = np.concatenate([normalize(scores_dict[key]) for key in scores_dict.keys()])# if key in normed_energy_dict.keys()])
+            energies = np.ones_like(normed_score) #np.concatenate([val for val in normed_energy_dict.values()])
+
 
             xline = np.asarray([np.amin(energies), np.amax(energies)])
             linreg_result = linregress((energies), normed_score)
@@ -2268,7 +2270,7 @@ class Modeller():
         softmax_temperature = 1
 
         # load up precomputed lennard-jones energies for the blind test submissions
-        bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy', allow_pickle=True).item()
+        bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy', allow_pickle=True).item() # todo recompute these - as the identifiers are now incorrect
         target_31_ff_dict = np.load('../datasets/sapt_energy_dict.npy',allow_pickle=True).item()
         energy = []
         bt_list = list(bt_lj_energy_dict.keys())
@@ -2335,7 +2337,7 @@ class Modeller():
                 scores_dict['Test Real'] = test_epoch_stats_dict['scores']
 
             elif self.config.gan_loss == 'standard':
-                scores_dict['Test Real'] = np_softmax(test_epoch_stats_dict['scores'], temperature=softmax_temperature)[:, 1]
+                scores_dict['Test Real'] = -np.log10(1-np_softmax(test_epoch_stats_dict['scores'], temperature=softmax_temperature)[:, 1])
 
             wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
 
@@ -2355,7 +2357,7 @@ class Modeller():
                     if self.config.gan_loss == 'wasserstein':
                         scores = raw_scores
                     elif self.config.gan_loss == 'standard':
-                        scores = np_softmax(raw_scores, temperature=softmax_temperature)[:, 1]
+                        scores = -np.log10(1-np_softmax(raw_scores, temperature=softmax_temperature)[:, 1])
                     scores_dict[target + ' exp'] = scores
                     energy_dict[target + ' exp'] = extra_test_dict['atomistic energy'][target_index]
 
@@ -2371,7 +2373,7 @@ class Modeller():
                     if self.config.gan_loss == 'wasserstein':
                         scores = raw_scores
                     elif self.config.gan_loss == 'standard':
-                        scores = np_softmax(raw_scores, temperature=softmax_temperature)[:, 1]
+                        scores = -np.log10(1-np_softmax(raw_scores, temperature=softmax_temperature)[:, 1])
                     scores_dict[target] = scores
                     energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
 
@@ -2428,7 +2430,7 @@ class Modeller():
             if self.config.gan_loss == 'wasserstein':
                 bandwidth = np.concatenate(list(scores_dict.values())).std()
             elif self.config.gan_loss == 'standard':
-                bandwidth = 0.0025
+                bandwidth = 0.05
 
             fig = go.Figure()
             for i, label in enumerate(scores_dict.keys()):
@@ -2565,8 +2567,8 @@ class Modeller():
             sapt_22_energies = extra_test_dict['atomistic energy'][sapt_22_inds]
 
             if config.gan_loss == 'standard':
-                sapt_scores = np_softmax(extra_test_dict['scores'][sapt_inds], temperature=softmax_temperature)[:,1]
-                sapt_22_scores = np_softmax(extra_test_dict['scores'][sapt_22_inds], temperature=softmax_temperature)[:,1]
+                sapt_scores = -np.log10(1-np_softmax(extra_test_dict['scores'][sapt_inds], temperature=softmax_temperature)[:,1])
+                sapt_22_scores = -np.log10(1-np_softmax(extra_test_dict['scores'][sapt_22_inds], temperature=softmax_temperature)[:,1])
             elif config.gan_loss == 'wasserstein':
                 sapt_scores = extra_test_dict['scores'][sapt_inds]
                 sapt_22_scores = extra_test_dict['scores'][sapt_22_inds]
@@ -2624,8 +2626,8 @@ class Modeller():
                 conformers_energies_dict_22[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict_22[conformer]]
 
 
-                conformers_scores_dict[conformer] = np_softmax(extra_test_dict['scores'][conformers_inds_dict[conformer]],temperature = softmax_temperature)[:,1]
-                conformers_scores_dict_22[conformer] = np_softmax(extra_test_dict['scores'][conformers_inds_dict_22[conformer]], temperature = softmax_temperature)[:,1]
+                conformers_scores_dict[conformer] = -np.log10(1-np_softmax(extra_test_dict['scores'][conformers_inds_dict[conformer]],temperature = softmax_temperature)[:,1])
+                conformers_scores_dict_22[conformer] = -np.log10(1-np_softmax(extra_test_dict['scores'][conformers_inds_dict_22[conformer]], temperature = softmax_temperature)[:,1])
 
             fig = make_subplots(rows=2, cols=10,
                                 )#subplot_titles=(['Sapt','Sapt 22']))
