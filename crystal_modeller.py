@@ -202,7 +202,10 @@ class Modeller():
             print(f'{config.mode} is not an implemented method!')
             sys.exit()
 
-        if config.device == 'cuda':
+        if config.device.lower() == 'cuda':
+            print('Putting models on CUDA')
+            torch.backends.cudnn.benchmark = True
+            torch.cuda.empty_cache()
             generator = generator.cuda()
             discriminator = discriminator.cuda()
 
@@ -253,6 +256,14 @@ class Modeller():
                     d_checkpoint['model_state_dict'][i[7:]] = d_checkpoint['model_state_dict'].pop(i)
             discriminator.load_state_dict(d_checkpoint['model_state_dict'])
             d_optimizer.load_state_dict(d_checkpoint['optimizer_state_dict'])
+
+        # cuda
+        if config.device.lower() == 'cuda':
+            print('Putting models on CUDA')
+            torch.backends.cudnn.benchmark = True
+            torch.cuda.empty_cache()
+            generator = nn.DataParallel(generator)
+            discriminator = nn.DataParallel(discriminator)
 
         # init schedulers
         scheduler1 = lr_scheduler.ReduceLROnPlateau(
@@ -469,7 +480,7 @@ class Modeller():
                                                           pg_dict=self.point_groups, sg_dict=self.space_groups, lattice_dict=self.lattice_type)
 
             print("Training batch size set to {}".format(config.final_batch_size))
-            #self.get_dists(config, extra_test_loader) # todo get rid of this when finished
+            # self.get_dists(config, extra_test_loader) # todo get rid of this when finished
 
             # model, optimizer, schedulers
             print('Reinitializing model and optimizer')
@@ -478,14 +489,6 @@ class Modeller():
             if config.d_model_path is None:
                 discriminator.apply(weight_reset)
             n_params = params1 + params2
-
-            # cuda
-            if config.device.lower() == 'cuda':
-                print('Putting models on CUDA')
-                torch.backends.cudnn.benchmark = True
-                torch.cuda.empty_cache()
-                generator.cuda()
-                discriminator.cuda()
 
             wandb.watch((generator, discriminator), log_graph=True, log_freq=100)
             wandb.log({"Model Num Parameters": n_params,
@@ -563,17 +566,15 @@ class Modeller():
                                           d_tr_record, d_te_record, g_tr_record, g_te_record)
 
                         if epoch % config.wandb.sample_reporting_frequency == 0:
-                            self.log_gan_accuracy(epoch, train_loader, test_loader,
-                                                  metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
+                            self.log_gan_accuracy(epoch, train_loader,
                                                   train_epoch_stats_dict, test_epoch_stats_dict, config,
-                                                  generator, discriminator, wandb_log_figures=config.wandb.log_figures,
                                                   extra_test_dict=extra_test_epoch_stats_dict)
 
                         '''
                         save model if best
                         '''  # todo add more sophisticated convergence stat
                         if epoch > 0:
-                            if epoch % 5 == 0: # every 5 epochs, save a checkpoint
+                            if epoch % 5 == 0:  # every 5 epochs, save a checkpoint
                                 # saving early-stopping checkpoint
                                 save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
                                 save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num) + f'_epoch_{epoch}')
@@ -641,10 +642,9 @@ class Modeller():
                 np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)
                 np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
 
-            self.log_discriminator_analysis(epoch, test_loader, extra_test_loader,
-                                            metrics_dict,
-                                            test_epoch_stats_dict, config,
-                                            extra_test_epoch_stats_dict)
+            self.log_gan_accuracy(epoch, train_loader,
+                                  train_epoch_stats_dict, test_epoch_stats_dict, config,
+                                  extra_test_dict=extra_test_epoch_stats_dict)
 
             # for working with a trained model
             if config.sample_after_training:
@@ -673,8 +673,8 @@ class Modeller():
         g_loss_record = []
         epoch_stats_dict = {
             'tracking features': [],
-            'generator density target':[],
-            'generator density prediction':[],
+            'generator density target': [],
+            'generator density prediction': [],
 
         }
 
@@ -785,7 +785,7 @@ class Modeller():
                     generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, config, data, generator, i)
 
                     score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict \
-                        = self.train_discriminator(generated_samples_i, discriminator, config, data, i, handedness, return_rdf = config.gan_loss == 'distance')  # alternately trains on real and fake samples
+                        = self.train_discriminator(generated_samples_i, discriminator, config, data, i, handedness, return_rdf=config.gan_loss == 'distance')  # alternately trains on real and fake samples
 
                     epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
                     epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
@@ -800,16 +800,16 @@ class Modeller():
 
                     elif config.gan_loss == 'distance':
                         real_rdf, fake_rdf, rr = real_dist_dict['rdf'], \
-                                                 fake_dist_dict['rdf'],\
+                                                 fake_dist_dict['rdf'], \
                                                  real_dist_dict['range']
-                        #width = 1
+                        # width = 1
                         # diffs = np.sum(np.abs(gaussian_filter1d(real_rdf,sigma=1) - gaussian_filter1d(fake_rdf,sigma=1)),axis=(1,2)) \
                         #         / np.sum(gaussian_filter1d(real_rdf,sigma=1),axis=(1,2))
 
-                        real_autocorrelation = np.asarray([np.asarray([scipy.signal.convolve(real_rdf[i,j],real_rdf[i,j],mode='same') for j in range(real_rdf.shape[1])]) for i in range(real_rdf.shape[0])])
-                        real_fake_correlation = np.asarray([np.asarray([scipy.signal.convolve(real_rdf[i,j],fake_rdf[i,j],mode='same') for j in range(real_rdf.shape[1])]) for i in range(real_rdf.shape[0])])
+                        real_autocorrelation = np.asarray([np.asarray([scipy.signal.convolve(real_rdf[i, j], real_rdf[i, j], mode='same') for j in range(real_rdf.shape[1])]) for i in range(real_rdf.shape[0])])
+                        real_fake_correlation = np.asarray([np.asarray([scipy.signal.convolve(real_rdf[i, j], fake_rdf[i, j], mode='same') for j in range(real_rdf.shape[1])]) for i in range(real_rdf.shape[0])])
 
-                        diffs = np.sum(np.abs(real_autocorrelation - real_fake_correlation),axis=(1,2)) / np.sum(real_autocorrelation,axis=(1,2))
+                        diffs = np.sum(np.abs(real_autocorrelation - real_fake_correlation), axis=(1, 2)) / np.sum(real_autocorrelation, axis=(1, 2))
 
                         epoch_stats_dict['generated sample distances'].extend(diffs)
 
@@ -868,7 +868,7 @@ class Modeller():
                         # adversarial_loss = torch.log(1-adversarial_score) # standard minimax
                         adversarial_loss = -torch.log(adversarial_score)  # modified minimax
                     elif config.gan_loss == 'distance':
-                        assert False # implement something here
+                        assert False  # implement something here
                     else:
                         print(config.gan_loss + ' is not an implemented GAN loss function!')
                         sys.exit()
@@ -1036,7 +1036,7 @@ class Modeller():
         elif config.gan_loss == 'standard':
             scores = output  # F.softmax(output, dim=1)[:, -1]  # 'no' and 'yes' unnormalized activations
         elif config.gan_loss == 'distance':
-            scores = output[:,0] # the raw distance output
+            scores = output[:, 0]  # the raw distance output
         else:
             print(config.gan_loss + ' is not a valid GAN loss function!')
             sys.exit()
@@ -1045,10 +1045,10 @@ class Modeller():
 
         return scores, extra_outputs['dists dict']
 
-    def compute_dataset_rmsd(self,target_identifiers, target_identifiers_list, extra_test_loader):
+    def compute_dataset_rmsd(self, target_identifiers, target_identifiers_list, extra_test_loader):
 
         if os.path.exists('../../test_data_rmsds.npy'):
-            rmsd_dict = np.load('../../test_data_rmsds.npy',allow_pickle=True).item()
+            rmsd_dict = np.load('../../test_data_rmsds.npy', allow_pickle=True).item()
         else:
             rmsd_dict = {}
 
@@ -1119,10 +1119,10 @@ class Modeller():
                     if crystal_target == 't31':
                         comparison_output1 = sim_engine.compare(target_crystals['XXXI_1'], test_crystal)
                         comparison_output2 = sim_engine.compare(target_crystals['XXXI_2'], test_crystal)
-                        #comparison_output3 = sim_engine.compare(target_crystals['XXXI_3'], test_crystal)
+                        # comparison_output3 = sim_engine.compare(target_crystals['XXXI_3'], test_crystal)
                         rmsd_dict[data.csd_identifier] = [comparison_output1.rmsd,
-                                                          comparison_output2.rmsd,]
-                                                          #comparison_output3.rmsd]
+                                                          comparison_output2.rmsd, ]
+                        # comparison_output3.rmsd]
 
                     elif crystal_target is not None:
                         comparison_output = sim_engine.compare(target_crystals[crystal_target], test_crystal)
@@ -1143,8 +1143,8 @@ class Modeller():
         '''
 
         from pymatgen.core import (structure, lattice)
-        #from ccdc.crystal import PackingSimilarity
-        #from ccdc.io import CrystalReader
+        # from ccdc.crystal import PackingSimilarity
+        # from ccdc.io import CrystalReader
         from pymatgen.io import cif
         import warnings
 
@@ -1168,7 +1168,7 @@ class Modeller():
             'XXVI': 'XAFQIH',
             'XXXI_1': '2199671_p10167_1_0',
             'XXXI_2': '2199673_1_0',
-            #'XXXI_3': '2199672_1_0',
+            # 'XXXI_3': '2199672_1_0',
         }
 
         target_identifiers_list = [
@@ -1194,8 +1194,8 @@ class Modeller():
         rdfs_dict = {}
 
         for i, data in enumerate(tqdm.tqdm(extra_test_loader)):
-            supercell_data = builder.build_supercells_from_dataset(data.clone(), config, return_energy=False, override_supercell_size = 1)
-            rdfs, rr, corr_labels = crystal_rdf(supercell_data, rrange=[0,5],bins=500, elementwise=True, atomwise = False, intermolecular=False, raw_density=True)
+            supercell_data = builder.build_supercells_from_dataset(data.clone(), config, return_energy=False, override_supercell_size=1)
+            rdfs, rr, corr_labels = crystal_rdf(supercell_data, rrange=[0, 5], bins=500, elementwise=True, atomwise=False, intermolecular=False, raw_density=True)
 
             for j, ident in enumerate(supercell_data.csd_identifier):
                 rdfs_dict[ident] = rdfs[j].cpu().detach().numpy()
@@ -1209,7 +1209,7 @@ class Modeller():
         rdf_diffs_dict = {}
         sigma = 10
 
-        compare = lambda a,b : np.sum(np.abs(a-b)) / np.sum(np.abs(a))
+        compare = lambda a, b: np.sum(np.abs(a - b)) / np.sum(np.abs(a))
 
         for i, key in enumerate(tqdm.tqdm(rdfs_dict)):
             '''
@@ -1231,11 +1231,11 @@ class Modeller():
             if crystal_target == 't31':
                 target_rdf1 = gaussian_filter1d(rdfs_dict['2199671_p10167_1_0'], sigma=sigma)
                 target_rdf2 = gaussian_filter1d(rdfs_dict['2199673_1_0'], sigma=sigma)
-                #target_rdf3 = gaussian_filter1d(rdfs_dict['2199672_1_0'], sigma=sigma)
+                # target_rdf3 = gaussian_filter1d(rdfs_dict['2199672_1_0'], sigma=sigma)
 
                 rdf_diffs_dict[key] = [compare(target_rdf1, sample_rdf),
                                        compare(target_rdf2, sample_rdf)]
-                                       #compare(target_rdf3, sample_rdf),]
+                # compare(target_rdf3, sample_rdf),]
 
             elif crystal_target is not None:
                 target_rdf1 = gaussian_filter1d(rdfs_dict[target_identifiers[crystal_target]], sigma=sigma)
@@ -1294,7 +1294,7 @@ class Modeller():
             else:
                 data1 = datapoints[key][..., 0]
                 data2 = datapoints[key][..., 1]
-                #data3 = datapoints[key][..., 2]
+                # data3 = datapoints[key][..., 2]
 
                 plt.subplot(3, 3, ind)
                 plt.title('XXXI_1')
@@ -1320,9 +1320,7 @@ class Modeller():
 
         plt.tight_layout()
 
-
         return None
-
 
     def pairwise_correlations_analysis(self, dataset_builder, config):
         '''
@@ -1522,13 +1520,13 @@ class Modeller():
                 if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
                     score = train_epoch_stats_dict[key]
                 elif self.config.gan_loss == 'standard':
-                    score = -np.log10(1-np_softmax(train_epoch_stats_dict[key])[:, 0])
+                    score = np_softmax(train_epoch_stats_dict[key])[:, 0]
                 special_losses['Train ' + key] = np.average(score)
             if ('score' in key) and (test_epoch_stats_dict[key] is not None):
                 if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
                     score = test_epoch_stats_dict[key]
                 elif self.config.gan_loss == 'standard':
-                    score = -np.log10(1-np_softmax(test_epoch_stats_dict[key])[:, 0])
+                    score = np_softmax(test_epoch_stats_dict[key])[:, 0]
                 special_losses['Test ' + key] = np.average(score)
         wandb.log(special_losses)
 
@@ -1556,706 +1554,31 @@ class Modeller():
 
         return ref_cell_coords_c
 
-    def log_gan_accuracy(self, epoch, train_loader, test_loader,
-                         metrics_dict, g_tr_record, g_te_record, d_tr_record, d_te_record,
+    def log_gan_accuracy(self, epoch, train_loader,
                          train_epoch_stats_dict, test_epoch_stats_dict, config,
-                         generator, discriminator, wandb_log_figures=True,
                          extra_test_dict=None):
         '''
         Do analysis and upload results to w&b
-
-        1: generator efficiency on test set
-            -:> cell parameter rmsd
-            -:> RDF / RMSD20 (from compack, CCDC)
-            -:> cell density
-            -:> 1D & 2D correlation overlaps
-        Future: FF evaluations, polymorphs ranking
-
-        :param epoch:
-        :param train_loader:
-        :param test_loader:
-        :param metrics_dict:
-        :param g_tr_record:
-        :param g_te_record:
-        :param d_tr_record:
-        :param d_te_record:
-        :param epoch_stats_dict:
-        :param config:
-        :param generator:
-        :param discriminator:
-        :return:
-        '''
-        # cell images
-        # for i in range(len(bottomXsamples)):
-        #     image = wandb.Image(image_set[i],
-        #                         caption="Epoch {} Molecule5 {} bad sample {} classified as {}".format(epoch, smiles_set[i], self.groupLabels[int(true_set[i])], self.groupLabels[int(guess_set[i])]))
-        #     wandb.log({"Bad examples": image})
-
-        '''
-        example generated unit cells
         '''
         if config.mode == 'gan':
             generated_supercell_examples_dict = test_epoch_stats_dict['generated supercell examples dict']
             if generated_supercell_examples_dict is not None:
-                if config.wandb.log_figures:
-                    for i in range(generated_supercell_examples_dict['n examples']):
-                        cell_vectors = generated_supercell_examples_dict['T fc list'][i].T
-                        supercell_pos = generated_supercell_examples_dict['crystal positions'][i]
-                        supercell_atoms = generated_supercell_examples_dict['atoms'][i]
+                self.log_molecules(config, generated_supercell_examples_dict)
 
-                        ref_cell_size = len(supercell_pos) // (2 * config.supercell_size + 1) ** 3
-                        ref_cell_pos = supercell_pos[:ref_cell_size]
-
-                        ref_cell_centroid = ref_cell_pos.mean(0)
-                        max_range = np.amax(np.linalg.norm(cell_vectors, axis=0)) / 1.3
-                        keep_pos = np.argwhere(cdist(supercell_pos, ref_cell_centroid[None, :]) < max_range)[:, 0]
-
-                        ase.io.write(f'supercell_{i}.pdb', Atoms(symbols=supercell_atoms[keep_pos], positions=supercell_pos[keep_pos], cell=cell_vectors))
-                        wandb.log({'Generated Supercells': wandb.Molecule(open(f"supercell_{i}.pdb"))})  # todo find the max number of atoms this thing will take for bonding
-
-            # # correlate losses with molecular features
-            # tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
-            # g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
-            # d_loss_correlations = np.zeros(config.dataDims['num tracking features'])
-            # features = []
-            # for i in range(config.dataDims['num tracking features']):  # not that interesting
-            #     features.append(config.dataDims['tracking features dict'][i])
-            #     g_loss_correlations[i] = np.corrcoef(g_te_record, tracking_features[:, i], rowvar=False)[0, 1]
-            #     d_loss_correlations[i] = np.corrcoef(d_te_record, tracking_features[:, i], rowvar=False)[0, 1]
-            #
-            # g_sort_inds = np.argsort(g_loss_correlations)
-            # g_loss_correlations = g_loss_correlations[g_sort_inds]
-            #
-            # d_sort_inds = np.argsort(d_loss_correlations)
-            # d_loss_correlations = d_loss_correlations[d_sort_inds]
-            #
-            # if config.wandb.log_figures:
-            #     fig = go.Figure(go.Bar(
-            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
-            #         x=[g_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
-            #         orientation='h',
-            #     ))
-            #     wandb.log({'G Loss correlations': fig})
-            #
-            #     fig = go.Figure(go.Bar(
-            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
-            #         x=[d_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
-            #         orientation='h',
-            #     ))
-            #     wandb.log({'D Loss correlations': fig})
-
-            '''
-            distance regression analysis
-            '''
             if self.config.gan_loss == 'distance':
-                test_fake_predictions = test_epoch_stats_dict['discriminator fake score']
-                test_real_predictions = test_epoch_stats_dict['discriminator real score']
-                test_fake_distances = test_epoch_stats_dict['generated sample distances']
-                test_real_distances = np.zeros_like(test_real_predictions)
-                orig_target = np.concatenate((test_fake_distances, test_real_distances))
-                orig_prediction = np.concatenate((test_fake_predictions, test_real_predictions))
+                self.gan_distance_regression_analysis(config, test_epoch_stats_dict)
 
-                xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
-                fig = go.Figure()
-                fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
-                fig.update_traces(contours_coloring="fill")
-                fig.update_traces(contours_showlines=False)
-                fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
-                fig.add_trace(go.Scattergl(x=xline, y=xline))
-                fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-                wandb.log({'Distance Trace':fig})
-
-                losses = ['normed error', 'abs normed error', 'squared error']
-                loss_dict = {}
-                losses_dict = {}
-                for loss in losses:
-                    if loss == 'normed error':
-                        loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
-                    elif loss == 'abs normed error':
-                        loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
-                    elif loss == 'squared error':
-                        loss_i = (orig_target - orig_prediction) ** 2
-                    losses_dict[loss] = loss_i  # huge unnecessary upload
-                    loss_dict[loss + ' mean'] = np.mean(loss_i)
-                    loss_dict[loss + ' std'] = np.std(loss_i)
-                    print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
-
-                linreg_result = linregress(orig_target, orig_prediction)
-                loss_dict['Regression R2'] = linreg_result.rvalue
-                loss_dict['Regression slope'] = linreg_result.slope
-                wandb.log(loss_dict)
-            '''
-            cell parameter analysis
-            '''
             if train_epoch_stats_dict['generated cell parameters'] is not None:
-                n_crystal_features = config.dataDims['num lattice features']
-                generated_samples = test_epoch_stats_dict['generated cell parameters']
-                means = config.dataDims['lattice means']
-                stds = config.dataDims['lattice stds']
-
-                # slightly expensive to do this every time
-                dataset_cell_distribution = np.asarray([train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
-
-                # raw outputs
-                renormalized_samples = np.zeros_like(generated_samples)
-                for i in range(generated_samples.shape[1]):
-                    renormalized_samples[:, i] = generated_samples[:, i] * stds[i] + means[i]
-
-                cleaned_samples = test_epoch_stats_dict['final generated cell parameters']
-
-                overlaps_1d = {}
-                sample_means = {}
-                sample_stds = {}
-                for i, key in enumerate(config.dataDims['lattice features']):
-                    mini, maxi = np.amin(dataset_cell_distribution[:, i]), np.amax(dataset_cell_distribution[:, i])
-                    h1, r1 = np.histogram(dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
-                    h1 = h1 / len(dataset_cell_distribution[:, i])
-
-                    h2, r2 = np.histogram(cleaned_samples[:, i], bins=r1)
-                    h2 = h2 / len(cleaned_samples[:, i])
-
-                    overlaps_1d[f'{key} 1D Overlap'] = np.min(np.concatenate((h1[None], h2[None]), axis=0), axis=0).sum()
-
-                    sample_means[f'{key} mean'] = np.mean(cleaned_samples[:, i])
-                    sample_stds[f'{key} std'] = np.std(cleaned_samples[:, i])
-
-                average_overlap = np.average([overlaps_1d[key] for key in overlaps_1d.keys()])
-                overlaps_1d['average 1D overlap'] = average_overlap
-                wandb.log(overlaps_1d.copy())
-                wandb.log(sample_means)
-                wandb.log(sample_stds)
-                print("1D Overlap With Data:{:.3f}".format(average_overlap))
-
-                if wandb_log_figures:
-                    fig_dict = {}  # consider replacing by Joy plot
-
-                    # bar graph of 1d overlaps
-                    fig = go.Figure(go.Bar(
-                        y=list(overlaps_1d.keys()),
-                        x=[overlaps_1d[key] for key in overlaps_1d],
-                        orientation='h',
-                        marker=dict(color='red')
-                    ))
-                    fig_dict['1D overlaps'] = fig
-
-                    # 1d Histograms
-                    for i in range(n_crystal_features):
-                        fig = go.Figure()
-
-                        fig.add_trace(go.Histogram(
-                            x=dataset_cell_distribution[:, i],
-                            histnorm='probability density',
-                            nbinsx=100,
-                            name="Dataset samples",
-                            showlegend=True,
-                        ))
-
-                        fig.add_trace(go.Histogram(
-                            x=renormalized_samples[:, i],
-                            histnorm='probability density',
-                            nbinsx=100,
-                            name="Samples",
-                            showlegend=True,
-                        ))
-                        fig.add_trace(go.Histogram(
-                            x=cleaned_samples[:, i],
-                            histnorm='probability density',
-                            nbinsx=100,
-                            name="Cleaned Samples",
-                            showlegend=True,
-                        ))
-                        fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                        fig.update_traces(opacity=0.5)
-
-                        fig_dict[self.dataDims['lattice features'][i] + ' distribution'] = fig
-
-                    wandb.log(fig_dict)
-
-            # '''
-            # cell atomic distances
-            # '''
-            # if train_epoch_stats_dict['generated inter distance hist'] is not None:  # todo update this
-            #     hh2_test, rr = test_epoch_stats_dict['generated inter distance hist']
-            #     hh2_train, _ = train_epoch_stats_dict['generated inter distance hist']
-            #     if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
-            #         hh1, rr = train_epoch_stats_dict['real inter distance hist']
-            #     else:
-            #         hh1 = hh2_test
-            #
-            #     shell_volumes = (4 / 3) * torch.pi * ((rr[:-1] + np.diff(rr)) ** 3 - rr[:-1] ** 3)
-            #     rdf1 = hh1 / shell_volumes
-            #     rdf2 = hh2_test / shell_volumes
-            #     rdf3 = hh2_train / shell_volumes
-            #     fig = go.Figure()
-            #     fig.add_trace(go.Scattergl(x=rr, y=rdf1, name='real'))
-            #     fig.add_trace(go.Scattergl(x=rr, y=rdf2, name='gen, test'))
-            #     fig.add_trace(go.Scattergl(x=rr, y=rdf3, name='gen, train'))
-            #
-            #     if config.wandb.log_figures:
-            #         wandb.log({'G2 Comparison': fig})
-            #
-            #     range_analysis_dict = {}
-            #     if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
-            #         # get histogram overlaps
-            #         range_analysis_dict['tr g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf3[None, :] / rdf1.sum()), axis=0), axis=0).sum()
-            #         range_analysis_dict['te g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf2[None, :] / rdf1.sum()), axis=0), axis=0).sum()
-            #
-            #     # get probability mass at too-close range (should be ~zero)
-            #     range_analysis_dict['tr short range density fraction'] = np.sum(rdf3[rr[1:] < 1.2] / rdf3.sum())
-            #     range_analysis_dict['te short range density fraction'] = np.sum(rdf2[rr[1:] < 1.2] / rdf2.sum())
-            #
-            #     wandb.log(range_analysis_dict)
+                self.cell_params_analysis(config, train_loader, test_epoch_stats_dict)
 
         '''
         auxiliary regression target
         '''
         if test_epoch_stats_dict['generator density target'] is not None:  # config.train_generator_density:
-            target_mean = self.dataDims['target mean']
-            target_std = self.dataDims['target std']
-
-            target = np.asarray(test_epoch_stats_dict['generator density target'])
-            prediction = np.asarray(test_epoch_stats_dict['generator density prediction'])
-            orig_target = target * target_std + target_mean
-            orig_prediction = prediction * target_std + target_mean
-
-            train_target = np.asarray(train_epoch_stats_dict['generator density target'])
-            train_prediction = np.asarray(train_epoch_stats_dict['generator density prediction'])
-            train_orig_target = train_target * target_std + target_mean
-            train_orig_prediction = train_prediction * target_std + target_mean
-
-            losses = ['normed error', 'abs normed error', 'squared error']
-            loss_dict = {}
-            losses_dict = {}
-            for loss in losses:
-                if loss == 'normed error':
-                    loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
-                elif loss == 'abs normed error':
-                    loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
-                elif loss == 'squared error':
-                    loss_i = (orig_target - orig_prediction) ** 2
-                losses_dict[loss] = loss_i  # huge unnecessary upload
-                loss_dict[loss + ' mean'] = np.mean(loss_i)
-                loss_dict[loss + ' std'] = np.std(loss_i)
-                print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
-
-            linreg_result = linregress(orig_target, orig_prediction)
-            loss_dict['Regression R2'] = linreg_result.rvalue
-            loss_dict['Regression slope'] = linreg_result.slope
-            wandb.log(loss_dict)
-
-            # log loss distribution
-            if config.wandb.log_figures:  # todo clean
-                # predictions vs target trace
-                xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
-                fig = go.Figure()
-                fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
-                fig.update_traces(contours_coloring="fill")
-                fig.update_traces(contours_showlines=False)
-                fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
-                fig.add_trace(go.Scattergl(x=xline, y=xline))
-                fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-                wandb.log({'Test Packing Coefficient': fig})
-
-                xline = np.linspace(max(min(train_orig_target), min(train_orig_prediction)), min(max(train_orig_target), max(train_orig_prediction)), 10)
-                fig = go.Figure()
-                fig.add_trace(go.Histogram2dContour(x=train_orig_target, y=train_orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
-                fig.update_traces(contours_coloring="fill")
-                fig.update_traces(contours_showlines=False)
-                fig.add_trace(go.Scattergl(x=train_orig_target, y=train_orig_prediction, mode='markers', showlegend=True, opacity=0.5))
-                fig.add_trace(go.Scattergl(x=xline, y=xline))
-                fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-                wandb.log({'Train Packing Coefficient': fig})
-
-                fig = go.Figure()
-                fig.add_trace(go.Histogram(x=train_orig_prediction - train_orig_target,
-                                           histnorm='probability density',
-                                           nbinsx=100,
-                                           name="Error Distribution",
-                                           showlegend=False))
-                wandb.log({'Regression Error Distribution': fig})
-
-                # correlate losses with molecular features
-                tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
-                g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
-                features = []
-                for i in range(config.dataDims['num tracking features']):  # not that interesting
-                    features.append(config.dataDims['tracking features dict'][i])
-                    g_loss_correlations[i] = np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i], rowvar=False)[0, 1]
-
-                g_sort_inds = np.argsort(g_loss_correlations)
-                g_loss_correlations = g_loss_correlations[g_sort_inds]
-
-                fig = go.Figure(go.Bar(
-                    y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
-                    x=[g_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
-                    orientation='h',
-                ))
-                wandb.log({'Regressor Loss Correlates': fig})
+            self.log_aux_regression(config, train_epoch_stats_dict, test_epoch_stats_dict)
 
         if (extra_test_dict is not None) and (epoch % config.extra_test_period == 0):
-            # need to identify targets
-            # need to distinguish between experimental and proposed structures
-            blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
-                'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
-                'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
-
-            #bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy', allow_pickle=True).item()
-            #extra_test_dict['atomistic energy'] = np.asarray([bt_lj_energy_dict[ident] for ident in extra_test_dict['identifiers']])
-
-            '''
-            determine which samples go with which targets
-            '''
-            all_identifiers = {key: [] for key in blind_test_targets}
-            for i in range(len(extra_test_dict['identifiers'])):
-                item = extra_test_dict['identifiers'][i]
-                for j in range(len(blind_test_targets)):  # go in reverse to account for roman numerals system of duplication
-                    if blind_test_targets[-1 - j] in item:
-                        all_identifiers[blind_test_targets[-1 - j]].append(i)
-                        break
-
-            '''
-            get the identifiers for all the BT targets
-            '''
-            # CSD identifiers for the blind test targets
-            target_identifiers = {
-                'XVI': 'OBEQUJ',
-                'XVII': 'OBEQOD',
-                'XVIII': 'OBEQET',
-                'XIX': 'XATJOT',
-                'XX': 'OBEQIX',
-                'XXI': 'KONTIQ',
-                'XXII': 'NACJAF',
-                'XXIII': 'XAFPAY',
-                'XXIV': 'XAFQON',
-                'XXVI': 'XAFQIH'
-            }
-
-            target_identifiers_inds = {key: [] for key in blind_test_targets}
-            for i in range(len(extra_test_dict['identifiers'])):
-                item = extra_test_dict['identifiers'][i]
-                for key in target_identifiers.keys():
-                    if item == target_identifiers[key]:
-                        target_identifiers_inds[key] = i
-
-            '''
-            record all the stats for the CSD data
-            '''
-            scores_dict = {}
-            # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
-            randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)
-            distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)
-
-            if self.config.gan_loss == 'wasserstein':
-                scores_dict['Train Real'] = train_epoch_stats_dict['discriminator real score']
-                scores_dict['Test Real'] = test_epoch_stats_dict['discriminator real score']
-                scores_dict['Test Randn'] = test_epoch_stats_dict['discriminator fake score'][randn_inds]
-                # scores_dict['Test NF'] = test_epoch_stats_dict['discriminator fake score'][nf_inds]
-                scores_dict['Test Distorted'] = test_epoch_stats_dict['discriminator fake score'][distorted_inds]
-
-            elif self.config.gan_loss == 'standard':
-                scores_dict['Train Real'] = -np.log10(1-np_softmax(train_epoch_stats_dict['discriminator real score'])[:, 1])
-                scores_dict['Test Real'] = -np.log10(1-np_softmax(test_epoch_stats_dict['discriminator real score'])[:, 1])
-                scores_dict['Test Randn'] = -np.log10(1-np_softmax(test_epoch_stats_dict['discriminator fake score'][randn_inds])[:, 1])
-                # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
-                scores_dict['Test Distorted'] = -np.log10(1-np_softmax(test_epoch_stats_dict['discriminator fake score'][distorted_inds])[:, 1])
-
-            elif self.config.gan_loss == 'distance':
-                assert False # todo implement something
-
-            wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
-            wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
-            wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})
-            # wandb.log({'Average NF Fake score': np.average(scores_dict['Test NF'])})
-            wandb.log({'Average Distorted Fake score': np.average(scores_dict['Test Distorted'])})
-
-            loss_correlations_dict = {}
-            rdf_full_distance_dict = {}
-            rdf_inter_distance_dict = {}
-            energy_dict = {}
-
-            '''
-            build property dicts for the submissions and BT targets
-            '''
-            for target in all_identifiers.keys():  # run the analysis for each target
-                if target_identifiers_inds[target] != []:
-
-                    target_index = target_identifiers_inds[target]
-                    raw_scores = extra_test_dict['scores'][target_index]
-                    if self.config.gan_loss == 'wasserstein':
-                        scores = raw_scores
-                    elif self.config.gan_loss == 'standard':
-                        scores = -np.log10(1-np_softmax(raw_scores)[:, 1])
-                    scores_dict[target + ' exp'] = scores
-                    #energy_dict[target + ' exp'] = extra_test_dict['atomistic energy'][target_index]
-
-                    wandb.log({f'Average {target} exp score': np.average(scores)})
-
-                    target_full_rdf = extra_test_dict['full rdf'][target_index]
-                    target_inter_rdf = extra_test_dict['intermolecular rdf'][target_index]
-
-                if all_identifiers[target] != []:
-
-                    target_indices = all_identifiers[target]
-                    raw_scores = extra_test_dict['scores'][target_indices]
-                    if self.config.gan_loss == 'wasserstein':
-                        scores = raw_scores
-                    elif self.config.gan_loss == 'standard':
-                        scores = -np.log10(1-np_softmax(raw_scores)[:, 1])
-                    scores_dict[target] = scores
-                    #energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
-
-                    wandb.log({f'Average {target} score': np.average(scores)})
-
-                    submission_full_rdf = extra_test_dict['full rdf'][target_indices]
-                    submission_inter_rdf = extra_test_dict['intermolecular rdf'][target_indices]
-
-                    # compute distance between target & submission RDFs
-                    rr = np.linspace(0, 10, 100)
-                    sigma = 1
-                    smoothed_target_full_rdf = gaussian_filter1d(target_full_rdf, sigma=sigma)
-                    smoothed_target_inter_rdf = gaussian_filter1d(target_inter_rdf, sigma=sigma)
-                    smoothed_submission_full_rdf = gaussian_filter1d(np.clip(submission_full_rdf, a_min=0, a_max=10), sigma=sigma)
-                    smoothed_submission_inter_rdf = gaussian_filter1d(np.clip(submission_inter_rdf, a_min=0, a_max=10), sigma=sigma)
-
-                    rdf_full_distance_dict[target] = 1 - np.sum(np.minimum(smoothed_target_full_rdf, smoothed_submission_full_rdf), axis=(1, 2)) / np.sum(
-                        smoothed_target_full_rdf)  # get histogram overlap over all atom pairs & scale by total target density
-                    rdf_inter_distance_dict[target] = 1 - np.sum(np.minimum(smoothed_target_inter_rdf, smoothed_submission_inter_rdf), axis=(1, 2)) / np.sum(smoothed_target_inter_rdf)
-
-                    # correlate losses with molecular features
-                    tracking_features = np.asarray(extra_test_dict['tracking features'])
-                    loss_correlations = np.zeros(config.dataDims['num tracking features'])
-                    features = []
-                    for j in range(config.dataDims['num tracking features']):  # not that interesting
-                        features.append(config.dataDims['tracking features dict'][j])
-                        loss_correlations[j] = np.corrcoef(scores, tracking_features[target_indices, j], rowvar=False)[0, 1]
-
-                    loss_correlations_dict[target] = loss_correlations
-
-            # normed_energy_dict = {key: normalize(energy_dict[key]) for key in energy_dict.keys() if 'exp' not in key}
-            # normed_energy_dict = {key: standardize(energy_dict[key]) for key in energy_dict.keys() if 'exp' not in key}
-
-            '''
-            prep violin figure colors
-            '''
-            lens = [len(val) for val in all_identifiers.values()]
-            colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
-
-            plot_color_dict = {}
-            plot_color_dict['Train Real'] = ('rgb(250,50,50)')  # train
-            plot_color_dict['Test Real'] = ('rgb(250,150,50)')  # test
-            plot_color_dict['Test Randn'] = ('rgb(0,50,0)')  # fake csd
-            plot_color_dict['Test NF'] = ('rgb(0,150,0)')  # fake nf
-            plot_color_dict['Test Distorted'] = ('rgb(0,100,100)')  # fake distortion
-            ind = 0
-            for target in all_identifiers.keys():
-                if all_identifiers[target] != []:
-                    plot_color_dict[target] = colors[ind]
-                    plot_color_dict[target + ' exp'] = colors[ind]
-
-                    ind += 1
-
-            '''
-            violin scores plot
-            '''
-            if self.config.gan_loss == 'wasserstein':
-                bandwidth = np.concatenate(list(scores_dict.values())).std()
-            elif self.config.gan_loss == 'standard':
-                bandwidth = 0.02
-
-            fig = go.Figure()
-            for i, label in enumerate(scores_dict.keys()):
-                if 'exp' in label:
-                    fig.add_trace(go.Violin(x=1-np.log10(np.array(scores_dict[label])), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
-                else:
-                    fig.add_trace(go.Violin(x=1-np.log10(np.array(scores_dict[label])), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
-            fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
-            wandb.log({'Discriminator Test Scores': fig})
-
-            '''
-            loss correlates - not useful right now
-            '''
-
-            loss_correlations = np.zeros(config.dataDims['num tracking features'])
-            features = []
-            for j in range(config.dataDims['num tracking features']):  # not that interesting
-                features.append(config.dataDims['tracking features dict'][j])
-                loss_correlations[j] = np.corrcoef(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'][:, j], rowvar=False)[0, 1]
-
-            loss_correlations_dict['Test Real'] = loss_correlations
-
-            fig = go.Figure()
-            color_dict = {
-                'XVI': 'rgb(250,50,5)',
-                'XVII': 'rgb(250,50,5)',
-                'XVIII': 'rgb(250,50,5)',
-                'XIX': 'rgb(250,50,5)',
-                'XX': 'rgb(250,50,5)',
-                'XXI': 'rgb(250,50,5)',
-
-                'XXII': 'rgb(5,50,250)',
-                'XXIII': 'rgb(5,50,250)',
-                'XXIV': 'rgb(5,50,250)',
-                'XXV': 'rgb(5,50,250)',
-                'XXVI': 'rgb(5,50,250)',
-
-                'Train Real': 'rgb(5,250,50)',
-                'Test Real': 'rgb(5,250,50)'
-            }
-            for target in loss_correlations_dict.keys():
-                fig.add_trace(go.Bar(
-                    y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
-                    x=[loss_correlations_dict[target][i] for i in range(config.dataDims['num tracking features'])],
-                    orientation='h',
-                    name=target,
-                    showlegend=True,
-                    marker_color=color_dict[target],
-                ))
-            fig.update_layout(showlegend=True)
-            wandb.log({'Test loss correlates': fig})
-
-            '''
-            rdf distance vs score vs energy
-            '''
-
-            # for i, label in enumerate(rdf_full_distance_dict.keys()):
-            #     fig = make_subplots(rows=1, cols=3)
-            #     xline = np.asarray([np.amin(normed_energy_dict[label]), np.amax(normed_energy_dict[label])])
-            #     linreg_result = linregress((normed_energy_dict[label]), scores_dict[label])
-            #     yline = xline * linreg_result.slope + linreg_result.intercept
-            #     fig.add_trace(go.Scattergl(x=normed_energy_dict[label], y=scores_dict[label], showlegend=False,
-            #                                mode='markers', marker=dict(size=4, color=rdf_full_distance_dict[label], colorscale='Viridis', showscale=False)),
-            #                   row=1, col=1)
-            #     fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Energy R={linreg_result.rvalue:.3f}'), row=1, col=1)
-            #
-            #     xline = np.asarray([np.amin(rdf_full_distance_dict[label]), np.amax(rdf_full_distance_dict[label])])
-            #     linreg_result = linregress(rdf_full_distance_dict[label], scores_dict[label])
-            #     yline = xline * linreg_result.slope + linreg_result.intercept
-            #     fig.add_trace(go.Scattergl(x=rdf_full_distance_dict[label], y=scores_dict[label], showlegend=False,
-            #                                mode='markers', marker=dict(size=4, color=normed_energy_dict[label], colorscale='Viridis', showscale=False)),
-            #                   row=1, col=2)
-            #     fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Full RDF R={linreg_result.rvalue:.3f}'), row=1, col=2)
-            #
-            #     xline = np.asarray([np.amin(rdf_inter_distance_dict[label]), np.amax(rdf_inter_distance_dict[label])])
-            #     linreg_result = linregress(rdf_inter_distance_dict[label], scores_dict[label])
-            #     yline = xline * linreg_result.slope + linreg_result.intercept
-            #     fig.add_trace(go.Scattergl(x=rdf_inter_distance_dict[label], y=scores_dict[label], showlegend=False,
-            #                                mode='markers', marker=dict(size=4, color=normed_energy_dict[label], colorscale='Viridis', showscale=False)),
-            #                   row=1, col=3)
-            #     fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Intermolecular RDF R={linreg_result.rvalue:.3f}'), row=1, col=3)
-            #     fig.update_layout(title=label)
-            #     fig.update_xaxes(title_text='Normed LJ Energy', row=1, col=1)
-            #     fig.update_yaxes(title_text='Model score', row=1, col=1)
-            #     fig.update_xaxes(title_text='Full RDF Distance', row=1, col=2)
-            #     fig.update_xaxes(title_text='Intermolecular RDF Distance', row=1, col=3)
-            #
-            #     # fig.show()
-            #     wandb.log({f'Target Analysis': fig})
-            '''
-            for all targets
-            '''
-            fig = make_subplots(rows=1, cols=3)
-            full_rdf = np.concatenate([val for val in rdf_full_distance_dict.values()])
-            inter_rdf = np.concatenate([val for val in rdf_inter_distance_dict.values()])
-            normed_score = np.concatenate([normalize(scores_dict[key]) for key in scores_dict.keys()])# if key in normed_energy_dict.keys()])
-            energies = np.ones_like(normed_score) #np.concatenate([val for val in normed_energy_dict.values()])
-
-
-            xline = np.asarray([np.amin(energies), np.amax(energies)])
-            linreg_result = linregress((energies), normed_score)
-            yline = xline * linreg_result.slope + linreg_result.intercept
-            fig.add_trace(go.Scattergl(x=energies, y=normed_score, showlegend=False,
-                                       mode='markers', marker=dict(size=4, color=full_rdf, colorscale='Viridis', showscale=False)),
-                          row=1, col=1)
-            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Energy R={linreg_result.rvalue:.3f}'), row=1, col=1)
-
-            xline = np.asarray([np.amin(full_rdf), np.amax(full_rdf)])
-            linreg_result = linregress(full_rdf, normed_score)
-            yline = xline * linreg_result.slope + linreg_result.intercept
-            fig.add_trace(go.Scattergl(x=full_rdf, y=normed_score, showlegend=False,
-                                       mode='markers', marker=dict(size=4, color=energies, colorscale='Viridis', showscale=False)),
-                          row=1, col=2)
-            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Full RDF R={linreg_result.rvalue:.3f}'), row=1, col=2)
-
-            xline = np.asarray([np.amin(inter_rdf), np.amax(inter_rdf)])
-            linreg_result = linregress(inter_rdf, normed_score)
-            yline = xline * linreg_result.slope + linreg_result.intercept
-            fig.add_trace(go.Scattergl(x=inter_rdf, y=normed_score, showlegend=False,
-                                       mode='markers', marker=dict(size=4, color=energies, colorscale='Viridis', showscale=False)),
-                          row=1, col=3)
-            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Intermolecular RDF R={linreg_result.rvalue:.3f}'), row=1, col=3)
-
-            fig.update_layout(title='All BT Targets')
-            fig.update_xaxes(title_text='Normed Energy', row=1, col=1)
-            fig.update_yaxes(title_text='Model score', row=1, col=1)
-            fig.update_xaxes(title_text='Full RDF Distance', row=1, col=2)
-            fig.update_xaxes(title_text='Intermolecular RDF Distance', row=1, col=3)
-            wandb.log({f'Target Analysis': fig})
-
-            '''
-            within-submission score vs rankings
-            file formats are different between BT 5 and BT6
-            '''
-            target_identifiers = {}
-            rankings = {}
-            group = {}
-            list_num = {}
-            for label in ['XXII', 'XXIII', 'XXVI']:
-                target_identifiers[label] = [extra_test_dict['identifiers'][all_identifiers[label][n]] for n in range(len(all_identifiers[label]))]
-                rankings[label] = []
-                group[label] = []
-                list_num[label] = []
-                for ident in target_identifiers[label]:
-                    if 'edited' in ident:
-                        ident = ident[7:]
-
-                    long_ident = ident.split('_')
-                    list_num[label].append(int(ident[len(label) + 1]))
-                    rankings[label].append(int(long_ident[-1]) + 1)
-                    group[label].append(long_ident[1])
-
-            fig = make_subplots(rows=1, cols=3,
-                                subplot_titles=(['XXII', 'XXIII', 'XXVI']))
-
-            for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
-                xline = np.asarray([0, 100])
-                linreg_result = linregress(rankings[label], scores_dict[label])
-                yline = xline * linreg_result.slope + linreg_result.intercept
-
-                fig.add_trace(go.Scattergl(x=rankings[label], y=scores_dict[label], showlegend=False,
-                                           mode='markers', marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
-                              row=1, col=i + 1)
-
-                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=1, col=i + 1)
-            fig.update_xaxes(title_text='Submission Rank', row=1, col=1)
-            fig.update_yaxes(title_text='Model score', row=1, col=1)
-            fig.update_xaxes(title_text='Submission Rank', row=1, col=2)
-            fig.update_xaxes(title_text='Submission Rank', row=1, col=3)
-
-            # fig.show()
-            wandb.log({'Target Score Rankings': fig})
-
-            for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
-                names = np.unique(list(group[label]))
-                uniques = len(names)
-                rows = int(np.floor(np.sqrt(uniques)))
-                cols = int(np.ceil(np.sqrt(uniques)) + 1)
-                fig = make_subplots(rows=rows, cols=cols,
-                                    subplot_titles=(names))
-
-                for j, group_name in enumerate(np.unique(group[label])):
-                    good_inds = np.where(np.asarray(group[label]) == group_name)
-                    xline = np.asarray([0, 100])
-                    linreg_result = linregress(np.asarray(rankings[label])[good_inds], np.asarray(scores_dict[label])[good_inds])
-                    yline = xline * linreg_result.slope + linreg_result.intercept
-
-                    fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
-                                               mode='markers', marker=dict(size=6, color=np.asarray(list_num[label])[good_inds], colorscale='portland', cmax=2, cmin=1, showscale=False)),
-                                  row=j // cols + 1, col=j % cols + 1)
-
-                    fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=j // cols + 1, col=j % cols + 1)
-
-                fig.update_layout(title=label)
-                wandb.log({f"{label} Groupwise Analysis": fig})
+            self.blind_test_analysis(config, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict)
 
         return None
 
@@ -2270,8 +1593,8 @@ class Modeller():
         softmax_temperature = 1
 
         # load up precomputed lennard-jones energies for the blind test submissions
-        bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy', allow_pickle=True).item() # todo recompute these - as the identifiers are now incorrect
-        target_31_ff_dict = np.load('../datasets/sapt_energy_dict.npy',allow_pickle=True).item()
+        bt_lj_energy_dict = np.load('../datasets/BT_LJ_energies.npy', allow_pickle=True).item()  # todo recompute these - as the identifiers are now incorrect
+        target_31_ff_dict = np.load('../datasets/sapt_energy_dict.npy', allow_pickle=True).item()
         energy = []
         bt_list = list(bt_lj_energy_dict.keys())
         t_31_list = list(target_31_ff_dict.keys())
@@ -2281,9 +1604,9 @@ class Modeller():
             elif ident in t_31_list:
                 energy.append(target_31_ff_dict[ident])
             else:
-                energy.append(-1) # error or missing code
+                energy.append(-1)  # error or missing code
 
-        extra_test_dict['atomistic energy'] = np.asarray(energy) #np.asarray([bt_lj_energy_dict[ident] for ident in extra_test_dict['identifiers']])
+        extra_test_dict['atomistic energy'] = np.asarray(energy)  # np.asarray([bt_lj_energy_dict[ident] for ident in extra_test_dict['identifiers']])
 
         # need to identify targets
         # need to distinguish between experimental and proposed structures
@@ -2301,7 +1624,6 @@ class Modeller():
                 if blind_test_targets[-1 - j] in item:
                     all_identifiers[blind_test_targets[-1 - j]].append(i)
                     break
-
 
         if len(np.concatenate(list(all_identifiers.values()))) > 0:
             '''
@@ -2337,7 +1659,7 @@ class Modeller():
                 scores_dict['Test Real'] = test_epoch_stats_dict['scores']
 
             elif self.config.gan_loss == 'standard':
-                scores_dict['Test Real'] = -np.log10(1-np_softmax(test_epoch_stats_dict['scores'], temperature=softmax_temperature)[:, 1])
+                scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['scores'], temperature=softmax_temperature)
 
             wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
 
@@ -2357,7 +1679,7 @@ class Modeller():
                     if self.config.gan_loss == 'wasserstein':
                         scores = raw_scores
                     elif self.config.gan_loss == 'standard':
-                        scores = -np.log10(1-np_softmax(raw_scores, temperature=softmax_temperature)[:, 1])
+                        scores = -np.log10(1 - np_softmax(raw_scores, temperature=softmax_temperature)[:, 1])
                     scores_dict[target + ' exp'] = scores
                     energy_dict[target + ' exp'] = extra_test_dict['atomistic energy'][target_index]
 
@@ -2373,7 +1695,7 @@ class Modeller():
                     if self.config.gan_loss == 'wasserstein':
                         scores = raw_scores
                     elif self.config.gan_loss == 'standard':
-                        scores = -np.log10(1-np_softmax(raw_scores, temperature=softmax_temperature)[:, 1])
+                        scores = -np.log10(1 - np_softmax(raw_scores, temperature=softmax_temperature)[:, 1])
                     scores_dict[target] = scores
                     energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
 
@@ -2528,8 +1850,6 @@ class Modeller():
                 cols = int(np.ceil(np.sqrt(uniques)) + 1)
                 fig = make_subplots(rows=rows, cols=cols,
                                     subplot_titles=(names))
-                colormap = {1: 'rgb(0,0,100)',
-                            2: 'rgb(100,0,0)'}
 
                 for j, group_name in enumerate(np.unique(group[label])):
                     good_inds = np.where(np.asarray(group[label]) == group_name)
@@ -2549,9 +1869,8 @@ class Modeller():
         '''
         CSP pipeline analysis
         '''
-        sapt_inds = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if ('\sapt' in ind) and ('-220224' not in ind)])
-        sapt_22_inds = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if '\sapt-220224' in ind])
-
+        sapt_inds = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if ('\sapt' in ind) and ('-220224' not in ind)])
+        sapt_22_inds = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if '\sapt-220224' in ind])
 
         if len(sapt_inds > 0):
 
@@ -2567,8 +1886,8 @@ class Modeller():
             sapt_22_energies = extra_test_dict['atomistic energy'][sapt_22_inds]
 
             if config.gan_loss == 'standard':
-                sapt_scores = -np.log10(1-np_softmax(extra_test_dict['scores'][sapt_inds], temperature=softmax_temperature)[:,1])
-                sapt_22_scores = -np.log10(1-np_softmax(extra_test_dict['scores'][sapt_22_inds], temperature=softmax_temperature)[:,1])
+                sapt_scores = -np.log10(1 - np_softmax(extra_test_dict['scores'][sapt_inds], temperature=softmax_temperature)[:, 1])
+                sapt_22_scores = -np.log10(1 - np_softmax(extra_test_dict['scores'][sapt_22_inds], temperature=softmax_temperature)[:, 1])
             elif config.gan_loss == 'wasserstein':
                 sapt_scores = extra_test_dict['scores'][sapt_inds]
                 sapt_22_scores = extra_test_dict['scores'][sapt_22_inds]
@@ -2577,14 +1896,14 @@ class Modeller():
             plot overall energy-score correlation
             '''
             fig = make_subplots(rows=1, cols=2,
-                                subplot_titles=(['Sapt','Sapt 22']))
+                                subplot_titles=(['Sapt', 'Sapt 22']))
 
             xline = np.asarray([min(sapt_energies), max(sapt_energies)])
             linreg_result = linregress(sapt_energies, sapt_scores)
             yline = xline * linreg_result.slope + linreg_result.intercept
 
             fig.add_trace(go.Scattergl(x=sapt_energies, y=sapt_scores, showlegend=False,
-                                       mode='markers'),#, marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                                       mode='markers'),  # , marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
                           row=1, col=1)
 
             fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt R={linreg_result.rvalue:.3f}'), row=1, col=1)
@@ -2594,7 +1913,7 @@ class Modeller():
             yline = xline * linreg_result.slope + linreg_result.intercept
 
             fig.add_trace(go.Scattergl(x=sapt_22_energies, y=sapt_22_scores, showlegend=False,
-                                       mode='markers'),#, marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                                       mode='markers'),  # , marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
                           row=1, col=2)
 
             fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt-22 R={linreg_result.rvalue:.3f}'), row=1, col=2)
@@ -2603,7 +1922,7 @@ class Modeller():
             '''
             plot within-conformer energy-score correlation
             '''
-            conformers = ['c01','c02','c03','c04','c05','c06','c07','c08','c09','c10']
+            conformers = ['c01', 'c02', 'c03', 'c04', 'c05', 'c06', 'c07', 'c08', 'c09', 'c10']
             conformers_inds_dict = {}
             conformers_inds_dict_22 = {}
             conformers_energies_dict = {}
@@ -2611,8 +1930,8 @@ class Modeller():
             conformers_scores_dict = {}
             conformers_scores_dict_22 = {}
             for conformer in conformers:
-                conformers_inds_dict[conformer] = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if ('\sapt' in ind) and ('-220224' not in ind) and (conformer in ind)])
-                conformers_inds_dict_22[conformer] = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if ('\sapt-220224' in ind) and (conformer in ind)])
+                conformers_inds_dict[conformer] = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if ('\sapt' in ind) and ('-220224' not in ind) and (conformer in ind)])
+                conformers_inds_dict_22[conformer] = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if ('\sapt-220224' in ind) and (conformer in ind)])
                 conformers_energies_dict[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict[conformer]]
 
                 outlier_inds = np.concatenate((np.where(conformers_energies_dict[conformer] > 0)[0], np.where(conformers_energies_dict[conformer] < -150)[0]))
@@ -2625,12 +1944,11 @@ class Modeller():
                 conformers_inds_dict_22[conformer] = np.asarray([ind for i, ind in enumerate(conformers_inds_dict_22[conformer]) if not (i in outlier_inds)])
                 conformers_energies_dict_22[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict_22[conformer]]
 
-
-                conformers_scores_dict[conformer] = -np.log10(1-np_softmax(extra_test_dict['scores'][conformers_inds_dict[conformer]],temperature = softmax_temperature)[:,1])
-                conformers_scores_dict_22[conformer] = -np.log10(1-np_softmax(extra_test_dict['scores'][conformers_inds_dict_22[conformer]], temperature = softmax_temperature)[:,1])
+                conformers_scores_dict[conformer] = -np.log10(1 - np_softmax(extra_test_dict['scores'][conformers_inds_dict[conformer]], temperature=softmax_temperature)[:, 1])
+                conformers_scores_dict_22[conformer] = -np.log10(1 - np_softmax(extra_test_dict['scores'][conformers_inds_dict_22[conformer]], temperature=softmax_temperature)[:, 1])
 
             fig = make_subplots(rows=2, cols=10,
-                                )#subplot_titles=(['Sapt','Sapt 22']))
+                                )  # subplot_titles=(['Sapt','Sapt 22']))
 
             for ii, conformer in enumerate(conformers_inds_dict.keys()):
                 score = conformers_scores_dict[conformer]
@@ -2643,29 +1961,29 @@ class Modeller():
                 yline = xline * linreg_result.slope + linreg_result.intercept
 
                 fig.add_trace(go.Scattergl(x=energy, y=score, showlegend=False,
-                                           mode='markers'),#, marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                                           mode='markers'),  # , marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
                               row=1, col=ii + 1)
 
-                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt R={linreg_result.rvalue:.3f}'), row=1, col=ii+1)
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt R={linreg_result.rvalue:.3f}'), row=1, col=ii + 1)
 
                 xline = np.asarray([min(energy_22), max(energy_22)])
                 linreg_result = linregress(energy_22, score_22)
                 yline = xline * linreg_result.slope + linreg_result.intercept
 
                 fig.add_trace(go.Scattergl(x=energy_22, y=score_22, showlegend=False,
-                                           mode='markers'),#, marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                                           mode='markers'),  # , marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
                               row=2, col=ii + 1)
 
-                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt-22 R={linreg_result.rvalue:.3f}'), row=2, col=ii+1)
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt-22 R={linreg_result.rvalue:.3f}'), row=2, col=ii + 1)
 
             wandb.log({'Conformer-wise analysis': fig})
 
-            target_31_inds = np.asarray([i for i,ind in enumerate(extra_test_dict['identifiers']) if ('219967' in ind)])
+            target_31_inds = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if ('219967' in ind)])
 
         finished = 1
         return None
 
-    def train_discriminator(self, generated_samples, discriminator, config, data, i, target_handedness=None, return_rdf = False):
+    def train_discriminator(self, generated_samples, discriminator, config, data, i, target_handedness=None, return_rdf=False):
         # generate fakes & create supercell data
         real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config)
         fake_supercell_data, generated_cell_volumes, overlaps_list = \
@@ -2688,8 +2006,8 @@ class Modeller():
         score_on_fake, fake_pairwise_distances_dict = self.adversarial_loss(discriminator, fake_supercell_data, config)
 
         if return_rdf:
-            real_rdf, rr, rdf_label_dict = crystal_rdf(real_supercell_data, rrange = [0,6], bins = 1000, intermolecular = True, elementwise=True, raw_density=True)
-            fake_rdf, rr, rdf_label_dict = crystal_rdf(fake_supercell_data, rrange = [0,6], bins = 1000, intermolecular=True, elementwise=True, raw_density=True)
+            real_rdf, rr, rdf_label_dict = crystal_rdf(real_supercell_data, rrange=[0, 6], bins=1000, intermolecular=True, elementwise=True, raw_density=True)
+            fake_rdf, rr, rdf_label_dict = crystal_rdf(fake_supercell_data, rrange=[0, 6], bins=1000, intermolecular=True, elementwise=True, raw_density=True)
 
             real_rdf_dict = {'rdf': real_rdf, 'range': rr, 'labels': rdf_label_dict}
             fake_rdf_dict = {'rdf': fake_rdf, 'range': rr, 'labels': rdf_label_dict}
@@ -2704,7 +2022,7 @@ class Modeller():
         if config.generator.positional_noise > 0:
             data.pos += torch.randn_like(data.pos) * config.generator.positional_noise
 
-        [[generated_samples, latent], prior, condition] = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device), return_latent=True, return_condition=True, return_prior=True)
+        [[generated_samples, latent], prior, condition] = generator.forward(n_samples=data.num_graphs, conditions=data.to(config.device), return_latent=True, return_condition=True, return_prior=True)
 
         if (config.generator_similarity_penalty != 0) and (len(generated_samples) > 5):
             similarity_penalty_i = config.generator_similarity_penalty * F.mse_loss(generated_samples.std(0), prior.std(0))  # match variance with the input noise
@@ -2824,7 +2142,7 @@ class Modeller():
         return -(logprob)  #
 
     def max_prob_iter(self, generator, data):
-        samples = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
+        samples = generator.forward(n_samples=data.num_graphs, conditions=data.to(self.config.device))
         latent_samples = self.randn_generator.backward(samples.cpu())
         log_probs = self.randn_generator.score(latent_samples)
 
@@ -2959,14 +2277,14 @@ class Modeller():
         if config.train_discriminator_adversarially:
             ii = i % n_generators
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:  # randomly sample which generator to use at each iteration
-                generated_samples_i = generator.forward(n_samples=data.num_graphs, conditions=data.to(generator.device))
+                generated_samples_i = generator.forward(n_samples=data.num_graphs, conditions=data.to(config.device))
                 handedness = None
                 epoch_stats_dict['generator sample source'].extend(np.zeros(len(generated_samples_i)))
 
         if config.train_discriminator_on_randn:
             ii = (i + 1) % n_generators
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
-                generated_samples_i = self.randn_generator.forward(data, data.num_graphs).to(generator.device)
+                generated_samples_i = self.randn_generator.forward(data, data.num_graphs).to(config.device)
                 handedness = None
                 epoch_stats_dict['generator sample source'].extend(np.ones(len(generated_samples_i)))
 
@@ -2974,8 +2292,604 @@ class Modeller():
             ii = (i + 2) % n_generators
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
                 generated_samples_ii = (data.cell_params - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
-                generated_samples_i = ((generated_samples_ii + torch.randn_like(generated_samples_ii) * config.generator_noise_level)).to(generator.device)  # add jitter and return in standardized basis
+                generated_samples_i = ((generated_samples_ii + torch.randn_like(generated_samples_ii) * config.generator_noise_level)).to(config.device)  # add jitter and return in standardized basis
                 handedness = data.asym_unit_handedness
                 epoch_stats_dict['generator sample source'].extend(np.ones(len(generated_samples_i)) * 2)
 
         return generated_samples_i, handedness, epoch_stats_dict
+
+    def log_aux_regression(self, config, train_epoch_stats_dict, test_epoch_stats_dict):
+        target_mean = self.dataDims['target mean']
+        target_std = self.dataDims['target std']
+
+        target = np.asarray(test_epoch_stats_dict['generator density target'])
+        prediction = np.asarray(test_epoch_stats_dict['generator density prediction'])
+        orig_target = target * target_std + target_mean
+        orig_prediction = prediction * target_std + target_mean
+
+        train_target = np.asarray(train_epoch_stats_dict['generator density target'])
+        train_prediction = np.asarray(train_epoch_stats_dict['generator density prediction'])
+        train_orig_target = train_target * target_std + target_mean
+        train_orig_prediction = train_prediction * target_std + target_mean
+
+        losses = ['normed error', 'abs normed error', 'squared error']
+        loss_dict = {}
+        losses_dict = {}
+        for loss in losses:
+            if loss == 'normed error':
+                loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
+            elif loss == 'abs normed error':
+                loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
+            elif loss == 'squared error':
+                loss_i = (orig_target - orig_prediction) ** 2
+            losses_dict[loss] = loss_i  # huge unnecessary upload
+            loss_dict[loss + ' mean'] = np.mean(loss_i)
+            loss_dict[loss + ' std'] = np.std(loss_i)
+            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
+
+        linreg_result = linregress(orig_target, orig_prediction)
+        loss_dict['Regression R2'] = linreg_result.rvalue
+        loss_dict['Regression slope'] = linreg_result.slope
+        wandb.log(loss_dict)
+
+        # log loss distribution
+        if config.wandb.log_figures:  # todo clean
+            # predictions vs target trace
+            xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
+            fig = go.Figure()
+            fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
+            fig.update_traces(contours_coloring="fill")
+            fig.update_traces(contours_showlines=False)
+            fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
+            fig.add_trace(go.Scattergl(x=xline, y=xline))
+            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+            wandb.log({'Test Packing Coefficient': fig})
+
+            xline = np.linspace(max(min(train_orig_target), min(train_orig_prediction)), min(max(train_orig_target), max(train_orig_prediction)), 10)
+            fig = go.Figure()
+            fig.add_trace(go.Histogram2dContour(x=train_orig_target, y=train_orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
+            fig.update_traces(contours_coloring="fill")
+            fig.update_traces(contours_showlines=False)
+            fig.add_trace(go.Scattergl(x=train_orig_target, y=train_orig_prediction, mode='markers', showlegend=True, opacity=0.5))
+            fig.add_trace(go.Scattergl(x=xline, y=xline))
+            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+            wandb.log({'Train Packing Coefficient': fig})
+
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(x=train_orig_prediction - train_orig_target,
+                                       histnorm='probability density',
+                                       nbinsx=100,
+                                       name="Error Distribution",
+                                       showlegend=False))
+            wandb.log({'Regression Error Distribution': fig})
+
+            # correlate losses with molecular features
+            tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
+            g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+            features = []
+            for i in range(config.dataDims['num tracking features']):  # not that interesting
+                features.append(config.dataDims['tracking features dict'][i])
+                g_loss_correlations[i] = np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i], rowvar=False)[0, 1]
+
+            g_sort_inds = np.argsort(g_loss_correlations)
+            g_loss_correlations = g_loss_correlations[g_sort_inds]
+
+            fig = go.Figure(go.Bar(
+                y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
+                x=[g_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
+                orientation='h',
+            ))
+            wandb.log({'Regressor Loss Correlates': fig})
+
+    def cell_params_analysis(self, config, train_loader, test_epoch_stats_dict):
+        n_crystal_features = config.dataDims['num lattice features']
+        generated_samples = test_epoch_stats_dict['generated cell parameters']
+        means = config.dataDims['lattice means']
+        stds = config.dataDims['lattice stds']
+
+        # slightly expensive to do this every time
+        dataset_cell_distribution = np.asarray([train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
+
+        # raw outputs
+        renormalized_samples = np.zeros_like(generated_samples)
+        for i in range(generated_samples.shape[1]):
+            renormalized_samples[:, i] = generated_samples[:, i] * stds[i] + means[i]
+
+        cleaned_samples = test_epoch_stats_dict['final generated cell parameters']
+
+        overlaps_1d = {}
+        sample_means = {}
+        sample_stds = {}
+        for i, key in enumerate(config.dataDims['lattice features']):
+            mini, maxi = np.amin(dataset_cell_distribution[:, i]), np.amax(dataset_cell_distribution[:, i])
+            h1, r1 = np.histogram(dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
+            h1 = h1 / len(dataset_cell_distribution[:, i])
+
+            h2, r2 = np.histogram(cleaned_samples[:, i], bins=r1)
+            h2 = h2 / len(cleaned_samples[:, i])
+
+            overlaps_1d[f'{key} 1D Overlap'] = np.min(np.concatenate((h1[None], h2[None]), axis=0), axis=0).sum()
+
+            sample_means[f'{key} mean'] = np.mean(cleaned_samples[:, i])
+            sample_stds[f'{key} std'] = np.std(cleaned_samples[:, i])
+
+        average_overlap = np.average([overlaps_1d[key] for key in overlaps_1d.keys()])
+        overlaps_1d['average 1D overlap'] = average_overlap
+        wandb.log(overlaps_1d.copy())
+        wandb.log(sample_means)
+        wandb.log(sample_stds)
+        print("1D Overlap With Data:{:.3f}".format(average_overlap))
+
+        if config.wandb.log_figures:
+            fig_dict = {}  # consider replacing by Joy plot
+
+            # bar graph of 1d overlaps
+            fig = go.Figure(go.Bar(
+                y=list(overlaps_1d.keys()),
+                x=[overlaps_1d[key] for key in overlaps_1d],
+                orientation='h',
+                marker=dict(color='red')
+            ))
+            fig_dict['1D overlaps'] = fig
+
+            # 1d Histograms
+            for i in range(n_crystal_features):
+                fig = go.Figure()
+
+                fig.add_trace(go.Histogram(
+                    x=dataset_cell_distribution[:, i],
+                    histnorm='probability density',
+                    nbinsx=100,
+                    name="Dataset samples",
+                    showlegend=True,
+                ))
+
+                fig.add_trace(go.Histogram(
+                    x=renormalized_samples[:, i],
+                    histnorm='probability density',
+                    nbinsx=100,
+                    name="Samples",
+                    showlegend=True,
+                ))
+                fig.add_trace(go.Histogram(
+                    x=cleaned_samples[:, i],
+                    histnorm='probability density',
+                    nbinsx=100,
+                    name="Cleaned Samples",
+                    showlegend=True,
+                ))
+                fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                fig.update_traces(opacity=0.5)
+
+                fig_dict[self.dataDims['lattice features'][i] + ' distribution'] = fig
+
+            wandb.log(fig_dict)
+
+    def log_molecules(self, config, generated_supercell_examples_dict):
+        if config.wandb.log_figures:
+            for i in range(generated_supercell_examples_dict['n examples']):
+                cell_vectors = generated_supercell_examples_dict['T fc list'][i].T
+                supercell_pos = generated_supercell_examples_dict['crystal positions'][i]
+                supercell_atoms = generated_supercell_examples_dict['atoms'][i]
+
+                ref_cell_size = len(supercell_pos) // (2 * config.supercell_size + 1) ** 3
+                ref_cell_pos = supercell_pos[:ref_cell_size]
+
+                ref_cell_centroid = ref_cell_pos.mean(0)
+                max_range = np.amax(np.linalg.norm(cell_vectors, axis=0)) / 1.3
+                keep_pos = np.argwhere(cdist(supercell_pos, ref_cell_centroid[None, :]) < max_range)[:, 0]
+
+                ase.io.write(f'supercell_{i}.pdb', Atoms(symbols=supercell_atoms[keep_pos], positions=supercell_pos[keep_pos], cell=cell_vectors))
+                wandb.log({'Generated Supercells': wandb.Molecule(open(f"supercell_{i}.pdb"))})  # todo find the max number of atoms this thing will take for bonding
+
+    def gan_distance_regression_analysis(self, config, test_epoch_stats_dict):
+        test_fake_predictions = test_epoch_stats_dict['discriminator fake score']
+        test_real_predictions = test_epoch_stats_dict['discriminator real score']
+        test_fake_distances = test_epoch_stats_dict['generated sample distances']
+        test_real_distances = np.zeros_like(test_real_predictions)
+        orig_target = np.concatenate((test_fake_distances, test_real_distances))
+        orig_prediction = np.concatenate((test_fake_predictions, test_real_predictions))
+
+        xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
+        fig = go.Figure()
+        fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
+        fig.update_traces(contours_coloring="fill")
+        fig.update_traces(contours_showlines=False)
+        fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
+        fig.add_trace(go.Scattergl(x=xline, y=xline))
+        fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+        wandb.log({'Distance Trace': fig})
+
+        losses = ['normed error', 'abs normed error', 'squared error']
+        loss_dict = {}
+        losses_dict = {}
+        for loss in losses:
+            if loss == 'normed error':
+                loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
+            elif loss == 'abs normed error':
+                loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
+            elif loss == 'squared error':
+                loss_i = (orig_target - orig_prediction) ** 2
+            losses_dict[loss] = loss_i  # huge unnecessary upload
+            loss_dict[loss + ' mean'] = np.mean(loss_i)
+            loss_dict[loss + ' std'] = np.std(loss_i)
+            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
+
+        linreg_result = linregress(orig_target, orig_prediction)
+        loss_dict['Regression R2'] = linreg_result.rvalue
+        loss_dict['Regression slope'] = linreg_result.slope
+        wandb.log(loss_dict)
+
+    def blind_test_analysis(self, config, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict):
+        blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+            'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
+            'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', 'XXXI', 'XXXII']
+
+        target_identifiers = {
+            'XVI': 'OBEQUJ',
+            'XVII': 'OBEQOD',
+            'XVIII': 'OBEQET',
+            'XIX': 'XATJOT',
+            'XX': 'OBEQIX',
+            'XXI': 'KONTIQ',
+            'XXII': 'NACJAF',
+            'XXIII': 'XAFPAY',
+            'XXIV': 'XAFQON',
+            'XXVI': 'XAFQIH'
+        }
+
+        # determine which samples go with which targets
+        all_identifiers = {key: [] for key in blind_test_targets}
+        for i in range(len(extra_test_dict['identifiers'])):
+            item = extra_test_dict['identifiers'][i]
+            for j in range(len(blind_test_targets)):  # go in reverse to account for roman numerals system of duplication
+                if blind_test_targets[-1 - j] in item:
+                    all_identifiers[blind_test_targets[-1 - j]].append(i)
+                    break
+
+        # determine which samples ARE the targets (mixed in the dataloader)
+        target_identifiers_inds = {key: [] for key in blind_test_targets}
+        for i in range(len(extra_test_dict['identifiers'])):
+            item = extra_test_dict['identifiers'][i]
+            for key in target_identifiers.keys():
+                if item == target_identifiers[key]:
+                    target_identifiers_inds[key] = i
+
+        '''
+        record all the stats for the CSD data
+        '''
+        scores_dict = {}
+        # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
+        randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)
+        distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)
+
+        if self.config.gan_loss == 'standard':
+            scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
+            scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'])
+            scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds])
+            # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
+            scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds])
+            wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
+            wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
+            wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})
+            # wandb.log({'Average NF Fake score': np.average(scores_dict['Test NF'])})
+            wandb.log({'Average Distorted Fake score': np.average(scores_dict['Test Distorted'])})
+
+        else:
+            print("Analysis only setup for cross entropy loss")
+            assert False
+
+        '''
+        build property dicts for the submissions and BT targets
+        '''
+        loss_correlations_dict = {}
+        rdf_full_distance_dict = {}
+        rdf_inter_distance_dict = {}
+
+        for target in all_identifiers.keys():  # run the analysis for each target
+            if target_identifiers_inds[target] != []:  # record target data
+
+                target_index = target_identifiers_inds[target]
+                raw_scores = extra_test_dict['scores'][target_index]
+                scores = softmax_and_score(raw_scores)
+                scores_dict[target + ' exp'] = scores
+
+                wandb.log({f'Average {target} exp score': np.average(scores)})
+
+                target_full_rdf = extra_test_dict['full rdf'][target_index]
+                target_inter_rdf = extra_test_dict['intermolecular rdf'][target_index]
+
+            if all_identifiers[target] != []:  # record sample data
+                target_indices = all_identifiers[target]
+                raw_scores = extra_test_dict['scores'][target_indices]
+                scores = softmax_and_score(raw_scores)
+                scores_dict[target] = scores
+                # energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
+
+                wandb.log({f'Average {target} score': np.average(scores)})
+
+                submission_full_rdf = extra_test_dict['full rdf'][target_indices]
+                submission_inter_rdf = extra_test_dict['intermolecular rdf'][target_indices]
+
+                rdf_full_distance_dict[target] = compute_rdf_distance(target_full_rdf, submission_full_rdf) # todo make this parallel
+                rdf_inter_distance_dict[target] = compute_rdf_distance(target_inter_rdf, submission_inter_rdf)
+
+                # correlate losses with molecular features
+                tracking_features = np.asarray(extra_test_dict['tracking features'])
+                loss_correlations = np.zeros(config.dataDims['num tracking features'])
+                features = []
+                for j in range(config.dataDims['num tracking features']):  # not that interesting
+                    features.append(config.dataDims['tracking features dict'][j])
+                    loss_correlations[j] = np.corrcoef(scores, tracking_features[target_indices, j], rowvar=False)[0, 1]
+
+                loss_correlations_dict[target] = loss_correlations
+
+        '''
+        prep violin figure colors
+        '''
+        lens = [len(val) for val in all_identifiers.values()]
+        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
+
+        plot_color_dict = {}
+        plot_color_dict['Train Real'] = ('rgb(250,50,50)')  # train
+        plot_color_dict['Test Real'] = ('rgb(250,150,50)')  # test
+        plot_color_dict['Test Randn'] = ('rgb(0,50,0)')  # fake csd
+        plot_color_dict['Test NF'] = ('rgb(0,150,0)')  # fake nf
+        plot_color_dict['Test Distorted'] = ('rgb(0,100,100)')  # fake distortion
+        ind = 0
+        for target in all_identifiers.keys():
+            if all_identifiers[target] != []:
+                plot_color_dict[target] = colors[ind]
+                plot_color_dict[target + ' exp'] = colors[ind]
+                ind += 1
+
+        '''
+        violin scores plot
+        '''
+        scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
+        bandwidth = scores_range / 200
+
+        fig = go.Figure()
+        for i, label in enumerate(scores_dict.keys()):
+            if 'exp' in label:
+                fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
+            else:
+                fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
+        fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
+        fig.update_layout(xaxis_title='Model Score')
+        wandb.log({'Discriminator Test Scores': fig})
+
+        '''
+        loss correlates - not useful right now
+        '''
+
+        loss_correlations = np.zeros(config.dataDims['num tracking features'])
+        features = []
+        for j in range(config.dataDims['num tracking features']):  # not that interesting
+            features.append(config.dataDims['tracking features dict'][j])
+            loss_correlations[j] = np.corrcoef(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'][:, j], rowvar=False)[0, 1]
+
+        loss_correlations_dict['Test Real'] = loss_correlations
+
+        fig = go.Figure()
+        color_dict = {
+            'XVI': 'rgb(250,50,5)',
+            'XVII': 'rgb(250,50,5)',
+            'XVIII': 'rgb(250,50,5)',
+            'XIX': 'rgb(250,50,5)',
+            'XX': 'rgb(250,50,5)',
+            'XXI': 'rgb(250,50,5)',
+
+            'XXII': 'rgb(5,50,250)',
+            'XXIII': 'rgb(5,50,250)',
+            'XXIV': 'rgb(5,50,250)',
+            'XXV': 'rgb(5,50,250)',
+            'XXVI': 'rgb(5,50,250)',
+
+            'Train Real': 'rgb(5,250,50)',
+            'Test Real': 'rgb(5,250,50)'
+        }
+        for target in loss_correlations_dict.keys():
+            fig.add_trace(go.Bar(
+                y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
+                x=[loss_correlations_dict[target][i] for i in range(config.dataDims['num tracking features'])],
+                orientation='h',
+                name=target,
+                showlegend=True,
+                marker_color=color_dict[target],
+            ))
+        fig.update_layout(showlegend=True)
+        wandb.log({'Test loss correlates': fig})
+
+        '''
+        rdf distance vs score
+        '''
+        fig = make_subplots(rows=1, cols=2)
+        full_rdf = np.concatenate([val for val in rdf_full_distance_dict.values()])
+        inter_rdf = np.concatenate([val for val in rdf_inter_distance_dict.values()])
+        normed_score = np.concatenate([normalize(scores_dict[key]) for key in scores_dict.keys() if key in blind_test_targets])  # if key in normed_energy_dict.keys()])
+        all_scores = np.concatenate([(scores_dict[key]) for key in scores_dict.keys() if key in blind_test_targets])  # if key in normed_energy_dict.keys()])
+
+        xline = np.asarray([np.amin(full_rdf), np.amax(full_rdf)])
+        linreg_result = linregress(full_rdf, normed_score)
+        yline = xline * linreg_result.slope + linreg_result.intercept
+        fig.add_trace(go.Scattergl(x=full_rdf, y=normed_score, showlegend=False,
+                                   mode='markers'),
+                      row=1, col=1)
+        fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Full RDF R={linreg_result.rvalue:.3f}'), row=1, col=1)
+
+        xline = np.asarray([np.amin(inter_rdf), np.amax(inter_rdf)])
+        linreg_result = linregress(inter_rdf, normed_score)
+        yline = xline * linreg_result.slope + linreg_result.intercept
+        fig.add_trace(go.Scattergl(x=inter_rdf, y=normed_score, showlegend=False,
+                                   mode='markers'),
+                      row=1, col=2)
+        fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'Intermolecular RDF R={linreg_result.rvalue:.3f}'), row=1, col=2)
+
+        fig.update_layout(title='All BT Targets')
+        fig.update_yaxes(title_text='Model score', row=1, col=1)
+        fig.update_xaxes(title_text='Full RDF Distance', row=1, col=1)
+        fig.update_xaxes(title_text='Intermolecular RDF Distance', row=1, col=2)
+        wandb.log({f'Target Analysis': fig})
+
+        fig = make_subplots(rows=2, cols=4,
+                            subplot_titles=(list(rdf_full_distance_dict.keys())) + ['All'])
+
+        for i, label in enumerate(rdf_full_distance_dict.keys()):
+            row = i // 4 + 1
+            col = i % 4 + 1
+            xline = np.asarray([np.amin(rdf_full_distance_dict[label]), np.amax(rdf_full_distance_dict[label])])
+            linreg_result = linregress(rdf_full_distance_dict[label], scores_dict[label])
+            yline = xline * linreg_result.slope + linreg_result.intercept
+
+            fig.add_trace(go.Scattergl(x=rdf_full_distance_dict[label], y=scores_dict[label], showlegend=False,
+                                       mode='markers'),
+                          row=row, col=col)
+
+            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=row, col=col)
+
+        xline = np.asarray([np.amin(full_rdf), np.amax(full_rdf)])
+        linreg_result = linregress(full_rdf, all_scores)
+        yline = xline * linreg_result.slope + linreg_result.intercept
+        fig.add_trace(go.Scattergl(x=full_rdf, y=all_scores, showlegend=False,
+                                   mode='markers'),
+                      row=2, col=4)
+        fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'All Targets R={linreg_result.rvalue:.3f}'), row=2, col=4)
+
+        wandb.log({f'Target Analysis': fig})
+
+        '''
+        within-submission score vs rankings
+        file formats are different between BT 5 and BT6
+        '''
+        target_identifiers = {}
+        rankings = {}
+        group = {}
+        list_num = {}
+        for label in ['XXII', 'XXIII', 'XXVI']:
+            target_identifiers[label] = [extra_test_dict['identifiers'][all_identifiers[label][n]] for n in range(len(all_identifiers[label]))]
+            rankings[label] = []
+            group[label] = []
+            list_num[label] = []
+            for ident in target_identifiers[label]:
+                if 'edited' in ident:
+                    ident = ident[7:]
+
+                long_ident = ident.split('_')
+                list_num[label].append(int(ident[len(label) + 1]))
+                rankings[label].append(int(long_ident[-1]) + 1)
+                group[label].append(long_ident[1])
+
+        fig = make_subplots(rows=1, cols=3,
+                            subplot_titles=(['XXII', 'XXIII', 'XXVI']))
+
+        for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+            xline = np.asarray([0, 100])
+            linreg_result = linregress(rankings[label], scores_dict[label])
+            yline = xline * linreg_result.slope + linreg_result.intercept
+
+            fig.add_trace(go.Scattergl(x=rankings[label], y=scores_dict[label], showlegend=False,
+                                       mode='markers', marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
+                          row=1, col=i + 1)
+
+            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=1, col=i + 1)
+        fig.update_xaxes(title_text='Submission Rank', row=1, col=1)
+        fig.update_yaxes(title_text='Model score', row=1, col=1)
+        fig.update_xaxes(title_text='Submission Rank', row=1, col=2)
+        fig.update_xaxes(title_text='Submission Rank', row=1, col=3)
+
+        # fig.show()
+        wandb.log({'Target Score Rankings': fig})
+
+        for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+            names = np.unique(list(group[label]))
+            uniques = len(names)
+            rows = int(np.floor(np.sqrt(uniques)))
+            cols = int(np.ceil(np.sqrt(uniques)) + 1)
+            fig = make_subplots(rows=rows, cols=cols,
+                                subplot_titles=(names))
+
+            for j, group_name in enumerate(np.unique(group[label])):
+                good_inds = np.where(np.asarray(group[label]) == group_name)
+                xline = np.asarray([0, 100])
+                linreg_result = linregress(np.asarray(rankings[label])[good_inds], np.asarray(scores_dict[label])[good_inds])
+                yline = xline * linreg_result.slope + linreg_result.intercept
+
+                fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
+                                           mode='markers', marker=dict(size=6, color=np.asarray(list_num[label])[good_inds], colorscale='portland', cmax=2, cmin=1, showscale=False)),
+                              row=j // cols + 1, col=j % cols + 1)
+
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=j // cols + 1, col=j % cols + 1)
+
+            fig.update_layout(title=label)
+            wandb.log({f"{label} Groupwise Analysis": fig})
+
+        aa = 1
+
+
+'''
+            # if train_epoch_stats_dict['generated inter distance hist'] is not None:  # todo update this
+            #     hh2_test, rr = test_epoch_stats_dict['generated inter distance hist']
+            #     hh2_train, _ = train_epoch_stats_dict['generated inter distance hist']
+            #     if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
+            #         hh1, rr = train_epoch_stats_dict['real inter distance hist']
+            #     else:
+            #         hh1 = hh2_test
+            #
+            #     shell_volumes = (4 / 3) * torch.pi * ((rr[:-1] + np.diff(rr)) ** 3 - rr[:-1] ** 3)
+            #     rdf1 = hh1 / shell_volumes
+            #     rdf2 = hh2_test / shell_volumes
+            #     rdf3 = hh2_train / shell_volumes
+            #     fig = go.Figure()
+            #     fig.add_trace(go.Scattergl(x=rr, y=rdf1, name='real'))
+            #     fig.add_trace(go.Scattergl(x=rr, y=rdf2, name='gen, test'))
+            #     fig.add_trace(go.Scattergl(x=rr, y=rdf3, name='gen, train'))
+            #
+            #     if config.wandb.log_figures:
+            #         wandb.log({'G2 Comparison': fig})
+            #
+            #     range_analysis_dict = {}
+            #     if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
+            #         # get histogram overlaps
+            #         range_analysis_dict['tr g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf3[None, :] / rdf1.sum()), axis=0), axis=0).sum()
+            #         range_analysis_dict['te g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf2[None, :] / rdf1.sum()), axis=0), axis=0).sum()
+            #
+            #     # get probability mass at too-close range (should be ~zero)
+            #     range_analysis_dict['tr short range density fraction'] = np.sum(rdf3[rr[1:] < 1.2] / rdf3.sum())
+            #     range_analysis_dict['te short range density fraction'] = np.sum(rdf2[rr[1:] < 1.2] / rdf2.sum())
+            #
+            #     wandb.log(range_analysis_dict)
+
+
+                        # # correlate losses with molecular features
+            # tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
+            # g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+            # d_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+            # features = []
+            # for i in range(config.dataDims['num tracking features']):  # not that interesting
+            #     features.append(config.dataDims['tracking features dict'][i])
+            #     g_loss_correlations[i] = np.corrcoef(g_te_record, tracking_features[:, i], rowvar=False)[0, 1]
+            #     d_loss_correlations[i] = np.corrcoef(d_te_record, tracking_features[:, i], rowvar=False)[0, 1]
+            #
+            # g_sort_inds = np.argsort(g_loss_correlations)
+            # g_loss_correlations = g_loss_correlations[g_sort_inds]
+            #
+            # d_sort_inds = np.argsort(d_loss_correlations)
+            # d_loss_correlations = d_loss_correlations[d_sort_inds]
+            #
+            # if config.wandb.log_figures:
+            #     fig = go.Figure(go.Bar(
+            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
+            #         x=[g_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
+            #         orientation='h',
+            #     ))
+            #     wandb.log({'G Loss correlations': fig})
+            #
+            #     fig = go.Figure(go.Bar(
+            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
+            #         x=[d_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
+            #         orientation='h',
+            #     ))
+            #     wandb.log({'D Loss correlations': fig})
+
+'''

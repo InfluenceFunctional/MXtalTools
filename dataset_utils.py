@@ -466,7 +466,7 @@ class BuildDataset:
                             'molecule num rings', 'molecule num donors', 'molecule num acceptors',
                             'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                             'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
-                            'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
+                            'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3','crystal r factor',
                             ])
         keys_to_add.extend(self.crystal_keys)
         if 'crystal spacegroup symbol' in keys_to_add:
@@ -484,7 +484,16 @@ class BuildDataset:
 
         feature_array = np.zeros((self.dataset_length, len(keys_to_add)), dtype=float)
         for column, key in enumerate(keys_to_add):
-            feature_vector = dataset[key]
+            if key == 'crystal r factor':
+                feature_vector_i = np.asarray(dataset[key])
+                feature_vector = np.zeros_like(feature_vector_i)
+                for jj in range(len(feature_vector)):
+                    if feature_vector_i[jj] != None:
+                        if feature_vector_i[jj].lower() != 'none':
+                            feature_vector[jj] = float(feature_vector_i[jj])
+
+            else:
+                feature_vector = dataset[key]
             if type(feature_vector) is not np.ndarray:
                 feature_vector = np.asarray(feature_vector)
 

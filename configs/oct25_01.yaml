@@ -1,10 +1,10 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 171
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard #distance
@@ -17,17 +17,15 @@ train_generator_adversarially: False
 train_discriminator_adversarially: False
 train_discriminator_on_randn: True
 train_discriminator_on_noise: True
-generator_noise_level: 0.2
+generator_noise_level: 0
 generator_similarity_penalty: 0
 cut_max_prob_training_after: 1000
 extra_test_period: 10
 sample_after_training: False
-extra_test_set_paths: [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
-                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
-                        'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
-                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_dataset',
-                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_targets',]
-d_model_path: 'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminator_150'
+extra_test_set_paths: [ '/scratch/mk8347/csd_runs/datasets/blind_test_5_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_6_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_targets']
+d_model_path: null
 g_model_path: null
 
 seeds:
@@ -49,7 +47,7 @@ auto_batch_sizing: True
 min_batch_size: 10
 max_batch_size: 1000
 auto_batch_reduction: .25
-max_epochs: 0 # 0 epochs takes us straight to evaluation mode
+max_epochs: 1000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 
 # dataset curation
@@ -71,7 +69,7 @@ include_organometallic: True
 max_atomic_number: 87
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
-exclude_polymorphs: True
+exclude_polymorphs: False
 exclude_nonstandard_settings: True
 exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
@@ -85,8 +83,8 @@ supercell_size: 1 # 1 = 3x3x3, 2 = 5x5x5 etc. note 1 is too small for small mole
 # discriminator optimizer and model
 discriminator:
   optimizer: "adamw"
-  learning_rate: 0.00001
-  max_lr: 0.0001
+  learning_rate: 0.0001
+  max_lr: 0.001
   lr_schedule: True
   beta1: 0.9
   beta2: 0.999
@@ -108,8 +106,8 @@ discriminator:
   radial_function: 'bessel' # mikenet only
   num_attention_heads: 1 # mikenet self attention mode only - must evenly divide graph filters
   graph_convolution: 'self attention' # 'full message passing' or schnet or 'self attention'
-  add_spherical_basis: False # mikenet only
-  add_torsional_basis: False #
+  add_spherical_basis: True # mikenet only
+  add_torsional_basis: True #
   pooling: combo
 
   num_fc_layers: 2

@@ -2331,6 +2331,19 @@ def np_hardsigmoid(x):
 def np_hardtanh(x):
     return F.hardtanh(torch.Tensor(x)).detach().numpy()
 
+def compute_rdf_distance(target_rdf, sample_rdf):
+    '''
+    earth mover's distance
+    assuming dimension [sample, element-pair, radius]
+    normed against target rdf
+    '''
+    normed_rdfs_diff = np.nan_to_num((target_rdf - sample_rdf)/ np.sum(target_rdf,axis=-1)[None,:,None])
+    return np.average(np.sum(np.abs(np.cumsum(normed_rdfs_diff, axis=-1)),axis=-1),axis=-1)
+
+def softmax_and_score(score, temperature = 1):
+    score = np_softmax(score, temperature)[:,1].astype('float64') # values get too close to zero for float32
+    tanned = np.tan((score - 0.5) * np.pi)
+    return (np.sign(tanned) * np.log10(np.abs(tanned)))
 
 '''
 # look at all kinds of activations
