@@ -49,7 +49,7 @@ auto_batch_sizing: True
 min_batch_size: 10
 max_batch_size: 1000
 auto_batch_reduction: .25
-max_epochs: 0 # 0 epochs takes us straight to evaluation mode
+max_epochs: 2 # 0 epochs takes us straight to evaluation mode
 history: 1000
 
 # dataset curation

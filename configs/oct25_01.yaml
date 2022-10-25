@@ -52,7 +52,7 @@ history: 1000
 
 # dataset curation
 target: density # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100

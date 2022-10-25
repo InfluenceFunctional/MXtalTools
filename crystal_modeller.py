@@ -641,7 +641,7 @@ class Modeller():
                 np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
 
             self.log_gan_accuracy(epoch, train_loader,
-                                  train_epoch_stats_dict, test_epoch_stats_dict, config,
+                                  None, test_epoch_stats_dict, config,
                                   extra_test_dict=extra_test_epoch_stats_dict)
 
             # for working with a trained model
@@ -1561,21 +1561,19 @@ class Modeller():
         Do analysis and upload results to w&b
         '''
         if config.mode == 'gan':
-            generated_supercell_examples_dict = test_epoch_stats_dict['generated supercell examples dict']
-            if generated_supercell_examples_dict is not None:
-                self.log_molecules(config, generated_supercell_examples_dict)
+            #if test_epoch_stats_dict['generated supercell examples dict'] is not None:
+            #    self.log_molecules(config, test_epoch_stats_dict['generated supercell examples dict'])
 
             if self.config.gan_loss == 'distance':
                 self.gan_distance_regression_analysis(config, test_epoch_stats_dict)
 
-            if train_epoch_stats_dict['generated cell parameters'] is not None:
-                self.cell_params_analysis(config, train_loader, test_epoch_stats_dict)
+            if train_epoch_stats_dict is not None:
+                if test_epoch_stats_dict['generated cell parameters'] is not None:  # config.train_generator_density:
+                    self.cell_params_analysis(config, train_loader, test_epoch_stats_dict)
 
-        '''
-        auxiliary regression target
-        '''
-        if test_epoch_stats_dict['generator density target'] is not None:  # config.train_generator_density:
-            self.log_aux_regression(config, train_epoch_stats_dict, test_epoch_stats_dict)
+                if train_epoch_stats_dict['generator density target'] is not None:  # config.train_generator_density:
+                    self.log_aux_regression(config, train_epoch_stats_dict, test_epoch_stats_dict)
+
 
         if (extra_test_dict is not None) and (epoch % config.extra_test_period == 0):
             self.blind_test_analysis(config, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict)
@@ -2564,7 +2562,8 @@ class Modeller():
         distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)
 
         if self.config.gan_loss == 'standard':
-            scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
+            if train_epoch_stats_dict is not None:
+                scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
             scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'])
             scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds])
             # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
