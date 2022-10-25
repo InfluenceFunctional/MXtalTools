@@ -27,7 +27,7 @@ from supercell_builders import SupercellBuilder
 from STUN_MC import Sampler
 from plotly.colors import n_colors
 import scipy.signal
-
+from torch_geometric.loader.data_list_loader import DataListLoader
 
 class Modeller():
     def __init__(self, config):
@@ -259,11 +259,9 @@ class Modeller():
 
         # cuda
         if config.device.lower() == 'cuda':
-            print('Putting models on CUDA')
-            torch.backends.cudnn.benchmark = True
-            torch.cuda.empty_cache()
-            generator = nn.DataParallel(generator)
-            discriminator = nn.DataParallel(discriminator)
+            pass
+            #generator = gnn.DataParallel(generator)
+            #discriminator = gnn.DataParallel(discriminator)
 
         # init schedulers
         scheduler1 = lr_scheduler.ReduceLROnPlateau(
@@ -1026,6 +1024,8 @@ class Modeller():
         return epoch_stats_dict, total_time
 
     def adversarial_loss(self, discriminator, data, config):
+        #if config.device == 'cuda':
+        #    data = DataListLoader(data)
 
         output, extra_outputs = discriminator(data, return_dists=True)  # reshape output from flat filters to channels * filters per channel
 
