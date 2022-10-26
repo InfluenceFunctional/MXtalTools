@@ -4,7 +4,7 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 173
+run_num: 174
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard #distance
@@ -83,7 +83,7 @@ supercell_size: 1 # 1 = 3x3x3, 2 = 5x5x5 etc. note 1 is too small for small mole
 # discriminator optimizer and model
 discriminator:
   optimizer: "adamw"
-  learning_rate: 0.0001
+  learning_rate: 0.001
   max_lr: 0.001
   lr_schedule: True
   beta1: 0.9
