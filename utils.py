@@ -2337,11 +2337,46 @@ def compute_rdf_distance(target_rdf, sample_rdf):
     assuming dimension [sample, element-pair, radius]
     normed against target rdf
     '''
+    # clip for stability near 0
+
     normed_rdfs_diff = np.nan_to_num((target_rdf - sample_rdf)/ np.sum(target_rdf,axis=-1)[None,:,None])
     return np.average(np.sum(np.abs(np.cumsum(normed_rdfs_diff, axis=-1)),axis=-1),axis=-1)
 
+def compute_rdf_distance_metric(target_rdf, sample_rdf):
+    '''
+    earth mover's distance
+    assuming dimension [sample, element-pair, radius]
+    normed against mean average, to make it a metric
+    '''
+    # clip for stability near 0
+    norm = (np.sum(target_rdf,axis=-1)[None,:] + np.sum(sample_rdf,axis=-1))[...,None]
+    normed_rdfs_diff = np.nan_to_num((target_rdf - sample_rdf)/norm)
+    return np.average(np.sum(np.abs(np.cumsum(normed_rdfs_diff, axis=-1)),axis=-1),axis=-1)
+
+def compute_rdf_distance_metric_torch(target_rdf, sample_rdf):
+    '''
+    earth mover's distance
+    assuming dimension [sample, element-pair, radius]
+    normed against mean average, to make it a metric
+    '''
+    # clip for stability near 0
+    norm = (torch.sum(target_rdf,dim=-1)[None,:] + torch.sum(sample_rdf,dim=-1))[...,None]
+    normed_rdfs_diff = torch.nan_to_num((target_rdf - sample_rdf)/norm)
+    return torch.mean(torch.sum(torch.abs(torch.cumsum(normed_rdfs_diff, dim=-1)),dim=-1),dim=-1)
+
+def compute_rdf_distance2(target_rdf, sample_rdf):
+    '''
+    earth mover's distance
+    assuming dimension [sample, element-pair, radius]
+    normed against target rdf
+    '''
+    cum1 = np.nan_to_num(np.cumsum(target_rdf/np.sum(target_rdf,axis=-1)[:,None],axis=-1))
+    cum2 = np.nan_to_num(np.cumsum(sample_rdf/np.sum(target_rdf,axis=-1)[None,:,None],axis=-1))
+    return np.average(np.sum(np.abs(cum1-cum2)))
+
+
 def softmax_and_score(score, temperature = 1):
-    score = np_softmax(score, temperature)[:,1].astype('float64') # values get too close to zero for float32
+    score = np_softmax(score.astype('float64'), temperature)[:,1].astype('float64') # values get too close to zero for float32
     tanned = np.tan((score - 0.5) * np.pi)
     return (np.sign(tanned) * np.log10(np.abs(tanned)))
 

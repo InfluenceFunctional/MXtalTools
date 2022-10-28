@@ -612,6 +612,7 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
         miner.exclude_blind_test_targets = False
         dataset_i = miner.load_for_modelling(save_dataset=False, return_dataset=True)
         if config.test_mode:
+            np.random.seed(config.seeds.dataset)
             randinds = np.random.choice(len(dataset_i), min(len(dataset_i), 500), replace=False)
             dataset_i = dataset_i.loc[randinds]
         datasets.append(dataset_i)
