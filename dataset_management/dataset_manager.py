@@ -310,13 +310,13 @@ class Miner():
         # molecule organic
         if not self.include_organic:
             n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organic']))[:, 0])
+            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organic'] == 'True'))[:, 0])
             print('organic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule organometallic
         if not self.include_organometallic:
             n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organometallic']))[:, 0])
+            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organometallic'] == 'True'))[:, 0])
             print('organometallic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # molecule has disorder
