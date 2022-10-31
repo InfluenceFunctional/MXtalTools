@@ -46,9 +46,9 @@ wandb:
 
 # batching & convergence
 auto_batch_sizing: True
-min_batch_size: 10
+min_batch_size: 2
 max_batch_size: 1000
-auto_batch_reduction: .4
+auto_batch_reduction: .25
 max_epochs: 5000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 

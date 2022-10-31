@@ -4,7 +4,7 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 1215
+run_num: 1216
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard #distance
@@ -68,7 +68,7 @@ max_packing_coefficient: 0.85
 min_packing_coefficient: 0.55
 include_organic: True
 include_organometallic: True
-max_atomic_number: 87
+max_atomic_number: 86
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
 exclude_polymorphs: True
@@ -115,8 +115,8 @@ discriminator:
   num_fc_layers: 4
   fc_depth: 512
   activation: leaky relu
-  fc_dropout_probability: 0
-  fc_norm_mode: null
+  fc_dropout_probability: 0.1
+  fc_norm_mode: layer
 
 # generator optimizer and model
 generator:
