@@ -4,7 +4,7 @@ import tqdm
 from pymatgen.core import Molecule
 from pymatgen.symmetry.analyzer import PointGroupAnalyzer
 import rdkit.Chem as Chem
-from rdkit.Chem import Descriptors, rdMolDescriptors
+from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments
 from nikos.coordinate_transformations import coor_trans_matrix
 from mendeleev import element as element_table
 from crystal_builder_tools import (get_cell_fractional_centroids, c_f_transform)
@@ -754,10 +754,14 @@ class CustomGraphFeaturizer():
         dataset['molecule num rotatable bonds'] = rdMolDescriptors.CalcNumRotatableBonds((mol))
         dataset['molecule planarity'] = rdMolDescriptors.CalcPBF(mol)
         dataset['molecule radius of gyration'] = rdMolDescriptors.CalcRadiusOfGyration(mol)
-        dataset['molecule H fraction'] = get_fraction(dataset['atom Z'], 1)
-        dataset['molecule C fraction'] = get_fraction(dataset['atom Z'], 6)
-        dataset['molecule N fraction'] = get_fraction(dataset['atom Z'], 7)
-        dataset['molecule O fraction'] = get_fraction(dataset['atom Z'], 8)
+
+        for anum in range(1,36):
+            dataset[f'molecule {element_table(anum).symbol} fraction'] = get_fraction(dataset['atom Z'], anum)
+
+        for key in Fragments.__dict__.keys(): # for all the class methods
+            if key[0:3] == 'fr_': # if it's a functional group analysis method
+                dataset[f'molecule has {key[3:]}'] = Fragments.__dict__[key](mol, countUnique=False)
+
         dataset['molecule smiles'] = Chem.MolToSmiles(mol)
         dataset['molecule chemical formula'] = rdMolDescriptors.CalcMolFormula(mol)
         Ip, Ipm, _ = compute_principal_axes_np(np.asarray(dataset['atom coords']), np.asarray(dataset['atom mass']))  # rdMolTransforms.ComputePrincipalAxesAndMoments(mol.GetConformer(), ignoreHs=False) # this does it column-wise

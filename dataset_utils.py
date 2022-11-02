@@ -112,7 +112,6 @@ class BuildDataset:
 
         return
 
-
     def get_syms(self, pg_dict=None, sg_dict=None, lattice_dict=None):
         # get crystal symmetry factors
         if pg_dict is not None:
@@ -171,6 +170,19 @@ class BuildDataset:
             dataset['crystal alpha'] = dataset['crystal alpha'] * np.pi / 180
             dataset['crystal beta'] = dataset['crystal beta'] * np.pi / 180
             dataset['crystal gamma'] = dataset['crystal gamma'] * np.pi / 180
+
+        '''
+        add functional group information
+        '''
+        from dataset_management.molecule_featurizer import get_fraction
+        from mendeleev import element as element_table
+
+        for anum in range(1, min(36, config.max_atomic_number)):
+            dataset[f'molecule {element_table(anum).symbol} fraction'] = np.asarray([get_fraction(atom_list, anum) for atom_list in dataset['atom Z']])
+
+        # for key in Fragments.__dict__.keys(): # for all the class methods
+        #     if key[0:3] == 'fr_': # if it's a functional group analysis method
+        #         dataset[f'molecule has {key[3:]}'] = Fragments.__dict__[key](mol, countUnique=False)
 
         return dataset
 
@@ -376,7 +388,7 @@ class BuildDataset:
                                            T_fc_list=dataset['crystal fc transform'],
                                            identifiers=dataset['identifier'],
                                            asymmetric_unit_handedness=dataset['crystal asymmetric unit handedness'],
-                                           crystal_symmetries = dataset['crystal symmetries'])
+                                           crystal_symmetries=dataset['crystal symmetries'])
 
     def get_cell_features(self, dataset):
         keys_to_add = self.lattice_keys
@@ -466,8 +478,12 @@ class BuildDataset:
                             'molecule num rings', 'molecule num donors', 'molecule num acceptors',
                             'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                             'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
-                            'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3','crystal r factor',
+                            'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3', 'crystal r factor',
                             ])
+        for key in dataset.keys():
+            if ('molecule' in key) and ('fraction' in key):
+                keys_to_add.append(key)
+
         keys_to_add.extend(self.crystal_keys)
         if 'crystal spacegroup symbol' in keys_to_add:
             keys_to_add.remove('crystal spacegroup symbol')  # we don't want to deal with strings
@@ -563,6 +579,7 @@ class BuildDataset:
     def __len__(self):
         return len(self.datapoints)
 
+
 def get_dataloaders(dataset_builder, config, override_batch_size=None):
     if override_batch_size is not None:
         batch_size = override_batch_size
@@ -623,7 +640,7 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
         dataset = dataset.drop(columns='level_0')
     dataset = dataset.reset_index()
 
-    dataset = dataset.drop('crystal symmetries', axis=1) # can't mix nicely # todo delete this after next BT refeaturization
+    dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo delete this after next BT refeaturization
 
     extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
                                           sg_dict=sg_dict,

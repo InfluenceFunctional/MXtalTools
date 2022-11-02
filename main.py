@@ -7,13 +7,10 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)  # annoying numpy err
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # annoying numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # annoying w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
+# warnings.filterwarnings("ignore", category=PerformanceWarning) # annoying pandas error
+
 from utils import load_yaml, add_bool_arg, get_config
 from crystal_modeller import Modeller
-
-'''
-Predict crystal features given atom and molecule-level information
-'''
-
 
 def update_args2config(args2config, arg, config=None):
     if config is not None:
@@ -318,7 +315,7 @@ def add_args(parser):
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
     add_bool_arg(parser, 'train_discriminator_on_noise', default=False)  # train generator on distorted CSD data
-    parser.add_argument('--generator_noise_level', type=float, default = 0) # amount of noise to add to cell params for distorted cell training
+    parser.add_argument('--generator_noise_level', type=float, default=0)  # amount of noise to add to cell params for distorted cell training
     parser.add_argument('--generator_similarity_penalty', type=float, default=0)  # coefficient weighting penalty for self-similarity in generator batches
     parser.add_argument('--cut_max_prob_training_after', type=int, default=10)  # stop applying flow losses after xx epochs
     parser.add_argument('--extra_test_period', type=int, default=10)  # how often to report stats on the extra test data

@@ -187,10 +187,19 @@ class Modeller():
         # init model
         if config.g_model_path is not None:
             g_checkpoint = torch.load(config.g_model_path)
+            # save learning rates so we can un-overwrite them
+            max_lr = config.generator.max_lr * 1
+            lr = config.generator.learning_rate * 1
             config.generator = Namespace(**g_checkpoint['config'])  # overwrite the settings for the model
+            config.generator.learning_rate = lr
+            config.generator.max_lr = max_lr
         if config.d_model_path is not None:
             d_checkpoint = torch.load(config.d_model_path)
+            max_lr = config.discriminator.max_lr * 1
+            lr = config.discriminator.learning_rate * 1
             config.discriminator = Namespace(**d_checkpoint['config'])
+            config.discriminator.learning_rate = lr
+            config.discriminator.max_lr = max_lr
         print("Initializing models for " + config.mode)
         if config.mode == 'gan':
             generator = crystal_generator(config, dataDims)
@@ -543,6 +552,10 @@ class Modeller():
                                     extra_test_epoch_stats_dict, time_test_ex = \
                                         self.discriminator_evaluation(config, dataLoader=extra_test_loader, discriminator=discriminator)  # compute loss on test set
                                     print(f'Extra test evaluation took {time_test_ex:.1f} seconds')
+
+                                    np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)  # save
+                                    np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
+
                             else:
                                 extra_test_epoch_stats_dict = None
 
@@ -2129,12 +2142,14 @@ class Modeller():
 
         loss_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
         scores_dict, all_identifiers, blind_test_targets, target_identifiers, \
-        target_identifiers_inds, loss_correlations_dict, BT_target_scores, BT_submission_scores = \
+        target_identifiers_inds, loss_correlations_dict, BT_target_scores, BT_submission_scores, \
+        BT_scores_dists, BT_balanced_dist = \
             self.process_discriminator_evaluation_data(config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict)
 
         self.violin_scores_plot(all_identifiers, scores_dict, target_identifiers_inds)
-        self.violin_scores_plot2(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores)
-        self.scores_distributions_plot(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores)
+        self.violin_scores_plot2(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
+        self.violin_scores_plot3(scores_dict, tracking_features_names =config.dataDims['tracking features dict'], tracking_features=test_epoch_stats_dict['tracking features'])
+        self.scores_distributions_plot(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
         self.loss_correlates_plot(loss_correlations_dict, config)
         self.distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
         self.targetwise_distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
@@ -2193,6 +2208,7 @@ class Modeller():
             if train_epoch_stats_dict is not None:
                 scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
                 wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
+                wandb.log({'Train score std': np.std(scores_dict['Train Real'])})
 
             scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'])
             scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds])
@@ -2202,6 +2218,10 @@ class Modeller():
             wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})
             # wandb.log({'Average NF Fake score': np.average(scores_dict['Test NF'])})
             wandb.log({'Average Distorted Fake score': np.average(scores_dict['Test Distorted'])})
+
+            wandb.log({'Test Real std': np.std(scores_dict['Test Real'])})
+            wandb.log({'Distorted Fake score std': np.std(scores_dict['Test Distorted'])})
+            wandb.log({'Randn score std': np.std(scores_dict['Test Randn'])})
 
         else:
             print("Analysis only setup for cross entropy loss")
@@ -2235,11 +2255,12 @@ class Modeller():
                 # energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
 
                 wandb.log({f'Average {target} score': np.average(scores)})
+                wandb.log({f'Average {target} std': np.std(scores)})
 
                 submission_full_rdf = extra_test_dict['full rdf'][target_indices]
                 submission_inter_rdf = extra_test_dict['intermolecular rdf'][target_indices]
 
-                rdf_full_distance_dict[target] = compute_rdf_distance(target_full_rdf, submission_full_rdf)  # todo make this parallel
+                rdf_full_distance_dict[target] = compute_rdf_distance(target_full_rdf, submission_full_rdf)
                 rdf_inter_distance_dict[target] = compute_rdf_distance(target_inter_rdf, submission_inter_rdf)
 
                 # correlate losses with molecular features
@@ -2260,12 +2281,20 @@ class Modeller():
             loss_correlations[j] = np.corrcoef(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'][:, j], rowvar=False)[0, 1]
         loss_correlations_dict['Test Real'] = loss_correlations
 
+        # collect all BT targets & submissions into single dicts
         BT_target_scores = np.concatenate([scores_dict[key] for key in scores_dict.keys() if 'exp' in key])
         BT_submission_scores = np.concatenate([scores_dict[key] for key in scores_dict.keys() if key in all_identifiers.keys()])
+        BT_scores_dists = {key: np.histogram(scores_dict[key], bins=200, range=[-15, 15])[0] / len(scores_dict[key]) for key in scores_dict.keys() if key in all_identifiers.keys()}
+        BT_balanced_dist = np.average(np.stack(list(BT_scores_dists.values())), axis=0)
+
+        wandb.log({'Average BT submission score': np.average(BT_submission_scores)})
+        wandb.log({'Average BT target score': np.average(BT_target_scores)})
+        wandb.log({'BT submission score std': np.std(BT_target_scores)})
+        wandb.log({'BT target score std': np.std(BT_target_scores)})
 
         return loss_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, \
                all_identifiers, blind_test_targets, target_identifiers, target_identifiers_inds, \
-               loss_correlations_dict, BT_target_scores, BT_submission_scores
+               loss_correlations_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist
 
     def violin_scores_plot(self, all_identifiers, scores_dict, target_identifiers_inds):
         '''
@@ -2299,11 +2328,17 @@ class Modeller():
                 fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
             else:
                 fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
+
+            quantiles = [np.quantile(scores_dict['Test Real'], 0.01), np.quantile(scores_dict['Test Real'], 0.05), np.quantile(scores_dict['Test Real'], 0.1)]
+        fig.add_vline(x=quantiles[0], line_dash='dash', line_color=plot_color_dict['Test Real'])
+        fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['Test Real'])
+        fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['Test Real'])
+
         fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
         fig.update_layout(xaxis_title='Model Score')
         wandb.log({'Discriminator Test Scores': fig})
 
-    def violin_scores_plot2(self, all_identifiers, scores_dict, BT_target_scores, BT_submission_scores):
+    def violin_scores_plot2(self, all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist):
 
         plot_color_dict = {}
         plot_color_dict['Test Real'] = ('rgb(200,0,50)')  # test
@@ -2341,43 +2376,105 @@ class Modeller():
                       line=dict(color=plot_color_dict['BT Submissions'], dash='dash'))
         fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
         fig.update_layout(xaxis_title='Model Score')
-        #fig.show()
+        # fig.show()
+        fig.update_layout(title='Scores and 0.01, 0.05, 0.1 quantiles')
 
         wandb.log({'Scores Distribution': fig})
 
         return None
 
-    def scores_distributions_plot(self, all_identifiers, scores_dict, BT_target_scores, BT_submission_scores):
+    def violin_scores_plot3(self, scores_dict, tracking_features_names, tracking_features):
+        '''
+        plot scores distributions for different functional groups
+        '''
+
+        # get the indices for each functional group
+        functional_group_inds = {}
+        fraction_dict = {}
+        for ii, key in enumerate(tracking_features_names):
+            if 'molecule' in key and 'fraction' in key:
+                if np.sum(tracking_features[:,ii]) > 0:
+                    fraction_dict[key.split()[1]] = np.average(tracking_features[:,ii] > 0)
+                    functional_group_inds[key.split()[1]] = np.argwhere(tracking_features[:,ii] > 0)[:,0]
+
+        sort_order = np.argsort(list(fraction_dict.values()))[-1::-1]
+        sorted_functional_group_keys = [list(functional_group_inds.keys())[i] for i in sort_order]
+
+        colors = n_colors('rgb(150,10,5)', 'rgb(5,150,10)', len(list(functional_group_inds.keys())), colortype='rgb')
+        plot_color_dict = {}
+        for ind, target in enumerate(functional_group_inds.keys()):
+            plot_color_dict[target] = colors[ind]
+
+        '''
+        violin scores plot
+        '''
+        scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
+        bandwidth = scores_range / 200
+
+        fig = go.Figure()
+        fig.add_trace(go.Violin(x=scores_dict['Test Real'], name='CSD Test',
+                                line_color='#0c4dae', side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
+
+        for ii, label in enumerate(sorted_functional_group_keys):
+            fraction = fraction_dict[label]
+            fig.add_trace(go.Violin(x=scores_dict['Test Real'][functional_group_inds[label]], name=f'Fraction containing {label}={fraction:.3f}',
+                                    line_color=plot_color_dict[label], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
+
+        fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
+        fig.update_layout(xaxis_title='Model Score')
+        fig.update_layout(showlegend=False)
+        #fig.show()
+
+        wandb.log({'Functional Group Scores Distributions': fig})
+
+        return None
+
+    def scores_distributions_plot(self, all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist):
         '''
         compute fraction of submissions below each quantile of the CSD data
         compute fraction of submissions above & below each experimental structrue
         '''
         csd_scores = scores_dict['Test Real']
-        scores_hist, rr = np.histogram(csd_scores,bins=200,range=[-15,15],density=True)
-        scores_hist /= scores_hist.sum()
-        submissions_hist, _ = np.histogram(BT_submission_scores, bins=200, range=[-15,15],density=True)
-        submissions_hist /= submissions_hist.sum()
-        scores_overlap = np.sum(np.minimum(scores_hist,submissions_hist)) / np.sum(scores_hist)
-        scores_emd = np.sum(np.cumsum(np.abs(scores_hist - submissions_hist)))
+        hists = {}
+        scores_hist, rr = np.histogram(csd_scores, bins=200, range=[-15, 15], density=True)
+        hists['Test Real'] = scores_hist / scores_hist.sum()
 
-        vals =  [0.01, 0.05, 0.1, 0.25, 0.5]
+        submissions_hist, _ = np.histogram(BT_submission_scores, bins=200, range=[-15, 15], density=True)
+        hists['BT submissions'] = submissions_hist /submissions_hist.sum()
+
+        distorted_hist, rr = np.histogram(scores_dict['Test Distorted'], bins=200, range=[-15, 15], density=True)
+        hists['Test Distorted'] = distorted_hist / distorted_hist.sum()
+
+        randn_hist, rr = np.histogram(scores_dict['Test Randn'], bins=200, range=[-15, 15], density=True)
+        hists['Test Randn'] = randn_hist / randn_hist.sum()
+
+        emds = {}
+        overlaps = {}
+        for i, label1 in enumerate(hists.keys()):
+            for j, label2 in enumerate(hists.keys()):
+                if i > j:
+                    emds[f'{label1} <-> {label2} emd'] = earth_movers_distance_np(hists[label1],hists[label2])
+                    overlaps[f'{label1} <-> {label2} overlap'] = histogram_overlap(hists[label1],hists[label2])
+
+        wandb.log(emds)
+        wandb.log(overlaps)
+
+        vals = [0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.5]
         quantiles = np.quantile(csd_scores, vals)
-        submissions_fraction_below_csd_quantile = {value:np.average(BT_submission_scores < cutoff) for value,cutoff in zip(vals,quantiles)}
-        targets_fraction_below_csd_quantile = {value:np.average(BT_target_scores < cutoff) for value,cutoff in zip(vals,quantiles)}
+        submissions_fraction_below_csd_quantile = {value: np.average(BT_submission_scores < cutoff) for value, cutoff in zip(vals, quantiles)}
+        targets_fraction_below_csd_quantile = {value: np.average(BT_target_scores < cutoff) for value, cutoff in zip(vals, quantiles)}
 
         submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + ' exp']) for key in all_identifiers.keys() if key in scores_dict.keys()}
         submissions_average_below_target = np.average(list(submissions_fraction_below_target.values()))
 
-
         distributions_dict = {
-            'CSD-submissions overlap': scores_overlap,
-            'CSD-submissions EMD': scores_emd,
-            'Targets below CSD quantile': submissions_fraction_below_csd_quantile,
-            'Submissions below CSD quantile': targets_fraction_below_csd_quantile,
+            'Submissions below CSD quantile': submissions_fraction_below_csd_quantile,
+            'Targets below CSD quantile': targets_fraction_below_csd_quantile,
             'Submissions below target': submissions_fraction_below_target,
             'Submissions below target mean': submissions_average_below_target,
         }
         wandb.log(distributions_dict)
+
 
         return None
 
@@ -2542,19 +2639,129 @@ class Modeller():
                                 subplot_titles=(names))
 
             for j, group_name in enumerate(np.unique(group[label])):
-                good_inds = np.where(np.asarray(group[label]) == group_name)
+                good_inds = np.where(np.asarray(group[label]) == group_name)[0]
+                submissions_list_num = np.asarray(list_num[label])[good_inds]
+                list1_inds = np.where(submissions_list_num == 1)[0]
+                list2_inds = np.where(submissions_list_num == 2)[0]
+
                 xline = np.asarray([0, 100])
-                linreg_result = linregress(np.asarray(rankings[label])[good_inds], np.asarray(scores_dict[label])[good_inds])
+                linreg_result = linregress(np.asarray(rankings[label])[good_inds[list1_inds]], np.asarray(scores_dict[label])[good_inds[list1_inds]])
                 yline = xline * linreg_result.slope + linreg_result.intercept
 
                 fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
-                                           mode='markers', marker=dict(size=6, color=np.asarray(list_num[label])[good_inds], colorscale='portland', cmax=2, cmin=1, showscale=False)),
+                                           mode='markers', marker=dict(size=6, color=submissions_list_num, colorscale='portland', cmax=2, cmin=1, showscale=False)),
                               row=j // cols + 1, col=j % cols + 1)
 
-                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=j // cols + 1, col=j % cols + 1)
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{group_name} R={linreg_result.rvalue:.3f}', line=dict(color='#0c4dae')), row=j // cols + 1, col=j % cols + 1)
+
+                if len(list2_inds) > 0:
+                    linreg_result2 = linregress(np.asarray(rankings[label])[good_inds[list2_inds]], np.asarray(scores_dict[label])[good_inds[list2_inds]])
+                    yline2 = xline * linreg_result2.slope + linreg_result2.intercept
+                    fig.add_trace(go.Scattergl(x=xline, y=yline2, name=f'{group_name} R={linreg_result2.rvalue:.3f}', line=dict(color='#d60000')), row=j // cols + 1, col=j % cols + 1)
 
             fig.update_layout(title=label)
             wandb.log({f"{label} Groupwise Analysis": fig})
+
+        # specifically interesting groups & targets
+        # brandenberg XXVI
+        # Brandenberg XXII
+        # Facelli XXII
+        # Price XXII
+        # Goto XXII
+        # Brandenberg XXIII
+
+        fig = make_subplots(rows=2, cols=2, subplot_titles=(
+            ['Brandenburg XXII', 'Brandenburg XXIII', 'Brandenburg XXVI', 'Facelli XXII']),
+                            x_title='Model Score')
+
+        for ii, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+            good_inds = np.where(np.asarray(group[label]) == 'Brandenburg')[0]
+            submissions_list_num = np.asarray(list_num[label])[good_inds]
+            list1_inds = np.where(submissions_list_num == 1)[0]
+            list2_inds = np.where(submissions_list_num == 2)[0]
+
+            fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list1_inds]],
+                                       histnorm='probability density',
+                                       nbinsx=50,
+                                       name="Submission 1 Score",
+                                       showlegend=False,
+                                       marker_color='#0c4dae'),
+                          row=(ii) //2 + 1, col=(ii) %2 + 1)
+            fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list2_inds]],
+                                       histnorm='probability density',
+                                       nbinsx=50,
+                                       name="Submission 2 Score",
+                                       showlegend=False,
+                                       marker_color='#d60000'),
+                          row=(ii)//2 + 1, col=(ii) % 2 + 1)
+
+        label = 'XXII'
+        good_inds = np.where(np.asarray(group[label]) == 'Facelli')[0]
+        submissions_list_num = np.asarray(list_num[label])[good_inds]
+        list1_inds = np.where(submissions_list_num == 1)[0]
+        list2_inds = np.where(submissions_list_num == 2)[0]
+
+        fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list1_inds]],
+                                   histnorm='probability density',
+                                   nbinsx=50,
+                                   name="Submission 1 Score",
+                                   showlegend=False,
+                                   marker_color='#0c4dae'), row=2, col=2)
+        fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list2_inds]],
+                                   histnorm='probability density',
+                                   nbinsx=50,
+                                   name="Submission 2 Score",
+                                   showlegend=False,
+                                   marker_color='#d60000'), row=2, col=2)
+
+        wandb.log({'Group Submissions Analysis': fig})
+
+        #
+        # label = 'XXII'
+        # good_inds = np.where(np.asarray(group[label]) == 'Price')[0]
+        # submissions_list_num = np.asarray(list_num[label])[good_inds]
+        # list1_inds = np.where(submissions_list_num == 1)[0]
+        # list2_inds = np.where(submissions_list_num == 2)[0]
+        #
+        # fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list1_inds]],
+        #                            histnorm='probability density',
+        #                            nbinsx=50,
+        #                            name="Submission 1 Score",
+        #                            showlegend=False,
+        #                            marker_color='#0c4dae'),
+        #               row=2, col=2)
+        # fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list2_inds]],
+        #                            histnorm='probability density',
+        #                            nbinsx=50,
+        #                            name="Submission 2 Score",
+        #                            showlegend=False,
+        #                            marker_color='#d60000'),
+        #               row=2, col=2)
+        #
+        # label = 'XXII'
+        # good_inds = np.where(np.asarray(group[label]) == 'Goto')[0]
+        # submissions_list_num = np.asarray(list_num[label])[good_inds]
+        # list1_inds = np.where(submissions_list_num == 1)[0]
+        # list2_inds = np.where(submissions_list_num == 2)[0]
+        #
+        # fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list1_inds]],
+        #                            histnorm='probability density',
+        #                            nbinsx=50,
+        #                            name="Submission 1 Score",
+        #                            showlegend=False,
+        #                            marker_color='#0c4dae'),
+        #               row=2, col=3)
+        # fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list2_inds]],
+        #                            histnorm='probability density',
+        #                            nbinsx=50,
+        #                            name="Submission 2 Score",
+        #                            showlegend=False,
+        #                            marker_color='#d60000'),
+        #               row=2, col=3)
+
+
+
+        return None
 
     def bt_clustering(self, all_identifiers, scores_dict, extra_test_dict):
         # compute pairwise distances

@@ -3,9 +3,9 @@ import tqdm
 import numpy as np
 import os
 import pandas as pd
-from rdkit import Chem
-from rdkit.Chem import Draw
-from rdkit.Chem import AllChem
+# from rdkit import Chem
+# from rdkit.Chem import Draw
+# from rdkit.Chem import AllChem
 from argparse import Namespace
 import yaml
 from pathlib import Path
@@ -18,17 +18,19 @@ from scipy.spatial.transform import Rotation
 from ase import Atoms
 from ase.calculators import lj
 from pymatgen.core import (structure, lattice)
-#from ccdc.crystal import PackingSimilarity
-#from ccdc.io import CrystalReader
+# from ccdc.crystal import PackingSimilarity
+# from ccdc.io import CrystalReader
 from pymatgen.io import cif
-
 
 '''
 general utilities
 '''
+
+
 def weight_reset(m):
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
         m.reset_parameters()
+
 
 def initialize_metrics_dict(metrics):
     m_dict = {}
@@ -1794,17 +1796,17 @@ def loadSpaceGroups():
     return sgDict
 
 
-def draw_molecule_2d(smiles, show=False):
-    mol = Chem.MolFromSmiles(smiles)
-    try:
-        AllChem.Compute2DCoords(mol)
-        img = Draw.MolToImage(mol, subImgSize=(400, 400))
-        if show:
-            img.show()
-        return img
-    except:
-        # print("Could not embed molecule")
-        return 'failed embedding'
+# def draw_molecule_2d(smiles, show=False):
+#     mol = Chem.MolFromSmiles(smiles)
+#     try:
+#         AllChem.Compute2DCoords(mol)
+#         img = Draw.MolToImage(mol, subImgSize=(400, 400))
+#         if show:
+#             img.show()
+#         return img
+#     except:
+#         # print("Could not embed molecule")
+#         return 'failed embedding'
 
 
 def dict2namespace(data_dict):
@@ -2114,7 +2116,7 @@ def single_point_compute_rdf_torch(dists, density=None, range=None, bins=None):
     return rdf, rr[:-1] + torch.diff(rr)  # rdf and x-axis
 
 
-def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None, remove_radial_scaling = False):
+def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None, remove_radial_scaling=False):
     '''
     compute the radial distribution for a single particle
     dists: array of pairwise distances of nearby particles from the reference
@@ -2148,11 +2150,11 @@ def torch_ptp(tensor):
     return torch.max(tensor) - torch.min(tensor)
 
 
-def ase_mol_from_crystaldata(data, index = None, highlight_aux=False, exclusion_level=None, sub_ref_cell = False):
+def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, sub_ref_cell=False):
     '''
     generate an ASE Atoms object from a crystaldata object
     '''
-    if data.batch is not None: # more than one crystal in the datafile
+    if data.batch is not None:  # more than one crystal in the datafile
         atom_inds = torch.where(data.batch == index)[0]
     else:
         atom_inds = torch.arange(len(data.x))
@@ -2176,6 +2178,7 @@ def ase_mol_from_crystaldata(data, index = None, highlight_aux=False, exclusion_
     mol = Atoms(symbols=numbers, positions=coords, cell=cell)
     return mol
 
+
 def ref_cell_to_pymatgen_istruc(data, i):
     pymat_struct = structure.IStructure(species=data.x[data.batch == i, 0].repeat(data.Z[i]),
                                         coords=data.ref_cell_pos[i].reshape(int(data.Z[i] * len(data.pos[data.batch == i])), 3),
@@ -2183,38 +2186,40 @@ def ref_cell_to_pymatgen_istruc(data, i):
                                         coords_are_cartesian=True)
     return pymat_struct
 
-def pairwise_crystaldata_rmsd20(data1, ind1, data2, ind2, shell_size = 20):
+
+def pairwise_crystaldata_rmsd20(data1, ind1, data2, ind2, shell_size=20):
     struct1 = ref_cell_to_pymatgen_istruc(data1, ind1)
     struct2 = ref_cell_to_pymatgen_istruc(data2, ind2)
-    writer1 = cif.CifWriter(struct1, symprec = 0.1)
-    writer2 = cif.CifWriter(struct2, symprec = 0.1)
+    writer1 = cif.CifWriter(struct1, symprec=0.1)
+    writer2 = cif.CifWriter(struct2, symprec=0.1)
     writer1.write_file('crystal1.cif')
     writer2.write_file('crystal2.cif')
 
-    crystal1 = CrystalReader('crystal1.cif',format='cif')[0]
-    crystal2 = CrystalReader('crystal2.cif',format='cif')[0]
+    crystal1 = CrystalReader('crystal1.cif', format='cif')[0]
+    crystal2 = CrystalReader('crystal2.cif', format='cif')[0]
 
     sim_engine = PackingSimilarity()
-    sim_engine.settings.packing_shell_size=shell_size
-    out = sim_engine.compare(crystal1,crystal2) # reference, target
+    sim_engine.settings.packing_shell_size = shell_size
+    out = sim_engine.compare(crystal1, crystal2)  # reference, target
 
     return out.rmsd, out.nmatched_molecules
 
-def many_to_one_rmsd20(data1, data2, ind2, shell_size = 20):
-    struct2 = ref_cell_to_pymatgen_istruc(data2, ind2) # target_structure
-    writer2 = cif.CifWriter(struct2, symprec = 0.1)
+
+def many_to_one_rmsd20(data1, data2, ind2, shell_size=20):
+    struct2 = ref_cell_to_pymatgen_istruc(data2, ind2)  # target_structure
+    writer2 = cif.CifWriter(struct2, symprec=0.1)
     writer2.write_file('crystal2.cif')
-    crystal2 = CrystalReader('crystal2.cif',format='cif')[0]
+    crystal2 = CrystalReader('crystal2.cif', format='cif')[0]
 
     sim_engine = PackingSimilarity()
-    sim_engine.settings.packing_shell_size=shell_size
+    sim_engine.settings.packing_shell_size = shell_size
 
     outputs = []
     for i in tqdm.tqdm(range(data1.num_graphs)):
         struct1 = ref_cell_to_pymatgen_istruc(data1, i)
-        writer1 = cif.CifWriter(struct1, symprec = 0.1)
+        writer1 = cif.CifWriter(struct1, symprec=0.1)
         writer1.write_file('crystal1.cif')
-        crystal1 = CrystalReader('crystal1.cif',format='cif')[0]
+        crystal1 = CrystalReader('crystal1.cif', format='cif')[0]
         out = sim_engine.compare(crystal1, crystal2)  # reference, target
 
         outputs.append([out.rmsd, out.nmatched_molecules])
@@ -2226,12 +2231,14 @@ def invert_rotvec_handedness(rotvec):
     rot_mat = Rotation.from_rotvec(rotvec).as_matrix()
     return Rotation.from_matrix(-rot_mat).as_rotvec()  # negative of the rotation matrix gives the accurate rotation for opposite handed object
 
+
 def normalize(x):
     min_x = np.amin(x)
     max_x = np.amax(x)
     span = max_x - min_x
     normed_x = (x - min_x) / span
     return normed_x
+
 
 def compute_Ip_handedness(Ip):
     if isinstance(Ip, np.ndarray):
@@ -2269,7 +2276,7 @@ def save_checkpoint(epoch, model, optimizer, config, model_name):
     torch.save({'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'config':config},
+                'config': config},
                '../models/' + model_name)
     return None
 
@@ -2296,51 +2303,84 @@ def load_checkpoint(model, optimizer, model_path, config):
 
     return model, optimizer, config
 
+
 def normed_score(x):
-    return (x[:,1] - x[:,0])/np.abs(x[:,1])
+    return (x[:, 1] - x[:, 0]) / np.abs(x[:, 1])
 
 
-def np_softmax(x, temperature = 1):
+def np_softmax(x, temperature=1):
     if x.ndim == 1:
-        x = x[None,:]
+        x = x[None, :]
     # return F.softmax(torch.Tensor(x), dim=1).cpu().detach().numpy()
-    probabilities = np.exp(x / temperature)/np.sum(np.exp(x / temperature),axis=1)[:,None]
+    probabilities = np.exp(x / temperature) / np.sum(np.exp(x / temperature), axis=1)[:, None]
 
     return probabilities
 
-def crystal_pot_calculation(refcells, calculator = 'lj'):
-    mols = [ase_mol_from_crystaldata(refcells,n) for n in range(refcells.num_graphs)]
+
+def crystal_pot_calculation(refcells, calculator='lj'):
+    mols = [ase_mol_from_crystaldata(refcells, n) for n in range(refcells.num_graphs)]
     pot_en = np.zeros(len(mols))
-    for i,mol in enumerate(mols):
+    for i, mol in enumerate(mols):
         if calculator == 'lj':
             mol.calc = lj.LennardJones()
 
-        mol.set_pbc([True,True,True])
+        mol.set_pbc([True, True, True])
         pot_en[i] = mol.get_potential_energy()
     return pot_en
+
 
 def saturating_tanh(x, norm):
     return F.hardtanh((x - norm) / norm) * norm + norm
 
+
 def np_sigmoid(x):
-    return (np.tanh(x) + 1)/2
+    return (np.tanh(x) + 1) / 2
+
 
 def np_hardsigmoid(x):
     return ((F.hardtanh(torch.Tensor(x)) + 1) / 2).detach().numpy()
 
+
 def np_hardtanh(x):
     return F.hardtanh(torch.Tensor(x)).detach().numpy()
+
 
 def compute_rdf_distance(target_rdf, sample_rdf):
     '''
     earth mover's distance
     assuming dimension [sample, element-pair, radius]
-    normed against target rdf
+    normed against target rdf (sample is not strictly a PDF in this case)
+    averaged over nnz elements - only works for single type of molecule per call
     '''
-    # clip for stability near 0
 
-    normed_rdfs_diff = np.nan_to_num((target_rdf - sample_rdf)/ np.sum(target_rdf,axis=-1)[None,:,None])
-    return np.average(np.sum(np.abs(np.cumsum(normed_rdfs_diff, axis=-1)),axis=-1),axis=-1)
+    nonzero_element_pairs = np.sum(np.sum(target_rdf, axis=1) > 0)
+    target_CDF = np.cumsum(target_rdf, axis=-1)
+    sample_CDF = np.cumsum(sample_rdf, axis=-1)
+    norm = target_CDF[:, -1]
+    target_CDF = np.nan_to_num(target_CDF / norm[:, None])
+    sample_CDF = np.nan_to_num(sample_CDF / norm[None, :, None])
+    emd = np.sum(np.abs(target_CDF - sample_CDF), axis=(1, 2))
+    return emd / nonzero_element_pairs  # manual normalizaion elementwise
+
+
+def earth_movers_distance_np(d1, d2):
+    '''
+
+    Parameters
+    ----------
+    d1
+    d2
+
+    Returns
+    -------
+    earth mover's distance (Wasserstein metric) between 1d PDFs (pre-normalized)
+    '''
+    return np.sum(np.abs(np.cumsum(d1) - np.cumsum(d2)))
+
+
+def histogram_overlap(d1, d2):
+    return np.sum(np.minimum(d1, d2)) / np.average((d1.sum(), d2.sum()))
+
 
 def compute_rdf_distance_metric(target_rdf, sample_rdf):
     '''
@@ -2348,10 +2388,12 @@ def compute_rdf_distance_metric(target_rdf, sample_rdf):
     assuming dimension [sample, element-pair, radius]
     normed against mean average, to make it a metric
     '''
+    assert False  # todo rewrite this correctly as above
     # clip for stability near 0
-    norm = (np.sum(target_rdf,axis=-1)[None,:] + np.sum(sample_rdf,axis=-1))[...,None]
-    normed_rdfs_diff = np.nan_to_num((target_rdf - sample_rdf)/norm)
-    return np.average(np.sum(np.abs(np.cumsum(normed_rdfs_diff, axis=-1)),axis=-1),axis=-1)
+    norm = (np.sum(target_rdf, axis=-1)[None, :] + np.sum(sample_rdf, axis=-1))[..., None]
+    normed_rdfs_diff = np.nan_to_num((target_rdf - sample_rdf) / norm)
+    return np.average(np.sum(np.abs(np.cumsum(normed_rdfs_diff, axis=-1)), axis=-1), axis=-1)
+
 
 def compute_rdf_distance_metric_torch(target_rdf, sample_rdf):
     '''
@@ -2359,10 +2401,12 @@ def compute_rdf_distance_metric_torch(target_rdf, sample_rdf):
     assuming dimension [sample, element-pair, radius]
     normed against mean average, to make it a metric
     '''
+    assert False  # todo rewrite this correctly as above
     # clip for stability near 0
-    norm = (torch.sum(target_rdf,dim=-1)[None,:] + torch.sum(sample_rdf,dim=-1))[...,None]
-    normed_rdfs_diff = torch.nan_to_num((target_rdf - sample_rdf)/norm)
-    return torch.mean(torch.sum(torch.abs(torch.cumsum(normed_rdfs_diff, dim=-1)),dim=-1),dim=-1)
+    norm = (torch.sum(target_rdf, dim=-1)[None, :] + torch.sum(sample_rdf, dim=-1))[..., None]
+    normed_rdfs_diff = torch.nan_to_num((target_rdf - sample_rdf) / norm)
+    return torch.mean(torch.sum(torch.abs(torch.cumsum(normed_rdfs_diff, dim=-1)), dim=-1), dim=-1)
+
 
 def compute_rdf_distance2(target_rdf, sample_rdf):
     '''
@@ -2370,15 +2414,16 @@ def compute_rdf_distance2(target_rdf, sample_rdf):
     assuming dimension [sample, element-pair, radius]
     normed against target rdf
     '''
-    cum1 = np.nan_to_num(np.cumsum(target_rdf/np.sum(target_rdf,axis=-1)[:,None],axis=-1))
-    cum2 = np.nan_to_num(np.cumsum(sample_rdf/np.sum(target_rdf,axis=-1)[None,:,None],axis=-1))
-    return np.average(np.sum(np.abs(cum1-cum2)))
+    cum1 = np.nan_to_num(np.cumsum(target_rdf / np.sum(target_rdf, axis=-1)[:, None], axis=-1))
+    cum2 = np.nan_to_num(np.cumsum(sample_rdf / np.sum(target_rdf, axis=-1)[None, :, None], axis=-1))
+    return np.average(np.sum(np.abs(cum1 - cum2)))
 
 
-def softmax_and_score(score, temperature = 1):
-    score = np_softmax(score.astype('float64'), temperature)[:,1].astype('float64') # values get too close to zero for float32
+def softmax_and_score(score, temperature=1):
+    score = np_softmax(score.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
     tanned = np.tan((score - 0.5) * np.pi)
     return (np.sign(tanned) * np.log10(np.abs(tanned)))
+
 
 '''
 # look at all kinds of activations
