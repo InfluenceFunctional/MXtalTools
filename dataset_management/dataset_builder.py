@@ -470,7 +470,7 @@ cifs_directory_path = None
 # cifs_directory_path = None
 # target_identifiers = [
 #     'OBEQUJ', 'OBEQOD', 'OBEQET', 'OBEQIX',
-#     'NACJAF', 'XAFPAY', 'XAFQIH'
+#     'NACJAF', 'XAFPAY', 'XAFPAY01','XAFPAY02','XAFPAY03','XAFPAY04', 'XAFQIH'
 # ]
 
 # mode = 'cif'

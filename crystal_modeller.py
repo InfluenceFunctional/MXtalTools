@@ -464,7 +464,7 @@ class Modeller():
         stop = 1
 
     def train(self):
-        with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=self.config.wandb.experiment_tag):
+        with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=[self.config.wandb.experiment_tag]):
             wandb.run.name = wandb.config.machine + '_' + str(wandb.config.run_num) # overwrite procedurally generated run name with our run name
             wandb.run.save()
             # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken - look at the github thread
@@ -1190,6 +1190,10 @@ class Modeller():
             'XXI': 'KONTIQ',
             'XXII': 'NACJAF',
             'XXIII': 'XAFPAY',
+            'XXIII_1': 'XAFPAY01',
+            'XXIII_2':'XAFPAY02',
+            'XXXIII_3':'XAFPAY03',
+            'XXXIII_4':'XAFPAY04',
             'XXIV': 'XAFQON',
             'XXVI': 'XAFQIH',
             'XXXI_1': '2199671_p10167_1_0',
@@ -2195,9 +2199,17 @@ class Modeller():
             'XXI': 'KONTIQ',
             'XXII': 'NACJAF',
             'XXIII': 'XAFPAY',
+            'XXIII_1': 'XAFPAY01',
+            'XXIII_2':'XAFPAY02',
+            'XXXIII_3':'XAFPAY03',
+            'XXXIII_4':'XAFPAY04',
             'XXIV': 'XAFQON',
-            'XXVI': 'XAFQIH'
+            'XXVI': 'XAFQIH',
+            'XXXI_1': '2199671_p10167_1_0',
+            'XXXI_2': '2199673_1_0',
+            # 'XXXI_3': '2199672_1_0',
         }
+
 
         # determine which samples go with which targets
         all_identifiers = {key: [] for key in blind_test_targets}

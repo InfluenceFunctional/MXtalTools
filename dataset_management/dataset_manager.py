@@ -221,7 +221,7 @@ class Miner():
             # CSD blind test 5 and 6 targets
             blind_test_identifiers = [
                 'OBEQUJ','OBEQOD','OBEQET','XATJOT','OBEQIX','KONTIQ',
-                'NACJAF','XAFPAY','XAFQON','XAFQIH'
+                'NACJAF','XAFPAY','XAFQON','XAFQIH','XAFPAY01','XAFPAY02','XAFPAY03','XAFPAY04'
             ]
             blind_test_identifiers.remove('XATJOT') # multi-component
             blind_test_identifiers.remove('XAFQON') # multi-component
