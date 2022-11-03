@@ -464,7 +464,9 @@ class Modeller():
         stop = 1
 
     def train(self):
-        with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=[self.config.wandb.experiment_tag]):
+        with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=self.config.wandb.experiment_tag):
+            wandb.run.name = wandb.config.machine + '_' + str(wandb.config.run_num) # overwrite procedurally generated run name with our run name
+            wandb.run.save()
             # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken - look at the github thread
 
             config, dataset_builder = self.train_boilerplate()
@@ -674,6 +676,15 @@ class Modeller():
 
                 np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)
                 np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
+
+            metrics_dict = self.update_gan_metrics(
+                epoch, metrics_dict,
+                np.zeros(10), d_err_te,
+                np.zeros(10), g_err_te,
+                d_optimizer.defaults['lr'], g_optimizer.defaults['lr'])
+
+            self.log_gan_loss(metrics_dict, None, test_epoch_stats_dict,
+                              None, d_te_record, None, g_te_record)
 
             self.log_gan_accuracy(epoch, train_loader,
                                   None, test_epoch_stats_dict, config,
@@ -1506,43 +1517,52 @@ class Modeller():
         wandb.log(current_metrics)
 
         # log discriminator losses
-        hist = np.histogram(d_tr_record, bins=256, range=(np.amin(d_tr_record), np.quantile(d_tr_record, 0.9)))
-        wandb.log({"Discriminator Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
+        if d_tr_record is not None:
+            hist = np.histogram(d_tr_record, bins=256, range=(np.amin(d_tr_record), np.quantile(d_tr_record, 0.9)))
+            wandb.log({"Discriminator Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
         hist = np.histogram(d_te_record, bins=256, range=(np.amin(d_te_record), np.quantile(d_te_record, 0.9)))
         wandb.log({"Discriminator Test Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
 
-        wandb.log({"D Train Loss Coeff. of Variation": np.sqrt(np.var(d_tr_record)) / np.average(d_tr_record)})
+        if d_tr_record is not None:
+            wandb.log({"D Train Loss Coeff. of Variation": np.sqrt(np.var(d_tr_record)) / np.average(d_tr_record)})
         wandb.log({"D Test Loss Coeff. of Variation": np.sqrt(np.var(d_te_record)) / np.average(d_te_record)})
 
         # log generator losses
-        hist = np.histogram(g_tr_record, bins=256, range=(np.amin(g_tr_record), np.quantile(g_tr_record, 0.9)))
-        wandb.log({"Generator Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
+        if g_tr_record is not None:
+            hist = np.histogram(g_tr_record, bins=256, range=(np.amin(g_tr_record), np.quantile(g_tr_record, 0.9)))
+            wandb.log({"Generator Train Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
         hist = np.histogram(g_te_record, bins=256, range=(np.amin(g_te_record), np.quantile(g_te_record, 0.9)))
         wandb.log({"Generator Test Losses": wandb.Histogram(np_histogram=hist, num_bins=256)})
 
-        wandb.log({"G Train Loss Coeff. of Variation": np.sqrt(np.var(g_tr_record)) / np.average(g_tr_record)})
+        if g_tr_record is not None:
+            wandb.log({"G Train Loss Coeff. of Variation": np.sqrt(np.var(g_tr_record)) / np.average(g_tr_record)})
         wandb.log({"G Test Loss Coeff. of Variation": np.sqrt(np.var(g_te_record)) / np.average(g_te_record)})
 
         # log specific losses
         special_losses = {}
         special_losses['epoch'] = current_metrics['epoch']
-        for key in train_epoch_stats_dict.keys():
-            if ('loss' in key) and (train_epoch_stats_dict[key] is not None):
-                special_losses['Train ' + key] = np.average(train_epoch_stats_dict[key])
-            if ('loss' in key) and (test_epoch_stats_dict[key] is not None):
-                special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
-            if ('score' in key) and (train_epoch_stats_dict[key] is not None):
-                if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
-                    score = train_epoch_stats_dict[key]
-                elif self.config.gan_loss == 'standard':
-                    score = np_softmax(train_epoch_stats_dict[key])[:, 0]
-                special_losses['Train ' + key] = np.average(score)
-            if ('score' in key) and (test_epoch_stats_dict[key] is not None):
-                if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
-                    score = test_epoch_stats_dict[key]
-                elif self.config.gan_loss == 'standard':
-                    score = np_softmax(test_epoch_stats_dict[key])[:, 0]
-                special_losses['Test ' + key] = np.average(score)
+        if train_epoch_stats_dict is not None:
+            for key in train_epoch_stats_dict.keys():
+                if ('loss' in key) and (train_epoch_stats_dict[key] is not None):
+                    special_losses['Train ' + key] = np.average(train_epoch_stats_dict[key])
+                if ('score' in key) and (train_epoch_stats_dict[key] is not None):
+                    if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
+                        score = train_epoch_stats_dict[key]
+                    elif self.config.gan_loss == 'standard':
+                        score = softmax_and_score(train_epoch_stats_dict[key])
+                    special_losses['Train ' + key] = np.average(score)
+
+        if test_epoch_stats_dict is not None:
+            for key in test_epoch_stats_dict.keys():
+                if ('loss' in key) and (test_epoch_stats_dict[key] is not None):
+                    special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
+                if ('score' in key) and (test_epoch_stats_dict[key] is not None):
+                    if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
+                        score = test_epoch_stats_dict[key]
+                    elif self.config.gan_loss == 'standard':
+                        score = softmax_and_score(test_epoch_stats_dict[key])
+                    special_losses['Test ' + key] = np.average(score)
+
         wandb.log(special_losses)
 
     def params_f_to_c(self, cell_lengths, cell_angles):
@@ -2148,7 +2168,7 @@ class Modeller():
 
         self.violin_scores_plot(all_identifiers, scores_dict, target_identifiers_inds)
         self.violin_scores_plot2(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
-        self.violin_scores_plot3(scores_dict, tracking_features_names =config.dataDims['tracking features dict'], tracking_features=test_epoch_stats_dict['tracking features'])
+        self.violin_scores_plot3(scores_dict, tracking_features_names=config.dataDims['tracking features dict'], tracking_features=test_epoch_stats_dict['tracking features'])
         self.scores_distributions_plot(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
         self.loss_correlates_plot(loss_correlations_dict, config)
         self.distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
@@ -2156,7 +2176,7 @@ class Modeller():
         group, rankings, list_num = self.target_ranking_analysis(extra_test_dict, scores_dict, all_identifiers)
         self.groupwise_target_ranking_analysis(group, rankings, list_num, scores_dict)
 
-        # self.bt_clustering(all_identifiers, scores_dict, extra_test_dict)
+        #self.bt_clustering(all_identifiers, scores_dict, extra_test_dict)
         # self.functional_group_analysis()
 
         aa = 1
@@ -2393,9 +2413,9 @@ class Modeller():
         fraction_dict = {}
         for ii, key in enumerate(tracking_features_names):
             if 'molecule' in key and 'fraction' in key:
-                if np.sum(tracking_features[:,ii]) > 0:
-                    fraction_dict[key.split()[1]] = np.average(tracking_features[:,ii] > 0)
-                    functional_group_inds[key.split()[1]] = np.argwhere(tracking_features[:,ii] > 0)[:,0]
+                if np.sum(tracking_features[:, ii]) > 0:
+                    fraction_dict[key.split()[1]] = np.average(tracking_features[:, ii] > 0)
+                    functional_group_inds[key.split()[1]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
 
         sort_order = np.argsort(list(fraction_dict.values()))[-1::-1]
         sorted_functional_group_keys = [list(functional_group_inds.keys())[i] for i in sort_order]
@@ -2423,7 +2443,7 @@ class Modeller():
         fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
         fig.update_layout(xaxis_title='Model Score')
         fig.update_layout(showlegend=False)
-        #fig.show()
+        # fig.show()
 
         wandb.log({'Functional Group Scores Distributions': fig})
 
@@ -2440,7 +2460,7 @@ class Modeller():
         hists['Test Real'] = scores_hist / scores_hist.sum()
 
         submissions_hist, _ = np.histogram(BT_submission_scores, bins=200, range=[-15, 15], density=True)
-        hists['BT submissions'] = submissions_hist /submissions_hist.sum()
+        hists['BT submissions'] = submissions_hist / submissions_hist.sum()
 
         distorted_hist, rr = np.histogram(scores_dict['Test Distorted'], bins=200, range=[-15, 15], density=True)
         hists['Test Distorted'] = distorted_hist / distorted_hist.sum()
@@ -2453,8 +2473,8 @@ class Modeller():
         for i, label1 in enumerate(hists.keys()):
             for j, label2 in enumerate(hists.keys()):
                 if i > j:
-                    emds[f'{label1} <-> {label2} emd'] = earth_movers_distance_np(hists[label1],hists[label2])
-                    overlaps[f'{label1} <-> {label2} overlap'] = histogram_overlap(hists[label1],hists[label2])
+                    emds[f'{label1} <-> {label2} emd'] = earth_movers_distance_np(hists[label1], hists[label2])
+                    overlaps[f'{label1} <-> {label2} overlap'] = histogram_overlap(hists[label1], hists[label2])
 
         wandb.log(emds)
         wandb.log(overlaps)
@@ -2474,7 +2494,6 @@ class Modeller():
             'Submissions below target mean': submissions_average_below_target,
         }
         wandb.log(distributions_dict)
-
 
         return None
 
@@ -2686,14 +2705,14 @@ class Modeller():
                                        name="Submission 1 Score",
                                        showlegend=False,
                                        marker_color='#0c4dae'),
-                          row=(ii) //2 + 1, col=(ii) %2 + 1)
+                          row=(ii) // 2 + 1, col=(ii) % 2 + 1)
             fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list2_inds]],
                                        histnorm='probability density',
                                        nbinsx=50,
                                        name="Submission 2 Score",
                                        showlegend=False,
                                        marker_color='#d60000'),
-                          row=(ii)//2 + 1, col=(ii) % 2 + 1)
+                          row=(ii) // 2 + 1, col=(ii) % 2 + 1)
 
         label = 'XXII'
         good_inds = np.where(np.asarray(group[label]) == 'Facelli')[0]
@@ -2759,45 +2778,43 @@ class Modeller():
         #                            marker_color='#d60000'),
         #               row=2, col=3)
 
-
-
         return None
 
     def bt_clustering(self, all_identifiers, scores_dict, extra_test_dict):
         # compute pairwise distances
-        if not os.path.exists('../bt_submissions_distances.npy'):  # expensive - should be precomputed
+        aa = 1
+        if True:  # not os.path.exists('../bt_submissions_distances.npy'):  # expensive - should be precomputed
             submissions_dists_dict = {}
             for key in all_identifiers.keys():
-                if key not in ['XVI', 'XVII', 'XVIII']:  # already did these ones
+                if True:  # key not in ['XVI', 'XVII', 'XVIII']:  # already did these ones
                     if all_identifiers[key] != []:
                         print(key)
                         rdfs = extra_test_dict['full rdf'][all_identifiers[key]]
                         dists = np.zeros((len(rdfs), len(rdfs)))
                         for i in tqdm.tqdm(range(len(rdfs))):
-                            dists[i, :] = compute_rdf_distance_metric_torch(torch.Tensor(rdfs[i]).cuda(), torch.Tensor(rdfs).cuda()).cpu().detach().numpy()  # many-to-one - faster via torch
+                            dists[i, :i + 1] = compute_rdf_distance_metric_torch(torch.Tensor(rdfs[i]).cuda(), torch.Tensor(rdfs[:i + 1]).cuda()).cpu().detach().numpy()  # many-to-one - faster via torch
                         submissions_dists_dict[key] = dists
+                        submissions_dists_dict[key] += dists.T
                 np.save('../bt_submissions_distances.npy', submissions_dists_dict)
         else:
             submissions_dists_dict = np.load('../bt_submissions_distances.npy', allow_pickle=True).item()
 
-        cluster_labels_dict = {}
-        for key in submissions_dists_dict.keys():
-            clustering = AgglomerativeClustering(n_clusters=None, linkage="average", compute_full_tree=True, distance_threshold=np.average(submissions_dists_dict[key]) * 0.7, affinity='precomputed').fit(submissions_dists_dict[key])
-            cluster_labels_dict[key] = clustering.labels_
-
-        # fig = make_subplots(rows=2, cols=4,
-        #                     subplot_titles=(list(cluster_labels_dict.keys())) + ['All'])
+        # agglomerative clustering and dendrogram
+        # setting distance_threshold=0 ensures we compute the full tree.
+        # plt.clf()
+        # for i, label in enumerate(submissions_dists_dict.keys()):
+        #     model = AgglomerativeClustering(distance_threshold=0, linkage="average", affinity='precomputed', n_clusters=None)
+        #     model = model.fit(submissions_dists_dict[label])
         #
-        # for i, label in enumerate(cluster_labels_dict.keys()):
-        #     row = i // 4 + 1
-        #     col = i % 4 + 1
-        #
-        #     fig.add_trace(go.Scattergl(x=cluster_labels_dict[label], y=scores_dict[label], showlegend=False, mode='markers'), row=row, col=col)
-        #
-        # wandb.log({'Cluster Scoring': fig})
+        #     plt.title("Hierarchical Clustering Dendrogram")
+        #     plt.subplot(2, 4, i + 1)
+        #     # plot the top three levels of the dendrogram
+        #     plot_dendrogram(model, truncate_mode="level", p=3)
+        #     plt.xlabel("Number of points in node (or index of point if no parenthesis).")
+        #     plt.show()
 
 
-'''
+''' extra stuff
             # if train_epoch_stats_dict['generated inter distance hist'] is not None:  # todo update this
             #     hh2_test, rr = test_epoch_stats_dict['generated inter distance hist']
             #     hh2_train, _ = train_epoch_stats_dict['generated inter distance hist']

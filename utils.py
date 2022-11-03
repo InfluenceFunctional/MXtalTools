@@ -21,10 +21,34 @@ from pymatgen.core import (structure, lattice)
 # from ccdc.crystal import PackingSimilarity
 # from ccdc.io import CrystalReader
 from pymatgen.io import cif
+from scipy.cluster.hierarchy import dendrogram
+
 
 '''
 general utilities
 '''
+
+def plot_dendrogram(model, **kwargs):
+    # Create linkage matrix and then plot the dendrogram
+
+    # create the counts of samples under each node
+    counts = np.zeros(model.children_.shape[0])
+    n_samples = len(model.labels_)
+    for i, merge in enumerate(model.children_):
+        current_count = 0
+        for child_idx in merge:
+            if child_idx < n_samples:
+                current_count += 1  # leaf node
+            else:
+                current_count += counts[child_idx - n_samples]
+        counts[i] = current_count
+
+    linkage_matrix = np.column_stack(
+        [model.children_, model.distances_, counts]
+    ).astype(float)
+
+    # Plot the corresponding dendrogram
+    dendrogram(linkage_matrix, **kwargs)
 
 
 def weight_reset(m):
@@ -2401,22 +2425,12 @@ def compute_rdf_distance_metric_torch(target_rdf, sample_rdf):
     assuming dimension [sample, element-pair, radius]
     normed against mean average, to make it a metric
     '''
-    assert False  # todo rewrite this correctly as above
-    # clip for stability near 0
-    norm = (torch.sum(target_rdf, dim=-1)[None, :] + torch.sum(sample_rdf, dim=-1))[..., None]
-    normed_rdfs_diff = torch.nan_to_num((target_rdf - sample_rdf) / norm)
-    return torch.mean(torch.sum(torch.abs(torch.cumsum(normed_rdfs_diff, dim=-1)), dim=-1), dim=-1)
-
-
-def compute_rdf_distance2(target_rdf, sample_rdf):
-    '''
-    earth mover's distance
-    assuming dimension [sample, element-pair, radius]
-    normed against target rdf
-    '''
-    cum1 = np.nan_to_num(np.cumsum(target_rdf / np.sum(target_rdf, axis=-1)[:, None], axis=-1))
-    cum2 = np.nan_to_num(np.cumsum(sample_rdf / np.sum(target_rdf, axis=-1)[None, :, None], axis=-1))
-    return np.average(np.sum(np.abs(cum1 - cum2)))
+    nonzero_element_pairs = torch.sum(torch.sum(target_rdf, dim=1) > 0)
+    target_CDF = torch.cumsum(target_rdf, dim=-1)
+    sample_CDF = torch.cumsum(sample_rdf, dim=-1)
+    norm = (target_CDF[:, -1] + sample_CDF[:,:,-1]) / 2
+    emd = torch.sum(torch.nan_to_num(torch.abs(target_CDF - sample_CDF) / norm[...,None]), dim=(1, 2))
+    return emd / nonzero_element_pairs  # manual normalizaion elementwise
 
 
 def softmax_and_score(score, temperature=1):
