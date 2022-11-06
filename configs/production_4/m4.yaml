@@ -31,7 +31,7 @@ d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminato
 g_model_path: null
 
 seeds:
-  model: 0
+  model: 2
   dataset: 0
 
 # opt - sweep details
