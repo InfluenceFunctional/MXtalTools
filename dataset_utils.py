@@ -171,18 +171,15 @@ class BuildDataset:
             dataset['crystal beta'] = dataset['crystal beta'] * np.pi / 180
             dataset['crystal gamma'] = dataset['crystal gamma'] * np.pi / 180
 
-        '''
-        add functional group information
-        '''
-        from dataset_management.molecule_featurizer import get_fraction
-        from mendeleev import element as element_table
-
-        for anum in range(1, min(36, config.max_atomic_number)):
-            dataset[f'molecule {element_table(anum).symbol} fraction'] = np.asarray([get_fraction(atom_list, anum) for atom_list in dataset['atom Z']])
-
-        # for key in Fragments.__dict__.keys(): # for all the class methods
-        #     if key[0:3] == 'fr_': # if it's a functional group analysis method
-        #         dataset[f'molecule has {key[3:]}'] = Fragments.__dict__[key](mol, countUnique=False)
+        # '''
+        # add functional group information
+        # '''
+        # if not 'molecule B fraction' in dataset.keys():
+        #     from dataset_management.molecule_featurizer import get_fraction
+        #     from mendeleev import element as element_table
+        #
+        #     for anum in range(1, 36):
+        #         dataset[f'molecule {element_table(anum).symbol} fraction'] = np.asarray([get_fraction(atom_list, anum) for atom_list in dataset['atom Z']])
 
         return dataset
 
@@ -474,15 +471,13 @@ class BuildDataset:
         """
         # normalize everything
         keys_to_add = []
-        keys_to_add.extend(['molecule volume', 'molecule mass', 'molecule num atoms', 'molecule volume', 'molecule point group is C1',
+        keys_to_add.extend(['molecule volume', 'molecule mass', 'molecule num atoms', 'molecule point group is C1',
                             'molecule num rings', 'molecule num donors', 'molecule num acceptors',
                             'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                             'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
                             'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3', 'crystal r factor',
                             ])
-        for key in dataset.keys():
-            if ('molecule' in key) and ('fraction' in key):
-                keys_to_add.append(key)
+
 
         keys_to_add.extend(self.crystal_keys)
         if 'crystal spacegroup symbol' in keys_to_add:
@@ -493,6 +488,12 @@ class BuildDataset:
             keys_to_add.remove('crystal lattice centring')  # we don't want to deal with strings
         if ('crystal point group' in keys_to_add):
             keys_to_add.remove('crystal point group')  # we don't want to deal with strings
+
+        for key in dataset.keys():
+            if ('molecule' in key) and ('fraction' in key):
+                keys_to_add.append(key)
+            if ('molecule has' in key):
+                keys_to_add.append(key)
 
         print("Preparing molecule/crystal tracking features")
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it

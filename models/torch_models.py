@@ -469,3 +469,41 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
         else:
             density = None
         return parallel_compute_rdf_torch([dists[crystal_number == n] for n in range(crystaldata.num_graphs)], rrange=rrange, bins=bins, density=density)
+
+
+def vdW_penalty(crystaldata, vdw_radii):
+
+    if crystaldata.aux_ind is not None:
+        in_inds = torch.where(crystaldata.aux_ind == 0)[0]
+        # default to always intermolecular distances
+        out_inds = torch.where(crystaldata.aux_ind == 1)[0].to(crystaldata.pos.device)
+
+    else: # if we lack the info, just do it intramolecular
+        in_inds = torch.arange(len(crystaldata.pos)).to(crystaldata.pos.device)
+        out_inds = in_inds
+
+    '''
+    compute all distances
+    '''
+    edges = asymmetric_radius_graph(crystaldata.pos,
+                                    batch=crystaldata.batch,
+                                    inside_inds=in_inds,
+                                    convolve_inds=out_inds,
+                                    r=6, max_num_neighbors=500, flow='source_to_target') # max vdW range as six
+
+    crystal_number = crystaldata.batch[edges[0]]
+
+    dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
+
+    '''
+    compute vdW radii respectfulness
+    '''
+    elements = [crystaldata.x[edges[0], 0].long().to(dists.device), crystaldata.x[edges[1], 0].long().to(dists.device)]
+    vdw_radii_vector = torch.Tensor(list(vdw_radii.values())).to(dists.device)
+    atom_radii = [vdw_radii_vector[elements[0]], vdw_radii_vector[elements[1]]]
+    radii_sums = atom_radii[0] + atom_radii[1]
+    radii_adjusted_dists = dists - radii_sums
+    penalties = torch.clip(torch.exp(-radii_adjusted_dists - 0.25) - 1,min=0)
+    scores_list = [torch.mean(penalties[crystal_number == ii]) for ii in range(crystaldata.num_graphs)]
+
+    return torch.Tensor(scores_list)

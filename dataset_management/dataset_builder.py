@@ -506,14 +506,14 @@ if __name__ == '__main__':
         os.mkdir(chunk_path + '/molecule_features')
 
     helper = CCDC_helper(chunk_path, mode)
-    #helper.add_single_feature_to_dataset(dataset_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/full_dataset',
-    #                                     feature = 'crystal symmetries')
+    helper.add_single_feature_to_dataset(dataset_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/new_dataset',
+                                        feature = 'crystal symmetries')
     #helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
     # helper.collect_chunks_and_initialize_df()
     # helper.get_crystal_features(n_chunks=100, chunk_inds=[0, 100], file_path=cifs_directory_path)
 
-    featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
-    featurizer.featurize(chunk_inds=[75, 100])
-
-    miner = Miner(chunk_path, collect_chunks=True, database=mode)
-    miner.process_new_dataset(dataset_name = 'full_dataset')
+    # featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
+    # featurizer.featurize(chunk_inds=[600, 650])
+    #
+    # miner = Miner(chunk_path, collect_chunks=True, database=mode)
+    # miner.process_new_dataset(dataset_name = 'full_dataset')

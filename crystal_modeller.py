@@ -54,8 +54,11 @@ class Modeller():
 
         periodicTable = Chem.GetPeriodicTable()
         self.atom_weights = {}
+        self.vdw_radii = {}
         for i in range(100):
             self.atom_weights[i] = periodicTable.GetAtomicWeight(i)
+            self.vdw_radii[i] = periodicTable.GetRvdw(i)
+
 
         if os.path.exists('symmetry_info.npy'):
             sym_info = np.load('symmetry_info.npy', allow_pickle=True).item()
@@ -797,6 +800,9 @@ class Modeller():
             'generated supercell examples dict': [],
             'generator sample source': [],
             'generated sample distances': [],
+            'distortion level': [],
+            'real vdW penalty': [],
+            'fake vdW penalty': [],
         }
 
         generated_supercell_examples_dict = {}
@@ -804,22 +810,6 @@ class Modeller():
         rand_batch_ind = np.random.randint(0, len(dataLoader))
 
         for i, data in enumerate(tqdm.tqdm(dataLoader)):
-            '''
-            train flowmodel first just in case it's initialization is too wild for the discriminator
-            '''
-            if config.train_generator_as_flow:
-                if (epoch < config.cut_max_prob_training_after):  # stop using max_prob training after a few initial epochs
-
-                    g_flow_losses = self.flow_iter(generator, data.clone().to(config.device))
-
-                    g_flow_loss = g_flow_losses.mean()
-                    g_flow_err.append(g_flow_loss.data.cpu())  # average loss
-                    epoch_stats_dict['generator flow loss'].append(g_flow_losses.cpu().detach().numpy())  # loss distribution
-
-                    if update_gradients:
-                        g_optimizer.zero_grad()  # reset gradients from previous passes
-                        g_flow_loss.backward()  # back-propagation
-                        g_optimizer.step()  # update parameters
 
             '''
             train discriminator
@@ -828,11 +818,13 @@ class Modeller():
                 if config.train_discriminator_adversarially or config.train_discriminator_on_noise or config.train_discriminator_on_randn:
                     generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, config, data, generator, i)
 
-                    score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict \
+                    score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict, real_vdW_score, fake_vdW_score \
                         = self.train_discriminator(generated_samples_i, discriminator, config, data, i, handedness, return_rdf=config.gan_loss == 'distance')  # alternately trains on real and fake samples
 
                     epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
                     epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
+                    epoch_stats_dict['real vdW penalty'].extend(real_vdW_score.cpu().detach().numpy())
+                    epoch_stats_dict['fake vdW penalty'].extend(fake_vdW_score.cpu().detach().numpy())
 
                     if config.gan_loss == 'wasserstein':
                         d_losses = -score_on_real + score_on_fake  # maximize score on real, minimize score on fake
@@ -856,11 +848,6 @@ class Modeller():
                         torch.nn.utils.clip_grad_norm_(discriminator.parameters(), config.gradient_norm_clip)  # gradient clipping
                         d_optimizer.step()  # update parameters
 
-                    # generated_intra_dist.append(fake_dist_dict['intramolecular dist'].cpu().detach().numpy())
-                    # generated_inter_dist.append(fake_dist_dict['intermolecular dist'].cpu().detach().numpy())
-                    # real_intra_dist.append(real_dist_dict['intramolecular dist'].cpu().detach().numpy())
-                    # real_inter_dist.append(real_dist_dict['intermolecular dist'].cpu().detach().numpy())
-
                     epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
                     epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
 
@@ -869,7 +856,24 @@ class Modeller():
                     d_loss_record.extend(np.zeros(data.num_graphs))
 
             '''
-            train_generator # todo update
+            train flowmodel first just in case it's initialization is too wild for the discriminator # DEPRECATED
+            '''
+            if config.train_generator_as_flow:
+                if (epoch < config.cut_max_prob_training_after):  # stop using max_prob training after a few initial epochs
+
+                    g_flow_losses = self.flow_iter(generator, data.clone().to(config.device))
+
+                    g_flow_loss = g_flow_losses.mean()
+                    g_flow_err.append(g_flow_loss.data.cpu())  # average loss
+                    epoch_stats_dict['generator flow loss'].append(g_flow_losses.cpu().detach().numpy())  # loss distribution
+
+                    if update_gradients:
+                        g_optimizer.zero_grad()  # reset gradients from previous passes
+                        g_flow_loss.backward()  # back-propagation
+                        g_optimizer.step()  # update parameters
+
+            '''
+            train_generator # todo update # DEPRECATED
             '''
             if any((config.train_generator_density, config.train_generator_adversarially, config.train_generator_g2, config.train_generator_packing)):
 
@@ -1004,6 +1008,7 @@ class Modeller():
             'intermolecular rdf': [],
             'atomistic energy': [],
             'full rdf': [],
+            'vdW penalty': [],
         }
 
         for i, data in enumerate(tqdm.tqdm(dataLoader)):
@@ -1031,6 +1036,8 @@ class Modeller():
             epoch_stats_dict['scores'].extend(score_on_real.cpu().detach().numpy())
             epoch_stats_dict['intermolecular rdf'].extend(intermolecular_rdfs.cpu().detach().numpy())
             epoch_stats_dict['full rdf'].extend(full_rdfs.cpu().detach().numpy())
+            epoch_stats_dict['vdW penalty'].extend(vdW_penalty(real_supercell_data,self.vdw_radii).cpu().detach().numpy())
+
             if compute_LJ_energy:
                 epoch_stats_dict['atomistic energy'].extend(atomwise_energy)
 
@@ -1042,6 +1049,7 @@ class Modeller():
         epoch_stats_dict['tracking features'] = np.stack(epoch_stats_dict['tracking features'])
         epoch_stats_dict['full rdf'] = np.stack(epoch_stats_dict['full rdf'])
         epoch_stats_dict['intermolecular rdf'] = np.stack(epoch_stats_dict['intermolecular rdf'])
+        epoch_stats_dict['vdW penalty'] = np.asarray(epoch_stats_dict['vdW penalty'])
         if compute_LJ_energy:
             epoch_stats_dict['atomistic energy'] = np.asarray(epoch_stats_dict['atomistic energy'])
         else:
@@ -1603,8 +1611,8 @@ class Modeller():
             # if test_epoch_stats_dict['generated supercell examples dict'] is not None:
             #    self.log_molecules(config, test_epoch_stats_dict['generated supercell examples dict'])
 
-            if self.config.gan_loss == 'distance':
-                self.gan_distance_regression_analysis(config, test_epoch_stats_dict)
+            # if self.config.gan_loss == 'distance': # DEPRECATED
+            #     self.gan_distance_regression_analysis(config, test_epoch_stats_dict)
 
             if train_epoch_stats_dict is not None:
                 if test_epoch_stats_dict['generated cell parameters'] is not None:  # config.train_generator_density:
@@ -1612,6 +1620,8 @@ class Modeller():
 
                 if train_epoch_stats_dict['generator density target'] is not None:  # config.train_generator_density:
                     self.log_aux_regression(config, train_epoch_stats_dict, test_epoch_stats_dict)
+        elif config.mode == 'regression':
+            self.log_regression_accuracy(config, train_epoch_stats_dict, test_epoch_stats_dict)
 
         if (extra_test_dict is not None) and (epoch % config.extra_test_period == 0):
             self.blind_test_analysis(config, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict)
@@ -1650,7 +1660,8 @@ class Modeller():
             return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), real_rdf_dict, fake_rdf_dict
 
         else:
-            return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), real_distances_dict, fake_pairwise_distances_dict
+            return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), \
+                   real_distances_dict, fake_pairwise_distances_dict, vdW_penalty(real_supercell_data, self.vdw_radii), vdW_penalty(fake_supercell_data, self.vdw_radii)
 
     def train_generator(self, generator, discriminator, config, data, i):
         # noise injection
@@ -1927,9 +1938,14 @@ class Modeller():
             ii = (i + 2) % n_generators
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
                 generated_samples_ii = (data.cell_params - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
-                generated_samples_i = ((generated_samples_ii + torch.randn_like(generated_samples_ii) * config.generator_noise_level)).to(config.device)  # add jitter and return in standardized basis
+                if config.generator_noise_level == -1:
+                    distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-5,0,len(generated_samples_ii)).to(generated_samples_ii.device)[:,None] # wider range for evaluation mode
+                else:
+                    distortion = torch.randn_like(generated_samples_ii) * config.generator_noise_level
+                generated_samples_i = (generated_samples_ii + distortion).to(config.device)  # add jitter and return in standardized basis
                 handedness = data.asym_unit_handedness
                 epoch_stats_dict['generator sample source'].extend(np.ones(len(generated_samples_i)) * 2)
+                epoch_stats_dict['distortion level'].extend(torch.linalg.norm(distortion,axis=-1).cpu().detach().numpy())
 
         return generated_samples_i, handedness, epoch_stats_dict
 
@@ -2015,6 +2031,93 @@ class Modeller():
                 orientation='h',
             ))
             wandb.log({'Regressor Loss Correlates': fig})
+
+
+    def log_regression_accuracy(self, config, train_epoch_stats_dict, test_epoch_stats_dict):
+        target_mean = self.dataDims['target mean']
+        target_std = self.dataDims['target std']
+
+        target = np.asarray(test_epoch_stats_dict['generator density target'])
+        prediction = np.asarray(test_epoch_stats_dict['generator density prediction'])
+        orig_target = target * target_std + target_mean
+        orig_prediction = prediction * target_std + target_mean
+
+        train_target = np.asarray(train_epoch_stats_dict['generator density target'])
+        train_prediction = np.asarray(train_epoch_stats_dict['generator density prediction'])
+        train_orig_target = train_target * target_std + target_mean
+        train_orig_prediction = train_prediction * target_std + target_mean
+
+        losses = ['normed error', 'abs normed error', 'squared error']
+        loss_dict = {}
+        losses_dict = {}
+        for loss in losses:
+            if loss == 'normed error':
+                loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
+            elif loss == 'abs normed error':
+                loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
+            elif loss == 'squared error':
+                loss_i = (orig_target - orig_prediction) ** 2
+            losses_dict[loss] = loss_i  # huge unnecessary upload
+            loss_dict[loss + ' mean'] = np.mean(loss_i)
+            loss_dict[loss + ' std'] = np.std(loss_i)
+            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
+
+        linreg_result = linregress(orig_target, orig_prediction)
+        loss_dict['Regression R2'] = linreg_result.rvalue
+        loss_dict['Regression slope'] = linreg_result.slope
+        wandb.log(loss_dict)
+
+        # log loss distribution
+        if config.wandb.log_figures:  # todo clean
+            # predictions vs target trace
+            xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
+            fig = go.Figure()
+            fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
+            fig.update_traces(contours_coloring="fill")
+            fig.update_traces(contours_showlines=False)
+            fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
+            fig.add_trace(go.Scattergl(x=xline, y=xline))
+            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+            fig.update_layout(showlegend=False)
+            wandb.log({'Test Packing Coefficient': fig})
+
+            xline = np.linspace(max(min(train_orig_target), min(train_orig_prediction)), min(max(train_orig_target), max(train_orig_prediction)), 10)
+            fig = go.Figure()
+            fig.add_trace(go.Histogram2dContour(x=train_orig_target, y=train_orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
+            fig.update_traces(contours_coloring="fill")
+            fig.update_traces(contours_showlines=False)
+            fig.add_trace(go.Scattergl(x=train_orig_target, y=train_orig_prediction, mode='markers', showlegend=True, opacity=0.5))
+            fig.add_trace(go.Scattergl(x=xline, y=xline))
+            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+            fig.update_layout(showlegend=False)
+            wandb.log({'Train Packing Coefficient': fig})
+
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(x=train_orig_prediction - train_orig_target,
+                                       histnorm='probability density',
+                                       nbinsx=100,
+                                       name="Error Distribution",
+                                       showlegend=False))
+            wandb.log({'Regression Error Distribution': fig})
+
+            # correlate losses with molecular features
+            tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
+            g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+            features = []
+            for i in range(config.dataDims['num tracking features']):  # not that interesting
+                features.append(config.dataDims['tracking features dict'][i])
+                g_loss_correlations[i] = np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i], rowvar=False)[0, 1]
+
+            g_sort_inds = np.argsort(g_loss_correlations)
+            g_loss_correlations = g_loss_correlations[g_sort_inds]
+
+            fig = go.Figure(go.Bar(
+                y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
+                x=[g_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
+                orientation='h',
+            ))
+            wandb.log({'Regressor Loss Correlates': fig})
+        return None
 
     def cell_params_analysis(self, config, train_loader, test_epoch_stats_dict):
         n_crystal_features = config.dataDims['num lattice features']
@@ -2160,28 +2263,25 @@ class Modeller():
         analyze and plot
         '''
         aa = 1
-        if False:  # reload a prior analysis
-            test_epoch_stats_dict = np.load('../150_test_epoch_stats_dict.npy', allow_pickle=True).item()
-            extra_test_dict = np.load('../150_extra_test_dict.npy', allow_pickle=True).item()
 
-        loss_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
+        score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
         scores_dict, all_identifiers, blind_test_targets, target_identifiers, \
-        target_identifiers_inds, loss_correlations_dict, BT_target_scores, BT_submission_scores, \
-        BT_scores_dists, BT_balanced_dist = \
+        target_identifiers_inds, BT_target_scores, BT_submission_scores, \
+        BT_scores_dists, BT_balanced_dist, vdW_penalty_dict = \
             self.process_discriminator_evaluation_data(config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict)
 
         self.violin_scores_plot(all_identifiers, scores_dict, target_identifiers_inds)
+        self.violin_vdW_plot(all_identifiers, vdW_penalty_dict, target_identifiers_inds)
         self.violin_scores_plot2(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
-        self.violin_scores_plot3(scores_dict, tracking_features_names=config.dataDims['tracking features dict'], tracking_features=test_epoch_stats_dict['tracking features'])
+        self.functional_group_violin_plot(scores_dict, tracking_features_names=config.dataDims['tracking features dict'], tracking_features=test_epoch_stats_dict['tracking features'])
         self.scores_distributions_plot(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
-        self.loss_correlates_plot(loss_correlations_dict, config)
+        self.score_correlations_plot(score_correlations_dict, config)
         self.distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
         self.targetwise_distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
         group, rankings, list_num = self.target_ranking_analysis(extra_test_dict, scores_dict, all_identifiers)
         self.groupwise_target_ranking_analysis(group, rankings, list_num, scores_dict)
 
         #self.bt_clustering(all_identifiers, scores_dict, extra_test_dict)
-        # self.functional_group_analysis()
 
         aa = 1
 
@@ -2232,6 +2332,7 @@ class Modeller():
         record all the stats for the CSD data
         '''
         scores_dict = {}
+        vdW_penalty_dict = {}
         # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
         randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)
         distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)
@@ -2239,6 +2340,7 @@ class Modeller():
         if self.config.gan_loss == 'standard':
             if train_epoch_stats_dict is not None:
                 scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
+                vdW_penalty_dict['Train Real'] = train_epoch_stats_dict['real vdW penalty']
                 wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
                 wandb.log({'Train score std': np.std(scores_dict['Train Real'])})
 
@@ -2246,6 +2348,10 @@ class Modeller():
             scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds])
             # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
             scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds])
+            vdW_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdW penalty']
+            vdW_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake vdW penalty'][randn_inds]
+            vdW_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake vdW penalty'][distorted_inds]
+
             wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
             wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})
             # wandb.log({'Average NF Fake score': np.average(scores_dict['Test NF'])})
@@ -2262,7 +2368,7 @@ class Modeller():
         '''
         build property dicts for the submissions and BT targets
         '''
-        loss_correlations_dict = {}
+        score_correlations_dict = {}
         rdf_full_distance_dict = {}
         rdf_inter_distance_dict = {}
 
@@ -2273,6 +2379,7 @@ class Modeller():
                 raw_scores = extra_test_dict['scores'][target_index]
                 scores = softmax_and_score(raw_scores)
                 scores_dict[target + ' exp'] = scores
+                vdW_penalty_dict[target + ' exp'] = extra_test_dict['vdW penalty'][target_index][None]
 
                 wandb.log({f'Average {target} exp score': np.average(scores)})
 
@@ -2285,6 +2392,7 @@ class Modeller():
                 scores = softmax_and_score(raw_scores)
                 scores_dict[target] = scores
                 # energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
+                vdW_penalty_dict[target] = extra_test_dict['vdW penalty'][target_indices]
 
                 wandb.log({f'Average {target} score': np.average(scores)})
                 wandb.log({f'Average {target} std': np.std(scores)})
@@ -2299,11 +2407,11 @@ class Modeller():
                 tracking_features = np.asarray(extra_test_dict['tracking features'])
                 loss_correlations = np.zeros(config.dataDims['num tracking features'])
                 features = []
-                for j in range(config.dataDims['num tracking features']):  # not that interesting
+                for j in range(tracking_features.shape[-1]):  # not that interesting
                     features.append(config.dataDims['tracking features dict'][j])
                     loss_correlations[j] = np.corrcoef(scores, tracking_features[target_indices, j], rowvar=False)[0, 1]
 
-                loss_correlations_dict[target] = loss_correlations
+                score_correlations_dict[target] = loss_correlations
 
         # compute loss correlates
         loss_correlations = np.zeros(config.dataDims['num tracking features'])
@@ -2311,7 +2419,7 @@ class Modeller():
         for j in range(config.dataDims['num tracking features']):  # not that interesting
             features.append(config.dataDims['tracking features dict'][j])
             loss_correlations[j] = np.corrcoef(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'][:, j], rowvar=False)[0, 1]
-        loss_correlations_dict['Test Real'] = loss_correlations
+        score_correlations_dict['Test Real'] = loss_correlations
 
         # collect all BT targets & submissions into single dicts
         BT_target_scores = np.concatenate([scores_dict[key] for key in scores_dict.keys() if 'exp' in key])
@@ -2324,9 +2432,9 @@ class Modeller():
         wandb.log({'BT submission score std': np.std(BT_target_scores)})
         wandb.log({'BT target score std': np.std(BT_target_scores)})
 
-        return loss_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, \
+        return score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, \
                all_identifiers, blind_test_targets, target_identifiers, target_identifiers_inds, \
-               loss_correlations_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist
+               BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist, vdW_penalty_dict
 
     def violin_scores_plot(self, all_identifiers, scores_dict, target_identifiers_inds):
         '''
@@ -2369,6 +2477,44 @@ class Modeller():
         fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
         fig.update_layout(xaxis_title='Model Score')
         wandb.log({'Discriminator Test Scores': fig})
+
+
+    def violin_vdW_plot(self, all_identifiers, vdW_penalty_dict, target_identifiers_inds):
+        '''
+        prep violin figure colors
+        '''
+        lens = [len(val) for val in all_identifiers.values()]
+        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
+
+        plot_color_dict = {}
+        plot_color_dict['Train Real'] = ('rgb(250,50,50)')  # train
+        plot_color_dict['Test Real'] = ('rgb(250,150,50)')  # test
+        plot_color_dict['Test Randn'] = ('rgb(0,50,0)')  # fake csd
+        plot_color_dict['Test NF'] = ('rgb(0,150,0)')  # fake nf
+        plot_color_dict['Test Distorted'] = ('rgb(0,100,100)')  # fake distortion
+        ind = 0
+        for target in all_identifiers.keys():
+            if all_identifiers[target] != []:
+                plot_color_dict[target] = colors[ind]
+                plot_color_dict[target + ' exp'] = colors[ind]
+                ind += 1
+
+        '''
+        violin scores plot
+        '''
+        scores_range = np.ptp(np.log(1e-6 + np.concatenate(list(vdW_penalty_dict.values()))))
+        bandwidth = scores_range / 200
+
+        fig = go.Figure()
+        for i, label in enumerate(vdW_penalty_dict.keys()):
+            if 'exp' in label:
+                fig.add_trace(go.Violin(x=np.log(vdW_penalty_dict[label] + 1e-6), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
+            else:
+                fig.add_trace(go.Violin(x=np.log(vdW_penalty_dict[label] + 1e-6), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
+
+        fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
+        fig.update_layout(xaxis_title='log vdW Penalty')
+        wandb.log({'vdW Penalty': fig})
 
     def violin_scores_plot2(self, all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist):
 
@@ -2415,7 +2561,7 @@ class Modeller():
 
         return None
 
-    def violin_scores_plot3(self, scores_dict, tracking_features_names, tracking_features):
+    def functional_group_violin_plot(self, scores_dict, tracking_features_names, tracking_features):
         '''
         plot scores distributions for different functional groups
         '''
@@ -2424,17 +2570,21 @@ class Modeller():
         functional_group_inds = {}
         fraction_dict = {}
         for ii, key in enumerate(tracking_features_names):
-            if 'molecule' in key and 'fraction' in key:
+            if ('molecule' in key and 'fraction' in key):
                 if np.sum(tracking_features[:, ii]) > 0:
                     fraction_dict[key.split()[1]] = np.average(tracking_features[:, ii] > 0)
                     functional_group_inds[key.split()[1]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
+            elif 'molecule has' in key:
+                if np.sum(tracking_features[:, ii]) > 0:
+                    fraction_dict[key.split()[2]] = np.average(tracking_features[:, ii] > 0)
+                    functional_group_inds[key.split()[2]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
 
         sort_order = np.argsort(list(fraction_dict.values()))[-1::-1]
         sorted_functional_group_keys = [list(functional_group_inds.keys())[i] for i in sort_order]
 
         colors = n_colors('rgb(150,10,5)', 'rgb(5,150,10)', len(list(functional_group_inds.keys())), colortype='rgb')
         plot_color_dict = {}
-        for ind, target in enumerate(functional_group_inds.keys()):
+        for ind, target in enumerate(sorted_functional_group_keys):
             plot_color_dict[target] = colors[ind]
 
         '''
@@ -2449,8 +2599,9 @@ class Modeller():
 
         for ii, label in enumerate(sorted_functional_group_keys):
             fraction = fraction_dict[label]
-            fig.add_trace(go.Violin(x=scores_dict['Test Real'][functional_group_inds[label]], name=f'Fraction containing {label}={fraction:.3f}',
-                                    line_color=plot_color_dict[label], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
+            if fraction > 0.01:
+                fig.add_trace(go.Violin(x=scores_dict['Test Real'][functional_group_inds[label]], name=f'Fraction containing {label}={fraction:.2f}',
+                                        line_color=plot_color_dict[label], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
 
         fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
         fig.update_layout(xaxis_title='Model Score')
@@ -2458,6 +2609,21 @@ class Modeller():
         # fig.show()
 
         wandb.log({'Functional Group Scores Distributions': fig})
+
+        fig = go.Figure()
+        fig.add_trace(go.Scattergl(x=sorted_functional_group_keys,
+                                   y=[np.average(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
+                                   error_y = dict(type='data',
+                                                  array=[np.std(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
+                                                  visible=True
+                                                  ),
+                                   showlegend=False,
+                                   mode='markers'))
+        #fig.show()
+        fig.update_layout(xaxis_title='Molecule Containing Functional Groups & Elements')
+        fig.update_layout(yaxis_title='Model Average Score and Standard Deviation')
+
+        wandb.log({'Functional Group Scores Statistics': fig})
 
         return None
 
@@ -2509,8 +2675,7 @@ class Modeller():
 
         return None
 
-    def loss_correlates_plot(self, loss_correlations_dict, config):
-        fig = go.Figure()
+    def score_correlations_plot(self, score_correlations_dict, config):
         color_dict = {
             'XVI': 'rgb(250,50,5)',
             'XVII': 'rgb(250,50,5)',
@@ -2528,16 +2693,34 @@ class Modeller():
             'Train Real': 'rgb(5,250,50)',
             'Test Real': 'rgb(5,250,50)'
         }
-        for target in loss_correlations_dict.keys():
-            fig.add_trace(go.Bar(
-                y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
-                x=[loss_correlations_dict[target][i] for i in range(config.dataDims['num tracking features'])],
-                orientation='h',
-                name=target,
-                showlegend=True,
-                marker_color=color_dict[target],
-            ))
-        fig.update_layout(showlegend=True)
+        fig = make_subplots(rows=1,cols=3)#go.Figure()
+
+        #for target in score_correlations_dict.keys():
+        fig.add_trace(go.Bar(
+            y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features']) if
+               ('fraction' not in config.dataDims['tracking features dict'][i]) and ( ('molecule has' not in config.dataDims['tracking features dict'][i]))],
+            x=[score_correlations_dict['Test Real'][i] for i in range(config.dataDims['num tracking features']) if
+               ('fraction' not in config.dataDims['tracking features dict'][i]) and ( ('molecule has' not in config.dataDims['tracking features dict'][i]))],
+            orientation='h',
+            showlegend=True,
+        ),row=1,col=1)
+        fig.add_trace(go.Bar(
+            y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features']) if
+               ('fraction' in config.dataDims['tracking features dict'][i]) and ( ('molecule has' not in config.dataDims['tracking features dict'][i]))],
+            x=[score_correlations_dict['Test Real'][i] for i in range(config.dataDims['num tracking features']) if
+               ('fraction' in config.dataDims['tracking features dict'][i]) and ( ('molecule has' not in config.dataDims['tracking features dict'][i]))],
+            orientation='h',
+            showlegend=True,
+        ),row=1,col=2)
+        fig.add_trace(go.Bar(
+            y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features']) if
+               ('fraction' not in config.dataDims['tracking features dict'][i]) and ( ('molecule has' in config.dataDims['tracking features dict'][i]))],
+            x=[score_correlations_dict['Test Real'][i] for i in range(config.dataDims['num tracking features']) if
+               ('fraction' not in config.dataDims['tracking features dict'][i]) and ( ('molecule has' in config.dataDims['tracking features dict'][i]))],
+            orientation='h',
+            showlegend=True,
+        ),row=1,col=3)
+        fig.update_layout(showlegend=False)
         wandb.log({'Test loss correlates': fig})
 
     def distance_vs_score_plot(self, rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets):
@@ -2790,6 +2973,9 @@ class Modeller():
         #                            marker_color='#d60000'),
         #               row=2, col=3)
 
+        return None
+
+    def score_correlates_plot(scores_dict, tracking_features_names, tracking_features):
         return None
 
     def bt_clustering(self, all_identifiers, scores_dict, extra_test_dict):
