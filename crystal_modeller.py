@@ -59,7 +59,6 @@ class Modeller():
             self.atom_weights[i] = periodicTable.GetAtomicWeight(i)
             self.vdw_radii[i] = periodicTable.GetRvdw(i)
 
-
         if os.path.exists('symmetry_info.npy'):
             sym_info = np.load('symmetry_info.npy', allow_pickle=True).item()
             self.sym_ops = sym_info['sym_ops']
@@ -468,7 +467,7 @@ class Modeller():
 
     def train(self):
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=[self.config.wandb.experiment_tag]):
-            wandb.run.name = wandb.config.machine + '_' + str(wandb.config.run_num) # overwrite procedurally generated run name with our run name
+            wandb.run.name = wandb.config.machine + '_' + str(wandb.config.run_num)  # overwrite procedurally generated run name with our run name
             wandb.run.save()
             # config = wandb.config # todo: wandb configs don't support nested namespaces. Sweeps are officially broken - look at the github thread
 
@@ -509,6 +508,8 @@ class Modeller():
             if config.extra_test_set_paths is not None:
                 extra_test_loader = get_extra_test_loader(config, config.extra_test_set_paths, dataDims=self.dataDims,
                                                           pg_dict=self.point_groups, sg_dict=self.space_groups, lattice_dict=self.lattice_type)
+            else:
+                extra_test_loader = None
 
             print("Training batch size set to {}".format(config.final_batch_size))
 
@@ -569,32 +570,13 @@ class Modeller():
                             np.mean(np.asarray(g_err_tr)), np.mean(np.asarray(g_err_te)),
                             time_train, time_test))
 
-                        '''
-                        update LR
-                        '''
-                        # update learning rate
-                        d_optimizer, d_lr = set_lr(d_schedulers, d_optimizer, config.discriminator.lr_schedule,
-                                                   config.discriminator.learning_rate, config.discriminator.max_lr, d_err_tr, d_hit_max_lr)
-                        d_learning_rate = d_optimizer.param_groups[0]['lr']
-                        if d_learning_rate >= config.discriminator.max_lr: d_hit_max_lr = True
+                        d_optimizer, d_learning_rate, d_hit_max_lr, g_optimizer, g_learning_rate, g_hit_max_lr = \
+                            self.update_lr(config, d_schedulers, d_optimizer, d_err_tr, d_hit_max_lr,
+                                           g_schedulers, g_optimizer, g_err_tr, g_hit_max_lr)
 
-                        # update learning rate
-                        g_optimizer, g_lr = set_lr(g_schedulers, g_optimizer, config.generator.lr_schedule,
-                                                   config.generator.learning_rate, config.generator.max_lr, g_err_tr, g_hit_max_lr)
-                        g_learning_rate = g_optimizer.param_groups[0]['lr']
-                        if g_learning_rate >= config.generator.max_lr: g_hit_max_lr = True
-
-                        print(f"Learning rates are d={d_lr:.5f}, g={g_lr:.5f}")
-
-                        '''
-                        logging
-                        '''
-                        # logging
-                        metrics_dict = self.update_gan_metrics(
-                            epoch, metrics_dict,
-                            d_err_tr, d_err_te,
-                            g_err_tr, g_err_te,
-                            d_learning_rate, g_learning_rate)
+                        metrics_dict = \
+                            self.update_gan_metrics(epoch, metrics_dict, d_err_tr, d_err_te,
+                                                    g_err_tr, g_err_te, d_learning_rate, g_learning_rate)
 
                         self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
                                           d_tr_record, d_te_record, g_tr_record, g_te_record)
@@ -604,61 +586,23 @@ class Modeller():
                                                   train_epoch_stats_dict, test_epoch_stats_dict, config,
                                                   extra_test_dict=extra_test_epoch_stats_dict)
 
-                        '''
-                        save model if best
-                        '''  # todo add more sophisticated convergence stat
-                        if epoch > 0:
-                            if epoch % 5 == 0:  # every 5 epochs, save a checkpoint
-                                # saving early-stopping checkpoint
-                                save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
-                                save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num) + f'_epoch_{epoch}')
+                        self.model_checkpointing(epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict)
 
-                            if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss'][:-1]):  # todo fix this
-                                print("Saving discriminator checkpoint")
-                                save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
-                            if np.average(g_err_te) < np.amin(metrics_dict['generator test loss'][:-1]):
-                                print("Saving generator checkpoint")
-                                save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num))
-
-                        '''
-                        convergence checks
-                        '''
-                        generator_convergence = checkConvergence(metrics_dict['generator test loss'], config.history, config.generator.convergence_eps)
-                        discriminator_convergence = checkConvergence(metrics_dict['discriminator test loss'], config.history, config.discriminator.convergence_eps)
-
-                        if generator_convergence:
-                            print('generator converged!')
-                        if discriminator_convergence:
-                            print('discriminator converged!')
-
+                        generator_convergence, discriminator_convergence = \
+                            self.check_model_convergence(metrics_dict, config, epoch)
                         if (generator_convergence and discriminator_convergence) and (epoch > config.history + 2):
                             print('Training has converged!')
                             config.finished = True
                             break
 
-                        '''
-                        update batch size
-                        '''
                         if epoch % 5 == 0:
-                            if train_loader.batch_size < len(train_loader.dataset):  # if the batch is smaller than the dataset
-                                increment = max(4, int(train_loader.batch_size * 0.05))  # increment batch size
-                                train_loader = update_batch_size(train_loader, train_loader.batch_size + increment)
-                                test_loader = update_batch_size(test_loader, test_loader.batch_size + increment)
-                                if config.extra_test_set_paths is not None:
-                                    extra_test_loader = update_batch_size(extra_test_loader, extra_test_loader.batch_size + increment)
-                                print(f'Batch size incremented to {train_loader.batch_size}')
-                            wandb.log({'batch size': train_loader.batch_size})
+                            train_loader, test_loader, extra_test_loader = \
+                                self.update_batch_size(train_loader, test_loader, extra_test_loader)
 
                     except RuntimeError as e:
                         if "CUDA out of memory" in str(e):  # if we do hit OOM, slash the batch size
-                            slash_increment = max(4, int(train_loader.batch_size * 0.1))
-                            train_loader = update_batch_size(train_loader, train_loader.batch_size - slash_increment)
-                            test_loader = update_batch_size(test_loader, test_loader.batch_size - slash_increment)
-                            print('==============================')
-                            print('OOMOOMOOMOOMOOMOOMOOMOOMOOMOOM')
-                            print(f'Batch size slashed to {train_loader.batch_size} due to OOM')
-                            print('==============================')
-                            wandb.log({'batch size': train_loader.batch_size})
+                            train_loader, test_loader = self.slash_batch(train_loader, test_loader)
+
                         else:
                             raise e
                     epoch += 1
@@ -669,16 +613,36 @@ class Modeller():
             '''
             run post-training evaluation
             '''
+            # reload best test
+            g_path = f'../models/generator_{config.run_num}'
+            d_path = f'../models/discriminator_{config.run_num}'
+            if os.path.exists(g_path):
+                g_checkpoint = torch.load(g_path)
+                if list(g_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+                    for i in list(g_checkpoint['model_state_dict']):
+                        g_checkpoint['model_state_dict'][i[7:]] = g_checkpoint['model_state_dict'].pop(i)
+                generator.load_state_dict(g_checkpoint['model_state_dict'])
+
+            if os.path.exists(d_path):
+                d_checkpoint = torch.load(d_path)
+                if list(d_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+                    for i in list(d_checkpoint['model_state_dict']):
+                        d_checkpoint['model_state_dict'][i[7:]] = d_checkpoint['model_state_dict'].pop(i)
+                discriminator.load_state_dict(d_checkpoint['model_state_dict'])
+
             with torch.no_grad():
                 d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
                     self.epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
                                update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
-
-                extra_test_epoch_stats_dict, time_test_ex = \
-                    self.discriminator_evaluation(config, dataLoader=extra_test_loader, discriminator=discriminator)  # compute loss on test set
-
-                np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)
                 np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
+
+                if config.extra_test_set_paths is not None:
+                    extra_test_epoch_stats_dict, time_test_ex = \
+                        self.discriminator_evaluation(config, dataLoader=extra_test_loader, discriminator=discriminator)  # compute loss on test set
+
+                    np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)
+                else:
+                    extra_test_epoch_stats_dict = None
 
             metrics_dict = self.update_gan_metrics(
                 epoch, metrics_dict,
@@ -693,9 +657,9 @@ class Modeller():
                                   None, test_epoch_stats_dict, config,
                                   extra_test_dict=extra_test_epoch_stats_dict)
 
-            # for working with a trained model
-            if config.sample_after_training:
-                sampling_results = self.MCMC_sampling(generator, discriminator, test_loader)
+            # # for working with a trained model # deprecated
+            # if config.sample_after_training:
+            #     sampling_results = self.MCMC_sampling(generator, discriminator, test_loader)
 
     def epoch(self, config, dataLoader=None, generator=None, discriminator=None, g_optimizer=None, d_optimizer=None, update_gradients=True,
               iteration_override=None, record_stats=False, epoch=None):
@@ -1036,7 +1000,7 @@ class Modeller():
             epoch_stats_dict['scores'].extend(score_on_real.cpu().detach().numpy())
             epoch_stats_dict['intermolecular rdf'].extend(intermolecular_rdfs.cpu().detach().numpy())
             epoch_stats_dict['full rdf'].extend(full_rdfs.cpu().detach().numpy())
-            epoch_stats_dict['vdW penalty'].extend(vdW_penalty(real_supercell_data,self.vdw_radii).cpu().detach().numpy())
+            epoch_stats_dict['vdW penalty'].extend(vdW_penalty(real_supercell_data, self.vdw_radii).cpu().detach().numpy())
 
             if compute_LJ_energy:
                 epoch_stats_dict['atomistic energy'].extend(atomwise_energy)
@@ -1199,9 +1163,9 @@ class Modeller():
             'XXII': 'NACJAF',
             'XXIII': 'XAFPAY',
             'XXIII_1': 'XAFPAY01',
-            'XXIII_2':'XAFPAY02',
-            'XXXIII_3':'XAFPAY03',
-            'XXXIII_4':'XAFPAY04',
+            'XXIII_2': 'XAFPAY02',
+            'XXXIII_3': 'XAFPAY03',
+            'XXXIII_4': 'XAFPAY04',
             'XXIV': 'XAFQON',
             'XXVI': 'XAFQIH',
             'XXXI_1': '2199671_p10167_1_0',
@@ -1939,13 +1903,13 @@ class Modeller():
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
                 generated_samples_ii = (data.cell_params - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
                 if config.generator_noise_level == -1:
-                    distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-5,0,len(generated_samples_ii)).to(generated_samples_ii.device)[:,None] # wider range for evaluation mode
+                    distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-5, 0, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range for evaluation mode
                 else:
                     distortion = torch.randn_like(generated_samples_ii) * config.generator_noise_level
                 generated_samples_i = (generated_samples_ii + distortion).to(config.device)  # add jitter and return in standardized basis
                 handedness = data.asym_unit_handedness
                 epoch_stats_dict['generator sample source'].extend(np.ones(len(generated_samples_i)) * 2)
-                epoch_stats_dict['distortion level'].extend(torch.linalg.norm(distortion,axis=-1).cpu().detach().numpy())
+                epoch_stats_dict['distortion level'].extend(torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy())
 
         return generated_samples_i, handedness, epoch_stats_dict
 
@@ -2032,7 +1996,6 @@ class Modeller():
             ))
             wandb.log({'Regressor Loss Correlates': fig})
 
-
     def log_regression_accuracy(self, config, train_epoch_stats_dict, test_epoch_stats_dict):
         target_mean = self.dataDims['target mean']
         target_std = self.dataDims['target std']
@@ -2042,10 +2005,17 @@ class Modeller():
         orig_target = target * target_std + target_mean
         orig_prediction = prediction * target_std + target_mean
 
-        train_target = np.asarray(train_epoch_stats_dict['generator density target'])
-        train_prediction = np.asarray(train_epoch_stats_dict['generator density prediction'])
-        train_orig_target = train_target * target_std + target_mean
-        train_orig_prediction = train_prediction * target_std + target_mean
+        volume_ind = config.dataDims['tracking features dict'].index('molecule volume')
+        mass_ind = config.dataDims['tracking features dict'].index('molecule mass')
+        molwise_density = test_epoch_stats_dict['tracking features'][:,mass_ind]/test_epoch_stats_dict['tracking features'][:,volume_ind]
+        target_density = molwise_density * orig_target * 1.66 # conversion from amu/A^3 to g/mL
+        predicted_density = molwise_density * orig_prediction * 1.66
+
+        if train_epoch_stats_dict is not None:
+            train_target = np.asarray(train_epoch_stats_dict['generator density target'])
+            train_prediction = np.asarray(train_epoch_stats_dict['generator density prediction'])
+            train_orig_target = train_target * target_std + target_mean
+            train_orig_prediction = train_prediction * target_std + target_mean
 
         losses = ['normed error', 'abs normed error', 'squared error']
         loss_dict = {}
@@ -2067,8 +2037,28 @@ class Modeller():
         loss_dict['Regression slope'] = linreg_result.slope
         wandb.log(loss_dict)
 
+        losses = ['density normed error', 'density abs normed error', 'density squared error']
+        loss_dict = {}
+        losses_dict = {}
+        for loss in losses:
+            if loss == 'density normed error':
+                loss_i = (target_density - predicted_density) / np.abs(target_density)
+            elif loss == 'density abs normed error':
+                loss_i = np.abs((target_density - predicted_density) / np.abs(target_density))
+            elif loss == 'density squared error':
+                loss_i = (target_density - predicted_density) ** 2
+            losses_dict[loss] = loss_i  # huge unnecessary upload
+            loss_dict[loss + ' mean'] = np.mean(loss_i)
+            loss_dict[loss + ' std'] = np.std(loss_i)
+            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
+
+        linreg_result = linregress(target_density, predicted_density)
+        loss_dict['Density Regression R2'] = linreg_result.rvalue
+        loss_dict['Density Regression slope'] = linreg_result.slope
+        wandb.log(loss_dict)
+
         # log loss distribution
-        if config.wandb.log_figures:  # todo clean
+        if config.wandb.log_figures:
             # predictions vs target trace
             xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
             fig = go.Figure()
@@ -2078,27 +2068,47 @@ class Modeller():
             fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
             fig.add_trace(go.Scattergl(x=xline, y=xline))
             fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-            fig.update_layout(showlegend=False)
+            fig.update_layout(showlegend=True)
             wandb.log({'Test Packing Coefficient': fig})
 
-            xline = np.linspace(max(min(train_orig_target), min(train_orig_prediction)), min(max(train_orig_target), max(train_orig_prediction)), 10)
             fig = go.Figure()
-            fig.add_trace(go.Histogram2dContour(x=train_orig_target, y=train_orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
-            fig.update_traces(contours_coloring="fill")
-            fig.update_traces(contours_showlines=False)
-            fig.add_trace(go.Scattergl(x=train_orig_target, y=train_orig_prediction, mode='markers', showlegend=True, opacity=0.5))
-            fig.add_trace(go.Scattergl(x=xline, y=xline))
-            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-            fig.update_layout(showlegend=False)
-            wandb.log({'Train Packing Coefficient': fig})
-
-            fig = go.Figure()
-            fig.add_trace(go.Histogram(x=train_orig_prediction - train_orig_target,
+            fig.add_trace(go.Histogram(x=orig_prediction - orig_target,
                                        histnorm='probability density',
                                        nbinsx=100,
                                        name="Error Distribution",
                                        showlegend=False))
-            wandb.log({'Regression Error Distribution': fig})
+            wandb.log({'Packing Coefficient Error Distribution': fig})
+
+            xline = np.linspace(max(min(target_density), min(predicted_density)), min(max(target_density), max(predicted_density)), 10)
+            fig = go.Figure()
+            fig.add_trace(go.Histogram2dContour(x=target_density, y=predicted_density, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
+            fig.update_traces(contours_coloring="fill")
+            fig.update_traces(contours_showlines=False)
+            fig.add_trace(go.Scattergl(x=target_density, y=predicted_density, mode='markers', showlegend=True, opacity=0.5))
+            fig.add_trace(go.Scattergl(x=xline, y=xline))
+            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+            fig.update_layout(showlegend=True)
+            wandb.log({'Test Density': fig})
+
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(x=predicted_density - target_density,
+                                       histnorm='probability density',
+                                       nbinsx=100,
+                                       name="Error Distribution",
+                                       showlegend=False))
+            wandb.log({'Density Error Distribution': fig})
+
+            if train_epoch_stats_dict is not None:
+                xline = np.linspace(max(min(train_orig_target), min(train_orig_prediction)), min(max(train_orig_target), max(train_orig_prediction)), 10)
+                fig = go.Figure()
+                fig.add_trace(go.Histogram2dContour(x=train_orig_target, y=train_orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
+                fig.update_traces(contours_coloring="fill")
+                fig.update_traces(contours_showlines=False)
+                fig.add_trace(go.Scattergl(x=train_orig_target, y=train_orig_prediction, mode='markers', showlegend=True, opacity=0.5))
+                fig.add_trace(go.Scattergl(x=xline, y=xline))
+                fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+                fig.update_layout(showlegend=True)
+                wandb.log({'Train Packing Coefficient': fig})
 
             # correlate losses with molecular features
             tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
@@ -2117,6 +2127,7 @@ class Modeller():
                 orientation='h',
             ))
             wandb.log({'Regressor Loss Correlates': fig})
+
         return None
 
     def cell_params_analysis(self, config, train_loader, test_epoch_stats_dict):
@@ -2281,7 +2292,7 @@ class Modeller():
         group, rankings, list_num = self.target_ranking_analysis(extra_test_dict, scores_dict, all_identifiers)
         self.groupwise_target_ranking_analysis(group, rankings, list_num, scores_dict)
 
-        #self.bt_clustering(all_identifiers, scores_dict, extra_test_dict)
+        # self.bt_clustering(all_identifiers, scores_dict, extra_test_dict)
 
         aa = 1
 
@@ -2300,16 +2311,15 @@ class Modeller():
             'XXII': 'NACJAF',
             'XXIII': 'XAFPAY',
             'XXIII_1': 'XAFPAY01',
-            'XXIII_2':'XAFPAY02',
-            'XXXIII_3':'XAFPAY03',
-            'XXXIII_4':'XAFPAY04',
+            'XXIII_2': 'XAFPAY02',
+            'XXXIII_3': 'XAFPAY03',
+            'XXXIII_4': 'XAFPAY04',
             'XXIV': 'XAFQON',
             'XXVI': 'XAFQIH',
             'XXXI_1': '2199671_p10167_1_0',
             'XXXI_2': '2199673_1_0',
             # 'XXXI_3': '2199672_1_0',
         }
-
 
         # determine which samples go with which targets
         all_identifiers = {key: [] for key in blind_test_targets}
@@ -2478,7 +2488,6 @@ class Modeller():
         fig.update_layout(xaxis_title='Model Score')
         wandb.log({'Discriminator Test Scores': fig})
 
-
     def violin_vdW_plot(self, all_identifiers, vdW_penalty_dict, target_identifiers_inds):
         '''
         prep violin figure colors
@@ -2613,13 +2622,13 @@ class Modeller():
         fig = go.Figure()
         fig.add_trace(go.Scattergl(x=sorted_functional_group_keys,
                                    y=[np.average(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
-                                   error_y = dict(type='data',
-                                                  array=[np.std(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
-                                                  visible=True
-                                                  ),
+                                   error_y=dict(type='data',
+                                                array=[np.std(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
+                                                visible=True
+                                                ),
                                    showlegend=False,
                                    mode='markers'))
-        #fig.show()
+        # fig.show()
         fig.update_layout(xaxis_title='Molecule Containing Functional Groups & Elements')
         fig.update_layout(yaxis_title='Model Average Score and Standard Deviation')
 
@@ -2693,33 +2702,33 @@ class Modeller():
             'Train Real': 'rgb(5,250,50)',
             'Test Real': 'rgb(5,250,50)'
         }
-        fig = make_subplots(rows=1,cols=3)#go.Figure()
+        fig = make_subplots(rows=1, cols=3)  # go.Figure()
 
-        #for target in score_correlations_dict.keys():
+        # for target in score_correlations_dict.keys():
         fig.add_trace(go.Bar(
             y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' not in config.dataDims['tracking features dict'][i]) and ( ('molecule has' not in config.dataDims['tracking features dict'][i]))],
+               ('fraction' not in config.dataDims['tracking features dict'][i]) and (('molecule has' not in config.dataDims['tracking features dict'][i]))],
             x=[score_correlations_dict['Test Real'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' not in config.dataDims['tracking features dict'][i]) and ( ('molecule has' not in config.dataDims['tracking features dict'][i]))],
+               ('fraction' not in config.dataDims['tracking features dict'][i]) and (('molecule has' not in config.dataDims['tracking features dict'][i]))],
             orientation='h',
             showlegend=True,
-        ),row=1,col=1)
+        ), row=1, col=1)
         fig.add_trace(go.Bar(
             y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' in config.dataDims['tracking features dict'][i]) and ( ('molecule has' not in config.dataDims['tracking features dict'][i]))],
+               ('fraction' in config.dataDims['tracking features dict'][i]) and (('molecule has' not in config.dataDims['tracking features dict'][i]))],
             x=[score_correlations_dict['Test Real'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' in config.dataDims['tracking features dict'][i]) and ( ('molecule has' not in config.dataDims['tracking features dict'][i]))],
+               ('fraction' in config.dataDims['tracking features dict'][i]) and (('molecule has' not in config.dataDims['tracking features dict'][i]))],
             orientation='h',
             showlegend=True,
-        ),row=1,col=2)
+        ), row=1, col=2)
         fig.add_trace(go.Bar(
             y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' not in config.dataDims['tracking features dict'][i]) and ( ('molecule has' in config.dataDims['tracking features dict'][i]))],
+               ('fraction' not in config.dataDims['tracking features dict'][i]) and (('molecule has' in config.dataDims['tracking features dict'][i]))],
             x=[score_correlations_dict['Test Real'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' not in config.dataDims['tracking features dict'][i]) and ( ('molecule has' in config.dataDims['tracking features dict'][i]))],
+               ('fraction' not in config.dataDims['tracking features dict'][i]) and (('molecule has' in config.dataDims['tracking features dict'][i]))],
             orientation='h',
             showlegend=True,
-        ),row=1,col=3)
+        ), row=1, col=3)
         fig.update_layout(showlegend=False)
         wandb.log({'Test loss correlates': fig})
 
@@ -2996,6 +3005,71 @@ class Modeller():
                 np.save('../bt_submissions_distances.npy', submissions_dists_dict)
         else:
             submissions_dists_dict = np.load('../bt_submissions_distances.npy', allow_pickle=True).item()
+
+    def slash_batch(self, train_loader, test_loader):
+        slash_increment = max(4, int(train_loader.batch_size * 0.1))
+        train_loader = update_batch_size(train_loader, train_loader.batch_size - slash_increment)
+        test_loader = update_batch_size(test_loader, test_loader.batch_size - slash_increment)
+        print('==============================')
+        print('OOMOOMOOMOOMOOMOOMOOMOOMOOMOOM')
+        print(f'Batch size slashed to {train_loader.batch_size} due to OOM')
+        print('==============================')
+        wandb.log({'batch size': train_loader.batch_size})
+
+        return train_loader, test_loader
+
+    def update_batch_size(self, train_loader, test_loader, extra_test_loader):
+        if train_loader.batch_size < len(train_loader.dataset):  # if the batch is smaller than the dataset
+            increment = max(4, int(train_loader.batch_size * 0.05))  # increment batch size
+            train_loader = update_batch_size(train_loader, train_loader.batch_size + increment)
+            test_loader = update_batch_size(test_loader, test_loader.batch_size + increment)
+            if self.config.extra_test_set_paths is not None:
+                extra_test_loader = update_batch_size(extra_test_loader, extra_test_loader.batch_size + increment)
+            print(f'Batch size incremented to {train_loader.batch_size}')
+        wandb.log({'batch size': train_loader.batch_size})
+        return train_loader, test_loader, extra_test_loader
+
+    def check_model_convergence(self, metrics_dict, config, epoch):
+        generator_convergence = checkConvergence(metrics_dict['generator test loss'], config.history, config.generator.convergence_eps)
+        discriminator_convergence = checkConvergence(metrics_dict['discriminator test loss'], config.history, config.discriminator.convergence_eps)
+        if generator_convergence:
+            print('generator converged!')
+        if discriminator_convergence:
+            print('discriminator converged!')
+
+        return generator_convergence, discriminator_convergence
+
+    def model_checkpointing(self, epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict):
+        if epoch > 0:
+            if epoch % 5 == 0:  # every 5 epochs, save a checkpoint
+                # saving early-stopping checkpoint
+                save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
+                save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num) + f'_epoch_{epoch}')
+
+            if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss'][:-1]):  # todo fix this
+                print("Saving discriminator checkpoint")
+                save_checkpoint(epoch, discriminator, d_optimizer, config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
+            if np.average(g_err_te) < np.amin(metrics_dict['generator test loss'][:-1]):
+                print("Saving generator checkpoint")
+                save_checkpoint(epoch, generator, g_optimizer, config.generator.__dict__, 'generator_' + str(config.run_num))
+
+    def update_lr(self, config, d_schedulers, d_optimizer, d_err_tr, d_hit_max_lr,
+                  g_schedulers, g_optimizer, g_err_tr, g_hit_max_lr):
+        # update learning rate
+        d_optimizer, d_lr = set_lr(d_schedulers, d_optimizer, config.discriminator.lr_schedule,
+                                   config.discriminator.learning_rate, config.discriminator.max_lr, d_err_tr, d_hit_max_lr)
+        d_learning_rate = d_optimizer.param_groups[0]['lr']
+        if d_learning_rate >= config.discriminator.max_lr: d_hit_max_lr = True
+
+        # update learning rate
+        g_optimizer, g_lr = set_lr(g_schedulers, g_optimizer, config.generator.lr_schedule,
+                                   config.generator.learning_rate, config.generator.max_lr, g_err_tr, g_hit_max_lr)
+        g_learning_rate = g_optimizer.param_groups[0]['lr']
+        if g_learning_rate >= config.generator.max_lr: g_hit_max_lr = True
+
+        print(f"Learning rates are d={d_lr:.5f}, g={g_lr:.5f}")
+
+        return d_optimizer, d_learning_rate, d_hit_max_lr, g_optimizer, g_learning_rate, g_hit_max_lr
 
         # agglomerative clustering and dendrogram
         # setting distance_threshold=0 ensures we compute the full tree.

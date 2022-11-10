@@ -171,6 +171,21 @@ class BuildDataset:
             dataset['crystal beta'] = dataset['crystal beta'] * np.pi / 180
             dataset['crystal gamma'] = dataset['crystal gamma'] * np.pi / 180
 
+        aa = 1
+        '''
+        recalculate crystal density
+        '''
+        from nikos.coordinate_transformations import cell_vol
+        cell_volume = np.asarray([cell_vol(
+            [dataset['crystal cell a'][i],dataset['crystal cell b'][i],dataset['crystal cell c'][i]],
+            [dataset['crystal alpha'][i], dataset['crystal beta'][i], dataset['crystal gamma'][i]])
+            for i in range(len(dataset))
+        ])
+        mass = dataset['molecule mass']
+        Z = dataset['crystal z value']
+        dataset['crystal density'] = mass * Z / cell_volume
+        #density = mass * Z / cell_volume
+        #density2 = (mass * Z) / (dataset['molecule volume'] * Z / dataset['crystal packing coefficient'])
         # '''
         # add functional group information
         # '''
@@ -475,9 +490,9 @@ class BuildDataset:
                             'molecule num rings', 'molecule num donors', 'molecule num acceptors',
                             'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                             'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
-                            'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3', 'crystal r factor',
+                            'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
+                            'crystal r factor', 'crystal density'
                             ])
-
 
         keys_to_add.extend(self.crystal_keys)
         if 'crystal spacegroup symbol' in keys_to_add:

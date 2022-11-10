@@ -741,7 +741,7 @@ class CustomGraphFeaturizer():
         molecule features
         '''
 
-        dataset['molecule mass'] = Descriptors.MolWt(mol)
+        dataset['molecule mass'] = Descriptors.MolWt(mol) # includes implicit protons
         dataset['molecule num atoms'] = len(dataset['atom Z'])  # mol.GetNumAtoms()
         dataset['molecule num rings'] = mol.GetRingInfo().NumRings()
         #dataset['molecule point group'] = self.pointGroupAnalysis(dataset['atom Z'], dataset['atom coords'])  # this is also slow, approx 30% of total effort
