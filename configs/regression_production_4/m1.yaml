@@ -4,7 +4,7 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 631
+run_num: 635
 anomaly_detection: False
 mode: regression # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard #distance
@@ -143,8 +143,8 @@ generator:
   radial_function: 'bessel' # mikenet only
   num_attention_heads: 4 # mikenet self attention mode only - must evenly divide graph filters
   graph_convolution: 'full message passing' # self attention, schnet, or full message passing
-  add_spherical_basis: True # mikenet only
-  add_torsional_basis: True
+  add_spherical_basis: False # mikenet only
+  add_torsional_basis: False
   pooling: combo
 
   conditioner_num_fc_layers: 4
