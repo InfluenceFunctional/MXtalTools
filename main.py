@@ -358,7 +358,7 @@ def process_config(config):
         if config.machine == 'cluster':
             config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
         else:
-            config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_new_dataset'
+            config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset'
 
     return config
 

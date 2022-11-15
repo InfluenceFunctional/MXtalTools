@@ -1,5 +1,6 @@
 from utils import chunkify
 import numpy as np
+
 try:
     from ccdc.search import TextNumericSearch, EntryReader
     from ccdc.diagram import DiagramGenerator
@@ -40,7 +41,7 @@ class CCDC_helper():
                 'crystal reference cell coords',
             ]
 
-    def grep_crystal_identifiers(self, file_path=None, chunk_inds=[0, 100], identifiers = None):
+    def grep_crystal_identifiers(self, file_path=None, chunk_inds=[0, 100], identifiers=None):
         print('Getting hits')
         allhits = []
         if target_identifiers is not None:
@@ -115,7 +116,7 @@ class CCDC_helper():
             df = pd.DataFrame(data=identifiers, index=np.arange(len(identifiers)), columns=['identifier'])  # initialize dataframe
             df.to_pickle(self.chunk_path + 'new_dataframe')
 
-    def get_crystal_features(self, n_chunks=100, chunk_inds=[0, 100], file_path=None, get_pot_energy_from_cif = False):
+    def get_crystal_features(self, n_chunks=100, chunk_inds=[0, 100], file_path=None, get_pot_energy_from_cif=False):
         os.chdir(self.chunk_path)
 
         allhits = []
@@ -180,20 +181,19 @@ class CCDC_helper():
                                 energies.append(energy)
                                 break
                         if found == 0:
-                            energies.append(666666) # error code
+                            energies.append(666666)  # error code
 
 
                     except:
                         pass
 
             self.features = ['identifier'] + self.features
-                # if get_pot_energy_from_cif:
-                #     np.save('potential_energy_dict', {ident: en for ident, en in zip(all_identifiers, energies)})
-                #
+            # if get_pot_energy_from_cif:
+            #     np.save('potential_energy_dict', {ident: en for ident, en in zip(all_identifiers, energies)})
+            #
 
             assert len(list(set(all_identifiers))) == len(all_identifiers)  # assert all unique identifiers
             chunks = chunkify(allhits, len(path_chunks))  # featurize a subset of chunks on this pass
-
 
         for n, chunk in enumerate(chunks):
             if not os.path.exists(self.chunk_path + 'crystal_features/{}'.format(n + chunk_inds[0])):  # don't repeat
@@ -206,7 +206,7 @@ class CCDC_helper():
                     chunk = chunk.reset_index()
                     new_features = [[] for _ in range(len(self.features))]
                 else:
-                    new_features = [[] for _ in range(len(self.features))] # add identifier
+                    new_features = [[] for _ in range(len(self.features))]  # add identifier
 
                 bad_inds = []
                 good_inds = []
@@ -259,7 +259,7 @@ class CCDC_helper():
                     # load new features into the dataframe
 
                 else:
-                    chunk = pd.DataFrame() # fresh empty dataframe
+                    chunk = pd.DataFrame()  # fresh empty dataframe
 
                 for i, feature in enumerate(self.features):
                     chunk[feature] = new_features[i]
@@ -425,7 +425,7 @@ class CCDC_helper():
 
         return list(t2)
 
-    def add_single_feature_to_dataset(self,dataset_path, feature):
+    def add_single_feature_to_dataset(self, dataset_path, feature):
         df = pd.read_pickle(dataset_path)
         if feature == 'crystal symmetries':
             feature = [[] for n in range(len(df))]
@@ -437,7 +437,7 @@ class CCDC_helper():
 
         df.to_pickle(dataset_path + '_with_new_feature')
 
-    def get_crystal_sym_ops(self,crystal):
+    def get_crystal_sym_ops(self, crystal):
         sym_ops = crystal.symmetry_operators  # get symmetry operators
         sym_elements = [np.eye(4) for m in range(len(sym_ops))]
         for j in range(1, len(sym_ops)):  # convert to affine transform
@@ -445,7 +445,6 @@ class CCDC_helper():
             sym_elements[j][:3, -1] = np.asarray(crystal.symmetry_translation(sym_ops[j]))
 
         return sym_elements
-
 
 
 def visualizeEntry(identifier):
@@ -486,7 +485,7 @@ cifs_directory_path = None
 # mode = 'cod'
 # chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/COD/'  # where the chunks should be saved during featurization
 # cifs_directory_path = 'F:/cod-cifs-mysql'
-#target_identifiers = None
+# target_identifiers = None
 
 # mode = 'csp'
 # chunk_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/sapt_full/'  # where the chunks should be saved during featurization
@@ -506,14 +505,15 @@ if __name__ == '__main__':
         os.mkdir(chunk_path + '/molecule_features')
 
     helper = CCDC_helper(chunk_path, mode)
-    # helper.add_single_feature_to_dataset(dataset_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/new_dataset',
-    #                                     feature = 'crystal symmetries')
-    #helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
+    helper.add_single_feature_to_dataset(dataset_path='C:/Users/mikem/Desktop/CSP_runs/datasets/test_new_dataset',
+                                         feature='crystal symmetries')
+
+    # helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
     # helper.collect_chunks_and_initialize_df()
     # helper.get_crystal_features(n_chunks=100, chunk_inds=[0, 100], file_path=cifs_directory_path)
 
-    featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
-    featurizer.featurize(chunk_inds=[600, 1000])
-
-    miner = Miner(chunk_path, collect_chunks=True, database=mode)
-    miner.process_new_dataset(dataset_name = 'full_dataset')
+    # featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
+    # featurizer.featurize(chunk_inds=[0, 1000])
+    #
+    # miner = Miner(chunk_path, collect_chunks=True, database=mode)
+    # miner.process_new_dataset(dataset_name = 'full_dataset')

@@ -7,9 +7,6 @@ from dataset_management.dataset_manager import Miner
 from torch import backends, optim
 from dataset_utils import BuildDataset, get_dataloaders, update_batch_size, get_extra_test_loader
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import plotly.express as px
 import tqdm
 import torch.optim.lr_scheduler as lr_scheduler
 from nikos.coordinate_transformations import coor_trans, cell_vol
@@ -26,6 +23,8 @@ from scipy.stats import linregress
 from supercell_builders import SupercellBuilder
 from STUN_MC import Sampler
 from plotly.colors import n_colors
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 from sklearn.cluster import AgglomerativeClustering
 
 
@@ -529,137 +528,140 @@ class Modeller():
 
             # training loop
             d_hit_max_lr, g_hit_max_lr, converged, epoch = False, False, config.max_epochs == 0, 0  # for evaluation mode
-            with torch.autograd.set_detect_anomaly(config.anomaly_detection):
-                while (epoch < config.max_epochs) and not converged:
-                    # very cool
-                    print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
-                    print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
-                    print("'      `--'      `.-'      `--'      `--'      `--'      `-.'      `--'      `")
-                    # very cool
-                    print("Starting Epoch {}".format(epoch))  # index from 0, very cool
+            if config.max_epochs == -1:  # skip evaluation altogether
+                self.make_nice_figures(config)
+            else:
+                with torch.autograd.set_detect_anomaly(config.anomaly_detection):
+                    while (epoch < config.max_epochs) and not converged:
+                        # very cool
+                        print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
+                        print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
+                        print("'      `--'      `.-'      `--'      `--'      `--'      `-.'      `--'      `")
+                        # very cool
+                        print("Starting Epoch {}".format(epoch))  # index from 0, very cool
 
-                    '''
-                    train
-                    '''
-                    extra_test_epoch_stats_dict = None
-                    try:
-                        d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
-                            self.epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
-                                       g_optimizer=g_optimizer, d_optimizer=d_optimizer,
-                                       update_gradients=True, record_stats=True, epoch=epoch)  # train & compute test loss
+                        '''
+                        train
+                        '''
+                        extra_test_epoch_stats_dict = None
+                        try:
+                            d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
+                                self.epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                                           g_optimizer=g_optimizer, d_optimizer=d_optimizer,
+                                           update_gradients=True, record_stats=True, epoch=epoch)  # train & compute test loss
 
-                        with torch.no_grad():
-                            d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
-                                self.epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
-                                           update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
+                            with torch.no_grad():
+                                d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
+                                    self.epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
+                                               update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
 
-                            if config.extra_test_set_paths is not None:
-                                if epoch % config.extra_test_period == 0:
-                                    extra_test_epoch_stats_dict, time_test_ex = \
-                                        self.discriminator_evaluation(config, dataLoader=extra_test_loader, discriminator=discriminator)  # compute loss on test set
-                                    print(f'Extra test evaluation took {time_test_ex:.1f} seconds')
+                                if config.extra_test_set_paths is not None:
+                                    if epoch % config.extra_test_period == 0:
+                                        extra_test_epoch_stats_dict, time_test_ex = \
+                                            self.discriminator_evaluation(config, dataLoader=extra_test_loader, discriminator=discriminator)  # compute loss on test set
+                                        print(f'Extra test evaluation took {time_test_ex:.1f} seconds')
 
-                                    np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)  # save
-                                    np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
+                                        np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)  # save
+                                        np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
+
+                                else:
+                                    extra_test_epoch_stats_dict = None
+
+                            print('epoch={}; d_nll_tr={:.5f}; d_nll_te={:.5f}; g_nll_tr={:.5f}; g_nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(
+                                epoch, np.mean(np.asarray(d_err_tr)), np.mean(np.asarray(d_err_te)),
+                                np.mean(np.asarray(g_err_tr)), np.mean(np.asarray(g_err_te)),
+                                time_train, time_test))
+
+                            d_optimizer, d_learning_rate, d_hit_max_lr, g_optimizer, g_learning_rate, g_hit_max_lr = \
+                                self.update_lr(config, d_schedulers, d_optimizer, d_err_tr, d_hit_max_lr,
+                                               g_schedulers, g_optimizer, g_err_tr, g_hit_max_lr)
+
+                            metrics_dict = \
+                                self.update_gan_metrics(epoch, metrics_dict, d_err_tr, d_err_te,
+                                                        g_err_tr, g_err_te, d_learning_rate, g_learning_rate)
+
+                            self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
+                                              d_tr_record, d_te_record, g_tr_record, g_te_record)
+
+                            if epoch % config.wandb.sample_reporting_frequency == 0:
+                                self.log_gan_accuracy(epoch, train_loader,
+                                                      train_epoch_stats_dict, test_epoch_stats_dict, config,
+                                                      extra_test_dict=extra_test_epoch_stats_dict)
+
+                            self.model_checkpointing(epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict)
+
+                            generator_convergence, discriminator_convergence = \
+                                self.check_model_convergence(metrics_dict, config, epoch)
+                            if (generator_convergence and discriminator_convergence) and (epoch > config.history + 2):
+                                print('Training has converged!')
+                                config.finished = True
+                                break
+
+                            if epoch % 5 == 0:
+                                train_loader, test_loader, extra_test_loader = \
+                                    self.update_batch_size(train_loader, test_loader, extra_test_loader)
+
+                        except RuntimeError as e:
+                            if "CUDA out of memory" in str(e):  # if we do hit OOM, slash the batch size
+                                train_loader, test_loader = self.slash_batch(train_loader, test_loader)
 
                             else:
-                                extra_test_epoch_stats_dict = None
+                                raise e
+                        epoch += 1
 
-                        print('epoch={}; d_nll_tr={:.5f}; d_nll_te={:.5f}; g_nll_tr={:.5f}; g_nll_te={:.5f}; time_tr={:.1f}s; time_te={:.1f}s'.format(
-                            epoch, np.mean(np.asarray(d_err_tr)), np.mean(np.asarray(d_err_te)),
-                            np.mean(np.asarray(g_err_tr)), np.mean(np.asarray(g_err_te)),
-                            time_train, time_test))
+                        if config.device.lower() == 'cuda':
+                            torch.cuda.empty_cache()  # clear GPU
 
-                        d_optimizer, d_learning_rate, d_hit_max_lr, g_optimizer, g_learning_rate, g_hit_max_lr = \
-                            self.update_lr(config, d_schedulers, d_optimizer, d_err_tr, d_hit_max_lr,
-                                           g_schedulers, g_optimizer, g_err_tr, g_hit_max_lr)
+                '''
+                run post-training evaluation
+                '''
+                # reload best test
+                g_path = f'../models/generator_{config.run_num}'
+                d_path = f'../models/discriminator_{config.run_num}'
+                if os.path.exists(g_path):
+                    g_checkpoint = torch.load(g_path)
+                    if list(g_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+                        for i in list(g_checkpoint['model_state_dict']):
+                            g_checkpoint['model_state_dict'][i[7:]] = g_checkpoint['model_state_dict'].pop(i)
+                    generator.load_state_dict(g_checkpoint['model_state_dict'])
 
-                        metrics_dict = \
-                            self.update_gan_metrics(epoch, metrics_dict, d_err_tr, d_err_te,
-                                                    g_err_tr, g_err_te, d_learning_rate, g_learning_rate)
+                if os.path.exists(d_path):
+                    d_checkpoint = torch.load(d_path)
+                    if list(d_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+                        for i in list(d_checkpoint['model_state_dict']):
+                            d_checkpoint['model_state_dict'][i[7:]] = d_checkpoint['model_state_dict'].pop(i)
+                    discriminator.load_state_dict(d_checkpoint['model_state_dict'])
 
-                        self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
-                                          d_tr_record, d_te_record, g_tr_record, g_te_record)
+                with torch.no_grad():
+                    d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
+                        self.epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
+                                   update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
+                    np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
 
-                        if epoch % config.wandb.sample_reporting_frequency == 0:
-                            self.log_gan_accuracy(epoch, train_loader,
-                                                  train_epoch_stats_dict, test_epoch_stats_dict, config,
-                                                  extra_test_dict=extra_test_epoch_stats_dict)
+                    if config.extra_test_set_paths is not None:
+                        extra_test_epoch_stats_dict, time_test_ex = \
+                            self.discriminator_evaluation(config, dataLoader=extra_test_loader, discriminator=discriminator)  # compute loss on test set
 
-                        self.model_checkpointing(epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict)
+                        np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)
+                    else:
+                        extra_test_epoch_stats_dict = None
 
-                        generator_convergence, discriminator_convergence = \
-                            self.check_model_convergence(metrics_dict, config, epoch)
-                        if (generator_convergence and discriminator_convergence) and (epoch > config.history + 2):
-                            print('Training has converged!')
-                            config.finished = True
-                            break
+                metrics_dict = self.update_gan_metrics(
+                    epoch, metrics_dict,
+                    np.zeros(10), d_err_te,
+                    np.zeros(10), g_err_te,
+                    d_optimizer.defaults['lr'], g_optimizer.defaults['lr'])
 
-                        if epoch % 5 == 0:
-                            train_loader, test_loader, extra_test_loader = \
-                                self.update_batch_size(train_loader, test_loader, extra_test_loader)
+                self.log_gan_loss(metrics_dict, None, test_epoch_stats_dict,
+                                  None, d_te_record, None, g_te_record)
 
-                    except RuntimeError as e:
-                        if "CUDA out of memory" in str(e):  # if we do hit OOM, slash the batch size
-                            train_loader, test_loader = self.slash_batch(train_loader, test_loader)
+                self.log_gan_accuracy(epoch, train_loader,
+                                      None, test_epoch_stats_dict, config,
+                                      extra_test_dict=extra_test_epoch_stats_dict)
 
-                        else:
-                            raise e
-                    epoch += 1
-
-                    if config.device.lower() == 'cuda':
-                        torch.cuda.empty_cache()  # clear GPU
-
-            '''
-            run post-training evaluation
-            '''
-            # reload best test
-            g_path = f'../models/generator_{config.run_num}'
-            d_path = f'../models/discriminator_{config.run_num}'
-            if os.path.exists(g_path):
-                g_checkpoint = torch.load(g_path)
-                if list(g_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
-                    for i in list(g_checkpoint['model_state_dict']):
-                        g_checkpoint['model_state_dict'][i[7:]] = g_checkpoint['model_state_dict'].pop(i)
-                generator.load_state_dict(g_checkpoint['model_state_dict'])
-
-            if os.path.exists(d_path):
-                d_checkpoint = torch.load(d_path)
-                if list(d_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
-                    for i in list(d_checkpoint['model_state_dict']):
-                        d_checkpoint['model_state_dict'][i[7:]] = d_checkpoint['model_state_dict'].pop(i)
-                discriminator.load_state_dict(d_checkpoint['model_state_dict'])
-
-            with torch.no_grad():
-                d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
-                    self.epoch(config, dataLoader=test_loader, generator=generator, discriminator=discriminator,
-                               update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
-                np.save(f'../{config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
-
-                if config.extra_test_set_paths is not None:
-                    extra_test_epoch_stats_dict, time_test_ex = \
-                        self.discriminator_evaluation(config, dataLoader=extra_test_loader, discriminator=discriminator)  # compute loss on test set
-
-                    np.save(f'../{config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)
-                else:
-                    extra_test_epoch_stats_dict = None
-
-            metrics_dict = self.update_gan_metrics(
-                epoch, metrics_dict,
-                np.zeros(10), d_err_te,
-                np.zeros(10), g_err_te,
-                d_optimizer.defaults['lr'], g_optimizer.defaults['lr'])
-
-            self.log_gan_loss(metrics_dict, None, test_epoch_stats_dict,
-                              None, d_te_record, None, g_te_record)
-
-            self.log_gan_accuracy(epoch, train_loader,
-                                  None, test_epoch_stats_dict, config,
-                                  extra_test_dict=extra_test_epoch_stats_dict)
-
-            # # for working with a trained model # deprecated
-            # if config.sample_after_training:
-            #     sampling_results = self.MCMC_sampling(generator, discriminator, test_loader)
+                # # for working with a trained model # deprecated
+                # if config.sample_after_training:
+                #     sampling_results = self.MCMC_sampling(generator, discriminator, test_loader)
 
     def epoch(self, config, dataLoader=None, generator=None, discriminator=None, g_optimizer=None, d_optimizer=None, update_gradients=True,
               iteration_override=None, record_stats=False, epoch=None):
@@ -1943,7 +1945,7 @@ class Modeller():
             print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
 
         linreg_result = linregress(orig_target, orig_prediction)
-        loss_dict['Regression R2'] = linreg_result.rvalue
+        loss_dict['Regression R'] = linreg_result.rvalue
         loss_dict['Regression slope'] = linreg_result.slope
         wandb.log(loss_dict)
 
@@ -2007,8 +2009,8 @@ class Modeller():
 
         volume_ind = config.dataDims['tracking features dict'].index('molecule volume')
         mass_ind = config.dataDims['tracking features dict'].index('molecule mass')
-        molwise_density = test_epoch_stats_dict['tracking features'][:,mass_ind]/test_epoch_stats_dict['tracking features'][:,volume_ind]
-        target_density = molwise_density * orig_target * 1.66 # conversion from amu/A^3 to g/mL
+        molwise_density = test_epoch_stats_dict['tracking features'][:, mass_ind] / test_epoch_stats_dict['tracking features'][:, volume_ind]
+        target_density = molwise_density * orig_target * 1.66  # conversion from amu/A^3 to g/mL
         predicted_density = molwise_density * orig_prediction * 1.66
 
         if train_epoch_stats_dict is not None:
@@ -2033,7 +2035,7 @@ class Modeller():
             print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
 
         linreg_result = linregress(orig_target, orig_prediction)
-        loss_dict['Regression R2'] = linreg_result.rvalue
+        loss_dict['Regression R'] = linreg_result.rvalue
         loss_dict['Regression slope'] = linreg_result.slope
         wandb.log(loss_dict)
 
@@ -2053,7 +2055,7 @@ class Modeller():
             print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
 
         linreg_result = linregress(target_density, predicted_density)
-        loss_dict['Density Regression R2'] = linreg_result.rvalue
+        loss_dict['Density Regression R'] = linreg_result.rvalue
         loss_dict['Density Regression slope'] = linreg_result.slope
         wandb.log(loss_dict)
 
@@ -2129,6 +2131,660 @@ class Modeller():
             wandb.log({'Regressor Loss Correlates': fig})
 
         return None
+
+    def nice_regression_plots(self, config, test_epoch_stats_dict):
+
+        '''
+        Calculations
+        '''
+        target_mean = self.dataDims['target mean']
+        target_std = self.dataDims['target std']
+
+        target = np.asarray(test_epoch_stats_dict['generator density target'])
+        prediction = np.asarray(test_epoch_stats_dict['generator density prediction'])
+        orig_target = target * target_std + target_mean
+        orig_prediction = prediction * target_std + target_mean
+
+        volume_ind = config.dataDims['tracking features dict'].index('molecule volume')
+        mass_ind = config.dataDims['tracking features dict'].index('molecule mass')
+        molwise_density = test_epoch_stats_dict['tracking features'][:, mass_ind] / test_epoch_stats_dict['tracking features'][:, volume_ind]
+        target_density = molwise_density * orig_target * 1.66  # conversion from amu/A^3 to g/mL
+        predicted_density = molwise_density * orig_prediction * 1.66
+
+        losses = ['normed error', 'abs normed error', 'squared error']
+        loss_dict = {}
+        losses_dict = {}
+        for loss in losses:
+            if loss == 'normed error':
+                loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
+            elif loss == 'abs normed error':
+                loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
+            elif loss == 'squared error':
+                loss_i = (orig_target - orig_prediction) ** 2
+            losses_dict[loss] = loss_i  # huge unnecessary upload
+            loss_dict[loss + ' mean'] = np.mean(loss_i)
+            loss_dict[loss + ' std'] = np.std(loss_i)
+            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
+
+        linreg_result = linregress(orig_target, orig_prediction)
+        loss_dict['Regression R'] = linreg_result.rvalue
+        loss_dict['Regression slope'] = linreg_result.slope
+
+        losses = ['density normed error', 'density abs normed error', 'density squared error']
+        for loss in losses:
+            if loss == 'density normed error':
+                loss_i = (target_density - predicted_density) / np.abs(target_density)
+            elif loss == 'density abs normed error':
+                loss_i = np.abs((target_density - predicted_density) / np.abs(target_density))
+            elif loss == 'density squared error':
+                loss_i = (target_density - predicted_density) ** 2
+            losses_dict[loss] = loss_i  # huge unnecessary upload
+            loss_dict[loss + ' mean'] = np.mean(loss_i)
+            loss_dict[loss + ' std'] = np.std(loss_i)
+            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
+
+        linreg_result = linregress(target_density, predicted_density)
+        loss_dict['Density Regression R'] = linreg_result.rvalue
+        loss_dict['Density Regression slope'] = linreg_result.slope
+
+        '''
+        summary table
+        '''
+        layout = go.Layout(
+            margin=go.layout.Margin(
+                l=0,  # left margin
+                r=0,  # right margin
+                b=0,  # bottom margin
+                t=20,  # top margin
+            )
+        )
+
+        fig = go.Figure(data=go.Table(
+            header=dict(values=['Metric', '$C_{pack}$', 'density']),
+            cells=dict(values=[['MAE', '$\sigma$', 'R', 'Slope'],
+                               [loss_dict['abs normed error mean'], loss_dict['abs normed error std'], loss_dict['Regression R'], loss_dict['Regression slope']],
+                               [loss_dict['density abs normed error mean'], loss_dict['density abs normed error std'], loss_dict['Density Regression R'], loss_dict['Density Regression slope']],
+                               ], format=["", ".3", ".3"])))
+        fig.update_layout(width=300)
+        fig.layout.margin = layout.margin
+        fig.write_image('../paper1_figs/regression_topline.png')
+        if config.machine == 'local':
+            fig.show()
+
+        '''
+        4-panel error distribution
+        '''
+        fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)', 'd)'))
+        xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
+        fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.02, marker_color='rgba(200,0,0,1)'),
+                      row=1, col=1)
+        fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)'), row=1, col=1)
+        fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+
+        fig.add_trace(go.Histogram(x=orig_target - orig_prediction,
+                                   histnorm='probability density',
+                                   nbinsx=500,
+                                   name="Error Distribution",
+                                   marker_color='rgba(0,0,100,1)'), row=2, col=1)
+
+        xline = np.linspace(max(min(target_density), min(predicted_density)), min(max(target_density), max(predicted_density)), 10)
+        fig.add_trace(go.Scattergl(x=target_density, y=predicted_density, mode='markers', showlegend=True, opacity=0.02, marker_color='rgba(200,0,0,1)'),
+                      row=1, col=2)
+        fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)'), row=1, col=2)
+        fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+
+        fig.add_trace(go.Histogram(x=target_density - predicted_density,
+                                   histnorm='probability density',
+                                   nbinsx=500,
+                                   name="Error Distribution",
+                                   marker_color='rgba(0,0,100,1)', ), row=2, col=2)
+        fig.update_layout(showlegend=False)
+
+        fig.update_yaxes(title_text='Predicted Packing Coefficient', row=1, col=1, dtick=0.05)
+        fig.update_yaxes(title_text='Predicted Density', row=1, col=2, dtick=0.5)
+        fig.update_xaxes(title_text='True Packing Coefficient', row=1, col=1, dtick=0.05)
+        fig.update_xaxes(title_text='True Density', row=1, col=2, dtick=0.5)
+        fig.update_xaxes(title_text='True-Predicted Packing Coefficient', row=2, col=1, dtick=0.05)
+        fig.update_xaxes(title_text='True-Predicted Density (g/cm^3)', row=2, col=2, dtick=0.1)
+
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
+        fig.layout.annotations[0].update(x=0.025)
+        fig.layout.annotations[2].update(x=0.025)
+        fig.layout.annotations[1].update(x=0.575)
+        fig.layout.annotations[3].update(x=0.575)
+
+        fig.update_layout(height=600, width=800)
+        fig.layout.margin = layout.margin
+
+        fig.write_image('../paper1_figs/regression_distributions.png')
+        if config.machine == 'local':
+            fig.show()
+        '''
+        Error correlates
+        '''
+        # correlate losses with molecular features
+        tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
+        g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+        features = []
+        ind = 0
+        for i in range(config.dataDims['num tracking features']):  # not that interesting
+            if (np.average(tracking_features[:, i] != 0) > 0.05) and \
+                    (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
+                    (config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
+                features.append(config.dataDims['tracking features dict'][i])
+                g_loss_correlations[ind] = np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i], rowvar=False)[0, 1]
+                ind += 1
+        g_loss_correlations = g_loss_correlations[:ind]
+
+        g_sort_inds = np.argsort(g_loss_correlations)
+        g_loss_correlations = g_loss_correlations[g_sort_inds]
+        features_sorted = [features[i] for i in g_sort_inds]
+
+        fig = go.Figure(go.Bar(
+            y=features_sorted,
+            x=[corr for corr in g_loss_correlations],
+            orientation='h',
+            text=np.asarray([corr for corr in g_loss_correlations]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}'
+        ))
+        fig.layout.margin = layout.margin
+        fig.update_layout(width=400, height=1000, font=dict(size=10))
+        fig.update_layout(xaxis_title='R Value')
+
+        fig.write_image('../paper1_figs/regression_correlates.png')
+        if config.machine == 'local':
+            fig.show()
+
+        return None
+
+    def nice_scoring_plots(self,config):
+        test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs\discriminator_1210_test_epoch_stats_dict.npy',allow_pickle=True).item()
+        extra_test_dict = np.load('C:/Users\mikem\Desktop\CSP_runs\discriminator_1210_extra_test_dict.npy',allow_pickle=True).item()
+
+        tracking_features = test_epoch_stats_dict['tracking features']
+        identifiers_list = extra_test_dict['identifiers']
+        score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
+        scores_dict, all_identifiers, blind_test_targets, target_identifiers, \
+        target_identifiers_inds, BT_target_scores, BT_submission_scores, \
+        BT_scores_dists, BT_balanced_dist, vdW_penalty_dict = \
+            self.process_discriminator_evaluation_data(config, extra_test_dict,
+                                                       test_epoch_stats_dict, None, size_normed_score=True)
+
+        del test_epoch_stats_dict
+        del extra_test_dict
+
+        layout = go.Layout(
+            margin=go.layout.Margin(
+                l=0,  # left margin
+                r=0,  # right margin
+                b=0,  # bottom margin
+                t=20,  # top margin
+            )
+        )
+
+        '''
+        4. true-false model scores distribution
+        '''
+        lens = [len(val) for val in all_identifiers.values()]
+        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
+
+        plot_color_dict = {}
+        plot_color_dict['Test Real'] = ('rgb(250,150,50)')  # test
+        plot_color_dict['Test Randn'] = ('rgb(0,50,0)')  # fake csd
+        plot_color_dict['Test Distorted'] = ('rgb(0,100,100)')  # fake distortion
+        ind = 0
+        for target in all_identifiers.keys():
+            if all_identifiers[target] != []:
+                plot_color_dict[target] = colors[ind]
+                plot_color_dict[target + ' exp'] = colors[ind]
+                ind += 1
+
+        scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
+        bandwidth = 15/200
+
+        scores_labels = {'Test Real':'Real', 'Test Randn':'Gaussian', 'Test Distorted':'Distorted'}
+        fig = make_subplots(rows=1,cols=2,subplot_titles=('a)', 'b)'))
+        for i, label in enumerate(scores_labels):
+            legend_label = scores_labels[label]
+            fig.add_trace(go.Violin(x=scores_dict[label], name=legend_label, line_color=plot_color_dict[label],
+                                    side='positive', orientation='h', width=4,
+                                    meanline_visible=True, bandwidth=bandwidth, points=False),
+                          row=1,col=1)
+            fig.add_trace(go.Violin(x=-np.log(vdW_penalty_dict[label] + 1e-6), name=legend_label, line_color=plot_color_dict[label],
+                                    side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False),
+                          row=1,col=2)
+
+        fig.update_layout(showlegend=False, yaxis_showgrid=True,width=800,height=500)
+        fig.update_xaxes(title_text='Model Score', row=1, col=1)
+        fig.update_xaxes(title_text='vdW Score', row=1, col=2)
+
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
+        fig.layout.annotations[0].update(x=0.025)
+        fig.layout.annotations[1].update(x=0.575)
+
+        fig.layout.margin = layout.margin
+        fig.write_image('../paper1_figs/real_vs_fake_scores.png')
+        if config.machine == 'local':
+            fig.show()
+
+        '''
+        5. BT scores distributions w aggregate inset
+        '''
+
+        lens = [len(val) for val in all_identifiers.values()]
+        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
+
+        plot_color_dict = {}
+        plot_color_dict['Train Real'] = ('rgb(250,50,50)')  # train
+        plot_color_dict['Test Real'] = ('rgb(250,150,50)')  # test
+        plot_color_dict['Test Randn'] = ('rgb(0,50,0)')  # fake csd
+        plot_color_dict['Test NF'] = ('rgb(0,150,0)')  # fake nf
+        plot_color_dict['Test Distorted'] = ('rgb(0,100,100)')  # fake distortion
+        ind = 0
+        for target in all_identifiers.keys():
+            if all_identifiers[target] != []:
+                plot_color_dict[target] = colors[ind]
+                plot_color_dict[target + ' exp'] = colors[ind]
+                ind += 1
+
+        # plot 1
+        scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
+        bandwidth = scores_range / 200
+
+        fig = make_subplots(cols=2,rows=1, horizontal_spacing=0.15,subplot_titles=('a)', 'b)'))
+        fig.layout.annotations[0].update(x=0.025)
+        fig.layout.annotations[1].update(x=0.525)
+        for i, label in enumerate(scores_dict.keys()):
+            if 'exp' in label:
+                fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6),
+                              row=1,col=1)
+            else:
+                fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False),
+                              row=1,col=1)
+
+        # plot2 inset
+        plot_color_dict = {}
+        plot_color_dict['Test Real'] = ('rgb(200,0,50)')  # test
+        plot_color_dict['BT Targets'] = ('rgb(50,0,50)')
+        plot_color_dict['BT Submissions'] = ('rgb(50,150,250)')
+
+        scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
+        bandwidth = scores_range / 200
+
+        # test data
+        fig.add_trace(go.Violin(x=scores_dict['Test Real'], name='CSD Test',
+                                line_color=plot_color_dict['Test Real'], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False),row=1,col=2)
+
+        # BT distribution
+        fig.add_trace(go.Violin(x=BT_target_scores, name='BT Targets',
+                                line_color=plot_color_dict['BT Targets'], side='positive', orientation='h', width=1, meanline_visible=True, bandwidth=bandwidth / 100, points=False),row=1,col=2)
+        # Submissions
+        fig.add_trace(go.Violin(x=BT_submission_scores, name='BT Submissions',
+                                line_color=plot_color_dict['BT Submissions'], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False),row=1,col=2)
+
+
+        # quantiles = [np.quantile(BT_submission_scores, 0.01), np.quantile(BT_submission_scores, 0.05), np.quantile(BT_submission_scores, 0.1)]
+        # fig.add_shape(type="line",
+        #               x0=quantiles[0], y0=2, x1=quantiles[0], y1=3,
+        #               line=dict(color=plot_color_dict['BT Submissions'], dash='dash'),
+        #               row=1,col=2)
+        # fig.add_shape(type="line",
+        #               x0=quantiles[1], y0=2, x1=quantiles[1], y1=3,
+        #               line=dict(color=plot_color_dict['BT Submissions'], dash='dash'),
+        #               row=1,col=2)
+        # fig.add_shape(type="line",
+        #               x0=quantiles[2], y0=2, x1=quantiles[2], y1=3,
+        #               line=dict(color=plot_color_dict['BT Submissions'], dash='dash'),
+        #               row=1,col=2)
+
+        # 99 and 95 quantiles
+        quantiles = [np.quantile(scores_dict['Test Real'], 0.01), np.quantile(scores_dict['Test Real'], 0.05), np.quantile(scores_dict['Test Real'], 0.1)]
+        fig.add_vline(x=quantiles[0], line_dash='dash', line_color=plot_color_dict['Test Real'],row=1,col=2)
+        fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['Test Real'],row=1,col=2)
+        fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['Test Real'],row=1,col=2)
+
+        fig.update_layout(showlegend=False, yaxis_showgrid=True)
+
+        fig.update_layout(showlegend=False, yaxis_showgrid=True,width=1000,height=500)
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_xaxes(title_text='Model Score', row=1, col=2)
+        fig.update_xaxes(title_text='Model Score', row=1, col=1)
+        fig.layout.margin = layout.margin
+        fig.write_image('../paper1_figs/bt_submissions_distribution.png')
+        if config.machine == 'local':
+            fig.show()
+
+        '''
+        7. Table of BT separation statistics
+        '''
+        vals = [0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.5]
+        quantiles = np.quantile(scores_dict['Test Real'], vals)
+        submissions_fraction_below_csd_quantile = {value: np.average(BT_submission_scores < cutoff) for value, cutoff in zip(vals, quantiles)}
+        targets_fraction_below_csd_quantile = {value: np.average(BT_target_scores < cutoff) for value, cutoff in zip(vals, quantiles)}
+
+        submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + ' exp']) for key in all_identifiers.keys() if key in scores_dict.keys()}
+        submissions_average_below_target = np.average(list(submissions_fraction_below_target.values()))
+
+        fig = go.Figure(data=go.Table(
+            header=dict(values=['CSD Test Quantile','Fraction of Submissions']),
+            cells=dict(values=[list(submissions_fraction_below_csd_quantile.keys()),
+                               list(submissions_fraction_below_csd_quantile.values()),
+                               ], format=[".3", ".3"])))
+        fig.update_layout(width=200)
+        fig.layout.margin = layout.margin
+        fig.write_image('../paper1_figs/scores_separation_table.png')
+        if config.machine == 'local':
+            fig.show()
+
+        '''
+        8. Functional group analysis
+        '''
+        tracking_features_names = config.dataDims['tracking features dict']
+        # get the indices for each functional group
+        functional_group_inds = {}
+        fraction_dict = {}
+        for ii, key in enumerate(tracking_features_names):
+            if ('molecule' in key and 'fraction' in key):
+                if np.average(tracking_features[:, ii] > 0) > 0.01:
+                    fraction_dict[key.split()[1]] = np.average(tracking_features[:, ii] > 0)
+                    functional_group_inds[key.split()[1]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
+            elif 'molecule has' in key:
+                if np.average(tracking_features[:, ii] > 0) > 0.01:
+                    fraction_dict[key.split()[2]] = np.average(tracking_features[:, ii] > 0)
+                    functional_group_inds[key.split()[2]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
+
+        sort_order = np.argsort(list(fraction_dict.values()))[-1::-1]
+        sorted_functional_group_keys = [list(functional_group_inds.keys())[i] for i in sort_order]
+        #
+        # colors = n_colors('rgb(100,10,5)', 'rgb(5,110,200)', len(list(functional_group_inds.keys())), colortype='rgb')
+        # plot_color_dict = {}
+        # for ind, target in enumerate(sorted_functional_group_keys):
+        #     plot_color_dict[target] = colors[ind]
+        #
+        #
+        # scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
+        # bandwidth = scores_range / 200
+        #
+        # fig = go.Figure()
+        # fig.add_trace(go.Violin(x=scores_dict['Test Real'], name='CSD Test',
+        #                         line_color='#0c4dae', side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
+        #
+        # for ii, label in enumerate(sorted_functional_group_keys):
+        #     fraction = fraction_dict[label]
+        #     if fraction > 0.01:
+        #         fig.add_trace(go.Violin(x=scores_dict['Test Real'][functional_group_inds[label]], name=f'Fraction containing {label}={fraction:.2f}',
+        #                                 line_color=plot_color_dict[label], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
+        #
+        # fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
+        # fig.update_layout(xaxis_title='Model Score')
+        # fig.update_layout(showlegend=False)
+        #
+        # fig.layout.margin = layout.margin
+        # fig.write_image('../paper1_figs/scores_separation_table.png')
+        # if config.machine == 'local':
+        #     fig.show()
+
+
+        fig = go.Figure()
+        fig.add_trace(go.Scattergl(x=[f'{key} {fraction_dict[key]:.2f}' for key in sorted_functional_group_keys],
+                                   y=[np.average(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
+                                   error_y=dict(type='data',
+                                                array=[np.std(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
+                                                visible=True
+                                                ),
+                                   showlegend=False,
+                                   mode='markers'))
+        # fig.show()
+        #fig.update_layout(xaxis_title='Molecule Containing Functional Groups & Elements')
+        fig.update_layout(yaxis_title='Mean Score and Standard Deviation')
+        fig.update_layout(width=1200,height=600)
+        fig.layout.margin = layout.margin
+        fig.write_image('../paper1_figs/functional_group_scores.png')
+        if config.machine == 'local':
+            fig.show()
+
+        '''
+        9. Score vs. EMD on BT submissions
+        '''
+
+        all_scores = np.concatenate([(scores_dict[key]) for key in scores_dict.keys() if key in blind_test_targets])  # if key in normed_energy_dict.keys()])
+        full_rdf = np.concatenate([val for val in rdf_full_distance_dict.values()])
+        inter_rdf = np.concatenate([val for val in rdf_inter_distance_dict.values()])
+
+        clip = np.quantile(full_rdf, 0.99) * 1.9
+        #full_rdf = np.clip(full_rdf, a_min=0, a_max=clip)
+
+        fig = make_subplots(rows=2, cols=4,
+                            vertical_spacing = 0.075,
+                            subplot_titles=(list(rdf_full_distance_dict.keys())))# + ['All'])
+
+        for i, label in enumerate(rdf_full_distance_dict.keys()):
+            row = i // 4 + 1
+            col = i % 4 + 1
+            dist = rdf_full_distance_dict[label]
+            dist = np.clip(dist, a_min=0, a_max=clip)
+            xline = np.asarray([np.amin(dist), np.amax(dist)])
+            linreg_result = linregress(dist, scores_dict[label])
+            yline = xline * linreg_result.slope + linreg_result.intercept
+
+            fig.add_trace(go.Scattergl(x=dist, y=scores_dict[label], showlegend=False,
+                                       mode='markers',marker_color='rgba(100,0,0,1)',opacity=0.05),
+                          row=row, col=col)
+            fig.add_trace(go.Scattergl(x=np.zeros(1), y=scores_dict[label + ' exp'], showlegend=False, mode='markers',
+                                       marker=dict(color='Black', size=10, line=dict(color='White', width=2))), row=row, col=col)
+
+            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=row, col=col)
+            fig.update_xaxes(range=[-5, clip],row=row,col=col)
+        #
+        # xline = np.asarray([np.amin(full_rdf), np.amax(full_rdf)])
+        # linreg_result = linregress(full_rdf, all_scores)
+        # yline = xline * linreg_result.slope + linreg_result.intercept
+        # fig.add_trace(go.Scattergl(x=full_rdf, y=all_scores, showlegend=False,
+        #                            mode='markers', ),
+        #               row=2, col=4)
+        # fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'All Targets R={linreg_result.rvalue:.3f}'), row=2, col=4)
+        # fig.update_xaxes(range=[-5, clip], row=2, col=4)
+
+        fig.update_yaxes(title_text='Model Score', row=1, col=1)
+        fig.update_yaxes(title_text='Model Score', row=2, col=1)
+
+        fig.update_layout(width=1000,height=500)
+        fig.layout.margin = layout.margin
+        fig.write_image('../paper1_figs/scores_vs_emd.png')
+        if config.machine == 'local':
+            fig.show()
+
+
+        '''
+        10. Interesting Group-wise analysis
+        '''
+
+        target_identifiers = {}
+        rankings = {}
+        group = {}
+        list_num = {}
+        for label in ['XXII', 'XXIII', 'XXVI']:
+            target_identifiers[label] = [identifiers_list[all_identifiers[label][n]] for n in range(len(all_identifiers[label]))]
+            rankings[label] = []
+            group[label] = []
+            list_num[label] = []
+            for ident in target_identifiers[label]:
+                if 'edited' in ident:
+                    ident = ident[7:]
+
+                long_ident = ident.split('_')
+                list_num[label].append(int(ident[len(label) + 1]))
+                rankings[label].append(int(long_ident[-1]) + 1)
+                rankings[label].append(int(long_ident[-1]) + 1)
+                group[label].append(long_ident[1])
+
+        fig = make_subplots(rows=2, cols=2, vertical_spacing=0.075, subplot_titles=(
+            ['Brandenburg XXII', 'Brandenburg XXIII', 'Brandenburg XXVI', 'Facelli XXII']),
+                            x_title='Model Score')
+
+        for ii, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+            good_inds = np.where(np.asarray(group[label]) == 'Brandenburg')[0]
+            submissions_list_num = np.asarray(list_num[label])[good_inds]
+            list1_inds = np.where(submissions_list_num == 1)[0]
+            list2_inds = np.where(submissions_list_num == 2)[0]
+
+            fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list1_inds]],
+                                       histnorm='probability density',
+                                       nbinsx=50,
+                                       name="Submission 1 Score",
+                                       showlegend=False,
+                                       marker_color='#0c4dae'),
+                          row=(ii) // 2 + 1, col=(ii) % 2 + 1)
+            fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list2_inds]],
+                                       histnorm='probability density',
+                                       nbinsx=50,
+                                       name="Submission 2 Score",
+                                       showlegend=False,
+                                       marker_color='#d60000'),
+                          row=(ii) // 2 + 1, col=(ii) % 2 + 1)
+
+        label = 'XXII'
+        good_inds = np.where(np.asarray(group[label]) == 'Facelli')[0]
+        submissions_list_num = np.asarray(list_num[label])[good_inds]
+        list1_inds = np.where(submissions_list_num == 1)[0]
+        list2_inds = np.where(submissions_list_num == 2)[0]
+
+        fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list1_inds]],
+                                   histnorm='probability density',
+                                   nbinsx=50,
+                                   name="Submission 1 Score",
+                                   showlegend=False,
+                                   marker_color='#0c4dae'), row=2, col=2)
+        fig.add_trace(go.Histogram(x=np.asarray(scores_dict[label])[good_inds[list2_inds]],
+                                   histnorm='probability density',
+                                   nbinsx=50,
+                                   name="Submission 2 Score",
+                                   showlegend=False,
+                                   marker_color='#d60000'), row=2, col=2)
+
+        fig.update_layout(width=1000,height=500)
+        fig.layout.margin = layout.margin
+        fig.layout.margin.b=50
+        fig.write_image('../paper1_figs/interesting_groups.png')
+        if config.machine == 'local':
+            fig.show()
+
+        '''
+        S1. All group-wise analysis
+        '''
+
+        for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+            names = np.unique(list(group[label]))
+            uniques = len(names)
+            rows = int(np.floor(np.sqrt(uniques)))
+            cols = int(np.ceil(np.sqrt(uniques)) + 1)
+            fig = make_subplots(rows=rows, cols=cols,
+                                subplot_titles=(names),x_title='Group Ranking',y_title='Model Score',vertical_spacing=0.1)
+
+            for j, group_name in enumerate(np.unique(group[label])):
+                good_inds = np.where(np.asarray(group[label]) == group_name)[0]
+                submissions_list_num = np.asarray(list_num[label])[good_inds]
+                list1_inds = np.where(submissions_list_num == 1)[0]
+                list2_inds = np.where(submissions_list_num == 2)[0]
+
+                xline = np.asarray([0, max(np.asarray(rankings[label])[good_inds[list1_inds]])])
+                linreg_result = linregress(np.asarray(rankings[label])[good_inds[list1_inds]], np.asarray(scores_dict[label])[good_inds[list1_inds]])
+                yline = xline * linreg_result.slope + linreg_result.intercept
+
+                fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
+                                           mode='markers', opacity=0.5, marker=dict(size=6, color=submissions_list_num, colorscale='portland', cmax=2, cmin=1, showscale=False)),
+                              row=j // cols + 1, col=j % cols + 1)
+
+                fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{group_name} R={linreg_result.rvalue:.3f}', line=dict(color='#0c4dae')), row=j // cols + 1, col=j % cols + 1)
+
+                if len(list2_inds) > 0:
+                    xline = np.asarray([0, max(np.asarray(rankings[label])[good_inds[list2_inds]])])
+                    linreg_result2 = linregress(np.asarray(rankings[label])[good_inds[list2_inds]], np.asarray(scores_dict[label])[good_inds[list2_inds]])
+                    yline2 = xline * linreg_result2.slope + linreg_result2.intercept
+                    fig.add_trace(go.Scattergl(x=xline, y=yline2, name=f'{group_name} R={linreg_result2.rvalue:.3f}', line=dict(color='#d60000')), row=j // cols + 1, col=j % cols + 1)
+
+            fig.update_layout(title=label)
+
+            fig.update_layout(width=1000, height=500)
+            fig.layout.margin = layout.margin
+            fig.layout.margin.t=50
+            fig.layout.margin.b=55
+            fig.layout.margin.l=60
+            fig.write_image(f'../paper1_figs/groupwise_analysis_{j}.png')
+            if config.machine == 'local':
+                fig.show()
+
+        '''
+        S2.  score correlates
+        '''
+
+        # correlate losses with molecular features
+        tracking_features = np.asarray(tracking_features)
+        g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+        features = []
+        ind = 0
+        for i in range(config.dataDims['num tracking features']):  # not that interesting
+            if (np.average(tracking_features[:, i] != 0) > 0.01) and \
+                    (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
+                    (config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
+                features.append(config.dataDims['tracking features dict'][i])
+                g_loss_correlations[ind] = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
+                ind += 1
+
+        g_loss_correlations = g_loss_correlations[:ind]
+
+        g_sort_inds = np.argsort(g_loss_correlations)
+        g_loss_correlations = g_loss_correlations[g_sort_inds]
+        features_sorted = [features[i] for i in g_sort_inds]
+        g_loss_dict = {feat:corr for feat,corr in zip(features_sorted,g_loss_correlations)}
+
+        fig = make_subplots(rows=1,cols=3, horizontal_spacing=0.14,subplot_titles=('a)', 'b)', 'c)'), x_title = 'R Value')
+
+        fig.add_trace(go.Bar(
+            y=[feat for feat in features_sorted if 'has' not in feat and 'fraction' not in feat],
+            x=[g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat],
+            orientation='h',
+            text=np.asarray([g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}'
+        ), row=1, col=1)
+        fig.add_trace(go.Bar(
+            y=[feat for feat in features_sorted if 'has' in feat and 'fraction' not in feat],
+            x=[g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat],
+            orientation='h',
+            text=np.asarray([g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}'
+        ), row=1, col=3)
+        fig.add_trace(go.Bar(
+            y=[feat for feat in features_sorted if 'has' not in feat and 'fraction' in feat],
+            x=[g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat],
+            orientation='h',
+            text=np.asarray([g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}'
+        ), row=1, col=2)
+
+        fig.update_yaxes(tickfont=dict(size=14),row=1,col=1)
+        fig.update_yaxes(tickfont=dict(size=14),row=1,col=2)
+        fig.update_yaxes(tickfont=dict(size=10),row=1,col=3)
+
+        fig.layout.annotations[0].update(x=0.025)
+        fig.layout.annotations[1].update(x=0.358)
+        fig.layout.annotations[2].update(x=0.70)
+
+        fig.layout.margin = layout.margin
+        fig.layout.margin.b=50
+        fig.write_image('../paper1_figs/scores_correlates.png')
+        if config.machine == 'local':
+            fig.show()
+
 
     def cell_params_analysis(self, config, train_loader, test_epoch_stats_dict):
         n_crystal_features = config.dataDims['num lattice features']
@@ -2265,7 +2921,7 @@ class Modeller():
             print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
 
         linreg_result = linregress(orig_target, orig_prediction)
-        loss_dict['Regression R2'] = linreg_result.rvalue
+        loss_dict['Regression R'] = linreg_result.rvalue
         loss_dict['Regression slope'] = linreg_result.slope
         wandb.log(loss_dict)
 
@@ -2274,7 +2930,7 @@ class Modeller():
         analyze and plot
         '''
         aa = 1
-
+        identifiers_list = extra_test_dict['identifiers']
         score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
         scores_dict, all_identifiers, blind_test_targets, target_identifiers, \
         target_identifiers_inds, BT_target_scores, BT_submission_scores, \
@@ -2289,14 +2945,51 @@ class Modeller():
         self.score_correlations_plot(score_correlations_dict, config)
         self.distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
         self.targetwise_distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
-        group, rankings, list_num = self.target_ranking_analysis(extra_test_dict, scores_dict, all_identifiers)
+        group, rankings, list_num = self.target_ranking_analysis(identifiers_list, scores_dict, all_identifiers)
         self.groupwise_target_ranking_analysis(group, rankings, list_num, scores_dict)
 
         # self.bt_clustering(all_identifiers, scores_dict, extra_test_dict)
 
         aa = 1
 
-    def process_discriminator_evaluation_data(self, config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict):
+    def make_nice_figures(self, config):
+        '''
+        make beautiful figures for paper / presentation
+        '''
+        import plotly.io as pio
+        pio.renderers.default = 'browser'
+        '''
+        Required figures
+        Data
+        0. Dataset statistics analysis
+        
+        Regression
+        1x. 4-panel packing coefficient & density, prediction trace & error distribution
+        2x. Table of packing coefficient & density metrics
+        3x. Packing coefficient error correlates
+
+        Scoring
+        4. true-false model scores distribution
+        6. BT scores distributions w aggregate inset
+        7. Table of BT separation statistics
+        8. Functional group analysis
+        9. Score vs. EMD on BT submissions
+        10. Interesting Group-wise analysis
+        
+        SI
+        S1. All group-wise analysis
+        S2. Scoring score correlates
+        '''
+        regression_test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/65_test_epoch_stats_dict.npy', allow_pickle=True).item()
+        self.nice_regression_plots(config, regression_test_epoch_stats_dict)
+        del regression_test_epoch_stats_dict
+
+        self.nice_scoring_plots(config)
+
+
+
+
+    def process_discriminator_evaluation_data(self, config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict, size_normed_score = False):
         blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
             'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
             'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', 'XXXI', 'XXXII']
@@ -2344,12 +3037,15 @@ class Modeller():
         scores_dict = {}
         vdW_penalty_dict = {}
         # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
-        randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)
-        distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)
+        randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)[0]
+        distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)[0]
 
         if self.config.gan_loss == 'standard':
             if train_epoch_stats_dict is not None:
                 scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
+                if size_normed_score:
+                    scores_dict['Train Real'] /= train_epoch_stats_dict['tracking features'][:,config.dataDims['tracking features dict'].index('molecule volume')]
+
                 vdW_penalty_dict['Train Real'] = train_epoch_stats_dict['real vdW penalty']
                 wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
                 wandb.log({'Train score std': np.std(scores_dict['Train Real'])})
@@ -2358,6 +3054,12 @@ class Modeller():
             scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds])
             # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
             scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds])
+
+            if size_normed_score:
+                scores_dict['Test Real'] /= test_epoch_stats_dict['tracking features'][:, config.dataDims['tracking features dict'].index('molecule volume')]
+                scores_dict['Test Randn'] /= test_epoch_stats_dict['tracking features'][randn_inds, config.dataDims['tracking features dict'].index('molecule volume')]
+                scores_dict['Test Distorted'] /= test_epoch_stats_dict['tracking features'][distorted_inds, config.dataDims['tracking features dict'].index('molecule volume')]
+
             vdW_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdW penalty']
             vdW_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake vdW penalty'][randn_inds]
             vdW_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake vdW penalty'][distorted_inds]
@@ -2389,6 +3091,9 @@ class Modeller():
                 raw_scores = extra_test_dict['scores'][target_index]
                 scores = softmax_and_score(raw_scores)
                 scores_dict[target + ' exp'] = scores
+                if size_normed_score:
+                    scores_dict[target + ' exp'] /= extra_test_dict['tracking features'][target_index, config.dataDims['tracking features dict'].index('molecule volume')]
+
                 vdW_penalty_dict[target + ' exp'] = extra_test_dict['vdW penalty'][target_index][None]
 
                 wandb.log({f'Average {target} exp score': np.average(scores)})
@@ -2401,6 +3106,9 @@ class Modeller():
                 raw_scores = extra_test_dict['scores'][target_indices]
                 scores = softmax_and_score(raw_scores)
                 scores_dict[target] = scores
+                if size_normed_score:
+                    scores_dict[target] /= extra_test_dict['tracking features'][target_indices, config.dataDims['tracking features dict'].index('molecule volume')]
+
                 # energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
                 vdW_penalty_dict[target] = extra_test_dict['vdW penalty'][target_indices]
 
@@ -2806,7 +3514,7 @@ class Modeller():
 
         wandb.log({f'Targetwise Distance vs. Score': fig})
 
-    def target_ranking_analysis(self, extra_test_dict, scores_dict, all_identifiers):
+    def target_ranking_analysis(self, identifiers_list, scores_dict, all_identifiers):
         '''
         within-submission score vs rankings
         file formats are different between BT 5 and BT6
@@ -2816,7 +3524,7 @@ class Modeller():
         group = {}
         list_num = {}
         for label in ['XXII', 'XXIII', 'XXVI']:
-            target_identifiers[label] = [extra_test_dict['identifiers'][all_identifiers[label][n]] for n in range(len(all_identifiers[label]))]
+            target_identifiers[label] = [identifiers_list[all_identifiers[label][n]] for n in range(len(all_identifiers[label]))]
             rankings[label] = []
             group[label] = []
             list_num[label] = []
@@ -2982,9 +3690,6 @@ class Modeller():
         #                            marker_color='#d60000'),
         #               row=2, col=3)
 
-        return None
-
-    def score_correlates_plot(scores_dict, tracking_features_names, tracking_features):
         return None
 
     def bt_clustering(self, all_identifiers, scores_dict, extra_test_dict):
