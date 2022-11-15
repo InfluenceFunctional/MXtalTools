@@ -1763,10 +1763,15 @@ class Modeller():
     def train_boilerplate(self):
         config = self.config
         # dataset
+        if config.max_epochs == -1:
+            pass #self.nice_dataset_analysis(config, self.prep_dataset)
+
         dataset_builder = BuildDataset(config, pg_dict=self.point_groups,
                                        sg_dict=self.space_groups,
                                        lattice_dict=self.lattice_type,
                                        premade_dataset=self.prep_dataset)
+
+
         del self.prep_dataset  # we don't actually want this huge thing floating around
 
         self.dataDims = dataset_builder.get_dimension()
@@ -2132,6 +2137,51 @@ class Modeller():
 
         return None
 
+    def nice_dataset_analysis(self, config, dataset):
+        '''
+        distributions of dataset features
+        - molecule num atoms
+        - num rings
+        - num donors
+        - num acceptors
+        - atom fractions CNOFCl Metals
+        -
+        '''
+        import plotly.io as pio
+        pio.renderers.default = 'browser'
+
+        layout = go.Layout(
+            margin=go.layout.Margin(
+                l=0,  # left margin
+                r=0,  # right margin
+                b=0,  # bottom margin
+                t=20,  # top margin
+            )
+        )
+
+        rows = 3
+        cols = 4
+        mol_feats = ['molecule num atoms','molecule num rings','molecule num donors','molecule num acceptors',
+                     'molecule planarity','molecule C fraction','molecule N fraction','molecule O fraction',
+                     'crystal packing coefficient', 'crystal lattice centring','crystal system','crystal z value']
+
+        fig = make_subplots(rows=rows, cols=cols, subplot_titles=mol_feats, horizontal_spacing=0.04, vertical_spacing=0.1)
+        for ii, feat in enumerate(mol_feats):
+            fig.add_trace(go.Histogram(x=dataset[feat],
+                                       histnorm='probability density',
+                                       nbinsx=50,
+                                       showlegend=False,
+                                       marker_color='#0c4dae'),
+                          row=(ii) // cols + 1, col=(ii) % cols + 1)
+        fig.update_layout(width=900, height=600)
+        fig.layout.margin = layout.margin
+        fig.write_image('../paper1_figs/dataset_statistics.png')
+        if config.machine == 'local':
+            fig.show()
+
+        aa = 1
+        return None
+
     def nice_regression_plots(self, config, test_epoch_stats_dict):
 
         '''
@@ -2273,9 +2323,12 @@ class Modeller():
             if (np.average(tracking_features[:, i] != 0) > 0.05) and \
                     (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
                     (config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
-                features.append(config.dataDims['tracking features dict'][i])
-                g_loss_correlations[ind] = np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i], rowvar=False)[0, 1]
-                ind += 1
+
+                coeff = np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i], rowvar=False)[0, 1]
+                if np.abs(coeff) > 0.05:
+                    features.append(config.dataDims['tracking features dict'][i])
+                    g_loss_correlations[ind] = coeff
+                    ind += 1
         g_loss_correlations = g_loss_correlations[:ind]
 
         g_sort_inds = np.argsort(g_loss_correlations)
@@ -2291,7 +2344,7 @@ class Modeller():
             texttemplate='%{text:.2}'
         ))
         fig.layout.margin = layout.margin
-        fig.update_layout(width=400, height=1000, font=dict(size=10))
+        fig.update_layout(width = 300, height=600, font=dict(size=12))
         fig.update_layout(xaxis_title='R Value')
 
         fig.write_image('../paper1_figs/regression_correlates.png')
@@ -2343,7 +2396,9 @@ class Modeller():
                 ind += 1
 
         scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
-        bandwidth = 15/200
+        bandwidth1 = scores_range/200
+
+        bandwidth2 = 15/200
 
         scores_labels = {'Test Real':'Real', 'Test Randn':'Gaussian', 'Test Distorted':'Distorted'}
         fig = make_subplots(rows=1,cols=2,subplot_titles=('a)', 'b)'))
@@ -2351,10 +2406,10 @@ class Modeller():
             legend_label = scores_labels[label]
             fig.add_trace(go.Violin(x=scores_dict[label], name=legend_label, line_color=plot_color_dict[label],
                                     side='positive', orientation='h', width=4,
-                                    meanline_visible=True, bandwidth=bandwidth, points=False),
+                                    meanline_visible=True, bandwidth=bandwidth1, points=False),
                           row=1,col=1)
             fig.add_trace(go.Violin(x=-np.log(vdW_penalty_dict[label] + 1e-6), name=legend_label, line_color=plot_color_dict[label],
-                                    side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False),
+                                    side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth2, points=False),
                           row=1,col=2)
 
         fig.update_layout(showlegend=False, yaxis_showgrid=True,width=800,height=500)
@@ -2733,9 +2788,11 @@ class Modeller():
             if (np.average(tracking_features[:, i] != 0) > 0.01) and \
                     (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
                     (config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
-                features.append(config.dataDims['tracking features dict'][i])
-                g_loss_correlations[ind] = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
-                ind += 1
+                corr = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
+                if np.abs(corr) > 0.05:
+                    features.append(config.dataDims['tracking features dict'][i])
+                    g_loss_correlations[ind] = corr
+                    ind += 1
 
         g_loss_correlations = g_loss_correlations[:ind]
 
@@ -2752,7 +2809,8 @@ class Modeller():
             orientation='h',
             text=np.asarray([g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat]).astype('float16'),
             textposition='auto',
-            texttemplate='%{text:.2}'
+            texttemplate='%{text:.2}',
+            marker=dict(color='rgba(100,0,0,1)')
         ), row=1, col=1)
         fig.add_trace(go.Bar(
             y=[feat for feat in features_sorted if 'has' in feat and 'fraction' not in feat],
@@ -2760,7 +2818,8 @@ class Modeller():
             orientation='h',
             text=np.asarray([g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat]).astype('float16'),
             textposition='auto',
-            texttemplate='%{text:.2}'
+            texttemplate='%{text:.2}',
+            marker=dict(color='rgba(0,100,0,1)')
         ), row=1, col=3)
         fig.add_trace(go.Bar(
             y=[feat for feat in features_sorted if 'has' not in feat and 'fraction' in feat],
@@ -2768,7 +2827,8 @@ class Modeller():
             orientation='h',
             text=np.asarray([g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat]).astype('float16'),
             textposition='auto',
-            texttemplate='%{text:.2}'
+            texttemplate='%{text:.2}',
+            marker=dict(color='rgba(0,0,100,1)')
         ), row=1, col=2)
 
         fig.update_yaxes(tickfont=dict(size=14),row=1,col=1)
@@ -2980,6 +3040,7 @@ class Modeller():
         S1. All group-wise analysis
         S2. Scoring score correlates
         '''
+
         regression_test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/65_test_epoch_stats_dict.npy', allow_pickle=True).item()
         self.nice_regression_plots(config, regression_test_epoch_stats_dict)
         del regression_test_epoch_stats_dict
