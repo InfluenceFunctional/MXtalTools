@@ -509,8 +509,8 @@ class BuildDataset:
                 keys_to_add.append(key)
             if ('molecule has' in key):
                 keys_to_add.append(key)
-            if key == 'molecule freeSASA':
-                keys_to_add.append(key) #not yet in our cluster datasets
+            #if key == 'molecule freeSASA':
+            #    keys_to_add.append(key) #not yet in our cluster datasets
 
         print("Preparing molecule/crystal tracking features")
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it

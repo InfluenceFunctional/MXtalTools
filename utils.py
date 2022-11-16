@@ -2442,12 +2442,12 @@ def softmax_and_score(score, temperature=1):
 def norm_scores(score, tracking_features, config):
     # norm the incoming score according to its respective molecular surface area (assuming sphere)
     # also correct by spherical defect (non-crystal factor)
-    #volume = tracking_features[:,config.dataDims['tracking features dict'].index('molecule volume')]
+    volume = tracking_features[:,config.dataDims['tracking features dict'].index('molecule volume')]
     #radius = (3/4/np.pi * volume)**(1/3)
     #surface_area = 4*np.pi*radius**2
     #eccentricity = tracking_features[:,config.dataDims['tracking features dict'].index('molecule eccentricity')]
-    surface_area = tracking_features[:,config.dataDims['tracking features dict'].index('molecule freeSASA')]
-    return score / surface_area
+    #surface_area = tracking_features[:,config.dataDims['tracking features dict'].index('molecule freeSASA')]
+    return score / volume
 
 '''
 # look at all kinds of activations

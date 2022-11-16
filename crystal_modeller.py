@@ -3112,6 +3112,21 @@ class Modeller():
         distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)[0]
 
         if self.config.gan_loss == 'standard':
+            scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'])
+            scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds])
+            # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
+            scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds])
+
+            if size_normed_score:
+                mol_feats = test_epoch_stats_dict['tracking features'][:, :16]
+                from sklearn.decomposition import PCA
+                pca = PCA(n_components=2)
+                pca.fit(mol_feats)
+                normed_feat = pca.transform(mol_feats)
+                scores_dict['Test Real'] = norm_scores(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'], config)
+                scores_dict['Test Randn'] = norm_scores(scores_dict['Test Randn'], test_epoch_stats_dict['tracking features'][randn_inds], config)
+                scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking features'][distorted_inds], config)
+
             if train_epoch_stats_dict is not None:
                 scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
                 if size_normed_score:
@@ -3120,16 +3135,6 @@ class Modeller():
                 vdW_penalty_dict['Train Real'] = train_epoch_stats_dict['real vdW penalty']
                 wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
                 wandb.log({'Train score std': np.std(scores_dict['Train Real'])})
-
-            scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'])
-            scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds])
-            # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
-            scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds])
-
-            if size_normed_score:
-                scores_dict['Test Real'] = norm_scores(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'], config)
-                scores_dict['Test Randn'] = norm_scores(scores_dict['Test Randn'], test_epoch_stats_dict['tracking features'][randn_inds], config)
-                scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking features'][distorted_inds], config)
 
             vdW_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdW penalty']
             vdW_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake vdW penalty'][randn_inds]
