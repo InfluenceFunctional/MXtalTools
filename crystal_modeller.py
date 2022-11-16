@@ -1910,7 +1910,7 @@ class Modeller():
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
                 generated_samples_ii = (data.cell_params - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
                 if config.generator_noise_level == -1:
-                    distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-5, 0, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range for evaluation mode
+                    distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-3, 0, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range for evaluation mode
                 else:
                     distortion = torch.randn_like(generated_samples_ii) * config.generator_noise_level
                 generated_samples_i = (generated_samples_ii + distortion).to(config.device)  # add jitter and return in standardized basis
@@ -2845,6 +2845,8 @@ class Modeller():
         if config.machine == 'local':
             fig.show()
 
+        aa = 1
+
 
     def cell_params_analysis(self, config, train_loader, test_epoch_stats_dict):
         n_crystal_features = config.dataDims['num lattice features']
@@ -3009,7 +3011,13 @@ class Modeller():
         self.groupwise_target_ranking_analysis(group, rankings, list_num, scores_dict)
 
         # self.bt_clustering(all_identifiers, scores_dict, extra_test_dict)
-
+        '''
+        plt.clf()
+        plt.scatter(scores_dict['Test Distorted'],np.log10(vdW_penalty_dict['Test Distorted']+np.amin(vdW_penalty_dict['Test Distorted'][np.nonzero(vdW_penalty_dict['Test Distorted'])])),c=np.log(test_epoch_stats_dict['distortion level']))
+        plt.ylabel('vdW Penalty')
+        plt.xlabel('Model score')
+        plt.title('scores vs distortion size')
+        '''
         aa = 1
 
     def make_nice_figures(self, config):
