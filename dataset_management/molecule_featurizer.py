@@ -4,7 +4,7 @@ import tqdm
 from pymatgen.core import Molecule
 from pymatgen.symmetry.analyzer import PointGroupAnalyzer
 import rdkit.Chem as Chem
-from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments
+from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
 from nikos.coordinate_transformations import coor_trans_matrix
 from mendeleev import element as element_table
 from crystal_builder_tools import (get_cell_fractional_centroids, c_f_transform)
@@ -705,6 +705,61 @@ class CustomGraphFeaturizer():
 
                 df.to_pickle('../molecule_features/{}'.format(chunk_inds[0] + i))
 
+    def add_single_feature(self, molecule_chunks_path, chunk_inds=[0, 100], feature = None):
+        os.chdir(molecule_chunks_path)
+        chunks = os.listdir()[chunk_inds[0]:chunk_inds[1]]
+        self.init_features()
+
+        for i, chunk in enumerate(chunks):
+            df = pd.read_pickle(chunk)
+            bad_inds = []
+            new_features = None
+            print('Processing chunk {} with {} entries'.format(i, len(df)))
+            for j in tqdm.tqdm(range(len(df))):
+                # hydrogens are completely inconsistent, and can't be efficiently added either by CSD or rdkit
+                mol = Chem.MolFromMol2Block(df['xyz'][j], sanitize=True, removeHs=True)
+                try:
+                    mol = Chem.RemoveAllHs(mol)  # strictly clean the molecule of all hydrogens
+                except:
+                    if mol is not None:
+                        bad_inds.append(j)
+                        mol = None
+                        print("Error kekulizing")
+                        print('ERROR') # note this should never ever happen when only adding
+
+                if mol is None:
+                    bad_inds.append(j)
+                    print('ERROR') # note this should never ever happen when only adding
+                elif df['crystal reference cell coords'][j] == 'error': # if we didn't get reference coordinates, reject the structure
+                    bad_inds.append(j)
+                    print('ERROR')
+
+                elif mol.GetNumAtoms() < 3:
+                    bad_inds.append(j)
+                    print('ERROR')
+
+                else:
+                    mol_data = {}
+                    if feature == 'molecule freeSASA':
+                        radii = rdFreeSASA.classifyAtoms(mol)
+                        mol_data['molecule freeSASA'] = rdFreeSASA.CalcSASA(mol, radii)
+
+                    if new_features is None:
+                        new_features = [[] for _ in range(len(mol_data.keys()))]
+                        self.new_features_names = list(mol_data.keys())
+
+                    for k, key in enumerate(mol_data.keys()):
+                        new_features[k].append(mol_data[key])
+
+            df = df.drop(df.index[bad_inds])
+            if 'level_0' in df.columns:  # delete unwanted samples
+                df = df.drop(columns='level_0')
+            df = df.reset_index()
+            for k, key in enumerate(self.new_features_names):
+                df[key] = new_features[k]
+
+            df.to_pickle('../molecule_features/{}'.format(chunk_inds[0] + i))
+
     def featurize_molecule(self, mol):
         '''
         input is an rdkit molecule object
@@ -741,6 +796,8 @@ class CustomGraphFeaturizer():
         molecule features
         '''
 
+        radii = rdFreeSASA.classifyAtoms(mol)
+        dataset['molecule freeSASA'] = rdFreeSASA.CalcSASA(mol, radii)
         dataset['molecule mass'] = Descriptors.MolWt(mol) # includes implicit protons
         dataset['molecule num atoms'] = len(dataset['atom Z'])  # mol.GetNumAtoms()
         dataset['molecule num rings'] = mol.GetRingInfo().NumRings()

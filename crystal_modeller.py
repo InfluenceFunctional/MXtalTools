@@ -1764,13 +1764,12 @@ class Modeller():
         config = self.config
         # dataset
         if config.max_epochs == -1:
-            pass #self.nice_dataset_analysis(config, self.prep_dataset)
+            pass  # self.nice_dataset_analysis(config, self.prep_dataset)
 
         dataset_builder = BuildDataset(config, pg_dict=self.point_groups,
                                        sg_dict=self.space_groups,
                                        lattice_dict=self.lattice_type,
                                        premade_dataset=self.prep_dataset)
-
 
         del self.prep_dataset  # we don't actually want this huge thing floating around
 
@@ -1910,7 +1909,7 @@ class Modeller():
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
                 generated_samples_ii = (data.cell_params - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
                 if config.generator_noise_level == -1:
-                    distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-3, 0, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range for evaluation mode
+                    distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, -0.5, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range for evaluation mode
                 else:
                     distortion = torch.randn_like(generated_samples_ii) * config.generator_noise_level
                 generated_samples_i = (generated_samples_ii + distortion).to(config.device)  # add jitter and return in standardized basis
@@ -2161,9 +2160,9 @@ class Modeller():
 
         rows = 3
         cols = 4
-        mol_feats = ['molecule num atoms','molecule num rings','molecule num donors','molecule num acceptors',
-                     'molecule planarity','molecule C fraction','molecule N fraction','molecule O fraction',
-                     'crystal packing coefficient', 'crystal lattice centring','crystal system','crystal z value']
+        mol_feats = ['molecule num atoms', 'molecule num rings', 'molecule num donors', 'molecule num acceptors',
+                     'molecule planarity', 'molecule C fraction', 'molecule N fraction', 'molecule O fraction',
+                     'crystal packing coefficient', 'crystal lattice centring', 'crystal system', 'crystal z value']
 
         fig = make_subplots(rows=rows, cols=cols, subplot_titles=mol_feats, horizontal_spacing=0.04, vertical_spacing=0.1)
         for ii, feat in enumerate(mol_feats):
@@ -2344,7 +2343,7 @@ class Modeller():
             texttemplate='%{text:.2}'
         ))
         fig.layout.margin = layout.margin
-        fig.update_layout(width = 300, height=600, font=dict(size=12))
+        fig.update_layout(width=500, height=600, font=dict(size=12))
         fig.update_layout(xaxis_title='R Value')
 
         fig.write_image('../paper1_figs/regression_correlates.png')
@@ -2353,9 +2352,9 @@ class Modeller():
 
         return None
 
-    def nice_scoring_plots(self,config):
-        test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs\discriminator_1210_test_epoch_stats_dict.npy',allow_pickle=True).item()
-        extra_test_dict = np.load('C:/Users\mikem\Desktop\CSP_runs\discriminator_1210_extra_test_dict.npy',allow_pickle=True).item()
+    def nice_scoring_plots(self, config):
+        test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs\discriminator_1210_test_epoch_stats_dict.npy', allow_pickle=True).item()
+        extra_test_dict = np.load('C:/Users\mikem\Desktop\CSP_runs\discriminator_1210_extra_test_dict.npy', allow_pickle=True).item()
 
         tracking_features = test_epoch_stats_dict['tracking features']
         identifiers_list = extra_test_dict['identifiers']
@@ -2396,23 +2395,23 @@ class Modeller():
                 ind += 1
 
         scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
-        bandwidth1 = scores_range/200
+        bandwidth1 = scores_range / 200
 
-        bandwidth2 = 15/200
+        bandwidth2 = 15 / 200
 
-        scores_labels = {'Test Real':'Real', 'Test Randn':'Gaussian', 'Test Distorted':'Distorted'}
-        fig = make_subplots(rows=1,cols=2,subplot_titles=('a)', 'b)'))
+        scores_labels = {'Test Real': 'Real', 'Test Randn': 'Gaussian', 'Test Distorted': 'Distorted'}
+        fig = make_subplots(rows=1, cols=2, subplot_titles=('a)', 'b)'))
         for i, label in enumerate(scores_labels):
             legend_label = scores_labels[label]
             fig.add_trace(go.Violin(x=scores_dict[label], name=legend_label, line_color=plot_color_dict[label],
                                     side='positive', orientation='h', width=4,
                                     meanline_visible=True, bandwidth=bandwidth1, points=False),
-                          row=1,col=1)
+                          row=1, col=1)
             fig.add_trace(go.Violin(x=-np.log(vdW_penalty_dict[label] + 1e-6), name=legend_label, line_color=plot_color_dict[label],
                                     side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth2, points=False),
-                          row=1,col=2)
+                          row=1, col=2)
 
-        fig.update_layout(showlegend=False, yaxis_showgrid=True,width=800,height=500)
+        fig.update_layout(showlegend=False, yaxis_showgrid=True, width=800, height=500)
         fig.update_xaxes(title_text='Model Score', row=1, col=1)
         fig.update_xaxes(title_text='vdW Score', row=1, col=2)
 
@@ -2451,16 +2450,16 @@ class Modeller():
         scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
         bandwidth = scores_range / 200
 
-        fig = make_subplots(cols=2,rows=1, horizontal_spacing=0.15,subplot_titles=('a)', 'b)'))
+        fig = make_subplots(cols=2, rows=1, horizontal_spacing=0.15, subplot_titles=('a)', 'b)'))
         fig.layout.annotations[0].update(x=0.025)
         fig.layout.annotations[1].update(x=0.525)
         for i, label in enumerate(scores_dict.keys()):
             if 'exp' in label:
                 fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6),
-                              row=1,col=1)
+                              row=1, col=1)
             else:
                 fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False),
-                              row=1,col=1)
+                              row=1, col=1)
 
         # plot2 inset
         plot_color_dict = {}
@@ -2473,15 +2472,14 @@ class Modeller():
 
         # test data
         fig.add_trace(go.Violin(x=scores_dict['Test Real'], name='CSD Test',
-                                line_color=plot_color_dict['Test Real'], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False),row=1,col=2)
+                                line_color=plot_color_dict['Test Real'], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False), row=1, col=2)
 
         # BT distribution
         fig.add_trace(go.Violin(x=BT_target_scores, name='BT Targets',
-                                line_color=plot_color_dict['BT Targets'], side='positive', orientation='h', width=1, meanline_visible=True, bandwidth=bandwidth / 100, points=False),row=1,col=2)
+                                line_color=plot_color_dict['BT Targets'], side='positive', orientation='h', width=1, meanline_visible=True, bandwidth=bandwidth / 100, points=False), row=1, col=2)
         # Submissions
         fig.add_trace(go.Violin(x=BT_submission_scores, name='BT Submissions',
-                                line_color=plot_color_dict['BT Submissions'], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False),row=1,col=2)
-
+                                line_color=plot_color_dict['BT Submissions'], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False), row=1, col=2)
 
         # quantiles = [np.quantile(BT_submission_scores, 0.01), np.quantile(BT_submission_scores, 0.05), np.quantile(BT_submission_scores, 0.1)]
         # fig.add_shape(type="line",
@@ -2499,13 +2497,13 @@ class Modeller():
 
         # 99 and 95 quantiles
         quantiles = [np.quantile(scores_dict['Test Real'], 0.01), np.quantile(scores_dict['Test Real'], 0.05), np.quantile(scores_dict['Test Real'], 0.1)]
-        fig.add_vline(x=quantiles[0], line_dash='dash', line_color=plot_color_dict['Test Real'],row=1,col=2)
-        fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['Test Real'],row=1,col=2)
-        fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['Test Real'],row=1,col=2)
+        fig.add_vline(x=quantiles[0], line_dash='dash', line_color=plot_color_dict['Test Real'], row=1, col=2)
+        fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['Test Real'], row=1, col=2)
+        fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['Test Real'], row=1, col=2)
 
         fig.update_layout(showlegend=False, yaxis_showgrid=True)
 
-        fig.update_layout(showlegend=False, yaxis_showgrid=True,width=1000,height=500)
+        fig.update_layout(showlegend=False, yaxis_showgrid=True, width=1000, height=500)
         fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
         fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
         fig.update_xaxes(title_text='Model Score', row=1, col=2)
@@ -2527,7 +2525,7 @@ class Modeller():
         submissions_average_below_target = np.average(list(submissions_fraction_below_target.values()))
 
         fig = go.Figure(data=go.Table(
-            header=dict(values=['CSD Test Quantile','Fraction of Submissions']),
+            header=dict(values=['CSD Test Quantile', 'Fraction of Submissions']),
             cells=dict(values=[list(submissions_fraction_below_csd_quantile.keys()),
                                list(submissions_fraction_below_csd_quantile.values()),
                                ], format=[".3", ".3"])))
@@ -2585,7 +2583,6 @@ class Modeller():
         # if config.machine == 'local':
         #     fig.show()
 
-
         fig = go.Figure()
         fig.add_trace(go.Scattergl(x=[f'{key} {fraction_dict[key]:.2f}' for key in sorted_functional_group_keys],
                                    y=[np.average(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
@@ -2596,9 +2593,9 @@ class Modeller():
                                    showlegend=False,
                                    mode='markers'))
         # fig.show()
-        #fig.update_layout(xaxis_title='Molecule Containing Functional Groups & Elements')
+        # fig.update_layout(xaxis_title='Molecule Containing Functional Groups & Elements')
         fig.update_layout(yaxis_title='Mean Score and Standard Deviation')
-        fig.update_layout(width=1200,height=600)
+        fig.update_layout(width=1200, height=600)
         fig.layout.margin = layout.margin
         fig.write_image('../paper1_figs/functional_group_scores.png')
         if config.machine == 'local':
@@ -2613,11 +2610,11 @@ class Modeller():
         inter_rdf = np.concatenate([val for val in rdf_inter_distance_dict.values()])
 
         clip = np.quantile(full_rdf, 0.99) * 1.9
-        #full_rdf = np.clip(full_rdf, a_min=0, a_max=clip)
+        # full_rdf = np.clip(full_rdf, a_min=0, a_max=clip)
 
         fig = make_subplots(rows=2, cols=4,
-                            vertical_spacing = 0.075,
-                            subplot_titles=(list(rdf_full_distance_dict.keys())))# + ['All'])
+                            vertical_spacing=0.075,
+                            subplot_titles=(list(rdf_full_distance_dict.keys())))  # + ['All'])
 
         for i, label in enumerate(rdf_full_distance_dict.keys()):
             row = i // 4 + 1
@@ -2629,13 +2626,13 @@ class Modeller():
             yline = xline * linreg_result.slope + linreg_result.intercept
 
             fig.add_trace(go.Scattergl(x=dist, y=scores_dict[label], showlegend=False,
-                                       mode='markers',marker_color='rgba(100,0,0,1)',opacity=0.05),
+                                       mode='markers', marker_color='rgba(100,0,0,1)', opacity=0.05),
                           row=row, col=col)
             fig.add_trace(go.Scattergl(x=np.zeros(1), y=scores_dict[label + ' exp'], showlegend=False, mode='markers',
                                        marker=dict(color='Black', size=10, line=dict(color='White', width=2))), row=row, col=col)
 
             fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=row, col=col)
-            fig.update_xaxes(range=[-5, clip],row=row,col=col)
+            fig.update_xaxes(range=[-5, clip], row=row, col=col)
         #
         # xline = np.asarray([np.amin(full_rdf), np.amax(full_rdf)])
         # linreg_result = linregress(full_rdf, all_scores)
@@ -2649,12 +2646,11 @@ class Modeller():
         fig.update_yaxes(title_text='Model Score', row=1, col=1)
         fig.update_yaxes(title_text='Model Score', row=2, col=1)
 
-        fig.update_layout(width=1000,height=500)
+        fig.update_layout(width=1000, height=500)
         fig.layout.margin = layout.margin
         fig.write_image('../paper1_figs/scores_vs_emd.png')
         if config.machine == 'local':
             fig.show()
-
 
         '''
         10. Interesting Group-wise analysis
@@ -2723,9 +2719,9 @@ class Modeller():
                                    showlegend=False,
                                    marker_color='#d60000'), row=2, col=2)
 
-        fig.update_layout(width=1000,height=500)
+        fig.update_layout(width=1000, height=500)
         fig.layout.margin = layout.margin
-        fig.layout.margin.b=50
+        fig.layout.margin.b = 50
         fig.write_image('../paper1_figs/interesting_groups.png')
         if config.machine == 'local':
             fig.show()
@@ -2740,7 +2736,7 @@ class Modeller():
             rows = int(np.floor(np.sqrt(uniques)))
             cols = int(np.ceil(np.sqrt(uniques)) + 1)
             fig = make_subplots(rows=rows, cols=cols,
-                                subplot_titles=(names),x_title='Group Ranking',y_title='Model Score',vertical_spacing=0.1)
+                                subplot_titles=(names), x_title='Group Ranking', y_title='Model Score', vertical_spacing=0.1)
 
             for j, group_name in enumerate(np.unique(group[label])):
                 good_inds = np.where(np.asarray(group[label]) == group_name)[0]
@@ -2766,11 +2762,11 @@ class Modeller():
 
             fig.update_layout(title=label)
 
-            fig.update_layout(width=1000, height=500)
+            fig.update_layout(width=1200, height=600)
             fig.layout.margin = layout.margin
-            fig.layout.margin.t=50
-            fig.layout.margin.b=55
-            fig.layout.margin.l=60
+            fig.layout.margin.t = 50
+            fig.layout.margin.b = 55
+            fig.layout.margin.l = 60
             fig.write_image(f'../paper1_figs/groupwise_analysis_{j}.png')
             if config.machine == 'local':
                 fig.show()
@@ -2785,68 +2781,68 @@ class Modeller():
         features = []
         ind = 0
         for i in range(config.dataDims['num tracking features']):  # not that interesting
-            if (np.average(tracking_features[:, i] != 0) > 0.01) and \
-                    (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
-                    (config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
-                corr = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
-                if np.abs(corr) > 0.05:
-                    features.append(config.dataDims['tracking features dict'][i])
-                    g_loss_correlations[ind] = corr
-                    ind += 1
+            if 'spacegroup' not in config.dataDims['tracking features dict'][i]:
+                if (np.average(tracking_features[:, i] != 0) > 0.01) and \
+                        (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
+                        (config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
+                    corr = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
+                    if np.abs(corr) > 0.05:
+                        features.append(config.dataDims['tracking features dict'][i])
+                        g_loss_correlations[ind] = corr
+                        ind += 1
 
         g_loss_correlations = g_loss_correlations[:ind]
 
         g_sort_inds = np.argsort(g_loss_correlations)
         g_loss_correlations = g_loss_correlations[g_sort_inds]
         features_sorted = [features[i] for i in g_sort_inds]
-        g_loss_dict = {feat:corr for feat,corr in zip(features_sorted,g_loss_correlations)}
+        g_loss_dict = {feat: corr for feat, corr in zip(features_sorted, g_loss_correlations)}
 
-        fig = make_subplots(rows=1,cols=3, horizontal_spacing=0.14,subplot_titles=('a)', 'b)', 'c)'), x_title = 'R Value')
+        fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=('a)', 'b)', 'c)'), x_title='R Value')
 
         fig.add_trace(go.Bar(
             y=[feat for feat in features_sorted if 'has' not in feat and 'fraction' not in feat],
-            x=[g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat],
+            x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat],
             orientation='h',
-            text=np.asarray([g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat]).astype('float16'),
+            text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat]).astype('float16'),
             textposition='auto',
             texttemplate='%{text:.2}',
             marker=dict(color='rgba(100,0,0,1)')
         ), row=1, col=1)
         fig.add_trace(go.Bar(
             y=[feat for feat in features_sorted if 'has' in feat and 'fraction' not in feat],
-            x=[g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat],
+            x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat],
             orientation='h',
-            text=np.asarray([g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat]).astype('float16'),
+            text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat]).astype('float16'),
             textposition='auto',
             texttemplate='%{text:.2}',
             marker=dict(color='rgba(0,100,0,1)')
         ), row=1, col=3)
         fig.add_trace(go.Bar(
             y=[feat for feat in features_sorted if 'has' not in feat and 'fraction' in feat],
-            x=[g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat],
+            x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat],
             orientation='h',
-            text=np.asarray([g for i,(feat,g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat]).astype('float16'),
+            text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat]).astype('float16'),
             textposition='auto',
             texttemplate='%{text:.2}',
             marker=dict(color='rgba(0,0,100,1)')
         ), row=1, col=2)
 
-        fig.update_yaxes(tickfont=dict(size=14),row=1,col=1)
-        fig.update_yaxes(tickfont=dict(size=14),row=1,col=2)
-        fig.update_yaxes(tickfont=dict(size=10),row=1,col=3)
+        fig.update_yaxes(tickfont=dict(size=14), row=1, col=1)
+        fig.update_yaxes(tickfont=dict(size=14), row=1, col=2)
+        fig.update_yaxes(tickfont=dict(size=10), row=1, col=3)
 
         fig.layout.annotations[0].update(x=0.025)
         fig.layout.annotations[1].update(x=0.358)
         fig.layout.annotations[2].update(x=0.70)
 
         fig.layout.margin = layout.margin
-        fig.layout.margin.b=50
+        fig.layout.margin.b = 50
+        fig.update_xaxes(range=[np.amin(list(g_loss_dict.values())), np.amax(list(g_loss_dict.values()))])
         fig.write_image('../paper1_figs/scores_correlates.png')
         if config.machine == 'local':
             fig.show()
-
         aa = 1
-
 
     def cell_params_analysis(self, config, train_loader, test_epoch_stats_dict):
         n_crystal_features = config.dataDims['num lattice features']
@@ -2999,12 +2995,21 @@ class Modeller():
         BT_scores_dists, BT_balanced_dist, vdW_penalty_dict = \
             self.process_discriminator_evaluation_data(config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict)
 
+        self.layout = go.Layout(
+            margin=go.layout.Margin(
+                l=0,  # left margin
+                r=0,  # right margin
+                b=0,  # bottom margin
+                t=20,  # top margin
+            )
+        )
+
         self.violin_scores_plot(all_identifiers, scores_dict, target_identifiers_inds)
         self.violin_vdW_plot(all_identifiers, vdW_penalty_dict, target_identifiers_inds)
         self.violin_scores_plot2(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
         self.functional_group_violin_plot(scores_dict, tracking_features_names=config.dataDims['tracking features dict'], tracking_features=test_epoch_stats_dict['tracking features'])
         self.scores_distributions_plot(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
-        self.score_correlations_plot(score_correlations_dict, config)
+        self.score_correlations_plot(test_epoch_stats_dict['tracking features'], scores_dict, config)
         self.distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
         self.targetwise_distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
         group, rankings, list_num = self.target_ranking_analysis(identifiers_list, scores_dict, all_identifiers)
@@ -3049,16 +3054,13 @@ class Modeller():
         S2. Scoring score correlates
         '''
 
-        regression_test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/65_test_epoch_stats_dict.npy', allow_pickle=True).item()
+        regression_test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/good_regression_test_epoch_stats_dict.npy', allow_pickle=True).item()
         self.nice_regression_plots(config, regression_test_epoch_stats_dict)
         del regression_test_epoch_stats_dict
 
         self.nice_scoring_plots(config)
 
-
-
-
-    def process_discriminator_evaluation_data(self, config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict, size_normed_score = False):
+    def process_discriminator_evaluation_data(self, config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict, size_normed_score=False):
         blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
             'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
             'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', 'XXXI', 'XXXII']
@@ -3113,7 +3115,7 @@ class Modeller():
             if train_epoch_stats_dict is not None:
                 scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
                 if size_normed_score:
-                    scores_dict['Train Real'] /= train_epoch_stats_dict['tracking features'][:,config.dataDims['tracking features dict'].index('molecule volume')]
+                    scores_dict['Train Real'] = norm_scores(scores_dict['Train Real'], train_epoch_stats_dict['tracking features'], config)
 
                 vdW_penalty_dict['Train Real'] = train_epoch_stats_dict['real vdW penalty']
                 wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
@@ -3125,9 +3127,9 @@ class Modeller():
             scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds])
 
             if size_normed_score:
-                scores_dict['Test Real'] /= test_epoch_stats_dict['tracking features'][:, config.dataDims['tracking features dict'].index('molecule volume')]
-                scores_dict['Test Randn'] /= test_epoch_stats_dict['tracking features'][randn_inds, config.dataDims['tracking features dict'].index('molecule volume')]
-                scores_dict['Test Distorted'] /= test_epoch_stats_dict['tracking features'][distorted_inds, config.dataDims['tracking features dict'].index('molecule volume')]
+                scores_dict['Test Real'] = norm_scores(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'], config)
+                scores_dict['Test Randn'] = norm_scores(scores_dict['Test Randn'], test_epoch_stats_dict['tracking features'][randn_inds], config)
+                scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking features'][distorted_inds], config)
 
             vdW_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdW penalty']
             vdW_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake vdW penalty'][randn_inds]
@@ -3161,7 +3163,7 @@ class Modeller():
                 scores = softmax_and_score(raw_scores)
                 scores_dict[target + ' exp'] = scores
                 if size_normed_score:
-                    scores_dict[target + ' exp'] /= extra_test_dict['tracking features'][target_index, config.dataDims['tracking features dict'].index('molecule volume')]
+                    scores_dict[target + ' exp'] = norm_scores(scores_dict[target + ' exp'], extra_test_dict['tracking features'][target_index][None, :], config)
 
                 vdW_penalty_dict[target + ' exp'] = extra_test_dict['vdW penalty'][target_index][None]
 
@@ -3176,7 +3178,7 @@ class Modeller():
                 scores = softmax_and_score(raw_scores)
                 scores_dict[target] = scores
                 if size_normed_score:
-                    scores_dict[target] /= extra_test_dict['tracking features'][target_indices, config.dataDims['tracking features dict'].index('molecule volume')]
+                    scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking features'][target_indices], config)
 
                 # energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
                 vdW_penalty_dict[target] = extra_test_dict['vdW penalty'][target_indices]
@@ -3261,8 +3263,10 @@ class Modeller():
         fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['Test Real'])
         fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['Test Real'])
 
-        fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
+        fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
         fig.update_layout(xaxis_title='Model Score')
+        fig.update_layout(font=dict(size=18))
+        fig.layout.margin = self.layout.margin
         wandb.log({'Discriminator Test Scores': fig})
 
     def violin_vdW_plot(self, all_identifiers, vdW_penalty_dict, target_identifiers_inds):
@@ -3288,17 +3292,20 @@ class Modeller():
         '''
         violin scores plot
         '''
-        scores_range = np.ptp(np.log(1e-6 + np.concatenate(list(vdW_penalty_dict.values()))))
+        scores_range = np.ptp(np.log10(1e-6 + np.concatenate(list(vdW_penalty_dict.values()))))
         bandwidth = scores_range / 200
 
         fig = go.Figure()
         for i, label in enumerate(vdW_penalty_dict.keys()):
             if 'exp' in label:
-                fig.add_trace(go.Violin(x=np.log(vdW_penalty_dict[label] + 1e-6), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
+                fig.add_trace(go.Violin(x=np.log10(vdW_penalty_dict[label] + 1e-6), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6))
             else:
-                fig.add_trace(go.Violin(x=np.log(vdW_penalty_dict[label] + 1e-6), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
+                fig.add_trace(go.Violin(x=np.log10(vdW_penalty_dict[label] + 1e-6), name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False))
 
-        fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
+        fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
+        fig.update_layout(xaxis_title='Model Score')
+        fig.update_layout(font=dict(size=18))
+        fig.layout.margin = self.layout.margin
         fig.update_layout(xaxis_title='log vdW Penalty')
         wandb.log({'vdW Penalty': fig})
 
@@ -3342,7 +3349,11 @@ class Modeller():
         fig.update_layout(xaxis_title='Model Score')
         # fig.show()
         fig.update_layout(title='Scores and 0.01, 0.05, 0.1 quantiles')
-
+        fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
+        fig.update_layout(xaxis_title='Model Score')
+        fig.update_layout(font=dict(size=18))
+        fig.layout.margin = self.layout.margin
+        fig.layout.margin.t = 50
         wandb.log({'Scores Distribution': fig})
 
         return None
@@ -3357,47 +3368,19 @@ class Modeller():
         fraction_dict = {}
         for ii, key in enumerate(tracking_features_names):
             if ('molecule' in key and 'fraction' in key):
-                if np.sum(tracking_features[:, ii]) > 0:
+                if np.average(tracking_features[:, ii] > 0) > 0.01:
                     fraction_dict[key.split()[1]] = np.average(tracking_features[:, ii] > 0)
                     functional_group_inds[key.split()[1]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
             elif 'molecule has' in key:
-                if np.sum(tracking_features[:, ii]) > 0:
+                if np.average(tracking_features[:, ii] > 0) > 0.01:
                     fraction_dict[key.split()[2]] = np.average(tracking_features[:, ii] > 0)
                     functional_group_inds[key.split()[2]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
 
         sort_order = np.argsort(list(fraction_dict.values()))[-1::-1]
         sorted_functional_group_keys = [list(functional_group_inds.keys())[i] for i in sort_order]
 
-        colors = n_colors('rgb(150,10,5)', 'rgb(5,150,10)', len(list(functional_group_inds.keys())), colortype='rgb')
-        plot_color_dict = {}
-        for ind, target in enumerate(sorted_functional_group_keys):
-            plot_color_dict[target] = colors[ind]
-
-        '''
-        violin scores plot
-        '''
-        scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
-        bandwidth = scores_range / 200
-
         fig = go.Figure()
-        fig.add_trace(go.Violin(x=scores_dict['Test Real'], name='CSD Test',
-                                line_color='#0c4dae', side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
-
-        for ii, label in enumerate(sorted_functional_group_keys):
-            fraction = fraction_dict[label]
-            if fraction > 0.01:
-                fig.add_trace(go.Violin(x=scores_dict['Test Real'][functional_group_inds[label]], name=f'Fraction containing {label}={fraction:.2f}',
-                                        line_color=plot_color_dict[label], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
-
-        fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
-        fig.update_layout(xaxis_title='Model Score')
-        fig.update_layout(showlegend=False)
-        # fig.show()
-
-        wandb.log({'Functional Group Scores Distributions': fig})
-
-        fig = go.Figure()
-        fig.add_trace(go.Scattergl(x=sorted_functional_group_keys,
+        fig.add_trace(go.Scattergl(x=[f'{key} {fraction_dict[key]:.2f}' for key in sorted_functional_group_keys],
                                    y=[np.average(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
                                    error_y=dict(type='data',
                                                 array=[np.std(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
@@ -3405,11 +3388,35 @@ class Modeller():
                                                 ),
                                    showlegend=False,
                                    mode='markers'))
-        # fig.show()
+
         fig.update_layout(xaxis_title='Molecule Containing Functional Groups & Elements')
-        fig.update_layout(yaxis_title='Model Average Score and Standard Deviation')
+        fig.update_layout(yaxis_title='Mean Score and Standard Deviation')
+        fig.layout.margin = self.layout.margin
 
         wandb.log({'Functional Group Scores Statistics': fig})
+
+        # '''
+        # violin scores plot
+        # '''
+        # scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
+        # bandwidth = scores_range / 200
+        #
+        # fig = go.Figure()
+        # fig.add_trace(go.Violin(x=scores_dict['Test Real'], name='CSD Test',
+        #                         line_color='#0c4dae', side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
+        #
+        # for ii, label in enumerate(sorted_functional_group_keys):
+        #     fraction = fraction_dict[label]
+        #     if fraction > 0.01:
+        #         fig.add_trace(go.Violin(x=scores_dict['Test Real'][functional_group_inds[label]], name=f'Fraction containing {label}={fraction:.2f}',
+        #                                 line_color=plot_color_dict[label], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False))
+        #
+        # fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
+        # fig.update_layout(xaxis_title='Model Score')
+        # fig.update_layout(showlegend=False)
+        # fig.show()
+
+        # wandb.log({'Functional Group Scores Distributions': fig})
 
         return None
 
@@ -3461,52 +3468,73 @@ class Modeller():
 
         return None
 
-    def score_correlations_plot(self, score_correlations_dict, config):
-        color_dict = {
-            'XVI': 'rgb(250,50,5)',
-            'XVII': 'rgb(250,50,5)',
-            'XVIII': 'rgb(250,50,5)',
-            'XIX': 'rgb(250,50,5)',
-            'XX': 'rgb(250,50,5)',
-            'XXI': 'rgb(250,50,5)',
+    def score_correlations_plot(self, tracking_features, scores_dict, config):
 
-            'XXII': 'rgb(5,50,250)',
-            'XXIII': 'rgb(5,50,250)',
-            'XXIV': 'rgb(5,50,250)',
-            'XXV': 'rgb(5,50,250)',
-            'XXVI': 'rgb(5,50,250)',
+        # correlate losses with molecular features
+        tracking_features = np.asarray(tracking_features)
+        g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+        features = []
+        ind = 0
+        for i in range(config.dataDims['num tracking features']):  # not that interesting
+            if 'spacegroup' not in config.dataDims['tracking features dict'][i]:
+                if (np.average(tracking_features[:, i] != 0) > 0.01) and \
+                        (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
+                        (config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
+                    corr = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
+                    if np.abs(corr) > 0.05:
+                        features.append(config.dataDims['tracking features dict'][i])
+                        g_loss_correlations[ind] = corr
+                        ind += 1
 
-            'Train Real': 'rgb(5,250,50)',
-            'Test Real': 'rgb(5,250,50)'
-        }
-        fig = make_subplots(rows=1, cols=3)  # go.Figure()
+        g_loss_correlations = g_loss_correlations[:ind]
 
-        # for target in score_correlations_dict.keys():
+        g_sort_inds = np.argsort(g_loss_correlations)
+        g_loss_correlations = g_loss_correlations[g_sort_inds]
+        features_sorted = [features[i] for i in g_sort_inds]
+        g_loss_dict = {feat: corr for feat, corr in zip(features_sorted, g_loss_correlations)}
+
+        fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=('a)', 'b)', 'c)'), x_title='R Value')
+
         fig.add_trace(go.Bar(
-            y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' not in config.dataDims['tracking features dict'][i]) and (('molecule has' not in config.dataDims['tracking features dict'][i]))],
-            x=[score_correlations_dict['Test Real'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' not in config.dataDims['tracking features dict'][i]) and (('molecule has' not in config.dataDims['tracking features dict'][i]))],
+            y=[feat for feat in features_sorted if 'has' not in feat and 'fraction' not in feat],
+            x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat],
             orientation='h',
-            showlegend=True,
+            text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}',
+            marker=dict(color='rgba(100,0,0,1)')
         ), row=1, col=1)
         fig.add_trace(go.Bar(
-            y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' in config.dataDims['tracking features dict'][i]) and (('molecule has' not in config.dataDims['tracking features dict'][i]))],
-            x=[score_correlations_dict['Test Real'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' in config.dataDims['tracking features dict'][i]) and (('molecule has' not in config.dataDims['tracking features dict'][i]))],
+            y=[feat for feat in features_sorted if 'has' in feat and 'fraction' not in feat],
+            x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat],
             orientation='h',
-            showlegend=True,
-        ), row=1, col=2)
-        fig.add_trace(go.Bar(
-            y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' not in config.dataDims['tracking features dict'][i]) and (('molecule has' in config.dataDims['tracking features dict'][i]))],
-            x=[score_correlations_dict['Test Real'][i] for i in range(config.dataDims['num tracking features']) if
-               ('fraction' not in config.dataDims['tracking features dict'][i]) and (('molecule has' in config.dataDims['tracking features dict'][i]))],
-            orientation='h',
-            showlegend=True,
+            text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}',
+            marker=dict(color='rgba(0,100,0,1)')
         ), row=1, col=3)
-        fig.update_layout(showlegend=False)
+        fig.add_trace(go.Bar(
+            y=[feat for feat in features_sorted if 'has' not in feat and 'fraction' in feat],
+            x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat],
+            orientation='h',
+            text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}',
+            marker=dict(color='rgba(0,0,100,1)')
+        ), row=1, col=2)
+
+        fig.update_yaxes(tickfont=dict(size=14), row=1, col=1)
+        fig.update_yaxes(tickfont=dict(size=14), row=1, col=2)
+        fig.update_yaxes(tickfont=dict(size=10), row=1, col=3)
+        fig.update_xaxes(range=[np.amin(list(g_loss_dict.values())), np.amax(list(g_loss_dict.values()))])
+
+        fig.layout.annotations[0].update(x=0.02)
+        fig.layout.annotations[1].update(x=0.358)
+        fig.layout.annotations[2].update(x=0.75)
+
+        fig.layout.margin = self.layout.margin
+        fig.layout.margin.b = 50
+
         wandb.log({'Test loss correlates': fig})
 
     def distance_vs_score_plot(self, rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets):
@@ -3551,11 +3579,12 @@ class Modeller():
         full_rdf = np.concatenate([val for val in rdf_full_distance_dict.values()])
         inter_rdf = np.concatenate([val for val in rdf_inter_distance_dict.values()])
 
-        clip = np.quantile(full_rdf, 0.99) * 2
-        full_rdf = np.clip(full_rdf, a_min=0, a_max=clip)
+        clip = np.quantile(full_rdf, 0.99) * 1.9
+        # full_rdf = np.clip(full_rdf, a_min=0, a_max=clip)
 
         fig = make_subplots(rows=2, cols=4,
-                            subplot_titles=(list(rdf_full_distance_dict.keys())) + ['All'])
+                            vertical_spacing=0.075,
+                            subplot_titles=(list(rdf_full_distance_dict.keys())))  # + ['All'])
 
         for i, label in enumerate(rdf_full_distance_dict.keys()):
             row = i // 4 + 1
@@ -3567,19 +3596,26 @@ class Modeller():
             yline = xline * linreg_result.slope + linreg_result.intercept
 
             fig.add_trace(go.Scattergl(x=dist, y=scores_dict[label], showlegend=False,
-                                       mode='markers'),
+                                       mode='markers', marker_color='rgba(100,0,0,1)', opacity=0.05),
                           row=row, col=col)
-            fig.add_trace(go.Scattergl(x=np.zeros(1), y=scores_dict[label + ' exp'], showlegend=False, mode='markers', marker=dict(color='Black', size=10, line=dict(color='White', width=2))), row=row, col=col)
+            fig.add_trace(go.Scattergl(x=np.zeros(1), y=scores_dict[label + ' exp'], showlegend=False, mode='markers',
+                                       marker=dict(color='Black', size=10, line=dict(color='White', width=2))), row=row, col=col)
 
             fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{label} R={linreg_result.rvalue:.3f}'), row=row, col=col)
+            fig.update_xaxes(range=[-5, clip], row=row, col=col)
+        #
+        # xline = np.asarray([np.amin(full_rdf), np.amax(full_rdf)])
+        # linreg_result = linregress(full_rdf, all_scores)
+        # yline = xline * linreg_result.slope + linreg_result.intercept
+        # fig.add_trace(go.Scattergl(x=full_rdf, y=all_scores, showlegend=False,
+        #                            mode='markers', ),
+        #               row=2, col=4)
+        # fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'All Targets R={linreg_result.rvalue:.3f}'), row=2, col=4)
+        # fig.update_xaxes(range=[-5, clip], row=2, col=4)
 
-        xline = np.asarray([np.amin(full_rdf), np.amax(full_rdf)])
-        linreg_result = linregress(full_rdf, all_scores)
-        yline = xline * linreg_result.slope + linreg_result.intercept
-        fig.add_trace(go.Scattergl(x=full_rdf, y=all_scores, showlegend=False,
-                                   mode='markers', ),
-                      row=2, col=4)
-        fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'All Targets R={linreg_result.rvalue:.3f}'), row=2, col=4)
+        fig.update_yaxes(title_text='Model Score', row=1, col=1)
+        fig.update_yaxes(title_text='Model Score', row=2, col=1)
+        fig.layout.margin = self.layout.margin
 
         wandb.log({f'Targetwise Distance vs. Score': fig})
 
@@ -3636,7 +3672,7 @@ class Modeller():
             rows = int(np.floor(np.sqrt(uniques)))
             cols = int(np.ceil(np.sqrt(uniques)) + 1)
             fig = make_subplots(rows=rows, cols=cols,
-                                subplot_titles=(names))
+                                subplot_titles=(names), x_title='Group Ranking', y_title='Model Score', vertical_spacing=0.1)
 
             for j, group_name in enumerate(np.unique(group[label])):
                 good_inds = np.where(np.asarray(group[label]) == group_name)[0]
@@ -3644,22 +3680,29 @@ class Modeller():
                 list1_inds = np.where(submissions_list_num == 1)[0]
                 list2_inds = np.where(submissions_list_num == 2)[0]
 
-                xline = np.asarray([0, 100])
+                xline = np.asarray([0, max(np.asarray(rankings[label])[good_inds[list1_inds]])])
                 linreg_result = linregress(np.asarray(rankings[label])[good_inds[list1_inds]], np.asarray(scores_dict[label])[good_inds[list1_inds]])
                 yline = xline * linreg_result.slope + linreg_result.intercept
 
                 fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
-                                           mode='markers', marker=dict(size=6, color=submissions_list_num, colorscale='portland', cmax=2, cmin=1, showscale=False)),
+                                           mode='markers', opacity=0.5, marker=dict(size=6, color=submissions_list_num, colorscale='portland', cmax=2, cmin=1, showscale=False)),
                               row=j // cols + 1, col=j % cols + 1)
 
                 fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{group_name} R={linreg_result.rvalue:.3f}', line=dict(color='#0c4dae')), row=j // cols + 1, col=j % cols + 1)
 
                 if len(list2_inds) > 0:
+                    xline = np.asarray([0, max(np.asarray(rankings[label])[good_inds[list2_inds]])])
                     linreg_result2 = linregress(np.asarray(rankings[label])[good_inds[list2_inds]], np.asarray(scores_dict[label])[good_inds[list2_inds]])
                     yline2 = xline * linreg_result2.slope + linreg_result2.intercept
-                    fig.add_trace(go.Scattergl(x=xline, y=yline2, name=f'{group_name} R={linreg_result2.rvalue:.3f}', line=dict(color='#d60000')), row=j // cols + 1, col=j % cols + 1)
+                    fig.add_trace(go.Scattergl(x=xline, y=yline2, name=f'{group_name} #2 R={linreg_result2.rvalue:.3f}', line=dict(color='#d60000')), row=j // cols + 1, col=j % cols + 1)
 
             fig.update_layout(title=label)
+
+            fig.update_layout(width=1000, height=500)
+            fig.layout.margin = self.layout.margin
+            fig.layout.margin.t = 50
+            fig.layout.margin.b = 55
+            fig.layout.margin.l = 60
             wandb.log({f"{label} Groupwise Analysis": fig})
 
         # specifically interesting groups & targets
@@ -3670,7 +3713,7 @@ class Modeller():
         # Goto XXII
         # Brandenberg XXIII
 
-        fig = make_subplots(rows=2, cols=2, subplot_titles=(
+        fig = make_subplots(rows=2, cols=2, vertical_spacing=0.075, subplot_titles=(
             ['Brandenburg XXII', 'Brandenburg XXIII', 'Brandenburg XXVI', 'Facelli XXII']),
                             x_title='Model Score')
 
@@ -3713,6 +3756,9 @@ class Modeller():
                                    name="Submission 2 Score",
                                    showlegend=False,
                                    marker_color='#d60000'), row=2, col=2)
+
+        fig.layout.margin = self.layout.margin
+        fig.layout.margin.b = 50
 
         wandb.log({'Group Submissions Analysis': fig})
 
