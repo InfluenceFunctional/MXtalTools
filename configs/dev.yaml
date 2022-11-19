@@ -23,7 +23,7 @@ cut_max_prob_training_after: 1000
 extra_test_period: 1
 sample_after_training: True
 sample_ind: 0
-sample_steps: 100
+sample_steps: 1000
 sample_move_size: 0.05
 extra_test_set_paths: null #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',

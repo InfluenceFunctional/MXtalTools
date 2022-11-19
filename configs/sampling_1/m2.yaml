@@ -51,7 +51,7 @@ wandb:
 auto_batch_sizing: True
 min_batch_size: 10
 max_batch_size: 1000
-auto_batch_reduction: .75
+auto_batch_reduction: .4
 max_epochs: 0 # 0 epochs takes us straight to evaluation mode, -1 skips evaluation and goes straight to graphing
 history: 50
 

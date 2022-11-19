@@ -2463,6 +2463,11 @@ class Modeller():
         fig.layout.annotations[2].update(x=0.525)
 
         for i, label in enumerate(scores_dict.keys()):
+            # if 'X' in label and 'exp' not in label:
+            #     agrees_with_exp_sg = tracking_features_dict[label]['crystal spacegroup number'] == tracking_features_dict[label + ' exp']['crystal spacegroup number']
+            #     fig.add_trace(go.Violin(x=scores_dict[label][agrees_with_exp_sg], name=label, line_color=plot_color_dict['Test NF'], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False),
+            #                   row=1, col=1)
+
             if 'exp' in label:
                 fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6),
                               row=1, col=1)
