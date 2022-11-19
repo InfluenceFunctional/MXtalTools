@@ -25,6 +25,7 @@ from STUN_MC import Sampler
 from plotly.colors import n_colors
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import plotly.express as px
 from sklearn.cluster import AgglomerativeClustering
 
 
@@ -660,8 +661,9 @@ class Modeller():
                                       extra_test_dict=extra_test_epoch_stats_dict)
 
                 # # for working with a trained model # deprecated
-                # if config.sample_after_training:
-                #     sampling_results = self.MCMC_sampling(generator, discriminator, test_loader)
+                if config.sample_after_training:
+                    sampling_dict = self.MCMC_sampling(discriminator, test_loader, config.sample_ind, config.sample_steps, config.sample_move_size)
+                    self.report_sampling(test_epoch_stats_dict, sampling_dict, config.sample_ind)
 
     def epoch(self, config, dataLoader=None, generator=None, discriminator=None, g_optimizer=None, d_optimizer=None, update_gradients=True,
               iteration_override=None, record_stats=False, epoch=None):
@@ -1599,7 +1601,8 @@ class Modeller():
         real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config)
         fake_supercell_data, generated_cell_volumes, overlaps_list = \
             self.supercell_builder.build_supercells(data.clone().to(generated_samples.device), generated_samples,
-                                                    config.supercell_size, config.discriminator.graph_convolution_cutoff, override_sg=config.generate_sgs, target_handedness=target_handedness)
+                                                    config.supercell_size, config.discriminator.graph_convolution_cutoff,
+                                                    override_sg=config.generate_sgs, target_handedness=target_handedness)
 
         if config.device.lower() == 'cuda':  # redundant
             real_supercell_data = real_supercell_data.cuda()
@@ -1804,14 +1807,14 @@ class Modeller():
 
         return config, dataset_builder
 
-    def MCMC_sampling(self, generator, discriminator, test_loader):
+    def MCMC_sampling(self, discriminator, test_loader, sample_ind, sample_steps, move_size):
         '''
         Stun MC annealing on a pretrained discriminator
         '''
         from torch_geometric.loader.dataloader import Collater
 
         n_samples = self.config.final_batch_size
-        single_mol_data = test_loader.dataset[0]
+        single_mol_data = test_loader.dataset[sample_ind]
         collater = Collater(None, None)
         single_mol_data = collater([single_mol_data for n in range(n_samples)])
         self.randn_generator.cpu()
@@ -1820,15 +1823,16 @@ class Modeller():
         initialize sampler
         '''
         smc_sampler = Sampler(
-            gammas=np.logspace(-7, 2, n_samples),
+            gammas=np.logspace(-4, 0, n_samples),
             seedInd=0,
             acceptance_mode='stun',
             debug=True,
             init_temp=1,
             random_generator=self.randn_generator,
-            move_size=.5,
+            move_size=move_size,
             supercell_size=self.config.supercell_size,
-            graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff
+            graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
+            vdw_radii=self.vdw_radii,
         )
 
         '''
@@ -1836,52 +1840,22 @@ class Modeller():
         '''
         init_samples = self.randn_generator.forward(single_mol_data, n_samples).cpu().detach().numpy()
 
-        # debug test
-        supercells1, _, _ = self.supercell_builder.build_supercells(
-            supercell_data=single_mol_data.clone(), cell_sample=torch.Tensor(init_samples), supercell_size=3, graph_convolution_cutoff=7, target_handedness=torch.ones(10))
-
-        supercells2, _, _ = self.supercell_builder.build_supercells(
-            supercell_data=single_mol_data.clone(), cell_sample=torch.Tensor(init_samples), supercell_size=3, graph_convolution_cutoff=7, target_handedness=-torch.ones(10))
-
         '''
         run sampling
         '''
-        num_iters = 1000
+        num_iters = sample_steps
         sampling_dict = smc_sampler(discriminator, self.supercell_builder,
                                     single_mol_data, init_samples, num_iters)
 
-        flag = 1
-        '''
-        analyze outputs
-        '''
+        np.save(f'../sampling_output_run_{self.config.run_num}', sampling_dict)
 
-        plt.figure(5)
-        plt.clf()
-        plt.subplot(2, 3, 1)
-        plt.plot(sampling_dict['scores'].T)
-        plt.ylabel('scores')
-        plt.subplot(2, 3, 2)
-        plt.plot(sampling_dict['stun score'].T)
-        plt.ylabel('stun score')
-        plt.ylim([-5, 5])
-        plt.subplot(2, 3, 3)
-        plt.plot(np.exp(-sampling_dict['scores'].T))
-        plt.ylabel('probabilities')
-        plt.subplot(2, 2, 3)
-        plt.plot(sampling_dict['acceptance ratio'].T)
-        plt.ylabel('acc rat')
-        plt.subplot(2, 2, 4)
-        plt.semilogy(sampling_dict['temperature'].T)
-        plt.ylabel('temps')
-        plt.tight_layout()
-
-        best_inds = np.argsort(sampling_dict['scores'].flatten())
-        best_samples = sampling_dict['samples'].reshape(12, n_samples * num_iters)[:, best_inds[:n_samples]].T
-
-        best_supercells, _, _ = self.supercell_builder.build_supercells(single_mol_data.clone(), torch.Tensor(best_samples).cuda(),
-                                                                        supercell_size=1, graph_convolution_cutoff=7)
-
-        best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular=True)
+        # best_inds = np.argsort(sampling_dict['scores'].flatten())
+        # best_samples = sampling_dict['samples'].reshape(12, n_samples * num_iters)[:, best_inds[:n_samples]].T
+        #
+        # best_supercells, _, _ = self.supercell_builder.build_supercells(single_mol_data.clone(), torch.Tensor(best_samples).cuda(),
+        #                                                                 supercell_size=1, graph_convolution_cutoff=7)
+        #
+        # best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular=True)
 
         return sampling_dict
 
@@ -2249,7 +2223,7 @@ class Modeller():
         )
 
         fig = go.Figure(data=go.Table(
-            header=dict(values=['Metric', '$C_{pack}$', 'density']),
+            header=dict(values=['Metric', '$C_(pack)$', 'density']),
             cells=dict(values=[['MAE', '$\sigma$', 'R', 'Slope'],
                                [loss_dict['abs normed error mean'], loss_dict['abs normed error std'], loss_dict['Regression R'], loss_dict['Regression slope']],
                                [loss_dict['density abs normed error mean'], loss_dict['density abs normed error std'], loss_dict['Density Regression R'], loss_dict['Density Regression slope']],
@@ -2290,9 +2264,9 @@ class Modeller():
         fig.update_layout(showlegend=False)
 
         fig.update_yaxes(title_text='Predicted Packing Coefficient', row=1, col=1, dtick=0.05)
-        fig.update_yaxes(title_text='Predicted Density', row=1, col=2, dtick=0.5)
+        fig.update_yaxes(title_text='Predicted Density (g/cm^3)', row=1, col=2, dtick=0.5)
         fig.update_xaxes(title_text='True Packing Coefficient', row=1, col=1, dtick=0.05)
-        fig.update_xaxes(title_text='True Density', row=1, col=2, dtick=0.5)
+        fig.update_xaxes(title_text='True Density (g/cm^3)', row=1, col=2, dtick=0.5)
         fig.update_xaxes(title_text='True-Predicted Packing Coefficient', row=2, col=1, dtick=0.05)
         fig.update_xaxes(title_text='True-Predicted Density (g/cm^3)', row=2, col=2, dtick=0.1)
 
@@ -2361,12 +2335,35 @@ class Modeller():
         score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
         scores_dict, all_identifiers, blind_test_targets, target_identifiers, \
         target_identifiers_inds, BT_target_scores, BT_submission_scores, \
-        BT_scores_dists, BT_balanced_dist, vdW_penalty_dict = \
+        BT_scores_dists, BT_balanced_dist, vdW_penalty_dict, tracking_features_dict = \
             self.process_discriminator_evaluation_data(config, extra_test_dict,
-                                                       test_epoch_stats_dict, None, size_normed_score=True)
+                                                       test_epoch_stats_dict, None, size_normed_score=False)
 
         del test_epoch_stats_dict
         del extra_test_dict
+
+        '''
+        new scoring decorrection?
+        
+        plt.clf()
+        molecule_feature = 'molecule principal moment 1'
+        x = tracking_features_dict['Test Real'][molecule_feature]
+        y = scores_dict['Test Real']
+        linreg_result = linregress(x,y)
+        
+        slope = linreg_result.slope
+        intercept = linreg_result.intercept
+        
+        decor_y = (y - intercept) / (x)
+        print(linreg_result.rvalue)
+        linreg_result2 = linregress(x,decor_y)
+        print(linreg_result2.rvalue)
+        
+        plt.subplot(1,2,1)
+        plt.scatter(x,y/np.abs(np.amax(y)),alpha=0.025)
+        plt.scatter(x,decor_y/np.abs(np.amax(decor_y)), alpha=0.025)
+
+        '''
 
         layout = go.Layout(
             margin=go.layout.Margin(
@@ -2400,7 +2397,8 @@ class Modeller():
         bandwidth2 = 15 / 200
 
         scores_labels = {'Test Real': 'Real', 'Test Randn': 'Gaussian', 'Test Distorted': 'Distorted'}
-        fig = make_subplots(rows=1, cols=2, subplot_titles=('a)', 'b)'))
+        fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)'),
+                            specs=[[{}, {}],[{"colspan": 2}, None]],)
         for i, label in enumerate(scores_labels):
             legend_label = scores_labels[label]
             fig.add_trace(go.Violin(x=scores_dict[label], name=legend_label, line_color=plot_color_dict[label],
@@ -2410,6 +2408,14 @@ class Modeller():
             fig.add_trace(go.Violin(x=-np.log(vdW_penalty_dict[label] + 1e-6), name=legend_label, line_color=plot_color_dict[label],
                                     side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth2, points=False),
                           row=1, col=2)
+
+        all_vdws = np.concatenate((vdW_penalty_dict['Test Real'],vdW_penalty_dict['Test Randn'], vdW_penalty_dict['Test Distorted']))
+        all_scores_i = np.concatenate((scores_dict['Test Real'],scores_dict['Test Randn'], scores_dict['Test Distorted']))
+
+        fig.add_trace(go.Histogram2d(x=-np.log(all_vdws[all_vdws > 0] + 1e-6),
+                                     y=all_scores_i[all_vdws > 0],
+                                     nbinsy=50,nbinsx=50),
+                      row=2,col=1)
 
         fig.update_layout(showlegend=False, yaxis_showgrid=True, width=800, height=500)
         fig.update_xaxes(title_text='Model Score', row=1, col=1)
@@ -2450,9 +2456,12 @@ class Modeller():
         scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
         bandwidth = scores_range / 200
 
-        fig = make_subplots(cols=2, rows=1, horizontal_spacing=0.15, subplot_titles=('a)', 'b)'))
+        fig = make_subplots(cols=2, rows=2, horizontal_spacing=0.15, subplot_titles=('a)', 'b)', 'c)'),
+                            specs=[[{"rowspan":2},{}],[None,{}]], vertical_spacing=0.12)
         fig.layout.annotations[0].update(x=0.025)
         fig.layout.annotations[1].update(x=0.525)
+        fig.layout.annotations[2].update(x=0.525)
+
         for i, label in enumerate(scores_dict.keys()):
             if 'exp' in label:
                 fig.add_trace(go.Violin(x=scores_dict[label], name=label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6),
@@ -2481,25 +2490,35 @@ class Modeller():
         fig.add_trace(go.Violin(x=BT_submission_scores, name='BT Submissions',
                                 line_color=plot_color_dict['BT Submissions'], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False), row=1, col=2)
 
-        # quantiles = [np.quantile(BT_submission_scores, 0.01), np.quantile(BT_submission_scores, 0.05), np.quantile(BT_submission_scores, 0.1)]
-        # fig.add_shape(type="line",
-        #               x0=quantiles[0], y0=2, x1=quantiles[0], y1=3,
-        #               line=dict(color=plot_color_dict['BT Submissions'], dash='dash'),
-        #               row=1,col=2)
-        # fig.add_shape(type="line",
-        #               x0=quantiles[1], y0=2, x1=quantiles[1], y1=3,
-        #               line=dict(color=plot_color_dict['BT Submissions'], dash='dash'),
-        #               row=1,col=2)
-        # fig.add_shape(type="line",
-        #               x0=quantiles[2], y0=2, x1=quantiles[2], y1=3,
-        #               line=dict(color=plot_color_dict['BT Submissions'], dash='dash'),
-        #               row=1,col=2)
-
-        # 99 and 95 quantiles
         quantiles = [np.quantile(scores_dict['Test Real'], 0.01), np.quantile(scores_dict['Test Real'], 0.05), np.quantile(scores_dict['Test Real'], 0.1)]
         fig.add_vline(x=quantiles[0], line_dash='dash', line_color=plot_color_dict['Test Real'], row=1, col=2)
         fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['Test Real'], row=1, col=2)
         fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['Test Real'], row=1, col=2)
+
+
+        normed_scores_dict = scores_dict.copy()
+        for key in normed_scores_dict.keys():
+            normed_scores_dict[key] = normed_scores_dict[key] / tracking_features_dict[key]['molecule num atoms']
+
+        normed_BT_target_scores = np.concatenate([normed_scores_dict[key] for key in normed_scores_dict.keys() if 'exp' in key])
+        normed_BT_submission_scores = np.concatenate([normed_scores_dict[key] for key in normed_scores_dict.keys() if key in all_identifiers.keys()])
+        scores_range = np.ptp(np.concatenate(list(normed_scores_dict.values())))
+        bandwidth = scores_range / 200
+        # test data
+        fig.add_trace(go.Violin(x=normed_scores_dict['Test Real'], name='CSD Test',
+                                line_color=plot_color_dict['Test Real'], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False), row=2, col=2)
+
+        # BT distribution
+        fig.add_trace(go.Violin(x=normed_BT_target_scores, name='BT Targets',
+                                line_color=plot_color_dict['BT Targets'], side='positive', orientation='h', width=1, meanline_visible=True, bandwidth=bandwidth / 100, points=False), row=2, col=2)
+        # Submissions
+        fig.add_trace(go.Violin(x=normed_BT_submission_scores, name='BT Submissions',
+                                line_color=plot_color_dict['BT Submissions'], side='positive', orientation='h', width=2, meanline_visible=True, bandwidth=bandwidth, points=False), row=2, col=2)
+
+        quantiles = [np.quantile(normed_scores_dict['Test Real'], 0.01), np.quantile(normed_scores_dict['Test Real'], 0.05), np.quantile(normed_scores_dict['Test Real'], 0.1)]
+        fig.add_vline(x=quantiles[0], line_dash='dash', line_color=plot_color_dict['Test Real'], row=2, col=2)
+        fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['Test Real'], row=2, col=2)
+        fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['Test Real'], row=2, col=2)
 
         fig.update_layout(showlegend=False, yaxis_showgrid=True)
 
@@ -2519,7 +2538,9 @@ class Modeller():
         vals = [0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.5]
         quantiles = np.quantile(scores_dict['Test Real'], vals)
         submissions_fraction_below_csd_quantile = {value: np.average(BT_submission_scores < cutoff) for value, cutoff in zip(vals, quantiles)}
-        targets_fraction_below_csd_quantile = {value: np.average(BT_target_scores < cutoff) for value, cutoff in zip(vals, quantiles)}
+
+        normed_quantiles = np.quantile(normed_scores_dict['Test Real'], vals)
+        normed_submissions_fraction_below_csd_quantile = {value: np.average(normed_BT_submission_scores < cutoff) for value, cutoff in zip(vals, normed_quantiles)}
 
         submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + ' exp']) for key in all_identifiers.keys() if key in scores_dict.keys()}
         submissions_average_below_target = np.average(list(submissions_fraction_below_target.values()))
@@ -2782,7 +2803,7 @@ class Modeller():
         ind = 0
         for i in range(config.dataDims['num tracking features']):  # not that interesting
             if 'spacegroup' not in config.dataDims['tracking features dict'][i]:
-                if (np.average(tracking_features[:, i] != 0) > 0.01) and \
+                if (np.average(tracking_features[:, i] != 0) > 0.05) and \
                         (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
                         (config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
                     corr = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
@@ -2839,6 +2860,7 @@ class Modeller():
         fig.layout.margin = layout.margin
         fig.layout.margin.b = 50
         fig.update_xaxes(range=[np.amin(list(g_loss_dict.values())), np.amax(list(g_loss_dict.values()))])
+        fig.update_layout(width=800,height=400)
         fig.write_image('../paper1_figs/scores_correlates.png')
         if config.machine == 'local':
             fig.show()
@@ -2992,7 +3014,7 @@ class Modeller():
         score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
         scores_dict, all_identifiers, blind_test_targets, target_identifiers, \
         target_identifiers_inds, BT_target_scores, BT_submission_scores, \
-        BT_scores_dists, BT_balanced_dist, vdW_penalty_dict = \
+        BT_scores_dists, BT_balanced_dist, vdW_penalty_dict, tracking_features_dict = \
             self.process_discriminator_evaluation_data(config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict)
 
         self.layout = go.Layout(
@@ -3022,6 +3044,23 @@ class Modeller():
         plt.ylabel('vdW Penalty')
         plt.xlabel('Model score')
         plt.title('scores vs distortion size')
+        
+        plt.clf()
+        ind = 1
+        for key in vdW_penalty_dict.keys():
+            if 'exp' not in key:
+                plt.subplot(3,4,ind)
+                ind += 1
+                plt.scatter(x=scores_dict[key],
+                            y=np.log10(vdW_penalty_dict[key] + 1e-6))
+                plt.ylim([-7,1])
+                plt.xlim([-16,10])
+                
+                xline = np.asarray([np.amin(scores_dict[key]), np.amax(scores_dict[key])])
+                linreg_result = linregress(scores_dict[key], vdW_penalty_dict[key])
+                yline = xline * linreg_result.slope + linreg_result.intercept
+                plt.plot(xline,np.log10(yline),'r.-')
+                plt.title(key + f' {linreg_result.rvalue:.3f}')
         '''
         aa = 1
 
@@ -3107,6 +3146,7 @@ class Modeller():
         '''
         scores_dict = {}
         vdW_penalty_dict = {}
+        tracking_features_dict = {}
         # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
         randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)[0]
         distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)[0]
@@ -3117,18 +3157,19 @@ class Modeller():
             # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
             scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds])
 
+            tracking_features_dict['Test Real'] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'].T)}
+            tracking_features_dict['Test Distorted'] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'][distorted_inds].T)}
+            tracking_features_dict['Test Randn'] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'][randn_inds].T)}
+
             if size_normed_score:
-                mol_feats = test_epoch_stats_dict['tracking features'][:, :16]
-                from sklearn.decomposition import PCA
-                pca = PCA(n_components=2)
-                pca.fit(mol_feats)
-                normed_feat = pca.transform(mol_feats)
                 scores_dict['Test Real'] = norm_scores(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'], config)
                 scores_dict['Test Randn'] = norm_scores(scores_dict['Test Randn'], test_epoch_stats_dict['tracking features'][randn_inds], config)
                 scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking features'][distorted_inds], config)
 
             if train_epoch_stats_dict is not None:
                 scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
+                tracking_features_dict['Train Real'] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], train_epoch_stats_dict['tracking features'].T)}
+
                 if size_normed_score:
                     scores_dict['Train Real'] = norm_scores(scores_dict['Train Real'], train_epoch_stats_dict['tracking features'], config)
 
@@ -3167,6 +3208,9 @@ class Modeller():
                 raw_scores = extra_test_dict['scores'][target_index]
                 scores = softmax_and_score(raw_scores)
                 scores_dict[target + ' exp'] = scores
+
+                tracking_features_dict[target + ' exp'] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], extra_test_dict['tracking features'][target_index][None, :].T)}
+
                 if size_normed_score:
                     scores_dict[target + ' exp'] = norm_scores(scores_dict[target + ' exp'], extra_test_dict['tracking features'][target_index][None, :], config)
 
@@ -3182,6 +3226,8 @@ class Modeller():
                 raw_scores = extra_test_dict['scores'][target_indices]
                 scores = softmax_and_score(raw_scores)
                 scores_dict[target] = scores
+                tracking_features_dict[target] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], extra_test_dict['tracking features'][target_indices].T)}
+
                 if size_normed_score:
                     scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking features'][target_indices], config)
 
@@ -3228,7 +3274,8 @@ class Modeller():
 
         return score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, \
                all_identifiers, blind_test_targets, target_identifiers, target_identifiers_inds, \
-               BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist, vdW_penalty_dict
+               BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist, \
+               vdW_penalty_dict, tracking_features_dict
 
     def violin_scores_plot(self, all_identifiers, scores_dict, target_identifiers_inds):
         '''
@@ -3909,6 +3956,79 @@ class Modeller():
         #     plot_dendrogram(model, truncate_mode="level", p=3)
         #     plt.xlabel("Number of points in node (or index of point if no parenthesis).")
         #     plt.show()
+
+    def report_sampling(self, test_epoch_stats_dict, sampling_dict, sample_ind):
+        '''
+        score
+        stun
+        acceptance rate
+        temperature
+        overall distribution
+        '''
+        layout = go.Layout(
+            margin=go.layout.Margin(
+                l=0,  # left margin
+                r=0,  # right margin
+                b=0,  # bottom margin
+                t=40,  # top margin
+            )
+        )
+        n_samples = len(sampling_dict['scores'])
+        num_iters = sampling_dict['scores'].shape[1]
+        fig = make_subplots(cols=3, rows=2, subplot_titles=['Model Score', 'STUN Score','vdW Score', 'Acceptance Rate', 'Temperature'])
+        for i in range(n_samples):
+            opacity = np.clip(1 - np.abs(np.amin(sampling_dict['scores'][i]) - np.amin(sampling_dict['scores'])) / np.amin(sampling_dict['scores']), a_min = 0.1, a_max = 1)
+            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['scores'][i], opacity = opacity), col=1, row=1)
+            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['stun score'][i], opacity = opacity), col=2, row=1)
+            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['vdw penalties'][i], opacity = opacity), col=3, row=1)
+            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity), col=1, row=2)
+            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['temperature'][i]), opacity= opacity), col=2, row=2)
+        fig.update_layout(showlegend=False)
+        fig.update_yaxes(range=[0, 1], row=1, col=2)
+        fig.layout.margin = layout.margin
+        fig.write_image('../paper1_figs/sampling_telemetry.png')
+        wandb.log({'Sampling Telemetry': fig})
+        if self.config.machine == 'local':
+            import plotly.io as pio
+            pio.renderers.default = 'browser'
+            fig.show()
+
+
+        crystal_identifier = test_epoch_stats_dict['identifiers'][sample_ind]
+        real_score = softmax_and_score(test_epoch_stats_dict['discriminator real score'][sample_ind])[0]
+        df = pd.DataFrame.from_dict({'Model Scores': -sampling_dict['scores'].flatten(),
+                                     'vdW Scores': -sampling_dict['vdw penalties'].flatten()})
+
+        fig = go.Figure()
+        fig.add_trace(go.Histogram2d(x=df['Model Scores'],
+                                     y=df['vdW Scores'],
+                                     xbins=dict(start=-16, end=16, size=32 / 50),
+                                     ybins=dict(start=np.amin(df['vdW Scores']), end=0.1, size=1 / 50)
+                                     ))
+        fig.add_trace(go.Scatter(x=softmax_and_score(test_epoch_stats_dict['discriminator real score'][sample_ind]),
+                                 y=test_epoch_stats_dict['real vdW penalty'][sample_ind][None],
+                                 mode='markers',
+                                 showlegend=False,
+                                 marker=dict(
+                                     symbol='circle',
+                                     color='white',
+                                     size=25,
+                                     line=dict(width=1, color='black')
+                                 )
+                                 ))
+
+        fig.layout.margin = layout.margin
+        fig.update_layout(title=crystal_identifier)
+        fig.write_image('../paper1_figs/sampling_scores.png')
+        wandb.log({'Sampling Scores': fig})
+        if self.config.machine == 'local':
+            import plotly.io as pio
+            pio.renderers.default = 'browser'
+            fig.show()
+
+
+        aa = 1
+        return None
 
 
 ''' extra stuff

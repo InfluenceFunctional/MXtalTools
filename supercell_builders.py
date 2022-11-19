@@ -45,7 +45,7 @@ class SupercellBuilder():
         self.normed_lattice_vectors = normed_lattice_vectors
 
     def build_supercells(self, supercell_data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
-                         do_on_cpu=True, override_sg=None, skip_cell_cleaning=False, ref_data=None, debug=False, standardized_sample=True, return_energy=False,
+                         do_on_cpu=False, override_sg=None, skip_cell_cleaning=False, ref_data=None, debug=False, standardized_sample=True, return_energy=False,
                          supercell_inclusion_level='ref mol'):
         '''
         convert cell parameters to reference cell in a fast, differentiable, invertible way
@@ -63,6 +63,9 @@ class SupercellBuilder():
             if ref_data is not None:
                 ref_data = ref_data.cpu()
 
+        if target_handedness is not None:
+            target_handedness = target_handedness.to(supercell_data.x.device)
+
         '''
         if searching a specific space group, override the relevant information here
         '''
@@ -70,7 +73,7 @@ class SupercellBuilder():
             sym_ops_list = [torch.Tensor(self.symmetries_dict['sym_ops'][override_sg]).to(supercell_data.x.device) for i in range(supercell_data.num_graphs)]
             supercell_data = override_sg_info(override_sg, self.dataDims, supercell_data, self.symmetries_dict) # todo update the way we handle this
         else:
-            sym_ops_list = [torch.Tensor(supercell_data.symmetry_operators[n]) for n in range(len(supercell_data.symmetry_operators))]
+            sym_ops_list = [torch.Tensor(supercell_data.symmetry_operators[n]).to(supercell_data.x.device) for n in range(len(supercell_data.symmetry_operators))]
             #torch.Tensor(self.sym_ops[int(supercell_data.sg_ind[i])]).to(supercell_data.x.device) for i in range(supercell_data.num_graphs)]
 
         '''
@@ -79,7 +82,8 @@ class SupercellBuilder():
         if ref_data is not None:  # extract parameters directly from the ref_data
             cell_sample_i, target_handedness, ref_final_coords = cell_analysis(ref_data.clone(), self.atom_weights,
                                                                                debug=debug, return_final_coords=True, return_sym_ops=False)
-            sym_ops_list = [torch.Tensor(ref_data.symmetry_operators[n]) for n in range(len(ref_data.symmetry_operators))]
+            sym_ops_list = [torch.Tensor(ref_data.symmetry_operators[n]).to(supercell_data.x.device) for n in range(len(ref_data.symmetry_operators))]
+            target_handedness = target_handedness.to(supercell_data.x.device)
 
             if standardized_sample:
                 cell_sample = (cell_sample_i - torch.Tensor(self.dataDims['lattice means'])) / torch.Tensor(self.dataDims['lattice stds'])  # standardize
@@ -184,7 +188,7 @@ class SupercellBuilder():
             fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, supercell_data.Z,
                                                  supercell_scale=supercell_size, cutoff=graph_convolution_cutoff, inside_mode=supercell_inclusion_level)
 
-        overlaps_list = compute_lattice_vector_overlap(final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors)
+        overlaps_list = compute_lattice_vector_overlap(final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors.to(supercell_data.x.device))
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
 
@@ -205,7 +209,7 @@ class SupercellBuilder():
         else:
             return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list
 
-    def build_supercells_from_dataset(self, supercell_data, config, do_on_cpu=True, return_overlaps=False, return_energy=False, supercell_inclusion_level='ref mol', override_supercell_size = None):
+    def build_supercells_from_dataset(self, supercell_data, config, do_on_cpu=False, return_overlaps=False, return_energy=False, supercell_inclusion_level='ref mol', override_supercell_size = None):
         '''
         should be faster than the old way
         pretty quick on cpu

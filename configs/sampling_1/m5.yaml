@@ -1,10 +1,10 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 905
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard #distance
@@ -22,15 +22,15 @@ generator_similarity_penalty: 0
 cut_max_prob_training_after: 1000
 extra_test_period: 1
 sample_after_training: True
-sample_ind: 0
-sample_steps: 100
+sample_ind: 1
+sample_steps: 10000
 sample_move_size: 0.05
 extra_test_set_paths: null #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_targets',]
-d_model_path: 'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminator_1210'
+d_model_path: "/scratch/mk8347/csd_runs/models/discriminator_1210"
 g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_638'
 
 seeds:

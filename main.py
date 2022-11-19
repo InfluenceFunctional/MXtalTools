@@ -320,6 +320,9 @@ def add_args(parser):
     parser.add_argument('--cut_max_prob_training_after', type=int, default=10)  # stop applying flow losses after xx epochs
     parser.add_argument('--extra_test_period', type=int, default=10)  # how often to report stats on the extra test data
     add_bool_arg(parser, 'sample_after_training', default=False)  # run sampler after model converges
+    parser.add_argument('--sample_ind', type=int, default=0)  # which sample from test dataset to sample
+    parser.add_argument('--sample_steps', type=int, default=1000)  #
+    parser.add_argument('--sample_move_size', type=int, default=0.05)  #
 
     update_args2config(args2config, 'gan_loss')
     update_args2config(args2config, 'train_generator_density')
@@ -336,6 +339,9 @@ def add_args(parser):
     update_args2config(args2config, 'cut_max_prob_training_after')
     update_args2config(args2config, 'extra_test_period')
     update_args2config(args2config, 'sample_after_training')
+    update_args2config(args2config, 'sample_ind')
+    update_args2config(args2config, 'sample_steps')
+    update_args2config(args2config, 'sample_move_size')
 
     return parser, args2config
 

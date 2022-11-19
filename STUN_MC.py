@@ -3,6 +3,8 @@ import tqdm
 import numpy as np
 import torch.nn.functional as F
 import torch
+from utils import softmax_and_score
+from models.torch_models import vdW_penalty
 
 '''
 This script uses Markov Chain Monte Carlo, including the STUN algorithm, to optimize a given function
@@ -29,6 +31,7 @@ class Sampler:
                  move_size=0.01,
                  supercell_size=1,
                  graph_convolution_cutoff=7,
+                 vdw_radii = None
                  ):
         if acceptance_mode == 'stun':
             self.STUN = 1
@@ -36,7 +39,7 @@ class Sampler:
             self.STUN = 0
         self.debug = debug
         self.target_acceptance_rate = 0.234  # found this in a paper - optimal MCMC acceptance ratio
-        self.deltaIter = int(10)  # get outputs every this many of iterations with one iteration meaning one move proposed for each "particle" on average
+        self.deltaIter = int(1)  # get outputs every this many of iterations with one iteration meaning one move proposed for each "particle" on average
         self.randintsResampleAt = int(1e4)  # larger takes up more memory but increases speed
         self.recordMargin = 0.2  # how close does a state have to be to the best found minimum to be recorded
         self.gammas = gammas
@@ -48,6 +51,7 @@ class Sampler:
         self.move_size = move_size
         self.supercell_size = supercell_size
         self.graph_convolution_cutoff = graph_convolution_cutoff
+        self.vdw_radii = vdw_radii
 
         np.random.seed(int(seedInd))  # initial seed is randomized over pipeline iterations
 
@@ -63,30 +67,32 @@ class Sampler:
             "scores": np.stack(self.all_scores).T,
             "energies": np.stack(self.all_energies).T,
             "uncertainties": np.stack(self.all_uncertainties).T,
+            "vdw penalties": np.stack(self.all_vdw_penalties).T,
         }
 
         if self.debug:
-            outputs['temperature']=np.stack(self.temprec)
-            outputs['acceptance ratio']=np.stack(self.accrec)
-            outputs['stun score']=np.stack(self.stunrec)
+            outputs['temperature'] = np.stack(self.temprec)
+            outputs['acceptance ratio'] = np.stack(self.accrec)
+            outputs['stun score'] = np.stack(self.stunrec)
+
             # outputs['raw score record']=np.stack(self.scorerec)
             # outputs['energy record']=np.stack(self.enrec)
             # outputs['std dev record']=np.stack(self.std_devrec)
         return outputs
 
-    def makeAConfig(self):
+    def makeAConfig(self, crystaldata):
         '''
         initialize a random config with appropriate padding
         :return:
         '''
-        return self.generator.forward(1).cpu().detach().numpy()
+        return self.generator.forward(crystaldata, num_samples=crystaldata.num_graphs).cpu().detach().numpy()
 
-    def resetConfig(self, ind):
+    def resetConfig(self, crystaldata, ind):
         """
         re-randomize a particular configuration
         :return:
         """
-        self.config[ind, :] = self.makeAConfig()
+        self.config[ind, :] = self.makeAConfig(crystaldata)[0,:]
 
     def resampleRandints(self):
         """
@@ -94,8 +100,8 @@ class Sampler:
         :return:
         """
         self.move_randns = np.random.normal(size=(self.nruns, self.randintsResampleAt)) * self.move_size  # randn move, equal for each dim
-        self.pickDimRandints = np.random.choice([0,1,2,4,6,8,9,10,11],size=(self.nruns,self.randintsResampleAt)) # don't change alpha and gamma, for now
-        #self.pickDimRandints = np.random.randint(6, self.dim, size=(self.nruns, self.randintsResampleAt))
+        self.pickDimRandints = np.random.choice([0, 1, 2, 4, 6, 8, 9, 10, 11], size=(self.nruns, self.randintsResampleAt))  # don't change alpha and gamma, for now
+        # self.pickDimRandints = np.random.randint(6, self.dim, size=(self.nruns, self.randintsResampleAt))
         self.alphaRandoms = np.random.random((self.nruns, self.randintsResampleAt)).astype(float)
 
     def initOptima(self, scores, energy, std_dev):
@@ -108,6 +114,7 @@ class Sampler:
         self.all_energies = np.zeros_like(self.all_scores)  # record energies near the optima
         self.all_uncertainties = np.zeros_like(self.all_scores)  # record of uncertainty at the optima
         self.all_samples = np.zeros((self.run_iters, self.nruns, self.dim))
+        self.all_vdw_penalties = np.zeros_like(self.all_scores)
 
         # optima
         self.new_optima_inds = [[] for i in range(self.nruns)]
@@ -141,6 +148,8 @@ class Sampler:
         self.scorerec = [[] for i in range(self.nruns)]
         self.enrec = [[] for i in range(self.nruns)]
         self.std_devrec = [[] for i in range(self.nruns)]
+        self.vdwrec = [[] for i in range(self.nruns)]
+
 
     def initConvergenceStats(self):
         # convergence stats
@@ -170,7 +179,7 @@ class Sampler:
             self.iterate(model, builder, crystaldata)  # try a monte-carlo step!
 
             if (self.iter % self.deltaIter == 0) and (self.iter > 0):  # every N iterations do some reporting / updating
-                self.updateAnnealing()  # change temperature or other conditions
+                self.updateAnnealing(crystaldata)  # change temperature or other conditions
 
             if self.iter % self.randintsResampleAt == 0:  # periodically resample random numbers
                 self.resampleRandints()
@@ -200,7 +209,8 @@ class Sampler:
 
         # even if it didn't change, just run it anyway (big parallel - to hard to disentangle)
         # compute acceptance ratio
-        self.scores, self.energy, self.std_dev = self.getScores(self.prop_config, self.config, model, builder, crystaldata)
+        self.scores, self.energy, self.std_dev, self.vdw_penalty = self.getScores(self.prop_config, self.config, model, builder, crystaldata)
+
 
         if self.iter == 0:  # initialize optima recording
             self.initOptima(self.scores, self.energy, self.std_dev)
@@ -223,8 +233,6 @@ class Sampler:
                 if (self.scores[0][i] < self.E0[i]):
                     self.updateBest(i)
 
-                # self.recordTrajectory(i) # if we accept the move, update the trajectory
-
         self.recordTrajectory()  # if we accept the move, update the trajectory
 
         if self.debug:  # record a bunch of detailed outputs
@@ -235,14 +243,15 @@ class Sampler:
         self.all_energies[self.iter] = self.energy[0]
         self.all_uncertainties[self.iter] = self.std_dev[0]
         self.all_samples[self.iter] = self.prop_config
+        self.all_vdw_penalties[self.iter] = self.vdw_penalty
 
     def getDelta(self, scores):
         if self.STUN == 1:  # compute score difference using STUN
             F = self.computeSTUN(scores)
-            DE = F[0] - F[1]
+            DE = F[1] - F[0]
         else:  # compute raw score difference
             F = [0, 0]
-            DE = scores[0] - scores[1]
+            DE = scores[1] - scores[0]
 
         return F, DE
 
@@ -255,6 +264,7 @@ class Sampler:
             self.std_devrec[i].append(self.std_dev[0][i])
             if self.STUN:
                 self.stunrec[i].append(self.F[0][i])
+            self.vdwrec[i].append(self.vdw_penalty[i])
 
     def getScores(self, prop_config, config, model, builder, crystaldata):
         """
@@ -267,15 +277,19 @@ class Sampler:
         with torch.no_grad():
             supercells, _, _ = builder.build_supercells(crystaldata.clone(), torch.Tensor(config).cuda(),
                                                         supercell_size=self.supercell_size, graph_convolution_cutoff=self.graph_convolution_cutoff)
-            energy = [-np.log(F.softmax(model(supercells), dim=1).cpu().detach().numpy())[:, 1]]
+            energy = [-softmax_and_score(model(supercells).cpu().detach().numpy())]
+
+            vdw_penalty = vdW_penalty(supercells, self.vdw_radii).cpu().detach().numpy()
+
             supercells, _, _ = builder.build_supercells(crystaldata.clone(), torch.Tensor(prop_config).cuda(),
                                                         supercell_size=self.supercell_size, graph_convolution_cutoff=self.graph_convolution_cutoff)
-            energy.append(- np.log(F.softmax(model(supercells), dim=1).cpu().detach().numpy())[:, 1])
+            energy.append(-softmax_and_score(model(supercells).cpu().detach().numpy()))
+
 
         std_dev = [np.ones_like(energy[0]), np.ones_like(energy[0])]  # not using this
         score = energy
 
-        return score, energy, std_dev
+        return score, energy, std_dev, vdw_penalty
 
     def updateBest(self, ind):
         self.E0[ind] = self.scores[0][ind]
@@ -285,7 +299,7 @@ class Sampler:
         self.new_optima_scores[ind].append(self.scores[0][ind])
         self.new_optima_inds[ind].append(self.iter)
 
-    def updateAnnealing(self):
+    def updateAnnealing(self, crystaldata):
         """
         Following "Adaptation in stochatic tunneling global optimization of complex potential energy landscapes"
         1) updates temperature according to STUN threshold to separate "Local search" and "tunneling" phases
@@ -306,7 +320,7 @@ class Sampler:
 
             # if we haven't found a new minimum in a long time, randomize input and do a temperature boost
             if (self.iter - self.resetInd[i]) > 1e3:  # within xx of the last reset
-                if (self.iter - self.new_optima_inds[i][-1]) > 1e3:  # haven't seen a new near-minimum in xx steps
+                if (self.iter - self.new_optima_inds[i][-1]) > 5e3:  # haven't seen a new near-minimum in xx steps
                     self.resetInd[i] = self.iter
-                    self.resetConfig(i)  # re-randomize # TODO this is broken under new randn generator normalization
+                    self.resetConfig(crystaldata, i)  # re-randomize # TODO this is broken under new randn generator normalization
                     self.temperature[i] = self.temp0  # boost temperature

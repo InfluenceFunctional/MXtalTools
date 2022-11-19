@@ -133,7 +133,8 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
     supercell_atoms_list = []
     ref_mol_inds_list = []
     for i, (ref_cell, cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, z_values)):
-        ref_cell = torch.Tensor(ref_cell)
+        if type(ref_cell) == np.ndarray:
+            ref_cell = torch.Tensor(ref_cell)
         supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(n_cells, 1)  # duplicate over XxXxX supercell
         cart_translations_i = torch.mul(cell_vectors.tile(n_cells, 1), sorted_fractional_translations.reshape(n_cells * 3, 1))  # 3 dimensions
         cart_translations = torch.stack(cart_translations_i.split(3, dim=0), dim=0).sum(1)
@@ -258,13 +259,13 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
                 cell_angles[i] = torch.ones(3) * torch.pi / 2
             elif (lattice.lower() == 'tetragonal'):  # fix all angles and a & b vectors
                 cell_angles[i] = torch.ones(3) * torch.pi / 2
-                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2)
+                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2).to(cell_lengths.device)
             elif (lattice.lower() == 'hexagonal') or (lattice.lower() == 'trigonal') or (lattice.lower() == 'rhombohedral'):
-                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2)
+                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2).to(cell_lengths.device)
                 cell_angles[i,0:2] = torch.pi/2
                 cell_angles[i,2] = torch.pi * 2/3
             elif (lattice.lower() == 'cubic'):  # all angles 90 all lengths equal
-                cell_lengths[i] = cell_lengths[i].mean() * torch.ones(3)
+                cell_lengths[i] = cell_lengths[i].mean() * torch.ones(3).to(cell_lengths.device)
                 cell_angles[i] = torch.pi * torch.ones(3) / 2
             else:
                 print(lattice + ' is not a valid crystal lattice!')
