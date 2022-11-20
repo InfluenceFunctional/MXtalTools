@@ -31,7 +31,8 @@ class Sampler:
                  move_size=0.01,
                  supercell_size=1,
                  graph_convolution_cutoff=7,
-                 vdw_radii = None
+                 vdw_radii=None,
+                 preset_minimum=None,
                  ):
         if acceptance_mode == 'stun':
             self.STUN = 1
@@ -52,6 +53,7 @@ class Sampler:
         self.supercell_size = supercell_size
         self.graph_convolution_cutoff = graph_convolution_cutoff
         self.vdw_radii = vdw_radii
+        self.preset_minimum = preset_minimum
 
         np.random.seed(int(seedInd))  # initial seed is randomized over pipeline iterations
 
@@ -92,14 +94,14 @@ class Sampler:
         re-randomize a particular configuration
         :return:
         """
-        self.config[ind, :] = self.makeAConfig(crystaldata)[0,:]
+        self.config[ind, :] = self.makeAConfig(crystaldata)[0, :]
 
     def resampleRandints(self):
         """
         periodically resample our relevant random numbers
         :return:
         """
-        self.move_randns = np.random.normal(size=(self.nruns, self.randintsResampleAt)) * self.move_size  # randn move, equal for each dim
+        self.move_randns = np.random.normal(size=(self.nruns, self.randintsResampleAt)) * self.move_size  # randn move, equal for each dim (standardized)
         self.pickDimRandints = np.random.choice([0, 1, 2, 4, 6, 8, 9, 10, 11], size=(self.nruns, self.randintsResampleAt))  # don't change alpha and gamma, for now
         # self.pickDimRandints = np.random.randint(6, self.dim, size=(self.nruns, self.randintsResampleAt))
         self.alphaRandoms = np.random.random((self.nruns, self.randintsResampleAt)).astype(float)
@@ -124,8 +126,12 @@ class Sampler:
         self.new_optima_samples = [[] for i in range(self.nruns)]  # new minima
 
         # set initial values
+
         self.E0 = scores[1]  # initialize the 'best score' value
-        self.absMin = np.amin(self.E0)
+        if self.preset_minimum is not None:
+            self.absMin = -self.preset_minimum
+        else:
+            self.absMin = np.amin(self.E0)
         self.all_scores[0] = scores[1]
         self.all_energies[0] = energy[1]
         self.all_uncertainties[0] = std_dev[1]
@@ -149,7 +155,6 @@ class Sampler:
         self.enrec = [[] for i in range(self.nruns)]
         self.std_devrec = [[] for i in range(self.nruns)]
         self.vdwrec = [[] for i in range(self.nruns)]
-
 
     def initConvergenceStats(self):
         # convergence stats
@@ -211,7 +216,6 @@ class Sampler:
         # compute acceptance ratio
         self.scores, self.energy, self.std_dev, self.vdw_penalty = self.getScores(self.prop_config, self.config, model, builder, crystaldata)
 
-
         if self.iter == 0:  # initialize optima recording
             self.initOptima(self.scores, self.energy, self.std_dev)
 
@@ -261,7 +265,7 @@ class Sampler:
             self.accrec[i].append(self.acceptanceRate[i])
             self.scorerec[i].append(self.scores[0][i])
             self.enrec[i].append(self.energy[0][i])
-            self.std_devrec[i].append(self.std_dev[0][i])
+            # self.std_devrec[i].append(self.std_dev[0][i])
             if self.STUN:
                 self.stunrec[i].append(self.F[0][i])
             self.vdwrec[i].append(self.vdw_penalty[i])
@@ -285,7 +289,6 @@ class Sampler:
                                                         supercell_size=self.supercell_size, graph_convolution_cutoff=self.graph_convolution_cutoff)
             energy.append(-softmax_and_score(model(supercells).cpu().detach().numpy()))
 
-
         std_dev = [np.ones_like(energy[0]), np.ones_like(energy[0])]  # not using this
         score = energy
 
@@ -293,9 +296,10 @@ class Sampler:
 
     def updateBest(self, ind):
         self.E0[ind] = self.scores[0][ind]
-        self.absMin = self.E0[ind]
-        self.new_optima_samples[ind].append(self.prop_config[ind])
-        self.new_optima_energies[ind].append(self.energy[0][ind])
+        if self.E0[ind] < self.absMin:
+            self.absMin = self.E0[ind]
+        # self.new_optima_samples[ind].append(self.prop_config[ind])
+        # self.new_optima_energies[ind].append(self.energy[0][ind])
         self.new_optima_scores[ind].append(self.scores[0][ind])
         self.new_optima_inds[ind].append(self.iter)
 
@@ -320,7 +324,7 @@ class Sampler:
 
             # if we haven't found a new minimum in a long time, randomize input and do a temperature boost
             if (self.iter - self.resetInd[i]) > 1e3:  # within xx of the last reset
-                if (self.iter - self.new_optima_inds[i][-1]) > 5e3:  # haven't seen a new near-minimum in xx steps
+                if (self.iter - self.new_optima_inds[i][-1]) > 1e3:  # haven't seen a new near-minimum in xx steps
                     self.resetInd[i] = self.iter
-                    self.resetConfig(crystaldata, i)  # re-randomize # TODO this is broken under new randn generator normalization
+                    self.resetConfig(crystaldata, i)  # re-randomize selected trajectories
                     self.temperature[i] = self.temp0  # boost temperature

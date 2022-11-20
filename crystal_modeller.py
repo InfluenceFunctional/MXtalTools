@@ -662,8 +662,7 @@ class Modeller():
 
                 # # for working with a trained model # deprecated
                 if config.sample_after_training:
-                    sampling_dict = self.MCMC_sampling(discriminator, test_loader, config.sample_ind, config.sample_steps, config.sample_move_size)
-                    self.report_sampling(test_epoch_stats_dict, sampling_dict, config.sample_ind)
+                    sampling_dict = self.MCMC_sampling(discriminator, test_loader, config.sample_ind, config.sample_steps, config.sample_move_size, test_epoch_stats_dict, config)
 
     def epoch(self, config, dataLoader=None, generator=None, discriminator=None, g_optimizer=None, d_optimizer=None, update_gradients=True,
               iteration_override=None, record_stats=False, epoch=None):
@@ -1807,7 +1806,7 @@ class Modeller():
 
         return config, dataset_builder
 
-    def MCMC_sampling(self, discriminator, test_loader, sample_ind, sample_steps, move_size):
+    def MCMC_sampling(self, discriminator, test_loader, sample_ind, sample_steps, move_size, test_epoch_stats_dict, config):
         '''
         Stun MC annealing on a pretrained discriminator
         '''
@@ -1833,6 +1832,7 @@ class Modeller():
             supercell_size=self.config.supercell_size,
             graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
             vdw_radii=self.vdw_radii,
+            preset_minimum = np.quantile(softmax_and_score(test_epoch_stats_dict['discriminator real score']),0.05)
         )
 
         '''
@@ -1856,6 +1856,7 @@ class Modeller():
         #                                                                 supercell_size=1, graph_convolution_cutoff=7)
         #
         # best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular=True)
+        self.report_sampling(test_epoch_stats_dict, sampling_dict, config.sample_ind)
 
         return sampling_dict
 
@@ -2398,7 +2399,7 @@ class Modeller():
 
         scores_labels = {'Test Real': 'Real', 'Test Randn': 'Gaussian', 'Test Distorted': 'Distorted'}
         fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)'),
-                            specs=[[{}, {}],[{"colspan": 2}, None]],)
+                            specs=[[{}, {}], [{"colspan": 2}, None]], )
         for i, label in enumerate(scores_labels):
             legend_label = scores_labels[label]
             fig.add_trace(go.Violin(x=scores_dict[label], name=legend_label, line_color=plot_color_dict[label],
@@ -2409,13 +2410,13 @@ class Modeller():
                                     side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth2, points=False),
                           row=1, col=2)
 
-        all_vdws = np.concatenate((vdW_penalty_dict['Test Real'],vdW_penalty_dict['Test Randn'], vdW_penalty_dict['Test Distorted']))
-        all_scores_i = np.concatenate((scores_dict['Test Real'],scores_dict['Test Randn'], scores_dict['Test Distorted']))
+        all_vdws = np.concatenate((vdW_penalty_dict['Test Real'], vdW_penalty_dict['Test Randn'], vdW_penalty_dict['Test Distorted']))
+        all_scores_i = np.concatenate((scores_dict['Test Real'], scores_dict['Test Randn'], scores_dict['Test Distorted']))
 
         fig.add_trace(go.Histogram2d(x=-np.log(all_vdws[all_vdws > 0] + 1e-6),
                                      y=all_scores_i[all_vdws > 0],
-                                     nbinsy=50,nbinsx=50),
-                      row=2,col=1)
+                                     nbinsy=50, nbinsx=50),
+                      row=2, col=1)
 
         fig.update_layout(showlegend=False, yaxis_showgrid=True, width=800, height=500)
         fig.update_xaxes(title_text='Model Score', row=1, col=1)
@@ -2457,7 +2458,7 @@ class Modeller():
         bandwidth = scores_range / 200
 
         fig = make_subplots(cols=2, rows=2, horizontal_spacing=0.15, subplot_titles=('a)', 'b)', 'c)'),
-                            specs=[[{"rowspan":2},{}],[None,{}]], vertical_spacing=0.12)
+                            specs=[[{"rowspan": 2}, {}], [None, {}]], vertical_spacing=0.12)
         fig.layout.annotations[0].update(x=0.025)
         fig.layout.annotations[1].update(x=0.525)
         fig.layout.annotations[2].update(x=0.525)
@@ -2499,7 +2500,6 @@ class Modeller():
         fig.add_vline(x=quantiles[0], line_dash='dash', line_color=plot_color_dict['Test Real'], row=1, col=2)
         fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['Test Real'], row=1, col=2)
         fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['Test Real'], row=1, col=2)
-
 
         normed_scores_dict = scores_dict.copy()
         for key in normed_scores_dict.keys():
@@ -2865,7 +2865,7 @@ class Modeller():
         fig.layout.margin = layout.margin
         fig.layout.margin.b = 50
         fig.update_xaxes(range=[np.amin(list(g_loss_dict.values())), np.amax(list(g_loss_dict.values()))])
-        fig.update_layout(width=800,height=400)
+        fig.update_layout(width=800, height=400)
         fig.write_image('../paper1_figs/scores_correlates.png')
         if config.machine == 'local':
             fig.show()
@@ -3970,6 +3970,15 @@ class Modeller():
         temperature
         overall distribution
         '''
+        #if False:
+        # files = [
+        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_901.npy',
+        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_902.npy',
+        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_903.npy',
+        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_904.npy',
+        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_905.npy',
+        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_906.npy']
+
         layout = go.Layout(
             margin=go.layout.Margin(
                 l=0,  # left margin
@@ -3980,59 +3989,96 @@ class Modeller():
         )
         n_samples = len(sampling_dict['scores'])
         num_iters = sampling_dict['scores'].shape[1]
-        fig = make_subplots(cols=3, rows=2, subplot_titles=['Model Score', 'STUN Score','vdW Score', 'Acceptance Rate', 'Temperature'])
-        for i in range(n_samples):
-            opacity = np.clip(1 - np.abs(np.amin(sampling_dict['scores'][i]) - np.amin(sampling_dict['scores'])) / np.amin(sampling_dict['scores']), a_min = 0.1, a_max = 1)
-            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['scores'][i], opacity = opacity), col=1, row=1)
-            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['stun score'][i], opacity = opacity), col=2, row=1)
-            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['vdw penalties'][i], opacity = opacity), col=3, row=1)
-            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity), col=1, row=2)
-            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['temperature'][i]), opacity= opacity), col=2, row=2)
+
+        '''
+        telemetry summary
+        '''
+        fig = make_subplots(cols=3, rows=2, subplot_titles=['Best Model Score', 'Average STUN Score', 'Min vdW Score', 'Mean Acceptance Rate', 'Mean Temperature'])
+        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-np.amin(sampling_dict['scores'], axis=0)), col=1, row=1)
+        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['stun score'], axis=0)), col=2, row=1)
+        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-np.amin(sampling_dict['vdw penalties'], axis=0)), col=3, row=1)
+        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['acceptance ratio'], axis=0)), col=1, row=2)
+        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(np.log10(sampling_dict['temperature']), axis=0)), col=2, row=2)
         fig.update_layout(showlegend=False)
-        fig.update_yaxes(range=[0, 1], row=1, col=2)
+        fig.update_yaxes(range=[-1, 1], row=1, col=2)
+        fig.update_yaxes(range=[-2,0],row=1,col=3)
+        fig.update_yaxes(range=[-16,16],row=1,col=1)
         fig.layout.margin = layout.margin
-        fig.write_image('../paper1_figs/sampling_telemetry.png')
-        wandb.log({'Sampling Telemetry': fig})
+        #fig.write_image('../paper1_figs/sampling_telemetry_summary.png')
+        wandb.log({'Sampling Telemetry Summary': fig})
         if self.config.machine == 'local':
             import plotly.io as pio
             pio.renderers.default = 'browser'
             fig.show()
 
-
         crystal_identifier = test_epoch_stats_dict['identifiers'][sample_ind]
-        real_score = softmax_and_score(test_epoch_stats_dict['discriminator real score'][sample_ind])[0]
         df = pd.DataFrame.from_dict({'Model Scores': -sampling_dict['scores'].flatten(),
                                      'vdW Scores': -sampling_dict['vdw penalties'].flatten()})
 
         fig = go.Figure()
+        viridis = px.colors.sequential.Viridis
         fig.add_trace(go.Histogram2d(x=df['Model Scores'],
                                      y=df['vdW Scores'],
                                      xbins=dict(start=-16, end=16, size=32 / 50),
-                                     ybins=dict(start=np.amin(df['vdW Scores']), end=0.1, size=1 / 50)
-                                     ))
-        fig.add_trace(go.Scatter(x=softmax_and_score(test_epoch_stats_dict['discriminator real score'][sample_ind]),
-                                 y=test_epoch_stats_dict['real vdW penalty'][sample_ind][None],
-                                 mode='markers',
-                                 showlegend=False,
-                                 marker=dict(
-                                     symbol='circle',
-                                     color='white',
-                                     size=25,
-                                     line=dict(width=1, color='black')
-                                 )
-                                 ))
+                                     ybins=dict(start=-2, end=0.1, size=1 / 50),
+                                     showscale=False,
+                                     colorscale=[
+                                         [0, viridis[0]],
+                                         [1. / 1000000, viridis[2]],
+                                         [1. / 10000, viridis[4]],
+                                         [1. / 100, viridis[7]],
+                                         [1., viridis[9]],
+                                     ],
+                                     colorbar=dict(
+                                         tick0=0,
+                                         tickmode='array',
+                                         tickvals=[0, 1000, 10000]
+                                     )))
+
+        fig.add_trace(go.Scattergl(x=softmax_and_score(test_epoch_stats_dict['discriminator real score'][sample_ind]),
+                                   y=test_epoch_stats_dict['real vdW penalty'][sample_ind][None],
+                                   mode='markers',
+                                   showlegend=False,
+                                   marker=dict(
+                                       symbol='circle',
+                                       color='white',
+                                       size=25,
+                                       line=dict(width=1, color='black')
+                                   )))
 
         fig.layout.margin = layout.margin
         fig.update_layout(title=crystal_identifier)
-        fig.write_image('../paper1_figs/sampling_scores.png')
+        #fig.write_image('../paper1_figs/sampling_scores.png')
         wandb.log({'Sampling Scores': fig})
         if self.config.machine == 'local':
             import plotly.io as pio
             pio.renderers.default = 'browser'
             fig.show()
 
-
         aa = 1
+
+
+        '''
+        full telemetry
+        '''
+        # fig = make_subplots(cols=3, rows=2, subplot_titles=['Model Score', 'STUN Score','vdW Score', 'Acceptance Rate', 'Temperature'])
+        # for i in range(n_samples):
+        #     opacity = np.clip(1 - np.abs(np.amin(sampling_dict['scores'][i]) - np.amin(sampling_dict['scores'])) / np.amin(sampling_dict['scores']), a_min = 0.1, a_max = 1)
+        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['scores'][i], opacity = opacity), col=1, row=1)
+        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['stun score'][i], opacity = opacity), col=2, row=1)
+        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['vdw penalties'][i], opacity = opacity), col=3, row=1)
+        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity), col=1, row=2)
+        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['temperature'][i]), opacity= opacity), col=2, row=2)
+        # fig.update_layout(showlegend=False)
+        # fig.update_yaxes(range=[0, 1], row=1, col=2)
+        # fig.layout.margin = layout.margin
+        # fig.write_image('../paper1_figs/sampling_telemetry.png')
+        # wandb.log({'Sampling Telemetry': fig})
+        # if self.config.machine == 'local':
+        #     import plotly.io as pio
+        #     pio.renderers.default = 'browser'
+        #     fig.show()
+        #
         return None
 
 
