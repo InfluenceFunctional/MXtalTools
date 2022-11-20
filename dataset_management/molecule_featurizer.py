@@ -15,6 +15,9 @@ from scipy.spatial.transform import Rotation
 def get_fraction(atomic_numbers, target):
     return atomic_numbers.count(target) / len(atomic_numbers)
 
+def get_range_fraction(atomic_numbers, rrange):
+    return np.sum((np.asarray(atomic_numbers) > rrange[0]) * (np.asarray(atomic_numbers) < rrange[1])) / len(atomic_numbers)
+
 
 def get_dipole(coords, charges):
     center_of_geometry = np.average(np.asarray(coords), axis=0)

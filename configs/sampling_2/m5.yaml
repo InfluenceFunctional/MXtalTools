@@ -4,7 +4,7 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 901
+run_num: 911
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'diagnostic'
 gan_loss: standard #wasserstein # standard #distance
@@ -22,9 +22,9 @@ generator_similarity_penalty: 0
 cut_max_prob_training_after: 1000
 extra_test_period: 1
 sample_after_training: True
-sample_ind: 0
+sample_ind: 1
 sample_steps: 10000
-sample_move_size: 0.01
+sample_move_size: 0.1
 extra_test_set_paths: null #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
@@ -40,7 +40,7 @@ seeds:
 # opt - sweep details
 wandb:
   sample_reporting_frequency: 1
-  experiment_tag: sampling_1
+  experiment_tag: sampling_2
   log_figures: True
   sweep_config_file: "sweep_test.yaml"
   sweep: False
@@ -50,8 +50,8 @@ wandb:
 # batching & convergence
 auto_batch_sizing: True
 min_batch_size: 10
-max_batch_size: 1000
-auto_batch_reduction: .4
+max_batch_size: 2000
+auto_batch_reduction: .5
 max_epochs: 0 # 0 epochs takes us straight to evaluation mode, -1 skips evaluation and goes straight to graphing
 history: 50
 

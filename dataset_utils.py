@@ -184,17 +184,14 @@ class BuildDataset:
         mass = dataset['molecule mass']
         Z = dataset['crystal z value']
         dataset['crystal density'] = mass * Z / cell_volume
-        #density = mass * Z / cell_volume
-        #density2 = (mass * Z) / (dataset['molecule volume'] * Z / dataset['crystal packing coefficient'])
-        # '''
-        # add functional group information
-        # '''
-        # if not 'molecule B fraction' in dataset.keys():
-        #     from dataset_management.molecule_featurizer import get_fraction
-        #     from mendeleev import element as element_table
-        #
-        #     for anum in range(1, 36):
-        #         dataset[f'molecule {element_table(anum).symbol} fraction'] = np.asarray([get_fraction(atom_list, anum) for atom_list in dataset['atom Z']])
+
+        '''
+        check for heavy atoms
+        '''
+        from dataset_management.molecule_featurizer import get_range_fraction
+        znums = [10,18,36,54]
+        for znum in znums:
+            dataset[f'molecule atom heavier than {znum} fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200] ) for atom_list in dataset['atom Z']])
 
         return dataset
 

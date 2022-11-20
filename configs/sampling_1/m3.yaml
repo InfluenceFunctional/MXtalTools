@@ -40,7 +40,7 @@ seeds:
 # opt - sweep details
 wandb:
   sample_reporting_frequency: 1
-  experiment_tag: dev
+  experiment_tag: sampling_1
   log_figures: True
   sweep_config_file: "sweep_test.yaml"
   sweep: False

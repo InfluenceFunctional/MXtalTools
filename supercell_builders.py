@@ -45,7 +45,7 @@ class SupercellBuilder():
         self.normed_lattice_vectors = normed_lattice_vectors
 
     def build_supercells(self, supercell_data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
-                         do_on_cpu=False, override_sg=None, skip_cell_cleaning=False, ref_data=None, debug=False, standardized_sample=True, return_energy=False,
+                         do_on_cpu=True, override_sg=None, skip_cell_cleaning=False, ref_data=None, debug=False, standardized_sample=True, return_energy=False,
                          supercell_inclusion_level='ref mol'):
         '''
         convert cell parameters to reference cell in a fast, differentiable, invertible way
@@ -188,7 +188,7 @@ class SupercellBuilder():
             fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, supercell_data.Z,
                                                  supercell_scale=supercell_size, cutoff=graph_convolution_cutoff, inside_mode=supercell_inclusion_level)
 
-        overlaps_list = compute_lattice_vector_overlap(final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors.to(supercell_data.x.device))
+        overlaps_list = None # expensive and not currently used # compute_lattice_vector_overlap(final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors.to(supercell_data.x.device))
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
 
@@ -209,7 +209,7 @@ class SupercellBuilder():
         else:
             return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list
 
-    def build_supercells_from_dataset(self, supercell_data, config, do_on_cpu=False, return_overlaps=False, return_energy=False, supercell_inclusion_level='ref mol', override_supercell_size = None):
+    def build_supercells_from_dataset(self, supercell_data, config, do_on_cpu=True, return_overlaps=False, return_energy=False, supercell_inclusion_level='ref mol', override_supercell_size = None):
         '''
         should be faster than the old way
         pretty quick on cpu

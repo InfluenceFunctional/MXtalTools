@@ -44,7 +44,7 @@ class CCDC_helper():
     def grep_crystal_identifiers(self, file_path=None, chunk_inds=[0, 100], identifiers=None):
         print('Getting hits')
         allhits = []
-        if target_identifiers is not None:
+        if identifiers is not None:
             np.save(self.chunk_path + 'identifiers/chunk_{}_identifiers'.format(0), identifiers)
         else:
             if self.database.lower() == 'csd':

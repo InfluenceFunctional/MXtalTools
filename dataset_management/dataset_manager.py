@@ -532,7 +532,7 @@ class Miner():
         for i in range(len(sorted_correlation_inds) - 50, len(sorted_correlation_inds)):
             best_correlates.append(correlates_list[sorted_correlation_inds[i, 0]] + ' + ' + correlates_list[sorted_correlation_inds[i, 1]] + ' ==> {:.3f}'.format(corr_vals[i]))
 
-        # molecule - to - crystal correlations (shit we care about)
+        # molecule - to - crystal correlations (stuff we care about)
         mol_cryst_corrs = []
         mol_cryst_corrs_record = []
         for i in range(len(sorted_correlation_inds)):
