@@ -67,18 +67,21 @@ class BuildDataset:
         '''
         prep for modelling
         '''
-
         lattice_features = self.get_cell_features(dataset)
         targets = self.get_targets(dataset)
         self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets, config)
-
+        if False: # make dataset a bunch of the same molecule
+            identifiers = [item.csd_identifier for item in self.datapoints]
+            index = identifiers.index('VEJCES') # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
+            new_datapoints = [self.datapoints[index + (i % 5)] for i in range(self.final_dataset_length)]
+            self.datapoints = new_datapoints
         self.shuffle_datapoints()
 
     def set_keys(self):
         # define relevant features for analysis
         if self.feature_richness == 'full':
             self.atom_keys = ['atom Z',
-                              'atom mass', 'atom is H bond acceptor',
+                              'atom mass', 'atom is H bond acceptor', 'atom is H bond acceptor',
                               'atom valence', 'atom vdW radius',  # 'atom is aromatic', # issue with aromaticity in test sets
                               'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
             self.molecule_keys = ['molecule volume',
@@ -488,16 +491,16 @@ class BuildDataset:
                             'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                             'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
                             'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
-                            'crystal r factor', 'crystal density'
+                            'crystal r factor', 'crystal density', 'crystal temperature'
                             ])
 
         keys_to_add.extend(self.crystal_keys)
         if 'crystal spacegroup symbol' in keys_to_add:
             keys_to_add.remove('crystal spacegroup symbol')  # we don't want to deal with strings
         if ('crystal system' in keys_to_add):
-            keys_to_add.remove('crystal system')  # we don't want to deal with strings
+            pass#keys_to_add.remove('crystal system')  # we don't want to deal with strings
         if ('crystal lattice centring' in keys_to_add):
-            keys_to_add.remove('crystal lattice centring')  # we don't want to deal with strings
+            pass#keys_to_add.remove('crystal lattice centring')  # we don't want to deal with strings
         if ('crystal point group' in keys_to_add):
             keys_to_add.remove('crystal point group')  # we don't want to deal with strings
 
@@ -512,19 +515,19 @@ class BuildDataset:
         print("Preparing molecule/crystal tracking features")
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it
             keys_to_add.remove(self.target)
-
+        self.unique_dicts = []
         feature_array = np.zeros((self.dataset_length, len(keys_to_add)), dtype=float)
         for column, key in enumerate(keys_to_add):
             if key == 'crystal r factor':
                 feature_vector_i = np.asarray(dataset[key])
-                feature_vector = np.zeros_like(feature_vector_i)
+                feature_vector = np.zeros_like(feature_vector_i,dtype=np.float)
                 for jj in range(len(feature_vector)):
                     if feature_vector_i[jj] != None:
                         if feature_vector_i[jj].lower() != 'none':
                             feature_vector[jj] = float(feature_vector_i[jj])
-
             else:
                 feature_vector = dataset[key]
+
             if type(feature_vector) is not np.ndarray:
                 feature_vector = np.asarray(feature_vector)
 
@@ -532,11 +535,15 @@ class BuildDataset:
                 pass
             elif feature_vector.dtype == float:
                 feature_vector = feature_vector
-            elif feature_vector.dtype == int:
-                if len(np.unique(feature_vector)) > 2:
-                    feature_vector = feature_vector
-                else:
-                    feature_vector = np.asarray(feature_vector == np.amax(feature_vector))  # turn it into a bool
+            elif (feature_vector.dtype == int) or (feature_vector.dtype == np.int64):
+                feature_vector = feature_vector
+            elif feature_vector.dtype == 'O':
+                # assign integers to unique elements
+                uniques = np.unique(feature_vector)
+                uniques_dict = {uniques[i]:i for i in range(len(uniques))}
+                self.unique_dicts.append([key, uniques_dict])
+                new_feature_vector = [uniques_dict[feat] for feat in feature_vector]
+                feature_vector = np.asarray(new_feature_vector)
 
             feature_array[:, column] = feature_vector
 
@@ -584,6 +591,7 @@ class BuildDataset:
             'num crystal generation features': len(self.crystal_generation_features),
 
             'space groups to search': self.include_sgs,
+            'uniques dicts': self.unique_dicts,
         }
 
         return dim

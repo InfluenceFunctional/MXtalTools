@@ -215,6 +215,8 @@ def add_args(parser):
     parser.add_argument('--generator_activation', type=str, default='gelu')
     parser.add_argument('--generator_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
     parser.add_argument('--generator_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
+    parser.add_argument('--generator_conditioning_mode', type=str, default='graph model')  # how to derive molecular conditioning - graph model or just selected features
+
 
     # flow model
     parser.add_argument('--generator_num_flow_layers', type=int, default=3)  # number of flow layers
@@ -224,7 +226,6 @@ def add_args(parser):
     parser.add_argument('--generator_flow_type', type=str, default='nsf_cl')  # type of flow model 'nsf-cl' is legit
     parser.add_argument('--generator_num_samples', type=int, default=10000)  # number of samples to generate for analysis
     add_bool_arg(parser, 'generator_conditional_modelling', default=True)  # whether to use molecular features as conditions for normalizing flow model
-    parser.add_argument('--generator_conditioning_mode', type=str, default='graph model')  # how to derive molecular conditioning - graph model or just selected features
 
     update_args2config(args2config, 'generator_model_type', ['generator', 'model_type'])
     update_args2config(args2config, 'generator_graph_model', ['generator', 'graph_model'])
@@ -306,18 +307,15 @@ def add_args(parser):
 
     # cell generator
     parser.add_argument('--gan_loss', type=str, default='wasserstein')  # 'wasserstein, 'standard'
-    add_bool_arg(parser, 'train_generator_density', default=True)  # train on cell volume
-    add_bool_arg(parser, 'train_generator_as_flow', default=False)  # train normalizing flow generator via flow loss
-    add_bool_arg(parser, 'train_generator_on_randn', default=False)  # train model to match appropriate multivariate gaussian
+    add_bool_arg(parser, 'train_generator_density', default=False)  # train on cell volume
+    add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
-    add_bool_arg(parser, 'train_generator_g2', default=False)  # train generator on adversarially
-    add_bool_arg(parser, 'train_generator_pure_packing', default=False)  # train generator on adversarially
+    add_bool_arg(parser, 'train_generator_vdw', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
     add_bool_arg(parser, 'train_discriminator_on_noise', default=False)  # train generator on distorted CSD data
     parser.add_argument('--generator_noise_level', type=float, default=0)  # amount of noise to add to cell params for distorted cell training
     parser.add_argument('--generator_similarity_penalty', type=float, default=0)  # coefficient weighting penalty for self-similarity in generator batches
-    parser.add_argument('--cut_max_prob_training_after', type=int, default=10)  # stop applying flow losses after xx epochs
     parser.add_argument('--extra_test_period', type=int, default=10)  # how often to report stats on the extra test data
     add_bool_arg(parser, 'sample_after_training', default=False)  # run sampler after model converges
     parser.add_argument('--sample_ind', type=int, default=0)  # which sample from test dataset to sample
@@ -326,17 +324,14 @@ def add_args(parser):
 
     update_args2config(args2config, 'gan_loss')
     update_args2config(args2config, 'train_generator_density')
-    update_args2config(args2config, 'train_generator_as_flow')
-    update_args2config(args2config, 'train_generator_on_randn')
+    update_args2config(args2config, 'train_generator_packing')
     update_args2config(args2config, 'train_generator_adversarially')
-    update_args2config(args2config, 'train_generator_g2')
-    update_args2config(args2config, 'train_generator_pure_packing')
+    update_args2config(args2config, 'train_generator_vdw')
     update_args2config(args2config, 'train_discriminator_adversarially')
     update_args2config(args2config, 'train_discriminator_on_randn')
     update_args2config(args2config, 'train_discriminator_on_noise')
     update_args2config(args2config, 'generator_noise_level')
     update_args2config(args2config, 'generator_similarity_penalty')
-    update_args2config(args2config, 'cut_max_prob_training_after')
     update_args2config(args2config, 'extra_test_period')
     update_args2config(args2config, 'sample_after_training')
     update_args2config(args2config, 'sample_ind')

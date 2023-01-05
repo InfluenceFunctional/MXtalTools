@@ -505,5 +505,8 @@ def vdW_penalty(crystaldata, vdw_radii):
     radii_adjusted_dists = dists - radii_sums
     penalties = torch.clip(torch.exp(-radii_adjusted_dists) - 1,min=0)
     scores_list = [torch.mean(penalties[crystal_number == ii]) for ii in range(crystaldata.num_graphs)]
+    scores = torch.stack(scores_list)
 
-    return torch.Tensor(scores_list)
+    assert torch.sum(torch.isnan(penalties)) == 0
+    scores = torch.nan_to_num(scores)
+    return scores

@@ -79,6 +79,8 @@ class SupercellBuilder():
         '''
         if copying a reference, extract its parameters
         '''
+        #TODO update analysis with new/finalized asymmetric unit method
+
         if ref_data is not None:  # extract parameters directly from the ref_data
             cell_sample_i, target_handedness, ref_final_coords = cell_analysis(ref_data.clone(), self.atom_weights,
                                                                                debug=debug, return_final_coords=True, return_sym_ops=False)
@@ -98,7 +100,7 @@ class SupercellBuilder():
             self.process_cell_params(supercell_data, cell_sample, skip_cell_cleaning, standardized_sample)
 
         # todo - for fractional rotations, get this inside the above function, without breaking autograd. Good Luck
-        T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles)  # this is the troublemaker
+        T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles)  # this is the troublemaker in fractional orientations
 
         '''
         update cell params
@@ -274,6 +276,11 @@ class SupercellBuilder():
                 cell_lengths, cell_angles, mol_position, mol_rotation, lattices, self.dataDims,
                 enforce_crystal_system=True, return_transforms=True, standardized_sample=standardized_sample)
 
+        # TODO convert from asymmetric unit to full cell fractional coordinates
+
+        if True:
+            mol_position = self.scale_asymmetric_unit(mol_position, supercell_data.sg_ind)
+
         return cell_lengths, cell_angles, mol_position, mol_rotation
 
     def get_canonical_conformer(self, supercell_data, mol_position, sym_ops_list, debug=False):
@@ -418,3 +425,27 @@ class SupercellBuilder():
                 # view(mols)
 
         return reference_cell_list
+
+    def scale_asymmetric_unit(self, mol_position, sg_ind):
+        '''
+        input fractional coordinates are scaled on 0-1
+        rescale these for the specific ranges according to each space group
+        for now, hardcoded to do P-1 only
+        Parameters
+        ----------
+        mol_position
+        sg_ind
+
+        Returns
+        -------
+        '''
+
+        assert all(sg_ind == 2)
+        '''
+        P-1 asymmetric unit bounds
+        x[0,.5], yz[0,1]
+        '''
+        scaled_mol_position = mol_position
+        scaled_mol_position[:,0] = mol_position[:,0] / 2
+
+        return scaled_mol_position

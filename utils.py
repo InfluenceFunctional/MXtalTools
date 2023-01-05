@@ -2449,6 +2449,29 @@ def norm_scores(score, tracking_features, config):
     #surface_area = tracking_features[:,config.dataDims['tracking features dict'].index('molecule freeSASA')]
     return score / volume
 
+def enforce_1d_bound(x, x_span, x_center, mode='soft'): # soft or hard
+    '''
+    constrains function to range x_center plus/minus x_span
+    Parameters
+    ----------
+    x
+    x_span
+    x_center
+    mode
+
+    Returns
+    -------
+
+    '''
+    if mode == 'soft':
+        bounded = F.tanh((x-x_center) / x_span) * x_span + x_center
+    elif mode == 'hard':
+        bounded = F.hardtanh((x-x_center) / x_span) * x_span + x_center
+    else:
+        raise ValueError
+
+    return bounded
+
 '''
 # look at all kinds of activations
 plt.clf()

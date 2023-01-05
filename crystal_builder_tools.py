@@ -1,5 +1,5 @@
 import numpy as np
-from utils import compute_principal_axes_np, compute_principal_axes_torch
+from utils import compute_principal_axes_np, compute_principal_axes_torch, enforce_1d_bound
 from scipy.spatial.transform import Rotation
 import torch
 import time
@@ -221,13 +221,17 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
         mol_rotation = mol_rotation * stds[9:12] + means[9:12]
 
     tanh_cutoff = 9
+    # TODO write a bounding function instead of all this ad-hoc stuff
 
     cell_lengths = F.softplus(cell_lengths - 0.1) + 0.1  # enforces positive nonzero
     # mix of tanh and hardtanh allows us to get close to the limits, but still with a finite gradient outside the range
-    norm1 = torch.pi / 2
-    cell_angles = F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1#(tanh_cutoff*(F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1) + (F.tanh((cell_angles - norm1) / norm1) * norm1 + norm1)) / (tanh_cutoff + 1)  # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
-    norm2 = 0.5 # todo make sure this is 0-1 not -0.5 to 0.5
-    mol_position = F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2#(tanh_cutoff*(F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2) + (F.tanh((mol_position - norm2) / norm2) * norm2 + norm2)) / (tanh_cutoff + 1)  # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
+
+    cell_angles = enforce_1d_bound(cell_angles, torch.pi/2, torch.pi/2, mode='hard')
+    mol_position = enforce_1d_bound(mol_position, 0.5, 0.5, mode='hard')
+    # norm1 = torch.pi / 2
+    #cell_angles = F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1#(tanh_cutoff*(F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1) + (F.tanh((cell_angles - norm1) / norm1) * norm1 + norm1)) / (tanh_cutoff + 1)  # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
+    #norm2 = 0.5 # todo make sure this is 0-1 not -0.5 to 0.5
+    #mol_position = F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2#(tanh_cutoff*(F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2) + (F.tanh((mol_position - norm2) / norm2) * norm2 + norm2)) / (tanh_cutoff + 1)  # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
 
     if (rotation_type == 'fractional rotvec') or return_transforms:
         pass  # T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles)
@@ -238,16 +242,17 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     elif rotation_type == 'cartesian rotvec':
         pass
 
+
+    #norm3 = torch.pi
+    #normed_norms = F.hardtanh((norms - norm3) / norm3) * norm3 + norm3#(tanh_cutoff*(F.hardtanh((norms - norm3) / norm3) * norm3 + norm3) + (F.tanh((norms - norm3) / norm3) * norm3 + norm3)) / (tanh_cutoff + 1) #F.tanh(norms / torch.pi) * torch.pi  # the norm should be between -pi to pi
+    # norm rotation vectors by their length (rotvec length determines rotation angle
     norms = torch.linalg.norm(mol_rotation, dim=1)
-    norm3 = torch.pi
-    normed_norms = F.hardtanh((norms - norm3) / norm3) * norm3 + norm3#(tanh_cutoff*(F.hardtanh((norms - norm3) / norm3) * norm3 + norm3) + (F.tanh((norms - norm3) / norm3) * norm3 + norm3)) / (tanh_cutoff + 1) #F.tanh(norms / torch.pi) * torch.pi  # the norm should be between -pi to pi
+    normed_norms = enforce_1d_bound(norms, torch.pi, torch.pi, mode='hard')
     mol_rotation = mol_rotation / norms[:, None] * normed_norms[:, None]  # renormalize
 
-    # old - euler rotations
-    # mol_rotation = F.tanh(mol_rotation / torch.pi) * torch.pi  # tanh from -pi to pi
 
     for i in range(len(cell_lengths)):
-        if enforce_crystal_system:  # todo - untested # can alternately enforce this via auxiliary loss on the generator itself
+        if enforce_crystal_system:
             lattice = lattices[i]
 
             # enforce agreement with crystal system
@@ -272,7 +277,8 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
                 sys.exit()
         else:
             # don't assume a crystal system, but snap angles close to 90, to assist in precise symmetry
-            cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.01] = torch.pi / 2
+            pass #cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.01] = torch.pi / 2
+
 
     if return_transforms:
         return cell_lengths, cell_angles, mol_position, mol_rotation, None, None, None  # T_fc_list, T_cf_list, generated_cell_volumes
