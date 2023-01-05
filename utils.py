@@ -2472,6 +2472,17 @@ def enforce_1d_bound(x, x_span, x_center, mode='soft'): # soft or hard
 
     return bounded
 
+def reload_model(model, optimizer, path):
+    checkpoint = torch.load(path)
+    if list(checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+        for i in list(checkpoint['model_state_dict']):
+            checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
+
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    return model, optimizer
+
 '''
 # look at all kinds of activations
 plt.clf()

@@ -52,30 +52,21 @@ def add_args(parser):
     update_args2config(args2config, 'g_model_path')
     update_args2config(args2config, 'extra_test_set_paths')
 
-    # wandb login
+    # wandb
     parser.add_argument('--wandb_experiment_tag', type=str, default='MCryGAN_dev')
     parser.add_argument('--wandb_username', type=str, default='mkilgour')
     parser.add_argument('--wandb_project_name', type=str, default='MCryGAN')
-    # wandb reporting
     parser.add_argument('--wandb_sample_reporting_frequency', type=int, default=1)
     add_bool_arg(parser, 'wandb_log_figures', default=True)
-    # wandb sweeps
-    parser.add_argument('--sweep_config_file', type=str, default='sweep_1.yaml')
-    add_bool_arg(parser, 'sweep', default=True)  # whether to do a single run or use w&b to run a Bayesian sweep
-    parser.add_argument('--sweep_id', type=str, default=None)  # put something here to continue a prior sweep, else None fo fresh sweeps
-    parser.add_argument('--sweep_num_runs', type=int, default=100)
 
     update_args2config(args2config, 'wandb_experiment_tag', ['wandb', 'experiment_tag'])
     update_args2config(args2config, 'wandb_username', ['wandb', 'username'])
     update_args2config(args2config, 'wandb_project_name', ['wandb', 'project_name'])
     update_args2config(args2config, 'wandb_sample_reporting_frequency', ['wandb', 'sample_reporting_frequency'])
     update_args2config(args2config, 'wandb_log_figures', ['wandb', 'log_figures'])
-    update_args2config(args2config, 'sweep_config_file', ['wandb', 'sweep_config_file'])
-    update_args2config(args2config, 'sweep', ['wandb', 'sweep'])
-    update_args2config(args2config, 'sweep_id', ['wandb', 'sweep_id'])
-    update_args2config(args2config, 'sweep_num_runs', ['wandb', 'sweep_num_runs'])
 
     # dataset settings
+    #todo update target - mostly not used
     parser.add_argument('--target', type=str,
                         default='molecule spherical defect')  # 'rings', 'groups', 'screw', 'inversion','rotoinversion','mirror','rotation','glide', 'crystal system', 'lattice centering', 'spherical', 'planar'(not in Jan17 dataset)
     parser.add_argument("--dataset_path", type=str, default='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset')
@@ -340,10 +331,9 @@ def add_args(parser):
 
     return parser, args2config
 
-
 def process_config(config):
     if config.machine == 'local':
-        config.workdir = 'C:/Users\mikem\Desktop/CSP_runs'  # Working directory
+        config.workdir = 'C:/Users\mikem\Desktop/CSP_runs'
     elif config.machine == 'cluster':
         config.workdir = '/scratch/mk8347/csd_runs/'
         config.dataset_path = '/scratch/mk8347/csd_runs/datasets/full_dataset'
@@ -354,7 +344,6 @@ def process_config(config):
     if config.test_mode:
         config.max_batch_size = min((config.max_batch_size, 50))
         # config.auto_batch_sizing = False
-        config.num_samples = 1000  # not used anywhere
         # config.anomaly_detection = True
         if config.machine == 'cluster':
             config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
@@ -377,33 +366,12 @@ if __name__ == '__main__':
     config = get_config(args, override_args, args2config)
     config = process_config(config)
     print("Args:\n" + "\n".join([f"    {k:20}: {v}" for k, v in vars(config).items()]))
-    #
-    # config = parser.parse_args()
-    # if config.config_file is not None:  # load up config from file
-    #     yaml_config = load_yaml(config.config_file)
-    #     for key in yaml_config.keys():  # overwrite config from yaml
-    #         vars(config)[key] = yaml_config[key]
-
-    # have to load before we go to the workdir
-    if config.wandb.sweep:
-        sweep_config = load_yaml(config.wandb.sweep_config_file)
 
     '''
     run the code
     '''
-
     predictor = Modeller(config)
-    if config.mode == 'diagnostic':
-        predictor.cell_diagnostic()
+    if config.mode == 'figures':
+        predictor.make_nice_figures()
     else:
         predictor.train()
-        # if config.wandb.sweep:  # todo sweep won't work in new no-save-and-load method, since we delete dataset at first instance, also since nested namespaces are broken in wandb configs
-        #     for sweep_run in range(config.wandb.sweep_num_runs):
-        #         wandb.login()
-        #         if config.wandb.sweep_id is not None:  # continue a prior sweep
-        #             sweep_id = config.wandb.sweep_id
-        #         else:
-        #             sweep_id = wandb.sweep(sweep_config, project=config.wandb.project_name)
-        #             config.wandb.sweep_id = sweep_id
-        #         wandb.agent(sweep_id, predictor.train, project=config.wandb.project_name, count=1)
-        # else:

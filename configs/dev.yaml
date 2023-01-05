@@ -6,7 +6,7 @@ explicit_run_enumeration: False
 skip_saving_and_loading: True
 run_num: 0
 anomaly_detection: False
-mode: gan # 'gan' or 'regression' or 'diagnostic'
+mode: gan # 'gan' or 'regression' or 'figures'
 gan_loss: standard #wasserstein # standard #distance
 train_generator_density: False
 train_generator_packing: True
@@ -39,17 +39,13 @@ wandb:
   sample_reporting_frequency: 20
   experiment_tag: dev
   log_figures: True
-  sweep_config_file: null
-  sweep: False
-  sweep_id: null
-  sweep_num_runs: null
 
 # batching & convergence
 auto_batch_sizing: True
 min_batch_size: 10
 max_batch_size: 1000
 auto_batch_reduction: .6
-max_epochs: 1000 # 0 epochs takes us straight to evaluation mode, -1 skips evaluation and goes straight to graphing
+max_epochs: 1000 # 0 epochs takes us straight to evaluation mode
 history: 500
 
 # dataset curation
