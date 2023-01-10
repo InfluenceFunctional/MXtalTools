@@ -1,21 +1,14 @@
 '''Import statements'''
-import torch
-import torch.nn.functional as F
-from torch import nn
-import torch_geometric
 import torch_geometric.nn as gnn
-from models.DimeNetCustom import CustomDimeNet
-from models.CustomSchNet import CustomSchNet
-from models.MikesGraphNet import MikesGraphNet, FCBlock
+from models.MikesGraphNet import MikesGraphNet
 import sys
-from nflib.flows import *
-from nflib.nets import *
+
+from models.model_components import general_MLP
 from nflib.spline_flows import *
-from torch.distributions import MultivariateNormal, Uniform
-import itertools
-from sklearn.decomposition import PCA
+from torch.distributions import MultivariateNormal
+from ase import Atoms
 from models.asymmetric_radius_graph import asymmetric_radius_graph
-from utils import single_point_compute_rdf_torch, parallel_compute_rdf_torch
+from utils import parallel_compute_rdf_torch
 
 
 class molecule_graph_model(nn.Module):
@@ -166,79 +159,6 @@ class molecule_graph_model(nn.Module):
             return output
 
 
-class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation of activation as a linear combination of basis functions
-    def __init__(self, n_basis, span, channels, *args, **kwargs):
-        super(kernelActivation, self).__init__(*args, **kwargs)
-
-        self.channels, self.n_basis = channels, n_basis
-        # define the space of basis functions
-        self.register_buffer('dict', torch.linspace(-span, span, n_basis))  # positive and negative values for Dirichlet Kernel
-        gamma = 1 / (6 * (self.dict[-1] - self.dict[-2]) ** 2)  # optimum gaussian spacing parameter should be equal to 1/(6*spacing^2) according to KAFnet paper
-        self.register_buffer('gamma', torch.ones(1) * gamma)  #
-
-        # self.register_buffer('dict', torch.linspace(0, n_basis-1, n_basis)) # positive values for ReLU kernel
-
-        # define module to learn parameters
-        # 1d convolutions allow for grouping of terms, unlike nn.linear which is always fully-connected.
-        # #This way should be fast and efficient, and play nice with pytorch optim
-        self.linear = nn.Conv1d(channels * n_basis, channels, kernel_size=(1, 1), groups=int(channels), bias=False)
-
-        # nn.init.normal(self.linear.weight.data, std=0.1)
-
-    def kernel(self, x):
-        # x has dimention batch, features, y, x
-        # must return object of dimension batch, features, y, x, basis
-        x = x.unsqueeze(2)
-        if len(x) == 2:
-            x = x.reshape(2, self.channels, 1)
-
-        return torch.exp(-self.gamma * (x - self.dict) ** 2)
-
-    def forward(self, x):
-        x = self.kernel(x).unsqueeze(-1).unsqueeze(-1)  # run activation, output shape batch, features, y, x, basis
-        x = x.reshape(x.shape[0], x.shape[1] * x.shape[2], x.shape[3], x.shape[4])  # concatenate basis functions with filters
-        x = self.linear(x).squeeze(-1).squeeze(-1)  # apply linear coefficients and sum
-
-        # y = torch.zeros((x.shape[0], self.channels, x.shape[-2], x.shape[-1])).cuda() #initialize output
-        # for i in range(self.channels):
-        #    y[:,i,:,:] = self.linear[i](x[:,i,:,:,:]).squeeze(-1) # multiply coefficients channel-wise (probably slow)
-
-        return x
-
-
-class Activation(nn.Module):
-    def __init__(self, activation_func, filters, *args, **kwargs):
-        super().__init__()
-        if activation_func.lower() == 'relu':
-            self.activation = F.relu
-        elif activation_func.lower() == 'gelu':
-            self.activation = F.gelu
-        elif activation_func.lower() == 'kernel':
-            self.activation = kernelActivation(n_basis=20, span=4, channels=filters)
-        elif activation_func.lower() == 'leaky relu':
-            self.activation = F.leaky_relu
-
-    def forward(self, input):
-        return self.activation(input)
-
-
-class Normalization(nn.Module):
-    def __init__(self, norm, filters, *args, **kwargs):
-        super().__init__()
-        if norm == 'batch':
-            self.norm = nn.BatchNorm1d(filters)
-        elif norm == 'layer':
-            self.norm = nn.LayerNorm(filters)
-        elif norm is None:
-            self.norm = nn.Identity()
-        else:
-            print(norm + " is not a valid normalization")
-            sys.exit()
-
-    def forward(self, input):
-        return self.norm(input)
-
-
 class independent_gaussian_model(nn.Module):
     def __init__(self, input_dim, means, stds, normed_length_means, normed_length_stds, cov_mat=None):
         super(independent_gaussian_model, self).__init__()
@@ -281,71 +201,6 @@ class independent_gaussian_model(nn.Module):
 
     def score(self, samples):
         return self.prior.log_prob(samples)
-
-
-class general_MLP(nn.Module):
-    def __init__(self, layers, filters, input_dim, output_dim, activation='gelu', seed=0, dropout=0, conditioning_dim=0, norm=None):
-        super(general_MLP, self).__init__()
-        # initialize constants and layers
-        self.n_layers = layers
-        self.n_filters = filters
-        self.conditioning_dim = conditioning_dim
-        self.output_dim = output_dim
-        self.input_dim = input_dim + conditioning_dim
-        self.norm_mode = norm
-        self.dropout_p = dropout
-        self.activation = activation
-
-        torch.manual_seed(seed)
-
-        self.fc_layers = torch.nn.ModuleList([
-            nn.Linear(self.n_filters, self.n_filters)
-            for _ in range(self.n_layers)
-        ])
-
-        self.fc_norms = torch.nn.ModuleList([
-            Normalization(self.norm_mode, self.n_filters)
-            for _ in range(self.n_layers)
-        ])
-
-        self.fc_dropouts = torch.nn.ModuleList([
-            nn.Dropout(p=self.dropout_p)
-            for _ in range(self.n_layers)
-        ])
-
-        self.fc_activations = torch.nn.ModuleList([
-            Activation(activation, self.n_filters)
-            for _ in range(self.n_layers)
-        ])
-
-        self.init_layer = nn.Linear(self.input_dim, self.n_filters)  # set appropriate sizing
-        self.output_layer = nn.Linear(self.n_filters, self.output_dim, bias=False)
-
-    def forward(self, x, conditions=None, return_latent=False):
-        if type(x) == torch_geometric.data.batch.CrystalDataBatch:  # extract conditions from trailing atomic features
-            # if x.num_graphs == 1:
-            #     x = x.x[:, -self.input_dim:]
-            # else:
-            x = gnn.global_max_pool(x.x, x.batch)[:, -self.input_dim:]  # x.x[x.ptr[:-1]][:, -self.input_dim:]
-
-        if conditions is not None:
-            # if type(conditions) == torch_geometric.data.batch.DataBatch: # extract conditions from trailing atomic features
-            #     if len(x) == 1:
-            #         conditions = conditions.x[:,-self.conditioning_dim:]
-            #     else:
-            #         conditions = conditions.x[conditions.ptr[:-1]][:,-self.conditioning_dim:]
-
-            x = torch.cat((x, conditions), dim=1)
-
-        x = self.init_layer(x)
-
-        for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
-            x = x + dropout(activation(linear(norm(x))))  # residue
-
-        if return_latent:
-            return self.output_layer(x), x
-        else:
-            return self.output_layer(x)
 
 
 class global_aggregation(nn.Module):
@@ -471,7 +326,7 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
         return parallel_compute_rdf_torch([dists[crystal_number == n] for n in range(crystaldata.num_graphs)], rrange=rrange, bins=bins, density=density)
 
 
-def vdW_penalty(crystaldata, vdw_radii):
+def vdW_penalty(crystaldata, vdw_radii, return_atomwise = False):
 
     if crystaldata.aux_ind is not None:
         in_inds = torch.where(crystaldata.aux_ind == 0)[0]
@@ -509,4 +364,48 @@ def vdW_penalty(crystaldata, vdw_radii):
 
     assert torch.sum(torch.isnan(penalties)) == 0
     scores = torch.nan_to_num(scores)
-    return scores
+    if return_atomwise:
+        return scores, penalties, edges
+    else:
+        return scores
+
+
+def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, vdw_radii = None, vdw_tagging = False):
+    '''
+    generate an ASE Atoms object from a crystaldata object
+
+    from ase.visualize import view
+    mols = [ase_mol_from_crystaldata(supercell_data,i,exclusion_level = 'convolve with', highlight_aux=True) for i in range(10)]
+    view(mols)
+    '''
+
+    if data.batch is not None:  # more than one crystal in the datafile
+        atom_inds = torch.where(data.batch == index)[0]
+    else:
+        atom_inds = torch.arange(len(data.x))
+
+    if exclusion_level == 'ref only':
+        inside_inds = torch.where(data.aux_ind == 0)[0]
+        new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
+        atom_inds = new_atom_inds
+    elif exclusion_level == 'convolve with':
+        inside_inds = torch.where(data.aux_ind < 2)[0]
+        new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
+        atom_inds = new_atom_inds
+
+    coords = data.pos[atom_inds].cpu().detach().numpy()
+    if highlight_aux:  # highlight the atom aux index
+        numbers = data.aux_ind[atom_inds].cpu().detach().numpy() + 6
+    else:
+        numbers = data.x[atom_inds, 0].cpu().detach().numpy()
+
+    cell = data.T_fc[index].T.cpu().detach().numpy()
+    mol = Atoms(symbols=numbers, positions=coords, cell=cell)
+    if vdw_tagging:
+        pass
+        #scores, all_penalties, edges = vdW_penalty(data, vdw_radii, return_atomwise = True)
+        #useful_edges = edges[:,torch.where(data.batch[edges[0]] == index)[0]]
+        #useful_penalties = all_penalties[torch.where(data.batch[edges[0]] == index)[0]]
+
+        #mol.set_tags(vdw_penalties)
+    return mol

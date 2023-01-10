@@ -6,8 +6,8 @@ import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn
 from crystal_builder_tools import \
     (cell_analysis, update_supercell_data, compute_lattice_vector_overlap,
-     fast_differentiable_coor_trans_matrix,
-     fast_differentiable_ref_to_supercell, clean_cell_output, compute_principal_axes_list, invert_coords,
+     coor_trans_matrix,
+     ref_to_supercell, clean_cell_output, compute_principal_axes_list, invert_coords,
      compute_Ip_handedness)
 
 
@@ -37,16 +37,17 @@ def override_sg_info(override_sg, dataDims, supercell_data, symmetries_dict, sym
 
 
 class SupercellBuilder():
-    def __init__(self, sym_ops, symmetries_dict, normed_lattice_vectors, atom_weights, dataDims):
+    def __init__(self, sym_ops, symmetries_dict, normed_lattice_vectors, atom_weights, dataDims, new_generation=False):
         self.sym_ops = sym_ops
         self.atom_weights = atom_weights
         self.symmetries_dict = symmetries_dict
         self.dataDims = dataDims
         self.normed_lattice_vectors = normed_lattice_vectors
+        self.new_generation = new_generation
 
     def build_supercells(self, supercell_data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
-                         do_on_cpu=True, override_sg=None, skip_cell_cleaning=False, ref_data=None, debug=False, standardized_sample=True, return_energy=False,
-                         supercell_inclusion_level='ref mol'):
+                         do_on_cpu=True, override_sg=None, skip_cell_cleaning=False, ref_data=None, debug=False,
+                         standardized_sample=True, return_energy=False):
         '''
         convert cell parameters to reference cell in a fast, differentiable, invertible way
         convert reference cell to NxN supercell
@@ -71,16 +72,14 @@ class SupercellBuilder():
         '''
         if override_sg is not None:
             sym_ops_list = [torch.Tensor(self.symmetries_dict['sym_ops'][override_sg]).to(supercell_data.x.device) for i in range(supercell_data.num_graphs)]
-            supercell_data = override_sg_info(override_sg, self.dataDims, supercell_data, self.symmetries_dict) # todo update the way we handle this
+            supercell_data = override_sg_info(override_sg, self.dataDims, supercell_data, self.symmetries_dict)  # todo update the way we handle this
         else:
             sym_ops_list = [torch.Tensor(supercell_data.symmetry_operators[n]).to(supercell_data.x.device) for n in range(len(supercell_data.symmetry_operators))]
-            #torch.Tensor(self.sym_ops[int(supercell_data.sg_ind[i])]).to(supercell_data.x.device) for i in range(supercell_data.num_graphs)]
 
         '''
         if copying a reference, extract its parameters
         '''
-        #TODO update analysis with new/finalized asymmetric unit method
-
+        # TODO update analysis with new/finalized asymmetric unit method - currently hardcoded to old method
         if ref_data is not None:  # extract parameters directly from the ref_data
             cell_sample_i, target_handedness, ref_final_coords = cell_analysis(ref_data.clone(), self.atom_weights,
                                                                                debug=debug, return_final_coords=True, return_sym_ops=False)
@@ -100,7 +99,7 @@ class SupercellBuilder():
             self.process_cell_params(supercell_data, cell_sample, skip_cell_cleaning, standardized_sample)
 
         # todo - for fractional rotations, get this inside the above function, without breaking autograd. Good Luck
-        T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles)  # this is the troublemaker in fractional orientations
+        T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(cell_lengths, cell_angles)
 
         '''
         update cell params
@@ -117,9 +116,7 @@ class SupercellBuilder():
         for i in range(supercell_data.num_graphs):
             atoms_list.append(supercell_data.x[supercell_data.batch == i])
             coords_list.append(supercell_data.pos[supercell_data.batch == i])
-            # masses_list.append(torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(supercell_data.x.device))
-
-        canonical_fractional_centroids_list = self.get_canonical_conformer(supercell_data, mol_position, sym_ops_list, debug=(ref_data is not None) and debug)
+            # masses_list.append(torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(supercell_data.x.device)) # don't need these
 
         '''
         determine standardization rotation
@@ -143,6 +140,12 @@ class SupercellBuilder():
 
         # rotation matrix between target and current Ip axes
         std_rotations_list = torch.matmul(normed_alignment_target_list.permute(0, 2, 1), torch.linalg.inv(Ip_axes_list).permute(0, 2, 1))  # RMAT = X_new * X_old^(-1)
+
+        if self.new_generation:
+            # in new generation mode, we don't have to identify canonical conformer as it's set automatically
+            canonical_fractional_centroids_list = mol_position
+        else:
+            canonical_fractional_centroids_list = self.get_canonical_conformer(supercell_data, mol_position, sym_ops_list, debug=(ref_data is not None) and debug)
 
         if (ref_data is not None) and debug:
             # apply the rotation and check it
@@ -181,20 +184,20 @@ class SupercellBuilder():
         apply point symmetry in z-batches for speed
         '''
         reference_cell_list = self.build_unit_cell(supercell_data.clone(), final_coords_list, T_fc_list, T_cf_list, sym_ops_list, debug=(ref_data is not None) and debug)
+
         '''
         generate supercells
         '''
-
-        cell_vector_list = T_fc_list.permute(0, 2, 1)  # fast_differentiable_cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix
+        cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, supercell_data.Z,
-                                                 supercell_scale=supercell_size, cutoff=graph_convolution_cutoff, inside_mode=supercell_inclusion_level)
+            ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, supercell_data.Z,
+                             supercell_scale=supercell_size, cutoff=graph_convolution_cutoff)
 
-        overlaps_list = None # expensive and not currently used # compute_lattice_vector_overlap(final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors.to(supercell_data.x.device))
+        overlaps_list = None  # expensive and not currently used # compute_lattice_vector_overlap(final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors.to(supercell_data.x.device))
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
 
-        if return_energy:
+        if return_energy:  # expensive
             mols = [Atoms(positions=reference_cell_list[n].cpu().detach().numpy().reshape(reference_cell_list[n].shape[1] * reference_cell_list[n].shape[0], 3),
                           symbols=atoms_list[n][:, 0].repeat(supercell_data.Z[n]).cpu().detach().numpy(),
                           cell=supercell_data.T_fc[n].T.cpu().detach().numpy()
@@ -211,7 +214,7 @@ class SupercellBuilder():
         else:
             return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list
 
-    def build_supercells_from_dataset(self, supercell_data, config, do_on_cpu=True, return_overlaps=False, return_energy=False, supercell_inclusion_level='ref mol', override_supercell_size = None):
+    def build_supercells_from_dataset(self, supercell_data, config, do_on_cpu=True, return_overlaps=False, return_energy=False, supercell_inclusion_level='ref mol', override_supercell_size=None):
         '''
         should be faster than the old way
         pretty quick on cpu
@@ -225,7 +228,7 @@ class SupercellBuilder():
         else:
             supercell_size = config.supercell_size
 
-        T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(
+        T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(
             cell_lengths=supercell_data.cell_params[:, 0:3], cell_angles=supercell_data.cell_params[:, 3:6])
 
         # masses_list = []
@@ -235,10 +238,11 @@ class SupercellBuilder():
             atoms_list.append(atoms_i)
             # atomic_numbers = atoms_i[:, 0]
 
-        cell_vector_list = T_fc_list.permute(0, 2, 1)  # fast_differentiable_cell_vectors(T_fc_list)
+        cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            fast_differentiable_ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list, T_fc_list, atoms_list, supercell_data.Z,
-                                                 supercell_scale=supercell_size, cutoff=config.discriminator.graph_convolution_cutoff, inside_mode=supercell_inclusion_level)
+            ref_to_supercell(
+                supercell_data.ref_cell_pos, cell_vector_list, T_fc_list, atoms_list, supercell_data.Z,
+                supercell_scale=supercell_size, cutoff=config.discriminator.graph_convolution_cutoff)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
 
@@ -278,7 +282,7 @@ class SupercellBuilder():
 
         # TODO convert from asymmetric unit to full cell fractional coordinates
 
-        if True:
+        if self.new_generation:
             mol_position = self.scale_asymmetric_unit(mol_position, supercell_data.sg_ind)
 
         return cell_lengths, cell_angles, mol_position, mol_rotation
@@ -446,6 +450,6 @@ class SupercellBuilder():
         x[0,.5], yz[0,1]
         '''
         scaled_mol_position = mol_position
-        scaled_mol_position[:,0] = mol_position[:,0] / 2
+        scaled_mol_position[:, 0] = mol_position[:, 0] / 2
 
         return scaled_mol_position

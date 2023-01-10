@@ -17,6 +17,7 @@ from crystal_builder_tools import *
 from models.generator_models import crystal_generator
 from models.discriminator_models import crystal_discriminator
 from models.regression_models import molecule_regressor
+from models.torch_models import ase_mol_from_crystaldata
 import ase.io
 from scipy.spatial.distance import cdist
 from scipy.stats import linregress
@@ -333,7 +334,7 @@ class Modeller():
                 discriminator.cuda()
 
             try:
-                _ = self.epoch(config, dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                _ = self.epoch(dataLoader=train_loader, generator=generator, discriminator=discriminator,
                                g_optimizer=g_optimizer, d_optimizer=d_optimizer,
                                update_gradients=True, record_stats=True, iteration_override=2, epoch=1)
 
@@ -468,8 +469,7 @@ class Modeller():
                                           d_tr_record, d_te_record, g_tr_record, g_te_record)
 
                         if epoch % self.config.wandb.sample_reporting_frequency == 0:
-                            self.log_gan_accuracy(epoch, train_loader,
-                                                  train_epoch_stats_dict, test_epoch_stats_dict, self.config,
+                            self.log_gan_accuracy(epoch, train_loader,train_epoch_stats_dict, test_epoch_stats_dict,
                                                   extra_test_dict=extra_test_epoch_stats_dict)
 
                         self.model_checkpointing(epoch, self.config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict)
@@ -672,46 +672,13 @@ class Modeller():
                     generated_supercell_examples_dict['atoms'] = [supercell_examples.x[supercell_examples.batch == ind, 0].cpu().detach().numpy() for ind in supercell_inds]
                     epoch_stats_dict['final generated cell parameters'].extend(supercell_examples.cell_params.cpu().detach().numpy())
                     del supercell_examples
-
-                if adversarial_score is not None:
-                    if self.config.gan_loss == 'wasserstein':
-                        adversarial_loss = -adversarial_score  # generator wants to maximize the score (minimize the negative score)
-                    elif self.config.gan_loss == 'standard':
-                        adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
-                        adversarial_loss = -torch.log(adversarial_score)  # modified minimax
-                    elif self.config.gan_loss == 'distance':
-                        assert False  # implement something here
-                    else:
-                        print(self.config.gan_loss + ' is not an implemented GAN loss function!')
-                        sys.exit()
-
                 epoch_stats_dict['generator density prediction'].append(density_prediction)
                 epoch_stats_dict['generator density target'].append(density_target)
-                g_losses_list = []
-                if self.config.train_generator_density:
-                    g_losses_list.append(density_loss.float())
-                    epoch_stats_dict['generator density loss'].append(density_loss.cpu().detach().numpy())
 
-                if self.config.train_generator_adversarially:
-                    g_losses_list.append(adversarial_loss)
-                    epoch_stats_dict['generator adversarial score'].append(adversarial_score.cpu().detach().numpy())
+                adversarial_loss = self.get_adversarial_loss(adversarial_score)
 
-                if self.config.train_generator_vdw:
-                    g_losses_list.append(vdw_loss)
-                    epoch_stats_dict['generator short range loss'].append(vdw_loss.cpu().detach().numpy())
-
-                if self.config.train_generator_packing:
-                    g_losses_list.append(packing_loss)
-                    epoch_stats_dict['generator packing loss'].append(packing_loss.cpu().detach().numpy())
-
-                if self.config.generator_similarity_penalty != 0:
-                    if similarity_penalty is not None:
-                        g_losses_list.append(similarity_penalty)
-                        epoch_stats_dict['generator similarity loss'].append(similarity_penalty.cpu().detach().numpy())
-                    else:
-                        print('similarity penalty was none')
-
-                g_losses = torch.sum(torch.stack(g_losses_list), dim=0)
+                g_losses = self.aggregate_generator_losses(
+                    epoch_stats_dict, density_loss, adversarial_score, adversarial_loss, vdw_loss, packing_loss, similarity_penalty)
 
                 g_loss = g_losses.mean()
                 g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
@@ -721,6 +688,7 @@ class Modeller():
                 if update_gradients:
                     g_optimizer.zero_grad()  # reset gradients from previous passes
                     g_loss.backward()  # back-propagation
+                    torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
                     g_optimizer.step()  # update parameters
             else:
                 g_err.append(np.zeros(1))
@@ -733,6 +701,7 @@ class Modeller():
             if record_stats:
                 epoch_stats_dict['tracking features'].extend(data.tracking.cpu().detach().numpy())
                 epoch_stats_dict['identifiers'].extend(data.csd_identifier)
+
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -835,288 +804,6 @@ class Modeller():
         assert torch.sum(torch.isnan(scores)) == 0
 
         return scores, extra_outputs['dists dict']
-
-    #
-    # def compute_dataset_rmsd(self, target_identifiers, target_identifiers_list, extra_test_loader):
-    #
-    #     if os.path.exists('../../test_data_rmsds.npy'):
-    #         rmsd_dict = np.load('../../test_data_rmsds.npy', allow_pickle=True).item()
-    #     else:
-    #         rmsd_dict = {}
-    #
-    #     '''
-    #     initialize analyzer
-    #     '''
-    #
-    #     sim_engine = PackingSimilarity()
-    #     sim_engine.settings.packing_shell_size = 20
-    #     sim_engine.settings.allow_molecular_differences = True
-    #
-    #     target_crystals = {}
-    #     target_inds = {}
-    #
-    #     '''
-    #     pre generate all the reference structures & print CIFs & collect crystal objects
-    #     '''
-    #
-    #     for i, data in enumerate(tqdm.tqdm(extra_test_loader.dataset)):
-    #         item = data.csd_identifier
-    #         for key in target_identifiers.keys():
-    #             if item == target_identifiers[key]:
-    #                 target_inds[key] = i
-    #
-    #     for key in target_inds.keys():
-    #         data = extra_test_loader.dataset[target_inds[key]]
-    #         pymat_struct = structure.IStructure(species=data.x[:, 0].repeat(data.Z),
-    #                                             coords=data.ref_cell_pos.reshape(int(data.Z * len(data.pos)), 3),
-    #                                             lattice=lattice.Lattice(data.T_fc.T.type(dtype=torch.float16)),
-    #                                             coords_are_cartesian=True)
-    #         writer1 = cif.CifWriter(pymat_struct, symprec=0.1)
-    #         writer1.write_file(key + '.cif')
-    #         target_crystals[key] = CrystalReader(key + '.cif', format='cif')[0]
-    #
-    #     '''
-    #     do the rmsd calculation for each sample in the dataset
-    #     '''
-    #
-    #     identifiers_inds = {key: [] for key in target_identifiers_list}
-    #
-    #     for i, data in enumerate(tqdm.tqdm(extra_test_loader.dataset)):
-    #         '''
-    #         identify the reference
-    #         -> need also to account for the 3 structures of target 31
-    #         '''
-    #         crystal_target = None
-    #         item = data.csd_identifier
-    #         if item not in list(rmsd_dict.keys()):
-    #             for j in range(len(target_identifiers_list)):  # go in reverse to account for roman numerals system of duplication
-    #                 if target_identifiers_list[-1 - j] in item:
-    #                     crystal_target = target_identifiers_list[-1 - j]
-    #                     identifiers_inds[crystal_target].append(i)
-    #                     break
-    #
-    #             try:
-    #                 '''
-    #                 generate cif & compare
-    #                 '''
-    #                 pymat_struct = structure.IStructure(species=data.x[:, 0].repeat(data.Z),
-    #                                                     coords=data.ref_cell_pos.reshape(int(data.Z * len(data.pos)), 3),
-    #                                                     lattice=lattice.Lattice(data.T_fc.T.type(dtype=torch.float16)),
-    #                                                     coords_are_cartesian=True)
-    #                 writer1 = cif.CifWriter(pymat_struct, symprec=0.1)
-    #                 writer1.write_file('crystal.cif')
-    #
-    #                 test_crystal = CrystalReader('crystal.cif', format='cif')[0]
-    #
-    #                 if crystal_target == 't31':
-    #                     comparison_output1 = sim_engine.compare(target_crystals['XXXI_1'], test_crystal)
-    #                     comparison_output2 = sim_engine.compare(target_crystals['XXXI_2'], test_crystal)
-    #                     # comparison_output3 = sim_engine.compare(target_crystals['XXXI_3'], test_crystal)
-    #                     rmsd_dict[data.csd_identifier] = [comparison_output1.rmsd,
-    #                                                       comparison_output2.rmsd, ]
-    #                     # comparison_output3.rmsd]
-    #
-    #                 elif crystal_target is not None:
-    #                     comparison_output = sim_engine.compare(target_crystals[crystal_target], test_crystal)
-    #                     rmsd_dict[data.csd_identifier] = comparison_output.rmsd
-    #             except:
-    #                 rmsd_dict[data.csd_identifier] = 'error'  # todo pymatgen and ccdc disagree on some space group names
-    #
-    #         if i % 1000 == 0:
-    #             np.save('../../test_data_rmsds', rmsd_dict)
-    #
-    #     np.save('../../test_data_rmsds', rmsd_dict)
-    #     return rmsd_dict
-
-    def get_dists(self, config, extra_test_loader):
-        '''
-        compute distance metrics for extra test data
-        run from the end of dataset_utils
-        '''
-
-        from pymatgen.core import (structure, lattice)
-        # from ccdc.crystal import PackingSimilarity
-        # from ccdc.io import CrystalReader
-        from pymatgen.io import cif
-        import warnings
-
-        warnings.filterwarnings("ignore", category=RuntimeWarning)  # annoying numpy error
-        warnings.filterwarnings("ignore", category=DeprecationWarning)  # annoying numpy error
-
-        blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
-            'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
-            'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
-
-        target_identifiers = {
-            'XVI': 'OBEQUJ',
-            'XVII': 'OBEQOD',
-            'XVIII': 'OBEQET',
-            'XIX': 'XATJOT',
-            'XX': 'OBEQIX',
-            'XXI': 'KONTIQ',
-            'XXII': 'NACJAF',
-            'XXIII': 'XAFPAY',
-            'XXIII_1': 'XAFPAY01',
-            'XXIII_2': 'XAFPAY02',
-            'XXXIII_3': 'XAFPAY03',
-            'XXXIII_4': 'XAFPAY04',
-            'XXIV': 'XAFQON',
-            'XXVI': 'XAFQIH',
-            'XXXI_1': '2199671_p10167_1_0',
-            'XXXI_2': '2199673_1_0',
-            # 'XXXI_3': '2199672_1_0',
-        }
-
-        target_identifiers_list = [
-            'XVI',
-            'XVII',
-            'XVIII',
-            'XIX',
-            'XX',
-            'XXI',
-            'XXII',
-            'XXIII',
-            'XXIV',
-            'XXVI',
-            't31']
-
-        rmsd_dict = self.compute_dataset_rmsd(target_identifiers, target_identifiers_list, extra_test_loader)
-
-        '''
-        Get our RDF metric
-        '''
-        builder = SupercellBuilder(self.sym_ops, self.sym_info, self.normed_lattice_vectors, self.atom_weights, self.config.dataDims)
-
-        rdfs_dict = {}
-
-        for i, data in enumerate(tqdm.tqdm(extra_test_loader)):
-            supercell_data = builder.build_supercells_from_dataset(data.clone(), config, return_energy=False, override_supercell_size=1)
-            rdfs, rr, corr_labels = crystal_rdf(supercell_data, rrange=[0, 5], bins=500, elementwise=True, atomwise=False, intermolecular=False, raw_density=True)
-
-            for j, ident in enumerate(supercell_data.csd_identifier):
-                rdfs_dict[ident] = rdfs[j].cpu().detach().numpy()
-            if i % 1000 == 0:
-                np.save('../../test_data_rdfs', rdfs_dict)
-
-        np.save('../../test_data_rdfs', rdfs_dict)
-        '''
-        generate rdf diffs
-        '''
-        rdf_diffs_dict = {}
-        sigma = 10
-
-        compare = lambda a, b: np.sum(np.abs(a - b)) / np.sum(np.abs(a))
-
-        for i, key in enumerate(tqdm.tqdm(rdfs_dict)):
-            '''
-            identify the reference
-            -> need also to account for the 3 structures of target 31
-            '''
-            crystal_target = None
-            item = key
-            for j in range(len(target_identifiers_list)):  # go in reverse to account for roman numerals system of duplication
-                if target_identifiers_list[-1 - j] in item:
-                    crystal_target = target_identifiers_list[-1 - j]
-                    break
-
-            '''
-            compare rdfs
-            '''
-
-            sample_rdf = gaussian_filter1d(rdfs_dict[key], sigma=sigma)
-            if crystal_target == 't31':
-                target_rdf1 = gaussian_filter1d(rdfs_dict['2199671_p10167_1_0'], sigma=sigma)
-                target_rdf2 = gaussian_filter1d(rdfs_dict['2199673_1_0'], sigma=sigma)
-                # target_rdf3 = gaussian_filter1d(rdfs_dict['2199672_1_0'], sigma=sigma)
-
-                rdf_diffs_dict[key] = [compare(target_rdf1, sample_rdf),
-                                       compare(target_rdf2, sample_rdf)]
-                # compare(target_rdf3, sample_rdf),]
-
-            elif crystal_target is not None:
-                target_rdf1 = gaussian_filter1d(rdfs_dict[target_identifiers[crystal_target]], sigma=sigma)
-                rdf_diffs_dict[key] = compare(target_rdf1, sample_rdf)
-
-        '''
-        collate & generate diffs
-        '''
-
-        # omit the third entry, as it's not the right molecule
-        datapoints = {key: [] for key in target_identifiers_list}
-
-        for i, key in enumerate(rdf_diffs_dict):
-            if rmsd_dict[key] != 'error':
-                crystal_target = None
-                item = key
-                for j in range(len(target_identifiers_list)):  # go in reverse to account for roman numerals system of duplication
-                    if target_identifiers_list[-1 - j] in item:
-                        crystal_target = target_identifiers_list[-1 - j]
-                        if crystal_target == 't31':
-                            datapoints[crystal_target].append([rmsd_dict[key][:2], rdf_diffs_dict[key]])
-                        else:
-                            datapoints[crystal_target].append([rmsd_dict[key], rdf_diffs_dict[key]])
-                        break
-        ll = list(datapoints.keys())
-        for key in ll:
-            if len(datapoints[key]) == 0:
-                datapoints.pop(key)
-            else:
-                datapoints[key] = np.asarray(datapoints[key])
-
-        plt.figure(3)
-        plt.clf()
-        vals = []
-        [vals.extend(aa[:, 1].flatten()) for aa in list(datapoints.values())]
-        vals2 = []
-        [vals2.extend(aa[:, 0].flatten()) for aa in list(datapoints.values())]
-        ylim = max(vals)
-        xlim = max(vals2)
-        ind = 1
-        for i, key in enumerate(datapoints.keys()):
-            if key != 't31':
-                if datapoints[key] != []:
-                    data = datapoints[key]
-                    plt.subplot(3, 3, ind)
-                    ind += 1
-                    plt.title(key)
-                    plt.scatter(data[:, 0], data[:, 1], marker='.')
-                    xline = np.asarray([0, np.amax(data[:, 0])])
-                    linreg_result = linregress(data[:, 0], data[:, 1])
-                    yline = xline * linreg_result.slope + linreg_result.intercept
-                    plt.plot(xline, yline, label=f'R={linreg_result.rvalue:.3f}')
-                    plt.legend()
-                    plt.axis([0, xlim, 0, ylim])
-
-            else:
-                data1 = datapoints[key][..., 0]
-                data2 = datapoints[key][..., 1]
-                # data3 = datapoints[key][..., 2]
-
-                plt.subplot(3, 3, ind)
-                plt.title('XXXI_1')
-                ind += 1
-                plt.scatter(data1[:, 0], data1[:, 1], marker='.')
-                xline = np.asarray([0, np.amax(data1[:, 0])])
-                linreg_result = linregress(data1[:, 0], data1[:, 1])
-                yline = xline * linreg_result.slope + linreg_result.intercept
-                plt.plot(xline, yline, label=f'R={linreg_result.rvalue:.3f}')
-                plt.legend()
-                plt.axis([0, xlim, 0, ylim])
-
-                plt.subplot(3, 3, ind)
-                plt.title('XXXI_2')
-                ind += 1
-                plt.scatter(data2[:, 0], data2[:, 1], marker='.')
-                xline = np.asarray([0, np.amax(data2[:, 0])])
-                linreg_result = linregress(data2[:, 0], data2[:, 1])
-                yline = xline * linreg_result.slope + linreg_result.intercept
-                plt.plot(xline, yline, label=f'R={linreg_result.rvalue:.3f}')
-                plt.legend()
-                plt.axis([0, xlim, 0, ylim])
-
-        plt.tight_layout()
-
-        return None
 
     def pairwise_correlations_analysis(self, dataset_builder, config):
         '''
@@ -1360,29 +1047,30 @@ class Modeller():
         return ref_cell_coords_c
 
     def log_gan_accuracy(self, epoch, train_loader,
-                         train_epoch_stats_dict, test_epoch_stats_dict, config,
+                         train_epoch_stats_dict, test_epoch_stats_dict,
                          extra_test_dict=None):
         '''
         Do analysis and upload results to w&b
         '''
         if self.config.mode == 'gan':
             # if test_epoch_stats_dict['generated supercell examples dict'] is not None:
-            #    self.log_molecules(config, test_epoch_stats_dict['generated supercell examples dict'])
+            #    self.log_molecules(test_epoch_stats_dict['generated supercell examples dict'])
 
             # if self.config.gan_loss == 'distance': # DEPRECATED
             #     self.gan_distance_regression_analysis(config, test_epoch_stats_dict)
 
             if train_epoch_stats_dict is not None:
                 if test_epoch_stats_dict['generated cell parameters'] is not None:  # self.config.train_generator_density:
-                    self.cell_params_analysis(config, train_loader, test_epoch_stats_dict)
+                    self.cell_params_analysis(train_loader, test_epoch_stats_dict)
 
-                if train_epoch_stats_dict['generator density target'] is not None:  # self.config.train_generator_density:
-                    pass  # self.log_aux_regression(config, train_epoch_stats_dict, test_epoch_stats_dict)
+                if self.config.train_generator_packing or self.config.train_generator_vdw or self.config.train_generator_density or self.config.train_generator_packing:
+                    self.cell_generation_analysis(test_epoch_stats_dict)
+
         elif self.config.mode == 'regression':
             pass  # self.log_regression_accuracy(config, train_epoch_stats_dict, test_epoch_stats_dict)
 
         if (extra_test_dict is not None) and (epoch % self.config.extra_test_period == 0):
-            self.blind_test_analysis(config, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict)
+            self.blind_test_analysis(train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict)
 
         return None
 
@@ -1426,73 +1114,58 @@ class Modeller():
         '''
         train the generator
         '''
-
-        # todo abstract these loss calculations
-        # noise injection
+        '''
+        noise injection
+        '''
         if self.config.generator.positional_noise > 0:
             data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
 
+        '''
+        get the sample
+        '''
         [[generated_samples, latent], prior, condition] = generator.forward(
             n_samples=data.num_graphs, conditions=data.to(self.config.device), return_latent=True, return_condition=True, return_prior=True)
 
-        if (self.config.generator_similarity_penalty != 0) and (len(generated_samples) > 5):
-            similarity_penalty_i = self.config.generator_similarity_penalty * F.relu(-(generated_samples.std(0) - prior.std(0)))  # F.mse_loss(generated_samples.std(0), prior.std(0))  # set variance as at least that of input noise
-            similarity_penalty = torch.ones(len(generated_samples)).to(generated_samples.device) * similarity_penalty_i  # copy across batch
-        else:
-            similarity_penalty = None
-
+        '''
+        build supercells, if necessary
+        '''
         if self.config.train_generator_adversarially or self.config.train_generator_vdw or self.config.train_generator_density:
-            supercell_data, generated_cell_volumes, overlaps_list = \
-                self.supercell_builder.build_supercells(data.clone(), generated_samples, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff,
-                                                        target_handedness=torch.ones(data.num_graphs),  # hardcode right handed generation
-                                                        override_sg=self.config.generate_sgs)
+            supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+                data.clone(), generated_samples, self.config.supercell_size,
+                self.config.discriminator.graph_convolution_cutoff,
+                target_handedness=torch.ones(data.num_graphs),  # hardcode right handed generation
+                override_sg=self.config.generate_sgs)
+
             data.cell_params = supercell_data.cell_params
         else:
             supercell_data = None
 
-        if self.config.train_generator_adversarially:
-            if self.config.device.lower() == 'cuda':
-                supercell_data = supercell_data.cuda()
+        '''
+        evaluate losses
+        
+        from ase.visualize import view
 
-            if self.config.test_mode or self.config.anomaly_detection:
-                assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
-
-            discriminator_score, dist_dict = self.adversarial_loss(discriminator, supercell_data, self.config)
-        else:
-            discriminator_score = None
-            dist_dict = None
-
-        if self.config.train_generator_vdw:
-            vdw_loss = vdW_penalty(supercell_data, self.vdw_radii)
-
-            if self.config.test_mode:
-                assert torch.sum(torch.isnan(vdw_loss)) == 0
-                if similarity_penalty is not None:
-                    assert torch.sum(torch.isnan(similarity_penalty)) == 0
-
-        else:
-            vdw_loss = None
-
+        mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(10)]
+        view(mols)
+        '''
+        similarity_penalty = self.similarity_penalty(generated_samples, prior)
+        discriminator_score, dist_dict = self.score_adversarially(supercell_data, data, discriminator)
+        vdw_loss = self.get_vdw_loss(supercell_data)
         density_loss, density_prediction, density_target, packing_loss = \
-            self.generator_density_loss(data, generated_samples, self.config.dataDims)
-
-        if supercell_data is not None:
-            return_supercell_data = supercell_data
-        else:
-            return_supercell_data = None
+            self.generator_density_loss(data, generated_samples)
 
         return discriminator_score, generated_samples.cpu().detach().numpy(), \
                density_loss, density_prediction, \
                density_target, \
                vdw_loss, dist_dict, \
-               return_supercell_data, similarity_penalty, packing_loss
+               supercell_data, similarity_penalty, packing_loss
 
     def regression_loss(self, generator, data):
         predictions = generator(data.to(generator.model.device))[:, 0]
         targets = data.y
         return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions, targets
 
-    def generator_density_loss(self, data, raw_sample, dataDims, precomputed_volumes=None):
+    def generator_density_loss(self, data, raw_sample, precomputed_volumes=None):
         # compute proposed density and evaluate loss against known volume
 
         gen_packing = []
@@ -1519,8 +1192,9 @@ class Modeller():
         # den_loss = F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none') # raw value
         # den_loss = torch.abs(torch.sqrt(F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))) # abs(sqrt()) is a soft rescaling to avoid gigantic losses
         den_loss = torch.log(1 + F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))  # log(1+loss) is a better soft rescaling to avoid gigantic losses
-        cutoff = 0.6  # minimum density
-        packing_loss = F.relu(-(raw_packing_coefficients - cutoff))  # linear loss below a cutoff
+        cutoff = 0.75 # linear density gradient
+        #packing_loss = F.relu(-(raw_packing_coefficients))  # linear gradient - always maximize density
+        packing_loss = torch.exp(F.relu(-(raw_packing_coefficients - cutoff))) - 1  # exponential loss below a cutoff
 
         if self.config.test_mode:
             assert torch.sum(torch.isnan(den_loss)) == 0
@@ -1539,7 +1213,7 @@ class Modeller():
         '''
         init supercell builder
         '''
-        self.supercell_builder = SupercellBuilder(self.sym_ops, self.sym_info, self.normed_lattice_vectors, self.atom_weights, self.config.dataDims)
+        self.supercell_builder = SupercellBuilder(self.sym_ops, self.sym_info, self.normed_lattice_vectors, self.atom_weights, self.config.dataDims, new_generation=self.config.new_generation)
 
         '''
         set tracking feature indices & property dicts we will use later
@@ -2120,8 +1794,8 @@ class Modeller():
         return None
 
     def nice_scoring_plots(self):
-        test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs\discriminator_713_test_epoch_stats_dict.npy', allow_pickle=True).item()
-        extra_test_dict = np.load('C:/Users\mikem\Desktop\CSP_runs\discriminator_713_extra_test_dict.npy', allow_pickle=True).item()
+        test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/275_test_epoch_stats_dict.npy', allow_pickle=True).item()
+        extra_test_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/275_extra_test_dict.npy', allow_pickle=True).item()
 
         tracking_features = test_epoch_stats_dict['tracking features']
         identifiers_list = extra_test_dict['identifiers']
@@ -2129,7 +1803,7 @@ class Modeller():
         scores_dict, all_identifiers, blind_test_targets, target_identifiers, \
         target_identifiers_inds, BT_target_scores, BT_submission_scores, \
         BT_scores_dists, BT_balanced_dist, vdW_penalty_dict, tracking_features_dict = \
-            self.process_discriminator_evaluation_data(self.config, extra_test_dict,
+            self.process_discriminator_evaluation_data(extra_test_dict,
                                                        test_epoch_stats_dict, None, size_normed_score=False)
 
         del test_epoch_stats_dict
@@ -2416,13 +2090,13 @@ class Modeller():
                                    mode='markers'))
 
         fig.update_layout(yaxis_title='Mean Score and Standard Deviation')
-        fig.update_layout(width=1400, height=600)
+        fig.update_layout(width=1600, height=600)
         fig.update_layout(font=dict(size=12))
         fig.layout.margin = layout.margin
         fig.write_image('../paper1_figs/functional_group_scores.png', scale=4)
         if self.config.machine == 'local':
             fig.show()
-
+        aa = 1
         '''
         9. Score vs. EMD on BT submissions
         '''
@@ -2616,7 +2290,9 @@ class Modeller():
         features = []
         ind = 0
         for i in range(self.config.dataDims['num tracking features']):  # not that interesting
-            if 'spacegroup' not in self.config.dataDims['tracking features dict'][i]:
+            if ('spacegroup' not in self.config.dataDims['tracking features dict'][i]) and \
+                    ('system' not in self.config.dataDims['tracking features dict'][i]) and \
+                    ('density' not in self.config.dataDims['tracking features dict'][i]):
                 if (np.average(tracking_features[:, i] != 0) > 0.05) and \
                         (self.config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
                         (self.config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
@@ -2701,9 +2377,9 @@ class Modeller():
         if self.config.machine == 'local':
             fig.show()
 
-        aa = 1
+        assert False
 
-    def cell_params_analysis(self, config, train_loader, test_epoch_stats_dict):
+    def cell_params_analysis(self, train_loader, test_epoch_stats_dict):
         n_crystal_features = self.config.dataDims['num lattice features']
         generated_samples = test_epoch_stats_dict['generated cell parameters']
         if generated_samples.ndim == 3:
@@ -2724,7 +2400,7 @@ class Modeller():
         overlaps_1d = {}
         sample_means = {}
         sample_stds = {}
-        for i, key in enumerate(config.dataDims['lattice features']):
+        for i, key in enumerate(self.config.dataDims['lattice features']):
             mini, maxi = np.amin(dataset_cell_distribution[:, i]), np.amax(dataset_cell_distribution[:, i])
             h1, r1 = np.histogram(dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
             h1 = h1 / len(dataset_cell_distribution[:, i])
@@ -2789,7 +2465,7 @@ class Modeller():
 
             wandb.log(fig_dict)
 
-    def log_molecules(self, config, generated_supercell_examples_dict):
+    def log_molecules(self, generated_supercell_examples_dict):
         if self.config.wandb.log_figures:
             for i in range(generated_supercell_examples_dict['n examples']):
                 cell_vectors = generated_supercell_examples_dict['T fc list'][i].T
@@ -2844,17 +2520,16 @@ class Modeller():
         loss_dict['Regression slope'] = linreg_result.slope
         wandb.log(loss_dict)
 
-    def blind_test_analysis(self, config, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict):
+    def blind_test_analysis(self, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict):
         '''
         analyze and plot
         '''
-        aa = 1
         identifiers_list = extra_test_dict['identifiers']
         score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
         scores_dict, all_identifiers, blind_test_targets, target_identifiers, \
         target_identifiers_inds, BT_target_scores, BT_submission_scores, \
         BT_scores_dists, BT_balanced_dist, vdW_penalty_dict, tracking_features_dict = \
-            self.process_discriminator_evaluation_data(config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict)
+            self.process_discriminator_evaluation_data(extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict)
 
         self.layout = go.Layout(
             margin=go.layout.Margin(
@@ -2868,9 +2543,9 @@ class Modeller():
         self.violin_scores_plot(all_identifiers, scores_dict, target_identifiers_inds)
         self.violin_vdW_plot(all_identifiers, vdW_penalty_dict, target_identifiers_inds)
         self.violin_scores_plot2(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
-        self.functional_group_violin_plot(scores_dict, tracking_features_names=config.dataDims['tracking features dict'], tracking_features=test_epoch_stats_dict['tracking features'])
+        self.functional_group_violin_plot(scores_dict, tracking_features_names=self.config.dataDims['tracking features dict'], tracking_features=test_epoch_stats_dict['tracking features'])
         self.scores_distributions_plot(all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist)
-        self.score_correlations_plot(test_epoch_stats_dict['tracking features'], scores_dict, config)
+        self.score_correlations_plot(test_epoch_stats_dict['tracking features'], scores_dict, self.config)
         self.distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
         self.targetwise_distance_vs_score_plot(rdf_full_distance_dict, rdf_inter_distance_dict, scores_dict, blind_test_targets)
         group, rankings, list_num = self.target_ranking_analysis(identifiers_list, scores_dict, all_identifiers)
@@ -2917,12 +2592,12 @@ class Modeller():
             # self.nice_dataset_analysis(self.prep_dataset)
             self.training_prep()
 
-            self.nice_regression_plots()
+            # self.nice_regression_plots()
             self.nice_scoring_plots()
 
         return
 
-    def process_discriminator_evaluation_data(self, config, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict, size_normed_score=False):
+    def process_discriminator_evaluation_data(self, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict, size_normed_score=False):
         blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
             'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
             'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', 'XXXI', 'XXXII']
@@ -2985,16 +2660,16 @@ class Modeller():
             tracking_features_dict['Test Randn'] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'][randn_inds].T)}
 
             if size_normed_score:
-                scores_dict['Test Real'] = norm_scores(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'], config)
-                scores_dict['Test Randn'] = norm_scores(scores_dict['Test Randn'], test_epoch_stats_dict['tracking features'][randn_inds], config)
-                scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking features'][distorted_inds], config)
+                scores_dict['Test Real'] = norm_scores(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'], self.config.dataDims)
+                scores_dict['Test Randn'] = norm_scores(scores_dict['Test Randn'], test_epoch_stats_dict['tracking features'][randn_inds], self.config.dataDims)
+                scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking features'][distorted_inds], self.config.dataDims)
 
             if train_epoch_stats_dict is not None:
                 scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
                 tracking_features_dict['Train Real'] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], train_epoch_stats_dict['tracking features'].T)}
 
                 if size_normed_score:
-                    scores_dict['Train Real'] = norm_scores(scores_dict['Train Real'], train_epoch_stats_dict['tracking features'], config)
+                    scores_dict['Train Real'] = norm_scores(scores_dict['Train Real'], train_epoch_stats_dict['tracking features'], self.config.dataDims)
 
                 vdW_penalty_dict['Train Real'] = train_epoch_stats_dict['real vdW penalty']
                 wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
@@ -3035,7 +2710,7 @@ class Modeller():
                 tracking_features_dict[target + ' exp'] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], extra_test_dict['tracking features'][target_index][None, :].T)}
 
                 if size_normed_score:
-                    scores_dict[target + ' exp'] = norm_scores(scores_dict[target + ' exp'], extra_test_dict['tracking features'][target_index][None, :], config)
+                    scores_dict[target + ' exp'] = norm_scores(scores_dict[target + ' exp'], extra_test_dict['tracking features'][target_index][None, :], self.config.dataDims)
 
                 vdW_penalty_dict[target + ' exp'] = extra_test_dict['vdW penalty'][target_index][None]
 
@@ -3052,7 +2727,7 @@ class Modeller():
                 tracking_features_dict[target] = {feat: vec for feat, vec in zip(self.config.dataDims['tracking features dict'], extra_test_dict['tracking features'][target_indices].T)}
 
                 if size_normed_score:
-                    scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking features'][target_indices], config)
+                    scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking features'][target_indices], self.config.dataDims)
 
                 # energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
                 vdW_penalty_dict[target] = extra_test_dict['vdW penalty'][target_indices]
@@ -3068,19 +2743,19 @@ class Modeller():
 
                 # correlate losses with molecular features
                 tracking_features = np.asarray(extra_test_dict['tracking features'])
-                loss_correlations = np.zeros(config.dataDims['num tracking features'])
+                loss_correlations = np.zeros(self.config.dataDims['num tracking features'])
                 features = []
                 for j in range(tracking_features.shape[-1]):  # not that interesting
-                    features.append(config.dataDims['tracking features dict'][j])
+                    features.append(self.config.dataDims['tracking features dict'][j])
                     loss_correlations[j] = np.corrcoef(scores, tracking_features[target_indices, j], rowvar=False)[0, 1]
 
                 score_correlations_dict[target] = loss_correlations
 
         # compute loss correlates
-        loss_correlations = np.zeros(config.dataDims['num tracking features'])
+        loss_correlations = np.zeros(self.config.dataDims['num tracking features'])
         features = []
-        for j in range(config.dataDims['num tracking features']):  # not that interesting
-            features.append(config.dataDims['tracking features dict'][j])
+        for j in range(self.config.dataDims['num tracking features']):  # not that interesting
+            features.append(self.config.dataDims['tracking features dict'][j])
             loss_correlations[j] = np.corrcoef(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'][:, j], rowvar=False)[0, 1]
         score_correlations_dict['Test Real'] = loss_correlations
 
@@ -3108,11 +2783,11 @@ class Modeller():
         colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
 
         plot_color_dict = {}
-        plot_color_dict['Train CSD'] = ('rgb(250,50,50)')  # train
-        plot_color_dict['CSD'] = ('rgb(250,150,50)')  # test
-        plot_color_dict['Gaussian'] = ('rgb(0,50,0)')  # fake csd
+        plot_color_dict['Train Real'] = ('rgb(250,50,50)')  # train
+        plot_color_dict['Test Real'] = ('rgb(250,150,50)')  # test
+        plot_color_dict['Test Randn'] = ('rgb(0,50,0)')  # fake csd
         plot_color_dict['Test NF'] = ('rgb(0,150,0)')  # fake nf
-        plot_color_dict['Distorted'] = ('rgb(0,100,100)')  # fake distortion
+        plot_color_dict['Test Distorted'] = ('rgb(0,100,100)')  # fake distortion
         ind = 0
         for target in all_identifiers.keys():
             if all_identifiers[target] != []:
@@ -3735,18 +3410,18 @@ class Modeller():
         return generator_convergence, discriminator_convergence
 
     def model_checkpointing(self, epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict):
-        if epoch > 0:
-            if epoch % 5 == 0:  # every 5 epochs, save a checkpoint
+        if (epoch > 0) and (epoch % 5 == 0):
+            if config.machine == 'cluster':  # every 5 epochs, save a checkpoint
                 # saving early-stopping checkpoint
                 save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
                 save_checkpoint(epoch, generator, g_optimizer, self.config.generator.__dict__, 'generator_' + str(config.run_num) + f'_epoch_{epoch}')
 
-            if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss'][:-1]):  # todo fix this
-                print("Saving discriminator checkpoint")
-                save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
-            if np.average(g_err_te) < np.amin(metrics_dict['generator test loss'][:-1]):
-                print("Saving generator checkpoint")
-                save_checkpoint(epoch, generator, g_optimizer, self.config.generator.__dict__, 'generator_' + str(config.run_num))
+                if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss'][:-1]):  # todo fix this
+                    print("Saving discriminator checkpoint")
+                    save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
+                if np.average(g_err_te) < np.amin(metrics_dict['generator test loss'][:-1]):
+                    print("Saving generator checkpoint")
+                    save_checkpoint(epoch, generator, g_optimizer, self.config.generator.__dict__, 'generator_' + str(config.run_num))
 
     def update_lr(self, config, d_schedulers, d_optimizer, d_err_tr, d_hit_max_lr,
                   g_schedulers, g_optimizer, g_err_tr, g_hit_max_lr):
@@ -3963,188 +3638,150 @@ class Modeller():
         self.log_gan_loss(metrics_dict, None, test_epoch_stats_dict,
                           None, d_te_record, None, g_te_record)
 
-        self.log_gan_accuracy(epoch, train_loader,
-                              None, test_epoch_stats_dict, self.config,
+        self.log_gan_accuracy(epoch, train_loader,None, test_epoch_stats_dict,
                               extra_test_dict=extra_test_epoch_stats_dict)
 
+    def similarity_penalty(self, generated_samples, prior):
+        if (self.config.generator_similarity_penalty != 0) and (len(generated_samples) > 5):
+            similarity_penalty_i = self.config.generator_similarity_penalty * F.relu(-(generated_samples.std(0) - prior.std(0))).mean()  # F.mse_loss(generated_samples.std(0), prior.std(0))  # set variance as at least that of input noise
+            similarity_penalty = torch.ones(len(generated_samples)).to(generated_samples.device) * similarity_penalty_i  # copy across batch
+            if self.config.test_mode:
+                assert torch.sum(torch.isnan(similarity_penalty)) == 0
+        else:
+            similarity_penalty = None
 
-''' extra stuff
-            # if train_epoch_stats_dict['generated inter distance hist'] is not None:  # todo update this
-            #     hh2_test, rr = test_epoch_stats_dict['generated inter distance hist']
-            #     hh2_train, _ = train_epoch_stats_dict['generated inter distance hist']
-            #     if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
-            #         hh1, rr = train_epoch_stats_dict['real inter distance hist']
-            #     else:
-            #         hh1 = hh2_test
-            #
-            #     shell_volumes = (4 / 3) * torch.pi * ((rr[:-1] + np.diff(rr)) ** 3 - rr[:-1] ** 3)
-            #     rdf1 = hh1 / shell_volumes
-            #     rdf2 = hh2_test / shell_volumes
-            #     rdf3 = hh2_train / shell_volumes
-            #     fig = go.Figure()
-            #     fig.add_trace(go.Scattergl(x=rr, y=rdf1, name='real'))
-            #     fig.add_trace(go.Scattergl(x=rr, y=rdf2, name='gen, test'))
-            #     fig.add_trace(go.Scattergl(x=rr, y=rdf3, name='gen, train'))
-            #
-            #     if self.config.wandb.log_figures:
-            #         wandb.log({'G2 Comparison': fig})
-            #
-            #     range_analysis_dict = {}
-            #     if train_epoch_stats_dict['real inter distance hist'] is not None:  # if there is no discriminator training, we don't generate this
-            #         # get histogram overlaps
-            #         range_analysis_dict['tr g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf3[None, :] / rdf1.sum()), axis=0), axis=0).sum()
-            #         range_analysis_dict['te g2 overlap'] = np.min(np.concatenate((rdf1[None, :] / rdf1.sum(), rdf2[None, :] / rdf1.sum()), axis=0), axis=0).sum()
-            #
-            #     # get probability mass at too-close range (should be ~zero)
-            #     range_analysis_dict['tr short range density fraction'] = np.sum(rdf3[rr[1:] < 1.2] / rdf3.sum())
-            #     range_analysis_dict['te short range density fraction'] = np.sum(rdf2[rr[1:] < 1.2] / rdf2.sum())
-            #
-            #     wandb.log(range_analysis_dict)
+        return similarity_penalty
 
+    def score_adversarially(self,supercell_data, data, discriminator):
+        if self.config.train_generator_adversarially:
+            if self.config.device.lower() == 'cuda':
+                supercell_data = supercell_data.cuda()
 
-                        # # correlate losses with molecular features
-            # tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
-            # g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
-            # d_loss_correlations = np.zeros(config.dataDims['num tracking features'])
-            # features = []
-            # for i in range(config.dataDims['num tracking features']):  # not that interesting
-            #     features.append(config.dataDims['tracking features dict'][i])
-            #     g_loss_correlations[i] = np.corrcoef(g_te_record, tracking_features[:, i], rowvar=False)[0, 1]
-            #     d_loss_correlations[i] = np.corrcoef(d_te_record, tracking_features[:, i], rowvar=False)[0, 1]
-            #
-            # g_sort_inds = np.argsort(g_loss_correlations)
-            # g_loss_correlations = g_loss_correlations[g_sort_inds]
-            #
-            # d_sort_inds = np.argsort(d_loss_correlations)
-            # d_loss_correlations = d_loss_correlations[d_sort_inds]
-            #
-            # if self.config.wandb.log_figures:
-            #     fig = go.Figure(go.Bar(
-            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
-            #         x=[g_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
-            #         orientation='h',
-            #     ))
-            #     wandb.log({'G Loss correlations': fig})
-            #
-            #     fig = go.Figure(go.Bar(
-            #         y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
-            #         x=[d_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
-            #         orientation='h',
-            #     ))
-            #     wandb.log({'D Loss correlations': fig})
+            if self.config.test_mode or self.config.anomaly_detection:
+                assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
 
+            discriminator_score, dist_dict = self.adversarial_loss(discriminator, supercell_data, self.config)
+        else:
+            discriminator_score = None
+            dist_dict = None
 
-         
-        # '''
-# CSP pipeline analysis
-# '''
-# sapt_inds = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if ('\sapt' in ind) and ('-220224' not in ind)])
-# sapt_22_inds = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if '\sapt-220224' in ind])
-#
-# if len(sapt_inds > 0):
-#
-#     sapt_energies = extra_test_dict['atomistic energy'][sapt_inds]
-#     sapt_22_energies = extra_test_dict['atomistic energy'][sapt_22_inds]
-#
-#     outlier_inds = np.concatenate((np.where(sapt_energies > 0)[0], np.where(sapt_energies < -150)[0]))
-#     sapt_inds = np.asarray([ind for i, ind in enumerate(sapt_inds) if not (i in outlier_inds)])
-#     sapt_energies = extra_test_dict['atomistic energy'][sapt_inds]
-#
-#     outlier_inds = np.concatenate((np.where(sapt_22_energies > 0)[0], np.where(sapt_22_energies < -150)[0]))
-#     sapt_22_inds = np.asarray([ind for i, ind in enumerate(sapt_22_inds) if not (i in outlier_inds)])
-#     sapt_22_energies = extra_test_dict['atomistic energy'][sapt_22_inds]
-#
-#     if self.config.gan_loss == 'standard':
-#         sapt_scores = -np.log10(1 - np_softmax(extra_test_dict['scores'][sapt_inds], temperature=softmax_temperature)[:, 1])
-#         sapt_22_scores = -np.log10(1 - np_softmax(extra_test_dict['scores'][sapt_22_inds], temperature=softmax_temperature)[:, 1])
-#     elif self.config.gan_loss == 'wasserstein':
-#         sapt_scores = extra_test_dict['scores'][sapt_inds]
-#         sapt_22_scores = extra_test_dict['scores'][sapt_22_inds]
-#
-#     '''
-#     plot overall energy-score correlation
-#     '''
-#     fig = make_subplots(rows=1, cols=2,
-#                         subplot_titles=(['Sapt', 'Sapt 22']))
-#
-#     xline = np.asarray([min(sapt_energies), max(sapt_energies)])
-#     linreg_result = linregress(sapt_energies, sapt_scores)
-#     yline = xline * linreg_result.slope + linreg_result.intercept
-#
-#     fig.add_trace(go.Scattergl(x=sapt_energies, y=sapt_scores, showlegend=False,
-#                                mode='markers'),  # , marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
-#                   row=1, col=1)
-#
-#     fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt R={linreg_result.rvalue:.3f}'), row=1, col=1)
-#
-#     xline = np.asarray([min(sapt_22_energies), max(sapt_22_energies)])
-#     linreg_result = linregress(sapt_22_energies, sapt_22_scores)
-#     yline = xline * linreg_result.slope + linreg_result.intercept
-#
-#     fig.add_trace(go.Scattergl(x=sapt_22_energies, y=sapt_22_scores, showlegend=False,
-#                                mode='markers'),  # , marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
-#                   row=1, col=2)
-#
-#     fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt-22 R={linreg_result.rvalue:.3f}'), row=1, col=2)
-#     wandb.log({'Target 31 analysis': fig})
-#
-#     '''
-#     plot within-conformer energy-score correlation
-#     '''
-#     conformers = ['c01', 'c02', 'c03', 'c04', 'c05', 'c06', 'c07', 'c08', 'c09', 'c10']
-#     conformers_inds_dict = {}
-#     conformers_inds_dict_22 = {}
-#     conformers_energies_dict = {}
-#     conformers_energies_dict_22 = {}
-#     conformers_scores_dict = {}
-#     conformers_scores_dict_22 = {}
-#     for conformer in conformers:
-#         conformers_inds_dict[conformer] = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if ('\sapt' in ind) and ('-220224' not in ind) and (conformer in ind)])
-#         conformers_inds_dict_22[conformer] = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if ('\sapt-220224' in ind) and (conformer in ind)])
-#         conformers_energies_dict[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict[conformer]]
-#
-#         outlier_inds = np.concatenate((np.where(conformers_energies_dict[conformer] > 0)[0], np.where(conformers_energies_dict[conformer] < -150)[0]))
-#         conformers_inds_dict[conformer] = np.asarray([ind for i, ind in enumerate(conformers_inds_dict[conformer]) if not (i in outlier_inds)])
-#         conformers_energies_dict[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict[conformer]]
-#
-#         conformers_energies_dict_22[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict_22[conformer]]
-#
-#         outlier_inds = np.concatenate((np.where(conformers_energies_dict_22[conformer] > 0)[0], np.where(conformers_energies_dict_22[conformer] < -150)[0]))
-#         conformers_inds_dict_22[conformer] = np.asarray([ind for i, ind in enumerate(conformers_inds_dict_22[conformer]) if not (i in outlier_inds)])
-#         conformers_energies_dict_22[conformer] = extra_test_dict['atomistic energy'][conformers_inds_dict_22[conformer]]
-#
-#         conformers_scores_dict[conformer] = -np.log10(1 - np_softmax(extra_test_dict['scores'][conformers_inds_dict[conformer]], temperature=softmax_temperature)[:, 1])
-#         conformers_scores_dict_22[conformer] = -np.log10(1 - np_softmax(extra_test_dict['scores'][conformers_inds_dict_22[conformer]], temperature=softmax_temperature)[:, 1])
-#
-#     fig = make_subplots(rows=2, cols=10,
-#                         )  # subplot_titles=(['Sapt','Sapt 22']))
-#
-#     for ii, conformer in enumerate(conformers_inds_dict.keys()):
-#         score = conformers_scores_dict[conformer]
-#         score_22 = conformers_scores_dict_22[conformer]
-#         energy = conformers_energies_dict[conformer]
-#         energy_22 = conformers_energies_dict_22[conformer]
-#
-#         xline = np.asarray([min(energy), max(energy)])
-#         linreg_result = linregress(energy, score)
-#         yline = xline * linreg_result.slope + linreg_result.intercept
-#
-#         fig.add_trace(go.Scattergl(x=energy, y=score, showlegend=False,
-#                                    mode='markers'),  # , marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
-#                       row=1, col=ii + 1)
-#
-#         fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt R={linreg_result.rvalue:.3f}'), row=1, col=ii + 1)
-#
-#         xline = np.asarray([min(energy_22), max(energy_22)])
-#         linreg_result = linregress(energy_22, score_22)
-#         yline = xline * linreg_result.slope + linreg_result.intercept
-#
-#         fig.add_trace(go.Scattergl(x=energy_22, y=score_22, showlegend=False,
-#                                    mode='markers'),  # , marker=dict(size=6, color=list_num[label], colorscale='portland', showscale=False)),
-#                       row=2, col=ii + 1)
-#
-#         fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'sapt-22 R={linreg_result.rvalue:.3f}'), row=2, col=ii + 1)
-#
-#     wandb.log({'Conformer-wise analysis': fig})
-#
-#     target_31_inds = np.asarray([i for i, ind in enumerate(extra_test_dict['identifiers']) if ('219967' in ind)])
+        return discriminator_score, dist_dict
+
+    def get_vdw_loss(self, supercell_data):
+        if self.config.train_generator_vdw:
+            vdw_loss = vdW_penalty(supercell_data, self.vdw_radii)
+            if self.config.test_mode:
+                assert torch.sum(torch.isnan(vdw_loss)) == 0
+        else:
+            vdw_loss = None
+
+        return vdw_loss
+
+    def get_adversarial_loss(self, adversarial_score):
+        if adversarial_score is not None:
+            if self.config.gan_loss == 'wasserstein':
+                adversarial_loss = -adversarial_score  # generator wants to maximize the score (minimize the negative score)
+            elif self.config.gan_loss == 'standard':
+                adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
+                adversarial_loss = -torch.log(adversarial_score)  # modified minimax
+            elif self.config.gan_loss == 'distance':
+                assert False  # implement something here
+            else:
+                print(self.config.gan_loss + ' is not an implemented GAN loss function!')
+                sys.exit()
+
+            return adversarial_loss
+        else:
+            return None
+
+    def aggregate_generator_losses(self,epoch_stats_dict, density_loss, adversarial_score, adversarial_loss, vdw_loss, packing_loss, similarity_penalty):
+        g_losses_list = []
+        if self.config.train_generator_density:
+            g_losses_list.append(density_loss.float())
+            epoch_stats_dict['generator density loss'].append(density_loss.cpu().detach().numpy())
+
+        if self.config.train_generator_adversarially:
+            g_losses_list.append(adversarial_loss)
+            epoch_stats_dict['generator adversarial score'].append(adversarial_score.cpu().detach().numpy())
+
+        if self.config.train_generator_vdw:
+            g_losses_list.append(vdw_loss)
+            epoch_stats_dict['generator short range loss'].append(vdw_loss.cpu().detach().numpy())
+
+        if self.config.train_generator_packing:
+            g_losses_list.append(packing_loss)
+            epoch_stats_dict['generator packing loss'].append(packing_loss.cpu().detach().numpy())
+
+        if self.config.generator_similarity_penalty != 0:
+            if similarity_penalty is not None:
+                g_losses_list.append(similarity_penalty)
+                epoch_stats_dict['generator similarity loss'].append(similarity_penalty.cpu().detach().numpy())
+            else:
+                print('similarity penalty was none')
+
+        g_losses = torch.sum(torch.stack(g_losses_list), dim=0)
+        return g_losses
+
+    def cell_generation_analysis(self, epoch_stats_dict):
+        '''
+        do analysis and plotting for cell generator
+
+        sample-wise vdw & density
+
+        example structures
+
+        todo: hydrogen bonding analysis, motif diversity
+        '''
+
+        import plotly.io as pio
+        pio.renderers.default = 'browser'
+
+        layout = go.Layout(
+            margin=go.layout.Margin(
+                l=0,  # left margin
+                r=0,  # right margin
+                b=0,  # bottom margin
+                t=20,  # top margin
+            )
+        )
+        '''
+        cubic defect
+        '''
+        cleaned_samples = epoch_stats_dict['final generated cell parameters']
+        cubic_distortion = 1 - np.nan_to_num(np.stack([cell_vol(cleaned_samples[i,0:3], cleaned_samples[i,3:6]) / np.prod(cleaned_samples[i,0:3],axis=-1) for i in range(len(cleaned_samples))]))
+        wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
+        hist = np.histogram(cubic_distortion, bins=256, range=(0,1))
+        wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})
+        wandb.log({"Generated cell parameter variation":epoch_stats_dict['generated cell parameters'].std(0).mean()})
+
+        sample_density = np.concatenate(epoch_stats_dict['generator density prediction'])
+        target_density =  np.concatenate(epoch_stats_dict['generator density target'])
+        sample_vdw_loss =  np.concatenate(epoch_stats_dict['generator short range loss'])
+        sample_packing_loss =  np.concatenate(epoch_stats_dict['generator packing loss'])
+
+        '''
+        vdw vs packing loss with density loss as color
+        '''
+        x = sample_vdw_loss
+        y = sample_packing_loss
+        c = np.abs(target_density - sample_density)
+        xline = np.asarray([np.amin(x), np.amax(x)])
+        linreg_result = linregress(x, y)
+        yline = xline * linreg_result.slope + linreg_result.intercept
+
+        fig = go.Figure()
+        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
+                                   mode='markers', marker=dict(color=c), opacity=1))
+
+        fig.add_trace(go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}'))
+
+        fig.layout.margin = layout.margin
+        fig.update_layout(xaxis_title='vdw loss', yaxis_title='packing loss')
+
+        #fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
+        if self.config.wandb.log_figures:
+            wandb.log({'vdw vs packing loss':fig})
+        if (self.config.machine == 'local') and False:
+            fig.show()
+
+        return None

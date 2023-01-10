@@ -76,7 +76,7 @@ def euler_XYZ_rotation_matrix(angles):
     return rotation_matrix
 
 
-def fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles):
+def coor_trans_matrix(cell_lengths, cell_angles):
     '''
     compute f->c and c->f transforms as well as cell volume in a vectorized, differentiable way
     '''
@@ -110,7 +110,7 @@ def fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles):
     return T_fc_list, T_cf_list, torch.abs(vol)
 
 
-def fast_differentiable_cell_vectors(T_fc_list):
+def cell_vectors(T_fc_list):
     '''
     convert fractional vectors (1,1,1) into cartesian cell vectors (a,b,c)
     '''
@@ -118,7 +118,18 @@ def fast_differentiable_cell_vectors(T_fc_list):
     return torch.matmul(T_fc_list, eyevec).permute(0, 2, 1)
 
 
-def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, z_values, supercell_scale=2, cutoff=5, inside_mode='ref mol'):
+def ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list,
+                     atoms_list, z_values, supercell_scale=2, cutoff=5):
+
+    '''
+    1) generate fractional translations for full supercell
+    for each sample
+    2) generate cartesian coordinates
+    3) identify canonical conformer, inside inds, outside inds
+    4) kick out molecules which are outside
+
+    '''
+
     n_cells = (2 * supercell_scale + 1) ** 3
     fractional_translations = torch.zeros((n_cells, 3))  # initialize the translations in fractional coords
     i = 0
@@ -132,47 +143,56 @@ def fast_differentiable_ref_to_supercell(reference_cell_list, cell_vector_list, 
     supercell_coords_list = []
     supercell_atoms_list = []
     ref_mol_inds_list = []
+    copies = []
     for i, (ref_cell, cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, z_values)):
         if type(ref_cell) == np.ndarray:
             ref_cell = torch.Tensor(ref_cell)
+
+        mol_n_atoms = len(atoms)
         supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(n_cells, 1)  # duplicate over XxXxX supercell
         cart_translations_i = torch.mul(cell_vectors.tile(n_cells, 1), sorted_fractional_translations.reshape(n_cells * 3, 1))  # 3 dimensions
         cart_translations = torch.stack(cart_translations_i.split(3, dim=0), dim=0).sum(1)
 
-        supercell_coords_list.append(
-            supercell_coords + torch.repeat_interleave(cart_translations, ref_cell.shape[1] * ref_cell.shape[0], dim=0)
-        )
+        full_supercell_coords = supercell_coords + torch.repeat_interleave(cart_translations, ref_cell.shape[1] * ref_cell.shape[0], dim=0)  # add translations throughout
 
-        supercell_atoms = atoms.repeat(n_cells * z_value, 1)
-        if inside_mode == 'ref mol':
-            # index atoms within the 'canonical' conformer, which is always indexed first
-            in_mol_inds = torch.arange(len(atoms))
-            ref_mol_inds = torch.ones(len(supercell_atoms), dtype=int).to(ref_cell.device)
-            ref_mol_inds[in_mol_inds] = 0
-
-        elif inside_mode == 'unit cell':
-            # index atoms within the unit cell
-            in_mol_inds = torch.arange(len(atoms) * z_value)
-            ref_mol_inds = torch.ones(len(supercell_atoms), dtype=int).to(ref_cell.device)
-            ref_mol_inds[in_mol_inds] = 0
+        # index atoms within the 'canonical' conformer, which is always indexed first
+        in_mol_inds = torch.arange(mol_n_atoms)
 
         # also, note the atoms which are too far to ever appear in a convolution with this molecule, and generate an index to ignore them
-        ref_mol_centroid = supercell_coords_list[-1][in_mol_inds].mean(0)
-        centroid_dists = torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1], p=2)
-        ref_mol_max_dist = torch.max(centroid_dists[:,in_mol_inds])
+        #ref_mol_centroid = supercell_coords_list[-1][in_mol_inds].mean(0)
+        # centroid_dists = torch.cdist(ref_mol_centroid[None, :], supercell_coords_list[-1], p=2)
+        # ref_mol_max_dist = torch.max(centroid_dists[:,in_mol_inds])
+
+        molwise_supercell_coords = full_supercell_coords.reshape(n_cells*z_value, mol_n_atoms, 3)
+        ref_mol_centroid = molwise_supercell_coords[0].mean(0) # first is always the canonical conformer
+        all_mol_centroids = torch.mean(molwise_supercell_coords, dim = 1) # centroids for all molecules in the supercell
+        mol_centroid_dists = torch.cdist(ref_mol_centroid[None, :], all_mol_centroids, p=2)[0]
+        ref_mol_radius = torch.max(torch.cdist(ref_mol_centroid[None,:], full_supercell_coords[in_mol_inds]))
 
         # ignore atoms which are more than mol_radius + conv_cutoff + buffer
-        ignore_inds = torch.where((centroid_dists > (ref_mol_max_dist + cutoff + 0.5))[0])[0]
-        ref_mol_inds[ignore_inds] = 2  # 2 is the index for completely ignoring these atoms in graph convolutions - haven't removed them entirely because it wrecks the crystal periodicity
+        convolve_mol_inds = torch.where((mol_centroid_dists <= (2*ref_mol_radius + cutoff + 0.1)))[0]
+
+        ref_mol_inds = torch.ones(len(convolve_mol_inds) * mol_n_atoms, dtype=int).to(ref_cell.device) # only index molecules which will be kept
+        ref_mol_inds[in_mol_inds] = 0
+
+        convolve_atom_inds = (torch.arange(mol_n_atoms)[:,None] + convolve_mol_inds * mol_n_atoms).T.reshape(len(convolve_mol_inds) * mol_n_atoms) # looks complicated but it's fast
+
+        supercell_coords_list.append(full_supercell_coords[convolve_atom_inds]) # only the relevant molecules are now kept
+        supercell_atoms = atoms.repeat(len(convolve_mol_inds), 1) # take the number of kept molecules only
+
+        #ref_mol_inds[ignore_inds] = 2  # 2 is the index for completely ignoring these atoms in graph convolutions - haven't removed them entirely because it wrecks the crystal periodicity
 
         # if the crystal is too diffuse, we will have no intermolecular convolution inds - we need a failure mode which accounts for this
-        if torch.sum(ref_mol_inds == 1) == 0:
-            ref_mol_inds[ignore_inds] = 1 # un-ignore too-far interactions (just so the model doesn't crash)
+        # if torch.sum(ref_mol_inds == 1) == 0:
+        #    aa = 1#ref_mol_inds[ignore_inds] = 1 # un-ignore too-far interactions (just so the model doesn't crash)
 
         supercell_atoms_list.append(supercell_atoms)
         ref_mol_inds_list.append(ref_mol_inds)
 
-    n_copies = torch.tensor(z_values) * n_cells
+        copies.append(len(convolve_mol_inds))
+
+    #n_copies = torch.tensor(z_values) * n_cells
+    n_copies = torch.tensor(copies,dtype=torch.int32)
 
     return supercell_coords_list, supercell_atoms_list, ref_mol_inds_list, n_copies
 
@@ -226,15 +246,15 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     cell_lengths = F.softplus(cell_lengths - 0.1) + 0.1  # enforces positive nonzero
     # mix of tanh and hardtanh allows us to get close to the limits, but still with a finite gradient outside the range
 
-    cell_angles = enforce_1d_bound(cell_angles, torch.pi/2, torch.pi/2, mode='hard')
-    mol_position = enforce_1d_bound(mol_position, 0.5, 0.5, mode='hard')
+    cell_angles = enforce_1d_bound(cell_angles, x_span = torch.pi/2 * 0.8,x_center = torch.pi/2, mode='soft') # prevent too-skinny cells
+    mol_position = enforce_1d_bound(mol_position, 0.5, 0.5, mode='soft')
     # norm1 = torch.pi / 2
     #cell_angles = F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1#(tanh_cutoff*(F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1) + (F.tanh((cell_angles - norm1) / norm1) * norm1 + norm1)) / (tanh_cutoff + 1)  # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
-    #norm2 = 0.5 # todo make sure this is 0-1 not -0.5 to 0.5
+    #norm2 = 0.5
     #mol_position = F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2#(tanh_cutoff*(F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2) + (F.tanh((mol_position - norm2) / norm2) * norm2 + norm2)) / (tanh_cutoff + 1)  # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
 
     if (rotation_type == 'fractional rotvec') or return_transforms:
-        pass  # T_fc_list, T_cf_list, generated_cell_volumes = fast_differentiable_coor_trans_matrix(cell_lengths, cell_angles)
+        pass  # T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(cell_lengths, cell_angles)
 
     # if rotation_type == 'fractional rotvec':  # todo implement fractional rotation
     #     mol_rotation = torch.einsum('nij,nj->ni', (T_fc_list, mol_rotation))
@@ -247,7 +267,7 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     #normed_norms = F.hardtanh((norms - norm3) / norm3) * norm3 + norm3#(tanh_cutoff*(F.hardtanh((norms - norm3) / norm3) * norm3 + norm3) + (F.tanh((norms - norm3) / norm3) * norm3 + norm3)) / (tanh_cutoff + 1) #F.tanh(norms / torch.pi) * torch.pi  # the norm should be between -pi to pi
     # norm rotation vectors by their length (rotvec length determines rotation angle
     norms = torch.linalg.norm(mol_rotation, dim=1)
-    normed_norms = enforce_1d_bound(norms, torch.pi, torch.pi, mode='hard')
+    normed_norms = enforce_1d_bound(norms, torch.pi, torch.pi, mode='soft')
     mol_rotation = mol_rotation / norms[:, None] * normed_norms[:, None]  # renormalize
 
 

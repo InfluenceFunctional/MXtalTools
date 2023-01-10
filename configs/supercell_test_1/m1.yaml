@@ -1,10 +1,10 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 961
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures'
 gan_loss: standard #wasserstein # standard #distance
@@ -23,10 +23,9 @@ sample_after_training: False
 sample_ind: 0
 sample_steps: 10
 sample_move_size: 0.05
-extra_test_set_paths: null #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
-                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
-                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
-                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_dataset',
+extra_test_set_paths: [ '/scratch/mk8347/csd_runs/datasets/blind_test_5_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_6_dataset',
+                        '/scratch/mk8347/csd_runs/datasets/blind_test_targets']
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_targets',]
 d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminator_931'
 g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_951'
@@ -38,7 +37,7 @@ seeds:
 # opt - sweep details
 wandb:
   sample_reporting_frequency: 1
-  experiment_tag: dev
+  experiment_tag: supercell_size_dev
   log_figures: True
 
 # batching & convergence
@@ -56,7 +55,7 @@ dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
-max_num_atoms: 40
+max_num_atoms: 100
 min_num_atoms: 8 # target XVI has only 9 heavy atoms
 max_z_value: 18
 min_z_value: 0
@@ -84,7 +83,7 @@ supercell_size: 5 # new method - should be very large, automatically pares down
 discriminator:
   optimizer: "adamw"
   learning_rate: 0.0001
-  max_lr: 0.0001
+  max_lr: 0.001
   lr_schedule: True
   beta1: 0.9
   beta2: 0.999
@@ -99,7 +98,7 @@ discriminator:
   atom_embedding_size: 256
   graph_norm: layer
   num_spherical: 6
-  num_radial: 32
+  num_radial: 36
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
@@ -128,9 +127,9 @@ generator:
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   model_type: mlp # mlp only
-  graph_convolution_layers: 4
-  graph_filters: 64
-  atom_embedding_size: 128
+  graph_convolution_layers: 1
+  graph_filters: 12
+  atom_embedding_size: 12
   graph_norm: null
   num_spherical: 6
   num_radial: 32
@@ -144,13 +143,13 @@ generator:
   pooling: combo
 
   conditioner_num_fc_layers: 1
-  conditioner_fc_depth: 128
+  conditioner_fc_depth: 12
   conditioner_activation: leaky relu
   conditioner_fc_dropout_probability: 0
   conditioner_fc_norm_mode: null
 
   num_fc_layers: 20
-  fc_depth: 512
+  fc_depth: 12
   activation: leaky relu
   fc_dropout_probability: 0
   fc_norm_mode: layer

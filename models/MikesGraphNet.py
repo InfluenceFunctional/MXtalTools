@@ -1,6 +1,7 @@
 from math import sqrt, pi as PI
 import sys
 import sympy as sym
+import tqdm
 from torch_geometric.nn.models.dimenet_utils import (bessel_basis,
                                                      associated_legendre_polynomials,
                                                      sph_harm_prefactor)
@@ -15,6 +16,7 @@ from torch_scatter import scatter
 from torch_sparse import SparseTensor
 import torch_geometric.nn as gnn
 from models.asymmetric_radius_graph import asymmetric_radius_graph
+from models.model_components import general_MLP
 
 
 def real_sph_harm(k, zero_m_only=True, spherical_coordinates=True):
@@ -229,11 +231,10 @@ class MikesGraphNet(torch.nn.Module):
             # intermolecular edges
             edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # extra radius for intermolecular graph convolution
                                                        max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
-                                                       inside_inds=inside_inds, convolve_inds=outside_inds)  # outside_inds)
+                                                       inside_inds=inside_inds, convolve_inds=outside_inds)
 
             if self.crystal_convolution_type == 1:
                 edge_index = torch.cat((edge_index, edge_index_inter), dim=1)
-
 
         else:
             edge_index = gnn.radius_graph(pos, r=self.cutoff, batch=batch,
@@ -314,7 +315,7 @@ class SphericalBasisLayer(torch.nn.Module):
 
         x, theta = sym.symbols('x theta')
         modules = {'sin': torch.sin, 'cos': torch.cos}
-        for i in range(num_spherical):
+        for i in tqdm.tqdm(range(num_spherical)):
             if i == 0:
                 sph1 = sym.lambdify([theta], sph_harm_forms[i][0], modules)(0)
                 self.sph_funcs.append(lambda x: torch.zeros_like(x) + sph1)
@@ -480,6 +481,8 @@ class GCBlock(torch.nn.Module):
                 in_channels=graph_convolution_filters,
                 out_channels=graph_convolution_filters,
                 edge_dim=graph_convolution_filters,
+                dropout = dropout,
+                norm = norm,
             )
         elif convolution_mode.lower() == 'schnet':  #
             assert not spherical, 'schnet currently only works with pure radial bases'
@@ -555,20 +558,31 @@ class CFConv(gnn.MessagePassing):
 
 
 class MPConv(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, edge_dim, activation='leaky relu'):
+    def __init__(self, in_channels, out_channels, edge_dim, dropout = 0, norm = None, activation='leaky relu'):
         super(MPConv, self).__init__()
-        self.linear1 = nn.Linear(in_channels * 2 + edge_dim, out_channels)
-        self.linear2 = nn.Linear(out_channels, out_channels)
-        self.norm = nn.LayerNorm(out_channels)
-        self.activation = Activation(activation, filters=None)
+
+        self.MLP = general_MLP(layers = 4,
+                               filters = out_channels,
+                               input_dim = in_channels * 2 + edge_dim,
+                               dropout = dropout,
+                               norm = norm,
+                               output_dim = out_channels,
+                               activation=activation,
+                               )
+        #self.linear1 = nn.Linear(in_channels * 2 + edge_dim, out_channels)
+        #self.linear2 = nn.Linear(out_channels, out_channels)
+        #self.norm = nn.LayerNorm(out_channels)
+        #self.activation = Activation(activation, filters=None)
 
     def forward(self, x, edge_index, edge_attr):
         # i, j = edge_index
         # m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[i], x[j], edge_attr), dim=-1)))))
         # return scatter(m, j, dim=0, dim_size=len(x))  # send directional messages from i to j, enforcing the size of the output dimension
 
-        m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1)))))
+        #m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1)))))
         # m = self.linear1(torch.cat((x[i], x[j], edge_attr), dim=-1))
+
+        m = self.MLP(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1))
 
         return scatter(m, edge_index[1], dim=0, dim_size=len(x))  # send directional messages from i to j, enforcing the size of the output dimension
 

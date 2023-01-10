@@ -15,7 +15,6 @@ import sys
 import torch.nn.functional as F
 from scipy.ndimage import gaussian_filter1d
 from scipy.spatial.transform import Rotation
-from ase import Atoms
 from ase.calculators import lj
 from pymatgen.core import (structure, lattice)
 # from ccdc.crystal import PackingSimilarity
@@ -2174,35 +2173,6 @@ def torch_ptp(tensor):
     return torch.max(tensor) - torch.min(tensor)
 
 
-def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, sub_ref_cell=False):
-    '''
-    generate an ASE Atoms object from a crystaldata object
-    '''
-    if data.batch is not None:  # more than one crystal in the datafile
-        atom_inds = torch.where(data.batch == index)[0]
-    else:
-        atom_inds = torch.arange(len(data.x))
-
-    if exclusion_level == 'ref only':
-        inside_inds = torch.where(data.aux_ind == 0)[0]
-        new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
-        atom_inds = new_atom_inds
-    elif exclusion_level == 'convolve with':
-        inside_inds = torch.where(data.aux_ind < 2)[0]
-        new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
-        atom_inds = new_atom_inds
-
-    coords = data.pos[atom_inds].cpu().detach().numpy()
-    if highlight_aux:  # highlight the atom aux index
-        numbers = data.aux_ind[atom_inds].cpu().detach().numpy() + 6
-    else:
-        numbers = data.x[atom_inds, 0].cpu().detach().numpy()
-
-    cell = data.T_fc[index].T.cpu().detach().numpy()
-    mol = Atoms(symbols=numbers, positions=coords, cell=cell)
-    return mol
-
-
 def ref_cell_to_pymatgen_istruc(data, i):
     pymat_struct = structure.IStructure(species=data.x[data.batch == i, 0].repeat(data.Z[i]),
                                         coords=data.ref_cell_pos[i].reshape(int(data.Z[i] * len(data.pos[data.batch == i])), 3),
@@ -2439,10 +2409,10 @@ def softmax_and_score(score, temperature=1):
     return (np.sign(tanned) * np.log10(np.abs(tanned)))
 
 
-def norm_scores(score, tracking_features, config):
+def norm_scores(score, tracking_features, dataDims):
     # norm the incoming score according to its respective molecular surface area (assuming sphere)
     # also correct by spherical defect (non-crystal factor)
-    volume = tracking_features[:,config.dataDims['tracking features dict'].index('molecule volume')]
+    volume = tracking_features[:,dataDims['tracking features dict'].index('molecule volume')]
     #radius = (3/4/np.pi * volume)**(1/3)
     #surface_area = 4*np.pi*radius**2
     #eccentricity = tracking_features[:,config.dataDims['tracking features dict'].index('molecule eccentricity')]

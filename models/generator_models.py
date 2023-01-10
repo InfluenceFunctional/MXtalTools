@@ -6,7 +6,8 @@ from nflib.flows import Invertible1x1Conv
 from nflib.spline_flows import NSF_CL
 from torch.distributions import MultivariateNormal, Uniform
 import itertools
-from models.torch_models import molecule_graph_model, Normalization, ActNorm, general_MLP, independent_gaussian_model
+from models.torch_models import molecule_graph_model, independent_gaussian_model
+from models.model_components import general_MLP, Normalization
 
 
 class crystal_generator(nn.Module):
@@ -78,8 +79,7 @@ class crystal_generator(nn.Module):
                                      conditioning_dim=config.generator.fc_depth,
                                      seed=config.seeds.model
                                      )
-        elif self.generator_model_type.lower() == 'nf':  # conditioned normalizing flow
-            self.model = crystal_nf(config, dataDims, self.prior)
+
         elif self.generator_model_type.lower() == 'fit normal':
             assert config.generator.prior.lower() == 'multivariate normal'
             self.model = independent_gaussian_model(config, dataDims, dataDims['lattice means'], dataDims['lattice stds'])
@@ -111,130 +111,8 @@ class crystal_generator(nn.Module):
             return output
 
         else:
-            if not 'nf' in self.generator_model_type:  # todo implement latent return in NF model
-                return self.model(z, conditions=conditions_encoding, return_latent=return_latent)
-            else:
-                x, _ = self.model.backward(z, conditions=conditions_encoding)  # normalizing flow runs backwards from z->x
-
-                # destandardize with denormalized length norm
-                x = x * self.model.fixed_stds + self.model.fixed_norms
-
-                # denormalize
-                x[:, :3] = x[:, :3] * (conditions.Z[:, None] ** (1 / 3)) * (conditions.mol_volume[:, None] ** (1 / 3))
-
-                # restandardize with standard norms & means
-                return  (x - self.model.means) / self.model.stds
-
-    def nf_forward(self, x, conditions=None):
-        if conditions is not None:
-            conditions_encoding = self.conditioner(conditions)
-        else:
-            conditions_encoding = None
-
-        return self.model.forward(x, conditions=conditions_encoding)
+            return self.model(z, conditions=conditions_encoding, return_latent=return_latent)
 
 
-class crystal_nf(nn.Module):
-    def __init__(self, config, dataDims, prior):
-        super(crystal_nf, self).__init__()
-        torch.manual_seed(config.seeds.model)
-        # https://github.com/karpathy/pytorch-normalizing-flows/blob/master/nflib1.ipynb
-        # nice review https://arxiv.org/pdf/1912.02762.pdf
-        self.flow_dimension = dataDims['num lattice features']
-        self.prior = prior
-
-        fixed_norms = torch.Tensor(dataDims['lattice means'])
-        fixed_norms[:3] = torch.Tensor(dataDims['lattice normed length means'])
-        fixed_stds = torch.Tensor(dataDims['lattice stds'])
-        fixed_stds[:3] = torch.Tensor(dataDims['lattice normed length stds'])
-
-        self.register_buffer('means', torch.Tensor(dataDims['lattice means']))
-        self.register_buffer('stds', torch.Tensor(dataDims['lattice stds']))
-        self.register_buffer('fixed_norms', torch.Tensor(fixed_norms))
-        self.register_buffer('fixed_stds', torch.Tensor(fixed_stds))
-
-        if config.generator.conditional_modelling:
-            # if config.generator.conditioning_mode == 'graph model':
-            self.n_conditional_features = config.generator.fc_depth  # will concatenate the graph model latent representation to the selected molecule features
-            # else:
-            #    self.n_conditional_features = dataDims['num conditional features']
-        else:
-            self.n_conditional_features = 0
-
-        # normalizing flow is a combination of a prior and some flows
-        if config.device.lower() == 'cuda':
-            self.device = 'cuda'
-        else:
-            self.device = 'cpu'
-
-        # flows
-        nsf_flow = NSF_CL
-        flows = [nsf_flow(dim=dataDims['num lattice features'],
-                          K=config.generator.flow_basis_fns,
-                          B=3,
-                          hidden_dim=config.generator.flow_depth,
-                          conditioning_dim=self.n_conditional_features
-                          ) for _ in range(config.generator.num_flow_layers)]
-        convs = [Invertible1x1Conv(dim=dataDims['num lattice features']) for _ in flows]
-        norms = [ActNorm(dim=dataDims['num lattice features']) for _ in flows]
-        self.flow = NormalizingFlow2(list(itertools.chain(*zip(norms, convs, flows))), self.n_conditional_features)
-
-    def forward(self, x, conditions=None):
-        zs, log_det = self.flow.forward(x.float(), conditions=conditions)
-
-        prior_logprob = self.prior.log_prob(zs.cpu()).view(x.size(0), -1).sum(1)
-
-        return zs, prior_logprob.to(log_det.device), log_det
-
-    def backward(self, z, conditions=None):
-        xs, log_det = self.flow.backward(z.float(), conditions=conditions)
-
-        return xs, log_det
-
-    def sample(self, num_samples, conditions):
-        z = self.prior.sample((num_samples,)).to(self.device)
-        prior_logprob = self.prior.log_prob(z.cpu())
-
-        xs, log_det = self.flow.backward(z.float(), conditions=conditions)
-
-        return xs, z, prior_logprob, log_det
-
-    def score(self, x):
-        _, prior_logprob, log_det = self.forward(x)
-        return (prior_logprob + log_det)
 
 
-class NormalizingFlow2(nn.Module):
-    """ A sequence of Normalizing Flows is a Normalizing Flow """
-
-    def __init__(self, flows, n_conditional_features=0):
-        super().__init__()
-        self.flows = nn.ModuleList(flows)
-        self.conditioning_dims = n_conditional_features
-
-    def forward(self, x, conditions=None):
-        log_det = torch.zeros(len(x)).to(x.device)
-
-        for i, flow in enumerate(self.flows):
-            if ('nsf' in flow._get_name().lower()) and (self.conditioning_dims > 0):  # conditioning only implemented for spline flow
-                x, ld = flow.forward(torch.cat((x, conditions), dim=1))
-            else:
-                x, ld = flow.forward(x)
-
-            log_det += ld
-
-        return x, log_det
-
-    def backward(self, z, conditions=None):
-        log_det = torch.zeros(len(z)).to(z.device)
-
-        zz = []
-        for i, flow in enumerate(self.flows[::-1]):
-            if ('nsf' in flow._get_name().lower()) and (self.conditioning_dims > 0):
-                z, ld = flow.backward(torch.cat((z, conditions), dim=1))
-            else:
-                z, ld = flow.backward(z)
-            log_det += ld
-            zz.append(z)
-
-        return z, log_det

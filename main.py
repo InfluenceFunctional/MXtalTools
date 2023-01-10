@@ -298,6 +298,7 @@ def add_args(parser):
 
     # cell generator
     parser.add_argument('--gan_loss', type=str, default='wasserstein')  # 'wasserstein, 'standard'
+    add_bool_arg(parser, 'new_generation', default=True) # new way of defining the asymmetric unit
     add_bool_arg(parser, 'train_generator_density', default=False)  # train on cell volume
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
@@ -314,6 +315,7 @@ def add_args(parser):
     parser.add_argument('--sample_move_size', type=int, default=0.05)  #
 
     update_args2config(args2config, 'gan_loss')
+    update_args2config(args2config, 'new_generation')
     update_args2config(args2config, 'train_generator_density')
     update_args2config(args2config, 'train_generator_packing')
     update_args2config(args2config, 'train_generator_adversarially')
