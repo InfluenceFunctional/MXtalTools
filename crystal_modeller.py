@@ -3778,7 +3778,7 @@ class Modeller():
             else:
                 generator_losses[key] = None
 
-        losses_dict = {key:np.average(value) for i, (key,value) in enumerate(generator_losses.items())}
+        losses_dict = {key:np.average(value) for i, (key,value) in enumerate(generator_losses.items()) if value is not None}
         wandb.log(losses_dict)
         '''
         vdw vs packing loss with density loss as color
