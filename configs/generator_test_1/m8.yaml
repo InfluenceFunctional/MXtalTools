@@ -1,10 +1,10 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 978
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures'
 gan_loss: standard #wasserstein # standard #distance
@@ -128,7 +128,7 @@ generator:
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   model_type: mlp # mlp only
-  graph_convolution_layers: 4
+  graph_convolution_layers: 6
   graph_filters: 64
   atom_embedding_size: 128
   graph_norm: null
@@ -143,7 +143,7 @@ generator:
   add_torsional_basis: False
   pooling: combo
 
-  conditioner_num_fc_layers: 1
+  conditioner_num_fc_layers: 2
   conditioner_fc_depth: 128
   conditioner_activation: leaky relu
   conditioner_fc_dropout_probability: 0

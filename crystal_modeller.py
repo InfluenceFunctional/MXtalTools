@@ -584,7 +584,6 @@ class Modeller():
             'discriminator fake score': [],
             'generator density loss': [],
             'generator adversarial score': [],
-            'generator flow loss': [],
             'generator short range loss': [],
             'generator packing loss': [],
             'generator density prediction': [],
@@ -672,6 +671,7 @@ class Modeller():
                     generated_supercell_examples_dict['atoms'] = [supercell_examples.x[supercell_examples.batch == ind, 0].cpu().detach().numpy() for ind in supercell_inds]
                     epoch_stats_dict['final generated cell parameters'].extend(supercell_examples.cell_params.cpu().detach().numpy())
                     del supercell_examples
+
                 epoch_stats_dict['generator density prediction'].append(density_prediction)
                 epoch_stats_dict['generator density target'].append(density_target)
 
@@ -724,7 +724,7 @@ class Modeller():
         else:
             return d_err, d_loss_record, g_err, g_loss_record, total_time
 
-    def discriminator_evaluation(self, config, dataLoader=None, discriminator=None, iteration_override=None, compute_LJ_energy=False):
+    def discriminator_evaluation(self, dataLoader=None, discriminator=None, iteration_override=None, compute_LJ_energy=False):
         t0 = time.time()
         discriminator.eval()
 
@@ -743,9 +743,9 @@ class Modeller():
             evaluate discriminator
             '''
             if compute_LJ_energy:  # only compute LJ energy on the first run or when specifically asked
-                real_supercell_data, atomwise_energy = self.supercell_builder.build_supercells_from_dataset(data.clone(), config, return_energy=True)
+                real_supercell_data, atomwise_energy = self.supercell_builder.build_supercells_from_dataset(data.clone(), self.config, return_energy=True)
             else:
-                real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config, return_energy=False)
+                real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), self.config, return_energy=False)
 
             if self.config.device.lower() == 'cuda':  # redundant
                 real_supercell_data = real_supercell_data.cuda()
@@ -753,7 +753,7 @@ class Modeller():
             if self.config.test_mode or self.config.anomaly_detection:
                 assert torch.sum(torch.isnan(real_supercell_data.x)) == 0, "NaN in training input"
 
-            score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
+            score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data)
 
             full_rdfs, rr, self.elementwise_correlations_labels = crystal_rdf(real_supercell_data, elementwise=True, raw_density=True, rrange=[0, 10], bins=500)
             intermolecular_rdfs, rr, _ = crystal_rdf(real_supercell_data, intermolecular=True, elementwise=True, raw_density=True, rrange=[0, 10], bins=500)
@@ -786,7 +786,7 @@ class Modeller():
 
         return epoch_stats_dict, total_time
 
-    def adversarial_loss(self, discriminator, data, config):
+    def adversarial_loss(self, discriminator, data):
         output, extra_outputs = discriminator(data, return_dists=True)  # reshape output from flat filters to channels * filters per channel
 
         # discriminator score
@@ -798,7 +798,7 @@ class Modeller():
         elif self.config.gan_loss == 'distance':
             scores = output[:, 0]  # the raw distance output
         else:
-            print(config.gan_loss + ' is not a valid GAN loss function!')
+            print(self.config.gan_loss + ' is not a valid GAN loss function!')
             sys.exit()
 
         assert torch.sum(torch.isnan(scores)) == 0
@@ -1006,7 +1006,7 @@ class Modeller():
                     if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
                         score = train_epoch_stats_dict[key]
                     elif self.config.gan_loss == 'standard':
-                        score = softmax_and_score(train_epoch_stats_dict[key])
+                        score = softmax_and_score(np.concatenate(train_epoch_stats_dict[key]))
                     special_losses['Train ' + key] = np.average(score)
 
         if test_epoch_stats_dict is not None:
@@ -1017,7 +1017,7 @@ class Modeller():
                     if (self.config.gan_loss == 'wasserstein') or (self.config.gan_loss == 'distance'):
                         score = test_epoch_stats_dict[key]
                     elif self.config.gan_loss == 'standard':
-                        score = softmax_and_score(test_epoch_stats_dict[key])
+                        score = softmax_and_score(np.concatenate(test_epoch_stats_dict[key]))
                     special_losses['Test ' + key] = np.average(score)
 
         wandb.log(special_losses)
@@ -1063,7 +1063,7 @@ class Modeller():
                 if test_epoch_stats_dict['generated cell parameters'] is not None:  # self.config.train_generator_density:
                     self.cell_params_analysis(train_loader, test_epoch_stats_dict)
 
-                if self.config.train_generator_packing or self.config.train_generator_vdw or self.config.train_generator_density or self.config.train_generator_packing:
+                if self.config.train_generator_packing or self.config.train_generator_vdw or self.config.train_generator_density or self.config.train_generator_adversarially:
                     self.cell_generation_analysis(test_epoch_stats_dict)
 
         elif self.config.mode == 'regression':
@@ -1094,8 +1094,8 @@ class Modeller():
             real_supercell_data.pos += torch.randn_like(real_supercell_data.pos) * self.config.discriminator.positional_noise
             fake_supercell_data.pos += torch.randn_like(fake_supercell_data.pos) * self.config.discriminator.positional_noise
 
-        score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data, config)
-        score_on_fake, fake_pairwise_distances_dict = self.adversarial_loss(discriminator, fake_supercell_data, config)
+        score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data)
+        score_on_fake, fake_pairwise_distances_dict = self.adversarial_loss(discriminator, fake_supercell_data)
 
         if return_rdf:
             real_rdf, rr, rdf_label_dict = crystal_rdf(real_supercell_data, rrange=[0, 6], bins=1000, intermolecular=True, elementwise=True, raw_density=True)
@@ -3660,7 +3660,7 @@ class Modeller():
             if self.config.test_mode or self.config.anomaly_detection:
                 assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
 
-            discriminator_score, dist_dict = self.adversarial_loss(discriminator, supercell_data, self.config)
+            discriminator_score, dist_dict = self.adversarial_loss(discriminator, supercell_data)
         else:
             discriminator_score = None
             dist_dict = None
@@ -3668,7 +3668,8 @@ class Modeller():
         return discriminator_score, dist_dict
 
     def get_vdw_loss(self, supercell_data):
-        if self.config.train_generator_vdw:
+        # todo change the below to an optional tracking when not running with vdw loss
+        if supercell_data is not None: # if we already have this, the vdw computation is ~pretty~ cheap
             vdw_loss = vdW_penalty(supercell_data, self.vdw_radii)
             if self.config.test_mode:
                 assert torch.sum(torch.isnan(vdw_loss)) == 0
@@ -3698,18 +3699,22 @@ class Modeller():
         g_losses_list = []
         if self.config.train_generator_density:
             g_losses_list.append(density_loss.float())
+        if density_loss is not None:
             epoch_stats_dict['generator density loss'].append(density_loss.cpu().detach().numpy())
 
         if self.config.train_generator_adversarially:
             g_losses_list.append(adversarial_loss)
+        if adversarial_loss is not None:
             epoch_stats_dict['generator adversarial score'].append(adversarial_score.cpu().detach().numpy())
 
         if self.config.train_generator_vdw:
             g_losses_list.append(vdw_loss)
+        if vdw_loss is not None:
             epoch_stats_dict['generator short range loss'].append(vdw_loss.cpu().detach().numpy())
 
         if self.config.train_generator_packing:
             g_losses_list.append(packing_loss)
+        if packing_loss is not None:
             epoch_stats_dict['generator packing loss'].append(packing_loss.cpu().detach().numpy())
 
         if self.config.generator_similarity_penalty != 0:
@@ -3752,36 +3757,56 @@ class Modeller():
         wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
         hist = np.histogram(cubic_distortion, bins=256, range=(0,1))
         wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})
+        '''
+        diversity
+        '''
         wandb.log({"Generated cell parameter variation":epoch_stats_dict['generated cell parameters'].std(0).mean()})
 
-        sample_density = np.concatenate(epoch_stats_dict['generator density prediction'])
-        target_density =  np.concatenate(epoch_stats_dict['generator density target'])
-        sample_vdw_loss =  np.concatenate(epoch_stats_dict['generator short range loss'])
-        sample_packing_loss =  np.concatenate(epoch_stats_dict['generator packing loss'])
+        '''
+        tracking scores
+        '''
+        generator_loss_keys = ['generator density prediction', 'generator density target', 'generator short range loss', 'generator packing loss', 'generator adversarial score']
+        generator_losses = {}
+        for key in generator_loss_keys:
+            if epoch_stats_dict[key] is not None:
+                generator_losses[key] = np.concatenate(epoch_stats_dict[key])
+                if key == 'generator adversarial score':
+                    generator_losses[key] = softmax_and_score(generator_losses[key])
+                if key == 'generator density target':
+                    generator_losses['generator density loss'] = np.abs(generator_losses['generator density prediction'] - generator_losses['generator density target'])
+                    del generator_losses['generator density prediction'], generator_losses['generator density target']
+            else:
+                generator_losses[key] = None
 
+        losses_dict = {key:np.average(value) for i, (key,value) in enumerate(generator_losses.items())}
+        wandb.log(losses_dict)
         '''
         vdw vs packing loss with density loss as color
         '''
-        x = sample_vdw_loss
-        y = sample_packing_loss
-        c = np.abs(target_density - sample_density)
-        xline = np.asarray([np.amin(x), np.amax(x)])
-        linreg_result = linregress(x, y)
-        yline = xline * linreg_result.slope + linreg_result.intercept
+        if  generator_losses['generator short range loss'] is not None and \
+                generator_losses['generator packing loss'] is not None and \
+                generator_losses['generator density loss'] is not None:
 
-        fig = go.Figure()
-        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                                   mode='markers', marker=dict(color=c), opacity=1))
+            x = generator_losses['generator short range loss']
+            y = generator_losses['generator packing loss']
+            c = generator_losses['generator density loss']
+            xline = np.asarray([np.amin(x), np.amax(x)])
+            linreg_result = linregress(x, y)
+            yline = xline * linreg_result.slope + linreg_result.intercept
 
-        fig.add_trace(go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}'))
+            fig = go.Figure()
+            fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
+                                       mode='markers', marker=dict(color=c), opacity=1))
 
-        fig.layout.margin = layout.margin
-        fig.update_layout(xaxis_title='vdw loss', yaxis_title='packing loss')
+            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}'))
 
-        #fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
-        if self.config.wandb.log_figures:
-            wandb.log({'vdw vs packing loss':fig})
-        if (self.config.machine == 'local') and False:
-            fig.show()
+            fig.layout.margin = layout.margin
+            fig.update_layout(xaxis_title='vdw loss', yaxis_title='packing loss')
+
+            #fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
+            if self.config.wandb.log_figures:
+                wandb.log({'vdw vs packing loss':fig})
+            if (self.config.machine == 'local') and False:
+                fig.show()
 
         return None

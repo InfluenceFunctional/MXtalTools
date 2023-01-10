@@ -2181,46 +2181,6 @@ def ref_cell_to_pymatgen_istruc(data, i):
     return pymat_struct
 
 
-def pairwise_crystaldata_rmsd20(data1, ind1, data2, ind2, shell_size=20):
-    struct1 = ref_cell_to_pymatgen_istruc(data1, ind1)
-    struct2 = ref_cell_to_pymatgen_istruc(data2, ind2)
-    writer1 = cif.CifWriter(struct1, symprec=0.1)
-    writer2 = cif.CifWriter(struct2, symprec=0.1)
-    writer1.write_file('crystal1.cif')
-    writer2.write_file('crystal2.cif')
-
-    crystal1 = CrystalReader('crystal1.cif', format='cif')[0]
-    crystal2 = CrystalReader('crystal2.cif', format='cif')[0]
-
-    sim_engine = PackingSimilarity()
-    sim_engine.settings.packing_shell_size = shell_size
-    out = sim_engine.compare(crystal1, crystal2)  # reference, target
-
-    return out.rmsd, out.nmatched_molecules
-
-
-def many_to_one_rmsd20(data1, data2, ind2, shell_size=20):
-    struct2 = ref_cell_to_pymatgen_istruc(data2, ind2)  # target_structure
-    writer2 = cif.CifWriter(struct2, symprec=0.1)
-    writer2.write_file('crystal2.cif')
-    crystal2 = CrystalReader('crystal2.cif', format='cif')[0]
-
-    sim_engine = PackingSimilarity()
-    sim_engine.settings.packing_shell_size = shell_size
-
-    outputs = []
-    for i in tqdm.tqdm(range(data1.num_graphs)):
-        struct1 = ref_cell_to_pymatgen_istruc(data1, i)
-        writer1 = cif.CifWriter(struct1, symprec=0.1)
-        writer1.write_file('crystal1.cif')
-        crystal1 = CrystalReader('crystal1.cif', format='cif')[0]
-        out = sim_engine.compare(crystal1, crystal2)  # reference, target
-
-        outputs.append([out.rmsd, out.nmatched_molecules])
-
-    return out
-
-
 def invert_rotvec_handedness(rotvec):
     rot_mat = Rotation.from_rotvec(rotvec).as_matrix()
     return Rotation.from_matrix(-rot_mat).as_rotvec()  # negative of the rotation matrix gives the accurate rotation for opposite handed object
@@ -2309,18 +2269,6 @@ def np_softmax(x, temperature=1):
     probabilities = np.exp(x / temperature) / np.sum(np.exp(x / temperature), axis=1)[:, None]
 
     return probabilities
-
-
-def crystal_pot_calculation(refcells, calculator='lj'):
-    mols = [ase_mol_from_crystaldata(refcells, n) for n in range(refcells.num_graphs)]
-    pot_en = np.zeros(len(mols))
-    for i, mol in enumerate(mols):
-        if calculator == 'lj':
-            mol.calc = lj.LennardJones()
-
-        mol.set_pbc([True, True, True])
-        pot_en[i] = mol.get_potential_energy()
-    return pot_en
 
 
 def saturating_tanh(x, norm):

@@ -74,9 +74,9 @@ def add_args(parser):
     parser.add_argument('--feature_richness', type=str, default='minimal')  # atom & molecule feature richness
 
     # dataset composition
-    parser.add_argument('--include_sgs', type=str, default=['P21/c'])  # spacegroups to explicitly include in modelling - new!
-    parser.add_argument('--include_pgs', type=str, default=['222', '-1'])  # point groups to pull from dataset
-    parser.add_argument('--generate_sgs', type=str, default=['222', '-1'])  # point groups to generate
+    parser.add_argument('--include_sgs', type=str, default=None)  #['P21/c'] spacegroups to explicitly include in modelling - new!
+    parser.add_argument('--include_pgs', type=str, default=None)  #['222', '-1'] point groups to pull from dataset
+    parser.add_argument('--generate_sgs', type=str, default=None)  #['222', '-1'] point groups to generate
     parser.add_argument('--supercell_size', type=int, default=1)  # point groups to generate
     parser.add_argument('--max_crystal_temperature', type=float, default=int(1e3))
     parser.add_argument('--min_crystal_temperature', type=int, default=0)
@@ -90,7 +90,7 @@ def add_args(parser):
     add_bool_arg(parser, 'exclude_polymorphs', default=True)
     add_bool_arg(parser, 'exclude_nonstandard_settings', default=True)
     add_bool_arg(parser, 'exclude_missing_r_factor', default=True)
-    parser.add_argument('--exclude_crystal_systems', type=list, default=['hexagonal'])
+    parser.add_argument('--exclude_crystal_systems', type=list, default=None) # ['hexagonal']
     add_bool_arg(parser, 'exclude_blind_test_targets', default=True)
 
     update_args2config(args2config, 'target')
