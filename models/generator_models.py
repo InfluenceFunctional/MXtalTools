@@ -2,12 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import sys
-from nflib.flows import Invertible1x1Conv
-from nflib.spline_flows import NSF_CL
 from torch.distributions import MultivariateNormal, Uniform
-import itertools
 from models.torch_models import molecule_graph_model, independent_gaussian_model
 from models.model_components import general_MLP, Normalization
+from crystal_builder_tools import compute_crystaldata_principal_axes
 
 
 class crystal_generator(nn.Module):
@@ -16,6 +14,7 @@ class crystal_generator(nn.Module):
 
         self.device = config.device
         self.generator_model_type = config.generator.model_type
+        self.conditioning_mode = config.generator.conditioning_mode
 
         if config.generator.prior == 'multivariate normal':
             self.prior = MultivariateNormal(torch.zeros(dataDims['num lattice features']), torch.eye(dataDims['num lattice features']))
@@ -24,10 +23,11 @@ class crystal_generator(nn.Module):
         else:
             print(config.generator.prior + ' is not an implemented prior!!')
             sys.exit()
+
         '''
         conditioning model
         '''
-        if config.generator.conditioning_mode == 'graph model':  # molecular graph model
+        if self.conditioning_mode == 'graph model':  # molecular graph model
             self.conditioner = molecule_graph_model(
                 dataDims,
                 seed=config.seeds.model,
@@ -56,7 +56,7 @@ class crystal_generator(nn.Module):
                 max_num_neighbors=config.generator.max_num_neighbors,
                 convolution_cutoff=config.generator.graph_convolution_cutoff,
             )
-        elif config.generator.conditioning_mode == 'molecule features':
+        elif self.conditioning_mode == 'molecule features':
             self.conditioner = general_MLP(layers=config.generator.conditioner_num_fc_layers,
                                            filters=config.generator.conditioner_fc_depth,
                                            norm=config.generator.conditioner_fc_norm_mode,
@@ -97,6 +97,9 @@ class crystal_generator(nn.Module):
             # z = torch.zeros_like(z0)
 
         if conditions is not None:
+            if self.conditioning_mode == 'graph model':
+                # reorient molecules into inertial frame
+                conditions = compute_crystaldata_principal_axes(conditions)
             conditions_encoding = self.conditioner(conditions)
         else:
             conditions_encoding = None

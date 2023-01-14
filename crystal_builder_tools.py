@@ -463,3 +463,25 @@ def compute_principal_axes_list(coords_list, masses_list = None):
         for i, (coords,masses) in enumerate(zip(coords_list,masses_list)):
             Ip_axes_list[i], _, _ = compute_principal_axes_torch(coords,masses)
     return Ip_axes_list
+
+def compute_crystaldata_principal_axes(data):
+    '''
+    only works for geometric principal axes
+    '''
+    coords_list = [data.pos[data.ptr[i]:data.ptr[i+1]] for i in range(data.num_graphs)]
+    coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
+    principal_axes_list = compute_principal_axes_list(coords_list_centred, masses_list = None)
+    eye = torch.eye(3).to(data.x.device) # enforce right handedness
+    rotation_matrix_list = [torch.matmul(eye, torch.linalg.inv(principal_axes_list[i])) for i in range(data.num_graphs)]
+    transformed_coords = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)]
+
+    if False: # debug
+        # loss should be zero if the transform worked
+        assert F.l1_loss(compute_principal_axes_list(transformed_coords), torch.stack([torch.eye(3).to(transformed_coords[0].device) for i in range(data.num_graphs)])) < 1e-5
+
+    data.pos = torch.cat(transformed_coords)
+
+    if True: # set last 3 feature dimensions as saturating overlaps with inertial axes
+        data.x[:, -3:] = torch.sign(data.pos)
+
+    return data

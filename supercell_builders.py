@@ -81,8 +81,9 @@ class SupercellBuilder():
         '''
         # TODO update analysis with new/finalized asymmetric unit method - currently hardcoded to old method
         if ref_data is not None:  # extract parameters directly from the ref_data
-            cell_sample_i, target_handedness, ref_final_coords = cell_analysis(ref_data.clone(), self.atom_weights,
-                                                                               debug=debug, return_final_coords=True, return_sym_ops=False)
+            cell_sample_i, target_handedness, ref_final_coords = \
+                cell_analysis(ref_data.clone(), self.atom_weights,debug=debug,
+                              return_final_coords=True, return_sym_ops=False)
             sym_ops_list = [torch.Tensor(ref_data.symmetry_operators[n]).to(supercell_data.x.device) for n in range(len(ref_data.symmetry_operators))]
             target_handedness = target_handedness.to(supercell_data.x.device)
 

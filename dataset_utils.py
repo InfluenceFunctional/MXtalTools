@@ -83,13 +83,15 @@ class BuildDataset:
             self.atom_keys = ['atom Z',
                               'atom mass', 'atom is H bond acceptor', 'atom is H bond acceptor',
                               'atom valence', 'atom vdW radius',  # 'atom is aromatic', # issue with aromaticity in test sets
-                              'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
+                              'atom on a ring', 'atom degree', 'atom electronegativity',
+                              'atom electronegativity','atom electronegativity','atom electronegativity']   # 'atom chirality', todo check chirality measure
             self.molecule_keys = ['molecule volume',
                                   'molecule mass', 'molecule num atoms', 'molecule volume', 'molecule point group is C1',
                                   'molecule num rings', 'molecule num donors', 'molecule num acceptors',
                                   'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                                   'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
                                   'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
+                                  'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3', # dummy entries
                                   ]
         elif self.feature_richness == 'minimal':
             self.atom_keys = ['atom Z']

@@ -228,7 +228,7 @@ class Modeller():
             discriminator = discriminator.cuda()
 
         # init optimizers
-        amsgrad = False
+        amsgrad = True
         beta1 = self.config.generator.beta1  # 0.9
         beta2 = self.config.generator.beta2  # 0.999
         weight_decay = self.config.generator.weight_decay  # 0.01
@@ -1152,7 +1152,7 @@ class Modeller():
         discriminator_score, dist_dict = self.score_adversarially(supercell_data, data, discriminator)
         vdw_loss = self.get_vdw_loss(supercell_data)
         density_loss, density_prediction, density_target, packing_loss = \
-            self.generator_density_loss(data, generated_samples)
+            self.cell_density_loss(data, generated_samples)
 
         return discriminator_score, generated_samples.cpu().detach().numpy(), \
                density_loss, density_prediction, \
@@ -1165,11 +1165,13 @@ class Modeller():
         targets = data.y
         return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions, targets
 
-    def generator_density_loss(self, data, raw_sample, precomputed_volumes=None):
+    def cell_density_loss(self, data, raw_sample, precomputed_volumes=None):
         # compute proposed density and evaluate loss against known volume
 
         gen_packing = []
         gen_raw_packing = []
+        true_packing = []
+        raw_true_packing = []
         for i in range(len(raw_sample)):
             if precomputed_volumes is None:
                 volume = cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6])  # torch.prod(cell_lengths[i]) # toss angles #
@@ -1188,18 +1190,18 @@ class Modeller():
 
         # generated_packing_coefficients = raw_sample[:,0]
         csd_packing_coefficients = data.y
-
+        raw_csd_packing_coefficients = data.y * self.config.dataDims['target std'] + self.config.dataDims['target mean']
         # den_loss = F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none') # raw value
         # den_loss = torch.abs(torch.sqrt(F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))) # abs(sqrt()) is a soft rescaling to avoid gigantic losses
         den_loss = torch.log(1 + F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))  # log(1+loss) is a better soft rescaling to avoid gigantic losses
-        cutoff = 0.75 # linear density gradient
+        cutoff = 1 # linear density gradient
         #packing_loss = F.relu(-(raw_packing_coefficients))  # linear gradient - always maximize density
         packing_loss = torch.exp(F.relu(-(raw_packing_coefficients - cutoff))) - 1  # exponential loss below a cutoff
 
         if self.config.test_mode:
             assert torch.sum(torch.isnan(den_loss)) == 0
 
-        return den_loss, generated_packing_coefficients.cpu().detach().numpy(), csd_packing_coefficients.cpu().detach().numpy(), packing_loss
+        return den_loss, raw_packing_coefficients.cpu().detach().numpy(), raw_csd_packing_coefficients.cpu().detach().numpy(), packing_loss
 
     def training_prep(self):
         dataset_builder = BuildDataset(self.config, pg_dict=self.point_groups,

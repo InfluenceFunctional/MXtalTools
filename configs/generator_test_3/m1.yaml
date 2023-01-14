@@ -1,10 +1,36 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
 skip_run_init: False
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 991
+anomaly_detection: False
+mode: gan # 'gan' or 'regression' or 'figures'
+gan_loss: standard #wasserstein # standard #distance
+new_generation: True # new way of defining asymmetric unit
+train_generator_density: False
+train_generator_packing: False
+train_generator_vdw: False
+train_generator_adversarially: True
+train_discriminator_adversarially: True
+train_discriminator_on_randn: False
+train_discriminator_on_noise: False
+generator_noise_level: 0.1 # -1 for wide range test # noise for distorted generation
+generator_similarity_penalty: 0
+extra_test_period: 1
+sample_after_training: False
+sample_ind: 0
+sample_steps: 10
+sample_move_size: 0.05
+extra_test_set_paths: null #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
+                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
+                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
+                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_dataset',
+                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/bt_31_targets',]
+d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminator_931'
+g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_951'
+
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures'
 gan_loss: standard #wasserstein # standard #distance
