@@ -1192,6 +1192,7 @@ class Modeller():
         # den_loss = F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none') # raw value
         # den_loss = torch.abs(torch.sqrt(F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))) # abs(sqrt()) is a soft rescaling to avoid gigantic losses
         den_loss = torch.log(1 + F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
+
         cutoff = 0.75 # linear density gradient
         packing_loss = F.relu(-(raw_packing_coefficients - cutoff))  # linear gradient below some cutoff
         #packing_loss = torch.exp(F.relu(-(raw_packing_coefficients - cutoff))) - 1  # exponential loss below a cutoff

@@ -169,11 +169,21 @@ def ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list,
         mol_centroid_dists = torch.cdist(ref_mol_centroid[None, :], all_mol_centroids, p=2)[0]
         ref_mol_radius = torch.max(torch.cdist(ref_mol_centroid[None,:], full_supercell_coords[in_mol_inds]))
 
-        # ignore atoms which are more than mol_radius + conv_cutoff + buffer
-        convolve_mol_inds = torch.where((mol_centroid_dists <= (2*ref_mol_radius + cutoff + 0.1)))[0]
+        successful_gconv = False
+        extra_cutoff = 0
+        while successful_gconv == False:
+            # ignore atoms which are more than mol_radius + conv_cutoff + buffer
+            convolve_mol_inds = torch.where((mol_centroid_dists <= (2*ref_mol_radius + cutoff + extra_cutoff + 0.1)))[0]
+
+            if len(convolve_mol_inds) <= mol_n_atoms: # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
+                extra_cutoff += 0.5
+            else:
+                successful_gconv = True
 
         ref_mol_inds = torch.ones(len(convolve_mol_inds) * mol_n_atoms, dtype=int).to(ref_cell.device) # only index molecules which will be kept
         ref_mol_inds[in_mol_inds] = 0
+
+        assert len(convolve_mol_inds) > mol_n_atoms
 
         convolve_atom_inds = (torch.arange(mol_n_atoms)[:,None] + convolve_mol_inds * mol_n_atoms).T.reshape(len(convolve_mol_inds) * mol_n_atoms) # looks complicated but it's fast
 
