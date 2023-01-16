@@ -44,7 +44,8 @@ def cell_vol(v, a):
     cos_a = np.cos(a)  # in natural units
 
     ''' Calculate volume of the unit cell '''
-    vol = v[0] * v[1] * v[2] * np.sqrt(1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2])
+    val = 1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2]
+    vol = v[0] * v[1] * v[2] * np.sqrt(np.abs(val))  # technically a signed quanitity
 
     return vol
 

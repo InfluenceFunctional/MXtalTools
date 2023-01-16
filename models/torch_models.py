@@ -358,7 +358,8 @@ def vdW_penalty(crystaldata, vdw_radii, return_atomwise = False):
     atom_radii = [vdw_radii_vector[elements[0]], vdw_radii_vector[elements[1]]]
     radii_sums = atom_radii[0] + atom_radii[1]
     radii_adjusted_dists = dists - radii_sums
-    penalties = torch.clip(torch.exp(-radii_adjusted_dists) - 1,min=0)
+    penalties = torch.clip(torch.exp(-radii_adjusted_dists / radii_sums) - 1,min=0) / 1.71828 # strictly normed vdW loss
+    #penalties = torch.pow(F.relu(-radii_adjusted_dists),2)
     scores_list = [torch.mean(penalties[crystal_number == ii]) for ii in range(crystaldata.num_graphs)]
     scores = torch.stack(scores_list)
 
@@ -370,7 +371,7 @@ def vdW_penalty(crystaldata, vdw_radii, return_atomwise = False):
         return scores
 
 
-def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, vdw_radii = None, vdw_tagging = False):
+def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, inclusion_distance = True):
     '''
     generate an ASE Atoms object from a crystaldata object
 
@@ -384,16 +385,33 @@ def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_le
     else:
         atom_inds = torch.arange(len(data.x))
 
+
+
     if exclusion_level == 'ref only':
         inside_inds = torch.where(data.aux_ind == 0)[0]
         new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
         atom_inds = new_atom_inds
+        coords = data.pos[atom_inds].cpu().detach().numpy()
+
     elif exclusion_level == 'convolve with':
         inside_inds = torch.where(data.aux_ind < 2)[0]
         new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
         atom_inds = new_atom_inds
+        coords = data.pos[atom_inds].cpu().detach().numpy()
 
-    coords = data.pos[atom_inds].cpu().detach().numpy()
+    elif exclusion_level == 'distance':
+        crystal_coords = data.pos[atom_inds]
+        crystal_inds = data.aux_ind[atom_inds]
+
+        canonical_conformer_inds = torch.where(crystal_inds == 0)[0]
+        mol_centroid = crystal_coords[canonical_conformer_inds].mean(0)
+        mol_radius = torch.max(torch.cdist(mol_centroid[None], crystal_coords[canonical_conformer_inds],p=2))
+        in_range_inds = torch.where((torch.cdist(mol_centroid[None], crystal_coords,p=2) < (mol_radius + inclusion_distance))[0])[0]
+        atom_inds = in_range_inds
+        coords = crystal_coords[atom_inds].cpu().detach().numpy()
+    else:
+        coords = data.pos[atom_inds].cpu().detach().numpy()
+
     if highlight_aux:  # highlight the atom aux index
         numbers = data.aux_ind[atom_inds].cpu().detach().numpy() + 6
     else:
@@ -401,11 +419,5 @@ def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_le
 
     cell = data.T_fc[index].T.cpu().detach().numpy()
     mol = Atoms(symbols=numbers, positions=coords, cell=cell)
-    if vdw_tagging:
-        pass
-        #scores, all_penalties, edges = vdW_penalty(data, vdw_radii, return_atomwise = True)
-        #useful_edges = edges[:,torch.where(data.batch[edges[0]] == index)[0]]
-        #useful_penalties = all_penalties[torch.where(data.batch[edges[0]] == index)[0]]
 
-        #mol.set_tags(vdw_penalties)
     return mol

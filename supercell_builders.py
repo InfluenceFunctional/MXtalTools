@@ -44,6 +44,30 @@ class SupercellBuilder():
         self.dataDims = dataDims
         self.normed_lattice_vectors = normed_lattice_vectors
         self.new_generation = new_generation
+        # confirm sym ops we are using agree with these settings
+        self.asym_unit_dict = { # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
+            '1':[1,1,1], # P1
+            '2':[.5,1,1], # P-1
+            '3': [1, 1, 0.5],  # P2
+            '4': [1, 1, 0.5],  # P21
+            '5': [0.5, 0.5, 1],  # C121
+            '6': [1, 0.5, 1],  # Pm
+            '7': [.5, 1, 1],  # Pc
+            '8': [.5, 1, 1],  # Cm
+            '9': [.5, 1, 1],  # Cc
+            '10': [.5, 1, 1],  # P2/m
+            '11': [.5, 1, 1],  # P21/m
+            '12': [.5, 1, 1],  # C2/m
+            '13': [.5, 1, 1],  # P2/c
+            '14': [.5, 1, 1],  # P21/c
+            '15': [.5, 1, 1],  # C2/c
+            '16': [.5, 1, 1],  # P222
+            '17': [.5, 1, 1],  # P2221
+            '18': [.5, 1, 1],  # P21212
+            '19': [.5, 1, 1],  # P212121
+            '20': [.5, 1, 1],  # C2221
+            '21': [.5, 1, 1],  # C222
+        }
 
     def build_supercells(self, supercell_data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
                          do_on_cpu=True, override_sg=None, skip_cell_cleaning=False, ref_data=None, debug=False,
@@ -79,7 +103,7 @@ class SupercellBuilder():
         '''
         if copying a reference, extract its parameters
         '''
-        # TODO update analysis with new/finalized asymmetric unit method - currently hardcoded to old method
+        # TODO update analysis with new/finalized asymmetric unit method for all space groups
         if ref_data is not None:  # extract parameters directly from the ref_data
             cell_sample_i, target_handedness, ref_final_coords = \
                 cell_analysis(ref_data.clone(), self.atom_weights,debug=debug,
@@ -119,28 +143,30 @@ class SupercellBuilder():
             coords_list.append(supercell_data.pos[supercell_data.batch == i])
             # masses_list.append(torch.tensor([self.atom_weights[int(number)] for number in atomic_numbers]).to(supercell_data.x.device)) # don't need these
 
-        '''
-        determine standardization rotation
-        '''
-        # we want all rotations from right-handed orientations to right-handed orientations
-        Ip_axes_list = compute_principal_axes_list(coords_list)
-        mol_handedness = compute_Ip_handedness(Ip_axes_list)  # torch.sign(torch.mul(Ip_axes_list[:, 0], torch.cross(Ip_axes_list[:, 1], Ip_axes_list[:, 2], dim=1)).sum(1))
-        if target_handedness is not None:  # if we are supplied with a certain handedness, enforce it
-            disagreements = torch.where(mol_handedness != target_handedness)[0]
-            for n in range(len(disagreements)):  # invert molecules which disagree
-                coords_list[disagreements[n]] = invert_coords(coords_list[disagreements[n]])
 
-        if debug:
+        if False: # mol is pre-standardized and right-handed in the generator now
+            '''
+            determine standardization rotation
+            '''
+            # we want all rotations from right-handed orientations to right-handed orientations
             Ip_axes_list = compute_principal_axes_list(coords_list)
             mol_handedness = compute_Ip_handedness(Ip_axes_list)  # torch.sign(torch.mul(Ip_axes_list[:, 0], torch.cross(Ip_axes_list[:, 1], Ip_axes_list[:, 2], dim=1)).sum(1))
-            assert torch.sum(mol_handedness == target_handedness) == len(mol_handedness)
+            if target_handedness is not None:  # if we are supplied with a certain handedness, enforce it # todo pointless for generator which pre-enforces right-handedness
+                disagreements = torch.where(mol_handedness != target_handedness)[0]
+                for n in range(len(disagreements)):  # invert molecules which disagree
+                    coords_list[disagreements[n]] = invert_coords(coords_list[disagreements[n]])
 
-        normed_alignment_target_list = torch.stack([torch.eye(3) for n in range(len(coords_list))]).to(coords_list[0].device)
-        if target_handedness is not None:  # accomodate for left-handed targets
-            normed_alignment_target_list[:, 0, 0] = target_handedness
+            if debug:
+                Ip_axes_list = compute_principal_axes_list(coords_list)
+                mol_handedness = compute_Ip_handedness(Ip_axes_list)  # torch.sign(torch.mul(Ip_axes_list[:, 0], torch.cross(Ip_axes_list[:, 1], Ip_axes_list[:, 2], dim=1)).sum(1))
+                assert torch.sum(mol_handedness == target_handedness) == len(mol_handedness)
 
-        # rotation matrix between target and current Ip axes
-        std_rotations_list = torch.matmul(normed_alignment_target_list.permute(0, 2, 1), torch.linalg.inv(Ip_axes_list).permute(0, 2, 1))  # RMAT = X_new * X_old^(-1)
+            normed_alignment_target_list = torch.stack([torch.eye(3) for n in range(len(coords_list))]).to(coords_list[0].device)
+            if target_handedness is not None:  # accomodate for left-handed targets
+                normed_alignment_target_list[:, 0, 0] = target_handedness
+
+            # rotation matrix between target and current Ip axes
+            std_rotations_list = torch.matmul(normed_alignment_target_list.permute(0, 2, 1), torch.linalg.inv(Ip_axes_list).permute(0, 2, 1))  # RMAT = X_new * X_old^(-1)
 
         if self.new_generation:
             # in new generation mode, we don't have to identify canonical conformer as it's set automatically
@@ -148,15 +174,15 @@ class SupercellBuilder():
         else:
             canonical_fractional_centroids_list = self.get_canonical_conformer(supercell_data, mol_position, sym_ops_list, debug=(ref_data is not None) and debug)
 
-        if (ref_data is not None) and debug:
-            # apply the rotation and check it
-            std_coords_list = []
-            for i, (rotation, coords, T_fc, new_frac_pos) in enumerate(zip(std_rotations_list, coords_list, T_fc_list, canonical_fractional_centroids_list)):
-                std_coords_list.append(
-                    torch.inner(rotation, coords - coords.mean(0)).T + torch.inner(T_fc, new_frac_pos)
-                )
-            Ip_axes_list = compute_principal_axes_list(std_coords_list)
-            assert F.l1_loss(Ip_axes_list, normed_alignment_target_list, reduction='mean') < 0.1
+            if (ref_data is not None) and debug: # todo this probably has to be rewritten if we want to use ref data
+                # apply the rotation and check it
+                std_coords_list = []
+                for i, (rotation, coords, T_fc, new_frac_pos) in enumerate(zip(std_rotations_list, coords_list, T_fc_list, canonical_fractional_centroids_list)):
+                    std_coords_list.append(
+                        torch.inner(rotation, coords - coords.mean(0)).T + torch.inner(T_fc, new_frac_pos)
+                    )
+                Ip_axes_list = compute_principal_axes_list(std_coords_list)
+                assert F.l1_loss(Ip_axes_list, normed_alignment_target_list, reduction='mean') < 0.1
 
         '''
         get applied rotation
@@ -167,7 +193,8 @@ class SupercellBuilder():
         do standardization & applied rotations & apply translation
         '''
         final_coords_list = []
-        rotations_list = torch.matmul(applied_rotation_list, std_rotations_list)  # list of rotations to apply - order is important since these do not commute
+        #rotations_list = torch.matmul(applied_rotation_list, std_rotations_list)  # list of rotations to apply - order is important since these do not commute
+        rotations_list = applied_rotation_list  # only now applying the rotation matrix - no standardization
 
         for i, (rotation, coords, T_fc, new_frac_pos) in enumerate(zip(rotations_list, coords_list, T_fc_list, canonical_fractional_centroids_list)):
             final_coords_list.append(
@@ -450,7 +477,8 @@ class SupercellBuilder():
         P-1 asymmetric unit bounds
         x[0,.5], yz[0,1]
         '''
-        scaled_mol_position = mol_position
+        #for i in range(len(mol_position)):
+        scaled_mol_position = mol_position.clone()
         scaled_mol_position[:, 0] = mol_position[:, 0] / 2
 
         return scaled_mol_position

@@ -1141,11 +1141,10 @@ class Modeller():
             supercell_data = None
 
         '''
-        evaluate losses
+        #evaluate losses
         
         from ase.visualize import view
-
-        mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(10)]
+        mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(min(10, supercell_data.num_graphs))]
         view(mols)
         '''
         similarity_penalty = self.similarity_penalty(generated_samples, prior)
@@ -1170,8 +1169,7 @@ class Modeller():
 
         gen_packing = []
         gen_raw_packing = []
-        true_packing = []
-        raw_true_packing = []
+
         for i in range(len(raw_sample)):
             if precomputed_volumes is None:
                 volume = cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6])  # torch.prod(cell_lengths[i]) # toss angles #
@@ -1193,10 +1191,10 @@ class Modeller():
         raw_csd_packing_coefficients = data.y * self.config.dataDims['target std'] + self.config.dataDims['target mean']
         # den_loss = F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none') # raw value
         # den_loss = torch.abs(torch.sqrt(F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))) # abs(sqrt()) is a soft rescaling to avoid gigantic losses
-        den_loss = torch.log(1 + F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))  # log(1+loss) is a better soft rescaling to avoid gigantic losses
-        cutoff = 1 # linear density gradient
-        #packing_loss = F.relu(-(raw_packing_coefficients))  # linear gradient - always maximize density
-        packing_loss = torch.exp(F.relu(-(raw_packing_coefficients - cutoff))) - 1  # exponential loss below a cutoff
+        den_loss = torch.log(1 + F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
+        cutoff = 0.75 # linear density gradient
+        packing_loss = F.relu(-(raw_packing_coefficients - cutoff))  # linear gradient below some cutoff
+        #packing_loss = torch.exp(F.relu(-(raw_packing_coefficients - cutoff))) - 1  # exponential loss below a cutoff
 
         if self.config.test_mode:
             assert torch.sum(torch.isnan(den_loss)) == 0
@@ -3671,7 +3669,7 @@ class Modeller():
 
     def get_vdw_loss(self, supercell_data):
         # todo change the below to an optional tracking when not running with vdw loss
-        if supercell_data is not None: # if we already have this, the vdw computation is ~pretty~ cheap
+        if self.config.train_generator_vdw: #supercell_data is not None: # do vdw computation even if we don't need it
             vdw_loss = vdW_penalty(supercell_data, self.vdw_radii)
             if self.config.test_mode:
                 assert torch.sum(torch.isnan(vdw_loss)) == 0
@@ -3755,7 +3753,7 @@ class Modeller():
         cubic defect
         '''
         cleaned_samples = epoch_stats_dict['final generated cell parameters']
-        cubic_distortion = 1 - np.nan_to_num(np.stack([cell_vol(cleaned_samples[i,0:3], cleaned_samples[i,3:6]) / np.prod(cleaned_samples[i,0:3],axis=-1) for i in range(len(cleaned_samples))]))
+        cubic_distortion = np.abs(1 - np.nan_to_num(np.stack([cell_vol(cleaned_samples[i,0:3], cleaned_samples[i,3:6]) / np.prod(cleaned_samples[i,0:3],axis=-1) for i in range(len(cleaned_samples))])))
         wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
         hist = np.histogram(cubic_distortion, bins=256, range=(0,1))
         wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})
@@ -3783,15 +3781,17 @@ class Modeller():
         losses_dict = {key:np.average(value) for i, (key,value) in enumerate(generator_losses.items()) if value is not None}
         wandb.log(losses_dict)
         '''
-        vdw vs packing loss with density loss as color
+        vdw vs packing loss 
         '''
-        if  generator_losses['generator short range loss'] is not None and \
-                generator_losses['generator packing loss'] is not None and \
-                generator_losses['generator density loss'] is not None:
+        if epoch_stats_dict['generator density prediction'] is not None and \
+                epoch_stats_dict['generator density target'] is not None:
 
-            x = generator_losses['generator short range loss']
-            y = generator_losses['generator packing loss']
-            c = generator_losses['generator density loss']
+            x = np.concatenate(epoch_stats_dict['generator density target'])#generator_losses['generator short range loss']
+            y = np.concatenate(epoch_stats_dict['generator density prediction']) #generator_losses['generator packing loss']
+            if epoch_stats_dict['generator short range loss'] is not None:
+                c = epoch_stats_dict['generator short range loss'] #generator_losses['generator density loss']
+            else:
+                c = np.ones(len(x))
             xline = np.asarray([np.amin(x), np.amax(x)])
             linreg_result = linregress(x, y)
             yline = xline * linreg_result.slope + linreg_result.intercept
@@ -3803,7 +3803,7 @@ class Modeller():
             fig.add_trace(go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}'))
 
             fig.layout.margin = layout.margin
-            fig.update_layout(xaxis_title='vdw loss', yaxis_title='packing loss')
+            fig.update_layout(xaxis_title='density target', yaxis_title='density prediction')
 
             #fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
             if self.config.wandb.log_figures:
