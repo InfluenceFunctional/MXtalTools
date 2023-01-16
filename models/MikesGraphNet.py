@@ -221,7 +221,9 @@ class MikesGraphNet(torch.nn.Module):
         """"""
         if self.crystal_mode:
             inside_inds = torch.where(ref_mol_inds == 0)[0]
-            outside_inds = torch.where(ref_mol_inds == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
+            outside_inds = torch.where(ref_mol_inds == 1)[0] # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
+            if len(outside_inds) == 0: # if the crystal is so diffuse that there are no nearby molecules
+                outside_inds = inside_inds.clone() # this is a bit of a hack, but it will run
             inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
             n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]
             # intramolecular edges

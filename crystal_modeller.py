@@ -3798,7 +3798,7 @@ class Modeller():
 
             fig = go.Figure()
             fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                                       mode='markers', marker=dict(color=c), opacity=1))
+                                       mode='markers', marker=dict(color=c), opacity=0.25))
 
             fig.add_trace(go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}'))
 

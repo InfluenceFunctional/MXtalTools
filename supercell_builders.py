@@ -45,29 +45,32 @@ class SupercellBuilder():
         self.normed_lattice_vectors = normed_lattice_vectors
         self.new_generation = new_generation
         # confirm sym ops we are using agree with these settings
+        # todo confirm these make right crystals
         self.asym_unit_dict = { # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
             '1':[1,1,1], # P1
             '2':[.5,1,1], # P-1
             '3': [1, 1, 0.5],  # P2
             '4': [1, 1, 0.5],  # P21
-            '5': [0.5, 0.5, 1],  # C121
+            '5': [0.5, 0.5, 1],  # C2
             '6': [1, 0.5, 1],  # Pm
-            '7': [.5, 1, 1],  # Pc
-            '8': [.5, 1, 1],  # Cm
-            '9': [.5, 1, 1],  # Cc
-            '10': [.5, 1, 1],  # P2/m
-            '11': [.5, 1, 1],  # P21/m
-            '12': [.5, 1, 1],  # C2/m
-            '13': [.5, 1, 1],  # P2/c
-            '14': [.5, 1, 1],  # P21/c
-            '15': [.5, 1, 1],  # C2/c
-            '16': [.5, 1, 1],  # P222
-            '17': [.5, 1, 1],  # P2221
-            '18': [.5, 1, 1],  # P21212
-            '19': [.5, 1, 1],  # P212121
-            '20': [.5, 1, 1],  # C2221
-            '21': [.5, 1, 1],  # C222
+            '7': [1, 0.5, 1],  # Pc
+            '8': [1, 0.25, 1],  # Cm
+            '9': [1, 0.25, 1],  # Cc
+            '10': [.5, 0.5, 1],  # P2/m
+            '11': [1, 0.25, 1],  # P21/m
+            '12': [.5, 0.25, 1],  # C2/m
+            '13': [.5, 1, 0.5],  # P2/c
+            '14': [1, 0.25, 1],  # P21/c
+            '15': [0.5, 0.5, 0.5],  # C2/c
+            '16': [0.5, 0.5, 1],  # P222
+            '17': [0.5, 0.5, 1],  # P2221
+            '18': [0.5, 0.5, 1],  # P21212
+            '19': [0.5, 0.5, 1],  # P212121
+            '20': [0.5, 0.5, 0.5],  # C2221
+            '21': [0.25, 0.5, 1],  # C222
         }
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])
 
     def build_supercells(self, supercell_data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
                          do_on_cpu=True, override_sg=None, skip_cell_cleaning=False, ref_data=None, debug=False,
@@ -472,13 +475,13 @@ class SupercellBuilder():
         -------
         '''
 
-        assert all(sg_ind == 2)
+        #assert all(sg_ind == 2)
         '''
         P-1 asymmetric unit bounds
         x[0,.5], yz[0,1]
         '''
-        #for i in range(len(mol_position)):
         scaled_mol_position = mol_position.clone()
-        scaled_mol_position[:, 0] = mol_position[:, 0] / 2
+        for i, ind in enumerate(sg_ind):
+            scaled_mol_position[i, :] = mol_position[i, :] * self.asym_unit_dict[str(int(ind))]
 
         return scaled_mol_position
