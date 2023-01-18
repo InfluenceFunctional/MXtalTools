@@ -218,7 +218,6 @@ class MikesGraphNet(torch.nn.Module):
         return dist, self.rbf(dist), sbf, tbf, idx_kj, idx_ji
 
     def forward(self, z, pos, batch, ptr, ref_mol_inds=None, return_dists=False, n_repeats=None):
-        """"""
         if self.crystal_mode:
             inside_inds = torch.where(ref_mol_inds == 0)[0]
             outside_inds = torch.where(ref_mol_inds == 1)[0] # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
@@ -283,13 +282,17 @@ class MikesGraphNet(torch.nn.Module):
                 x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
                 x = x + fc(x)  # feature-wise 1D convolution
 
-        if return_dists:  # return dists, batch #, and inside/outside identity
+        if return_dists:  # return dists, batch #, and inside/outside identity, and atomic number
             dist_output = {}
             dist_output['intramolecular dist'] = dist
             dist_output['intramolecular dist batch'] = batch[edge_index[0]]
+            dist_output['intramolecular dist atoms'] = [z[edge_index[0],0].long(), z[edge_index[1],0].long()]
+            dist_output['intramolecular dist inds'] = edge_index
             if self.crystal_mode:
-                dist_output['intermolecular dist'] = dist_inter
+                dist_output['intermolecular dist'] = (pos[edge_index_inter[0]] - pos[edge_index_inter[1]]).pow(2).sum(dim=-1).sqrt()
                 dist_output['intermolecular dist batch'] = batch[edge_index_inter[0]]
+                dist_output['intermolecular dist atoms'] = [z[edge_index_inter[0],0].long(), z[edge_index_inter[1],0].long()]
+                dist_output['intermolecular dist inds'] = edge_index_inter
 
         out = self.output_layer(x)
         assert torch.sum(torch.isnan(out)) == 0
@@ -497,8 +500,8 @@ class GCBlock(torch.nn.Module):
         # convert local information into edge weights
         if tbf is not None:
             # aggregate spherical and torsional messages to radial
-            edge_attr = self.radial_spherical_torsional_aggregation(
-                torch.cat((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf), self.torsional_to_message(tbf)), dim=1))  # combine radial and spherical info in triplet space
+            edge_attr = (self.radial_spherical_torsional_aggregation(
+                torch.cat((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf), self.torsional_to_message(tbf)), dim=1)))  # combine radial and spherical info in triplet space
             # torch.sum(torch.stack((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf), self.torsional_to_message(tbf))),dim=0)
             edge_attr = scatter(edge_attr, idx_ji, dim=0)  # collect triplets back down to pair space
 
@@ -506,11 +509,11 @@ class GCBlock(torch.nn.Module):
             # aggregate spherical messages to radial
             # rbf = self.radial_to_message(rbf)
             # sbf = self.spherical_message(sbf)
-            edge_attr = self.radial_spherical_aggregation(torch.cat((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf)), dim=1))  # combine radial and spherical info in triplet space
+            edge_attr = (self.radial_spherical_aggregation(torch.cat((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf)), dim=1)))  # combine radial and spherical info in triplet space
             edge_attr = scatter(edge_attr, idx_ji, dim=0)  # collect triplets back down to pair space
 
         else:  # no angular information
-            edge_attr = self.radial_to_message(rbf)
+            edge_attr = (self.radial_to_message(rbf))
 
         # convolve # todo only update nodes which will actually pass messages on this round
         x = self.norm(self.node_to_message(x))

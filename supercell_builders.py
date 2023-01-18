@@ -91,7 +91,7 @@ class SupercellBuilder():
             if ref_data is not None:
                 ref_data = ref_data.cpu()
 
-        if target_handedness is not None:
+        if target_handedness is not None: # todo update this when we finalize generator
             target_handedness = target_handedness.to(supercell_data.x.device)
 
         '''
@@ -212,7 +212,7 @@ class SupercellBuilder():
             assert F.l1_loss(Ip_axes_list, target_Ip_axes_list, reduction='mean') < 0.01  # sometimes the rotations aren't perfect, what can I say
 
         '''
-        apply point symmetry in z-batches for speed
+        apply point symmetry in Z-batches for speed
         '''
         reference_cell_list = self.build_unit_cell(supercell_data.clone(), final_coords_list, T_fc_list, T_cf_list, sym_ops_list, debug=(ref_data is not None) and debug)
 

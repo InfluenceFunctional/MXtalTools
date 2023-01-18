@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch
 from utils import softmax_and_score
-from models.torch_models import vdW_penalty
+from models.torch_models import vdw_overlap
 
 '''
 This script uses Markov Chain Monte Carlo, including the STUN algorithm, to optimize a given function
@@ -286,7 +286,7 @@ class Sampler:
                                                         supercell_size=self.supercell_size, graph_convolution_cutoff=self.graph_convolution_cutoff)
             energy = [-softmax_and_score(model(supercells).cpu().detach().numpy())]
 
-            vdw_penalty = vdW_penalty(supercells, self.vdw_radii).cpu().detach().numpy()
+            vdw_penalty = vdw_overlap(supercells, self.vdw_radii).cpu().detach().numpy()
 
             supercells, _, _ = builder.build_supercells(crystaldata.clone(), torch.Tensor(prop_config).cuda(),
                                                         supercell_size=self.supercell_size, graph_convolution_cutoff=self.graph_convolution_cutoff)

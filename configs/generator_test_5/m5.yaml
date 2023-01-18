@@ -4,16 +4,17 @@ device: "cuda"
 skip_run_init: False
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 997
+run_num: 1005
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures'
 gan_loss: standard #wasserstein # standard #distance
 new_generation: True # new way of defining asymmetric unit
-train_generator_density: False # on a target
+train_generator_density: True # on a target
 train_generator_packing: False # simply maximize density
-train_generator_vdw: False
-train_generator_adversarially: True
-train_discriminator_adversarially: True
+train_generator_vdw: True
+train_generator_h_bond: True # maximize h bonding (non-directional)
+train_generator_adversarially: False
+train_discriminator_adversarially: False
 train_discriminator_on_randn: False
 train_discriminator_on_noise: False
 generator_noise_level: 0.1 # -1 for wide range test # noise for distorted generation
@@ -23,10 +24,10 @@ extra_test_set_paths: null #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_te
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
 d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminator_931'
-g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_992'
+g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_995'
 
 seeds:
-  model: 1
+  model: 0
   dataset: 0
 
 # opt - sweep details
@@ -88,23 +89,23 @@ discriminator:
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
-  graph_convolution_layers: 4
-  graph_filters: 128
-  atom_embedding_size: 256
+  graph_convolution_layers: 1
+  graph_filters: 12
+  atom_embedding_size: 12
   graph_norm: layer
-  num_spherical: 6
+  num_spherical: 5
   num_radial: 32
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
   num_attention_heads: 1 # mikenet self attention mode only - must evenly divide graph filters
-  graph_convolution: 'full message passing' # 'full message passing' or schnet or 'self attention'
+  graph_convolution: 'self attention' # 'full message passing' or schnet or 'self attention'
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False #
   pooling: combo
 
-  num_fc_layers: 4
-  fc_depth: 256
+  num_fc_layers: 1
+  fc_depth: 12
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer
@@ -123,16 +124,16 @@ generator:
 
   model_type: mlp # mlp only
   graph_convolution_layers: 4
-  graph_filters: 128
-  atom_embedding_size: 256
+  graph_filters: 256
+  atom_embedding_size: 512
   graph_norm: layer
   num_spherical: 6
-  num_radial: 12
+  num_radial: 32
   graph_convolution_cutoff: 3
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 4 # mikenet self attention mode only - must evenly divide graph filters
-  graph_convolution: 'full message passing' # self attention, schnet, or full message passing
+  num_attention_heads: 8 # mikenet self attention mode only - must evenly divide graph filters
+  graph_convolution: 'self attention' # self attention, schnet, or full message passing
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False
   pooling: combo
@@ -144,7 +145,7 @@ generator:
   conditioner_fc_norm_mode: layer
 
   num_fc_layers: 2
-  fc_depth: 128
+  fc_depth: 512
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer

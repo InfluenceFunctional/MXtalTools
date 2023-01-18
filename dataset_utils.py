@@ -81,7 +81,7 @@ class BuildDataset:
         # define relevant features for analysis
         if self.feature_richness == 'full':
             self.atom_keys = ['atom Z',
-                              'atom mass', 'atom is H bond acceptor', 'atom is H bond acceptor',
+                              'atom mass', 'atom is H bond donor', 'atom is H bond acceptor',
                               'atom valence', 'atom vdW radius',  # 'atom is aromatic', # issue with aromaticity in test sets
                               'atom on a ring', 'atom degree', 'atom electronegativity',
                               'atom electronegativity','atom electronegativity','atom electronegativity']   # 'atom chirality', todo check chirality measure
@@ -297,8 +297,10 @@ class BuildDataset:
                 elif (feature_vector.dtype == float) or (np.issubdtype(feature_vector.dtype, np.floating)):
                     feature_vector = standardize(feature_vector, known_std=stds[key], known_mean=means[key])
                 elif (feature_vector.dtype == int) or (np.issubdtype(feature_vector.dtype, np.integer)):
-                    # if len(np.unique(feature_vector)) > 2:
-                    feature_vector = standardize(feature_vector, known_std=stds[key], known_mean=means[key])
+                    if len(np.unique(feature_vector)) > 2:
+                        feature_vector = standardize(feature_vector, known_std=stds[key], known_mean=means[key])
+                    else:
+                        pass
                     # else:
                     #     feature_vector = np.asarray(feature_vector == np.amax(feature_vector))  # turn it into a bool
 
@@ -576,6 +578,7 @@ class BuildDataset:
 
             'num atom features': len(self.atom_keys) + len(self.mol_keys),
             'num atomwise features': len(self.atom_keys),
+            'atom features': self.atom_keys,
             'atom means': self.atom_means,
             'atom stds': self.atom_stds,
 

@@ -28,6 +28,7 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.express as px
 from sklearn.cluster import AgglomerativeClustering
+from scipy.stats import gaussian_kde
 
 
 class Modeller():
@@ -520,8 +521,8 @@ class Modeller():
         g_loss_record = []
         epoch_stats_dict = {
             'tracking features': [],
-            'generator density target': [],
-            'generator density prediction': [],
+            'generator packing target': [],
+            'generator packing prediction': [],
 
         }
 
@@ -533,8 +534,8 @@ class Modeller():
                 data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
 
             regression_losses_list, predictions, targets = self.regression_loss(generator, data)
-            epoch_stats_dict['generator density prediction'].append(predictions.cpu().detach().numpy())
-            epoch_stats_dict['generator density target'].append(targets.cpu().detach().numpy())
+            epoch_stats_dict['generator packing prediction'].append(predictions.cpu().detach().numpy())
+            epoch_stats_dict['generator packing target'].append(targets.cpu().detach().numpy())
 
             g_loss = regression_losses_list.mean()
             g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
@@ -556,8 +557,8 @@ class Modeller():
         epoch_stats_dict['tracking features'] = np.stack(epoch_stats_dict['tracking features'])
 
         if record_stats:
-            epoch_stats_dict['generator density prediction'] = np.concatenate(epoch_stats_dict['generator density prediction']) if epoch_stats_dict['generator density prediction'] != [] else None
-            epoch_stats_dict['generator density target'] = np.concatenate(epoch_stats_dict['generator density target']) if epoch_stats_dict['generator density target'] != [] else None
+            epoch_stats_dict['generator packing prediction'] = np.concatenate(epoch_stats_dict['generator packing prediction']) if epoch_stats_dict['generator packing prediction'] != [] else None
+            epoch_stats_dict['generator packing target'] = np.concatenate(epoch_stats_dict['generator packing target']) if epoch_stats_dict['generator packing target'] != [] else None
             return g_err, g_loss_record, g_err, g_loss_record, epoch_stats_dict, total_time
         else:
             return g_err, g_loss_record, g_err, g_loss_record, total_time
@@ -583,11 +584,12 @@ class Modeller():
             'discriminator real score': [],
             'discriminator fake score': [],
             'generator density loss': [],
-            'generator adversarial score': [],
+            'generator adversarial loss': [],
             'generator short range loss': [],
+            'generator h bond loss': [],
             'generator packing loss': [],
-            'generator density prediction': [],
-            'generator density target': [],
+            'generator packing prediction': [],
+            'generator packing target': [],
             'generator similarity loss': [],
             'generator intra distance hist': [],
             'generator inter distance hist': [],
@@ -659,26 +661,18 @@ class Modeller():
             '''
             if any((self.config.train_generator_density, self.config.train_generator_adversarially, self.config.train_generator_vdw)):
 
-                adversarial_score, generated_samples, density_loss, density_prediction, density_target, \
-                vdw_loss, generated_dist_dict, supercell_examples, similarity_penalty, packing_loss = \
+                adversarial_score, generated_samples, density_loss, \
+                density_prediction, density_target, \
+                vdw_loss, generated_dist_dict, supercell_examples, \
+                similarity_penalty, packing_loss, h_bond_score = \
                     self.train_generator(generator, discriminator, data, i)
 
-                if (supercell_examples is not None) and (i == rand_batch_ind):  # for a random batch in the epoch
-                    generated_supercell_examples_dict['n examples'] = min(5, len(supercell_examples.ptr) - 1)  # max of 5 examples per epoch
-                    supercell_inds = np.random.choice(len(supercell_examples.ptr) - 1, size=generated_supercell_examples_dict['n examples'], replace=False)
-                    generated_supercell_examples_dict['T fc list'] = [supercell_examples.T_fc[ind].cpu().detach().numpy() for ind in supercell_inds]
-                    generated_supercell_examples_dict['crystal positions'] = [supercell_examples.pos[supercell_examples.batch == ind].cpu().detach().numpy() for ind in supercell_inds]
-                    generated_supercell_examples_dict['atoms'] = [supercell_examples.x[supercell_examples.batch == ind, 0].cpu().detach().numpy() for ind in supercell_inds]
-                    epoch_stats_dict['final generated cell parameters'].extend(supercell_examples.cell_params.cpu().detach().numpy())
-                    del supercell_examples
+                generated_supercell_examples_dict, epoch_stats_dict =\
+                    self.log_supercell_examples(supercell_examples, i, rand_batch_ind, generated_supercell_examples_dict, epoch_stats_dict)
 
-                epoch_stats_dict['generator density prediction'].append(density_prediction)
-                epoch_stats_dict['generator density target'].append(density_target)
-
-                adversarial_loss = self.get_adversarial_loss(adversarial_score)
-
-                g_losses = self.aggregate_generator_losses(
-                    epoch_stats_dict, density_loss, adversarial_score, adversarial_loss, vdw_loss, packing_loss, similarity_penalty)
+                g_losses, epoch_stats_dict = self.aggregate_generator_losses(
+                    epoch_stats_dict, density_loss, adversarial_score, adversarial_score,
+                    vdw_loss, packing_loss, similarity_penalty, density_prediction, density_target, h_bond_score)
 
                 g_loss = g_losses.mean()
                 g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
@@ -763,7 +757,7 @@ class Modeller():
             epoch_stats_dict['scores'].extend(score_on_real.cpu().detach().numpy())
             epoch_stats_dict['intermolecular rdf'].extend(intermolecular_rdfs.cpu().detach().numpy())
             epoch_stats_dict['full rdf'].extend(full_rdfs.cpu().detach().numpy())
-            epoch_stats_dict['vdW penalty'].extend(vdW_penalty(real_supercell_data, self.vdw_radii).cpu().detach().numpy())
+            epoch_stats_dict['vdW penalty'].extend(vdw_overlap(real_supercell_data, self.vdw_radii).cpu().detach().numpy())
 
             if compute_LJ_energy:
                 epoch_stats_dict['atomistic energy'].extend(atomwise_energy)
@@ -1059,7 +1053,7 @@ class Modeller():
             # if self.config.gan_loss == 'distance': # DEPRECATED
             #     self.gan_distance_regression_analysis(config, test_epoch_stats_dict)
 
-            if train_epoch_stats_dict is not None:
+            if test_epoch_stats_dict is not None:
                 if test_epoch_stats_dict['generated cell parameters'] is not None:  # self.config.train_generator_density:
                     self.cell_params_analysis(train_loader, test_epoch_stats_dict)
 
@@ -1067,7 +1061,7 @@ class Modeller():
                     self.cell_generation_analysis(test_epoch_stats_dict)
 
         elif self.config.mode == 'regression':
-            pass  # self.log_regression_accuracy(config, train_epoch_stats_dict, test_epoch_stats_dict)
+            self.log_regression_accuracy(train_epoch_stats_dict, test_epoch_stats_dict)
 
         if (extra_test_dict is not None) and (epoch % self.config.extra_test_period == 0):
             self.blind_test_analysis(train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict)
@@ -1108,7 +1102,7 @@ class Modeller():
 
         else:
             return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), \
-                   real_distances_dict, fake_pairwise_distances_dict, vdW_penalty(real_supercell_data, self.vdw_radii), vdW_penalty(fake_supercell_data, self.vdw_radii)
+                   real_distances_dict, fake_pairwise_distances_dict, vdw_overlap(self.vdw_radii, crystaldata = real_supercell_data), vdw_overlap(self.vdw_radii, crystaldata = fake_supercell_data)
 
     def train_generator(self, generator, discriminator, data, i):
         '''
@@ -1121,15 +1115,15 @@ class Modeller():
             data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
 
         '''
-        get the sample
+        generate samples
         '''
         [[generated_samples, latent], prior, condition] = generator.forward(
             n_samples=data.num_graphs, conditions=data.to(self.config.device), return_latent=True, return_condition=True, return_prior=True)
 
         '''
-        build supercells, if necessary
+        build supercells
         '''
-        if self.config.train_generator_adversarially or self.config.train_generator_vdw or self.config.train_generator_density:
+        if self.config.train_generator_adversarially or self.config.train_generator_vdw:
             supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
                 data.clone(), generated_samples, self.config.supercell_size,
                 self.config.discriminator.graph_convolution_cutoff,
@@ -1138,7 +1132,7 @@ class Modeller():
 
             data.cell_params = supercell_data.cell_params
         else:
-            supercell_data = None
+            supercell_data, generated_cell_volumes = None, None
 
         '''
         #evaluate losses
@@ -1148,16 +1142,17 @@ class Modeller():
         view(mols)
         '''
         similarity_penalty = self.similarity_penalty(generated_samples, prior)
-        discriminator_score, dist_dict = self.score_adversarially(supercell_data, data, discriminator)
-        vdw_loss = self.get_vdw_loss(supercell_data)
-        density_loss, density_prediction, density_target, packing_loss = \
-            self.cell_density_loss(data, generated_samples)
+        discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
+        h_bond_score = self.compute_h_bond_score(supercell_data)
+        vdw_overlap = self.get_vdw_overlap(dist_dict)
+        density_loss, packing_loss, packing_prediction, packing_target, = \
+            self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
 
         return discriminator_score, generated_samples.cpu().detach().numpy(), \
-               density_loss, density_prediction, \
-               density_target, \
-               vdw_loss, dist_dict, \
-               supercell_data, similarity_penalty, packing_loss
+               density_loss, packing_prediction, \
+               packing_target, \
+               vdw_overlap, dist_dict, \
+               supercell_data, similarity_penalty, packing_loss, h_bond_score
 
     def regression_loss(self, generator, data):
         predictions = generator(data.to(generator.model.device))[:, 0]
@@ -1165,42 +1160,33 @@ class Modeller():
         return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions, targets
 
     def cell_density_loss(self, data, raw_sample, precomputed_volumes=None):
-        # compute proposed density and evaluate loss against known volume
+        '''
+        compute packing coefficients for generated cells
+        '''
+        if precomputed_volumes is None:
+            volumes_list = []
+            for i in range(len(raw_sample)):
+                volumes_list.append(cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6]))
+            volumes = torch.stack(volumes_list)
+        else:
+            volumes = precomputed_volumes
 
-        gen_packing = []
-        gen_raw_packing = []
+        generated_packing_coeffs = data.Z * data.tracking[:,self.mol_volume_ind] / volumes
+        standardized_gen_packing_coeffs = (generated_packing_coeffs - self.config.dataDims['target mean']) / self.config.dataDims['target std']
 
-        for i in range(len(raw_sample)):
-            if precomputed_volumes is None:
-                volume = cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6])  # torch.prod(cell_lengths[i]) # toss angles #
-            else:
-                volume = precomputed_volumes[i]
+        csd_packing_coeffs = data.tracking[:,self.config.dataDims['tracking features dict'].index('crystal packing coefficient')]
+        standardized_csd_packing_coeffs = (csd_packing_coeffs - self.config.dataDims['target mean']) / self.config.dataDims['target std'] # requires that packing coefficnet is set as regression target in main
 
-            coeff = data.Z[i] * data.tracking[i, self.mol_volume_ind] / volume
-            std_coeff = (coeff - self.config.dataDims['target mean']) / self.config.dataDims['target std']
 
-            # volumes.append(volume)
-            gen_packing.append(std_coeff)  # compute packing index from given volume and restandardize
-            gen_raw_packing.append(coeff)
-
-        generated_packing_coefficients = torch.stack(gen_packing)
-        raw_packing_coefficients = torch.stack(gen_raw_packing)
-
-        # generated_packing_coefficients = raw_sample[:,0]
-        csd_packing_coefficients = data.y
-        raw_csd_packing_coefficients = data.y * self.config.dataDims['target std'] + self.config.dataDims['target mean']
         # den_loss = F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none') # raw value
-        # den_loss = torch.abs(torch.sqrt(F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))) # abs(sqrt()) is a soft rescaling to avoid gigantic losses
-        den_loss = torch.log(1 + F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
+        den_loss = torch.log(1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
 
-        cutoff = 0.75 # linear density gradient
-        packing_loss = F.relu(-(raw_packing_coefficients - cutoff))  # linear gradient below some cutoff
-        #packing_loss = torch.exp(F.relu(-(raw_packing_coefficients - cutoff))) - 1  # exponential loss below a cutoff
+        packing_loss = F.relu(-(generated_packing_coeffs - 1)) # pack up to 0% free volume
 
         if self.config.test_mode:
             assert torch.sum(torch.isnan(den_loss)) == 0
 
-        return den_loss, raw_packing_coefficients.cpu().detach().numpy(), raw_csd_packing_coefficients.cpu().detach().numpy(), packing_loss
+        return den_loss, packing_loss, generated_packing_coeffs.cpu().detach().numpy(), csd_packing_coeffs.cpu().detach().numpy()
 
     def training_prep(self):
         dataset_builder = BuildDataset(self.config, pg_dict=self.point_groups,
@@ -1339,13 +1325,13 @@ class Modeller():
         target_mean = self.config.dataDims['target mean']
         target_std = self.config.dataDims['target std']
 
-        target = np.asarray(test_epoch_stats_dict['generator density target'])
-        prediction = np.asarray(test_epoch_stats_dict['generator density prediction'])
+        target = np.asarray(test_epoch_stats_dict['generator packing target'])
+        prediction = np.asarray(test_epoch_stats_dict['generator packing prediction'])
         orig_target = target * target_std + target_mean
         orig_prediction = prediction * target_std + target_mean
 
-        train_target = np.asarray(train_epoch_stats_dict['generator density target'])
-        train_prediction = np.asarray(train_epoch_stats_dict['generator density prediction'])
+        train_target = np.asarray(train_epoch_stats_dict['generator packing target'])
+        train_prediction = np.asarray(train_epoch_stats_dict['generator packing prediction'])
         train_orig_target = train_target * target_std + target_mean
         train_orig_prediction = train_prediction * target_std + target_mean
 
@@ -1418,12 +1404,12 @@ class Modeller():
             ))
             wandb.log({'Regressor Loss Correlates': fig})
 
-    def log_regression_accuracy(self, config, train_epoch_stats_dict, test_epoch_stats_dict):
+    def log_regression_accuracy(self, train_epoch_stats_dict, test_epoch_stats_dict):
         target_mean = self.config.dataDims['target mean']
         target_std = self.config.dataDims['target std']
 
-        target = np.asarray(test_epoch_stats_dict['generator density target'])
-        prediction = np.asarray(test_epoch_stats_dict['generator density prediction'])
+        target = np.asarray(test_epoch_stats_dict['generator packing target'])
+        prediction = np.asarray(test_epoch_stats_dict['generator packing prediction'])
         orig_target = target * target_std + target_mean
         orig_prediction = prediction * target_std + target_mean
 
@@ -1434,8 +1420,8 @@ class Modeller():
         predicted_density = molwise_density * orig_prediction * 1.66
 
         if train_epoch_stats_dict is not None:
-            train_target = np.asarray(train_epoch_stats_dict['generator density target'])
-            train_prediction = np.asarray(train_epoch_stats_dict['generator density prediction'])
+            train_target = np.asarray(train_epoch_stats_dict['generator packing target'])
+            train_prediction = np.asarray(train_epoch_stats_dict['generator packing prediction'])
             train_orig_target = train_target * target_std + target_mean
             train_orig_prediction = train_prediction * target_std + target_mean
 
@@ -1534,18 +1520,18 @@ class Modeller():
 
             # correlate losses with molecular features
             tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
-            g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+            g_loss_correlations = np.zeros(self.config.dataDims['num tracking features'])
             features = []
-            for i in range(config.dataDims['num tracking features']):  # not that interesting
-                features.append(config.dataDims['tracking features dict'][i])
+            for i in range(self.config.dataDims['num tracking features']):  # not that interesting
+                features.append(self.config.dataDims['tracking features dict'][i])
                 g_loss_correlations[i] = np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i], rowvar=False)[0, 1]
 
             g_sort_inds = np.argsort(g_loss_correlations)
             g_loss_correlations = g_loss_correlations[g_sort_inds]
 
             fig = go.Figure(go.Bar(
-                y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
-                x=[g_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
+                y=[self.config.dataDims['tracking features dict'][i] for i in range(self.config.dataDims['num tracking features'])],
+                x=[g_loss_correlations[i] for i in range(self.config.dataDims['num tracking features'])],
                 orientation='h',
             ))
             wandb.log({'Regressor Loss Correlates': fig})
@@ -1606,8 +1592,8 @@ class Modeller():
         target_mean = self.config.dataDims['target mean']
         target_std = self.config.dataDims['target std']
 
-        target = np.asarray(test_epoch_stats_dict['generator density target'])
-        prediction = np.asarray(test_epoch_stats_dict['generator density prediction'])
+        target = np.asarray(test_epoch_stats_dict['generator packing target'])
+        prediction = np.asarray(test_epoch_stats_dict['generator packing prediction'])
         orig_target = target * target_std + target_mean
         orig_prediction = prediction * target_std + target_mean
 
@@ -1680,7 +1666,6 @@ class Modeller():
         '''
         4-panel error distribution
         '''
-        from scipy.stats import gaussian_kde
         xy = np.vstack([orig_target, orig_prediction])
         z = gaussian_kde(xy)(xy)
         xy2 = np.vstack([target_density, predicted_density])
@@ -3643,6 +3628,18 @@ class Modeller():
                               extra_test_dict=extra_test_epoch_stats_dict)
 
     def similarity_penalty(self, generated_samples, prior):
+        '''
+        punish batches in which the samples are too self-similar
+
+        Parameters
+        ----------
+        generated_samples
+        prior
+
+        Returns
+        -------
+
+        '''
         if (self.config.generator_similarity_penalty != 0) and (len(generated_samples) > 5):
             similarity_penalty_i = self.config.generator_similarity_penalty * F.relu(-(generated_samples.std(0) - prior.std(0))).mean()  # F.mse_loss(generated_samples.std(0), prior.std(0))  # set variance as at least that of input noise
             similarity_penalty = torch.ones(len(generated_samples)).to(generated_samples.device) * similarity_penalty_i  # copy across batch
@@ -3653,13 +3650,25 @@ class Modeller():
 
         return similarity_penalty
 
-    def score_adversarially(self,supercell_data, data, discriminator):
-        if self.config.train_generator_adversarially:
+    def score_adversarially(self, supercell_data, discriminator):
+        '''
+        get an adversarial score for generated samples
+
+        Parameters
+        ----------
+        supercell_data
+        discriminator
+
+        Returns
+        -------
+
+        '''
+        if supercell_data is not None: # if we built the supercells, we'll want to do this analysis anyway
             if self.config.device.lower() == 'cuda':
                 supercell_data = supercell_data.cuda()
 
             if self.config.test_mode or self.config.anomaly_detection:
-                assert torch.sum(torch.isnan(data.x)) == 0, "NaN in training input"
+                assert torch.sum(torch.isnan(supercell_data.x)) == 0, "NaN in training input"
 
             discriminator_score, dist_dict = self.adversarial_loss(discriminator, supercell_data)
         else:
@@ -3668,50 +3677,45 @@ class Modeller():
 
         return discriminator_score, dist_dict
 
-    def get_vdw_loss(self, supercell_data):
-        # todo change the below to an optional tracking when not running with vdw loss
-        if self.config.train_generator_vdw: #supercell_data is not None: # do vdw computation even if we don't need it
-            vdw_loss = vdW_penalty(supercell_data, self.vdw_radii)
-            if self.config.test_mode:
-                assert torch.sum(torch.isnan(vdw_loss)) == 0
+    def get_vdw_overlap(self, dist_dict = None):
+        if dist_dict is not None: #supercell_data is not None: # do vdw computation even if we don't need it
+            vdw_loss = vdw_overlap(self.vdw_radii, dists = dist_dict['intermolecular dist'],
+                                   atomic_numbers = dist_dict['intermolecular dist atoms'],
+                                   batch_numbers = dist_dict['intermolecular dist batch'])
         else:
             vdw_loss = None
 
         return vdw_loss
 
-    def get_adversarial_loss(self, adversarial_score):
-        if adversarial_score is not None:
-            if self.config.gan_loss == 'wasserstein':
-                adversarial_loss = -adversarial_score  # generator wants to maximize the score (minimize the negative score)
-            elif self.config.gan_loss == 'standard':
-                adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
-                adversarial_loss = -torch.log(adversarial_score)  # modified minimax
-            elif self.config.gan_loss == 'distance':
-                assert False  # implement something here
-            else:
-                print(self.config.gan_loss + ' is not an implemented GAN loss function!')
-                sys.exit()
-
-            return adversarial_loss
-        else:
-            return None
-
-    def aggregate_generator_losses(self,epoch_stats_dict, density_loss, adversarial_score, adversarial_loss, vdw_loss, packing_loss, similarity_penalty):
+    def aggregate_generator_losses(self,epoch_stats_dict, density_loss, adversarial_score, adversarial_loss, vdw_loss, packing_loss, similarity_penalty, density_prediction, density_target, h_bond_score):
         g_losses_list = []
         if self.config.train_generator_density:
             g_losses_list.append(density_loss.float())
         if density_loss is not None:
             epoch_stats_dict['generator density loss'].append(density_loss.cpu().detach().numpy())
 
+        if adversarial_score is not None:
+            if self.config.gan_loss == 'wasserstein':
+                adversarial_loss = -adversarial_score  # generator wants to maximize the score (minimize the negative score)
+            elif self.config.gan_loss == 'standard':
+                softmax_adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
+                adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
+            else:
+                print(self.config.gan_loss + ' is not an implemented GAN loss function!')
+                sys.exit()
+            epoch_stats_dict['generator adversarial loss'].append(adversarial_loss.cpu().detach().numpy())
         if self.config.train_generator_adversarially:
             g_losses_list.append(adversarial_loss)
-        if adversarial_loss is not None:
-            epoch_stats_dict['generator adversarial score'].append(adversarial_score.cpu().detach().numpy())
 
         if self.config.train_generator_vdw:
             g_losses_list.append(vdw_loss)
         if vdw_loss is not None:
             epoch_stats_dict['generator short range loss'].append(vdw_loss.cpu().detach().numpy())
+
+        if self.config.train_generator_h_bond:
+            g_losses_list.append(h_bond_score)
+        if vdw_loss is not None:
+            epoch_stats_dict['generator h bond loss'].append(h_bond_score.cpu().detach().numpy())
 
         if self.config.train_generator_packing:
             g_losses_list.append(packing_loss)
@@ -3726,21 +3730,98 @@ class Modeller():
                 print('similarity penalty was none')
 
         g_losses = torch.sum(torch.stack(g_losses_list), dim=0)
-        return g_losses
+
+        epoch_stats_dict['generator packing prediction'].append(density_prediction)
+        epoch_stats_dict['generator packing target'].append(density_target)
+
+        return g_losses, epoch_stats_dict
 
     def cell_generation_analysis(self, epoch_stats_dict):
         '''
         do analysis and plotting for cell generator
-
-        sample-wise vdw & density
-
-        example structures
-
-        todo: hydrogen bonding analysis, motif diversity
         '''
+        layout = self.plotly_setup()
+        self.log_cubic_defect(epoch_stats_dict)
+        wandb.log({"Generated cell parameter variation":epoch_stats_dict['generated cell parameters'].std(0).mean()})
+        generator_losses, average_losses_dict = self.process_generator_losses(epoch_stats_dict)
+        wandb.log(average_losses_dict)
 
-        import plotly.io as pio
-        pio.renderers.default = 'browser'
+        '''
+        to-log:
+        h-bonds
+        density
+        vdw
+        
+        & combinations        
+        '''
+        self.cell_density_plot(epoch_stats_dict, layout)
+        self.all_losses_plot(generator_losses, layout)
+
+        return None
+
+    def log_supercell_examples(self, supercell_examples, i, rand_batch_ind, generated_supercell_examples_dict, epoch_stats_dict):
+        if (supercell_examples is not None) and (i == rand_batch_ind):  # for a random batch in the epoch
+            generated_supercell_examples_dict['n examples'] = min(5, len(supercell_examples.ptr) - 1)  # max of 5 examples per epoch
+            supercell_inds = np.random.choice(len(supercell_examples.ptr) - 1, size=generated_supercell_examples_dict['n examples'], replace=False)
+            generated_supercell_examples_dict['T fc list'] = [supercell_examples.T_fc[ind].cpu().detach().numpy() for ind in supercell_inds]
+            generated_supercell_examples_dict['crystal positions'] = [supercell_examples.pos[supercell_examples.batch == ind].cpu().detach().numpy() for ind in supercell_inds]
+            generated_supercell_examples_dict['atoms'] = [supercell_examples.x[supercell_examples.batch == ind, 0].cpu().detach().numpy() for ind in supercell_inds]
+            epoch_stats_dict['final generated cell parameters'].extend(supercell_examples.cell_params.cpu().detach().numpy())
+            del supercell_examples
+        return generated_supercell_examples_dict, epoch_stats_dict
+
+
+    def compute_h_bond_score(self, supercell_data = None):
+        if supercell_data is not None: #supercell_data is not None: # do vdw computation even if we don't need it
+            # get the total per-molecule counts
+            mol_acceptors = supercell_data.tracking[:,self.config.dataDims['tracking features dict'].index('molecule num acceptors')]
+            mol_donors = supercell_data.tracking[:,self.config.dataDims['tracking features dict'].index('molecule num donors')]
+
+            '''
+            count pairs within a close enough bubble ~2.7-3.3 Angstroms
+            '''
+            h_bonds_loss = []
+            for i in range(supercell_data.num_graphs):
+                if (mol_donors[i]) > 0 and (mol_acceptors[i] > 0):
+                    batch_inds = torch.arange(supercell_data.ptr[i], supercell_data.ptr[i+1])
+
+                    # find the canonical conformers
+                    canonical_conformers_inds = torch.where(supercell_data.aux_ind[batch_inds] == 0)[0]
+                    outside_inds = torch.where(supercell_data.aux_ind[batch_inds] == 1)[0]
+
+                    # identify and count canonical conformer acceptors and intermolecular donors
+                    canonical_conformer_acceptors_inds = torch.where(supercell_data.x[batch_inds[canonical_conformers_inds], self.config.dataDims['atom features'].index('atom is H bond acceptor')] == 1)[0]
+                    outside_donors_inds = torch.where(supercell_data.x[batch_inds[outside_inds], self.config.dataDims['atom features'].index('atom is H bond donor')] == 1)[0]
+
+                    donors_pos = supercell_data.pos[batch_inds[outside_inds[outside_donors_inds]]]
+                    acceptors_pos = supercell_data.pos[batch_inds[canonical_conformers_inds[canonical_conformer_acceptors_inds]]]
+
+                    dists = torch.cdist(donors_pos, acceptors_pos, p=2)
+
+                    h_bonds =torch.sum(dists < 3.3)
+                    bonds_per_possible_bond = h_bonds / min(mol_donors[i],mol_acceptors[i])
+                    h_bond_loss = 1-torch.tanh(2 * bonds_per_possible_bond) # smoother gradient
+
+                    h_bonds_loss.append(h_bond_loss)
+                else:
+                    h_bonds_loss.append(torch.zeros(1)[0].to(supercell_data.x.device))
+            h_bond_score = torch.stack(h_bonds_loss)
+        else:
+            h_bond_score = None
+
+        return h_bond_score
+
+    def log_cubic_defect(self, epoch_stats_dict):
+        cleaned_samples = epoch_stats_dict['final generated cell parameters']
+        cubic_distortion = np.abs(1 - np.nan_to_num(np.stack([cell_vol(cleaned_samples[i,0:3], cleaned_samples[i,3:6]) / np.prod(cleaned_samples[i,0:3],axis=-1) for i in range(len(cleaned_samples))])))
+        wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
+        hist = np.histogram(cubic_distortion, bins=256, range=(0,1))
+        wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})
+
+    def plotly_setup(self):
+        if self.config.machine == 'local':
+            import plotly.io as pio
+            pio.renderers.default = 'browser'
 
         layout = go.Layout(
             margin=go.layout.Margin(
@@ -3750,66 +3831,69 @@ class Modeller():
                 t=20,  # top margin
             )
         )
-        '''
-        cubic defect
-        '''
-        cleaned_samples = epoch_stats_dict['final generated cell parameters']
-        cubic_distortion = np.abs(1 - np.nan_to_num(np.stack([cell_vol(cleaned_samples[i,0:3], cleaned_samples[i,3:6]) / np.prod(cleaned_samples[i,0:3],axis=-1) for i in range(len(cleaned_samples))])))
-        wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
-        hist = np.histogram(cubic_distortion, bins=256, range=(0,1))
-        wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})
-        '''
-        diversity
-        '''
-        wandb.log({"Generated cell parameter variation":epoch_stats_dict['generated cell parameters'].std(0).mean()})
+        return layout
 
-        '''
-        tracking scores
-        '''
-        generator_loss_keys = ['generator density prediction', 'generator density target', 'generator short range loss', 'generator packing loss', 'generator adversarial score']
+    def process_generator_losses(self, epoch_stats_dict):
+        generator_loss_keys = ['generator packing prediction', 'generator packing target', 'generator short range loss', 'generator packing loss', 'generator adversarial loss', 'generator h bond loss']
         generator_losses = {}
         for key in generator_loss_keys:
             if epoch_stats_dict[key] is not None:
-                generator_losses[key] = np.concatenate(epoch_stats_dict[key])
-                if key == 'generator adversarial score':
-                    generator_losses[key] = softmax_and_score(generator_losses[key])
-                if key == 'generator density target':
-                    generator_losses['generator density loss'] = np.abs(generator_losses['generator density prediction'] - generator_losses['generator density target'])
-                    del generator_losses['generator density prediction'], generator_losses['generator density target']
-            else:
-                generator_losses[key] = None
+                if key == 'generator adversarial loss':
+                    if self.config.train_generator_adversarially:
+                        generator_losses[key[10:]] = np.concatenate(epoch_stats_dict[key])
+                    else:
+                        pass
+                else:
+                    generator_losses[key[10:]] = np.concatenate(epoch_stats_dict[key])
 
-        losses_dict = {key:np.average(value) for i, (key,value) in enumerate(generator_losses.items()) if value is not None}
-        wandb.log(losses_dict)
-        '''
-        vdw vs packing loss 
-        '''
-        if epoch_stats_dict['generator density prediction'] is not None and \
-                epoch_stats_dict['generator density target'] is not None:
-
-            x = np.concatenate(epoch_stats_dict['generator density target'])#generator_losses['generator short range loss']
-            y = np.concatenate(epoch_stats_dict['generator density prediction']) #generator_losses['generator packing loss']
-            if epoch_stats_dict['generator short range loss'] is not None:
-                c = epoch_stats_dict['generator short range loss'] #generator_losses['generator density loss']
+                if key == 'generator packing target':
+                        generator_losses['packing normed mae'] = np.abs(generator_losses['packing prediction'] - generator_losses['packing target'])/generator_losses['packing target']
+                        del generator_losses['packing prediction'], generator_losses['packing target']
             else:
-                c = np.ones(len(x))
+                generator_losses[key[10:]] = None
+
+        return generator_losses, {key:np.average(value) for i, (key,value) in enumerate(generator_losses.items()) if value is not None}
+
+
+    def cell_density_plot(self, epoch_stats_dict, layout):
+        if epoch_stats_dict['generator packing prediction'] is not None and \
+                epoch_stats_dict['generator packing target'] is not None:
+
+            x = np.concatenate(epoch_stats_dict['generator packing target'])#generator_losses['generator short range loss']
+            y = np.concatenate(epoch_stats_dict['generator packing prediction']) #generator_losses['generator packing loss']
+
+            xy = np.vstack([x, y])
+            z = gaussian_kde(xy)(xy)
+
             xline = np.asarray([np.amin(x), np.amax(x)])
             linreg_result = linregress(x, y)
             yline = xline * linreg_result.slope + linreg_result.intercept
 
             fig = go.Figure()
             fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                                       mode='markers', marker=dict(color=c), opacity=0.25))
+                                       mode='markers',marker=dict(color=z), opacity=1))
 
-            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}'))
+            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}, m={linreg_result.slope:.3f}'))
+
+            fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)', showlegend=False))
 
             fig.layout.margin = layout.margin
-            fig.update_layout(xaxis_title='density target', yaxis_title='density prediction')
+            fig.update_layout(xaxis_title='packing target', yaxis_title='packing prediction')
 
             #fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
             if self.config.wandb.log_figures:
-                wandb.log({'vdw vs packing loss':fig})
+                wandb.log({'Cell Packing':fig})
             if (self.config.machine == 'local') and False:
                 fig.show()
 
-        return None
+    def all_losses_plot(self, generator_losses, layout):
+        fig = px.bar(generator_losses)
+
+        fig.layout.margin = layout.margin
+        fig.update_layout(xaxis_title='Sample', yaxis_title='Per-Sample Losses')
+
+        # fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
+        if self.config.wandb.log_figures:
+            wandb.log({'Cell Generation Losses': fig})
+        if (self.config.machine == 'local') and False:
+            fig.show()

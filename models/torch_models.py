@@ -262,8 +262,6 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
 
     dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
 
-
-
     assert not (elementwise and atomwise)
 
     if elementwise:
@@ -326,52 +324,60 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
         return parallel_compute_rdf_torch([dists[crystal_number == n] for n in range(crystaldata.num_graphs)], rrange=rrange, bins=bins, density=density)
 
 
-def vdW_penalty(crystaldata, vdw_radii, return_atomwise = False):
+def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, crystaldata=None, return_atomwise=False):
+    if crystaldata is not None:  # extract distances from the crystal
+        if crystaldata.aux_ind is not None:
+            in_inds = torch.where(crystaldata.aux_ind == 0)[0]
+            # default to always intermolecular distances
+            out_inds = torch.where(crystaldata.aux_ind == 1)[0].to(crystaldata.pos.device)
 
-    if crystaldata.aux_ind is not None:
-        in_inds = torch.where(crystaldata.aux_ind == 0)[0]
-        # default to always intermolecular distances
-        out_inds = torch.where(crystaldata.aux_ind == 1)[0].to(crystaldata.pos.device)
+        else:  # if we lack the info, just do it intramolecular
+            in_inds = torch.arange(len(crystaldata.pos)).to(crystaldata.pos.device)
+            out_inds = in_inds
 
-    else: # if we lack the info, just do it intramolecular
-        in_inds = torch.arange(len(crystaldata.pos)).to(crystaldata.pos.device)
-        out_inds = in_inds
+        '''
+        compute all distances
+        '''
+        edges = asymmetric_radius_graph(crystaldata.pos,
+                                        batch=crystaldata.batch,
+                                        inside_inds=in_inds,
+                                        convolve_inds=out_inds,
+                                        r=6, max_num_neighbors=500, flow='source_to_target')  # max vdW range as six
 
-    '''
-    compute all distances
-    '''
-    edges = asymmetric_radius_graph(crystaldata.pos,
-                                    batch=crystaldata.batch,
-                                    inside_inds=in_inds,
-                                    convolve_inds=out_inds,
-                                    r=6, max_num_neighbors=500, flow='source_to_target') # max vdW range as six
+        crystal_number = crystaldata.batch[edges[0]]
 
-    crystal_number = crystaldata.batch[edges[0]]
+        dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
+        elements = [crystaldata.x[edges[0], 0].long().to(dists.device), crystaldata.x[edges[1], 0].long().to(dists.device)]
+        num_graphs = crystaldata.num_graphs
+    elif dists is not None:  # precomputed intermolecular crystal distances
+        crystal_number = batch_numbers
+        elements = atomic_numbers
+        num_graphs = int(batch_numbers.max() + 1)
 
-    dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
+    else:
+        assert False  # must do one or the other
 
     '''
     compute vdW radii respectfulness
     '''
-    elements = [crystaldata.x[edges[0], 0].long().to(dists.device), crystaldata.x[edges[1], 0].long().to(dists.device)]
     vdw_radii_vector = torch.Tensor(list(vdw_radii.values())).to(dists.device)
     atom_radii = [vdw_radii_vector[elements[0]], vdw_radii_vector[elements[1]]]
     radii_sums = atom_radii[0] + atom_radii[1]
-    radii_adjusted_dists = dists - radii_sums
-    penalties = torch.clip(torch.exp(-radii_adjusted_dists / radii_sums) - 1,min=0) / 1.71828 # strictly normed vdW loss
-    #penalties = torch.pow(F.relu(-radii_adjusted_dists),2)
-    scores_list = [torch.mean(penalties[crystal_number == ii]) for ii in range(crystaldata.num_graphs)]
-    scores = torch.stack(scores_list)
 
+    # penalties = torch.clip(torch.exp(-overlaps / radii_sums) - 1, min=0) / 1.71828  # strictly normed vdW loss
+    penalties = F.relu(-(dists - radii_sums))  # only punish negatives (meaning overlaps)
     assert torch.sum(torch.isnan(penalties)) == 0
-    scores = torch.nan_to_num(scores)
-    if return_atomwise:
-        return scores, penalties, edges
-    else:
-        return scores
+
+    scores = torch.nan_to_num(
+        torch.stack(
+            [torch.mean(penalties[crystal_number == ii]) for ii in range(num_graphs)]
+        )
+    )
+
+    return scores
 
 
-def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, inclusion_distance = True):
+def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, inclusion_distance=True):
     '''
     generate an ASE Atoms object from a crystaldata object
 
@@ -384,8 +390,6 @@ def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_le
         atom_inds = torch.where(data.batch == index)[0]
     else:
         atom_inds = torch.arange(len(data.x))
-
-
 
     if exclusion_level == 'ref only':
         inside_inds = torch.where(data.aux_ind == 0)[0]
@@ -405,8 +409,8 @@ def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_le
 
         canonical_conformer_inds = torch.where(crystal_inds == 0)[0]
         mol_centroid = crystal_coords[canonical_conformer_inds].mean(0)
-        mol_radius = torch.max(torch.cdist(mol_centroid[None], crystal_coords[canonical_conformer_inds],p=2))
-        in_range_inds = torch.where((torch.cdist(mol_centroid[None], crystal_coords,p=2) < (mol_radius + inclusion_distance))[0])[0]
+        mol_radius = torch.max(torch.cdist(mol_centroid[None], crystal_coords[canonical_conformer_inds], p=2))
+        in_range_inds = torch.where((torch.cdist(mol_centroid[None], crystal_coords, p=2) < (mol_radius + inclusion_distance))[0])[0]
         atom_inds = in_range_inds
         coords = crystal_coords[atom_inds].cpu().detach().numpy()
     else:

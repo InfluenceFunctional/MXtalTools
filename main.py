@@ -303,6 +303,7 @@ def add_args(parser):
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_vdw', default=False)  # train generator on adversarially
+    add_bool_arg(parser, 'train_generator_h_bond', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
     add_bool_arg(parser, 'train_discriminator_on_noise', default=False)  # train generator on distorted CSD data
@@ -320,6 +321,7 @@ def add_args(parser):
     update_args2config(args2config, 'train_generator_packing')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_vdw')
+    update_args2config(args2config, 'train_generator_h_bond')
     update_args2config(args2config, 'train_discriminator_adversarially')
     update_args2config(args2config, 'train_discriminator_on_randn')
     update_args2config(args2config, 'train_discriminator_on_noise')
