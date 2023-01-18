@@ -3887,7 +3887,8 @@ class Modeller():
                 fig.show()
 
     def all_losses_plot(self, generator_losses, layout):
-        fig = px.bar(generator_losses)
+        generator_losses_i = {key: value[:100] for i, (key,value) in enumerate(generator_losses.items())} # limite to 100 samples
+        fig = px.bar(generator_losses_i)
 
         fig.layout.margin = layout.margin
         fig.update_layout(xaxis_title='Sample', yaxis_title='Per-Sample Losses')
