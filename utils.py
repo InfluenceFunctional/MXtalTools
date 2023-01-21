@@ -2401,6 +2401,27 @@ def reload_model(model, optimizer, path):
 
     return model, optimizer
 
+
+def compute_num_h_bonds(supercell_data, dataDims, i):
+    batch_inds = torch.arange(supercell_data.ptr[i], supercell_data.ptr[i + 1])
+
+    # find the canonical conformers
+    canonical_conformers_inds = torch.where(supercell_data.aux_ind[batch_inds] == 0)[0]
+    outside_inds = torch.where(supercell_data.aux_ind[batch_inds] == 1)[0]
+
+    # identify and count canonical conformer acceptors and intermolecular donors
+    canonical_conformer_acceptors_inds = torch.where(supercell_data.x[batch_inds[canonical_conformers_inds], dataDims['atom features'].index('atom is H bond acceptor')] == 1)[0]
+    outside_donors_inds = torch.where(supercell_data.x[batch_inds[outside_inds], dataDims['atom features'].index('atom is H bond donor')] == 1)[0]
+
+    donors_pos = supercell_data.pos[batch_inds[outside_inds[outside_donors_inds]]]
+    acceptors_pos = supercell_data.pos[batch_inds[canonical_conformers_inds[canonical_conformer_acceptors_inds]]]
+
+    dists = torch.cdist(donors_pos, acceptors_pos, p=2)
+
+    h_bonds = torch.sum(dists < 3.3)
+
+    return h_bonds
+
 '''
 # look at all kinds of activations
 plt.clf()

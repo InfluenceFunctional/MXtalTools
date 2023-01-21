@@ -274,12 +274,12 @@ class MikesGraphNet(torch.nn.Module):
                         x = convolution(x, rbf_inter, dist_inter, torch.cat((edge_index, edge_index_inter), dim=1),
                                         sbf=sbf_inter, tbf=tbf_inter, idx_kj=idx_kj_inter, idx_ji=idx_ji_inter)  # return only the results of the intermolecular convolution, omitting intermolecular features
                     elif self.crystal_convolution_type == 1:
-                        x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
+                        x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf = tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
 
                     x = x[inside_inds] + fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, and return only those atoms
 
             else:
-                x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
+                x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf = tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
                 x = x + fc(x)  # feature-wise 1D convolution
 
         if return_dists:  # return dists, batch #, and inside/outside identity, and atomic number
@@ -464,7 +464,8 @@ class GCBlock(torch.nn.Module):
         if spherical:  # need more linear layers to aggregate angular information to radial
             assert spherical_dim is not None, "Spherical information must have a dimension != 0 for spherical message aggregation"
             self.spherical_to_message = nn.Linear(radial_dim * spherical_dim, graph_convolution_filters)
-            self.radial_spherical_aggregation = nn.Linear(graph_convolution_filters * 2, graph_convolution_filters)  # torch.add  # could also do dot
+            if not torsional:
+                self.radial_spherical_aggregation = nn.Linear(graph_convolution_filters * 2, graph_convolution_filters)  # torch.add  # could also do dot
         if torsional:
             assert spherical
             self.torsional_to_message = nn.Linear(spherical_dim * spherical_dim * radial_dim, graph_convolution_filters)
@@ -514,6 +515,10 @@ class GCBlock(torch.nn.Module):
 
         else:  # no angular information
             edge_attr = (self.radial_to_message(rbf))
+
+        # sometimes, the are different numbers edges according to spherical and radial bases, so we force them to align
+        if len(edge_attr) != edge_index.shape[1]:
+            edge_index = edge_index[:, :len(edge_attr)]
 
         # convolve # todo only update nodes which will actually pass messages on this round
         x = self.norm(self.node_to_message(x))

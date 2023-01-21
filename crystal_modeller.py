@@ -29,7 +29,10 @@ import plotly.graph_objects as go
 import plotly.express as px
 from sklearn.cluster import AgglomerativeClustering
 from scipy.stats import gaussian_kde
-
+import rdkit.Chem
+import rdkit.Chem.AllChem
+import rdkit.Chem.Draw
+from PIL import Image
 
 class Modeller():
     def __init__(self, config):
@@ -603,9 +606,8 @@ class Modeller():
             'distortion level': [],
             'real vdW penalty': [],
             'fake vdW penalty': [],
+            'generated supercell examples': None,
         }
-
-        generated_supercell_examples_dict = {}
 
         rand_batch_ind = np.random.randint(0, len(dataLoader))
 
@@ -661,14 +663,11 @@ class Modeller():
             '''
             if any((self.config.train_generator_density, self.config.train_generator_adversarially, self.config.train_generator_vdw)):
 
-                adversarial_score, generated_samples, density_loss, \
-                density_prediction, density_target, \
-                vdw_loss, generated_dist_dict, supercell_examples, \
-                similarity_penalty, packing_loss, h_bond_score = \
+                adversarial_score, generated_samples, density_loss, density_prediction, density_target, \
+                vdw_loss, generated_dist_dict, supercell_examples, similarity_penalty, packing_loss, h_bond_score = \
                     self.train_generator(generator, discriminator, data, i)
 
-                generated_supercell_examples_dict, epoch_stats_dict =\
-                    self.log_supercell_examples(supercell_examples, i, rand_batch_ind, generated_supercell_examples_dict, epoch_stats_dict)
+                epoch_stats_dict = self.log_supercell_examples(supercell_examples, i, rand_batch_ind, epoch_stats_dict)
 
                 g_losses, epoch_stats_dict = self.aggregate_generator_losses(
                     epoch_stats_dict, density_loss, adversarial_score, adversarial_score,
@@ -712,7 +711,6 @@ class Modeller():
                     else:
                         epoch_stats_dict[key] = np.asarray(feature)
 
-            epoch_stats_dict['generated supercell examples dict'] = generated_supercell_examples_dict if generated_supercell_examples_dict != {} else None
 
             return d_err, d_loss_record, g_err, g_loss_record, epoch_stats_dict, total_time
         else:
@@ -1144,7 +1142,7 @@ class Modeller():
         similarity_penalty = self.similarity_penalty(generated_samples, prior)
         discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
         h_bond_score = self.compute_h_bond_score(supercell_data)
-        vdw_overlap = self.get_vdw_overlap(dist_dict)
+        vdw_overlap = self.get_vdw_overlap(dist_dict, supercell_data.num_graphs)
         density_loss, packing_loss, packing_prediction, packing_target, = \
             self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
 
@@ -1176,7 +1174,6 @@ class Modeller():
 
         csd_packing_coeffs = data.tracking[:,self.config.dataDims['tracking features dict'].index('crystal packing coefficient')]
         standardized_csd_packing_coeffs = (csd_packing_coeffs - self.config.dataDims['target mean']) / self.config.dataDims['target std'] # requires that packing coefficnet is set as regression target in main
-
 
         # den_loss = F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none') # raw value
         den_loss = torch.log(1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
@@ -2450,23 +2447,33 @@ class Modeller():
                 fig_dict[self.config.dataDims['lattice features'][i] + ' distribution'] = fig
 
             wandb.log(fig_dict)
-
-    def log_molecules(self, generated_supercell_examples_dict):
-        if self.config.wandb.log_figures:
-            for i in range(generated_supercell_examples_dict['n examples']):
-                cell_vectors = generated_supercell_examples_dict['T fc list'][i].T
-                supercell_pos = generated_supercell_examples_dict['crystal positions'][i]
-                supercell_atoms = generated_supercell_examples_dict['atoms'][i]
-
-                ref_cell_size = len(supercell_pos) // (2 * self.config.supercell_size + 1) ** 3
-                ref_cell_pos = supercell_pos[:ref_cell_size]
-
-                ref_cell_centroid = ref_cell_pos.mean(0)
-                max_range = np.amax(np.linalg.norm(cell_vectors, axis=0)) / 1.3
-                keep_pos = np.argwhere(cdist(supercell_pos, ref_cell_centroid[None, :]) < max_range)[:, 0]
-
-                ase.io.write(f'supercell_{i}.pdb', Atoms(symbols=supercell_atoms[keep_pos], positions=supercell_pos[keep_pos], cell=cell_vectors))
-                wandb.log({'Generated Supercells': wandb.Molecule(open(f"supercell_{i}.pdb"))})  # todo find the max number of atoms this thing will take for bonding
+    #
+    # def log_molecules(self, generated_supercell_examples_dict):
+    #     '''
+    #     DEPRECATED
+    #     Parameters
+    #     ----------
+    #     generated_supercell_examples_dict
+    #
+    #     Returns
+    #     -------
+    #
+    #     '''
+    #     if self.config.wandb.log_figures:
+    #         for i in range(generated_supercell_examples_dict['n examples']):
+    #             cell_vectors = generated_supercell_examples_dict['T fc list'][i].T
+    #             supercell_pos = generated_supercell_examples_dict['crystal positions'][i]
+    #             supercell_atoms = generated_supercell_examples_dict['atoms'][i]
+    #
+    #             ref_cell_size = len(supercell_pos) // (2 * self.config.supercell_size + 1) ** 3
+    #             ref_cell_pos = supercell_pos[:ref_cell_size]
+    #
+    #             ref_cell_centroid = ref_cell_pos.mean(0)
+    #             max_range = np.amax(np.linalg.norm(cell_vectors, axis=0)) / 1.3
+    #             keep_pos = np.argwhere(cdist(supercell_pos, ref_cell_centroid[None, :]) < max_range)[:, 0]
+    #
+    #             ase.io.write(f'supercell_{i}.pdb', Atoms(symbols=supercell_atoms[keep_pos], positions=supercell_pos[keep_pos], cell=cell_vectors))
+    #             wandb.log({'Generated Supercells': wandb.Molecule(open(f"supercell_{i}.pdb"))})  # todo find the max number of atoms this thing will take for bonding
 
     def gan_distance_regression_analysis(self, config, test_epoch_stats_dict):
         test_fake_predictions = test_epoch_stats_dict['discriminator fake score']
@@ -3677,11 +3684,12 @@ class Modeller():
 
         return discriminator_score, dist_dict
 
-    def get_vdw_overlap(self, dist_dict = None):
+    def get_vdw_overlap(self, dist_dict = None, num_graphs = None):
         if dist_dict is not None: #supercell_data is not None: # do vdw computation even if we don't need it
             vdw_loss = vdw_overlap(self.vdw_radii, dists = dist_dict['intermolecular dist'],
                                    atomic_numbers = dist_dict['intermolecular dist atoms'],
-                                   batch_numbers = dist_dict['intermolecular dist batch'])
+                                   batch_numbers = dist_dict['intermolecular dist batch'],
+                                   num_graphs = num_graphs)
         else:
             vdw_loss = None
 
@@ -3746,29 +3754,22 @@ class Modeller():
         generator_losses, average_losses_dict = self.process_generator_losses(epoch_stats_dict)
         wandb.log(average_losses_dict)
 
-        '''
-        to-log:
-        h-bonds
-        density
-        vdw
-        
-        & combinations        
-        '''
         self.cell_density_plot(epoch_stats_dict, layout)
         self.all_losses_plot(generator_losses, layout)
+        self.save_3d_structure_examples(epoch_stats_dict)
+        self.sample_wise_analysis(epoch_stats_dict, layout)
+
 
         return None
 
-    def log_supercell_examples(self, supercell_examples, i, rand_batch_ind, generated_supercell_examples_dict, epoch_stats_dict):
+    def log_supercell_examples(self, supercell_examples, i, rand_batch_ind, epoch_stats_dict):
         if (supercell_examples is not None) and (i == rand_batch_ind):  # for a random batch in the epoch
-            generated_supercell_examples_dict['n examples'] = min(5, len(supercell_examples.ptr) - 1)  # max of 5 examples per epoch
-            supercell_inds = np.random.choice(len(supercell_examples.ptr) - 1, size=generated_supercell_examples_dict['n examples'], replace=False)
-            generated_supercell_examples_dict['T fc list'] = [supercell_examples.T_fc[ind].cpu().detach().numpy() for ind in supercell_inds]
-            generated_supercell_examples_dict['crystal positions'] = [supercell_examples.pos[supercell_examples.batch == ind].cpu().detach().numpy() for ind in supercell_inds]
-            generated_supercell_examples_dict['atoms'] = [supercell_examples.x[supercell_examples.batch == ind, 0].cpu().detach().numpy() for ind in supercell_inds]
+            epoch_stats_dict['generated supercell examples'] = supercell_examples.cpu().detach()
+            if supercell_examples.num_graphs > 100: # todo find a way to take only the few that we need
+                print('WARNING. Saving over 100 supercells for analysis')
             epoch_stats_dict['final generated cell parameters'].extend(supercell_examples.cell_params.cpu().detach().numpy())
             del supercell_examples
-        return generated_supercell_examples_dict, epoch_stats_dict
+        return epoch_stats_dict
 
 
     def compute_h_bond_score(self, supercell_data = None):
@@ -3783,33 +3784,19 @@ class Modeller():
             h_bonds_loss = []
             for i in range(supercell_data.num_graphs):
                 if (mol_donors[i]) > 0 and (mol_acceptors[i] > 0):
-                    batch_inds = torch.arange(supercell_data.ptr[i], supercell_data.ptr[i+1])
+                    h_bonds = compute_num_h_bonds(supercell_data, self.config.dataDims, i)
 
-                    # find the canonical conformers
-                    canonical_conformers_inds = torch.where(supercell_data.aux_ind[batch_inds] == 0)[0]
-                    outside_inds = torch.where(supercell_data.aux_ind[batch_inds] == 1)[0]
-
-                    # identify and count canonical conformer acceptors and intermolecular donors
-                    canonical_conformer_acceptors_inds = torch.where(supercell_data.x[batch_inds[canonical_conformers_inds], self.config.dataDims['atom features'].index('atom is H bond acceptor')] == 1)[0]
-                    outside_donors_inds = torch.where(supercell_data.x[batch_inds[outside_inds], self.config.dataDims['atom features'].index('atom is H bond donor')] == 1)[0]
-
-                    donors_pos = supercell_data.pos[batch_inds[outside_inds[outside_donors_inds]]]
-                    acceptors_pos = supercell_data.pos[batch_inds[canonical_conformers_inds[canonical_conformer_acceptors_inds]]]
-
-                    dists = torch.cdist(donors_pos, acceptors_pos, p=2)
-
-                    h_bonds =torch.sum(dists < 3.3)
                     bonds_per_possible_bond = h_bonds / min(mol_donors[i],mol_acceptors[i])
-                    h_bond_loss = 1-torch.tanh(2 * bonds_per_possible_bond) # smoother gradient
+                    h_bond_loss = 1-torch.tanh(2 * bonds_per_possible_bond) # smoother gradient about 0
 
                     h_bonds_loss.append(h_bond_loss)
                 else:
                     h_bonds_loss.append(torch.zeros(1)[0].to(supercell_data.x.device))
-            h_bond_score = torch.stack(h_bonds_loss)
+            h_bond_loss_f = torch.stack(h_bonds_loss)
         else:
-            h_bond_score = None
+            h_bond_loss_f = None
 
-        return h_bond_score
+        return h_bond_loss_f
 
     def log_cubic_defect(self, epoch_stats_dict):
         cleaned_samples = epoch_stats_dict['final generated cell parameters']
@@ -3834,7 +3821,7 @@ class Modeller():
         return layout
 
     def process_generator_losses(self, epoch_stats_dict):
-        generator_loss_keys = ['generator packing prediction', 'generator packing target', 'generator short range loss', 'generator packing loss', 'generator adversarial loss', 'generator h bond loss']
+        generator_loss_keys = ['generator packing prediction', 'generator packing target', 'generator short range loss', 'generator adversarial loss', 'generator h bond loss']
         generator_losses = {}
         for key in generator_loss_keys:
             if epoch_stats_dict[key] is not None:
@@ -3898,3 +3885,75 @@ class Modeller():
             wandb.log({'Cell Generation Losses': fig})
         if (self.config.machine == 'local') and False:
             fig.show()
+
+
+    def save_3d_structure_examples(self, epoch_stats_dict):
+        num_samples = 10
+        generated_supercell_examples = epoch_stats_dict['generated supercell examples']
+        crystals = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_aux = False, index = i, exclusion_level='distance', inclusion_distance=4) for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
+        for i in range(len(crystals)):
+            ase.io.write(f'supercell_{i}.pdb', crystals[i])
+            wandb.log({'Generated Supercells': wandb.Molecule(open(f"supercell_{i}.pdb"))})
+
+        mols = [ase_mol_from_crystaldata(generated_supercell_examples, index = i, exclusion_level='ref only') for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
+        for i in range(len(mols)):
+            ase.io.write(f'conformer_{i}.pdb', mols[i])
+            wandb.log({'Single Conformers': wandb.Molecule(open(f"conformer_{i}.pdb"))})
+
+        return None
+
+    def sample_wise_analysis(self, epoch_stats_dict, layout):
+        supercell_examples = epoch_stats_dict['generated supercell examples']
+        vdw_loss, vdw_penalties = vdw_overlap(self.vdw_radii, crystaldata = supercell_examples, return_atomwise = True)
+
+        # mol_acceptors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num acceptors')]
+        # mol_donors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num donors')]
+        # possible_h_bonds = torch.amin(torch.vstack((mol_acceptors, mol_donors)), dim=0)
+        # num_h_bonds = torch.stack([compute_num_h_bonds(supercell_examples, self.config.dataDims, i) for i in range(supercell_examples.num_graphs)])
+
+        volumes_list = []
+        for i in range(supercell_examples.num_graphs):
+            volumes_list.append(cell_vol_torch(supercell_examples.cell_params[i, 0:3], supercell_examples.cell_params[i, 3:6]))
+        volumes = torch.stack(volumes_list)
+        generated_packing_coeffs = (supercell_examples.Z * supercell_examples.tracking[:, self.mol_volume_ind] / volumes).cpu().detach().numpy()
+        target_packing = (supercell_examples.y * self.config.dataDims['target std'] + self.config.dataDims['target mean']).cpu().detach().numpy()
+
+        fig = go.Figure()
+        for i in range(min(supercell_examples.num_graphs,10)):
+            fig.add_trace(go.Violin(x=np.log10(vdw_penalties[i].cpu().detach()), side='positive', orientation='h',
+                                    bandwidth=0.01, width=1, showlegend=False, opacity=1, name=f'{supercell_examples.csd_identifier[i]} t{target_packing[i]:.2f} p{generated_packing_coeffs[i]:.2f}'),
+                          )
+
+            molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
+            try:
+                rdkit.Chem.AllChem.Compute2DCoords(molecule)
+                rdkit.Chem.AllChem.GenerateDepictionMatching2DStructure(molecule, molecule)
+                pil_image = rdkit.Chem.Draw.MolToImage(molecule, size=(500, 500))
+                pil_image.save('mol_img.png', 'png')
+                # Add trace
+                img = Image.open("mol_img.png")
+                # Add images
+                fig.add_layout_image(
+                    dict(
+                        source=img,
+                        xref="x domain", yref="y domain",
+                        x=0.1 + (0.1 * (i % 2)), y=i / 10.5 + 0.05,
+                        sizex=0.2, sizey=0.2,
+                        xanchor="center",
+                        yanchor="middle",
+                        opacity=0.75
+                    )
+                )
+            except:
+                pass
+
+        # fig.layout.paper_bgcolor = 'rgba(0,0,0,0)'
+        # fig.layout.plot_bgcolor = 'rgba(0,0,0,0)'
+        fig.layout.margin = layout.margin
+        fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
+
+        # fig.write_image('../paper1_figs/sampling_scores.png')
+        wandb.log({'Generated Sample Analysis': fig})
+        #fig.show()
+
+        return None

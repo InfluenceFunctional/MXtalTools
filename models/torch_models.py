@@ -324,7 +324,7 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
         return parallel_compute_rdf_torch([dists[crystal_number == n] for n in range(crystaldata.num_graphs)], rrange=rrange, bins=bins, density=density)
 
 
-def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, crystaldata=None, return_atomwise=False):
+def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, num_graphs=None, crystaldata=None, return_atomwise=False):
     if crystaldata is not None:  # extract distances from the crystal
         if crystaldata.aux_ind is not None:
             in_inds = torch.where(crystaldata.aux_ind == 0)[0]
@@ -352,7 +352,7 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
     elif dists is not None:  # precomputed intermolecular crystal distances
         crystal_number = batch_numbers
         elements = atomic_numbers
-        num_graphs = int(batch_numbers.max() + 1)
+        num_graphs = num_graphs
 
     else:
         assert False  # must do one or the other
@@ -370,11 +370,21 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
 
     scores = torch.nan_to_num(
         torch.stack(
+            # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
+            [torch.max(penalties[crystal_number == ii]) if (len(penalties[crystal_number == ii]) > 0) else torch.zeros(1)[0].to(penalties.device) for ii in range(num_graphs)]
+        )
+    )
+    mean_scores = torch.nan_to_num(
+        torch.stack(
             [torch.mean(penalties[crystal_number == ii]) for ii in range(num_graphs)]
         )
     )
-
-    return scores
+    tot_scores = (scores + mean_scores) / 2 # combine mean score with max score
+    assert len(tot_scores) == num_graphs
+    if return_atomwise:
+        return tot_scores, [penalties[crystal_number == ii] for ii in range(num_graphs)]
+    else:
+        return tot_scores
 
 
 def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, inclusion_distance=True):
@@ -411,8 +421,8 @@ def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_le
         mol_centroid = crystal_coords[canonical_conformer_inds].mean(0)
         mol_radius = torch.max(torch.cdist(mol_centroid[None], crystal_coords[canonical_conformer_inds], p=2))
         in_range_inds = torch.where((torch.cdist(mol_centroid[None], crystal_coords, p=2) < (mol_radius + inclusion_distance))[0])[0]
-        atom_inds = in_range_inds
-        coords = crystal_coords[atom_inds].cpu().detach().numpy()
+        atom_inds = atom_inds[in_range_inds]
+        coords = crystal_coords[in_range_inds].cpu().detach().numpy()
     else:
         coords = data.pos[atom_inds].cpu().detach().numpy()
 
@@ -421,7 +431,11 @@ def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_le
     else:
         numbers = data.x[atom_inds, 0].cpu().detach().numpy()
 
-    cell = data.T_fc[index].T.cpu().detach().numpy()
+    if index is not None:
+        cell = data.T_fc[index].T.cpu().detach().numpy()
+    else:
+        cell = data.T_fc[0].T.cpu().detach().numpy()
+
     mol = Atoms(symbols=numbers, positions=coords, cell=cell)
 
     return mol

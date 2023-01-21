@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from utils import standardize
 from dataset_management.CrystalData import CrystalData
-from torch_geometric.data import Data
 import sys
 from torch_geometric.loader import DataLoader
 import tqdm
