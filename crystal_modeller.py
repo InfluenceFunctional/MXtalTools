@@ -809,68 +809,6 @@ class Modeller():
 
         return correlations, keys
 
-    def check_inversion_quality(self, model, test_loader, config):  # todo deprecated - need normed cell params
-        # check for quality of the inversion
-        if self.n_conditional_features > 0:
-            if self.config.generator.conditioning_mode == 'molecule features':
-                test_conditions = next(iter(test_loader)).to(config.device)
-                test_sample = model.sample(test_conditions.num_graphs, conditions=test_conditions)
-                test_conditions.y[0][:, :-self.n_conditional_features] = test_sample
-                zs, _, _ = model.forward(test_conditions)
-                test_conditions.y[0] = torch.cat((zs, test_conditions.y[0][:, -self.n_conditional_features:]), dim=1)
-                test_sample2, _ = model.backward(test_conditions)
-            elif self.config.generator.conditioning_mode == 'graph model':
-                test_conditions = next(iter(test_loader)).to(config.device)
-                test_sample = model.sample(test_conditions.num_graphs, conditions=test_conditions)
-                test_conditions.y[0] = test_sample
-                zs, _, _ = model.forward(test_conditions)
-                test_conditions.y[0] = zs
-                test_sample2, _ = model.backward(test_conditions)
-        else:
-            test_conditions = next(iter(test_loader)).to(config.device)
-            test_sample = model.sample(test_conditions.num_graphs, conditions=None)
-            test_conditions.y[0] = test_sample
-            zs, _, _ = model.forward(test_conditions)
-            test_conditions.y[0] = zs
-            test_sample2, _ = model.backward(test_conditions)
-        diff = torch.mean((torch.abs(test_sample - test_sample2))).cpu().detach().numpy()
-        print('Average Inversion Error is {:.6f} per sample'.format(diff))
-        if diff > 0.01:
-            print("Warning! Inversion error is notably large! The flow is likely broken!")
-        wandb.log({'Inversion error': diff})
-        del zs, test_sample, test_sample2
-
-    def get_sample_efficiency(self, dataDims, targets, renormalized_samples, sample_efficiency_dict, feature_accuracy_dict, sampler):
-        assert renormalized_samples.ndim == 3
-        samples = renormalized_samples[:len(targets)]
-        targets = np.asarray(targets)[:len(samples)]
-        renormalized_targets = np.zeros_like(targets)
-        for i in range(dataDims['num lattice features']):
-            renormalized_targets[:, i] = targets[:, i] * dataDims['lattice stds'][i] + dataDims['lattice means'][i]
-
-        targets_rep = np.repeat(renormalized_targets[:, None, :], samples.shape[1], axis=1)
-        # denominator = np.repeat(np.repeat(np.quantile(renormalized_targets,0.95,axis=0)[None,None,:],samples.shape[0],axis=0),samples.shape[1],axis=1)
-        denominator = targets_rep.copy()
-        for i in range(dataDims['num lattice features']):
-            if dataDims['lattice dtypes'][i] == 'bool':
-                denominator[:, :, i] = 1
-
-        errors = np.abs((targets_rep - samples) / denominator)
-        feature_mae = np.mean(errors, axis=(0, 1))
-
-        for i in range(dataDims['num lattice features']):
-            feature_accuracy_dict[sampler + ' ' + dataDims['lattice features'][i] + ' mae'] = feature_mae[i]
-            for cutoff in [0.01, 0.025, 0.05, 0.075, 0.1, 0.2, 0.3]:
-                feature_accuracy_dict[sampler + ' ' + dataDims['lattice features'][i] + ' efficiency at {}'.format(cutoff)] = np.average(errors[:, :, i] < cutoff)
-
-        mae_error = np.mean(errors, axis=2)
-
-        for cutoff in [0.01, 0.025, 0.05, 0.075, 0.1, 0.2, 0.3]:
-            sample_efficiency_dict[sampler + ' efficiency at {}'.format(cutoff)] = np.average(mae_error < cutoff)
-
-        sample_efficiency_dict[sampler + ' average mae'] = np.average(mae_error)
-
-        return sample_efficiency_dict, feature_accuracy_dict
 
     def get_generation_conditions(self, train_loader, test_loader, model, config):  # todo deprecated - fix data.y norming
         generation_conditions = []
@@ -889,56 +827,6 @@ class Modeller():
 
         del generation_conditions
         return targets, train_data
-
-    def sample_nf(self, n_repeats, config, model, test_loader):
-        nf_samples = [[] for _ in range(n_repeats)]
-        print('Sampling from NF')
-        for j in tqdm.tqdm(range(n_repeats)):
-            for i, data in enumerate(test_loader):
-                minibatch_size = data.num_graphs
-                if self.config.generator.conditional_modelling:
-                    if self.config.device == 'cuda':
-                        data = data.cuda()
-                    nf_samples[j].extend(model.sample(
-                        minibatch_size,
-                        conditions=data
-                    ).cpu().detach().numpy())
-                else:
-                    nf_samples[j].extend(model.sample(
-                        minibatch_size,
-                    ).cpu().detach().numpy())
-        return np.asarray(nf_samples).transpose((1, 0, 2))  # molecule - n_samples - feature dimension
-
-    def get_pc_scores(self, sample_dict, pca):
-        # score everything via pca
-        pc_scores_dict = {}
-        for i, (key, value) in enumerate(sample_dict.items()):
-            if value.ndim == 3:
-                pc_scores_dict[key] = pca.score_samples(value.reshape(value.shape[0] * value.shape[1], value.shape[2]))
-            else:
-                pc_scores_dict[key] = pca.score_samples(value)
-        return pc_scores_dict
-
-    def get_nf_scores(self, sample_dict, model, config, dataloader, n_repeats, dataset_length):  # todo deprecated - fix data.y norming
-        nf_scores_dict = {}
-        for i, (key, value) in enumerate(sample_dict.items()):
-            scores = []
-            for n, data in enumerate(dataloader):
-                sample = sample_dict[key]
-                if sample.ndim == 2:
-                    if sample.shape[0] == dataset_length * n_repeats:
-                        sample = sample.reshape(dataset_length, n_repeats, sample.shape[-1])  # roll up the first dim for the indepenent and pc sampels
-                    elif sample.shape[0] == dataset_length:
-                        sample = sample[:, None, :]  # the real data only has one repeat
-                sample = torch.Tensor(sample[n * self.sampling_batch_size:n * self.sampling_batch_size + self.sampling_batch_size:1]).to(config.device)
-                for j in range(sample.shape[1]):  # todo this is very likely broken
-                    if self.n_conditional_features > 0:
-                        data.y[0] = sample[:, j]
-
-                    scores.extend(model.score(data.to(config.device)).cpu().detach().numpy())
-            nf_scores_dict[key] = np.asarray(scores)
-
-        return nf_scores_dict
 
     def log_gan_loss(self, metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
                      d_tr_record, d_te_record, g_tr_record, g_te_record):
@@ -1006,29 +894,6 @@ class Modeller():
 
         wandb.log(special_losses)
 
-    def params_f_to_c(self, cell_lengths, cell_angles):
-        cell_vector_a, cell_vector_b, cell_vector_c = \
-            torch.tensor(coor_trans('f_to_c', np.array((1, 0, 0)), cell_lengths, cell_angles)), \
-            torch.tensor(coor_trans('f_to_c', np.array((0, 1, 0)), cell_lengths, cell_angles)), \
-            torch.tensor(coor_trans('f_to_c', np.array((0, 0, 1)), cell_lengths, cell_angles))
-
-        return np.concatenate((cell_vector_a[None, :], cell_vector_b[None, :], cell_vector_c[None, :]), axis=0), cell_vol(cell_lengths, cell_angles)
-
-    def get_CSD_crystal(self, reader, csd_identifier, mol_n_atoms, z_value):
-        crystal = reader.crystal(csd_identifier)
-        tile_len = 1
-        n_tiles = tile_len ** 3
-        ref_cell = crystal.packing(box_dimensions=((0, 0, 0), (tile_len, tile_len, tile_len)), inclusion='CentroidIncluded')
-
-        ref_cell_coords_c = np.zeros((n_tiles * z_value, mol_n_atoms, 3), dtype=np.float_)
-        ref_cell_centroids_c = np.zeros((n_tiles * z_value, 3), dtype=np.float_)
-
-        for ind, component in enumerate(ref_cell.components):
-            if ind < z_value:  # some cells have spurious little atoms counted as extra components. Just hope the early components are the good ones
-                ref_cell_coords_c[ind, :] = np.asarray([atom.coordinates for atom in component.atoms if atom.atomic_number != 1])  # filter hydrogen
-                ref_cell_centroids_c[ind, :] = np.average(ref_cell_coords_c[ind], axis=0)
-
-        return ref_cell_coords_c
 
     def log_gan_accuracy(self, epoch, train_loader,
                          train_epoch_stats_dict, test_epoch_stats_dict,
@@ -1222,14 +1087,21 @@ class Modeller():
 
         return dataset_builder
 
-    def MCMC_sampling(self, discriminator, test_loader, sample_ind, sample_steps, move_size, test_epoch_stats_dict, config):
+    def MCMC_sampling(self, generator, discriminator, test_loader, sample_ind, sample_steps, move_size, test_epoch_stats_dict):
         '''
         Stun MC annealing on a pretrained discriminator
         '''
         from torch_geometric.loader.dataloader import Collater
 
         n_samples = self.config.final_batch_size
-        single_mol_data = test_loader.dataset[sample_ind]
+        n_samples = self.config.final_batch_size
+        extra_test_set_path = ['C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets', ]
+        extra_test_loader = get_extra_test_loader(self.config, extra_test_set_path, dataDims=self.config.dataDims,
+                                                  pg_dict=self.point_groups, sg_dict=self.space_groups, lattice_dict=self.lattice_type)
+        blind_test_identifiers = [
+            'OBEQUJ', 'OBEQOD','NACJAF'] # targets XVI, XVII, XXII
+        single_mol_data = extra_test_loader.dataset[extra_test_loader.csd_identifier.index(blind_test_identifiers[-1])]
+
         collater = Collater(None, None)
         single_mol_data = collater([single_mol_data for n in range(n_samples)])
         self.randn_generator.cpu()
@@ -1242,8 +1114,8 @@ class Modeller():
             seedInd=0,
             acceptance_mode='stun',
             debug=True,
-            init_temp=1,
-            random_generator=self.randn_generator,
+            init_temp=.1,
+            random_generator=generator,
             move_size=move_size,
             supercell_size=self.config.supercell_size,
             graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
@@ -1272,7 +1144,7 @@ class Modeller():
         #                                                                 supercell_size=1, graph_convolution_cutoff=7)
         #
         # best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular=True)
-        self.report_sampling(test_epoch_stats_dict, sampling_dict, self.config.sample_ind)
+        self.report_sampling(sampling_dict, extra_test_loader)
 
         return sampling_dict
 
@@ -1310,88 +1182,6 @@ class Modeller():
 
         return generated_samples_i, handedness, epoch_stats_dict
 
-    def log_aux_regression(self, config, train_epoch_stats_dict, test_epoch_stats_dict):
-        target_mean = self.config.dataDims['target mean']
-        target_std = self.config.dataDims['target std']
-
-        target = np.asarray(test_epoch_stats_dict['generator packing target'])
-        prediction = np.asarray(test_epoch_stats_dict['generator packing prediction'])
-        orig_target = target * target_std + target_mean
-        orig_prediction = prediction * target_std + target_mean
-
-        train_target = np.asarray(train_epoch_stats_dict['generator packing target'])
-        train_prediction = np.asarray(train_epoch_stats_dict['generator packing prediction'])
-        train_orig_target = train_target * target_std + target_mean
-        train_orig_prediction = train_prediction * target_std + target_mean
-
-        losses = ['normed error', 'abs normed error', 'squared error']
-        loss_dict = {}
-        losses_dict = {}
-        for loss in losses:
-            if loss == 'normed error':
-                loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
-            elif loss == 'abs normed error':
-                loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
-            elif loss == 'squared error':
-                loss_i = (orig_target - orig_prediction) ** 2
-            losses_dict[loss] = loss_i  # huge unnecessary upload
-            loss_dict[loss + ' mean'] = np.mean(loss_i)
-            loss_dict[loss + ' std'] = np.std(loss_i)
-            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
-
-        linreg_result = linregress(orig_target, orig_prediction)
-        loss_dict['Regression R'] = linreg_result.rvalue
-        loss_dict['Regression slope'] = linreg_result.slope
-        wandb.log(loss_dict)
-
-        # log loss distribution
-        if self.config.wandb.log_figures:  # todo clean
-            # predictions vs target trace
-            xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
-            fig = go.Figure()
-            fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
-            fig.update_traces(contours_coloring="fill")
-            fig.update_traces(contours_showlines=False)
-            fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
-            fig.add_trace(go.Scattergl(x=xline, y=xline))
-            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-            wandb.log({'Test Packing Coefficient': fig})
-
-            xline = np.linspace(max(min(train_orig_target), min(train_orig_prediction)), min(max(train_orig_target), max(train_orig_prediction)), 10)
-            fig = go.Figure()
-            fig.add_trace(go.Histogram2dContour(x=train_orig_target, y=train_orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
-            fig.update_traces(contours_coloring="fill")
-            fig.update_traces(contours_showlines=False)
-            fig.add_trace(go.Scattergl(x=train_orig_target, y=train_orig_prediction, mode='markers', showlegend=True, opacity=0.5))
-            fig.add_trace(go.Scattergl(x=xline, y=xline))
-            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-            wandb.log({'Train Packing Coefficient': fig})
-
-            fig = go.Figure()
-            fig.add_trace(go.Histogram(x=train_orig_prediction - train_orig_target,
-                                       histnorm='probability density',
-                                       nbinsx=100,
-                                       name="Error Distribution",
-                                       showlegend=False))
-            wandb.log({'Regression Error Distribution': fig})
-
-            # correlate losses with molecular features
-            tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
-            g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
-            features = []
-            for i in range(config.dataDims['num tracking features']):  # not that interesting
-                features.append(config.dataDims['tracking features dict'][i])
-                g_loss_correlations[i] = np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i], rowvar=False)[0, 1]
-
-            g_sort_inds = np.argsort(g_loss_correlations)
-            g_loss_correlations = g_loss_correlations[g_sort_inds]
-
-            fig = go.Figure(go.Bar(
-                y=[config.dataDims['tracking features dict'][i] for i in range(config.dataDims['num tracking features'])],
-                x=[g_loss_correlations[i] for i in range(config.dataDims['num tracking features'])],
-                orientation='h',
-            ))
-            wandb.log({'Regressor Loss Correlates': fig})
 
     def log_regression_accuracy(self, train_epoch_stats_dict, test_epoch_stats_dict):
         target_mean = self.config.dataDims['target mean']
@@ -2467,44 +2257,6 @@ class Modeller():
     #             ase.io.write(f'supercell_{i}.pdb', Atoms(symbols=supercell_atoms[keep_pos], positions=supercell_pos[keep_pos], cell=cell_vectors))
     #             wandb.log({'Generated Supercells': wandb.Molecule(open(f"supercell_{i}.pdb"))})  # todo find the max number of atoms this thing will take for bonding
 
-    def gan_distance_regression_analysis(self, config, test_epoch_stats_dict):
-        test_fake_predictions = test_epoch_stats_dict['discriminator fake score']
-        test_real_predictions = test_epoch_stats_dict['discriminator real score']
-        test_fake_distances = test_epoch_stats_dict['generated sample distances']
-        test_real_distances = np.zeros_like(test_real_predictions)
-        orig_target = np.concatenate((test_fake_distances, test_real_distances))
-        orig_prediction = np.concatenate((test_fake_predictions, test_real_predictions))
-
-        xline = np.linspace(max(min(orig_target), min(orig_prediction)), min(max(orig_target), max(orig_prediction)), 10)
-        fig = go.Figure()
-        fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40, showlegend=True))
-        fig.update_traces(contours_coloring="fill")
-        fig.update_traces(contours_showlines=False)
-        fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
-        fig.add_trace(go.Scattergl(x=xline, y=xline))
-        fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-        wandb.log({'Distance Trace': fig})
-
-        losses = ['normed error', 'abs normed error', 'squared error']
-        loss_dict = {}
-        losses_dict = {}
-        for loss in losses:
-            if loss == 'normed error':
-                loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
-            elif loss == 'abs normed error':
-                loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
-            elif loss == 'squared error':
-                loss_i = (orig_target - orig_prediction) ** 2
-            losses_dict[loss] = loss_i  # huge unnecessary upload
-            loss_dict[loss + ' mean'] = np.mean(loss_i)
-            loss_dict[loss + ' std'] = np.std(loss_i)
-            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
-
-        linreg_result = linregress(orig_target, orig_prediction)
-        loss_dict['Regression R'] = linreg_result.rvalue
-        loss_dict['Regression slope'] = linreg_result.slope
-        wandb.log(loss_dict)
-
     def blind_test_analysis(self, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict):
         '''
         analyze and plot
@@ -3440,30 +3192,16 @@ class Modeller():
         #     plt.xlabel("Number of points in node (or index of point if no parenthesis).")
         #     plt.show()
 
-    def report_sampling(self, test_epoch_stats_dict, sampling_dict, sample_ind):
+    def report_sampling(self, sampling_dict, loader):
         '''
         score
         stun
         acceptance rate
         temperature
         overall distribution
+        CLUSTERING
         '''
-        # if False:
-        # files = [
-        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_901.npy',
-        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_902.npy',
-        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_903.npy',
-        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_904.npy',
-        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_905.npy',
-        #     'C:/Users\mikem\Desktop\CSP_runs\sampling_1/sampling_output_run_906.npy']
-        files = [
-            'D:\sampling_2/sampling_output_run_910.npy',
-            'D:\sampling_2/sampling_output_run_911.npy',
-            'D:\sampling_2/sampling_output_run_912.npy',
-            'D:\sampling_2/sampling_output_run_917.npy',
-            'D:\sampling_2/sampling_output_run_918.npy'
-        ]
-        # sampling_dict = np.load(files[0],allow_pickle=True).item()
+
         layout = go.Layout(
             margin=go.layout.Margin(
                 l=0,  # left margin
@@ -3552,7 +3290,6 @@ class Modeller():
             pio.renderers.default = 'browser'
             fig.show()
 
-        aa = 1
 
         '''
         full telemetry

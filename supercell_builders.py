@@ -228,22 +228,23 @@ class SupercellBuilder():
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
 
-        if return_energy:  # expensive
-            mols = [Atoms(positions=reference_cell_list[n].cpu().detach().numpy().reshape(reference_cell_list[n].shape[1] * reference_cell_list[n].shape[0], 3),
-                          symbols=atoms_list[n][:, 0].repeat(supercell_data.Z[n]).cpu().detach().numpy(),
-                          cell=supercell_data.T_fc[n].T.cpu().detach().numpy()
-                          ) for n in range(len(reference_cell_list))]
-
-            pot_en = np.zeros(len(mols))
-            for i, mol in enumerate(mols):
-                mol.calc = lj.LennardJones()
-                mol.set_pbc([True, True, True])
-                pot_en[i] = mol.get_potential_energy() / len(mol)
-
-            return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list, pot_en
-
-        else:
-            return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list
+        #
+        # if return_energy:  # expensive
+        #     mols = [Atoms(positions=reference_cell_list[n].cpu().detach().numpy().reshape(reference_cell_list[n].shape[1] * reference_cell_list[n].shape[0], 3),
+        #                   symbols=atoms_list[n][:, 0].repeat(supercell_data.Z[n]).cpu().detach().numpy(),
+        #                   cell=supercell_data.T_fc[n].T.cpu().detach().numpy()
+        #                   ) for n in range(len(reference_cell_list))]
+        #
+        #     pot_en = np.zeros(len(mols))
+        #     for i, mol in enumerate(mols):
+        #         mol.calc = lj.LennardJones()
+        #         mol.set_pbc([True, True, True])
+        #         pot_en[i] = mol.get_potential_energy() / len(mol)
+        #
+        #     return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list, pot_en
+        #
+        # else:
+        return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list
 
     def real_cell_to_supercell(self, supercell_data, config, do_on_cpu=True, return_overlaps=False):
         '''

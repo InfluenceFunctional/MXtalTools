@@ -2294,6 +2294,7 @@ def compute_rdf_distance(target_rdf, sample_rdf):
     normed against target rdf (sample is not strictly a PDF in this case)
     averaged over nnz elements - only works for single type of molecule per call
     '''
+    # TODO upgrade and make this a symmetric distance
 
     nonzero_element_pairs = np.sum(np.sum(target_rdf, axis=1) > 0)
     target_CDF = np.cumsum(target_rdf, axis=-1)

@@ -103,6 +103,7 @@ class crystal_generator(nn.Module):
             if self.conditioning_mode == 'graph model':
                 # reorient molecules into inertial frame
                 conditions = align_crystaldata_to_principal_axes(conditions)
+
             conditions_encoding = self.conditioner(conditions)
         else:
             conditions_encoding = None

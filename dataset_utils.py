@@ -90,6 +90,7 @@ class BuildDataset:
                                   'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                                   'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
                                   'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
+                                  'molecule volume', # dummy variable
                                   ]
         elif self.feature_richness == 'minimal':
             self.atom_keys = ['atom Z']
@@ -103,15 +104,11 @@ class BuildDataset:
                              'crystal z value', 'crystal z prime',  # 'crystal point group',
                              ]
 
-        # for coupling NF models, must be an even number of these
         self.lattice_keys = ['crystal cell a', 'crystal cell b', 'crystal cell c',
                              'crystal alpha', 'crystal beta', 'crystal gamma',
                              'crystal asymmetric unit centroid x', 'crystal asymmetric unit centroid y', 'crystal asymmetric unit centroid z',
                              'crystal asymmetric unit rotvec 1', 'crystal asymmetric unit rotvec 2', 'crystal asymmetric unit rotvec 3',
                              ]
-
-        if len(self.lattice_keys) % 2 != 0:  # coupling flow model requires an even number of dimensions
-            print('For coupling flow, expect # latent dimensions to be even!')
 
         return
 

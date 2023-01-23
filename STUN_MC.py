@@ -30,9 +30,11 @@ class Sampler:
                  init_temp=1,
                  move_size=0.01,
                  supercell_size=1,
-                 graph_convolution_cutoff=7,
+                 graph_convolution_cutoff=6,
                  vdw_radii=None,
                  preset_minimum=None,
+                 reset_patience = 1e3,
+                 new_minimum_patience = 1e3,
                  ):
         if acceptance_mode == 'stun':
             self.STUN = 1
@@ -40,9 +42,9 @@ class Sampler:
             self.STUN = 0
         self.debug = debug
         self.target_acceptance_rate = 0.234  # found this in a paper - optimal MCMC acceptance ratio
+        self.acceptance_history = 100
         self.deltaIter = int(1)  # get outputs every this many of iterations with one iteration meaning one move proposed for each "particle" on average
         self.randintsResampleAt = int(1e4)  # larger takes up more memory but increases speed
-        self.recordMargin = 0.2  # how close does a state have to be to the best found minimum to be recorded
         self.gammas = gammas
         self.nruns = len(gammas)
         self.temp0 = init_temp  # initial temperature for sampling runs
@@ -54,6 +56,8 @@ class Sampler:
         self.graph_convolution_cutoff = graph_convolution_cutoff
         self.vdw_radii = vdw_radii
         self.preset_minimum = preset_minimum
+        self.reset_patience = reset_patience
+        self.new_minimum_patience = new_minimum_patience
 
         np.random.seed(int(seedInd))  # initial seed is randomized over pipeline iterations
 
@@ -71,7 +75,7 @@ class Sampler:
             "uncertainties": np.stack(self.all_uncertainties).T,
             "vdw penalties": np.stack(self.all_vdw_penalties).T,
         }
-
+        assert False # save samples for later reconstruction
         if self.debug:
             outputs['temperature'] = np.stack(self.temprec)
             outputs['acceptance ratio'] = np.stack(self.accrec)
@@ -84,9 +88,9 @@ class Sampler:
 
     def makeAConfig(self, crystaldata):
         '''
-        initialize a random config with appropriate padding
         :return:
         '''
+        assert 1 == 2 # set this up for our new generator
         return self.generator.forward(crystaldata, num_samples=crystaldata.num_graphs).cpu().detach().numpy()
 
     def resetConfig(self, crystaldata, ind):
@@ -315,10 +319,10 @@ class Sampler:
         # 1) if rejection rate is too high, switch to tunneling mode, if it is too low, switch to local search mode
         # acceptanceRate = len(self.stunRec)/self.iter # global acceptance rate
 
-        history = 100
+
         for i in range(self.nruns):
-            acceptedRecently = np.sum((self.iter - np.asarray(self.recInds[i][-history:])) < history)  # rolling acceptance rate - how many accepted out of the last hundred iters
-            self.acceptanceRate[i] = acceptedRecently / history
+            acceptedRecently = np.sum((self.iter - np.asarray(self.recInds[i][-self.acceptance_history:])) < self.acceptance_history)  # rolling acceptance rate - how many accepted out of the last hundred iters
+            self.acceptanceRate[i] = acceptedRecently / self.acceptance_history
 
             if self.acceptanceRate[i] < self.target_acceptance_rate:
                 self.temperature[i] = self.temperature[i] * (1 + np.random.random(1)[0])  # modulate temperature semi-stochastically
@@ -326,8 +330,8 @@ class Sampler:
                 self.temperature[i] = self.temperature[i] * (1 - np.random.random(1)[0])
 
             # if we haven't found a new minimum in a long time, randomize input and do a temperature boost
-            if (self.iter - self.resetInd[i]) > 1e3:  # within xx of the last reset
-                if (self.iter - self.new_optima_inds[i][-1]) > 1e3:  # haven't seen a new near-minimum in xx steps
+            if (self.iter - self.resetInd[i]) > self.reset_patience:  # within xx of the last reset
+                if (self.iter - self.new_optima_inds[i][-1]) > self.new_minimum_patience:  # haven't seen a new near-minimum in xx steps
                     self.resetInd[i] = self.iter
                     self.resetConfig(crystaldata, i)  # re-randomize selected trajectories
                     self.temperature[i] = self.temp0  # boost temperature
