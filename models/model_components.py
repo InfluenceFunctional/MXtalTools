@@ -139,3 +139,4 @@ class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation
         x = self.linear(x).squeeze(-1).squeeze(-1)  # apply linear coefficients and sum
 
         return x
+

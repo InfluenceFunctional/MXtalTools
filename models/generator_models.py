@@ -5,7 +5,7 @@ import sys
 from torch.distributions import MultivariateNormal, Uniform
 from models.torch_models import molecule_graph_model, independent_gaussian_model
 from models.model_components import general_MLP, Normalization
-from crystal_builder_tools import compute_crystaldata_principal_axes
+from crystal_builder_tools import align_crystaldata_to_principal_axes
 
 
 class crystal_generator(nn.Module):
@@ -15,9 +15,9 @@ class crystal_generator(nn.Module):
         self.device = config.device
         self.generator_model_type = config.generator.model_type
         self.conditioning_mode = config.generator.conditioning_mode
-
+        self.latent_dim = config.generator.prior_dimension
         if config.generator.prior == 'multivariate normal':
-            self.prior = MultivariateNormal(torch.zeros(dataDims['num lattice features']), torch.eye(dataDims['num lattice features']))
+            self.prior = MultivariateNormal(torch.zeros(self.latent_dim), torch.eye(self.latent_dim))
         elif config.generator.prior.lower() == 'uniform':
             self.prior = Uniform(low=0, high=1)
         else:
@@ -74,7 +74,7 @@ class crystal_generator(nn.Module):
                                      filters=config.generator.fc_depth,
                                      norm=config.generator.fc_norm_mode,
                                      dropout=config.generator.fc_dropout_probability,
-                                     input_dim=dataDims['num lattice features'],
+                                     input_dim=self.latent_dim,
                                      output_dim=dataDims['num lattice features'],
                                      conditioning_dim=config.generator.fc_depth,
                                      seed=config.seeds.model
@@ -94,12 +94,15 @@ class crystal_generator(nn.Module):
     def forward(self, n_samples, z=None, conditions=None, return_latent=False, return_condition=False, return_prior=False):
         if z is None:  # sample random numbers from simple prior
             z = self.sample_latent(n_samples)
+            # todo add something here to muck up the prior
+            # if torch.mean(z) > 0.1: # some fraction of the time
+            #     z = z**3 # extra noise
             # z = torch.zeros_like(z0)
 
         if conditions is not None:
             if self.conditioning_mode == 'graph model':
                 # reorient molecules into inertial frame
-                conditions = compute_crystaldata_principal_axes(conditions)
+                conditions = align_crystaldata_to_principal_axes(conditions)
             conditions_encoding = self.conditioner(conditions)
         else:
             conditions_encoding = None

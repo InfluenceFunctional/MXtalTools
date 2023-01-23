@@ -74,7 +74,7 @@ class SupercellBuilder():
 
     def build_supercells(self, supercell_data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
                          do_on_cpu=True, override_sg=None, skip_cell_cleaning=False, ref_data=None, debug=False,
-                         standardized_sample=True, return_energy=False):
+                         standardized_sample=True):
         '''
         convert cell parameters to reference cell in a fast, differentiable, invertible way
         convert reference cell to NxN supercell
@@ -245,7 +245,7 @@ class SupercellBuilder():
         else:
             return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list
 
-    def build_supercells_from_dataset(self, supercell_data, config, do_on_cpu=True, return_overlaps=False, return_energy=False, supercell_inclusion_level='ref mol', override_supercell_size=None):
+    def real_cell_to_supercell(self, supercell_data, config, do_on_cpu=True, return_overlaps=False):
         '''
         should be faster than the old way
         pretty quick on cpu
@@ -253,11 +253,6 @@ class SupercellBuilder():
 
         if do_on_cpu:
             supercell_data = supercell_data.cpu()
-
-        if override_supercell_size is not None:
-            supercell_size = override_supercell_size
-        else:
-            supercell_size = config.supercell_size
 
         T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(
             cell_lengths=supercell_data.cell_params[:, 0:3], cell_angles=supercell_data.cell_params[:, 3:6])
@@ -271,9 +266,9 @@ class SupercellBuilder():
 
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            ref_to_supercell(
-                supercell_data.ref_cell_pos, cell_vector_list, T_fc_list, atoms_list, supercell_data.Z,
-                supercell_scale=supercell_size, cutoff=config.discriminator.graph_convolution_cutoff)
+            ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list, T_fc_list,
+                             atoms_list, supercell_data.Z, supercell_scale=config.supercell_size,
+                             cutoff=config.discriminator.graph_convolution_cutoff)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
 
@@ -281,21 +276,21 @@ class SupercellBuilder():
         #     overlaps_list = compute_lattice_vector_overlap(masses_list, final_coords_list, T_cf_list, self.normed_lattice_vectors=self.self.normed_lattice_vectors)
         #     return supercell_data.to(config.device), overlaps_list
         # else:
-        if return_energy:
-            mols = [Atoms(positions=supercell_data.ref_cell_pos[n].reshape(supercell_data.ref_cell_pos[n].shape[1] * supercell_data.ref_cell_pos[n].shape[0], 3),
-                          symbols=atoms_list[n][:, 0].repeat(supercell_data.Z[n]).cpu().detach().numpy(),
-                          cell=supercell_data.T_fc[n].T.cpu().detach().numpy()
-                          ) for n in range(supercell_data.num_graphs)]
-
-            pot_en = np.zeros(len(mols))
-            for i, mol in enumerate(mols):
-                mol.calc = lj.LennardJones()
-                mol.set_pbc([True, True, True])
-                pot_en[i] = mol.get_potential_energy() / len(mol)
-
-            return supercell_data.to(config.device), pot_en
-        else:
-            return supercell_data.to(config.device)
+        # if return_energy:
+        #     mols = [Atoms(positions=supercell_data.ref_cell_pos[n].reshape(supercell_data.ref_cell_pos[n].shape[1] * supercell_data.ref_cell_pos[n].shape[0], 3),
+        #                   symbols=atoms_list[n][:, 0].repeat(supercell_data.Z[n]).cpu().detach().numpy(),
+        #                   cell=supercell_data.T_fc[n].T.cpu().detach().numpy()
+        #                   ) for n in range(supercell_data.num_graphs)]
+        #
+        #     pot_en = np.zeros(len(mols))
+        #     for i, mol in enumerate(mols):
+        #         mol.calc = lj.LennardJones()
+        #         mol.set_pbc([True, True, True])
+        #         pot_en[i] = mol.get_potential_energy() / len(mol)
+        #
+        #     return supercell_data.to(config.device), pot_en
+        # else:
+        return supercell_data.to(config.device)
 
     def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True):
         if skip_cell_cleaning:  # don't clean up

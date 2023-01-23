@@ -1,70 +1,17 @@
-from math import sqrt, pi as PI
+from math import pi as PI
 import sys
-import sympy as sym
-import tqdm
-from torch_geometric.nn.models.dimenet_utils import (bessel_basis,
-                                                     associated_legendre_polynomials,
-                                                     sph_harm_prefactor)
-import time
 
-import numpy as np
+from models.bases import TorsionalEmbedding, SphericalBasisLayer, GaussianEmbedding, BesselBasisLayer
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from models.global_aggregation import SphGeoPooling
 from torch_scatter import scatter
 from torch_sparse import SparseTensor
 import torch_geometric.nn as gnn
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from models.model_components import general_MLP
-
-
-def real_sph_harm(k, zero_m_only=True, spherical_coordinates=True):
-    if not zero_m_only:
-        S_m = [0]
-        C_m = [1]
-        for i in range(1, k):
-            x = sym.symbols('x')
-            y = sym.symbols('y')
-            S_m += [x * S_m[i - 1] + y * C_m[i - 1]]
-            C_m += [x * C_m[i - 1] - y * S_m[i - 1]]
-
-    P_l_m = associated_legendre_polynomials(k, zero_m_only)
-    if spherical_coordinates:
-        theta = sym.symbols('theta')
-        z = sym.symbols('z')
-        for i in range(len(P_l_m)):
-            for j in range(len(P_l_m[i])):
-                if type(P_l_m[i][j]) != int:
-                    P_l_m[i][j] = P_l_m[i][j].subs(z, sym.cos(theta))
-        if not zero_m_only:
-            phi = sym.symbols('phi')
-            for i in range(1, len(S_m)):  # todo mk range from 1
-                S_m[i] = S_m[i].subs(x,
-                                     sym.sin(theta) * sym.cos(phi)).subs(
-                    y,
-                    sym.sin(theta) * sym.sin(phi))
-            for i in range(1, len(C_m)):  # todo mk range from 1
-                C_m[i] = C_m[i].subs(x,
-                                     sym.sin(theta) * sym.cos(phi)).subs(
-                    y,
-                    sym.sin(theta) * sym.sin(phi))
-
-    Y_func_l_m = [['0'] * (2 * j + 1) for j in range(k)]
-    for i in range(k):
-        Y_func_l_m[i][0] = sym.simplify(sph_harm_prefactor(i, 0) * P_l_m[i][0])
-
-    if not zero_m_only:
-        for i in range(1, k):
-            for j in range(1, i + 1):
-                Y_func_l_m[i][j] = sym.simplify(
-                    2 ** 0.5 * sph_harm_prefactor(i, j) * C_m[j] * P_l_m[i][j])
-        for i in range(1, k):
-            for j in range(1, i + 1):
-                Y_func_l_m[i][-j] = sym.simplify(
-                    2 ** 0.5 * sph_harm_prefactor(i, -j) * S_m[j] * P_l_m[i][j])
-
-    return Y_func_l_m
 
 
 class MikesGraphNet(torch.nn.Module):
@@ -153,7 +100,7 @@ class MikesGraphNet(torch.nn.Module):
         sbf, tbf, idx_kj, idx_ji = None, None, None, None
 
         if torch.sum(dist == 0) > 0:
-            zeros_at = torch.where(dist == 0) # add a little jitter, we absolutely cannot have zero distances
+            zeros_at = torch.where(dist == 0)  # add a little jitter, we absolutely cannot have zero distances
             pos[i[zeros_at]] += (torch.ones_like(pos[i[zeros_at]]) / 5)
             dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
 
@@ -220,7 +167,7 @@ class MikesGraphNet(torch.nn.Module):
     def forward(self, z, pos, batch, ptr, ref_mol_inds=None, return_dists=False, n_repeats=None):
         if self.crystal_mode:
             inside_inds = torch.where(ref_mol_inds == 0)[0]
-            outside_inds = torch.where(ref_mol_inds == 1)[0] # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
+            outside_inds = torch.where(ref_mol_inds == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
             inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
             n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]
             # intramolecular edges
@@ -274,163 +221,30 @@ class MikesGraphNet(torch.nn.Module):
                         x = convolution(x, rbf_inter, dist_inter, torch.cat((edge_index, edge_index_inter), dim=1),
                                         sbf=sbf_inter, tbf=tbf_inter, idx_kj=idx_kj_inter, idx_ji=idx_ji_inter)  # return only the results of the intermolecular convolution, omitting intermolecular features
                     elif self.crystal_convolution_type == 1:
-                        x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf = tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
+                        x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
 
                     x = x[inside_inds] + fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, and return only those atoms
 
             else:
-                x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf = tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
+                x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
                 x = x + fc(x)  # feature-wise 1D convolution
 
         if return_dists:  # return dists, batch #, and inside/outside identity, and atomic number
             dist_output = {}
             dist_output['intramolecular dist'] = dist
             dist_output['intramolecular dist batch'] = batch[edge_index[0]]
-            dist_output['intramolecular dist atoms'] = [z[edge_index[0],0].long(), z[edge_index[1],0].long()]
+            dist_output['intramolecular dist atoms'] = [z[edge_index[0], 0].long(), z[edge_index[1], 0].long()]
             dist_output['intramolecular dist inds'] = edge_index
             if self.crystal_mode:
                 dist_output['intermolecular dist'] = (pos[edge_index_inter[0]] - pos[edge_index_inter[1]]).pow(2).sum(dim=-1).sqrt()
                 dist_output['intermolecular dist batch'] = batch[edge_index_inter[0]]
-                dist_output['intermolecular dist atoms'] = [z[edge_index_inter[0],0].long(), z[edge_index_inter[1],0].long()]
+                dist_output['intermolecular dist atoms'] = [z[edge_index_inter[0], 0].long(), z[edge_index_inter[1], 0].long()]
                 dist_output['intermolecular dist inds'] = edge_index_inter
 
         out = self.output_layer(x)
         assert torch.sum(torch.isnan(out)) == 0
 
         return out, dist_output if return_dists else None
-
-
-class SphericalBasisLayer(torch.nn.Module):
-    def __init__(self, num_spherical, num_radial, cutoff=5.0,
-                 envelope_exponent=5):
-        super(SphericalBasisLayer, self).__init__()
-
-        assert num_radial <= 64
-        self.num_spherical = num_spherical
-        self.num_radial = num_radial
-        self.cutoff = cutoff
-        self.envelope = Envelope(envelope_exponent)
-
-        bessel_forms = bessel_basis(num_spherical, num_radial)
-        sph_harm_forms = real_sph_harm(num_spherical)
-        self.sph_funcs = []
-        self.bessel_funcs = []
-
-        x, theta = sym.symbols('x theta')
-        modules = {'sin': torch.sin, 'cos': torch.cos}
-        for i in tqdm.tqdm(range(num_spherical)):
-            if i == 0:
-                sph1 = sym.lambdify([theta], sph_harm_forms[i][0], modules)(0)
-                self.sph_funcs.append(lambda x: torch.zeros_like(x) + sph1)
-            else:
-                sph = sym.lambdify([theta], sph_harm_forms[i][0], modules)
-                self.sph_funcs.append(sph)
-            for j in range(num_radial):
-                bessel = sym.lambdify([x], bessel_forms[i][j], modules)
-                self.bessel_funcs.append(bessel)
-
-        self.bessel_forms = bessel_forms  # saving this because it takes forever to compute
-
-    def forward(self, dist, angle, idx_kj):
-        dist = dist / self.cutoff
-        rbf = torch.stack([f(dist) for f in self.bessel_funcs], dim=1)
-        rbf = self.envelope(dist).unsqueeze(-1) * rbf
-
-        cbf = torch.stack([f(angle) for f in self.sph_funcs], dim=1)
-
-        n, k = self.num_spherical, self.num_radial
-        out = (rbf[idx_kj].view(-1, n, k) * cbf.view(-1, n, 1)).view(-1, n * k)
-        return out
-
-
-class TorsionalEmbedding(torch.nn.Module):
-    def __init__(self, num_spherical, num_radial, cutoff=5.0,
-                 envelope_exponent=5, bessel_forms=None):
-        super(TorsionalEmbedding, self).__init__()
-        assert num_radial <= 64
-        self.num_spherical = num_spherical  #
-        self.num_radial = num_radial
-        self.cutoff = cutoff
-        # self.envelope = Envelope(envelope_exponent)
-        if bessel_forms is None:
-            bessel_forms = bessel_basis(num_spherical, num_radial)
-        #        bessel_forms = bessel_basis(num_spherical, num_radial)
-        sph_harm_forms = real_sph_harm(num_spherical, zero_m_only=False)
-        self.sph_funcs = []
-        self.bessel_funcs = []
-
-        x = sym.symbols('x')
-        theta = sym.symbols('theta')
-        phi = sym.symbols('phi')
-        modules = {'sin': torch.sin, 'cos': torch.cos}
-        for i in range(self.num_spherical):
-            if i == 0:
-                sph1 = sym.lambdify([theta, phi], sph_harm_forms[i][0], modules)
-                self.sph_funcs.append(lambda x, y: torch.zeros_like(x) + torch.zeros_like(y) + sph1(0, 0))  # torch.zeros_like(x) + torch.zeros_like(y)
-            else:
-                for k in range(-i, i + 1):
-                    sph = sym.lambdify([theta, phi], sph_harm_forms[i][k + i], modules)
-                    self.sph_funcs.append(sph)
-            for j in range(self.num_radial):
-                bessel = sym.lambdify([x], bessel_forms[i][j], modules)
-                self.bessel_funcs.append(bessel)
-
-    def forward(self, dist, angle, phi, idx_kj):
-        dist = dist / self.cutoff
-        rbf = torch.stack([f(dist) for f in self.bessel_funcs], dim=1)
-        cbf = torch.stack([f(angle, phi) for f in self.sph_funcs], dim=1)
-
-        n, k = self.num_spherical, self.num_radial
-        out = (rbf[idx_kj].view(-1, 1, n, k) * cbf.view(-1, n, n, 1)).view(-1, n * n * k)
-        return out
-
-
-class BesselBasisLayer(torch.nn.Module):
-    def __init__(self, num_radial, cutoff=5.0, envelope_exponent=5):
-        super(BesselBasisLayer, self).__init__()
-        self.cutoff = cutoff
-        self.envelope = Envelope(envelope_exponent)
-
-        self.freq = torch.nn.Parameter(torch.Tensor(num_radial))
-
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        with torch.no_grad():
-            torch.arange(1, self.freq.numel() + 1, out=self.freq).mul_(PI)
-        # self.freq = torch.arange(1,self.freq.numel() + 1).mul(PI)
-
-    def forward(self, dist):
-        dist = dist.unsqueeze(-1) / self.cutoff
-        return self.envelope(dist) * (self.freq * dist).sin()
-
-
-class Envelope(torch.nn.Module):
-    def __init__(self, exponent):
-        super(Envelope, self).__init__()
-        self.p = exponent + 1
-        self.a = -(self.p + 1) * (self.p + 2) / 2
-        self.b = self.p * (self.p + 2)
-        self.c = -self.p * (self.p + 1) / 2
-
-    def forward(self, x):
-        p, a, b, c = self.p, self.a, self.b, self.c
-        x_pow_p0 = x.pow(p - 1)
-        x_pow_p1 = x_pow_p0 * x
-        x_pow_p2 = x_pow_p1 * x
-        return 1. / x + a * x_pow_p0 + b * x_pow_p1 + c * x_pow_p2
-
-
-class GaussianEmbedding(torch.nn.Module):
-    def __init__(self, start=0.0, stop=5.0, num_gaussians=50):
-        super(GaussianEmbedding, self).__init__()
-        offset = torch.linspace(start, stop, num_gaussians)
-        self.coeff = -0.5 / (offset[1] - offset[0]).item() ** 2
-        self.register_buffer('offset', offset)
-
-    def forward(self, dist):
-        dist = dist.view(-1, 1) - self.offset.view(1, -1)
-        return torch.exp(self.coeff * torch.pow(dist, 2))
 
 
 class EmbeddingBlock(torch.nn.Module):
@@ -471,7 +285,7 @@ class GCBlock(torch.nn.Module):
             self.torsional_to_message = nn.Linear(spherical_dim * spherical_dim * radial_dim, graph_convolution_filters)
             self.radial_spherical_torsional_aggregation = nn.Linear(graph_convolution_filters * 3, graph_convolution_filters)  # torch.add  # could also do dot
 
-        if convolution_mode == 'self attention':
+        if convolution_mode == 'GATv2':
             self.GConv = gnn.GATv2Conv(
                 in_channels=graph_convolution_filters,
                 out_channels=graph_convolution_filters // heads,
@@ -480,13 +294,22 @@ class GCBlock(torch.nn.Module):
                 add_self_loops=True,
                 edge_dim=graph_convolution_filters,
             )
+        elif convolution_mode == 'TransformerConv':
+            self.GConv = gnn.TransformerConv(
+                in_channels=graph_convolution_filters,
+                out_channels=graph_convolution_filters // heads,
+                heads=heads,
+                dropout=dropout,
+                edge_dim=graph_convolution_filters,
+                beta=True,
+            )
         elif convolution_mode == 'full message passing':
             self.GConv = MPConv(
                 in_channels=graph_convolution_filters,
                 out_channels=graph_convolution_filters,
                 edge_dim=graph_convolution_filters,
-                dropout = dropout,
-                norm = norm,
+                dropout=dropout,
+                norm=norm,
             )
         elif convolution_mode.lower() == 'schnet':  #
             assert not spherical, 'schnet currently only works with pure radial bases'
@@ -570,28 +393,28 @@ class CFConv(gnn.MessagePassing):
 
 
 class MPConv(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, edge_dim, dropout = 0, norm = None, activation='leaky relu'):
+    def __init__(self, in_channels, out_channels, edge_dim, dropout=0, norm=None, activation='leaky relu'):
         super(MPConv, self).__init__()
 
-        self.MLP = general_MLP(layers = 4,
-                               filters = out_channels,
-                               input_dim = in_channels * 2 + edge_dim,
-                               dropout = dropout,
-                               norm = norm,
-                               output_dim = out_channels,
+        self.MLP = general_MLP(layers=4,
+                               filters=out_channels,
+                               input_dim=in_channels * 2 + edge_dim,
+                               dropout=dropout,
+                               norm=norm,
+                               output_dim=out_channels,
                                activation=activation,
                                )
-        #self.linear1 = nn.Linear(in_channels * 2 + edge_dim, out_channels)
-        #self.linear2 = nn.Linear(out_channels, out_channels)
-        #self.norm = nn.LayerNorm(out_channels)
-        #self.activation = Activation(activation, filters=None)
+        # self.linear1 = nn.Linear(in_channels * 2 + edge_dim, out_channels)
+        # self.linear2 = nn.Linear(out_channels, out_channels)
+        # self.norm = nn.LayerNorm(out_channels)
+        # self.activation = Activation(activation, filters=None)
 
     def forward(self, x, edge_index, edge_attr):
         # i, j = edge_index
         # m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[i], x[j], edge_attr), dim=-1)))))
         # return scatter(m, j, dim=0, dim_size=len(x))  # send directional messages from i to j, enforcing the size of the output dimension
 
-        #m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1)))))
+        # m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1)))))
         # m = self.linear1(torch.cat((x[i], x[j], edge_attr), dim=-1))
 
         m = self.MLP(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1))
@@ -617,27 +440,6 @@ class FCBlock(torch.nn.Module):
         assert torch.sum(torch.isnan(x)) == 0
         return x
 
-class GlobalBlock(torch.nn.Module):
-    '''
-    fully-connected block, following the original transformer architecture with norm first
-    '''
-
-    def __init__(self, hidden_channels, graph_convolution_filters, norm, dropout, activation):
-        super(GlobalBlock, self).__init__()
-        self.global_pool = gnn.GlobalAttention(
-            gate_nn=nn.Sequential(nn.Linear(graph_convolution_filters, graph_convolution_filters), nn.GELU(), nn.Linear(graph_convolution_filters, 1)),
-        )
-        self.norm = Normalization(norm, hidden_channels)
-        self.activation = Activation(activation, hidden_channels)
-        self.dropout = nn.Dropout(p=dropout)
-        self.linear1 = nn.Linear(hidden_channels, graph_convolution_filters)
-        self.linear2 = nn.Linear(graph_convolution_filters + graph_convolution_filters, hidden_channels)
-
-    def forward(self, x, batch):
-        x = self.dropout(self.activation(self.linear1(self.norm(x))))  # scale to graph conv dimension
-        global_embedding = self.global_pool(x, batch)  # attention aggregation
-
-        return self.linear2(torch.cat((x, global_embedding[batch]), dim=-1))  # expand global to local basis, concatenate and forward
 
 
 class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation of activation as a linear combination of basis functions

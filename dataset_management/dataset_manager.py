@@ -238,6 +238,14 @@ class Miner():
             print('Blind test targets caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
 
+        # when the molecule is too long
+        # cases where the csd has the wrong number of molecules
+        n_bad_inds = len(bad_inds)
+        #self.config.max_molecule_radius
+        mol_radii = [np.amax(np.linalg.norm(coords - coords.mean(0),axis=-1)) for coords in self.dataset['atom coords']]
+        bad_inds.extend(np.argwhere(np.asarray(mol_radii) > self.config.max_molecule_radius)[:,0])
+        print('molecule too long filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
         # cases where the csd has the wrong number of molecules
         n_bad_inds = len(bad_inds)
         lens = [len(item) for item in self.dataset['crystal reference cell coords']]

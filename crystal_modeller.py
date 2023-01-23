@@ -12,7 +12,6 @@ import torch.optim.lr_scheduler as lr_scheduler
 from nikos.coordinate_transformations import coor_trans, cell_vol
 from pyxtal import symmetry
 from ase import Atoms
-import rdkit.Chem as Chem
 from crystal_builder_tools import *
 from models.generator_models import crystal_generator
 from models.discriminator_models import crystal_discriminator
@@ -57,7 +56,7 @@ class Modeller():
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
 
-        periodicTable = Chem.GetPeriodicTable()
+        periodicTable = rdkit.Chem.GetPeriodicTable()
         self.atom_weights = {}
         self.vdw_radii = {}
         for i in range(100):
@@ -716,7 +715,7 @@ class Modeller():
         else:
             return d_err, d_loss_record, g_err, g_loss_record, total_time
 
-    def discriminator_evaluation(self, dataLoader=None, discriminator=None, iteration_override=None, compute_LJ_energy=False):
+    def discriminator_evaluation(self, dataLoader=None, discriminator=None, iteration_override=None):
         t0 = time.time()
         discriminator.eval()
 
@@ -734,10 +733,9 @@ class Modeller():
             '''
             evaluate discriminator
             '''
-            if compute_LJ_energy:  # only compute LJ energy on the first run or when specifically asked
-                real_supercell_data, atomwise_energy = self.supercell_builder.build_supercells_from_dataset(data.clone(), self.config, return_energy=True)
-            else:
-                real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), self.config, return_energy=False)
+
+            real_supercell_data = \
+                self.supercell_builder.real_cell_to_supercell(data.clone(), self.config)
 
             if self.config.device.lower() == 'cuda':  # redundant
                 real_supercell_data = real_supercell_data.cuda()
@@ -757,9 +755,6 @@ class Modeller():
             epoch_stats_dict['full rdf'].extend(full_rdfs.cpu().detach().numpy())
             epoch_stats_dict['vdW penalty'].extend(vdw_overlap(real_supercell_data, self.vdw_radii).cpu().detach().numpy())
 
-            if compute_LJ_energy:
-                epoch_stats_dict['atomistic energy'].extend(atomwise_energy)
-
             if iteration_override is not None:
                 if i >= iteration_override:
                     break  # stop training early - for debugging purposes
@@ -769,10 +764,7 @@ class Modeller():
         epoch_stats_dict['full rdf'] = np.stack(epoch_stats_dict['full rdf'])
         epoch_stats_dict['intermolecular rdf'] = np.stack(epoch_stats_dict['intermolecular rdf'])
         epoch_stats_dict['vdW penalty'] = np.asarray(epoch_stats_dict['vdW penalty'])
-        if compute_LJ_energy:
-            epoch_stats_dict['atomistic energy'] = np.asarray(epoch_stats_dict['atomistic energy'])
-        else:
-            epoch_stats_dict['atomistic energy'] = None
+
 
         total_time = time.time() - t0
 
@@ -1068,7 +1060,7 @@ class Modeller():
 
     def train_discriminator(self, generated_samples, discriminator, config, data, i, target_handedness=None, return_rdf=False):
         # generate fakes & create supercell data
-        real_supercell_data = self.supercell_builder.build_supercells_from_dataset(data.clone(), config)
+        real_supercell_data = self.supercell_builder.real_cell_to_supercell(data.clone(), config)
         fake_supercell_data, generated_cell_volumes, overlaps_list = \
             self.supercell_builder.build_supercells(data.clone().to(generated_samples.device), generated_samples,
                                                     self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff,
@@ -3648,7 +3640,8 @@ class Modeller():
 
         '''
         if (self.config.generator_similarity_penalty != 0) and (len(generated_samples) > 5):
-            similarity_penalty_i = self.config.generator_similarity_penalty * F.relu(-(generated_samples.std(0) - prior.std(0))).mean()  # F.mse_loss(generated_samples.std(0), prior.std(0))  # set variance as at least that of input noise
+            #similarity_penalty_i = self.config.generator_similarity_penalty * F.relu(-(generated_samples.std(0) - prior.std(0))).mean()  # F.mse_loss(generated_samples.std(0), prior.std(0))  # set variance as at least that of input noise
+            similarity_penalty_i = self.config.generator_similarity_penalty / (generated_samples.std(0).mean())  # F.mse_loss(generated_samples.std(0), prior.std(0))  # set variance as at least that of input noise
             similarity_penalty = torch.ones(len(generated_samples)).to(generated_samples.device) * similarity_penalty_i  # copy across batch
             if self.config.test_mode:
                 assert torch.sum(torch.isnan(similarity_penalty)) == 0
@@ -3689,11 +3682,11 @@ class Modeller():
             vdw_loss = vdw_overlap(self.vdw_radii, dists = dist_dict['intermolecular dist'],
                                    atomic_numbers = dist_dict['intermolecular dist atoms'],
                                    batch_numbers = dist_dict['intermolecular dist batch'],
-                                   num_graphs = num_graphs)
+                                   num_graphs = num_graphs) ** 2
         else:
             vdw_loss = None
 
-        return vdw_loss
+        return vdw_loss**2
 
     def aggregate_generator_losses(self,epoch_stats_dict, density_loss, adversarial_score, adversarial_loss, vdw_loss, packing_loss, similarity_penalty, density_prediction, density_target, h_bond_score):
         g_losses_list = []
@@ -3767,8 +3760,8 @@ class Modeller():
             epoch_stats_dict['generated supercell examples'] = supercell_examples.cpu().detach()
             if supercell_examples.num_graphs > 100: # todo find a way to take only the few that we need
                 print('WARNING. Saving over 100 supercells for analysis')
-            epoch_stats_dict['final generated cell parameters'].extend(supercell_examples.cell_params.cpu().detach().numpy())
-            del supercell_examples
+        epoch_stats_dict['final generated cell parameters'].extend(supercell_examples.cell_params.cpu().detach().numpy())
+        del supercell_examples
         return epoch_stats_dict
 
 
@@ -3890,12 +3883,16 @@ class Modeller():
     def save_3d_structure_examples(self, epoch_stats_dict):
         num_samples = 10
         generated_supercell_examples = epoch_stats_dict['generated supercell examples']
-        crystals = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_aux = False, index = i, exclusion_level='distance', inclusion_distance=4) for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
+        crystals = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_aux = False,
+                                             index = i, exclusion_level='distance', inclusion_distance=4)
+                    for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
         for i in range(len(crystals)):
             ase.io.write(f'supercell_{i}.pdb', crystals[i])
             wandb.log({'Generated Supercells': wandb.Molecule(open(f"supercell_{i}.pdb"))})
 
-        mols = [ase_mol_from_crystaldata(generated_supercell_examples, index = i, exclusion_level='ref only') for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
+        mols = [ase_mol_from_crystaldata(generated_supercell_examples,
+                                         index = i, exclusion_level='ref only')
+                for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
         for i in range(len(mols)):
             ase.io.write(f'conformer_{i}.pdb', mols[i])
             wandb.log({'Single Conformers': wandb.Molecule(open(f"conformer_{i}.pdb"))})

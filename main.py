@@ -80,8 +80,9 @@ def add_args(parser):
     parser.add_argument('--supercell_size', type=int, default=1)  # point groups to generate
     parser.add_argument('--max_crystal_temperature', type=float, default=int(1e3))
     parser.add_argument('--min_crystal_temperature', type=int, default=0)
-    parser.add_argument('--max_num_atoms', type=float, default=int(1e3))
+    parser.add_argument('--max_num_atoms', type=int, default=int(1e3))
     parser.add_argument('--min_num_atoms', type=int, default=0)
+    parser.add_argument('--max_molecule_radius', type=float, default=10)
     parser.add_argument('--min_packing_coefficient', type=float, default=0.55)
     add_bool_arg(parser, 'include_organic', default=True)
     add_bool_arg(parser, 'include_organometallic', default=True)
@@ -105,6 +106,7 @@ def add_args(parser):
     update_args2config(args2config, 'min_crystal_temperature')
     update_args2config(args2config, 'max_num_atoms')
     update_args2config(args2config, 'min_num_atoms')
+    update_args2config(args2config, 'max_molecule_radius')
     update_args2config(args2config, 'min_packing_coefficient')
     update_args2config(args2config, 'include_organic')
     update_args2config(args2config, 'include_organometallic')
@@ -183,7 +185,7 @@ def add_args(parser):
     parser.add_argument('--generator_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
     parser.add_argument('--generator_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
     parser.add_argument('--generator_graph_filters', type=int, default=28)  # number of neurons per graph convolution
-    parser.add_argument('--generator_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'self attention' 'full message passing'
+    parser.add_argument('--generator_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'GATv2' 'full message passing'
     parser.add_argument('--generator_graph_convolutions_layers', type=int, default=0)  # number of graph convolution blocks
     parser.add_argument('--generator_graph_norm', type=str, default='layer')  # None, 'layer', 'graph'
     parser.add_argument('--generator_num_spherical', type=int, default=6)  # dime angular basis functions, default is 6
@@ -214,6 +216,8 @@ def add_args(parser):
     parser.add_argument('--generator_flow_depth', type=int, default=16)  # number of filters per flow layer
     parser.add_argument('--generator_flow_basis_fns', type=int, default=8)  # number of basis functions for spline NF model
     parser.add_argument('--generator_prior', type=str, default='multivariate normal')  # type of prior distribution
+    parser.add_argument('--generator_prior_dimension', type=int, default=12)  # type of prior distribution
+
     parser.add_argument('--generator_flow_type', type=str, default='nsf_cl')  # type of flow model 'nsf-cl' is legit
     parser.add_argument('--generator_num_samples', type=int, default=10000)  # number of samples to generate for analysis
     add_bool_arg(parser, 'generator_conditional_modelling', default=True)  # whether to use molecular features as conditions for normalizing flow model
@@ -247,6 +251,7 @@ def add_args(parser):
     update_args2config(args2config, 'generator_flow_depth', ['generator', 'flow_depth'])
     update_args2config(args2config, 'generator_flow_basis_fns', ['generator', 'flow_basis_fns'])
     update_args2config(args2config, 'generator_prior', ['generator', 'prior'])
+    update_args2config(args2config, 'generator_prior_dimension', ['generator', 'prior_dimension'])
     update_args2config(args2config, 'generator_flow_type', ['generator', 'flow_type'])
     update_args2config(args2config, 'generator_num_samples', ['generator', 'num_samples'])
     update_args2config(args2config, 'generator_conditional_modelling', ['generator', 'conditional_modelling'])
@@ -257,7 +262,7 @@ def add_args(parser):
     parser.add_argument('--discriminator_crystal_convolution_type', type=int, default=1)  # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
     parser.add_argument('--discriminator_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
     parser.add_argument('--discriminator_graph_filters', type=int, default=28)  # number of neurons per graph convolution
-    parser.add_argument('--discriminator_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'self attention' 'full message passing'
+    parser.add_argument('--discriminator_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'GATv2' 'full message passing'
     parser.add_argument('--discriminator_graph_convolutions_layers', type=int, default=0)  # number of graph convolution blocks
     parser.add_argument('--discriminator_graph_norm', type=str, default='layer')  # None, 'layer', 'graph'
     parser.add_argument('--discriminator_num_spherical', type=int, default=6)  # dime angular basis functions, default is 6

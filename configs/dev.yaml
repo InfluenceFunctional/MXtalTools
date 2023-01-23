@@ -12,7 +12,7 @@ new_generation: True # new way of defining asymmetric unit
 train_generator_density: True # on a target
 train_generator_packing: False # simply maximize density
 train_generator_vdw: True
-train_generator_h_bond: True # maximize h bonding (non-directional)
+train_generator_h_bond: False # maximize h bonding (non-directional)
 train_generator_adversarially: False
 train_discriminator_adversarially: False
 train_discriminator_on_randn: False
@@ -27,17 +27,17 @@ d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminato
 g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_1009'
 
 seeds:
-  model: 1
-  dataset: 1
+  model: 0
+  dataset: 0
 
 # opt - sweep details
 wandb:
-  sample_reporting_frequency: 1
+  sample_reporting_frequency: 5
   experiment_tag: dev
   log_figures: True
 
 # batching & convergence
-auto_batch_sizing: True
+auto_batch_sizing: False
 min_batch_size: 25
 max_batch_size: 100
 auto_batch_reduction: .6 # fraction of tested max batch size to actually start with (unequal graph sizes)
@@ -47,12 +47,13 @@ gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+dataset_length: 10000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
-max_num_atoms: 100
+max_num_atoms: 20
 min_num_atoms: 8 # target XVI has only 9 heavy atoms
+max_molecule_radius: 10 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -89,23 +90,23 @@ discriminator:
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
-  graph_convolution_layers: 1
-  graph_filters: 12
-  atom_embedding_size: 12
+  graph_convolution_layers: 4
+  graph_filters: 32
+  atom_embedding_size: 64
   graph_norm: layer
   num_spherical: 5
   num_radial: 32
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 1 # mikenet self attention mode only - must evenly divide graph filters
-  graph_convolution: 'self attention' # 'full message passing' or schnet or 'self attention'
+  num_attention_heads: 1 # mikenet GATv2 mode only - must evenly divide graph filters
+  graph_convolution: 'full message passing' # 'full message passing' or schnet or 'GATv2'
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False #
   pooling: combo
 
-  num_fc_layers: 1
-  fc_depth: 12
+  num_fc_layers: 2
+  fc_depth: 64
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer
@@ -123,34 +124,35 @@ generator:
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   model_type: mlp # mlp only
-  graph_convolution_layers: 8
-  graph_filters: 512
-  atom_embedding_size: 1028
+  graph_convolution_layers: 4
+  graph_filters: 64
+  atom_embedding_size: 128
   graph_norm: layer
   num_spherical: 6
   num_radial: 12
   graph_convolution_cutoff: 3
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 4 # mikenet self attention mode only - must evenly divide graph filters
-  graph_convolution: 'self attention' # self attention, schnet, or full message passing
+  num_attention_heads: 4 # mikenet GATv2 mode only - must evenly divide graph filters
+  graph_convolution: 'TransformerConv' # GATv2, schnet, or full message passing, or 'TransformerConv'
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False
-  pooling: combo
+  pooling: geometric # combo, geometric (wip)
 
   conditioner_num_fc_layers: 4
-  conditioner_fc_depth: 512
+  conditioner_fc_depth: 256
   conditioner_activation: leaky relu
   conditioner_fc_dropout_probability: 0.1
   conditioner_fc_norm_mode: layer
 
-  num_fc_layers: 8
-  fc_depth: 512
+  num_fc_layers: 4
+  fc_depth: 256
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer
 
   num_samples: 1000
   prior: multivariate normal
+  prior_dimension: 12
   conditional_modelling: True # false will likely not run at all
   conditioning_mode: graph model # molecule features or graph model

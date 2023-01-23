@@ -119,7 +119,7 @@ def cell_vectors(T_fc_list):
 
 
 def ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list,
-                     atoms_list, z_values, supercell_scale=2, cutoff=5):
+                     atoms_list, z_values, supercell_scale=5, cutoff=5):
 
     '''
     1) generate fractional translations for full supercell
@@ -474,7 +474,7 @@ def compute_principal_axes_list(coords_list, masses_list = None):
             Ip_axes_list[i], _, _ = compute_principal_axes_torch(coords,masses)
     return Ip_axes_list
 
-def compute_crystaldata_principal_axes(data):
+def align_crystaldata_to_principal_axes(data):
     '''
     only works for geometric principal axes
     '''
@@ -491,7 +491,7 @@ def compute_crystaldata_principal_axes(data):
 
     data.pos = torch.cat(transformed_coords)
 
-    if True: # set last 3 feature dimensions as saturating overlaps with inertial axes
+    if False: # set last 3 feature dimensions as saturating overlaps with inertial axes - i.e. give the coordinates to atom features (should not work well)
         data.x[:, -3:] = torch.sign(data.pos)
 
     return data

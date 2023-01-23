@@ -1,8 +1,8 @@
 '''Import statements'''
-import torch_geometric.nn as gnn
 from models.MikesGraphNet import MikesGraphNet
 import sys
 
+from models.global_aggregation import global_aggregation
 from models.model_components import general_MLP
 from nflib.spline_flows import *
 from torch.distributions import MultivariateNormal
@@ -132,9 +132,9 @@ class molecule_graph_model(nn.Module):
         if self.graph_model is not None:
             x, dists_dict = self.graph_net(data.x[:, :self.n_atom_feats], data.pos, data.batch, ptr=data.ptr, ref_mol_inds=data.aux_ind, return_dists=return_dists)  # get atoms encoding
             if self.crystal_mode:  # model only outputs ref mol atoms - many fewer
-                x = self.global_pool(x, data.batch[torch.where(data.aux_ind == 0)[0]])
+                x = self.global_pool(x, data.pos, data.batch[torch.where(data.aux_ind == 0)[0]])
             else:
-                x = self.global_pool(x, data.batch)  # aggregate atoms to molecule
+                x = self.global_pool(x, data.pos, data.batch)  # aggregate atoms to molecule
 
         mol_feats = self.mol_fc(data.x[data.ptr[:-1], -self.n_mol_feats:])  # molecule features are repeated, only need one per molecule (hence data.ptr)
 
@@ -201,40 +201,6 @@ class independent_gaussian_model(nn.Module):
 
     def score(self, samples):
         return self.prior.log_prob(samples)
-
-
-class global_aggregation(nn.Module):
-    '''
-    wrapper for several types of global aggregation functions
-    '''
-
-    def __init__(self, agg_func, filters):
-        super(global_aggregation, self).__init__()
-        self.agg_func = agg_func
-        if agg_func == 'mean':
-            self.agg = gnn.global_mean_pool
-        elif agg_func == 'sum':
-            self.agg = gnn.global_add_pool
-        elif agg_func == 'attention':
-            self.agg = gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))
-        elif agg_func == 'set2set':
-            self.agg = gnn.Set2Set(in_channels=filters, processing_steps=4)
-            self.agg_fc = nn.Linear(filters * 2, filters)  # condense to correct number of filters
-        elif agg_func == 'combo':
-            self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
-            self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))])  # aggregation functions requiring parameters
-            self.agg_fc = nn.Linear(filters * (len(self.agg_list1) + len(self.agg_list2)), filters)  # condense to correct number of filters
-
-    def forward(self, x, batch):
-        if self.agg_func == 'set2set':
-            x = self.agg(x, batch)
-            return self.agg_fc(x)
-        elif self.agg_func == 'combo':
-            output1 = [agg(x, batch) for agg in self.agg_list1]
-            output2 = [agg(x, batch) for agg in self.agg_list2]
-            return self.agg_fc(torch.cat((output1 + output2), dim=1))
-        else:
-            return self.agg(x, batch)
 
 
 def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, elementwise=False, raw_density=False, atomwise=False):
@@ -439,3 +405,4 @@ def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_le
     mol = Atoms(symbols=numbers, positions=coords, cell=cell)
 
     return mol
+
