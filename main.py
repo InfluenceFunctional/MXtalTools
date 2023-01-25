@@ -30,11 +30,11 @@ def add_args(parser):
     parser.add_argument('--dataset_seed', type=int, default=0)
     parser.add_argument('--machine', type=str, default='local')  # 'local' (local windows venv) or 'cluster' (linux env)
     parser.add_argument("--device", default="cuda", type=str)  # 'cuda' or 'cpu'
-    add_bool_arg(parser, 'skip_run_init', default=False)
     parser.add_argument("--mode", default="gan", type=str)  # 'gan' or 'regression'
     add_bool_arg(parser, 'skip_saving_and_loading', default=True)
     parser.add_argument("--d_model_path", default=None, type=str)
     parser.add_argument("--g_model_path", default=None, type=str)
+    add_bool_arg(parser, 'extra_test_evaluation', default=False)
     parser.add_argument("--extra_test_set_paths", default=None, type=list)
 
     update_args2config(args2config, 'yaml_config')
@@ -45,11 +45,11 @@ def add_args(parser):
     update_args2config(args2config, 'dataset_seed', ['seeds', 'dataset'])
     update_args2config(args2config, 'machine')
     update_args2config(args2config, 'device')
-    update_args2config(args2config, 'skip_run_init')
     update_args2config(args2config, 'mode')
     update_args2config(args2config, 'skip_saving_and_loading')
     update_args2config(args2config, 'd_model_path')
     update_args2config(args2config, 'g_model_path')
+    update_args2config(args2config, 'extra_test_evaluation')
     update_args2config(args2config, 'extra_test_set_paths')
 
     # wandb
@@ -318,7 +318,7 @@ def add_args(parser):
     add_bool_arg(parser, 'sample_after_training', default=False)  # run sampler after model converges
     parser.add_argument('--sample_ind', type=int, default=0)  # which sample from test dataset to sample
     parser.add_argument('--sample_steps', type=int, default=1000)  #
-    parser.add_argument('--sample_move_size', type=int, default=0.05)  #
+    parser.add_argument('--sample_move_size', type=float, default=0.05)  #
 
     update_args2config(args2config, 'gan_loss')
     update_args2config(args2config, 'new_generation')
@@ -382,5 +382,7 @@ if __name__ == '__main__':
     predictor = Modeller(config)
     if config.mode == 'figures':
         predictor.make_nice_figures()
+    elif config.mode == 'sampling':
+        predictor.MCMC_sampling()
     else:
         predictor.train()

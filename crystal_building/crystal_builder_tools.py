@@ -10,6 +10,40 @@ from pymatgen.symmetry import analyzer
 from pymatgen.core import (structure, lattice)
 import tqdm
 
+asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
+    '1': [1, 1, 1],  # P1
+    '2': [.5, 1, 1],  # P-1
+    '3': [1, 1, 0.5],  # P2
+    '4': [1, 1, 0.5],  # P21
+    '5': [0.5, 0.5, 1],  # C2
+    '6': [1, 0.5, 1],  # Pm
+    '7': [1, 0.5, 1],  # Pc
+    '8': [1, 0.25, 1],  # Cm
+    '9': [1, 0.25, 1],  # Cc
+    '10': [.5, 0.5, 1],  # P2/m
+    '11': [1, 0.25, 1],  # P21/m
+    '12': [.5, 0.25, 1],  # C2/m
+    '13': [.5, 1, 0.5],  # P2/c
+    '14': [1, 0.25, 1],  # P21/c
+    '15': [0.5, 0.5, 0.5],  # C2/c
+    '16': [0.5, 0.5, 1],  # P222
+    '17': [0.5, 0.5, 1],  # P2221
+    '18': [0.5, 0.5, 1],  # P21212
+    '19': [0.5, 0.5, 1],  # P212121
+    '20': [0.5, 0.5, 0.5],  # C2221
+    '21': [0.25, 0.5, 1],  # C222
+    '22': [0.25, 0.25, 1],  # F222
+    '23': [0.5, 0.5, 0.5],  # I222
+    '24': [0.5, 0.5, 0.5],  # I212121
+    '25': [0.5, 0.5, 1],  # Pmm2
+    '26': [0.5, 0.5, 1],  # Pmc21
+    '27': [0.5, 0.5, 1],  # Pcc2
+    '28': [0.25, 1, 1],  # Pma2
+    '29': [0.25, 1, 1],  # Pca21
+    '30': [0.5, 1, 0.5],  # Pnc2
+    '31': [0.5, 0.5, 1],  # Pmn21
+}
+
 
 def compute_Ip_handedness(Ip): # todo remove duplicate function
     if isinstance(Ip, np.ndarray):
@@ -381,7 +415,20 @@ def f_c_transform(coords, T_fc):
             return torch.einsum('nmj,ij->nmi', (coords, T_fc))
 
 
-def cell_analysis(data, atom_weights, debug=False, return_final_coords = False, return_sym_ops = False):
+def cell_analysis(data, debug=False, return_final_coords = False, return_sym_ops = False):
+    '''
+    DEPRECATED
+    Parameters
+    ----------
+    data
+    debug
+    return_final_coords
+    return_sym_ops
+
+    Returns
+    -------
+
+    '''
     cell_lengths = data.cell_params[:, 0:3]
     cell_angles = data.cell_params[:, 3:6]
 
@@ -448,6 +495,45 @@ def cell_analysis(data, atom_weights, debug=False, return_final_coords = False, 
             return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness
 
 
+def find_coord_in_box(coords, box):
+    return np.where((coords[:, 0] < box[0]) * (coords[:, 1] < box[1]) * (coords[:, 2] < box[2]))[0]
+
+def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf):
+    '''
+
+    Parameters
+    ----------
+    unit_cell_coords: coordinates for the full unit cell
+    sg_ind: space group index
+    asym_unit_dict: dict which defines the asymmetric unit for each space group
+
+    Returns
+    -------
+
+    '''
+    asym_unit = np.asarray(asym_unit_dict[str(int(sg_ind))]) # will only work for units which we have written down the parameterization for
+    centroids = unit_cell_coords.mean(-2)
+    centroids_fractional = np.inner(T_cf, centroids).T
+    centroids_fractional -= np.floor(centroids_fractional)
+    canonical_conformer_ind = find_coord_in_box(centroids_fractional, asym_unit)
+
+    # if len(canonical_conformer_ind) != 1: # only one of these is allowed to be in the asym unit
+    #     # some cells use nonstandard symmetries & therefore asymmetric unit definitions
+    #     # just pick one in that case - # todo we will filter these later
+    #     canonical_conformer_ind = canonical_conformer_ind[0]
+
+    canonical_conformer_coords = unit_cell_coords[canonical_conformer_ind[0]] # always take 0th entry
+
+    Ip_axes, Ip_moments, I = compute_principal_axes_np(canonical_conformer_coords)
+    handedness = compute_Ip_handedness(Ip_axes)
+    alignment = np.eye(3)
+    alignment[0,0] = handedness
+    rotation_matrix = np.inner(Ip_axes, np.linalg.inv(alignment))
+
+    mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()
+    mol_position = centroids_fractional[canonical_conformer_ind[0]]
+
+    return mol_position, mol_orientation, handedness
 
 def flip_I3(coords, Ip):
     '''
@@ -474,24 +560,23 @@ def compute_principal_axes_list(coords_list, masses_list = None):
             Ip_axes_list[i], _, _ = compute_principal_axes_torch(coords,masses)
     return Ip_axes_list
 
-def align_crystaldata_to_principal_axes(data):
+def align_crystaldata_to_principal_axes(data, handedness = None):
     '''
     only works for geometric principal axes
     '''
     coords_list = [data.pos[data.ptr[i]:data.ptr[i+1]] for i in range(data.num_graphs)]
     coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
     principal_axes_list = compute_principal_axes_list(coords_list_centred, masses_list = None)
-    eye = torch.eye(3).to(data.x.device) # enforce right handedness
-    rotation_matrix_list = [torch.matmul(eye, torch.linalg.inv(principal_axes_list[i])) for i in range(data.num_graphs)]
+
+    eye = torch.tile(torch.eye(3), (data.num_graphs, 1, 1)).to(data.x.device)
+    if handedness is not None:
+        eye[:,0,0] = handedness
+
+    # rotation2 = torch.matmul(eye2.reshape(data.num_graphs, 3, 3), torch.linalg.inv(principal_axes_list.reshape(data.num_graphs, 3, 3))) # one step
+
+    rotation_matrix_list = [torch.matmul(eye[i], torch.linalg.inv(principal_axes_list[i])) for i in range(data.num_graphs)]
     transformed_coords = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)]
 
-    if False: # debug
-        # loss should be zero if the transform worked
-        assert F.l1_loss(compute_principal_axes_list(transformed_coords), torch.stack([torch.eye(3).to(transformed_coords[0].device) for i in range(data.num_graphs)])) < 1e-5
-
     data.pos = torch.cat(transformed_coords)
-
-    if False: # set last 3 feature dimensions as saturating overlaps with inertial axes - i.e. give the coordinates to atom features (should not work well)
-        data.x[:, -3:] = torch.sign(data.pos)
 
     return data

@@ -1,9 +1,8 @@
-import numba as nb
 import numpy as np
 
 from calculate_molecular_positions import calculate_molecular_positions
 from calculate_molecular_rotations import calculate_molecular_rotations
-from coordinate_transformations import coor_trans, coor_trans_matrix
+from crystal_building.coordinate_transformations import coor_trans, coor_trans_matrix
 from generate_unit_cell import generate_unit_cell
 from identify_close_contacts import identify_close_contacts
 from perpendicular_vectors import perpendicular_vectors
@@ -154,7 +153,7 @@ if __name__ == '__main__':
     ''' Set the atomic species '''
     atom_name = np.array(['O','O','C','C','C','C','C','C','C','C','C','H','H','H','H','H','H']).reshape(n_atoms,1)
 
-    ''' Set the atomic vdW radii'''
+    ''' Set the atomic vdw radii'''
     atom_vdw = np.array([1.52,1.52,1.70,1.70,1.70,1.70,1.70,1.70,1.70,1.70,1.70,1.20,1.20,1.20,1.20,1.20,1.20]).reshape(n_atoms,1)
 
     ''' The atomic coordinates in the reference system '''

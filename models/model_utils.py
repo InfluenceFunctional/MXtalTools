@@ -1,11 +1,7 @@
-from models.torch_models import *
-import sklearn.metrics as metrics
-import sys
-import os
-#os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
-from utils import get_n_config#, draw_molecule_2d
-from dataset_utils import get_dataloaders
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 import numpy as np
+import torch
+from ase import Atoms
 
 
 def get_grad_norm(model):
@@ -86,7 +82,7 @@ def checkConvergence(record, history, convergence_eps):
             print("Model converged, target diverging")
 
         criteria = np.var(record[-history:]) / np.abs(np.average(record[-history:]))
-        print('Convergence criteria at {:.3f}'.format(np.log10(criteria))) # todo better rolling metric here - trailing exponential something
+        print('Convergence criteria at {:.3f}'.format(np.log10(criteria)))  # todo better rolling metric here - trailing exponential something
         if criteria < convergence_eps:
             converged = True
             print("Model converged, target stabilized")
@@ -122,3 +118,57 @@ def load_model(config, model, optimizer):
                     state[k] = v.cuda()
 
     return model, optimizer
+
+
+def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, inclusion_distance=4):
+    '''
+    generate an ASE Atoms object from a crystaldata object
+
+    from ase.visualize import view
+    mols = [ase_mol_from_crystaldata(supercell_data,i,exclusion_level = 'convolve with', highlight_aux=True) for i in range(10)]
+    view(mols)
+    '''
+
+    if data.batch is not None:  # more than one crystal in the datafile
+        atom_inds = torch.where(data.batch == index)[0]
+    else:
+        atom_inds = torch.arange(len(data.x))
+
+    if exclusion_level == 'ref only':
+        inside_inds = torch.where(data.aux_ind == 0)[0]
+        new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
+        atom_inds = new_atom_inds
+        coords = data.pos[atom_inds].cpu().detach().numpy()
+
+    elif exclusion_level == 'convolve with':
+        inside_inds = torch.where(data.aux_ind < 2)[0]
+        new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
+        atom_inds = new_atom_inds
+        coords = data.pos[atom_inds].cpu().detach().numpy()
+
+    elif exclusion_level == 'distance':
+        crystal_coords = data.pos[atom_inds]
+        crystal_inds = data.aux_ind[atom_inds]
+
+        canonical_conformer_inds = torch.where(crystal_inds == 0)[0]
+        mol_centroid = crystal_coords[canonical_conformer_inds].mean(0)
+        mol_radius = torch.max(torch.cdist(mol_centroid[None], crystal_coords[canonical_conformer_inds], p=2))
+        in_range_inds = torch.where((torch.cdist(mol_centroid[None], crystal_coords, p=2) < (mol_radius + inclusion_distance))[0])[0]
+        atom_inds = atom_inds[in_range_inds]
+        coords = crystal_coords[in_range_inds].cpu().detach().numpy()
+    else:
+        coords = data.pos[atom_inds].cpu().detach().numpy()
+
+    if highlight_aux:  # highlight the atom aux index
+        numbers = data.aux_ind[atom_inds].cpu().detach().numpy() + 6
+    else:
+        numbers = data.x[atom_inds, 0].cpu().detach().numpy()
+
+    if index is not None:
+        cell = data.T_fc[index].T.cpu().detach().numpy()
+    else:
+        cell = data.T_fc[0].T.cpu().detach().numpy()
+
+    mol = Atoms(symbols=numbers, positions=coords, cell=cell)
+
+    return mol

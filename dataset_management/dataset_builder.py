@@ -464,9 +464,12 @@ mode = 'csd'  #
 chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/nov_functional_add/'  # where the chunks should be saved during featurization
 cifs_directory_path = None
 
-# mode = 'csd'
-# chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/bt_targets/'
-# cifs_directory_path = None
+mode = 'csd'
+chunk_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/csd_coumarins/'
+cifs_directory_path = None
+target_identifiers = ["COUMAR01","COUMAR02","COUMAR10","COUMAR11","COUMAR12","COUMAR13",
+                      "COUMAR14","COUMAR15","COUMAR16","COUMAR17", # Z'!=1 or some other weird thing
+                      "COUMAR18","COUMAR19"]
 # target_identifiers = [
 #     'OBEQUJ', 'OBEQOD', 'OBEQET', 'OBEQIX',
 #     'NACJAF', 'XAFPAY', 'XAFPAY01','XAFPAY02','XAFPAY03','XAFPAY04', 'XAFQIH'
@@ -505,15 +508,15 @@ if __name__ == '__main__':
         os.mkdir(chunk_path + '/molecule_features')
 
     helper = CCDC_helper(chunk_path, mode)
-    helper.add_single_feature_to_dataset(dataset_path='C:/Users/mikem/Desktop/CSP_runs/datasets/new_dataset',
-                                         feature='crystal symmetries')
-    # helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
-    # helper.collect_chunks_and_initialize_df()
-    # helper.get_crystal_features(n_chunks=100, chunk_inds=[0, 100], file_path=cifs_directory_path)
+    # helper.add_single_feature_to_dataset(dataset_path='C:/Users/mikem/Desktop/CSP_runs/datasets/new_dataset',
+    #                                      feature='crystal symmetries')
+    helper.grep_crystal_identifiers(file_path=cifs_directory_path, identifiers = target_identifiers)
+    helper.collect_chunks_and_initialize_df()
+    helper.get_crystal_features(n_chunks=1, chunk_inds=[0, 1], file_path=cifs_directory_path)
 
-    # featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
-    # featurizer.add_single_feature(molecule_chunks_path=chunk_path + '/molecule_features', chunk_inds = [0,1000], feature='molecule freeSASA')
-    # featurizer.featurize(chunk_inds=[0, 1000])
-    #
-    # miner = Miner(chunk_path, collect_chunks=True, database=mode)
-    # miner.process_new_dataset(dataset_name = 'full_dataset_SASA')
+    featurizer = CustomGraphFeaturizer(chunk_path + '/crystal_features')
+    #featurizer.add_single_feature(molecule_chunks_path=chunk_path + '/molecule_features', chunk_inds = [0,1000], feature='molecule freeSASA')
+    featurizer.featurize(chunk_inds=[0, 1])
+
+    miner = Miner(chunk_path, collect_chunks=True, database=mode)
+    miner.process_new_dataset(dataset_name = 'csd_coumarins')

@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn.functional as F
 import torch
 from utils import softmax_and_score
-from models.torch_models import vdw_overlap
+from models.vdw_overlap import vdw_overlap
 
 '''
 This script uses Markov Chain Monte Carlo, including the STUN algorithm, to optimize a given function
@@ -40,6 +40,7 @@ class Sampler:
             self.STUN = 1
         else:
             self.STUN = 0
+
         self.debug = debug
         self.target_acceptance_rate = 0.234  # found this in a paper - optimal MCMC acceptance ratio
         self.acceptance_history = 100

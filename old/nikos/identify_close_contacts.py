@@ -1,7 +1,7 @@
 import numba as nb
 import numpy as np
 
-from coordinate_transformations import coor_trans
+from crystal_building.coordinate_transformations import coor_trans
 from generate_supercell import generate_supercell
 
 @nb.jit(nopython=True)
@@ -11,7 +11,7 @@ def identify_close_contacts(z,n_atoms,r,cell_vec,cell_ang,atom_name,atom_vdw):
     for i in range(27*z):
         r_sc[i] = coor_trans('f_to_c',r_sc[i],cell_vec,cell_ang)
         
-    ''' Identify close contacts based on the VDW radius of the atoms '''    
+    ''' Identify close contacts based on the vdw radius of the atoms '''    
     close_contacts = []
     species_pairs = []
     overlap = []

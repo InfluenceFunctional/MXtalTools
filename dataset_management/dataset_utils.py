@@ -2,11 +2,10 @@ import torch
 import numpy as np
 from utils import standardize
 from dataset_management.CrystalData import CrystalData
+from crystal_building.crystal_builder_tools import unit_cell_analysis, asym_unit_dict
 import sys
 from torch_geometric.loader import DataLoader
 import tqdm
-import time
-import matplotlib.pyplot as plt
 import pandas as pd
 from pyxtal import symmetry
 from dataset_management.dataset_manager import Miner
@@ -68,7 +67,7 @@ class BuildDataset:
         '''
         lattice_features = self.get_cell_features(dataset)
         targets = self.get_targets(dataset)
-        self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets, config)
+        self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets)
         if False: # make dataset a bunch of the same molecule
             identifiers = [item.csd_identifier for item in self.datapoints]
             index = identifiers.index('VEJCES') # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
@@ -175,7 +174,7 @@ class BuildDataset:
         '''
         recalculate crystal density
         '''
-        from nikos.coordinate_transformations import cell_vol
+        from crystal_building.coordinate_transformations import cell_vol
         cell_volume = np.asarray([cell_vol(
             [dataset['crystal cell a'][i],dataset['crystal cell b'][i],dataset['crystal cell c'][i]],
             [dataset['crystal alpha'][i], dataset['crystal beta'][i], dataset['crystal gamma'][i]])
@@ -192,6 +191,27 @@ class BuildDataset:
         znums = [10,18,36,54]
         for znum in znums:
             dataset[f'molecule atom heavier than {znum} fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200] ) for atom_list in dataset['atom Z']])
+
+        '''
+        update cell parameterization to new method
+        ''' # todo delete this and re-featurize the full dataset
+        for key in asym_unit_dict:
+            asym_unit_dict[key] = torch.Tensor(asym_unit_dict[key])
+
+        position, rotation, handedness = np.zeros((len(dataset), 3)), np.zeros((len(dataset), 3)), np.zeros(len(dataset))
+        for ii in tqdm.tqdm(range(len(dataset))):
+            unit_cell_coords = dataset['crystal reference cell coords'][ii]
+            sg_ind = dataset['crystal spacegroup number'][ii]
+            T_cf = dataset['crystal cf transform'][ii]
+            position[ii], rotation[ii], handedness[ii] = unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf)
+
+        dataset['crystal asymmetric unit centroid x'], \
+        dataset['crystal asymmetric unit centroid y'], \
+        dataset['crystal asymmetric unit centroid z'] = position.T
+        dataset['crystal asymmetric unit rotvec 1'], \
+        dataset['crystal asymmetric unit rotvec 2'], \
+        dataset['crystal asymmetric unit rotvec 3'] = rotation.T
+        dataset['crystal asymmetric unit handedness'] = handedness
 
         return dataset
 
@@ -366,7 +386,7 @@ class BuildDataset:
         assert np.sum(np.isnan(molecule_feature_array)) == 0
         return molecule_feature_array
 
-    def generate_training_datapoints(self, dataset, lattice_features, targets, config):
+    def generate_training_datapoints(self, dataset, lattice_features, targets):
         tracking_features = self.gather_tracking_features(dataset)
 
         # add symmetry features for generator
@@ -492,7 +512,10 @@ class BuildDataset:
                             'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
                             'crystal r factor', 'crystal density', 'crystal temperature'
                             ])
-
+        space_group_features = [column for column in dataset.columns if 'sg is' in column]
+        crystal_system_features = [column for column in dataset.columns if 'crystal system is' in column]
+        keys_to_add.extend(space_group_features)
+        keys_to_add.extend(crystal_system_features)
         keys_to_add.extend(self.crystal_keys)
         if 'crystal spacegroup symbol' in keys_to_add:
             keys_to_add.remove('crystal spacegroup symbol')  # we don't want to deal with strings
@@ -508,8 +531,6 @@ class BuildDataset:
                 keys_to_add.append(key)
             if ('molecule has' in key):
                 keys_to_add.append(key)
-            #if key == 'molecule freeSASA':
-            #    keys_to_add.append(key) #not yet in our cluster datasets
 
         print("Preparing molecule/crystal tracking features")
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it

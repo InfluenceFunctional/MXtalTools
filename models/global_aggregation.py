@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from models.model_components import general_MLP
 from e3nn.o3 import spherical_harmonics
-from models.bases import BesselBasisLayer, GaussianEmbedding
+from models.basis_functions import BesselBasisLayer, GaussianEmbedding
 from torch_geometric import nn as gnn
 
 
@@ -79,7 +79,6 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
         dists = torch.linalg.norm(pos, dim=-1)  # centroids are at (0,0,0)
         rbf = self.radial_basis(dists)
         sbf = torch.cat([spherical_harmonics(self.sph_od_list, x=pos[batch == ii], normalize=True, normalization='component') for ii in range(num_graphs)])
-        # geom_embed = torch.cat((rbf,sbf),dim=-1)
 
         '''
         do node aggregation

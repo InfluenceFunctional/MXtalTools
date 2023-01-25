@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import sys
 from torch.distributions import MultivariateNormal, Uniform
 from models.torch_models import molecule_graph_model, independent_gaussian_model
-from models.model_components import general_MLP, Normalization
-from crystal_builder_tools import align_crystaldata_to_principal_axes
+from models.model_components import general_MLP
+from crystal_building.crystal_builder_tools import align_crystaldata_to_principal_axes
 
 
 class crystal_generator(nn.Module):

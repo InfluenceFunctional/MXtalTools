@@ -1,45 +1,46 @@
 test_mode: False
-machine: "cluster"
+machine: "Local"
 device: "cuda"
-skip_run_init: False
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 1028
+run_num: 1036
 anomaly_detection: False
-mode: gan # 'gan' or 'regression' or 'figures'
+mode: gan # 'gan' or 'regression' or 'figures' or 'sampling'
 gan_loss: standard #wasserstein # standard #distance
 new_generation: True # new way of defining asymmetric unit
-train_generator_density: True # on a target
+train_generator_density: False # on a target
 train_generator_packing: False # simply maximize density
-train_generator_vdw: True
+train_generator_vdw: False
 train_generator_h_bond: False # maximize h bonding (non-directional)
 train_generator_adversarially: False
 train_discriminator_adversarially: False
-train_discriminator_on_randn: False
-train_discriminator_on_noise: False
+train_discriminator_on_randn: True
+train_discriminator_on_noise: True
 generator_noise_level: 0.1 # -1 for wide range test # noise for distorted generation
-generator_similarity_penalty: 0
+generator_similarity_penalty: 0.1
 extra_test_period: 10
-extra_test_set_paths: null #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
-                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
-                        #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
-d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminator_931'
-g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_1009'
+extra_test_evaluation: False
+extra_test_set_paths: null
+d_model_path: null
+g_model_path: null
+
+sample_steps: 1000
+sample_move_size: 0.01
 
 seeds:
-  model: 1
+  model: 0
   dataset: 0
 
 # opt - sweep details
 wandb:
-  sample_reporting_frequency: 5
-  experiment_tag: dev
+  sample_reporting_frequency: 3
+  experiment_tag: gan_test_1
   log_figures: True
 
 # batching & convergence
-auto_batch_sizing: True
-min_batch_size: 5
-max_batch_size: 1000
+auto_batch_sizing: False
+min_batch_size: 25
+max_batch_size: 100
 auto_batch_reduction: .6 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
 history: 5000
@@ -47,7 +48,7 @@ gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000000
+dataset_length: 100000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
@@ -91,22 +92,22 @@ discriminator:
 
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
   graph_convolution_layers: 4
-  graph_filters: 32
-  atom_embedding_size: 64
+  graph_filters: 128
+  atom_embedding_size: 256
   graph_norm: layer
   num_spherical: 5
   num_radial: 32
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 1 # mikenet GATv2 mode only - must evenly divide graph filters
-  graph_convolution: 'full message passing' # 'full message passing' or schnet or 'GATv2'
+  num_attention_heads: 4 # mikenet GATv2 mode only - must evenly divide graph filters
+  graph_convolution: 'TransformerConv' # 'full message passing' or schnet or 'GATv2'
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False #
   pooling: combo
 
-  num_fc_layers: 2
-  fc_depth: 64
+  num_fc_layers: 4
+  fc_depth: 256
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer
@@ -115,8 +116,8 @@ discriminator:
 generator:
   optimizer: adamw
   learning_rate: 0.00001
-  max_lr: 0.00005
-  lr_schedule: True
+  max_lr: 0.00001
+  lr_schedule: False
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
   weight_decay: 0.01
@@ -125,11 +126,11 @@ generator:
 
   model_type: mlp # mlp only
   graph_convolution_layers: 4
-  graph_filters: 256
-  atom_embedding_size: 512
-  graph_norm: null
+  graph_filters: 128
+  atom_embedding_size: 256
+  graph_norm: layer
   num_spherical: 6
-  num_radial: 12
+  num_radial: 32
   graph_convolution_cutoff: 3
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
@@ -140,13 +141,13 @@ generator:
   pooling: geometric # combo, geometric (wip)
 
   conditioner_num_fc_layers: 4
-  conditioner_fc_depth: 1028
+  conditioner_fc_depth: 256
   conditioner_activation: leaky relu
-  conditioner_fc_dropout_probability: 0
-  conditioner_fc_norm_mode: null
+  conditioner_fc_dropout_probability: 0.1
+  conditioner_fc_norm_mode: layer
 
-  num_fc_layers: 10
-  fc_depth: 1028
+  num_fc_layers: 12
+  fc_depth: 256
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: layer

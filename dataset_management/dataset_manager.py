@@ -1,10 +1,9 @@
 from utils import *
 import matplotlib.pyplot as plt
-import tqdm
 import pandas as pd
-from crystal_builder_tools import *
+from crystal_building.crystal_builder_tools import *
 from pyxtal import symmetry
-from nikos.coordinate_transformations import coor_trans_matrix
+from crystal_building.coordinate_transformations import coor_trans_matrix
 import matplotlib.colors as colors
 
 
@@ -18,6 +17,7 @@ class Miner():
             self.min_z_value = 1
             self.max_num_atoms = 1000
             self.min_num_atoms = 5
+            self.max_molecule_radius = 1000
             self.max_atomic_number = 87
             self.max_packing_coefficient = 0.85
             self.min_packing_coefficient = 0.55
@@ -40,6 +40,7 @@ class Miner():
             self.min_z_value = config.min_z_value
             self.max_num_atoms = config.max_num_atoms
             self.min_num_atoms = config.min_num_atoms
+            self.max_molecule_radius = config.max_molecule_radius
             self.max_atomic_number = config.max_atomic_number
             self.max_packing_coefficient = 0.85
             self.min_packing_coefficient = config.min_packing_coefficient
@@ -88,13 +89,13 @@ class Miner():
         self.dataset.to_pickle(self.datasetPath)
         del (self.dataset)
 
-    def process_new_dataset(self, dataset_name = 'new_dataset', test_mode=False):
+    def process_new_dataset(self, dataset_name='new_dataset', test_mode=False):
 
         self.load_dataset(self.dataset_path, self.collect_chunks, test_mode=test_mode)
         self.numerize_dataset()
         self.curate_dataset()
 
-        self.dataset.to_pickle('../../new_dataset')#'../../' + dataset_name)
+        self.dataset.to_pickle('../../new_dataset')  # '../../' + dataset_name)
         self.dataset.loc[0:10000].to_pickle('../../test_new_dataset')
 
     def load_dataset(self, dataset_path, collect_chunks=False, test_mode=False):
@@ -166,9 +167,9 @@ class Miner():
 
         # standardize SG symbols
         for i in tqdm.tqdm(range(self.dataset_length)):
-            if self.dataset['crystal spacegroup number'][i] != 0: # sometimes the sg number is broken
+            if self.dataset['crystal spacegroup number'][i] != 0:  # sometimes the sg number is broken
                 self.dataset['crystal spacegroup symbol'][i] = self.space_groups[self.dataset['crystal spacegroup number'][i]]
-            else: # in which case, try reverse assigning the number, given the space group
+            else:  # in which case, try reverse assigning the number, given the space group
                 self.dataset['crystal spacegroup number'][i] = self.sg_numbers[self.dataset['crystal spacegroup symbol'][i]]
 
         #
@@ -210,7 +211,6 @@ class Miner():
         #         bad_inds.append(j)
         # print('overlapping atoms caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
-
         # samples with bad CSD-generated reference cells
         n_bad_inds = len(bad_inds)
         bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:, 0])  # missing coordinates
@@ -220,30 +220,34 @@ class Miner():
         if self.exclude_blind_test_targets:
             # CSD blind test 5 and 6 targets
             blind_test_identifiers = [
-                'OBEQUJ','OBEQOD','OBEQET','XATJOT','OBEQIX','KONTIQ',
-                'NACJAF','XAFPAY','XAFQON','XAFQIH','XAFPAY01','XAFPAY02','XAFPAY03','XAFPAY04'
+                'OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
+                'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04',
+                "COUMAR01", "COUMAR02", "COUMAR10", "COUMAR11", "COUMAR12", "COUMAR13",
+                "COUMAR14", "COUMAR15", "COUMAR16", "COUMAR17",  # Z'!=1 or some other weird thing
+                "COUMAR18", "COUMAR19"
             ]
-            blind_test_identifiers.remove('XATJOT') # multi-component
-            blind_test_identifiers.remove('XAFQON') # multi-component
-            blind_test_identifiers.remove('KONTIQ') # multi-component
+            blind_test_identifiers.remove('XATJOT')  # multi-component
+            blind_test_identifiers.remove('XAFQON')  # multi-component
+            blind_test_identifiers.remove('KONTIQ')  # multi-component
 
             # samples with bad CSD-generated reference cells
             n_bad_inds = len(bad_inds)
             for j in range(len(self.dataset)):
-                item = self.dataset['identifier'][j] # do it this way to remove the target, including any of its polymorphs
+                item = self.dataset['identifier'][j]  # do it this way to remove the target, including any of its polymorphs
                 if item[-1].isdigit():
                     item = item[:-2]  # cut off trailing digits, if any
                 if item in blind_test_identifiers:
                     bad_inds.append(j)
             print('Blind test targets caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
+        # todo add a filter for when the asymmetric unit definition is nonstandard (returns more than one centroid)
 
         # when the molecule is too long
         # cases where the csd has the wrong number of molecules
         n_bad_inds = len(bad_inds)
-        #self.config.max_molecule_radius
-        mol_radii = [np.amax(np.linalg.norm(coords - coords.mean(0),axis=-1)) for coords in self.dataset['atom coords']]
-        bad_inds.extend(np.argwhere(np.asarray(mol_radii) > self.config.max_molecule_radius)[:,0])
+        # self.config.max_molecule_radius
+        mol_radii = [np.amax(np.linalg.norm(coords - coords.mean(0), axis=-1)) for coords in self.dataset['atom coords']]
+        bad_inds.extend(np.argwhere(np.asarray(mol_radii) > self.max_molecule_radius)[:, 0])
         print('molecule too long filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # cases where the csd has the wrong number of molecules
@@ -361,8 +365,8 @@ class Miner():
         # use CSD identifiers to pick out polymorphs
         duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
 
-        #duplicate_groups_identifiers = {ident:[self.dataset['identifier'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
-        #duplicate_groups_packings = {ident:[self.dataset['crystal packing coefficient'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
+        # duplicate_groups_identifiers = {ident:[self.dataset['identifier'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
+        # duplicate_groups_packings = {ident:[self.dataset['crystal packing coefficient'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
 
         # todo delete blind test and any extra CSP samples from the training dataset
 
@@ -397,14 +401,14 @@ class Miner():
                 if item not in all_identifiers.keys():
                     all_identifiers[item] = []
                 all_identifiers[item].append(i)
-        elif self.database.lower() == 'cif': # todo unfinished
+        elif self.database.lower() == 'cif':  # todo unfinished
             blind_test_targets = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
                                   'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
                                   'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
-            all_identifiers = {key:[] for key in blind_test_targets}
+            all_identifiers = {key: [] for key in blind_test_targets}
             for i in tqdm.tqdm(range(len(self.dataset['identifier']))):
                 item = self.dataset['identifier'][i]
-                for j in range(len(blind_test_targets)): # go in reverse to account for roman numerals system of duplication
+                for j in range(len(blind_test_targets)):  # go in reverse to account for roman numerals system of duplication
                     if blind_test_targets[-1 - j] in item:
                         all_identifiers[blind_test_targets[-1 - j]].append(i)
                         break
@@ -492,7 +496,7 @@ class Miner():
                 if 'molecule' in key:
                     correlates_list.append(key)
 
-        #correlates_list.append('molecule point group is C1')
+        # correlates_list.append('molecule point group is C1')
 
         for key in self.modellable_keys:
             key_good = True

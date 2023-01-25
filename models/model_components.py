@@ -3,8 +3,7 @@ import sys
 import torch
 import torch_geometric
 from torch import nn
-from torch.nn import functional
-from torch_geometric import nn as gnn
+import torch_geometric.nn as gnn
 import torch.nn.functional as F
 
 class general_MLP(nn.Module):
@@ -79,13 +78,20 @@ class Normalization(nn.Module):
             self.norm = nn.BatchNorm1d(filters)
         elif norm == 'layer':
             self.norm = nn.LayerNorm(filters)
+        elif norm == 'instance':
+            self.norm = nn.InstanceNorm1d(filters) # not tested
+        elif norm == 'graph':
+            self.norm = gnn.GraphNorm(filters)
         elif norm is None:
             self.norm = nn.Identity()
         else:
             print(norm + " is not a valid normalization")
             sys.exit()
 
-    def forward(self, input):
+    def forward(self, input, batch = None):
+        if batch is not None:
+            return self.norm(input, batch)
+
         return self.norm(input)
 
 

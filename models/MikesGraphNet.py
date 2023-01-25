@@ -1,7 +1,8 @@
 from math import pi as PI
 import sys
 
-from models.bases import TorsionalEmbedding, SphericalBasisLayer, GaussianEmbedding, BesselBasisLayer
+from models.basis_functions import TorsionalEmbedding, SphericalBasisLayer, GaussianEmbedding, BesselBasisLayer
+from models.model_components import Normalization, Activation
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -269,7 +270,6 @@ class EmbeddingBlock(torch.nn.Module):
 class GCBlock(torch.nn.Module):
     def __init__(self, graph_convolution_filters, hidden_channels, radial_dim, convolution_mode, spherical_dim=None, spherical=False, torsional=False, norm=None, dropout=0, heads=1):
         super(GCBlock, self).__init__()
-        self.norm = Normalization(norm, graph_convolution_filters)
         self.node_to_message = nn.Linear(hidden_channels, graph_convolution_filters)
         self.message_to_node = nn.Linear(graph_convolution_filters, hidden_channels, bias=False)  # don't want to send spurious messages, though it probably doesn't matter anyway
         self.radial_to_message = nn.Linear(radial_dim, graph_convolution_filters)
@@ -283,7 +283,7 @@ class GCBlock(torch.nn.Module):
         if torsional:
             assert spherical
             self.torsional_to_message = nn.Linear(spherical_dim * spherical_dim * radial_dim, graph_convolution_filters)
-            self.radial_spherical_torsional_aggregation = nn.Linear(graph_convolution_filters * 3, graph_convolution_filters)  # torch.add  # could also do dot
+            self.radial_torsional_aggregation = nn.Linear(graph_convolution_filters * 2, graph_convolution_filters)  # torch.add  # could also do dot
 
         if convolution_mode == 'GATv2':
             self.GConv = gnn.GATv2Conv(
@@ -309,7 +309,7 @@ class GCBlock(torch.nn.Module):
                 out_channels=graph_convolution_filters,
                 edge_dim=graph_convolution_filters,
                 dropout=dropout,
-                norm=norm,
+                norm=None, # can't do graph norm here
             )
         elif convolution_mode.lower() == 'schnet':  #
             assert not spherical, 'schnet currently only works with pure radial bases'
@@ -324,8 +324,8 @@ class GCBlock(torch.nn.Module):
         # convert local information into edge weights
         if tbf is not None:
             # aggregate spherical and torsional messages to radial
-            edge_attr = (self.radial_spherical_torsional_aggregation(
-                torch.cat((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf), self.torsional_to_message(tbf)), dim=1)))  # combine radial and spherical info in triplet space
+            edge_attr = (self.radial_torsional_aggregation(
+                torch.cat((self.radial_to_message(rbf)[idx_kj], self.torsional_to_message(tbf)), dim=1)))  # combine radial and torsional info in triplet space
             # torch.sum(torch.stack((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf), self.torsional_to_message(tbf))),dim=0)
             edge_attr = scatter(edge_attr, idx_ji, dim=0)  # collect triplets back down to pair space
 
@@ -344,7 +344,7 @@ class GCBlock(torch.nn.Module):
             edge_index = edge_index[:, :len(edge_attr)]
 
         # convolve # todo only update nodes which will actually pass messages on this round
-        x = self.norm(self.node_to_message(x))
+        x = self.node_to_message(x)
         if self.convolution_mode.lower() == 'schnet':
             x = self.GConv(x, edge_index, dists, edge_attr)
         else:
@@ -404,19 +404,8 @@ class MPConv(torch.nn.Module):
                                output_dim=out_channels,
                                activation=activation,
                                )
-        # self.linear1 = nn.Linear(in_channels * 2 + edge_dim, out_channels)
-        # self.linear2 = nn.Linear(out_channels, out_channels)
-        # self.norm = nn.LayerNorm(out_channels)
-        # self.activation = Activation(activation, filters=None)
 
     def forward(self, x, edge_index, edge_attr):
-        # i, j = edge_index
-        # m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[i], x[j], edge_attr), dim=-1)))))
-        # return scatter(m, j, dim=0, dim_size=len(x))  # send directional messages from i to j, enforcing the size of the output dimension
-
-        # m = self.linear2(self.activation(self.norm(self.linear1(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1)))))
-        # m = self.linear1(torch.cat((x[i], x[j], edge_attr), dim=-1))
-
         m = self.MLP(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1))
 
         return scatter(m, edge_index[1], dim=0, dim_size=len(x))  # send directional messages from i to j, enforcing the size of the output dimension
@@ -499,36 +488,3 @@ def triplets(edge_index, num_nodes):
     idx_ji = adj_t_row.storage.row()[mask]
 
     return col, row, idx_i, idx_j, idx_k, idx_kj, idx_ji
-
-
-class Normalization(nn.Module):
-    def __init__(self, norm, filters, *args, **kwargs):
-        super().__init__()
-        if norm == 'batch':
-            self.norm = nn.BatchNorm1d(filters)
-        elif norm == 'layer':
-            self.norm = nn.LayerNorm(filters)
-        elif norm is None:
-            self.norm = nn.Identity()
-        else:
-            print(norm + " is not a valid normalization")
-            sys.exit()
-
-    def forward(self, input):
-        return self.norm(input)
-
-
-class Activation(nn.Module):
-    def __init__(self, activation_func, filters, *args, **kwargs):
-        super().__init__()
-        if activation_func.lower() == 'relu':
-            self.activation = F.relu
-        elif activation_func.lower() == 'gelu':
-            self.activation = F.gelu
-        elif activation_func.lower() == 'kernel':
-            self.activation = kernelActivation(n_basis=20, span=4, channels=filters)
-        elif activation_func.lower() == 'leaky relu':
-            self.activation = F.leaky_relu
-
-    def forward(self, input):
-        return self.activation(input)
