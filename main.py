@@ -302,7 +302,7 @@ def add_args(parser):
     update_args2config(args2config, 'discriminator_fc_norm_mode', ['discriminator', 'fc_norm_mode'])
 
     # cell generator
-    parser.add_argument('--gan_loss', type=str, default='wasserstein')  # 'wasserstein, 'standard'
+    parser.add_argument('--gan_loss', type=str, default='standard')  # stnandard only
     add_bool_arg(parser, 'new_generation', default=True) # new way of defining the asymmetric unit
     add_bool_arg(parser, 'train_generator_density', default=False)  # train on cell volume
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density

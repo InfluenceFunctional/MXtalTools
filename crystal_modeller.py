@@ -623,17 +623,9 @@ class Modeller():
                     epoch_stats_dict['real vdw penalty'].extend(real_vdw_score.cpu().detach().numpy())
                     epoch_stats_dict['fake vdw penalty'].extend(fake_vdw_score.cpu().detach().numpy())
 
-                    if self.config.gan_loss == 'wasserstein':
-                        d_losses = -score_on_real + score_on_fake  # maximize score on real, minimize score on fake
-
-                    elif self.config.gan_loss == 'standard':
-                        prediction = torch.cat((score_on_real, score_on_fake))
-                        target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
-                        d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
-
-                    else:
-                        print(self.config.gan_loss + ' is not an implemented GAN loss function!')
-                        sys.exit()
+                    prediction = torch.cat((score_on_real, score_on_fake))
+                    target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
+                    d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
 
                     d_loss = d_losses.mean()
                     d_err.append(d_loss.data.cpu().detach().numpy())  # average overall loss
@@ -738,7 +730,7 @@ class Modeller():
             if self.config.test_mode or self.config.anomaly_detection:
                 assert torch.sum(torch.isnan(real_supercell_data.x)) == 0, "NaN in training input"
 
-            score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data)
+            score_on_real, real_distances_dict = self.adversarial_score(discriminator, real_supercell_data)
 
             full_rdfs, rr, self.elementwise_correlations_labels = crystal_rdf(real_supercell_data, elementwise=True, raw_density=True, rrange=[0, 10], bins=500)
             intermolecular_rdfs, rr, _ = crystal_rdf(real_supercell_data, intermolecular=True, elementwise=True, raw_density=True, rrange=[0, 10], bins=500)
@@ -765,24 +757,10 @@ class Modeller():
 
         return epoch_stats_dict, total_time
 
-    def adversarial_loss(self, discriminator, data):
+    def adversarial_score(self, discriminator, data):
         output, extra_outputs = discriminator(data, return_dists=True)  # reshape output from flat filters to channels * filters per channel
 
-        # discriminator score
-        if self.config.gan_loss == 'wasserstein':
-            scores = output[:, 0]  # F.softplus(output[:, 0])  # critic score - higher meaning more plausible
-
-        elif self.config.gan_loss == 'standard':
-            scores = output  # F.softmax(output, dim=1)[:, -1]  # 'no' and 'yes' unnormalized activations
-        elif self.config.gan_loss == 'distance':
-            scores = output[:, 0]  # the raw distance output
-        else:
-            print(self.config.gan_loss + ' is not a valid GAN loss function!')
-            sys.exit()
-
-        assert torch.sum(torch.isnan(scores)) == 0
-
-        return scores, extra_outputs['dists dict']
+        return output, extra_outputs['dists dict']
 
     def pairwise_correlations_analysis(self, dataset_builder, config):
         '''
@@ -918,8 +896,8 @@ class Modeller():
             real_supercell_data.pos += torch.randn_like(real_supercell_data.pos) * self.config.discriminator.positional_noise
             fake_supercell_data.pos += torch.randn_like(fake_supercell_data.pos) * self.config.discriminator.positional_noise
 
-        score_on_real, real_distances_dict = self.adversarial_loss(discriminator, real_supercell_data)
-        score_on_fake, fake_pairwise_distances_dict = self.adversarial_loss(discriminator, fake_supercell_data)
+        score_on_real, real_distances_dict = self.adversarial_score(discriminator, real_supercell_data)
+        score_on_fake, fake_pairwise_distances_dict = self.adversarial_score(discriminator, fake_supercell_data)
 
         if return_rdf:
             real_rdf, rr, rdf_label_dict = crystal_rdf(real_supercell_data, rrange=[0, 6], bins=1000, intermolecular=True, elementwise=True, raw_density=True)
@@ -1764,7 +1742,7 @@ class Modeller():
             if self.config.test_mode or self.config.anomaly_detection:
                 assert torch.sum(torch.isnan(supercell_data.x)) == 0, "NaN in training input"
 
-            discriminator_score, dist_dict = self.adversarial_loss(discriminator, supercell_data)
+            discriminator_score, dist_dict = self.adversarial_score(discriminator, supercell_data)
         else:
             discriminator_score = None
             dist_dict = None
@@ -1790,14 +1768,8 @@ class Modeller():
             epoch_stats_dict['generator density loss'].append(density_loss.cpu().detach().numpy())
 
         if adversarial_score is not None:
-            if self.config.gan_loss == 'wasserstein':
-                adversarial_loss = -adversarial_score  # generator wants to maximize the score (minimize the negative score)
-            elif self.config.gan_loss == 'standard':
-                softmax_adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
-                adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
-            else:
-                print(self.config.gan_loss + ' is not an implemented GAN loss function!')
-                sys.exit()
+            softmax_adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
+            adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
             epoch_stats_dict['generator adversarial loss'].append(adversarial_loss.cpu().detach().numpy())
         if self.config.train_generator_adversarially:
             g_losses_list.append(adversarial_loss)
