@@ -616,8 +616,7 @@ class Modeller():
                     generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, self.config, data, generator, i)
 
                     score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
-                        = self.train_discriminator(generated_samples_i, discriminator, self.config, data, i, handedness,
-                                                   return_rdf=self.config.gan_loss == 'distance')
+                        = self.train_discriminator(generated_samples_i, discriminator, data, i, handedness)
 
                     epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
                     epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
