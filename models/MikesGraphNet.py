@@ -1,5 +1,4 @@
 from math import pi as PI
-import sys
 
 from models.basis_functions import TorsionalEmbedding, SphericalBasisLayer, GaussianEmbedding, BesselBasisLayer
 from models.model_components import Normalization, Activation
@@ -7,7 +6,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.global_aggregation import SphGeoPooling
 from torch_scatter import scatter
 from torch_sparse import SparseTensor
 import torch_geometric.nn as gnn
@@ -270,6 +268,11 @@ class EmbeddingBlock(torch.nn.Module):
 class GCBlock(torch.nn.Module):
     def __init__(self, graph_convolution_filters, hidden_channels, radial_dim, convolution_mode, spherical_dim=None, spherical=False, torsional=False, norm=None, dropout=0, heads=1):
         super(GCBlock, self).__init__()
+        if norm == 'graph':
+            message_norm = 'layer'
+        else:
+            message_norm = norm
+        self.norm = Normalization(message_norm, graph_convolution_filters)
         self.node_to_message = nn.Linear(hidden_channels, graph_convolution_filters)
         self.message_to_node = nn.Linear(graph_convolution_filters, hidden_channels, bias=False)  # don't want to send spurious messages, though it probably doesn't matter anyway
         self.radial_to_message = nn.Linear(radial_dim, graph_convolution_filters)
@@ -344,7 +347,7 @@ class GCBlock(torch.nn.Module):
             edge_index = edge_index[:, :len(edge_attr)]
 
         # convolve # todo only update nodes which will actually pass messages on this round
-        x = self.node_to_message(x)
+        x = self.norm(self.node_to_message(x))
         if self.convolution_mode.lower() == 'schnet':
             x = self.GConv(x, edge_index, dists, edge_attr)
         else:
