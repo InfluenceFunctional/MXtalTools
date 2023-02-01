@@ -5,9 +5,9 @@ import torch
 import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn
 from crystal_building.crystal_builder_tools import \
-    (cell_analysis, update_supercell_data, compute_lattice_vector_overlap,
+    (update_supercell_data, compute_lattice_vector_overlap,
      coor_trans_matrix,
-     ref_to_supercell, clean_cell_output, compute_principal_axes_list, invert_coords,
+     ref_to_supercell, clean_cell_output, invert_coords,
      compute_Ip_handedness, align_crystaldata_to_principal_axes, asym_unit_dict)
 
 
@@ -34,29 +34,43 @@ def override_sg_info(override_sg, dataDims, supercell_data, symmetries_dict, sym
 
 
 class SupercellBuilder():
-    def __init__(self, sym_ops, symmetries_dict, normed_lattice_vectors, atom_weights, dataDims):
+    def __init__(self, sym_ops, symmetries_dict, normed_lattice_vectors, atom_weights, dataDims, supercell_scale = 5, device = 'cuda'):
         self.sym_ops = sym_ops
         self.atom_weights = atom_weights
         self.symmetries_dict = symmetries_dict
         self.dataDims = dataDims
         self.normed_lattice_vectors = normed_lattice_vectors
+        self.device = device
         # confirm sym ops we are using agree with these settings
         # todo confirm these make right crystals
         # todo add support for all 230 space groups
         # todo add extra tools for non-parallelipped asymmetric units
-        self.asym_unit_dict = asym_unit_dict
+        self.asym_unit_dict = asym_unit_dict.copy()
         for key in self.asym_unit_dict:
-            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
+
+        # init fractional translations for supercell construction
+        n_cells = (2 * supercell_scale + 1) ** 3
+        fractional_translations = torch.zeros((n_cells, 3))  # initialize the translations in fractional coords
+        i = 0
+        for xx in range(-supercell_scale, supercell_scale + 1):
+            for yy in range(-supercell_scale, supercell_scale + 1):
+                for zz in range(-supercell_scale, supercell_scale + 1):
+                    fractional_translations[i] = torch.tensor((xx, yy, zz))
+                    i += 1
+
+        self.sorted_fractional_translations = fractional_translations[torch.argsort(fractional_translations.abs().sum(1))].to(device)
+
 
     def build_supercells(self, supercell_data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
-                         do_on_cpu=True, override_sg=None, skip_cell_cleaning=False, standardized_sample=True):
+                         override_sg=None, skip_cell_cleaning=False, standardized_sample=True, align_molecules = True):
         '''
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to supercell with appropriate cluster size
         '''
 
-        orig_device, supercell_data, cell_sample, target_handedness = \
-            self.move_cell_data_to_device(do_on_cpu, supercell_data, cell_sample, target_handedness)
+        supercell_data, cell_sample, target_handedness = \
+            self.move_cell_data_to_device(supercell_data, cell_sample, target_handedness)
         sym_ops_list, supercell_data = self.set_sym_ops(override_sg, supercell_data)
 
         cell_lengths, cell_angles, mol_position, mol_rotation = \
@@ -68,7 +82,8 @@ class SupercellBuilder():
         supercell_data.cell_params = torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation), dim=1)  # lengths are destandardized here
 
         # standardize target with appropriate handedness
-        supercell_data = align_crystaldata_to_principal_axes(supercell_data, handedness=target_handedness)
+        if align_molecules: # align canonical conformers principal axes to cartesian axes, somewhat expensive
+            supercell_data = align_crystaldata_to_principal_axes(supercell_data, handedness=target_handedness)
 
         coords_list = []
         atoms_list = []
@@ -86,37 +101,17 @@ class SupercellBuilder():
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, supercell_data.Z,
-                             supercell_scale=supercell_size, cutoff=graph_convolution_cutoff)
+                             supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
+                             sorted_fractional_translations=self.sorted_fractional_translations)
 
         overlaps_list = None  # expensive and not currently used # compute_lattice_vector_overlap(final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors.to(supercell_data.x.device))
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
 
-        #
-        # if return_energy:  # expensive
-        #     mols = [Atoms(positions=reference_cell_list[n].cpu().detach().numpy().reshape(reference_cell_list[n].shape[1] * reference_cell_list[n].shape[0], 3),
-        #                   symbols=atoms_list[n][:, 0].repeat(supercell_data.Z[n]).cpu().detach().numpy(),
-        #                   cell=supercell_data.T_fc[n].T.cpu().detach().numpy()
-        #                   ) for n in range(len(reference_cell_list))]
-        #
-        #     pot_en = np.zeros(len(mols))
-        #     for i, mol in enumerate(mols):
-        #         mol.calc = lj.LennardJones()
-        #         mol.set_pbc([True, True, True])
-        #         pot_en[i] = mol.get_potential_energy() / len(mol)
-        #
-        #     return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list, pot_en
-        #
-        # else:
-        return supercell_data.to(orig_device), generated_cell_volumes.to(orig_device), overlaps_list
+        return supercell_data, generated_cell_volumes, overlaps_list
 
-    def real_cell_to_supercell(self, supercell_data, config, do_on_cpu=True, return_overlaps=False):
-        '''
-        pretty quick on cpu
-        '''
-
-        if do_on_cpu:
-            supercell_data = supercell_data.cpu()
+    def real_cell_to_supercell(self, supercell_data, config, return_overlaps=False):
+        supercell_data = supercell_data.clone().to(self.device)
 
         T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(
             cell_lengths=supercell_data.cell_params[:, 0:3], cell_angles=supercell_data.cell_params[:, 3:6])
@@ -132,28 +127,15 @@ class SupercellBuilder():
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list, T_fc_list,
                              atoms_list, supercell_data.Z, supercell_scale=config.supercell_size,
-                             cutoff=config.discriminator.graph_convolution_cutoff)
+                             cutoff=config.discriminator.graph_convolution_cutoff,
+                             sorted_fractional_translations=self.sorted_fractional_translations)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
 
         # if return_overlaps:  # todo finish this
         #     overlaps_list = compute_lattice_vector_overlap(masses_list, final_coords_list, T_cf_list, self.normed_lattice_vectors=self.self.normed_lattice_vectors)
         #     return supercell_data.to(config.device), overlaps_list
-        # else:
-        # if return_energy:
-        #     mols = [Atoms(positions=supercell_data.ref_cell_pos[n].reshape(supercell_data.ref_cell_pos[n].shape[1] * supercell_data.ref_cell_pos[n].shape[0], 3),
-        #                   symbols=atoms_list[n][:, 0].repeat(supercell_data.Z[n]).cpu().detach().numpy(),
-        #                   cell=supercell_data.T_fc[n].T.cpu().detach().numpy()
-        #                   ) for n in range(supercell_data.num_graphs)]
-        #
-        #     pot_en = np.zeros(len(mols))
-        #     for i, mol in enumerate(mols):
-        #         mol.calc = lj.LennardJones()
-        #         mol.set_pbc([True, True, True])
-        #         pot_en[i] = mol.get_potential_energy() / len(mol)
-        #
-        #     return supercell_data.to(config.device), pot_en
-        # else:
+
         return supercell_data.to(config.device)
 
     def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True):
@@ -311,14 +293,13 @@ class SupercellBuilder():
 
         return sym_ops_list, supercell_data
 
-    def move_cell_data_to_device(self, do_on_cpu, supercell_data, cell_sample, target_handedness):
-        orig_device = supercell_data.x.device
-        if do_on_cpu:
-            supercell_data = supercell_data.cpu()
-            if cell_sample is not None:
-                cell_sample = cell_sample.cpu()
+    def move_cell_data_to_device(self, supercell_data, cell_sample, target_handedness):
+        supercell_data = supercell_data.to(self.device)
+
+        if cell_sample is not None:
+            cell_sample = cell_sample.to(self.device)
 
         if target_handedness is not None:
-            target_handedness = target_handedness.to(supercell_data.x.device)
+            target_handedness = target_handedness.to(self.device)
 
-        return orig_device, supercell_data, cell_sample, target_handedness
+        return supercell_data, cell_sample, target_handedness

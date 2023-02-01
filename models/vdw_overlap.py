@@ -20,7 +20,7 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
                                         batch=crystaldata.batch,
                                         inside_inds=in_inds,
                                         convolve_inds=out_inds,
-                                        r=6, max_num_neighbors=500, flow='source_to_target')  # max vdw range as six
+                                        r=6, max_num_neighbors=500, flow='source_to_target')
 
         crystal_number = crystaldata.batch[edges[0]]
 
@@ -57,7 +57,7 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
             [torch.mean(penalties[crystal_number == ii]) for ii in range(num_graphs)]
         )
     )
-    tot_scores = (scores + mean_scores) / 2 # combine mean score with max score
+    tot_scores =(scores + mean_scores) / 2 # combine mean score with max score
     assert len(tot_scores) == num_graphs
     if return_atomwise:
         return tot_scores, [penalties[crystal_number == ii] for ii in range(num_graphs)]

@@ -2,13 +2,15 @@ import torch
 import numpy as np
 from utils import standardize
 from dataset_management.CrystalData import CrystalData
-from crystal_building.crystal_builder_tools import unit_cell_analysis, asym_unit_dict
+from crystal_building.crystal_builder_tools import unit_cell_analysis
+from crystal_building.crystal_builder_tools import asym_unit_dict as asymmetric_unit_dict
 import sys
 from torch_geometric.loader import DataLoader
 import tqdm
 import pandas as pd
 from pyxtal import symmetry
 from dataset_management.dataset_manager import Miner
+import os
 
 
 class BuildDataset:
@@ -195,15 +197,15 @@ class BuildDataset:
         '''
         update cell parameterization to new method
         ''' # todo delete this and re-featurize the full dataset
-        for key in asym_unit_dict:
-            asym_unit_dict[key] = torch.Tensor(asym_unit_dict[key])
+        for key in asymmetric_unit_dict:
+            asymmetric_unit_dict[key] = torch.Tensor(asymmetric_unit_dict[key])
 
         position, rotation, handedness = np.zeros((len(dataset), 3)), np.zeros((len(dataset), 3)), np.zeros(len(dataset))
         for ii in tqdm.tqdm(range(len(dataset))):
             unit_cell_coords = dataset['crystal reference cell coords'][ii]
             sg_ind = dataset['crystal spacegroup number'][ii]
             T_cf = dataset['crystal cf transform'][ii]
-            position[ii], rotation[ii], handedness[ii] = unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf)
+            position[ii], rotation[ii], handedness[ii] = unit_cell_analysis(unit_cell_coords, sg_ind, asymmetric_unit_dict, T_cf)
 
         dataset['crystal asymmetric unit centroid x'], \
         dataset['crystal asymmetric unit centroid y'], \
@@ -283,7 +285,6 @@ class BuildDataset:
         """
 
         keys_to_add = self.atom_keys
-        print("Preparing atom-wise features")
         if self.replace_dataDims is not None:
             stds = self.replace_dataDims['atom stds']
             means = self.replace_dataDims['atom means']
@@ -343,7 +344,6 @@ class BuildDataset:
             keys_to_add.extend(lattice_overlap_keys)
             # overlaps = np.asarray([dataset[key] for key in lattice_overlap_keys]).T
 
-        print("Preparing molcule-wise features")
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it
             keys_to_add.remove(self.target)
 
@@ -532,7 +532,6 @@ class BuildDataset:
             if ('molecule has' in key):
                 keys_to_add.append(key)
 
-        print("Preparing molecule/crystal tracking features")
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it
             keys_to_add.remove(self.target)
         self.unique_dicts = []
@@ -640,15 +639,17 @@ def get_dataloaders(dataset_builder, config, override_batch_size=None):
     for i in range(test_size):
         test_dataset.append(dataset_builder[i])
 
-    tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
-    te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False)
+    if config.machine == 'cluster':
+        tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=min(os.cpu_count(), 8), pin_memory=True)
+        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=min(os.cpu_count(), 8), pin_memory=True)
+    else:
+        tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
+        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
 
     return tr, te
 
-
 def update_batch_size(loader, new_batch_size):
-    return DataLoader(loader.dataset, batch_size=new_batch_size, shuffle=True, num_workers=0, pin_memory=False)
-
+    return DataLoader(loader.dataset, batch_size=new_batch_size, shuffle=True, num_workers=loader.num_workers, pin_memory=loader.pin_memory)
 
 def delete_from_dataset(dataset, good_inds):
     print("Deleting unwanted entries")

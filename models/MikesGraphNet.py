@@ -187,22 +187,6 @@ class MikesGraphNet(torch.nn.Module):
 
         dist, rbf, sbf, tbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
 
-        '''
-        import networkx as nx
-        import matplotlib.pyplot as plt
-        intra_edges = (edge_index[:, edge_index[0, :] < ptr[1]].cpu().detach().numpy().T)
-        inter_edges = (edge_index_inter[:, edge_index_inter[0, :] < ptr[1]].cpu().detach().numpy().T)
-        plt.clf()
-        G = nx.Graph()
-        G = G.to_directed()
-        G.add_weighted_edges_from(np.concatenate((intra_edges, np.ones(len(intra_edges))[:, None] * 2), axis=1))
-        G.add_weighted_edges_from(np.concatenate((inter_edges, np.ones(len(inter_edges))[:, None] * 0.25), axis=1))
-        edges,weights = zip(*nx.get_edge_attributes(G,'weight').items())
-        node_weights = np.concatenate((np.ones(9)*2, np.ones(len(G.nodes)-9)))
-        nx.draw_kamada_kawai(G, arrows=True, node_size=node_weights * 100, edge_color=weights, linewidths = 1, width=weights, 
-        edge_cmap=plt.cm.RdYlGn, node_color = node_weights, cmap=plt.cm.RdYlGn)
-        '''
-
         # graph model starts here
         x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector
         for n, (convolution, fc, global_agg) in enumerate(zip(self.interaction_blocks, self.fc_blocks, self.global_blocks)):
@@ -244,6 +228,24 @@ class MikesGraphNet(torch.nn.Module):
         assert torch.sum(torch.isnan(out)) == 0
 
         return out, dist_output if return_dists else None
+
+
+
+        '''
+        import networkx as nx
+        import matplotlib.pyplot as plt
+        intra_edges = (edge_index[:, edge_index[0, :] < ptr[1]].cpu().detach().numpy().T)
+        inter_edges = (edge_index_inter[:, edge_index_inter[0, :] < ptr[1]].cpu().detach().numpy().T)
+        plt.clf()
+        G = nx.Graph()
+        G = G.to_directed()
+        G.add_weighted_edges_from(np.concatenate((intra_edges, np.ones(len(intra_edges))[:, None] * 2), axis=1))
+        G.add_weighted_edges_from(np.concatenate((inter_edges, np.ones(len(inter_edges))[:, None] * 0.25), axis=1))
+        edges,weights = zip(*nx.get_edge_attributes(G,'weight').items())
+        node_weights = np.concatenate((np.ones(9)*2, np.ones(len(G.nodes)-9)))
+        nx.draw_kamada_kawai(G, arrows=True, node_size=node_weights * 100, edge_color=weights, linewidths = 1, width=weights, 
+        edge_cmap=plt.cm.RdYlGn, node_color = node_weights, cmap=plt.cm.RdYlGn)
+        '''
 
 
 class EmbeddingBlock(torch.nn.Module):

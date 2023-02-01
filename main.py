@@ -181,7 +181,7 @@ def add_args(parser):
     update_args2config(args2config, 'generator_positional_noise', ['generator', 'positional_noise'])
 
     # generator model settings
-    parser.add_argument('--generator_model_type', type=str, default='mlp')  # random, 'csd cell', 'model'
+    parser.add_argument('--generator_canonical_conformer_orientation', type=str, default = 'standardized') # standardized or random
     parser.add_argument('--generator_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
     parser.add_argument('--generator_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
     parser.add_argument('--generator_graph_filters', type=int, default=28)  # number of neurons per graph convolution
@@ -210,19 +210,11 @@ def add_args(parser):
     parser.add_argument('--generator_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
     parser.add_argument('--generator_conditioning_mode', type=str, default='graph model')  # how to derive molecular conditioning - graph model or just selected features
 
-
-    # flow model
-    parser.add_argument('--generator_num_flow_layers', type=int, default=3)  # number of flow layers
-    parser.add_argument('--generator_flow_depth', type=int, default=16)  # number of filters per flow layer
-    parser.add_argument('--generator_flow_basis_fns', type=int, default=8)  # number of basis functions for spline NF model
     parser.add_argument('--generator_prior', type=str, default='multivariate normal')  # type of prior distribution
     parser.add_argument('--generator_prior_dimension', type=int, default=12)  # type of prior distribution
-
-    parser.add_argument('--generator_flow_type', type=str, default='nsf_cl')  # type of flow model 'nsf-cl' is legit
-    parser.add_argument('--generator_num_samples', type=int, default=10000)  # number of samples to generate for analysis
     add_bool_arg(parser, 'generator_conditional_modelling', default=True)  # whether to use molecular features as conditions for normalizing flow model
 
-    update_args2config(args2config, 'generator_model_type', ['generator', 'model_type'])
+    update_args2config(args2config, 'generator_canonical_conformer_orientation', ['generator','canonical_conformer_orientation'])
     update_args2config(args2config, 'generator_graph_model', ['generator', 'graph_model'])
     update_args2config(args2config, 'generator_atom_embedding_size', ['generator', 'atom_embedding_size'])
     update_args2config(args2config, 'generator_graph_filters', ['generator', 'graph_filters'])
@@ -247,13 +239,8 @@ def add_args(parser):
     update_args2config(args2config, 'generator_activation', ['generator', 'activation'])
     update_args2config(args2config, 'generator_fc_dropout_probability', ['generator', 'fc_dropout_probability'])
     update_args2config(args2config, 'generator_fc_norm_mode', ['generator', 'fc_norm_mode'])
-    update_args2config(args2config, 'generator_num_flow_layers', ['generator', 'num_flow_layers'])
-    update_args2config(args2config, 'generator_flow_depth', ['generator', 'flow_depth'])
-    update_args2config(args2config, 'generator_flow_basis_fns', ['generator', 'flow_basis_fns'])
     update_args2config(args2config, 'generator_prior', ['generator', 'prior'])
     update_args2config(args2config, 'generator_prior_dimension', ['generator', 'prior_dimension'])
-    update_args2config(args2config, 'generator_flow_type', ['generator', 'flow_type'])
-    update_args2config(args2config, 'generator_num_samples', ['generator', 'num_samples'])
     update_args2config(args2config, 'generator_conditional_modelling', ['generator', 'conditional_modelling'])
     update_args2config(args2config, 'generator_conditioning_mode', ['generator', 'conditioning_mode'])
 
@@ -383,6 +370,6 @@ if __name__ == '__main__':
     if config.mode == 'figures':
         predictor.make_nice_figures()
     elif config.mode == 'sampling':
-        predictor.MCMC_sampling()
+        predictor.model_sampling()
     else:
         predictor.train()

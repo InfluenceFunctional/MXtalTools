@@ -24,25 +24,28 @@ class Sampler:
     def __init__(self,
                  gammas,
                  seedInd,
-                 random_generator,
+                 generator,
                  acceptance_mode='stun',
                  debug=False,
                  init_temp=1,
                  move_size=0.01,
-                 supercell_size=1,
+                 supercell_size=5,
                  graph_convolution_cutoff=6,
                  vdw_radii=None,
                  preset_minimum=None,
-                 reset_patience = 1e3,
-                 new_minimum_patience = 1e3,
+                 reset_patience=1e3,
+                 new_minimum_patience=1e3,
+                 target_acceptance_rate=0.234,  # found this in a paper - optimal MCMC acceptance ratio
+                 spacegroup_to_search='P1',
                  ):
         if acceptance_mode == 'stun':
-            self.STUN = 1
+            self.STUN = 1  # modify the acceptance function with stochastic tunneling
         else:
             self.STUN = 0
 
+        self.sg_to_search = spacegroup_to_search
         self.debug = debug
-        self.target_acceptance_rate = 0.234  # found this in a paper - optimal MCMC acceptance ratio
+        self.target_acceptance_rate = target_acceptance_rate
         self.acceptance_history = 100
         self.deltaIter = int(1)  # get outputs every this many of iterations with one iteration meaning one move proposed for each "particle" on average
         self.randintsResampleAt = int(1e4)  # larger takes up more memory but increases speed
@@ -51,7 +54,7 @@ class Sampler:
         self.temp0 = init_temp  # initial temperature for sampling runs
         self.temperature = [self.temp0 for _ in range(self.nruns)]
         self.dim = 12
-        self.generator = random_generator
+        self.generator = generator
         self.move_size = move_size
         self.supercell_size = supercell_size
         self.graph_convolution_cutoff = graph_convolution_cutoff
@@ -76,30 +79,34 @@ class Sampler:
             "uncertainties": np.stack(self.all_uncertainties).T,
             "vdw penalties": np.stack(self.all_vdw_penalties).T,
         }
-        assert False # save samples for later reconstruction
         if self.debug:
             outputs['temperature'] = np.stack(self.temprec)
             outputs['acceptance ratio'] = np.stack(self.accrec)
             outputs['stun score'] = np.stack(self.stunrec)
 
-            # outputs['raw score record']=np.stack(self.scorerec)
-            # outputs['energy record']=np.stack(self.enrec)
-            # outputs['std dev record']=np.stack(self.std_devrec)
         return outputs
 
-    def makeAConfig(self, crystaldata):
+    def makeNewConfigs(self, crystaldata):
         '''
         :return:
         '''
-        assert 1 == 2 # set this up for our new generator
-        return self.generator.forward(crystaldata, num_samples=crystaldata.num_graphs).cpu().detach().numpy()
+        if self.generator._get_name() == 'crystal_generator':
+            return self.generator.forward(n_samples = crystaldata.num_graphs, conditions=crystaldata).cpu().detach().numpy()
+        else:
+            return self.generator.forward(n_samples = crystaldata.num_graphs, conditions=crystaldata).cpu().detach().numpy()
+
 
     def resetConfig(self, crystaldata, ind):
         """
         re-randomize a particular configuration
         :return:
         """
-        self.config[ind, :] = self.makeAConfig(crystaldata)[0, :]
+        if (self.fresh_config_ind == crystaldata.num_graphs) or (self.fresh_config_ind == 0): # if we have run out of configs, make a fresh batch
+            self.fresh_configs = self.makeNewConfigs(crystaldata)
+            self.fresh_config_ind = 0
+
+        self.config[ind, :] = self.fresh_configs[self.fresh_config_ind,:]
+        self.fresh_config_ind += 1
 
     def resampleRandints(self):
         """
@@ -107,8 +114,9 @@ class Sampler:
         :return:
         """
         # self.move_randns = np.random.normal(size=(self.nruns, self.randintsResampleAt)) * self.move_size  # randn move, equal for each dim (standardized)
-        self.move_randns = np.random.normal(size=(self.nruns, self.randintsResampleAt)) * np.random.lognormal(size=(self.nruns, self.randintsResampleAt)) * self.move_size  # lognormal scaling increases both small and large steps
-        # , at cost of medium steps, equal for each dim (standardized)
+        self.move_randns = np.random.normal(size=(self.nruns, self.randintsResampleAt)) * np.random.lognormal(size=(self.nruns, self.randintsResampleAt)) * self.move_size
+        # lognormal scaling increases both small and large steps, at cost of medium steps, equal for each dim (standardized)
+        # todo pick only moves which are valid for a given space group
 
         self.pickDimRandints = np.random.choice([0, 1, 2, 4, 6, 8, 9, 10, 11], size=(self.nruns, self.randintsResampleAt))  # don't change alpha and gamma, for now
         # self.pickDimRandints = np.random.randint(6, self.dim, size=(self.nruns, self.randintsResampleAt))
@@ -168,6 +176,7 @@ class Sampler:
         # convergence stats
         self.resetInd = [0 for i in range(self.nruns)]  # flag
         self.acceptanceRate = np.zeros(self.nruns)  # rolling MCMC acceptance rate
+        self.fresh_config_ind = 0
 
     def computeSTUN(self, scores):
         """
@@ -188,14 +197,16 @@ class Sampler:
         crystaldata = crystaldata.cuda()
 
         self.run_iters = iters
-        for self.iter in tqdm.tqdm(range(self.run_iters)):  # sample for a certain number of iterations
-            self.iterate(model, builder, crystaldata)  # try a monte-carlo step!
+        model.eval()
+        with torch.no_grad():
+            for self.iter in tqdm.tqdm(range(self.run_iters)):  # sample for a certain number of iterations
+                self.iterate(model, builder, crystaldata)  # try a monte-carlo step!
 
-            if (self.iter % self.deltaIter == 0) and (self.iter > 0):  # every N iterations do some reporting / updating
-                self.updateAnnealing(crystaldata)  # change temperature or other conditions
+                if (self.iter % self.deltaIter == 0) and (self.iter > 0):  # every N iterations do some reporting / updating
+                    self.updateAnnealing(crystaldata)  # change temperature or other conditions
 
-            if self.iter % self.randintsResampleAt == 0:  # periodically resample random numbers
-                self.resampleRandints()
+                if self.iter % self.randintsResampleAt == 0:  # periodically resample random numbers
+                    self.resampleRandints()
 
         print("{} samples were recorded on this run".format(len(np.concatenate(self.all_samples))))
 
@@ -222,7 +233,8 @@ class Sampler:
 
         # even if it didn't change, just run it anyway (big parallel - to hard to disentangle)
         # compute acceptance ratio
-        self.scores, self.energy, self.std_dev, self.vdw_penalty = self.getScores(self.prop_config, self.config, model, builder, crystaldata)
+        self.scores, self.energy, self.std_dev, self.vdw_penalty = \
+            self.getScores(self.prop_config, self.config, model, builder, crystaldata)
 
         if self.iter == 0:  # initialize optima recording
             self.initOptima(self.scores, self.energy, self.std_dev)
@@ -285,17 +297,27 @@ class Sampler:
         :param config:
         :return:
         """
-        model.eval()
-        with torch.no_grad():
-            supercells, _, _ = builder.build_supercells(crystaldata.clone(), torch.Tensor(config).cuda(),
-                                                        supercell_size=self.supercell_size, graph_convolution_cutoff=self.graph_convolution_cutoff)
-            energy = [-softmax_and_score(model(supercells).cpu().detach().numpy())]
 
-            vdw_penalty = vdw_overlap(supercells, self.vdw_radii).cpu().detach().numpy()
+        supercells, _, _ = builder.build_supercells(crystaldata.clone(), torch.Tensor(config).cuda(),
+                                                    supercell_size=self.supercell_size,
+                                                    graph_convolution_cutoff=self.graph_convolution_cutoff,
+                                                    override_sg=self.sg_to_search,
+                                                    )
+        output, dist_dict = model(supercells.cuda(), return_dists=True)
+        energy = [-softmax_and_score(output).cpu().detach().numpy()]
 
-            supercells, _, _ = builder.build_supercells(crystaldata.clone(), torch.Tensor(prop_config).cuda(),
-                                                        supercell_size=self.supercell_size, graph_convolution_cutoff=self.graph_convolution_cutoff)
-            energy.append(-softmax_and_score(model(supercells).cpu().detach().numpy()))
+        vdw_penalty = vdw_overlap(self.vdw_radii, dists=dist_dict['dists dict']['intermolecular dist'],
+                                  atomic_numbers=dist_dict['dists dict']['intermolecular dist atoms'],
+                                  batch_numbers=dist_dict['dists dict']['intermolecular dist batch'],
+                                  num_graphs=crystaldata.num_graphs).cpu().detach().numpy()
+
+        supercells, _, _ = builder.build_supercells(crystaldata.clone(), torch.Tensor(prop_config).cuda(),
+                                                    supercell_size=self.supercell_size,
+                                                    graph_convolution_cutoff=self.graph_convolution_cutoff,
+                                                    override_sg=self.sg_to_search,
+                                                    )
+        output = model(supercells.cuda())
+        energy.append(-softmax_and_score(output).cpu().detach().numpy())
 
         std_dev = [np.ones_like(energy[0]), np.ones_like(energy[0])]  # not using this
         score = energy
@@ -319,7 +341,6 @@ class Sampler:
         """
         # 1) if rejection rate is too high, switch to tunneling mode, if it is too low, switch to local search mode
         # acceptanceRate = len(self.stunRec)/self.iter # global acceptance rate
-
 
         for i in range(self.nruns):
             acceptedRecently = np.sum((self.iter - np.asarray(self.recInds[i][-self.acceptance_history:])) < self.acceptance_history)  # rolling acceptance rate - how many accepted out of the last hundred iters

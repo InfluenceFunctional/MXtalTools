@@ -2,29 +2,40 @@ import torch
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from utils import parallel_compute_rdf_torch
 
-def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, elementwise=False, raw_density=False, atomwise=False):
+def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False):
     '''
     compute the RDF for all the supercells in a CrystalData object
     without respect for atom type
     '''
+
+    # whether or not to include intramolecular edges
     if crystaldata.aux_ind is not None:
         in_inds = torch.where(crystaldata.aux_ind == 0)[0]
-        if intermolecular:
+        if mode == 'intermolecular':
             out_inds = torch.where(crystaldata.aux_ind == 1)[0].to(crystaldata.pos.device)
-        else:
+        elif mode == 'all':
             out_inds = torch.arange(len(crystaldata.pos)).to(crystaldata.pos.device)
+        elif mode == 'intramolecular':
+            out_inds = in_inds
+        else:
+            print(mode + ' is not a valid rdf mode!')
+            assert False
     else:
+        # if we have no inside/outside labels, just consider the whole thing one big molecule
         in_inds = torch.arange(len(crystaldata.pos)).to(crystaldata.pos.device)
         out_inds = in_inds
 
+    # get edges
     edges = asymmetric_radius_graph(crystaldata.pos,
                                     batch=crystaldata.batch,
                                     inside_inds=in_inds,
                                     convolve_inds=out_inds,
                                     r=max(rrange), max_num_neighbors=500, flow='source_to_target')
 
+    # track which edges go with which crystals
     crystal_number = crystaldata.batch[edges[0]]
 
+    # compute all the dists
     dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
 
     assert not (elementwise and atomwise)
@@ -48,7 +59,7 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
                                                                         rrange=rrange, bins=bins, density=density)
                     ind += 1
         return rdfs_array, rr, rdfs_dict
-    elif atomwise:  # todo finish & test
+    elif atomwise: # assumes that atom indices are constantly tiled within samples and between samples
         # generate atomwise indices
         rdfs_array_list = []
         rdfs_dict_list = []
@@ -59,13 +70,14 @@ def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, intermolecular=False, ele
         atoms = [atom_inds[edges[0]].to(crystaldata.x.device), atom_inds[edges[1]].to(crystaldata.x.device)]
         ind = 0
         for n in range(crystaldata.num_graphs):
+            # all possible combinations of atoms on this graph
             atom = []
             for i in range(int(crystaldata.mol_size[n])):
                 for j in range(int(crystaldata.mol_size[n])):
                     if j >= i:
                         atom.append([i, j])
             atom = torch.Tensor(atom)
-            rdfs_dict_list.append(atom)
+            rdfs_dict_list.append(atom) # record the pairs
 
             if raw_density:
                 density = torch.ones(len(atom)).to(dists.device)

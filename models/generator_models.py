@@ -12,7 +12,6 @@ class crystal_generator(nn.Module):
         super(crystal_generator, self).__init__()
 
         self.device = config.device
-        self.generator_model_type = config.generator.model_type
         self.conditioning_mode = config.generator.conditioning_mode
         self.latent_dim = config.generator.prior_dimension
         if config.generator.prior == 'multivariate normal':
@@ -68,23 +67,16 @@ class crystal_generator(nn.Module):
         '''
         generator model
         '''
-        if self.generator_model_type.lower() == 'mlp':  # simple MLP
-            self.model = general_MLP(layers=config.generator.num_fc_layers,
-                                     filters=config.generator.fc_depth,
-                                     norm=config.generator.fc_norm_mode,
-                                     dropout=config.generator.fc_dropout_probability,
-                                     input_dim=self.latent_dim,
-                                     output_dim=dataDims['num lattice features'],
-                                     conditioning_dim=config.generator.fc_depth,
-                                     seed=config.seeds.model
-                                     )
+        self.model = general_MLP(layers=config.generator.num_fc_layers,
+                                 filters=config.generator.fc_depth,
+                                 norm=config.generator.fc_norm_mode,
+                                 dropout=config.generator.fc_dropout_probability,
+                                 input_dim=self.latent_dim,
+                                 output_dim=dataDims['num lattice features'],
+                                 conditioning_dim=config.generator.fc_depth,
+                                 seed=config.seeds.model
+                                 )
 
-        elif self.generator_model_type.lower() == 'fit normal':
-            assert config.generator.prior.lower() == 'multivariate normal'
-            self.model = independent_gaussian_model(config, dataDims, dataDims['lattice means'], dataDims['lattice stds'])
-        else:
-            print(self.generator_model_type + ' is not an implemented generator model!')
-            sys.exit()
 
     def sample_latent(self, n_samples):
         # return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
@@ -93,16 +85,8 @@ class crystal_generator(nn.Module):
     def forward(self, n_samples, z=None, conditions=None, return_latent=False, return_condition=False, return_prior=False):
         if z is None:  # sample random numbers from simple prior
             z = self.sample_latent(n_samples)
-            # todo add something here to muck up the prior
-            # if torch.mean(z) > 0.1: # some fraction of the time
-            #     z = z**3 # extra noise
-            # z = torch.zeros_like(z0)
 
         if conditions is not None:
-            if self.conditioning_mode == 'graph model':
-                # reorient molecules into inertial frame
-                conditions = align_crystaldata_to_principal_axes(conditions)
-
             conditions_encoding = self.conditioner(conditions)
         else:
             conditions_encoding = None
@@ -118,7 +102,4 @@ class crystal_generator(nn.Module):
 
         else:
             return self.model(z, conditions=conditions_encoding, return_latent=return_latent)
-
-
-
 

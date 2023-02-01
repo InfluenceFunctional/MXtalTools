@@ -21,6 +21,7 @@ from pymatgen.core import (structure, lattice)
 # from ccdc.io import CrystalReader
 from pymatgen.io import cif
 from scipy.cluster.hierarchy import dendrogram
+from torch_scatter import scatter
 
 
 '''
@@ -1920,31 +1921,38 @@ def compute_principal_axes_np(coords, masses=None):
 
     return Ip, Ipm, I
 
+def compute_inertial_tensor(x,y,z):
+    Ixy = -torch.sum(x * y)
+    Iyz = -torch.sum(y * z)
+    Ixz = -torch.sum(x * z)
+    #I = torch.tensor([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]],device=points.device)  # inertial tensor
+    I = torch.tensor(
+        [[torch.sum((y ** 2 + z ** 2)), Ixy, Ixz],
+         [Ixy, torch.sum((x ** 2 + z ** 2)), Iyz],
+         [Ixz, Iyz, torch.sum((x ** 2 + y ** 2))]],device=x.device)  # inertial tensor
 
-def compute_principal_axes_torch(coords, masses=None, return_direction=False):
-    if masses == None:
-        masses = torch.ones(len(coords)).to(coords.device)
-    points = coords - torch.inner(coords.T, masses) / torch.sum(masses)
-    x, y, z = points.T
-    Ixx = torch.sum(masses * (y ** 2 + z ** 2))  # todo switch to single-step
-    Iyy = torch.sum(masses * (x ** 2 + z ** 2))
-    Izz = torch.sum(masses * (x ** 2 + y ** 2))
-    Ixy = -torch.sum(masses * x * y)
-    Iyz = -torch.sum(masses * y * z)
-    Ixz = -torch.sum(masses * x * z)
-    I = torch.tensor([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]]).to(points.device)  # inertial tensor
     Ipm, Ip = torch.linalg.eig(I)  # principal inertial tensor
+
+    return I, Ip, Ipm
+
+def single_molecule_principal_axes(coords, masses=None, return_direction=False):
+    if masses is not None:
+        print('inertial tensor is purely geometric!')
+    x, y, z = coords.T
+
+    I, Ip, Ipm = compute_inertial_tensor(x,y,z)
+
     Ipm, Ip = torch.real(Ipm), torch.real(Ip)
     sort_inds = torch.argsort(Ipm)
     Ipm = Ipm[sort_inds]
     Ip = Ip.T[sort_inds]  # want eigenvectors to be sorted row-wise (rather than column-wise)
 
     # cardinal direction is vector from CoM to farthest atom
-    dists = torch.linalg.norm(points, axis=1)  # CoM is at 0,0,0
+    dists = torch.linalg.norm(coords, axis=1)  # CoM is at 0,0,0
     max_ind = torch.argmax(dists)
     max_equivs = torch.where(dists == dists[max_ind])[0]  # torch.where(torch.round(dists, decimals=8) == torch.round(dists[max_ind], decimals=8))[0]  # if there are multiple equidistant atoms - pick the one with the lowest index
     max_ind = int(torch.amin(max_equivs))
-    direction = points[max_ind]
+    direction = coords[max_ind]
     # direction = direction / torch.linalg.norm(direction) # magnitude doesn't matter, only the sign
     overlaps = torch.inner(Ip, direction)  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
     if any(overlaps == 0):  # exactly zero is invalid #
@@ -1965,6 +1973,53 @@ def compute_principal_axes_torch(coords, masses=None, return_direction=False):
     else:
         return Ip, Ipm, I
 
+def batch_molecule_principal_axes(coords_list):
+    all_coords = torch.cat(coords_list)
+
+    ptrs = [0]
+    ptrs.extend([len(coord) for coord in coords_list])
+    ptrs = torch.tensor(ptrs, dtype=torch.int, device=all_coords.device).cumsum(0)
+    batch = torch.cat([(i - 1) * torch.ones(ptrs[i] - ptrs[i - 1], dtype=torch.int64, device=all_coords.device) for i in range(1, len(ptrs))])
+
+    Ixy = -scatter(all_coords[:, 0] * all_coords[:, 1], batch)
+    Iyz = -scatter(all_coords[:, 1] * all_coords[:, 2], batch)
+    Ixz = -scatter(all_coords[:, 0] * all_coords[:, 2], batch)
+
+    I = torch.cat(
+        (torch.vstack((scatter(all_coords[:, 1] ** 2 + all_coords[:, 2] ** 2, batch), Ixy, Ixz))[:, None, :].T,
+         torch.vstack((Ixy, scatter(all_coords[:, 0] ** 2 + all_coords[:, 2] ** 2, batch), Iyz))[:, None, :].T,
+         torch.vstack((Ixz, Iyz, scatter(all_coords[:, 0] ** 2 + all_coords[:, 1] ** 2, batch)))[:, None, :].T
+         ), dim=-2)  # inertial tensor
+
+    Ipm, Ip = torch.linalg.eig(I)  # principal inertial tensor
+    Ipm, Ip = torch.real(Ipm), torch.real(Ip)
+    sort_inds = torch.argsort(Ipm, dim=1)
+    Ipm = torch.stack([Ipm[i, sort_inds[i]] for i in range(len(sort_inds))])
+    Ip = torch.stack([Ip[i].T[sort_inds[i]] for i in range(len(sort_inds))])  # want eigenvectors to be sorted row-wise (rather than column-wise)
+
+    # cardinal direction is vector from CoM to farthest atom
+    dists = torch.linalg.norm(all_coords, axis=1)  # CoM is at 0,0,0
+    max_ind = torch.stack([torch.argmax(dists[batch == i]) + ptrs[i] for i in range(len(ptrs) - 1)])  # find furthest atom in each mol
+    direction = all_coords[max_ind]
+    overlaps = torch.einsum('nij,nj->ni', (Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
+    overlaps[overlaps == 0] = 1e-9  # can't have exactly zero overlap
+
+    Ip_fin = torch.zeros_like(Ip)
+    for ii, Ip_i in enumerate(Ip):
+        if any(torch.abs(overlaps[ii]) < 1e-8):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+            # align the 'good' vectors
+            Ip_i = (Ip_i.T * torch.sign(overlaps[ii])).T  # if the vectors have negative overlap, flip the direction
+            fix_ind = torch.argmin(torch.abs(overlaps[ii]))
+            other_vectors = np.delete(np.arange(3), fix_ind)
+            check_direction = torch.cross(Ip_i[other_vectors[0]], Ip_i[other_vectors[1]])
+            # align the 'bad' vector
+            Ip_i[fix_ind] = check_direction  # Ip[fix_ind] * torch.sign(torch.dot(check_direction, Ip[fix_ind]))
+            Ip_fin[ii] = Ip_i
+        else:
+            Ip_i = (Ip_i.T * torch.sign(overlaps[ii])).T  # if the vectors have negative overlap, flip the direction
+            Ip_fin[ii] = Ip_i
+
+    return Ip_fin, Ipm, I
 
 def coor_trans_matrix_torch(opt, v, a, return_vol=False):
     ''' Calculate cos and sin of cell angles '''
@@ -2287,22 +2342,25 @@ def np_hardtanh(x):
     return F.hardtanh(torch.Tensor(x)).detach().numpy()
 
 
-def compute_rdf_distance(target_rdf, sample_rdf):
+def compute_rdf_distance(target_rdf, sample_rdf, rr):
     '''
     earth mover's distance
-    assuming dimension [sample, element-pair, radius]
-    normed against target rdf (sample is not strictly a PDF in this case)
+    assuming dimension [sample, radius]
+    norm both incoming rdfs to make a symmetric distance metric
     averaged over nnz elements - only works for single type of molecule per call
     '''
-    # TODO upgrade and make this a symmetric distance
 
-    nonzero_element_pairs = np.sum(np.sum(target_rdf, axis=1) > 0)
-    target_CDF = np.cumsum(target_rdf, axis=-1)
-    sample_CDF = np.cumsum(sample_rdf, axis=-1)
-    norm = target_CDF[:, -1]
-    target_CDF = np.nan_to_num(target_CDF / norm[:, None])
-    sample_CDF = np.nan_to_num(sample_CDF / norm[None, :, None])
-    emd = np.sum(np.abs(target_CDF - sample_CDF), axis=(1, 2))
+    nonzero_element_pairs = torch.sum(torch.sum(target_rdf + sample_rdf, axis=1) > 0)
+
+    target_pdf = torch.nan_to_num(target_rdf / target_rdf.sum(1)[:,None])
+    sample_pdf = torch.nan_to_num(sample_rdf / sample_rdf.sum(1)[:,None])
+
+    target_cdf = torch.cumsum(target_pdf, axis=-1)
+    sample_cdf = torch.cumsum(sample_pdf, axis=-1)
+
+    # norm distance according to bin width
+    emd = torch.sum(torch.abs(target_cdf - sample_cdf), axis=(0,1)) * (rr[1]-rr[0])
+
     return emd / nonzero_element_pairs  # manual normalizaion elementwise
 
 
@@ -2325,38 +2383,16 @@ def histogram_overlap(d1, d2):
     return np.sum(np.minimum(d1, d2)) / np.average((d1.sum(), d2.sum()))
 
 
-def compute_rdf_distance_metric(target_rdf, sample_rdf):
-    '''
-    earth mover's distance
-    assuming dimension [sample, element-pair, radius]
-    normed against mean average, to make it a metric
-    '''
-    assert False  # todo rewrite this correctly as above
-    # clip for stability near 0
-    norm = (np.sum(target_rdf, axis=-1)[None, :] + np.sum(sample_rdf, axis=-1))[..., None]
-    normed_rdfs_diff = np.nan_to_num((target_rdf - sample_rdf) / norm)
-    return np.average(np.sum(np.abs(np.cumsum(normed_rdfs_diff, axis=-1)), axis=-1), axis=-1)
-
-
-def compute_rdf_distance_metric_torch(target_rdf, sample_rdf):
-    '''
-    earth mover's distance
-    assuming dimension [sample, element-pair, radius]
-    normed against mean average, to make it a metric
-    '''
-    nonzero_element_pairs = torch.sum(torch.sum(target_rdf, dim=1) > 0)
-    target_CDF = torch.cumsum(target_rdf, dim=-1)
-    sample_CDF = torch.cumsum(sample_rdf, dim=-1)
-    norm = (target_CDF[:, -1] + sample_CDF[:,:,-1]) / 2
-    emd = torch.sum(torch.nan_to_num(torch.abs(target_CDF - sample_CDF) / norm[...,None]), dim=(1, 2))
-    return emd / nonzero_element_pairs  # manual normalizaion elementwise
-
-
 def softmax_and_score(score, temperature=1):
-    score = np_softmax(score.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
-    tanned = np.tan((score - 0.5) * np.pi)
-    return (np.sign(tanned) * np.log10(np.abs(tanned)))
+    if isinstance(score, np.ndarray):
+        score = np_softmax(score.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
+        tanned = np.tan((score - 0.5) * np.pi)
+        return (np.sign(tanned) * np.log10(np.abs(tanned)))
 
+    elif torch.is_tensor(score):
+        score = F.softmax(score / temperature,dim=-1)[:,1]
+        tanned = torch.tan((score - 0.5) * torch.pi)
+        return (torch.sign(tanned) * torch.log10(torch.abs(tanned)))
 
 def norm_scores(score, tracking_features, dataDims):
     # norm the incoming score according to its respective molecular surface area (assuming sphere)
