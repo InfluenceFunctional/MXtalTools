@@ -648,7 +648,7 @@ def get_dataloaders(dataset_builder, config, override_batch_size=None):
 
     return tr, te
 
-def update_batch_size(loader, new_batch_size):
+def update_dataloader_batch_size(loader, new_batch_size):
     return DataLoader(loader.dataset, batch_size=new_batch_size, shuffle=True, num_workers=loader.num_workers, pin_memory=loader.pin_memory)
 
 def delete_from_dataset(dataset, good_inds):

@@ -12,6 +12,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 from utils import load_yaml, add_bool_arg, get_config
 from crystal_modeller import Modeller
 
+
 def update_args2config(args2config, arg, config=None):
     if config is not None:
         args2config.update({arg: config})
@@ -66,7 +67,7 @@ def add_args(parser):
     update_args2config(args2config, 'wandb_log_figures', ['wandb', 'log_figures'])
 
     # dataset settings
-    #todo update target - mostly not used
+    # todo update target - mostly not used
     parser.add_argument('--target', type=str,
                         default='molecule spherical defect')  # 'rings', 'groups', 'screw', 'inversion','rotoinversion','mirror','rotation','glide', 'crystal system', 'lattice centering', 'spherical', 'planar'(not in Jan17 dataset)
     parser.add_argument("--dataset_path", type=str, default='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset')
@@ -74,9 +75,9 @@ def add_args(parser):
     parser.add_argument('--feature_richness', type=str, default='minimal')  # atom & molecule feature richness
 
     # dataset composition
-    parser.add_argument('--include_sgs', type=str, default=None)  #['P21/c'] spacegroups to explicitly include in modelling - new!
-    parser.add_argument('--include_pgs', type=str, default=None)  #['222', '-1'] point groups to pull from dataset
-    parser.add_argument('--generate_sgs', type=str, default=None)  #['222', '-1'] point groups to generate
+    parser.add_argument('--include_sgs', type=str, default=None)  # ['P21/c'] spacegroups to explicitly include in modelling - new!
+    parser.add_argument('--include_pgs', type=str, default=None)  # ['222', '-1'] point groups to pull from dataset
+    parser.add_argument('--generate_sgs', type=str, default=None)  # ['222', '-1'] point groups to generate
     parser.add_argument('--supercell_size', type=int, default=1)  # point groups to generate
     parser.add_argument('--max_crystal_temperature', type=float, default=int(1e3))
     parser.add_argument('--min_crystal_temperature', type=int, default=0)
@@ -91,7 +92,7 @@ def add_args(parser):
     add_bool_arg(parser, 'exclude_polymorphs', default=True)
     add_bool_arg(parser, 'exclude_nonstandard_settings', default=True)
     add_bool_arg(parser, 'exclude_missing_r_factor', default=True)
-    parser.add_argument('--exclude_crystal_systems', type=list, default=None) # ['hexagonal']
+    parser.add_argument('--exclude_crystal_systems', type=list, default=None)  # ['hexagonal']
     add_bool_arg(parser, 'exclude_blind_test_targets', default=True)
 
     update_args2config(args2config, 'target')
@@ -123,19 +124,28 @@ def add_args(parser):
     parser.add_argument('--history', type=int, default=5)
     parser.add_argument('--min_batch_size', type=int, default=50)
     parser.add_argument('--max_batch_size', type=int, default=10000)
+    parser.add_argument('--batch_growth_increment', type=int, default=0.05)
     add_bool_arg(parser, 'auto_batch_sizing', default=True)  # whether to densely connect dimenet outputs
     parser.add_argument('--auto_batch_reduction', type=float, default=0.2)  # leeway factor to reduce batch size at end of auto-sizing run
     parser.add_argument('--gradient_norm_clip', type=float, default=1)
     add_bool_arg(parser, 'anomaly_detection', default=False)
-
+    add_bool_arg(parser, 'accumulate_gradients', default=False)  # whether to densely connect dimenet outputs
+    parser.add_argument('--accumulate_batch_size', type=int, default=100)
+    parser.add_argument('--lr_growth_lambda', type=float, default=0.1)
+    parser.add_argument('--lr_shrink_lambda', type=float, default=0.95)
     update_args2config(args2config, 'max_epochs')
     update_args2config(args2config, 'history')
     update_args2config(args2config, 'min_batch_size')
     update_args2config(args2config, 'max_batch_size')
+    update_args2config(args2config, 'batch_growth_increment')
     update_args2config(args2config, 'auto_batch_sizing')
     update_args2config(args2config, 'auto_batch_reduction')
     update_args2config(args2config, 'gradient_norm_clip')
     update_args2config(args2config, 'anomaly_detection')
+    update_args2config(args2config, 'accumulate_gradients')
+    update_args2config(args2config, 'accumulate_batch_size')
+    update_args2config(args2config, 'lr_growth_lambda')
+    update_args2config(args2config, 'lr_shrink_lambda')
 
     # optimizer settings
     parser.add_argument('--discriminator_optimizer', type=str, default='adamw')  # adam, adamw, sgd
@@ -181,7 +191,7 @@ def add_args(parser):
     update_args2config(args2config, 'generator_positional_noise', ['generator', 'positional_noise'])
 
     # generator model settings
-    parser.add_argument('--generator_canonical_conformer_orientation', type=str, default = 'standardized') # standardized or random
+    parser.add_argument('--generator_canonical_conformer_orientation', type=str, default='standardized')  # standardized or random
     parser.add_argument('--generator_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
     parser.add_argument('--generator_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
     parser.add_argument('--generator_graph_filters', type=int, default=28)  # number of neurons per graph convolution
@@ -214,7 +224,7 @@ def add_args(parser):
     parser.add_argument('--generator_prior_dimension', type=int, default=12)  # type of prior distribution
     add_bool_arg(parser, 'generator_conditional_modelling', default=True)  # whether to use molecular features as conditions for normalizing flow model
 
-    update_args2config(args2config, 'generator_canonical_conformer_orientation', ['generator','canonical_conformer_orientation'])
+    update_args2config(args2config, 'generator_canonical_conformer_orientation', ['generator', 'canonical_conformer_orientation'])
     update_args2config(args2config, 'generator_graph_model', ['generator', 'graph_model'])
     update_args2config(args2config, 'generator_atom_embedding_size', ['generator', 'atom_embedding_size'])
     update_args2config(args2config, 'generator_graph_filters', ['generator', 'graph_filters'])
@@ -290,7 +300,7 @@ def add_args(parser):
 
     # cell generator
     parser.add_argument('--gan_loss', type=str, default='standard')  # stnandard only
-    add_bool_arg(parser, 'new_generation', default=True) # new way of defining the asymmetric unit
+    add_bool_arg(parser, 'new_generation', default=True)  # new way of defining the asymmetric unit
     add_bool_arg(parser, 'train_generator_density', default=False)  # train on cell volume
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
@@ -327,6 +337,7 @@ def add_args(parser):
 
     return parser, args2config
 
+
 def process_config(config):
     if config.machine == 'local':
         config.workdir = 'C:/Users\mikem\Desktop/CSP_runs'
@@ -338,7 +349,7 @@ def process_config(config):
     config.seeds.dataset = config.seeds.dataset % 10
 
     if config.test_mode:
-        config.max_batch_size = min((config.max_batch_size, 50))
+        # config.max_batch_size = min((config.max_batch_size, 50))
         # config.auto_batch_sizing = False
         # config.anomaly_detection = True
         if config.machine == 'cluster':

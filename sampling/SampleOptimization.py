@@ -49,7 +49,7 @@ def gradient_descent_sampling(discriminator, d_optimizer, init_samples, single_m
             new_sample.retain_grad()
 
         supercell_data, generated_cell_volumes, overlaps_list = \
-            supercell_builder.build_supercells(single_mol_data.clone().to(init_samples.device), sample,
+            supercell_builder.build_supercells(single_mol_data, sample,
                                                supercell_size, cutoff, override_sg=generate_sgs)
 
         loss = 1-F.softmax(discriminator(supercell_data),dim=-1)[:,1] #-softmax_and_score(discriminator(supercell_data))

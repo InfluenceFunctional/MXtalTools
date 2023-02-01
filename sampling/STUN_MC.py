@@ -15,7 +15,7 @@ This script uses Markov Chain Monte Carlo, including the STUN algorithm, to opti
 '''
 
 
-class Sampler:
+class mcmcSampler:
     """
     finds optimum values of the function defined by the model
     intrinsically parallel, rather than via multiprocessing
@@ -298,7 +298,7 @@ class Sampler:
         :return:
         """
 
-        supercells, _, _ = builder.build_supercells(crystaldata.clone(), torch.Tensor(config).cuda(),
+        supercells, _, _ = builder.build_supercells(crystaldata, torch.Tensor(config),
                                                     supercell_size=self.supercell_size,
                                                     graph_convolution_cutoff=self.graph_convolution_cutoff,
                                                     override_sg=self.sg_to_search,
@@ -311,7 +311,7 @@ class Sampler:
                                   batch_numbers=dist_dict['dists dict']['intermolecular dist batch'],
                                   num_graphs=crystaldata.num_graphs).cpu().detach().numpy()
 
-        supercells, _, _ = builder.build_supercells(crystaldata.clone(), torch.Tensor(prop_config).cuda(),
+        supercells, _, _ = builder.build_supercells(crystaldata, torch.Tensor(prop_config),
                                                     supercell_size=self.supercell_size,
                                                     graph_convolution_cutoff=self.graph_convolution_cutoff,
                                                     override_sg=self.sg_to_search,

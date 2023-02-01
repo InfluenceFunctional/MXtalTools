@@ -62,12 +62,13 @@ class SupercellBuilder():
         self.sorted_fractional_translations = fractional_translations[torch.argsort(fractional_translations.abs().sum(1))].to(device)
 
 
-    def build_supercells(self, supercell_data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
+    def build_supercells(self, data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
                          override_sg=None, skip_cell_cleaning=False, standardized_sample=True, align_molecules = True):
         '''
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to supercell with appropriate cluster size
         '''
+        supercell_data = data.clone()
 
         supercell_data, cell_sample, target_handedness = \
             self.move_cell_data_to_device(supercell_data, cell_sample, target_handedness)

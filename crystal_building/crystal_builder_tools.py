@@ -175,14 +175,14 @@ def ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list,
     else:
         n_cells = len(sorted_fractional_translations)
 
-    device = reference_cell_list[0].device
+    device = T_fc_list.device
     supercell_coords_list = []
     supercell_atoms_list = []
     ref_mol_inds_list = []
     copies = []
     for i, (ref_cell, cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, z_values)):
         if type(ref_cell) == np.ndarray:
-            ref_cell = torch.Tensor(ref_cell)
+            ref_cell = torch.tensor(ref_cell,device = device)
 
         mol_n_atoms = len(atoms)
         supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(n_cells, 1)  # duplicate over XxXxX supercell

@@ -19,12 +19,12 @@ from PIL import Image
 
 from utils import *
 
-from dataset_management.dataset_utils import BuildDataset, get_dataloaders, update_batch_size, get_extra_test_loader
+from dataset_management.dataset_utils import BuildDataset, get_dataloaders, update_dataloader_batch_size, get_extra_test_loader
 from dataset_management.dataset_manager import Miner
 
 from crystal_building.crystal_builder_tools import *
 from crystal_building.coordinate_transformations import cell_vol
-from crystal_building.supercell_builders import SupercellBuilder
+from crystal_building.supercell_builders import SupercellBuilder, override_sg_info
 
 from models.model_utils import *
 from models.crystal_rdf import crystal_rdf
@@ -34,7 +34,7 @@ from models.generator_models import crystal_generator
 from models.discriminator_models import crystal_discriminator
 from models.regression_models import molecule_regressor
 from models.torch_models import independent_gaussian_model
-from sampling.STUN_MC import Sampler
+from sampling.STUN_MC import mcmcSampler
 
 
 class Modeller():
@@ -59,7 +59,6 @@ class Modeller():
 
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
-
 
         periodicTable = rdkit.Chem.GetPeriodicTable()
         self.atom_weights = {}
@@ -276,28 +275,28 @@ class Modeller():
             g_optimizer,
             mode='min',
             factor=0.1,
-            patience=15,
+            patience=100,
             threshold=1e-4,
             threshold_mode='rel',
             cooldown=15
         )
-        lr_lambda = lambda epoch: 1.25
+        lr_lambda = lambda epoch: 1 + self.config.lr_growth_lambda
         scheduler2 = lr_scheduler.MultiplicativeLR(g_optimizer, lr_lambda=lr_lambda)
-        lr_lambda2 = lambda epoch: 0.98
+        lr_lambda2 = lambda epoch: 1 + self.config.lr_shrink_lambda
         scheduler3 = lr_scheduler.MultiplicativeLR(g_optimizer, lr_lambda=lr_lambda2)
 
         scheduler4 = lr_scheduler.ReduceLROnPlateau(
             d_optimizer,
             mode='min',
             factor=0.1,
-            patience=15,
+            patience=100,
             threshold=1e-4,
             threshold_mode='rel',
             cooldown=15
         )
-        lr_lambda = lambda epoch: 1.25
+        lr_lambda = lambda epoch: 1 + self.config.lr_growth_lambda
         scheduler5 = lr_scheduler.MultiplicativeLR(d_optimizer, lr_lambda=lr_lambda)
-        lr_lambda2 = lambda epoch: 0.98
+        lr_lambda2 = lambda epoch: 1 + self.config.lr_shrink_lambda
         scheduler6 = lr_scheduler.MultiplicativeLR(d_optimizer, lr_lambda=lr_lambda2)
 
         g_scheduler = [scheduler1, scheduler2, scheduler3]
@@ -328,6 +327,8 @@ class Modeller():
         batch_size = int(init_batch_size)
 
         while (not finished) and (batch_size < max_batch_size):
+            self.config.final_batch_size = batch_size
+
             if self.config.device.lower() == 'cuda':
                 torch.cuda.empty_cache()  # clear GPU cache
                 generator.cuda()
@@ -340,8 +341,8 @@ class Modeller():
 
                 # if successful, increase the batch and try again
                 batch_size = max(batch_size + 5, int(batch_size * increment))
-                train_loader = update_batch_size(train_loader, batch_size)
-                test_loader = update_batch_size(test_loader, batch_size)
+                train_loader = update_dataloader_batch_size(train_loader, batch_size)
+                test_loader = update_dataloader_batch_size(test_loader, batch_size)
                 # train_loader, test_loader = get_dataloaders(dataset, config, override_batch_size=batch_size)
 
                 print('Training batch size increased to {}'.format(batch_size))
@@ -525,7 +526,7 @@ class Modeller():
 
         }
 
-        for i, data in enumerate(tqdm.tqdm(dataLoader, miniters = int(len(dataLoader) / 25))):
+        for i, data in enumerate(tqdm.tqdm(dataLoader, miniters=int(len(dataLoader) / 25))):
             '''
             noise injection
             '''
@@ -606,77 +607,33 @@ class Modeller():
         }
 
         rand_batch_ind = np.random.randint(0, len(dataLoader))
+        self.n_samples_in_grad_buffer = 0
 
-        for i, data in enumerate(tqdm.tqdm(dataLoader, miniters = int(len(dataLoader) / 10))):
+        if update_gradients:
+            g_optimizer.zero_grad(set_to_none=True)
+            d_optimizer.zero_grad(set_to_none=True)
+
+        for i, data in enumerate(tqdm.tqdm(dataLoader, miniters=int(len(dataLoader) / 10))):
 
             '''
             train discriminator
             '''
-            if epoch % self.config.discriminator.training_period == 0:  # only train the discriminator every XX epochs
-                if self.config.train_discriminator_adversarially or self.config.train_discriminator_on_noise or self.config.train_discriminator_on_randn:
-                    generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, self.config, data, generator, i)
-
-                    score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
-                        = self.train_discriminator(generated_samples_i, discriminator, data, i, handedness)
-
-                    epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
-                    epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
-                    epoch_stats_dict['real vdw penalty'].extend(real_vdw_score.cpu().detach().numpy())
-                    epoch_stats_dict['fake vdw penalty'].extend(fake_vdw_score.cpu().detach().numpy())
-
-                    prediction = torch.cat((score_on_real, score_on_fake))
-                    target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
-                    d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
-
-                    #d_loss = d_losses.mean()
-                    d_loss = (d_losses / torch.diff(data.ptr)).mean()  # norm losses according to graph size
-                    d_err.append(d_loss.data.cpu().detach().numpy())  # average overall loss
-                    d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
-
-                    if update_gradients:
-                        d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-                        d_loss = d_loss / data.num_nodes  # normalize the loss by mean graph size
-                        d_loss.backward()  # back-propagation
-                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
-                        d_optimizer.step()  # update parameters
-
-                    epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
-                    epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
-
-                else:
-                    d_err.append(np.zeros(1))
-                    d_loss_record.extend(np.zeros(data.num_graphs))
+            d_err, d_loss_record, epoch_stats_dict = \
+                self.discriminator_step(discriminator, generator, epoch_stats_dict, data,
+                                        d_optimizer, i, update_gradients, d_err, d_loss_record,
+                                        epoch, last_batch = i == (len(dataLoader)-1))
 
             '''
             train_generator
             '''
-            if any((self.config.train_generator_density, self.config.train_generator_adversarially, self.config.train_generator_vdw)):
+            g_err, g_loss_record, epoch_stats_dict = \
+                self.generator_step(discriminator, generator, epoch_stats_dict, data,
+                                    g_optimizer, i, update_gradients, g_err, g_loss_record,
+                                    rand_batch_ind, last_batch = i == (len(dataLoader)-1))
 
-                adversarial_score, generated_samples, density_loss, density_prediction, density_target, \
-                vdw_loss, generated_dist_dict, supercell_examples, similarity_penalty, packing_loss, h_bond_score = \
-                    self.train_generator(generator, discriminator, data, i)
-
-                epoch_stats_dict = self.log_supercell_examples(supercell_examples, i, rand_batch_ind, epoch_stats_dict)
-
-                g_losses, epoch_stats_dict = self.aggregate_generator_losses(
-                    epoch_stats_dict, density_loss, adversarial_score, adversarial_score,
-                    vdw_loss, packing_loss, similarity_penalty, density_prediction, density_target, h_bond_score)
-
-                #g_loss = g_losses.mean()
-                g_loss = (g_losses / torch.diff(data.ptr)).mean() # norm losses according to graph size
-                g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
-                g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
-                epoch_stats_dict['generated cell parameters'].extend(generated_samples)
-
-                if update_gradients:
-                    g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-                    g_loss.backward()  # back-propagation
-                    torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
-                    g_optimizer.step()  # update parameters
-            else:
-                g_err.append(np.zeros(1))
-                g_loss_record.extend(np.zeros(data.num_graphs))
-
+            '''
+            record some stats
+            '''
             if (len(epoch_stats_dict['generated cell parameters']) < i) and record_stats:  # make some samples for analysis if we have none so far from this step
                 generated_samples = generator(len(data.y), z=None, conditions=data.to(self.config.device))
                 epoch_stats_dict['generated cell parameters'].extend(generated_samples.cpu().detach().numpy())
@@ -724,7 +681,7 @@ class Modeller():
             '''
 
             real_supercell_data = \
-                self.supercell_builder.real_cell_to_supercell(data.clone(), self.config)
+                self.supercell_builder.real_cell_to_supercell(data, self.config)
 
             if self.config.device.lower() == 'cuda':  # redundant
                 real_supercell_data = real_supercell_data.cuda()
@@ -869,11 +826,104 @@ class Modeller():
 
         return None
 
+    def discriminator_step(self, discriminator, generator, epoch_stats_dict, data, d_optimizer, i, update_gradients, d_err, d_loss_record,epoch,last_batch):
+        if epoch % self.config.discriminator.training_period == 0:  # only train the discriminator every XX epochs
+            if self.config.train_discriminator_adversarially or self.config.train_discriminator_on_noise or self.config.train_discriminator_on_randn:
+                generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, self.config, data, generator, i)
+
+                score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
+                    = self.train_discriminator(generated_samples_i, discriminator, data, i, handedness)
+
+                epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
+                epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
+                epoch_stats_dict['real vdw penalty'].extend(real_vdw_score.cpu().detach().numpy())
+                epoch_stats_dict['fake vdw penalty'].extend(fake_vdw_score.cpu().detach().numpy())
+
+                prediction = torch.cat((score_on_real, score_on_fake))
+                target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
+                d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
+
+                # d_loss = d_losses.mean()
+                d_loss = (d_losses / torch.diff(data.ptr.to(d_losses.device)).tile(2)).mean()  # norm losses according to graph size
+                d_err.append(d_loss.data.cpu().detach().numpy())  # average overall loss
+                d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
+
+                # if update_gradients:
+                #     d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                #     d_loss = d_loss / data.num_nodes  # normalize the loss by mean graph size
+                #     d_loss.backward()  # back-propagation
+                #     torch.nn.utils.clip_grad_norm_(discriminator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
+                #     d_optimizer.step()  # update parameters
+
+                if update_gradients:
+                    if self.config.accumulate_gradients:
+                        d_loss = d_loss / self.config.accumulate_batch_size * self.config.final_batch_size
+                    d_loss.backward()  # back-propagation
+                    torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
+                    if self.config.accumulate_gradients:
+                        self.n_samples_in_grad_buffer += data.num_graphs
+                        if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
+                            d_optimizer.step()
+                            d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                            self.n_samples_in_grad_buffer = 0
+                    else:
+                        d_optimizer.step()  # update parameters
+                        d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+
+
+                epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
+                epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
+
+            else:
+                d_err.append(np.zeros(1))
+                d_loss_record.extend(np.zeros(data.num_graphs))
+
+        return d_err, d_loss_record, epoch_stats_dict
+
+    def generator_step(self, discriminator, generator, epoch_stats_dict, data, g_optimizer, i, update_gradients, g_err, g_loss_record, rand_batch_ind, last_batch):
+        if any((self.config.train_generator_density, self.config.train_generator_adversarially, self.config.train_generator_vdw)):
+            adversarial_score, generated_samples, density_loss, density_prediction, density_target, \
+            vdw_loss, generated_dist_dict, supercell_examples, similarity_penalty, packing_loss, h_bond_score = \
+                self.train_generator(generator, discriminator, data, i)
+
+            epoch_stats_dict = self.log_supercell_examples(supercell_examples, i, rand_batch_ind, epoch_stats_dict)
+
+            g_losses, epoch_stats_dict = self.aggregate_generator_losses(
+                epoch_stats_dict, density_loss, adversarial_score, adversarial_score,
+                vdw_loss, packing_loss, similarity_penalty, density_prediction, density_target, h_bond_score)
+
+            # g_loss = g_losses.mean()
+            g_loss = (g_losses / torch.diff(data.ptr)).mean()  # norm losses according to graph size
+            g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
+            g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
+            epoch_stats_dict['generated cell parameters'].extend(generated_samples)
+
+            if update_gradients:
+                if self.config.accumulate_gradients:
+                    g_loss = g_loss / self.config.accumulate_batch_size * self.config.final_batch_size
+                g_loss.backward()  # back-propagation
+                torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
+                if self.config.accumulate_gradients:
+                    self.n_samples_in_grad_buffer += data.num_graphs
+                    if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
+                        g_optimizer.step()
+                        g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                        self.n_samples_in_grad_buffer = 0
+                else:
+                    g_optimizer.step()  # update parameters
+                    g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+
+        else:
+            g_err.append(np.zeros(1))
+            g_loss_record.extend(np.zeros(data.num_graphs))
+
+        return g_err, g_loss_record, epoch_stats_dict
+
     def train_discriminator(self, generated_samples, discriminator, data, i, target_handedness=None, return_rdf=False):
         # generate fakes & create supercell data
-        real_supercell_data = self.supercell_builder.real_cell_to_supercell(data.clone(), self.config)
+        real_supercell_data = self.supercell_builder.real_cell_to_supercell(data, self.config)
         fake_supercell_data, generated_cell_volumes, overlaps_list = \
-            self.supercell_builder.build_supercells(data.clone().to(generated_samples.device), generated_samples,
+            self.supercell_builder.build_supercells(data, generated_samples,
                                                     self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff,
                                                     override_sg=self.config.generate_sgs, target_handedness=target_handedness)
 
@@ -927,6 +977,14 @@ class Modeller():
             data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
 
         '''
+        update symmetry information
+        '''
+        if self.config.generate_sgs is not None:
+            override_sg_ind = self.supercell_builder.symmetries_dict['sg_ind_dict'][self.config.generate_sgs]
+            sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i in range(data.num_graphs)]
+            data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data, self.supercell_builder.symmetries_dict, sym_ops_list)  # todo update the way we handle this
+
+        '''
         generate samples
         '''
         [[generated_samples, latent], prior, condition] = generator.forward(
@@ -938,10 +996,10 @@ class Modeller():
         '''
         if self.config.train_generator_adversarially or self.config.train_generator_vdw:
             supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-                data.clone(), generated_samples, self.config.supercell_size,
+                data, generated_samples, self.config.supercell_size,
                 self.config.discriminator.graph_convolution_cutoff,
                 override_sg=self.config.generate_sgs,
-                align_molecules = False, # molecules are either random on purpose, or pre-aligned with set handedness
+                align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
             )
 
             data.cell_params = supercell_data.cell_params
@@ -956,7 +1014,7 @@ class Modeller():
         mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(min(10, supercell_data.num_graphs))]
         view(mols)
         '''
-        similarity_penalty = self.similarity_penalty(generated_samples, supercell_data.sg_ind, prior)
+        similarity_penalty = self.compute_similarity_penalty(generated_samples, supercell_data.sg_ind, prior)
         discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
         h_bond_score = self.compute_h_bond_score(supercell_data)
         vdw_overlap = self.get_vdw_overlap(dist_dict, supercell_data.num_graphs)
@@ -1050,7 +1108,6 @@ class Modeller():
         Stun MC annealing on a pretrained discriminator / generator
         '''
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=[self.config.wandb.experiment_tag]):
-
             dataset_builder = self.training_prep()
             del dataset_builder
             generator, discriminator, g_optimizer, g_schedulers, \
@@ -1063,7 +1120,6 @@ class Modeller():
             extra_test_loader = get_extra_test_loader(self.config, extra_test_set_path, dataDims=self.config.dataDims,
                                                       pg_dict=self.point_groups, sg_dict=self.space_groups, lattice_dict=self.lattice_type)
 
-
             self.randn_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice features'],
                                                               means=self.config.dataDims['lattice means'],
                                                               stds=self.config.dataDims['lattice stds'],
@@ -1075,7 +1131,7 @@ class Modeller():
             #
             # single_mol_data = extra_test_loader.dataset[extra_test_loader.csd_identifier.index(blind_test_identifiers[-1])]
 
-            n_samples = 200 #self.config.min_batch_size
+            n_samples = 200  # self.config.min_batch_size
             single_mol_data = extra_test_loader.dataset[0]
             collater = Collater(None, None)
             single_mol_data = collater([single_mol_data for n in range(n_samples)])
@@ -1088,7 +1144,7 @@ class Modeller():
             generator.eval()
             discriminator.eval()
             with torch.no_grad():
-                smc_sampler = Sampler(
+                smc_sampler = mcmcSampler(
                     gammas=np.logspace(-4, 0, n_samples),
                     seedInd=0,
                     acceptance_mode=None,
@@ -1446,8 +1502,8 @@ class Modeller():
 
     def slash_batch(self, train_loader, test_loader):
         slash_increment = max(4, int(train_loader.batch_size * 0.1))
-        train_loader = update_batch_size(train_loader, train_loader.batch_size - slash_increment)
-        test_loader = update_batch_size(test_loader, test_loader.batch_size - slash_increment)
+        train_loader = update_dataloader_batch_size(train_loader, train_loader.batch_size - slash_increment)
+        test_loader = update_dataloader_batch_size(test_loader, test_loader.batch_size - slash_increment)
         print('==============================')
         print('OOMOOMOOMOOMOOMOOMOOMOOMOOMOOM')
         print(f'Batch size slashed to {train_loader.batch_size} due to OOM')
@@ -1459,13 +1515,14 @@ class Modeller():
     def update_batch_size(self, train_loader, test_loader, extra_test_loader):
         if self.config.auto_batch_sizing:
             if (train_loader.batch_size < len(train_loader.dataset)) and (train_loader.batch_size < self.config.max_batch_size):  # if the batch is smaller than the dataset
-                increment = max(4, int(train_loader.batch_size * 0.05))  # increment batch size
-                train_loader = update_batch_size(train_loader, train_loader.batch_size + increment)
-                test_loader = update_batch_size(test_loader, test_loader.batch_size + increment)
+                increment = max(4, int(train_loader.batch_size * self.config.batch_growth_increment))  # increment batch size
+                train_loader = update_dataloader_batch_size(train_loader, train_loader.batch_size + increment)
+                test_loader = update_dataloader_batch_size(test_loader, test_loader.batch_size + increment)
                 if extra_test_loader is not None:
-                    extra_test_loader = update_batch_size(extra_test_loader, extra_test_loader.batch_size + increment)
+                    extra_test_loader = update_dataloader_batch_size(extra_test_loader, extra_test_loader.batch_size + increment)
                 print(f'Batch size incremented to {train_loader.batch_size}')
         wandb.log({'batch size': train_loader.batch_size})
+        self.config.final_batch_size = train_loader.batch_size
         return train_loader, test_loader, extra_test_loader
 
     def check_model_convergence(self, metrics_dict, config, epoch):
@@ -1480,7 +1537,7 @@ class Modeller():
 
     def model_checkpointing(self, epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict):
         if (epoch > 0) and (epoch % 5 == 0):
-            if config.machine == 'cluster':  # every 5 epochs, save a checkpoint
+            if True: #config.machine == 'cluster':  # every 5 epochs, save a checkpoint
                 # saving early-stopping checkpoint
                 save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
                 save_checkpoint(epoch, generator, g_optimizer, self.config.generator.__dict__, 'generator_' + str(config.run_num) + f'_epoch_{epoch}')
@@ -1715,7 +1772,7 @@ class Modeller():
         self.gan_reporting(epoch, train_loader, None, test_epoch_stats_dict,
                            extra_test_dict=extra_test_epoch_stats_dict)
 
-    def similarity_penalty(self, generated_samples, sg_ind, prior):
+    def compute_similarity_penalty(self, generated_samples, sg_ind, prior):
         '''
         punish batches in which the samples are too self-similar
 
@@ -1731,7 +1788,7 @@ class Modeller():
             # enforce that the distance between samples is similar to the distance between priors
             prior_dists = torch.cdist(prior, prior, p=2)
             sample_dists = torch.cdist(generated_samples, generated_samples, p=2)
-            similarity_penalty = self.config.generator_similarity_penalty * F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(1)  # align distances to all other samples
+            similarity_penalty = F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(1)  # align distances to all other samples
 
             # todo set the standardization for each space group individually (different stats and distances)
 
@@ -1770,10 +1827,10 @@ class Modeller():
     def get_vdw_overlap(self, dist_dict=None, num_graphs=None):
         if dist_dict is not None:  # supercell_data is not None: # do vdw computation even if we don't need it
             vdw_loss_i = vdw_overlap(self.vdw_radii, dists=dist_dict['intermolecular dist'],
-                                   atomic_numbers=dist_dict['intermolecular dist atoms'],
-                                   batch_numbers=dist_dict['intermolecular dist batch'],
-                                   num_graphs=num_graphs)
-            vdw_loss = torch.log(1+vdw_loss_i) # soft rescaling
+                                     atomic_numbers=dist_dict['intermolecular dist atoms'],
+                                     batch_numbers=dist_dict['intermolecular dist batch'],
+                                     num_graphs=num_graphs)
+            vdw_loss = torch.log(1 + vdw_loss_i)  # soft rescaling
         else:
             vdw_loss = None
 
@@ -1810,7 +1867,7 @@ class Modeller():
 
         if self.config.generator_similarity_penalty != 0:
             if similarity_penalty is not None:
-                g_losses_list.append(similarity_penalty)
+                g_losses_list.append(self.config.generator_similarity_penalth * similarity_penalty)
             else:
                 print('similarity penalty was none')
         if similarity_penalty is not None:

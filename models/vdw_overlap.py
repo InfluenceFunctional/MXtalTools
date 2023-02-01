@@ -52,12 +52,12 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
             [torch.max(penalties[crystal_number == ii]) if (len(penalties[crystal_number == ii]) > 0) else torch.zeros(1)[0].to(penalties.device) for ii in range(num_graphs)]
         )
     )
-    mean_scores = torch.nan_to_num(
-        torch.stack(
-            [torch.mean(penalties[crystal_number == ii]) for ii in range(num_graphs)]
-        )
-    )
-    tot_scores =(scores + mean_scores) / 2 # combine mean score with max score
+    # mean_scores = torch.nan_to_num(
+    #     torch.stack(
+    #         [torch.mean(penalties[crystal_number == ii]) for ii in range(num_graphs)]
+    #     )
+    # )
+    tot_scores = scores #(scores + mean_scores) / 2 # combine mean score with max score
     assert len(tot_scores) == num_graphs
     if return_atomwise:
         return tot_scores, [penalties[crystal_number == ii] for ii in range(num_graphs)]
