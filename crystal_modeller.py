@@ -1867,7 +1867,7 @@ class Modeller():
 
         if self.config.generator_similarity_penalty != 0:
             if similarity_penalty is not None:
-                g_losses_list.append(self.config.generator_similarity_penalth * similarity_penalty)
+                g_losses_list.append(self.config.generator_similarity_penalty * similarity_penalty)
             else:
                 print('similarity penalty was none')
         if similarity_penalty is not None:
