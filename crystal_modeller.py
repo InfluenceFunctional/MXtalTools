@@ -1056,7 +1056,7 @@ class Modeller():
         elif self.config.density_loss_rescaling is None:
             den_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none')
         elif self.config.density_loss_rescaling == 'mse':
-            F.mse_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none')
+            den_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none')
 
         packing_loss = F.relu(-(generated_packing_coeffs - 1))  # pack up to 0% free volume
 
