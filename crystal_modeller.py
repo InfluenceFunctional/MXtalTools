@@ -1051,7 +1051,12 @@ class Modeller():
         standardized_csd_packing_coeffs = (csd_packing_coeffs - self.config.dataDims['target mean']) / self.config.dataDims['target std']  # requires that packing coefficnet is set as regression target in main
 
         # den_loss = F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none') # raw value
-        den_loss = torch.log(1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
+        if self.config.density_loss_rescaling == 'log':
+            den_loss = torch.log(1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
+        elif self.config.density_loss_rescaling is None:
+            den_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none')
+        elif self.config.density_loss_rescaling == 'mse':
+            F.mse_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none')
 
         packing_loss = F.relu(-(generated_packing_coeffs - 1))  # pack up to 0% free volume
 
