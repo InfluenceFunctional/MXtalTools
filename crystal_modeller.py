@@ -1017,7 +1017,7 @@ class Modeller():
         similarity_penalty = self.compute_similarity_penalty(generated_samples, supercell_data.sg_ind, prior)
         discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
         h_bond_score = self.compute_h_bond_score(supercell_data)
-        vdw_overlap = self.get_vdw_overlap(dist_dict, supercell_data.num_graphs)
+        vdw_overlap = self.get_vdw_penalty(dist_dict, supercell_data.num_graphs)
         density_loss, packing_loss, packing_prediction, packing_target, = \
             self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
 
@@ -1829,7 +1829,7 @@ class Modeller():
 
         return discriminator_score, dist_dict
 
-    def get_vdw_overlap(self, dist_dict=None, num_graphs=None):
+    def get_vdw_penalty(self, dist_dict=None, num_graphs=None):
         if dist_dict is not None:  # supercell_data is not None: # do vdw computation even if we don't need it
             vdw_loss_i = vdw_overlap(self.vdw_radii, dists=dist_dict['intermolecular dist'],
                                      atomic_numbers=dist_dict['intermolecular dist atoms'],

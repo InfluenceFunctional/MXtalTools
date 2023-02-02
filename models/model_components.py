@@ -60,7 +60,7 @@ class general_MLP(nn.Module):
 
             x = torch.cat((x, conditions), dim=1)
 
-        x = self.init_layer(x)
+        x = self.init_layer(x) # get the right feature depth
 
         for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
             x = x + dropout(activation(linear(norm(x))))  # residue

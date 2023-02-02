@@ -210,8 +210,8 @@ class MikesGraphNet(torch.nn.Module):
         for n, (convolution, fc, global_agg) in enumerate(zip(self.interaction_blocks, self.fc_blocks, self.global_blocks)):
             if self.crystal_mode:
                 if n < (self.num_blocks - 1):  # to do this molecule-wise, we need to multiply n_repeats by Z for each crystal
-                    x = convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
-                    x[inside_inds] = fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, FC includes residual
+                    x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
+                    x[inside_inds] = x[inside_inds] + (x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, FC includes residual
                     for ii in range(len(ptr) - 1):  # for each crystal
                         x[ptr[ii]:ptr[ii + 1], :] = x[inside_inds[inside_batch == ii]].repeat(n_repeats[ii], 1)  # copy the first unit cell to all periodic images
 
@@ -222,14 +222,14 @@ class MikesGraphNet(torch.nn.Module):
                         x = convolution(x, rbf_inter, dist_inter, torch.cat((edge_index, edge_index_inter), dim=1),
                                         sbf=sbf_inter, tbf=tbf_inter, idx_kj=idx_kj_inter, idx_ji=idx_ji_inter)  # return only the results of the intermolecular convolution, omitting intermolecular features
                     elif self.crystal_convolution_type == 1:
-                        x = convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
-                    x = fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, and return only those atoms, FC includes residual
+                        x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
+                    x = x[inside_inds] + fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, and return only those atoms, FC includes residual
 
             else:
                 #x = self.inside_norm1[n](x)
-                x = convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution - residual is already inside the conv operator
+                x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution - residual is already inside the conv operator
                 #x = self.inside_norm2[n](x)
-                x = fc(x)  # feature-wise 1D convolution, FC includes residual
+                x = x + fc(x)  # feature-wise 1D convolution, FC includes residual
 
         if return_dists:  # return dists, batch #, and inside/outside identity, and atomic number
             dist_output = {}

@@ -46,17 +46,17 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
     penalties = F.relu(-(dists - radii_sums))  # only punish negatives (meaning overlaps)
     assert torch.sum(torch.isnan(penalties)) == 0
 
-    scores = torch.nan_to_num(
-        torch.stack(
-            # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
-            [torch.max(penalties[crystal_number == ii]) if (len(penalties[crystal_number == ii]) > 0) else torch.zeros(1)[0].to(penalties.device) for ii in range(num_graphs)]
-        )
-    )
-    # mean_scores = torch.nan_to_num(
+    # scores = torch.nan_to_num(
     #     torch.stack(
-    #         [torch.mean(penalties[crystal_number == ii]) for ii in range(num_graphs)]
+    #         # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
+    #         [torch.max(penalties[crystal_number == ii]) if (len(penalties[crystal_number == ii]) > 0) else torch.zeros(1)[0].to(penalties.device) for ii in range(num_graphs)]
     #     )
     # )
+    scores = torch.nan_to_num(
+        torch.stack(
+            [torch.sum(penalties[crystal_number == ii]) for ii in range(num_graphs)]
+        )
+    )
     tot_scores = scores #(scores + mean_scores) / 2 # combine mean score with max score
     assert len(tot_scores) == num_graphs
     if return_atomwise:
