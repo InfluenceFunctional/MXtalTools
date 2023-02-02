@@ -1830,7 +1830,12 @@ class Modeller():
                                      atomic_numbers=dist_dict['intermolecular dist atoms'],
                                      batch_numbers=dist_dict['intermolecular dist batch'],
                                      num_graphs=num_graphs)
-            vdw_loss = torch.log(1 + vdw_loss_i)  # soft rescaling
+            if self.config.vdw_loss_rescaling == 'log':
+                vdw_loss = torch.log(1 + vdw_loss_i)  # soft rescaling
+            elif self.config.vdw_loss_rescaling is None:
+                vdw_loss = vdw_loss_i
+            elif self.config.vdw_loss_rescaling == 'mse':
+                vdw_loss = vdw_loss_i ** 2
         else:
             vdw_loss = None
 
