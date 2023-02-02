@@ -51,7 +51,7 @@ auto_batch_reduction: .05 # fraction of tested max batch size to actually start 
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 gradient_norm_clip: 1
-lr_growth_lambda: 0.1
+lr_growth_lambda: 1.1
 lr_shrink_lambda: 0.98
 
 # dataset curation
