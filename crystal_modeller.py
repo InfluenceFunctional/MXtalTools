@@ -1018,6 +1018,7 @@ class Modeller():
         discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
         h_bond_score = self.compute_h_bond_score(supercell_data)
         vdw_overlap = self.get_vdw_penalty(dist_dict, supercell_data.num_graphs)
+        vdw_overlap = vdw_overlap / torch.diff(data.ptr)
         density_loss, packing_loss, packing_prediction, packing_target, = \
             self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
 
@@ -1052,7 +1053,7 @@ class Modeller():
 
         # den_loss = F.smooth_l1_loss(generated_packing_coefficients, csd_packing_coefficients, reduction='none') # raw value
         if self.config.density_loss_rescaling == 'log':
-            den_loss = torch.log(1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
+            den_loss = torch.log(1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none')) ** 2  # log(1+loss) is a soft rescaling to avoid gigantic losses
         elif self.config.density_loss_rescaling is None:
             den_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none')
         elif self.config.density_loss_rescaling == 'mse':
@@ -1836,7 +1837,7 @@ class Modeller():
                                      batch_numbers=dist_dict['intermolecular dist batch'],
                                      num_graphs=num_graphs)
             if self.config.vdw_loss_rescaling == 'log':
-                vdw_loss = torch.log(1 + vdw_loss_i)  # soft rescaling
+                vdw_loss = torch.log(1 + vdw_loss_i) ** 2  # soft rescaling
             elif self.config.vdw_loss_rescaling is None:
                 vdw_loss = vdw_loss_i
             elif self.config.vdw_loss_rescaling == 'mse':

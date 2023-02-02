@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 1072
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures' or 'sampling'
 gan_loss: standard # standard only
@@ -33,7 +33,7 @@ sample_steps: 100
 sample_move_size: 0.01
 
 seeds:
-  model: 0
+  model: 1
   dataset: 0
 
 # opt - sweep details
@@ -47,18 +47,18 @@ accumulate_gradients: False
 accumulate_batch_size: 1000
 auto_batch_sizing: True
 min_batch_size: 5
-max_batch_size: 1000
-batch_growth_increment: 0.25
+max_batch_size: 100
+batch_growth_increment: 0.05
 auto_batch_reduction: .05 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 gradient_norm_clip: 1
-lr_growth_lambda: 1.1
-lr_shrink_lambda: 0.98
+lr_growth_lambda: 1.25
+lr_shrink_lambda: 0.95
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+dataset_length: 10000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
@@ -125,7 +125,7 @@ discriminator:
 # generator optimizer and model
 generator:
   optimizer: adam
-  learning_rate: 5.0E-6
+  learning_rate: 1.0E-5
   max_lr: 5.0E-5
   lr_schedule: True
   beta1: 0.9 #0.9
@@ -136,30 +136,30 @@ generator:
 
   canonical_conformer_orientation: 'standardized' # 'standardized' 'random'
   graph_convolution_layers: 4
-  graph_filters: 64
-  atom_embedding_size: 1028
-  graph_norm: layer
+  graph_filters: 256
+  atom_embedding_size: 512
+  graph_norm: null
   num_spherical: 6
-  num_radial: 32
+  num_radial: 12
   graph_convolution_cutoff: 3
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 16 # mikenet GATv2 mode only - must evenly divide graph filters
+  num_attention_heads: 4 # mikenet GATv2 mode only - must evenly divide graph filters
   graph_convolution: 'TransformerConv' # GATv2, schnet, or full message passing, or 'TransformerConv'
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False
-  pooling: geometric # combo, geometric
+  pooling: geometric # combo, geometric (wip)
 
-  conditioner_num_fc_layers: 2
+  conditioner_num_fc_layers: 4
   conditioner_fc_depth: 1028
   conditioner_activation: leaky relu
   conditioner_fc_dropout_probability: 0
-  conditioner_fc_norm_mode: layer
+  conditioner_fc_norm_mode: null
 
-  num_fc_layers: 20
+  num_fc_layers: 10
   fc_depth: 1028
   activation: leaky relu
-  fc_dropout_probability: 0
+  fc_dropout_probability: 0.1
   fc_norm_mode: layer
 
   prior: multivariate normal
