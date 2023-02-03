@@ -301,12 +301,12 @@ def add_args(parser):
     # cell generator
     parser.add_argument('--gan_loss', type=str, default='standard')  # stnandard only
     add_bool_arg(parser, 'new_generation', default=True)  # new way of defining the asymmetric unit
-    add_bool_arg(parser, 'train_generator_density', default=False)  # train on cell volume
+    add_bool_arg(parser, 'train_generator_combo', default=False)  # train on a packing + vdw combined score
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_vdw', default=False)  # train generator on adversarially
     parser.add_argument('--vdw_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
-    parser.add_argument('--density_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
+    parser.add_argument('--packing_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
     add_bool_arg(parser, 'train_generator_h_bond', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
@@ -321,12 +321,12 @@ def add_args(parser):
 
     update_args2config(args2config, 'gan_loss')
     update_args2config(args2config, 'new_generation')
-    update_args2config(args2config, 'train_generator_density')
+    update_args2config(args2config, 'train_generator_combo')
     update_args2config(args2config, 'train_generator_packing')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_vdw')
     update_args2config(args2config, 'vdw_loss_rescaling')
-    update_args2config(args2config, 'density_loss_rescaling')
+    update_args2config(args2config, 'packing_loss_rescaling')
     update_args2config(args2config, 'train_generator_h_bond')
     update_args2config(args2config, 'train_discriminator_adversarially')
     update_args2config(args2config, 'train_discriminator_on_randn')

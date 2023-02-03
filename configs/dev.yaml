@@ -8,11 +8,11 @@ anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures' or 'sampling'
 gan_loss: standard # standard only
 new_generation: True # new way of defining asymmetric unit
-train_generator_density: True # on a target
-train_generator_packing: False # simply maximize density
-train_generator_vdw: True
+train_generator_packing: False
+train_generator_vdw: False
+train_generator_combo: True
 vdw_loss_rescaling: log
-density_loss_rescaling: log
+density_loss_rescaling: mse
 train_generator_h_bond: False # maximize h bonding (non-directional)
 train_generator_adversarially: False
 train_discriminator_adversarially: False
@@ -48,13 +48,13 @@ accumulate_batch_size: 1000
 auto_batch_sizing: True
 min_batch_size: 5
 max_batch_size: 1000
-batch_growth_increment: 0.25
+batch_growth_increment: 0.05
 auto_batch_reduction: .05 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 gradient_norm_clip: 1
-lr_growth_lambda: 1.1
-lr_shrink_lambda: 0.98
+lr_growth_lambda: 1.05
+lr_shrink_lambda: 0.97
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
@@ -125,7 +125,7 @@ discriminator:
 # generator optimizer and model
 generator:
   optimizer: adam
-  learning_rate: 5.0E-6
+  learning_rate: 1.0E-5
   max_lr: 5.0E-5
   lr_schedule: True
   beta1: 0.9 #0.9
@@ -135,9 +135,9 @@ generator:
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   canonical_conformer_orientation: 'standardized' # 'standardized' 'random'
-  graph_convolution_layers: 4
-  graph_filters: 64
-  atom_embedding_size: 1028
+  graph_convolution_layers: 1
+  graph_filters: 32
+  atom_embedding_size: 32
   graph_norm: layer
   num_spherical: 6
   num_radial: 32
@@ -150,13 +150,13 @@ generator:
   add_torsional_basis: False
   pooling: geometric # combo, geometric
 
-  conditioner_num_fc_layers: 2
-  conditioner_fc_depth: 1028
+  conditioner_num_fc_layers: 1
+  conditioner_fc_depth: 12
   conditioner_activation: leaky relu
   conditioner_fc_dropout_probability: 0
   conditioner_fc_norm_mode: layer
 
-  num_fc_layers: 20
+  num_fc_layers: 5
   fc_depth: 1028
   activation: leaky relu
   fc_dropout_probability: 0
