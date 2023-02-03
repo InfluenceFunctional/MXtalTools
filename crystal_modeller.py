@@ -844,7 +844,7 @@ class Modeller():
                 d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
 
                 # d_loss = d_losses.mean()
-                d_loss = (d_losses / torch.diff(data.ptr.to(d_losses.device)).tile(2)).mean()  # norm losses according to graph size
+                d_loss = (d_losses / torch.diff(data.ptr.to(d_losses.device)).tile(2) * (data.num_nodes / data.num_graphs)).mean()  # norm losses according to graph size
                 d_err.append(d_loss.data.cpu().detach().numpy())  # average overall loss
                 d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
 
@@ -893,7 +893,7 @@ class Modeller():
                 vdw_loss, packing_loss, similarity_penalty, density_prediction, density_target, h_bond_score)
 
             # g_loss = g_losses.mean()
-            g_loss = (g_losses / torch.diff(data.ptr)).mean()  # norm losses according to graph size
+            g_loss = (g_losses / torch.diff(data.ptr) * (data.num_nodes / data.num_graphs)).mean()  # norm losses according to graph size
             g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
             g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
             epoch_stats_dict['generated cell parameters'].extend(generated_samples)
