@@ -28,7 +28,7 @@ class global_aggregation(nn.Module):
             self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))])  # aggregation functions requiring parameters
             self.agg_fc = nn.Linear(filters * (len(self.agg_list1) + len(self.agg_list2)), filters)  # condense to correct number of filters
         elif agg_func == 'geometric':  # global aggregation via geometry-involved pooling
-            self.agg = SphGeoPooling(in_channels=filters)
+            self.agg = SphGeoPooling(in_channels=filters,num_radial = 50, spherical_order=11)
 
     def forward(self, x, pos, batch):
         if self.agg_func == 'set2set':

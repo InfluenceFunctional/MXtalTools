@@ -27,15 +27,18 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
         dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
         elements = [crystaldata.x[edges[0], 0].long().to(dists.device), crystaldata.x[edges[1], 0].long().to(dists.device)]
         num_graphs = crystaldata.num_graphs
-        graph_sizes = torch.diff(crystaldata.ptr)
+        molecule_sizes = torch.diff(crystaldata.ptr)
     elif dists is not None:  # precomputed intermolecular crystal distances
         crystal_number = batch_numbers
         elements = atomic_numbers
         num_graphs = num_graphs
-        graph_sizes = graph_sizes
+        molecule_sizes = graph_sizes
 
     else:
         assert False  # must do one or the other
+
+    if graph_sizes is not None:
+        molecule_sizes = graph_sizes
 
     '''
     compute vdw radii respectfulness
@@ -60,7 +63,7 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
         normed_penalties = F.relu(-(dists - radii_sums) / radii_sums)  # only punish negatives (meaning overlaps)
         normed_scores = torch.nan_to_num(
             torch.stack(
-                [torch.sum(normed_penalties[crystal_number == ii]) / graph_sizes[ii] for ii in range(num_graphs)]
+                [torch.sum(normed_penalties[crystal_number == ii]) / molecule_sizes[ii] for ii in range(num_graphs)]
             )
         )
         if return_atomwise:

@@ -140,14 +140,14 @@ generator:
   atom_embedding_size: 128
   graph_norm: layer
   num_spherical: 6
-  num_radial: 100
+  num_radial: 16
   graph_convolution_cutoff: 3
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 16 # mikenet GATv2 mode only - must evenly divide graph filters
+  num_attention_heads: 4 # mikenet GATv2 mode only - must evenly divide graph filters
   graph_convolution: 'TransformerConv' # GATv2, schnet, or full message passing, or 'TransformerConv'
-  add_spherical_basis: False # mikenet only
-  add_torsional_basis: False
+  add_spherical_basis: True # mikenet only
+  add_torsional_basis: True
   pooling: geometric # combo, geometric
 
   conditioner_num_fc_layers: 4
@@ -156,8 +156,8 @@ generator:
   conditioner_fc_dropout_probability: 0.25
   conditioner_fc_norm_mode: layer
 
-  num_fc_layers: 40
-  fc_depth: 512
+  num_fc_layers: 2
+  fc_depth: 128
   activation: leaky relu
   fc_dropout_probability: 0.25
   fc_norm_mode: layer

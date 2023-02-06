@@ -2069,7 +2069,10 @@ class Modeller():
     def sample_wise_analysis(self, epoch_stats_dict, layout):
         num_samples = 10
         supercell_examples = epoch_stats_dict['generated supercell examples']
-        vdw_loss, vdw_penalties = vdw_overlap(self.vdw_radii, crystaldata=supercell_examples, return_atomwise=True)
+        vdw_loss, normed_vdw_loss, vdw_penalties = \
+            vdw_overlap(self.vdw_radii, crystaldata=supercell_examples, return_atomwise=True, return_normed=True,
+                        graph_sizes = supercell_examples.tracking[:,self.config.dataDims['tracking features dict'].index('molecule num atoms')])
+        vdw_loss /= supercell_examples.tracking[:,self.config.dataDims['tracking features dict'].index('molecule num atoms')]
 
         # mol_acceptors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num acceptors')]
         # mol_donors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num donors')]
@@ -2085,8 +2088,12 @@ class Modeller():
 
         fig = go.Figure()
         for i in range(min(supercell_examples.num_graphs, num_samples)):
-            fig.add_trace(go.Violin(x=np.log10(vdw_penalties[i].cpu().detach()), side='positive', orientation='h',
-                                    bandwidth=0.01, width=1, showlegend=False, opacity=1, name=f'{supercell_examples.csd_identifier[i]} t{target_packing[i]:.2f} p{generated_packing_coeffs[i]:.2f}'),
+            pens = vdw_penalties[i].cpu().detach()
+            fig.add_trace(go.Violin(x=pens[pens!=0], side='positive', orientation='h',
+                                    bandwidth=0.01, width=1, showlegend=False, opacity=1,
+                                    name=f'{supercell_examples.csd_identifier[i]} <br /> ' +
+                                         f'c_t={target_packing[i]:.2f} c_p={generated_packing_coeffs[i]:.2f} <br /> ' +
+                                         f'tot_norm_ov={normed_vdw_loss[i]:.2f}'),
                           )
 
             molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
@@ -2117,6 +2124,7 @@ class Modeller():
         fig.update_layout(width=800, height=600, font=dict(size=12))
         fig.layout.margin = layout.margin
         fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
+        fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing prediction')
 
         # fig.write_image('../paper1_figs/sampling_scores.png')
         wandb.log({'Generated Sample Analysis': fig})
