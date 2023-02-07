@@ -1842,7 +1842,7 @@ class Modeller():
                                batch_numbers=dist_dict['intermolecular dist batch'],
                                num_graphs=num_graphs,
                                graph_sizes = torch.diff(data.ptr),
-                               return_normed = True)
+                               return_normed = True) ** 2 #TODO GET RID OF THIS
         else:
             return None, None
 
