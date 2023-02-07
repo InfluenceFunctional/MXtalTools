@@ -200,5 +200,3 @@ class independent_gaussian_model(nn.Module):
 
     def score(self, samples):
         return self.prior.log_prob(samples)
-
-
