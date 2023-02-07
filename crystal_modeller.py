@@ -1842,7 +1842,7 @@ class Modeller():
                                batch_numbers=dist_dict['intermolecular dist batch'],
                                num_graphs=num_graphs,
                                graph_sizes = torch.diff(data.ptr),
-                               return_normed = True) ** 2 #TODO GET RID OF THIS
+                               return_normed = True)
         else:
             return None, None
 
@@ -1870,7 +1870,7 @@ class Modeller():
             elif self.config.vdw_loss_rescaling is None:
                 vdw_loss_f = vdw_loss
             elif self.config.vdw_loss_rescaling == 'mse':
-                vdw_loss_f = vdw_loss ** 2
+                vdw_loss_f = vdw_loss ** 4 # todo GET RID OF THIS
             g_losses_list.append(vdw_loss_f)
         if vdw_loss is not None:
             epoch_stats_dict['generator per mol vdw loss'].append(vdw_loss.cpu().detach().numpy())
