@@ -1,8 +1,6 @@
 from utils import *
 import numpy.linalg as linalg
 import tqdm
-from pymatgen.core import Molecule
-from pymatgen.symmetry.analyzer import PointGroupAnalyzer
 import rdkit.Chem as Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
 from crystal_building.coordinate_transformations import coor_trans_matrix
@@ -10,7 +8,9 @@ from mendeleev import element as element_table
 from crystal_building.crystal_builder_tools import (get_cell_fractional_centroids, c_f_transform)
 from pyxtal import symmetry
 from scipy.spatial.transform import Rotation
-
+# REQUIRED FOR POINT GROUP ANALYSIS BELOW
+# from pymatgen.core import Molecule
+# from pymatgen.symmetry.analyzer import PointGroupAnalyzer
 
 def get_fraction(atomic_numbers, target):
     return atomic_numbers.count(target) / len(atomic_numbers)

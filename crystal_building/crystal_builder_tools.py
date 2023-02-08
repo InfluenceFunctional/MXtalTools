@@ -6,8 +6,8 @@ import time
 import torch.nn.utils.rnn as rnn
 import torch.nn.functional as F
 import sys
-from pymatgen.symmetry import analyzer
-from pymatgen.core import (structure, lattice)
+#from pymatgen.symmetry import analyzer
+#from pymatgen.core import (structure, lattice)
 import tqdm
 
 asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
@@ -405,85 +405,85 @@ def f_c_transform(coords, T_fc):
         elif torch.is_tensor(coords):
             return torch.einsum('nmj,ij->nmi', (coords, T_fc))
 
-
-def cell_analysis(data, debug=False, return_final_coords = False, return_sym_ops = False):
-    '''
-    DEPRECATED
-    Parameters
-    ----------
-    data
-    debug
-    return_final_coords
-    return_sym_ops
-
-    Returns
-    -------
-
-    '''
-    cell_lengths = data.cell_params[:, 0:3]
-    cell_angles = data.cell_params[:, 3:6]
-
-    '''
-    get the centroids in the fractional basis
-    '''
-    canonical_centroids_list = []
-    canonical_centroids_inds = []
-    for i in range(data.num_graphs):
-        centroids_f = get_cell_fractional_centroids(torch.Tensor(data.ref_cell_pos[i]), torch.linalg.inv(data.T_fc[i]))
-        centroids_f -= torch.floor(centroids_f)
-        canonical_centroids_inds.append(torch.argmin(torch.linalg.norm(centroids_f, dim=1)))
-        canonical_centroids_list.append(centroids_f[canonical_centroids_inds[-1]])
-
-    canonical_frac_centroids = torch.stack(canonical_centroids_list)
-    canonical_centroids_inds = torch.stack(canonical_centroids_inds)
-
-    mol_orientations_list = []
-    final_coords_list = []
-    target_handedness = torch.zeros(data.num_graphs)
-    for i in range(data.num_graphs):
-        '''
-        allow each molecule to stick with its given handedness
-        '''
-        coords = torch.Tensor(data.ref_cell_pos[i][canonical_centroids_inds[i]],device=data.x.device)
-        coords -= coords.mean(0)
-        Ip_axes, _, _ = single_molecule_principal_axes(coords)
-        target_handedness[i] = compute_Ip_handedness(Ip_axes)
-        normed_alignment_target = torch.eye(3)
-        normed_alignment_target[0,0] = target_handedness[i] # adjust the target so that the molecule doesn't invert during the rotation
-
-        rot_matrix = torch.matmul(normed_alignment_target.T, torch.linalg.inv(Ip_axes.float()).T)
-        components = torch.Tensor(Rotation.from_matrix(rot_matrix.T).as_rotvec())  # CRITICAL we want the inverse transform here (transpose is the inverse for unitary rotation matrix)
-        mol_orientations_list.append(torch.Tensor(components))
-        if debug:  # confirm this rotation gets the desired orientation
-            std_coords = torch.inner(rot_matrix, coords).T
-            Ip_axes, _, _ = single_molecule_principal_axes(std_coords)
-            assert F.l1_loss(Ip_axes, normed_alignment_target, reduction='sum') < 0.5
-
-        final_coords_list.append(coords)  # will record if we had to invert
-
-    mol_orientations = torch.stack(mol_orientations_list)
-
-    if return_sym_ops:
-        sym_ops_list = []
-        for i in tqdm.tqdm(range(data.num_graphs)):
-            struc_lattice = lattice.Lattice(data.T_fc[i].T.type(dtype=torch.float16))
-            pymat_struc1 = structure.IStructure(species=data.x[data.batch == i, 0].repeat(data.Z[i]),
-                                                coords=data.ref_cell_pos[i].reshape(int(data.Z[i] * len(data.pos[data.batch == i])), 3),
-                                                lattice=struc_lattice, coords_are_cartesian=True)
-            sg_analyzer1 = analyzer.SpacegroupAnalyzer(pymat_struc1)
-            sym_ops = sg_analyzer1.get_symmetry_operations()
-            sym_ops_list.append([torch.Tensor(sym_ops[n].affine_matrix,device=data.x.device) for n in range(len(sym_ops))])
-
-    if return_final_coords:
-        if return_sym_ops:
-            return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, final_coords_list, sym_ops_list
-        else:
-            return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, final_coords_list
-    else:
-        if return_sym_ops:
-            return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, sym_ops_list
-        else:
-            return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness
+#
+# def cell_analysis(data, debug=False, return_final_coords = False, return_sym_ops = False):
+#     '''
+#     DEPRECATED
+#     Parameters
+#     ----------
+#     data
+#     debug
+#     return_final_coords
+#     return_sym_ops
+#
+#     Returns
+#     -------
+#
+#     '''
+#     cell_lengths = data.cell_params[:, 0:3]
+#     cell_angles = data.cell_params[:, 3:6]
+#
+#     '''
+#     get the centroids in the fractional basis
+#     '''
+#     canonical_centroids_list = []
+#     canonical_centroids_inds = []
+#     for i in range(data.num_graphs):
+#         centroids_f = get_cell_fractional_centroids(torch.Tensor(data.ref_cell_pos[i]), torch.linalg.inv(data.T_fc[i]))
+#         centroids_f -= torch.floor(centroids_f)
+#         canonical_centroids_inds.append(torch.argmin(torch.linalg.norm(centroids_f, dim=1)))
+#         canonical_centroids_list.append(centroids_f[canonical_centroids_inds[-1]])
+#
+#     canonical_frac_centroids = torch.stack(canonical_centroids_list)
+#     canonical_centroids_inds = torch.stack(canonical_centroids_inds)
+#
+#     mol_orientations_list = []
+#     final_coords_list = []
+#     target_handedness = torch.zeros(data.num_graphs)
+#     for i in range(data.num_graphs):
+#         '''
+#         allow each molecule to stick with its given handedness
+#         '''
+#         coords = torch.Tensor(data.ref_cell_pos[i][canonical_centroids_inds[i]],device=data.x.device)
+#         coords -= coords.mean(0)
+#         Ip_axes, _, _ = single_molecule_principal_axes(coords)
+#         target_handedness[i] = compute_Ip_handedness(Ip_axes)
+#         normed_alignment_target = torch.eye(3)
+#         normed_alignment_target[0,0] = target_handedness[i] # adjust the target so that the molecule doesn't invert during the rotation
+#
+#         rot_matrix = torch.matmul(normed_alignment_target.T, torch.linalg.inv(Ip_axes.float()).T)
+#         components = torch.Tensor(Rotation.from_matrix(rot_matrix.T).as_rotvec())  # CRITICAL we want the inverse transform here (transpose is the inverse for unitary rotation matrix)
+#         mol_orientations_list.append(torch.Tensor(components))
+#         if debug:  # confirm this rotation gets the desired orientation
+#             std_coords = torch.inner(rot_matrix, coords).T
+#             Ip_axes, _, _ = single_molecule_principal_axes(std_coords)
+#             assert F.l1_loss(Ip_axes, normed_alignment_target, reduction='sum') < 0.5
+#
+#         final_coords_list.append(coords)  # will record if we had to invert
+#
+#     mol_orientations = torch.stack(mol_orientations_list)
+#
+#     if return_sym_ops:
+#         sym_ops_list = []
+#         for i in tqdm.tqdm(range(data.num_graphs)):
+#             struc_lattice = lattice.Lattice(data.T_fc[i].T.type(dtype=torch.float16))
+#             pymat_struc1 = structure.IStructure(species=data.x[data.batch == i, 0].repeat(data.Z[i]),
+#                                                 coords=data.ref_cell_pos[i].reshape(int(data.Z[i] * len(data.pos[data.batch == i])), 3),
+#                                                 lattice=struc_lattice, coords_are_cartesian=True)
+#             sg_analyzer1 = analyzer.SpacegroupAnalyzer(pymat_struc1)
+#             sym_ops = sg_analyzer1.get_symmetry_operations()
+#             sym_ops_list.append([torch.Tensor(sym_ops[n].affine_matrix,device=data.x.device) for n in range(len(sym_ops))])
+#
+#     if return_final_coords:
+#         if return_sym_ops:
+#             return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, final_coords_list, sym_ops_list
+#         else:
+#             return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, final_coords_list
+#     else:
+#         if return_sym_ops:
+#             return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness, sym_ops_list
+#         else:
+#             return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness
 
 
 def find_coord_in_box(coords, box):

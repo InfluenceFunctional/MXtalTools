@@ -58,7 +58,7 @@ lr_shrink_lambda: 0.99
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100
@@ -80,7 +80,7 @@ exclude_polymorphs: True
 exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
-include_sgs: ["P21/c","P212121","C2/c","Pca21","P21"] #["P-1", "P21/c", "P212121", "C2/c", "Pbca", "P21"]
+include_sgs: ["P-1","P21/c","P212121","C2/c"] #["P-1", "P21/c", "P212121", "C2/c", "Pbca", "P21"]
 include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
 generate_sgs: null #'P2' #'P21/c' # can only do one at a time right now
 supercell_size: 5 # new method - should be very large, automatically pares down

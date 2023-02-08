@@ -15,11 +15,11 @@ import sys
 import torch.nn.functional as F
 from scipy.ndimage import gaussian_filter1d
 from scipy.spatial.transform import Rotation
-from ase.calculators import lj
-from pymatgen.core import (structure, lattice)
+# from ase.calculators import lj
+# from pymatgen.core import (structure, lattice)
 # from ccdc.crystal import PackingSimilarity
 # from ccdc.io import CrystalReader
-from pymatgen.io import cif
+# from pymatgen.io import cif
 from scipy.cluster.hierarchy import dendrogram
 from torch_scatter import scatter
 
@@ -2227,13 +2227,13 @@ def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None,
 def torch_ptp(tensor):
     return torch.max(tensor) - torch.min(tensor)
 
-
-def ref_cell_to_pymatgen_istruc(data, i):
-    pymat_struct = structure.IStructure(species=data.x[data.batch == i, 0].repeat(data.Z[i]),
-                                        coords=data.ref_cell_pos[i].reshape(int(data.Z[i] * len(data.pos[data.batch == i])), 3),
-                                        lattice=lattice.Lattice(data.T_fc[i].T.type(dtype=torch.float16)),
-                                        coords_are_cartesian=True)
-    return pymat_struct
+#
+# def ref_cell_to_pymatgen_istruc(data, i):
+#     pymat_struct = structure.IStructure(species=data.x[data.batch == i, 0].repeat(data.Z[i]),
+#                                         coords=data.ref_cell_pos[i].reshape(int(data.Z[i] * len(data.pos[data.batch == i])), 3),
+#                                         lattice=lattice.Lattice(data.T_fc[i].T.type(dtype=torch.float16)),
+#                                         coords_are_cartesian=True)
+#     return pymat_struct
 
 
 def invert_rotvec_handedness(rotvec):
@@ -2453,11 +2453,7 @@ def compute_num_h_bonds(supercell_data, dataDims, i):
     donors_pos = supercell_data.pos[batch_inds[outside_inds[outside_donors_inds]]]
     acceptors_pos = supercell_data.pos[batch_inds[canonical_conformers_inds[canonical_conformer_acceptors_inds]]]
 
-    dists = torch.cdist(donors_pos, acceptors_pos, p=2)
-
-    h_bonds = torch.sum(dists < 3.3)
-
-    return h_bonds
+    return torch.sum(torch.cdist(donors_pos, acceptors_pos, p=2) < 3.3)
 
 '''
 # look at all kinds of activations
