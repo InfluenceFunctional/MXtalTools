@@ -58,7 +58,7 @@ lr_shrink_lambda: 0.99
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000000
+dataset_length: 1000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000
 min_crystal_temperature: -100

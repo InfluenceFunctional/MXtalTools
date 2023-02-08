@@ -2440,7 +2440,7 @@ def reload_model(model, optimizer, path):
 
 
 def compute_num_h_bonds(supercell_data, dataDims, i):
-    batch_inds = torch.arange(supercell_data.ptr[i], supercell_data.ptr[i + 1])
+    batch_inds = torch.arange(supercell_data.ptr[i], supercell_data.ptr[i + 1],device=supercell_data.x.device)
 
     # find the canonical conformers
     canonical_conformers_inds = torch.where(supercell_data.aux_ind[batch_inds] == 0)[0]
