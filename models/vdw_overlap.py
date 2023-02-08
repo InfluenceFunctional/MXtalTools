@@ -52,10 +52,17 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
 
     assert torch.sum(torch.isnan(penalties)) == 0
 
-    scores = torch.nan_to_num(
+    scores_i = torch.nan_to_num(
         torch.stack(
             [torch.sum(penalties[crystal_number == ii]) for ii in range(num_graphs)]
         ))
+
+    top_scores = torch.nan_to_num(
+        torch.stack(
+            [torch.max(penalties[crystal_number == ii]) for ii in range(num_graphs)]
+        ))
+
+    scores = scores_i + top_scores
 
     assert len(scores) == num_graphs
 
