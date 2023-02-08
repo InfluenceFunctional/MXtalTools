@@ -59,7 +59,8 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
 
     top_scores = torch.nan_to_num(
         torch.stack(
-            [torch.max(penalties[crystal_number == ii]) for ii in range(num_graphs)]
+            # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
+            [torch.max(penalties[crystal_number == ii]) if (len(penalties[crystal_number == ii]) > 0) else torch.zeros(1)[0].to(penalties.device) for ii in range(num_graphs)]
         ))
 
     scores = scores_i + top_scores
