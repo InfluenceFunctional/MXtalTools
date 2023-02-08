@@ -8,7 +8,6 @@ def radius(x: torch.Tensor, y: torch.Tensor, r: float,
            batch_y: Optional[torch.Tensor] = None,
            max_num_neighbors: int = 32,
            num_workers: int = 1) -> torch.Tensor:
-
     r"""Finds for each element in :obj:`y` all points in :obj:`x` within
     distance :obj:`r`.
 
