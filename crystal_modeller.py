@@ -892,8 +892,8 @@ class Modeller():
                 epoch_stats_dict, packing_loss, adversarial_score, adversarial_score,
                 vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score)
 
-            # g_loss = g_losses.mean()
-            g_loss = (g_losses / torch.diff(data.ptr) * (data.num_nodes / data.num_graphs)).mean()  # norm losses according to graph size
+            g_loss = g_losses.mean()
+            #g_loss = (g_losses / torch.diff(data.ptr) * (data.num_nodes / data.num_graphs)).mean()  # norm losses according to graph size
             g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
             g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
             epoch_stats_dict['generated cell parameters'].extend(generated_samples)
@@ -1870,7 +1870,7 @@ class Modeller():
             elif self.config.vdw_loss_rescaling is None:
                 vdw_loss_f = vdw_loss
             elif self.config.vdw_loss_rescaling == 'mse':
-                vdw_loss_f = vdw_loss ** 4 # todo GET RID OF THIS
+                vdw_loss_f = vdw_loss ** 4
             g_losses_list.append(vdw_loss_f)
         if vdw_loss is not None:
             epoch_stats_dict['generator per mol vdw loss'].append(vdw_loss.cpu().detach().numpy())
