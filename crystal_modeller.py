@@ -1060,7 +1060,7 @@ class Modeller():
         standardized_csd_packing_coeffs = (csd_packing_coeffs - self.config.dataDims['target mean']) / self.config.dataDims['target std']  # requires that packing coefficnet is set as regression target in main
 
         if self.config.packing_loss_rescaling == 'log':
-            packing_loss = torch.log(1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none')) ** 2  # log(1+loss) is a soft rescaling to avoid gigantic losses
+            packing_loss = torch.log(1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
         elif self.config.packing_loss_rescaling is None:
             packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs, reduction='none')
         elif self.config.packing_loss_rescaling == 'mse':
@@ -1866,11 +1866,11 @@ class Modeller():
 
         if self.config.train_generator_vdw:
             if self.config.vdw_loss_rescaling == 'log':
-                vdw_loss_f = torch.log(1 + vdw_loss) ** 2  # soft rescaling
+                vdw_loss_f = torch.log(1 + vdw_loss) # soft rescaling
             elif self.config.vdw_loss_rescaling is None:
                 vdw_loss_f = vdw_loss
             elif self.config.vdw_loss_rescaling == 'mse':
-                vdw_loss_f = vdw_loss ** 4
+                vdw_loss_f = vdw_loss ** 4 # todo take this back to ^2 when finished testing
             g_losses_list.append(vdw_loss_f)
         if vdw_loss is not None:
             epoch_stats_dict['generator per mol vdw loss'].append(vdw_loss.cpu().detach().numpy())
@@ -2042,6 +2042,8 @@ class Modeller():
             wandb.log({'Cell Generation Losses': fig})
         if (self.config.machine == 'local') and False:
             fig.show()
+
+        # todo 2d histogram for all samples
 
     def save_3d_structure_examples(self, epoch_stats_dict):
         num_samples = min(10, epoch_stats_dict['generated supercell examples'].num_graphs)
