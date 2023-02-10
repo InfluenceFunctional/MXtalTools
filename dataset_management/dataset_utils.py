@@ -390,7 +390,7 @@ class BuildDataset:
         tracking_features = self.gather_tracking_features(dataset)
 
         # add symmetry features for generator
-        self.crystal_generation_features = []  # todo need an option to turn this off for certain models
+        self.crystal_generation_features = []
         # point_group_features = [column for column in dataset.columns if 'pg is' in column]
         space_group_features = [column for column in dataset.columns if 'sg is' in column]
         crystal_system_features = [column for column in dataset.columns if 'crystal system is' in column]
