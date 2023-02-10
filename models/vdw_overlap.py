@@ -63,7 +63,7 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
             [torch.max(penalties[crystal_number == ii]) if (len(penalties[crystal_number == ii]) > 0) else torch.zeros(1)[0].to(penalties.device) for ii in range(num_graphs)]
         ))
 
-    scores = scores_i + top_scores
+    scores = (scores_i + top_scores)/2
 
     assert len(scores) == num_graphs
 
