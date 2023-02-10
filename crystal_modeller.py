@@ -542,7 +542,7 @@ class Modeller():
             g_loss_record.extend(regression_losses_list.cpu().detach().numpy())  # loss distribution
 
             if update_gradients:
-                g_optimizer.zero_grad(set_to_none=False)  # reset gradients from previous passes
+                g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
                 g_loss.backward()  # back-propagation
                 g_optimizer.step()  # update parameters
 
@@ -611,8 +611,8 @@ class Modeller():
         self.n_samples_in_grad_buffer = 0
 
         if update_gradients:
-            g_optimizer.zero_grad(set_to_none=False)
-            d_optimizer.zero_grad(set_to_none=False)
+            g_optimizer.zero_grad(set_to_none=True)
+            d_optimizer.zero_grad(set_to_none=True)
 
         for i, data in enumerate(tqdm.tqdm(dataLoader, miniters=int(len(dataLoader) / 10))):
 
@@ -850,7 +850,7 @@ class Modeller():
                 d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
 
                 # if update_gradients:
-                #     d_optimizer.zero_grad(set_to_none=False)  # reset gradients from previous passes
+                #     d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
                 #     d_loss = d_loss / data.num_nodes  # normalize the loss by mean graph size
                 #     d_loss.backward()  # back-propagation
                 #     torch.nn.utils.clip_grad_norm_(discriminator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
@@ -865,11 +865,11 @@ class Modeller():
                         self.n_samples_in_grad_buffer += data.num_graphs
                         if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
                             d_optimizer.step()
-                            d_optimizer.zero_grad(set_to_none=False)  # reset gradients from previous passes
+                            d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
                             self.n_samples_in_grad_buffer = 0
                     else:
                         d_optimizer.step()  # update parameters
-                        d_optimizer.zero_grad(set_to_none=False)  # reset gradients from previous passes
+                        d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
 
                 epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
                 epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
@@ -907,11 +907,11 @@ class Modeller():
                     self.n_samples_in_grad_buffer += data.num_graphs
                     if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
                         g_optimizer.step()
-                        g_optimizer.zero_grad(set_to_none=False)  # reset gradients from previous passes
+                        g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
                         self.n_samples_in_grad_buffer = 0
                 else:
                     g_optimizer.step()  # update parameters
-                    g_optimizer.zero_grad(set_to_none=False)  # reset gradients from previous passes
+                    g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
 
         else:
             g_err.append(np.zeros(1))
@@ -969,6 +969,15 @@ class Modeller():
             data = align_crystaldata_to_principal_axes(data)
         elif self.config.generator.canonical_conformer_orientation == 'random':
             data = random_crystaldata_alignment(data)
+            right_handed = True
+            if right_handed:
+                coords_list = [data.pos[data.ptr[i]:data.ptr[i + 1]] for i in range(data.num_graphs)]
+                coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
+                principal_axes_list, _, _ = batch_molecule_principal_axes(coords_list_centred)
+                handedness = compute_Ip_handedness(principal_axes_list)
+                for ind, hand in enumerate(handedness):
+                    if hand == -1:
+                        data.pos[data.batch==ind] = -data.pos[data.batch==ind] # invert
 
         '''
         noise injection
@@ -999,7 +1008,7 @@ class Modeller():
                 data, generated_samples, self.config.supercell_size,
                 self.config.discriminator.graph_convolution_cutoff,
                 override_sg=self.config.generate_sgs,
-                align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
+                align_molecules=False ,# molecules are either random on purpose, or pre-aligned with set handedness
             )
 
             data.cell_params = supercell_data.cell_params

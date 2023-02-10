@@ -82,8 +82,7 @@ class SupercellBuilder():
         supercell_data.T_fc = T_fc_list
         supercell_data.cell_params = torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation), dim=1)  # lengths are destandardized here
 
-        # standardize target with appropriate handedness
-        if align_molecules: # align canonical conformers principal axes to cartesian axes, somewhat expensive
+        if align_molecules: # align canonical conformers principal axes to cartesian axes
             supercell_data = align_crystaldata_to_principal_axes(supercell_data, handedness=target_handedness)
 
         coords_list = []
