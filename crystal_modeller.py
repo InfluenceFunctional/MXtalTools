@@ -335,7 +335,7 @@ class Modeller():
                 discriminator.cuda()
 
             try:
-                _ = self.epoch(dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                _ = self.run_epoch(dataLoader=train_loader, generator=generator, discriminator=discriminator,
                                g_optimizer=g_optimizer, d_optimizer=d_optimizer,
                                update_gradients=True, record_stats=True, iteration_override=2, epoch=1)
 
@@ -428,6 +428,7 @@ class Modeller():
             d_hit_max_lr, g_hit_max_lr, converged, epoch = False, False, self.config.max_epochs == 0, 0  # for evaluation mode
             with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
                 while (epoch < self.config.max_epochs) and not converged:
+                    self.epoch = epoch
                     # very cool
                     print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
                     print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
@@ -439,14 +440,14 @@ class Modeller():
                     try:
                         # train & compute train loss
                         d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
-                            self.epoch(dataLoader=train_loader, generator=generator, discriminator=discriminator,
+                            self.run_epoch(dataLoader=train_loader, generator=generator, discriminator=discriminator,
                                        g_optimizer=g_optimizer, d_optimizer=d_optimizer,
                                        update_gradients=True, record_stats=True, epoch=epoch)
 
                         with torch.no_grad():
                             # compute test loss
                             d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
-                                self.epoch(dataLoader=test_loader, generator=generator, discriminator=discriminator,
+                                self.run_epoch(dataLoader=test_loader, generator=generator, discriminator=discriminator,
                                            update_gradients=False, record_stats=True, epoch=epoch)
 
                             if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0):
@@ -498,7 +499,7 @@ class Modeller():
 
                 self.post_run_evaluation(epoch, generator, discriminator, d_optimizer, g_optimizer, metrics_dict, train_loader, test_loader, extra_test_loader)
 
-    def epoch(self, dataLoader=None, generator=None, discriminator=None, g_optimizer=None, d_optimizer=None, update_gradients=True,
+    def run_epoch(self, dataLoader=None, generator=None, discriminator=None, g_optimizer=None, d_optimizer=None, update_gradients=True,
               iteration_override=None, record_stats=False, epoch=None):
 
         if self.config.mode == 'gan':
@@ -1027,7 +1028,7 @@ class Modeller():
         discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
         h_bond_score = self.compute_h_bond_score(supercell_data)
         total_vdw_overlap, normed_vdw_overlap = self.get_vdw_penalty(dist_dict, supercell_data.num_graphs, data)
-        vdw_overlap = total_vdw_overlap / torch.diff(data.ptr) # norm by molecule size
+        vdw_overlap = total_vdw_overlap# / torch.diff(data.ptr) # norm by molecule size
         packing_loss, packing_prediction, packing_target, = \
             self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
 
@@ -1120,6 +1121,8 @@ class Modeller():
                                                           normed_length_means=self.config.dataDims['lattice normed length means'],
                                                           normed_length_stds=self.config.dataDims['lattice normed length stds'],
                                                           cov_mat=self.config.dataDims['lattice cov mat'])
+
+        self.epoch=0
 
         return dataset_builder
 
@@ -1767,7 +1770,7 @@ class Modeller():
         # rerun test inference
         with torch.no_grad():
             d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
-                self.epoch(dataLoader=test_loader, generator=generator, discriminator=discriminator,
+                self.run_epoch(dataLoader=test_loader, generator=generator, discriminator=discriminator,
                            update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
             np.save(f'../{self.config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
 
@@ -1873,7 +1876,14 @@ class Modeller():
         if self.config.train_generator_adversarially:
             g_losses_list.append(adversarial_loss)
 
+        if vdw_loss is not None:
+            epoch_stats_dict['generator per mol vdw loss'].append(vdw_loss.cpu().detach().numpy())
+
         if self.config.train_generator_vdw:
+            if self.config.generator_vdw_ramp:
+                ramp_level = min(1, 0.001 + self.epoch / self.config.vdw_ramp_epochs)
+                vdw_loss *= ramp_level
+
             if self.config.vdw_loss_rescaling == 'log':
                 vdw_loss_f = torch.log(1 + vdw_loss) # soft rescaling
             elif self.config.vdw_loss_rescaling is None:
@@ -1881,8 +1891,6 @@ class Modeller():
             elif self.config.vdw_loss_rescaling == 'mse':
                 vdw_loss_f = vdw_loss ** 4 # todo take this back to ^2 when finished testing
             g_losses_list.append(vdw_loss_f)
-        if vdw_loss is not None:
-            epoch_stats_dict['generator per mol vdw loss'].append(vdw_loss.cpu().detach().numpy())
 
         if self.config.train_generator_h_bond:
             g_losses_list.append(h_bond_score)
@@ -2052,7 +2060,23 @@ class Modeller():
         if (self.config.machine == 'local') and False:
             fig.show()
 
-        # todo 2d histogram for all samples
+        x = generator_losses['packing normed mae']
+        y = generator_losses['per mol vdw loss']
+        xy = np.vstack([x, y])
+        z = gaussian_kde(xy)(xy)
+
+
+        fig = go.Figure()
+        fig.add_trace(go.Scattergl(x=np.log10(x + 1e-3), y=np.log10(y + 1e-3), showlegend=False,
+                                   mode='markers', marker=dict(color=z), opacity=1))
+        fig.layout.margin = layout.margin
+        fig.update_layout(xaxis_title='Packing Loss', yaxis_title='vdW Loss')
+
+        # fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
+        if self.config.wandb.log_figures:
+            wandb.log({'Loss Balance': fig})
+        if (self.config.machine == 'local') and False:
+            fig.show()
 
     def save_3d_structure_examples(self, epoch_stats_dict):
         num_samples = min(10, epoch_stats_dict['generated supercell examples'].num_graphs)

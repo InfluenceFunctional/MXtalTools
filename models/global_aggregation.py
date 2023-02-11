@@ -79,7 +79,6 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
         dists = torch.linalg.norm(pos, dim=-1)  # centroids are at (0,0,0)
         rbf = self.radial_basis(dists)
         sbf = torch.cat([spherical_harmonics(self.sph_od_list, x=pos[batch == ii], normalize=True, normalization='component') for ii in range(num_graphs)])
-
         '''
         do node aggregation
         '''

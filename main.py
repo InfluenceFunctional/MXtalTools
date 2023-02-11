@@ -304,7 +304,9 @@ def add_args(parser):
     add_bool_arg(parser, 'train_generator_combo', default=False)  # train on a packing + vdw combined score
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
-    add_bool_arg(parser, 'train_generator_vdw', default=False)  # train generator on adversarially
+    add_bool_arg(parser, 'train_generator_vdw', default=False)  #
+    add_bool_arg(parser, 'generator_vdw_ramp', default=False)  #
+    parser.add_argument('--vdw_ramp_epochs', type=int, default=10)  # None, 'log', 'mse'
     parser.add_argument('--vdw_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
     parser.add_argument('--packing_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
     add_bool_arg(parser, 'train_generator_h_bond', default=False)  # train generator on adversarially
@@ -325,6 +327,8 @@ def add_args(parser):
     update_args2config(args2config, 'train_generator_packing')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_vdw')
+    update_args2config(args2config, 'generator_vdw_ramp')
+    update_args2config(args2config, 'vdw_ramp_epochs')
     update_args2config(args2config, 'vdw_loss_rescaling')
     update_args2config(args2config, 'packing_loss_rescaling')
     update_args2config(args2config, 'train_generator_h_bond')

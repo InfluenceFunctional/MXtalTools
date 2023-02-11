@@ -121,7 +121,6 @@ class CCDC_helper():
 
         allhits = []
         if self.database.lower() == 'csd':
-
             df = pd.read_pickle('new_dataframe')
             chunks = chunkify(df, n_chunks)[chunk_inds[0]:chunk_inds[1]]  # featurize a subset of chunks on this pass
             csd_reader = EntryReader('CSD')
