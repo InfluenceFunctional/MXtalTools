@@ -611,9 +611,9 @@ class Modeller():
         rand_batch_ind = np.random.randint(0, len(dataLoader))
         self.n_samples_in_grad_buffer = 0
 
-        if update_gradients:
-            g_optimizer.zero_grad(set_to_none=True)
-            d_optimizer.zero_grad(set_to_none=True)
+        # if update_gradients:
+        #     g_optimizer.zero_grad(set_to_none=True)
+        #     d_optimizer.zero_grad(set_to_none=True)
 
         for i, data in enumerate(tqdm.tqdm(dataLoader, miniters=int(len(dataLoader) / 10))):
 
@@ -858,19 +858,24 @@ class Modeller():
                 #     d_optimizer.step()  # update parameters
 
                 if update_gradients:
-                    if self.config.accumulate_gradients:
-                        d_loss = d_loss / self.config.accumulate_batch_size * self.config.final_batch_size
+                    d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
                     d_loss.backward()  # back-propagation
-                    torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
-                    if self.config.accumulate_gradients:
-                        self.n_samples_in_grad_buffer += data.num_graphs
-                        if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
-                            d_optimizer.step()
-                            d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-                            self.n_samples_in_grad_buffer = 0
-                    else:
-                        d_optimizer.step()  # update parameters
-                        d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                    d_optimizer.step()  # update parameters
+
+                    # if self.config.accumulate_gradients:
+                    #     d_loss = d_loss / self.config.accumulate_batch_size * self.config.final_batch_size
+                    # d_loss.backward()  # back-propagation
+                    # torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
+                    # if self.config.accumulate_gradients:
+                    #     self.n_samples_in_grad_buffer += data.num_graphs
+                    #     if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
+                    #         d_optimizer.step()
+                    #         d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                    #         self.n_samples_in_grad_buffer = 0
+                    # else:
+                    #     d_optimizer.step()  # update parameters
+                    #     d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
 
                 epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
                 epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
@@ -900,19 +905,24 @@ class Modeller():
             epoch_stats_dict['generated cell parameters'].extend(generated_samples)
 
             if update_gradients:
-                if self.config.accumulate_gradients:
-                    g_loss = g_loss / self.config.accumulate_batch_size * self.config.final_batch_size
-                g_loss.backward()  # back-propagation
+                g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
                 torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
-                if self.config.accumulate_gradients:
-                    self.n_samples_in_grad_buffer += data.num_graphs
-                    if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
-                        g_optimizer.step()
-                        g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-                        self.n_samples_in_grad_buffer = 0
-                else:
-                    g_optimizer.step()  # update parameters
-                    g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                g_loss.backward()  # back-propagation
+                g_optimizer.step()  # update parameters
+
+                # if self.config.accumulate_gradients:
+                #     g_loss = g_loss / self.config.accumulate_batch_size * self.config.final_batch_size
+                # g_loss.backward()  # back-propagation
+                # torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
+                # if self.config.accumulate_gradients:
+                #     self.n_samples_in_grad_buffer += data.num_graphs
+                #     if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
+                #         g_optimizer.step()
+                #         g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                #         self.n_samples_in_grad_buffer = 0
+                # else:
+                #     g_optimizer.step()  # update parameters
+                #     g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
 
         else:
             g_err.append(np.zeros(1))
