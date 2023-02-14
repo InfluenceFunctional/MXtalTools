@@ -11,6 +11,7 @@ from torch_sparse import SparseTensor
 import torch_geometric.nn as gnn
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from models.model_components import general_MLP
+from models.positional_encodings import PosEncoding3D
 
 
 class MikesGraphNet(torch.nn.Module):
@@ -36,6 +37,7 @@ class MikesGraphNet(torch.nn.Module):
                  attention_heads=1,
                  crystal_mode=False,
                  crystal_convolution_type=1,
+                 positional_embedding = False,
                  ):
         super(MikesGraphNet, self).__init__()
 
@@ -47,6 +49,7 @@ class MikesGraphNet(torch.nn.Module):
         self.crystal_mode = crystal_mode
         self.convolution_mode = graph_convolution
         self.crystal_convolution_type = crystal_convolution_type
+        self.positional_embedding = positional_embedding
 
         if radial_embedding == 'bessel':
             self.rbf = BesselBasisLayer(num_radial, cutoff, envelope_exponent)
@@ -56,6 +59,8 @@ class MikesGraphNet(torch.nn.Module):
             self.sbf = SphericalBasisLayer(num_spherical, num_radial, cutoff, envelope_exponent)
         if torsional_embedding:
             self.tbf = TorsionalEmbedding(num_spherical, num_radial, cutoff, bessel_forms=self.sbf.bessel_forms)
+        if positional_embedding:
+            self.pos_embedding = PosEncoding3D(hidden_channels//3,cutoff=10)
 
         self.atom_embeddings = EmbeddingBlock(hidden_channels, atom_embedding_dims, num_atom_features, embedding_hidden_dimension, activation)
 
@@ -207,6 +212,8 @@ class MikesGraphNet(torch.nn.Module):
 
         # graph model starts here
         x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector
+        if self.positional_embedding: # embed 3d positions
+            x = x + self.pos_embedding(pos)
         for n, (convolution, fc, global_agg) in enumerate(zip(self.interaction_blocks, self.fc_blocks, self.global_blocks)):
             if self.crystal_mode:
                 if n < (self.num_blocks - 1):  # to do this molecule-wise, we need to multiply n_repeats by Z for each crystal
@@ -352,7 +359,7 @@ class GCBlock(torch.nn.Module):
             # torch.sum(torch.stack((self.radial_to_message(rbf)[idx_kj], self.spherical_to_message(sbf), self.torsional_to_message(tbf))),dim=0)
             edge_attr = scatter(edge_attr, idx_ji, dim=0)  # collect triplets back down to pair space
 
-        elif sbf is not None:
+        elif sbf is not None and tbf is None:
             # aggregate spherical messages to radial
             # rbf = self.radial_to_message(rbf)
             # sbf = self.spherical_message(sbf)

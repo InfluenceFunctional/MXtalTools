@@ -1864,18 +1864,18 @@ class Modeller():
                                 batch_numbers=dist_dict['intermolecular dist batch'],
                                 num_graphs=num_graphs)
 
-            scores_i = torch.nan_to_num(
+            scores = torch.nan_to_num(
                 torch.stack(
-                    [torch.mean(penalties[ii]) for ii in range(num_graphs)]
-                ))
-
-            top_scores = torch.nan_to_num(
-                torch.stack(
-                    # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
-                    [torch.max(penalties[ii]) if (len(penalties[ii]) > 0) else torch.zeros(1)[0].to(vdw_overlap_sum.device) for ii in range(num_graphs)]
-                ))
-
-            scores = (scores_i + top_scores) / 2
+                    [torch.sum(penalties[ii]) for ii in range(num_graphs)]
+                )) / torch.diff(data.ptr)
+            #
+            # top_scores = torch.nan_to_num(
+            #     torch.stack(
+            #         # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
+            #         [torch.max(penalties[ii]) if (len(penalties[ii]) > 0) else torch.zeros(1)[0].to(vdw_overlap_sum.device) for ii in range(num_graphs)]
+            #     ))
+            #
+            # scores = (scores_i + top_scores) / 2
 
             return scores, normed_vdw_overlap_sum / torch.diff(data.ptr)
 
@@ -1913,7 +1913,7 @@ class Modeller():
             elif self.config.vdw_loss_rescaling is None:
                 vdw_loss_f = vdw_loss
             elif self.config.vdw_loss_rescaling == 'mse':
-                vdw_loss_f = vdw_loss ** 4  # todo take this back to ^2 when finished testing
+                vdw_loss_f = vdw_loss ** 2  # todo take this back to ^2 when finished testing
             g_losses_list.append(vdw_loss_f)
 
         if self.config.train_generator_h_bond:

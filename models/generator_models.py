@@ -53,6 +53,7 @@ class crystal_generator(nn.Module):
                 radial_function=config.generator.radial_function,
                 max_num_neighbors=config.generator.max_num_neighbors,
                 convolution_cutoff=config.generator.graph_convolution_cutoff,
+                positional_embedding = True, # todo flag this
             )
         elif self.conditioning_mode == 'molecule features':
             self.conditioner = general_MLP(layers=config.generator.conditioner_num_fc_layers,

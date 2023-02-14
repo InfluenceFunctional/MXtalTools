@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 1201
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures' or 'sampling'
 gan_loss: standard # standard only
@@ -21,7 +21,7 @@ train_discriminator_adversarially: False
 train_discriminator_on_randn: False
 train_discriminator_on_noise: False
 generator_noise_level: -1 # -1 for wide range test # noise for distorted generation
-generator_similarity_penalty: 0.1
+generator_similarity_penalty: 1
 extra_test_period: 10
 extra_test_evaluation: False
 extra_test_set_paths: [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/csd_coumarins_dataset']
@@ -40,7 +40,7 @@ seeds:
 
 # opt - sweep details
 wandb:
-  sample_reporting_frequency: 10
+  sample_reporting_frequency: 5
   experiment_tag: dev
   log_figures: True
 
@@ -60,7 +60,7 @@ lr_shrink_lambda: 0.975
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 10000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100
@@ -128,7 +128,7 @@ discriminator:
 generator:
   optimizer: adam
   learning_rate: 1.0E-5
-  max_lr: 1.0E-4
+  max_lr: 5.0E-5
   lr_schedule: True
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
@@ -137,9 +137,9 @@ generator:
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
-  graph_convolution_layers: 4
-  graph_filters: 64
-  atom_embedding_size: 126
+  graph_convolution_layers: 6
+  graph_filters: 128
+  atom_embedding_size: 258
   graph_norm: layer
   num_spherical: 6
   num_radial: 32
@@ -152,14 +152,14 @@ generator:
   add_torsional_basis: False
   pooling: geometric # combo, geometric
 
-  conditioner_num_fc_layers: 2
-  conditioner_fc_depth: 126  # must evenly divide 3 for geometric pooling, 126, 258, 510, 1026
+  conditioner_num_fc_layers: 4
+  conditioner_fc_depth: 1026  # must evenly divide 3 for geometric pooling, 126, 258, 510, 1026
   conditioner_activation: leaky relu
   conditioner_fc_dropout_probability: 0
   conditioner_fc_norm_mode: batch
 
-  num_fc_layers: 20
-  fc_depth: 128
+  num_fc_layers: 40
+  fc_depth: 256
   activation: leaky relu
   fc_dropout_probability: 0.1
   fc_norm_mode: batch
