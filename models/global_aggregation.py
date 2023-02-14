@@ -86,3 +86,5 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
 
         # aggregation
         return self.global_pool(self.messages, pos, batch)
+
+

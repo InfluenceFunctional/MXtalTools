@@ -28,7 +28,7 @@ from crystal_building.supercell_builders import SupercellBuilder, override_sg_in
 
 from models.model_utils import *
 from models.crystal_rdf import crystal_rdf
-from models.vdw_overlap import vdw_overlap
+from models.vdw_overlap import vdw_overlap, raw_vdw_overlap
 from sampling.SampleOptimization import gradient_descent_sampling
 from models.generator_models import crystal_generator
 from models.discriminator_models import crystal_discriminator
@@ -336,8 +336,8 @@ class Modeller():
 
             try:
                 _ = self.run_epoch(dataLoader=train_loader, generator=generator, discriminator=discriminator,
-                               g_optimizer=g_optimizer, d_optimizer=d_optimizer,
-                               update_gradients=True, record_stats=True, iteration_override=2, epoch=1)
+                                   g_optimizer=g_optimizer, d_optimizer=d_optimizer,
+                                   update_gradients=True, record_stats=True, iteration_override=2, epoch=1)
 
                 # if successful, increase the batch and try again
                 batch_size = max(batch_size + 5, int(batch_size * increment))
@@ -441,14 +441,14 @@ class Modeller():
                         # train & compute train loss
                         d_err_tr, d_tr_record, g_err_tr, g_tr_record, train_epoch_stats_dict, time_train = \
                             self.run_epoch(dataLoader=train_loader, generator=generator, discriminator=discriminator,
-                                       g_optimizer=g_optimizer, d_optimizer=d_optimizer,
-                                       update_gradients=True, record_stats=True, epoch=epoch)
+                                           g_optimizer=g_optimizer, d_optimizer=d_optimizer,
+                                           update_gradients=True, record_stats=True, epoch=epoch)
 
                         with torch.no_grad():
                             # compute test loss
                             d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
                                 self.run_epoch(dataLoader=test_loader, generator=generator, discriminator=discriminator,
-                                           update_gradients=False, record_stats=True, epoch=epoch)
+                                               update_gradients=False, record_stats=True, epoch=epoch)
 
                             if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0):
                                 extra_test_epoch_stats_dict, time_test_ex = \
@@ -500,7 +500,7 @@ class Modeller():
                 self.post_run_evaluation(epoch, generator, discriminator, d_optimizer, g_optimizer, metrics_dict, train_loader, test_loader, extra_test_loader)
 
     def run_epoch(self, dataLoader=None, generator=None, discriminator=None, g_optimizer=None, d_optimizer=None, update_gradients=True,
-              iteration_override=None, record_stats=False, epoch=None):
+                  iteration_override=None, record_stats=False, epoch=None):
 
         if self.config.mode == 'gan':
             return self.gan_epoch(dataLoader, generator, discriminator, g_optimizer, d_optimizer, update_gradients,
@@ -899,7 +899,7 @@ class Modeller():
                 vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score)
 
             g_loss = g_losses.mean()
-            #g_loss = (g_losses / torch.diff(data.ptr) * (data.num_nodes / data.num_graphs)).mean()  # norm losses according to graph size
+            # g_loss = (g_losses / torch.diff(data.ptr) * (data.num_nodes / data.num_graphs)).mean()  # norm losses according to graph size
             g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
             g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
             epoch_stats_dict['generated cell parameters'].extend(generated_samples)
@@ -988,7 +988,7 @@ class Modeller():
                 handedness = compute_Ip_handedness(principal_axes_list)
                 for ind, hand in enumerate(handedness):
                     if hand == -1:
-                        data.pos[data.batch==ind] = -data.pos[data.batch==ind] # invert
+                        data.pos[data.batch == ind] = -data.pos[data.batch == ind]  # invert
 
         '''
         noise injection
@@ -1019,7 +1019,7 @@ class Modeller():
                 data, generated_samples, self.config.supercell_size,
                 self.config.discriminator.graph_convolution_cutoff,
                 override_sg=self.config.generate_sgs,
-                align_molecules=False ,# molecules are either random on purpose, or pre-aligned with set handedness
+                align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
             )
 
             data.cell_params = supercell_data.cell_params
@@ -1037,23 +1037,22 @@ class Modeller():
         similarity_penalty = self.compute_similarity_penalty(generated_samples, supercell_data.sg_ind, prior)
         discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
         h_bond_score = self.compute_h_bond_score(supercell_data)
-        total_vdw_overlap, normed_vdw_overlap = self.get_vdw_penalty(dist_dict, supercell_data.num_graphs, data)
-        vdw_overlap = total_vdw_overlap# / torch.diff(data.ptr) # norm by molecule size
+        vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, supercell_data.num_graphs, data)
         packing_loss, packing_prediction, packing_target, = \
             self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
 
-        if normed_vdw_overlap is not None:
-            #packing_range = [0.55, 0.75]
-            #outside_reasonable_packing_loss = F.smooth_l1_loss(packing_prediction, packing_target, beta=.1, reduction='none')
-            combo_score = 1/(1 + (normed_vdw_overlap**2 + packing_loss**2)) #torch.exp(-(normed_vdw_overlap + outside_reasonable_packing_loss))
+        if normed_vdw_penalty is not None:
+            # packing_range = [0.55, 0.75]
+            # outside_reasonable_packing_loss = F.smooth_l1_loss(packing_prediction, packing_target, beta=.1, reduction='none')
+            combo_score = 1 / (1 + (normed_vdw_penalty ** 2 + packing_loss ** 2))  # torch.exp(-(normed_vdw_overlap + outside_reasonable_packing_loss))
         else:
             combo_score = None
 
         return discriminator_score, generated_samples.cpu().detach().numpy(), \
                packing_loss, packing_prediction.cpu().detach().numpy(), \
                packing_target.cpu().detach().numpy(), \
-               vdw_overlap, dist_dict, \
-               supercell_data, similarity_penalty, h_bond_score,\
+               vdw_penalty, dist_dict, \
+               supercell_data, similarity_penalty, h_bond_score, \
                combo_score
 
     def regression_loss(self, generator, data):
@@ -1132,7 +1131,7 @@ class Modeller():
                                                           normed_length_stds=self.config.dataDims['lattice normed length stds'],
                                                           cov_mat=self.config.dataDims['lattice cov mat'])
 
-        self.epoch=0
+        self.epoch = 0
 
         return dataset_builder
 
@@ -1781,7 +1780,7 @@ class Modeller():
         with torch.no_grad():
             d_err_te, d_te_record, g_err_te, g_te_record, test_epoch_stats_dict, time_test = \
                 self.run_epoch(dataLoader=test_loader, generator=generator, discriminator=discriminator,
-                           update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
+                               update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
             np.save(f'../{self.config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
 
             if extra_test_loader is not None:
@@ -1857,16 +1856,31 @@ class Modeller():
 
         return discriminator_score, dist_dict
 
-    def get_vdw_penalty(self, dist_dict=None, num_graphs=None, data = None):
+    def get_vdw_penalty(self, dist_dict=None, num_graphs=None, data=None):
         if dist_dict is not None:  # supercell_data is not None: # do vdw computation even if we don't need it
-            return vdw_overlap(self.vdw_radii, dists=dist_dict['intermolecular dist'],
-                               atomic_numbers=dist_dict['intermolecular dist atoms'],
-                               batch_numbers=dist_dict['intermolecular dist batch'],
-                               num_graphs=num_graphs,
-                               graph_sizes = torch.diff(data.ptr),
-                               return_normed = True)
+            vdw_overlap_sum, normed_vdw_overlap_sum, penalties = \
+                raw_vdw_overlap(self.vdw_radii, dists=dist_dict['intermolecular dist'],
+                                atomic_numbers=dist_dict['intermolecular dist atoms'],
+                                batch_numbers=dist_dict['intermolecular dist batch'],
+                                num_graphs=num_graphs)
+
+            scores_i = torch.nan_to_num(
+                torch.stack(
+                    [torch.mean(penalties[ii]) for ii in range(num_graphs)]
+                ))
+
+            top_scores = torch.nan_to_num(
+                torch.stack(
+                    # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
+                    [torch.max(penalties[ii]) if (len(penalties[ii]) > 0) else torch.zeros(1)[0].to(vdw_overlap_sum.device) for ii in range(num_graphs)]
+                ))
+
+            scores = (scores_i + top_scores) / 2
+
+            return scores, normed_vdw_overlap_sum / torch.diff(data.ptr)
+
         else:
-            return None, None
+            return None, None, None
 
     def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, adversarial_score, adversarial_loss, vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score):
         g_losses_list = []
@@ -1895,11 +1909,11 @@ class Modeller():
                 vdw_loss *= ramp_level
 
             if self.config.vdw_loss_rescaling == 'log':
-                vdw_loss_f = torch.log(1 + vdw_loss) # soft rescaling
+                vdw_loss_f = torch.log(1 + vdw_loss)  # soft rescaling
             elif self.config.vdw_loss_rescaling is None:
                 vdw_loss_f = vdw_loss
             elif self.config.vdw_loss_rescaling == 'mse':
-                vdw_loss_f = vdw_loss ** 4 # todo take this back to ^2 when finished testing
+                vdw_loss_f = vdw_loss ** 4  # todo take this back to ^2 when finished testing
             g_losses_list.append(vdw_loss_f)
 
         if self.config.train_generator_h_bond:
@@ -1918,7 +1932,7 @@ class Modeller():
         if self.config.train_generator_combo:
             g_losses_list.append(-combo_score)
         if combo_score is not None:
-            epoch_stats_dict['generator combo loss'].append(1-combo_score.cpu().detach().numpy())
+            epoch_stats_dict['generator combo loss'].append(1 - combo_score.cpu().detach().numpy())
 
         g_losses = torch.sum(torch.stack(g_losses_list), dim=0)
 
@@ -2075,7 +2089,6 @@ class Modeller():
         xy = np.vstack([x, y])
         z = gaussian_kde(xy)(xy)
 
-
         fig = go.Figure()
         fig.add_trace(go.Scattergl(x=np.log10(x + 1e-3), y=np.log10(y + 1e-3), showlegend=False,
                                    mode='markers', marker=dict(color=z), opacity=1))
@@ -2116,8 +2129,8 @@ class Modeller():
         supercell_examples = epoch_stats_dict['generated supercell examples']
         vdw_loss, normed_vdw_loss, vdw_penalties = \
             vdw_overlap(self.vdw_radii, crystaldata=supercell_examples, return_atomwise=True, return_normed=True,
-                        graph_sizes = supercell_examples.tracking[:,self.config.dataDims['tracking features dict'].index('molecule num atoms')])
-        vdw_loss /= supercell_examples.tracking[:,self.config.dataDims['tracking features dict'].index('molecule num atoms')]
+                        graph_sizes=supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num atoms')])
+        vdw_loss /= supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num atoms')]
 
         # mol_acceptors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num acceptors')]
         # mol_donors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num donors')]
@@ -2134,7 +2147,7 @@ class Modeller():
         fig = go.Figure()
         for i in range(min(supercell_examples.num_graphs, num_samples)):
             pens = vdw_penalties[i].cpu().detach()
-            fig.add_trace(go.Violin(x=pens[pens!=0], side='positive', orientation='h',
+            fig.add_trace(go.Violin(x=pens[pens != 0], side='positive', orientation='h',
                                     bandwidth=0.01, width=1, showlegend=False, opacity=1,
                                     name=f'{supercell_examples.csd_identifier[i]} <br /> ' +
                                          f'c_t={target_packing[i]:.2f} c_p={generated_packing_coeffs[i]:.2f} <br /> ' +
@@ -2282,7 +2295,6 @@ class Modeller():
         return None
 
     def plot_generator_loss_correlates(self, epoch_stats_dict, generator_losses, layout):
-
         correlates_dict = {}
         generator_losses['all'] = np.vstack([generator_losses[key] for key in generator_losses.keys()]).T.sum(1)
         loss_labels = list(generator_losses.keys())
@@ -2314,7 +2326,6 @@ class Modeller():
         wandb.log({'Generator Loss Correlates': fig})
 
     def plot_discriminator_score_correlates(self, epoch_stats_dict, layout):
-
         correlates_dict = {}
         real_scores = softmax_and_score(epoch_stats_dict['discriminator real score'])
         tracking_features = np.asarray(epoch_stats_dict['tracking features'])
