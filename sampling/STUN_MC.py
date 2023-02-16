@@ -38,10 +38,11 @@ class mcmcSampler:
                  target_acceptance_rate=0.234,  # found this in a paper - optimal MCMC acceptance ratio
                  spacegroup_to_search='P1',
                  ):
+
         if acceptance_mode == 'stun':
-            self.STUN = 1  # modify the acceptance function with stochastic tunneling
+            self.STUN = True  # modify the acceptance function with stochastic tunneling
         else:
-            self.STUN = 0
+            self.STUN = False
 
         self.sg_to_search = spacegroup_to_search
         self.debug = debug
@@ -91,21 +92,20 @@ class mcmcSampler:
         :return:
         '''
         if self.generator._get_name() == 'crystal_generator':
-            return self.generator.forward(n_samples = crystaldata.num_graphs, conditions=crystaldata).cpu().detach().numpy()
+            return self.generator.forward(n_samples=crystaldata.num_graphs, conditions=crystaldata).cpu().detach().numpy()
         else:
-            return self.generator.forward(n_samples = crystaldata.num_graphs, conditions=crystaldata).cpu().detach().numpy()
-
+            return self.generator.forward(n_samples=crystaldata.num_graphs, conditions=crystaldata).cpu().detach().numpy()
 
     def resetConfig(self, crystaldata, ind):
         """
         re-randomize a particular configuration
         :return:
         """
-        if (self.fresh_config_ind == crystaldata.num_graphs) or (self.fresh_config_ind == 0): # if we have run out of configs, make a fresh batch
+        if (self.fresh_config_ind == crystaldata.num_graphs) or (self.fresh_config_ind == 0):  # if we have run out of configs, make a fresh batch
             self.fresh_configs = self.makeNewConfigs(crystaldata)
             self.fresh_config_ind = 0
 
-        self.config[ind, :] = self.fresh_configs[self.fresh_config_ind,:]
+        self.config[ind, :] = self.fresh_configs[self.fresh_config_ind, :]
         self.fresh_config_ind += 1
 
     def resampleRandints(self):
@@ -270,7 +270,7 @@ class mcmcSampler:
         self.all_vdw_penalties[self.iter] = self.vdw_penalty
 
     def getDelta(self, scores):
-        if self.STUN == 1:  # compute score difference using STUN
+        if self.STUN:  # compute score difference using STUN
             F = self.computeSTUN(scores)
             DE = F[1] - F[0]
         else:  # compute raw score difference
@@ -311,12 +311,12 @@ class mcmcSampler:
                                   batch_numbers=dist_dict['dists dict']['intermolecular dist batch'],
                                   num_graphs=crystaldata.num_graphs).cpu().detach().numpy()
 
-        supercells, _, _ = builder.build_supercells(crystaldata, torch.Tensor(prop_config),
-                                                    supercell_size=self.supercell_size,
-                                                    graph_convolution_cutoff=self.graph_convolution_cutoff,
-                                                    override_sg=self.sg_to_search,
-                                                    )
-        output = model(supercells.cuda())
+        prop_supercells, _, _ = builder.build_supercells(crystaldata, torch.Tensor(prop_config),
+                                                         supercell_size=self.supercell_size,
+                                                         graph_convolution_cutoff=self.graph_convolution_cutoff,
+                                                         override_sg=self.sg_to_search,
+                                                         )
+        output = model(prop_supercells.cuda())
         energy.append(-softmax_and_score(output).cpu().detach().numpy())
 
         std_dev = [np.ones_like(energy[0]), np.ones_like(energy[0])]  # not using this

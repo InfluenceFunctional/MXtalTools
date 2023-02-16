@@ -474,7 +474,8 @@ class Modeller():
                             self.gan_reporting(epoch, train_loader, train_epoch_stats_dict, test_epoch_stats_dict,
                                                extra_test_dict=extra_test_epoch_stats_dict)
 
-                        self.model_checkpointing(epoch, self.config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict)
+                        self.model_checkpointing(epoch, self.config, discriminator, generator,
+                                                 d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict)
 
                         generator_converged, discriminator_converged = \
                             self.check_model_convergence(metrics_dict, self.config, epoch)
@@ -836,26 +837,12 @@ class Modeller():
                 score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
                     = self.train_discriminator(generated_samples_i, discriminator, data, i, handedness)
 
-                epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
-                epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
-                epoch_stats_dict['real vdw penalty'].extend(real_vdw_score.cpu().detach().numpy())
-                epoch_stats_dict['fake vdw penalty'].extend(fake_vdw_score.cpu().detach().numpy())
-
                 prediction = torch.cat((score_on_real, score_on_fake))
                 target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
                 d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
 
-                # d_loss = d_losses.mean()
-                d_loss = (d_losses / torch.diff(data.ptr.to(d_losses.device)).tile(2) * (data.num_nodes / data.num_graphs)).mean()  # norm losses according to graph size
+                d_loss = d_losses.mean()
                 d_err.append(d_loss.data.cpu().detach().numpy())  # average overall loss
-                d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
-
-                # if update_gradients:
-                #     d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-                #     d_loss = d_loss / data.num_nodes  # normalize the loss by mean graph size
-                #     d_loss.backward()  # back-propagation
-                #     torch.nn.utils.clip_grad_norm_(discriminator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
-                #     d_optimizer.step()  # update parameters
 
                 if update_gradients:
                     d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
@@ -863,20 +850,11 @@ class Modeller():
                     d_loss.backward()  # back-propagation
                     d_optimizer.step()  # update parameters
 
-                    # if self.config.accumulate_gradients:
-                    #     d_loss = d_loss / self.config.accumulate_batch_size * self.config.final_batch_size
-                    # d_loss.backward()  # back-propagation
-                    # torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
-                    # if self.config.accumulate_gradients:
-                    #     self.n_samples_in_grad_buffer += data.num_graphs
-                    #     if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
-                    #         d_optimizer.step()
-                    #         d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-                    #         self.n_samples_in_grad_buffer = 0
-                    # else:
-                    #     d_optimizer.step()  # update parameters
-                    #     d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-
+                epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
+                epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
+                epoch_stats_dict['real vdw penalty'].extend(real_vdw_score.cpu().detach().numpy())
+                epoch_stats_dict['fake vdw penalty'].extend(fake_vdw_score.cpu().detach().numpy())
+                d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
                 epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
                 epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
 
@@ -892,17 +870,12 @@ class Modeller():
             vdw_loss, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score, combo_score = \
                 self.train_generator(generator, discriminator, data, i)
 
-            epoch_stats_dict = self.log_supercell_examples(supercell_examples, i, rand_batch_ind, epoch_stats_dict)
-
             g_losses, epoch_stats_dict = self.aggregate_generator_losses(
                 epoch_stats_dict, packing_loss, adversarial_score, adversarial_score,
                 vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score)
 
             g_loss = g_losses.mean()
-            # g_loss = (g_losses / torch.diff(data.ptr) * (data.num_nodes / data.num_graphs)).mean()  # norm losses according to graph size
             g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
-            g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
-            epoch_stats_dict['generated cell parameters'].extend(generated_samples)
 
             if update_gradients:
                 g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
@@ -910,20 +883,9 @@ class Modeller():
                 g_loss.backward()  # back-propagation
                 g_optimizer.step()  # update parameters
 
-                # if self.config.accumulate_gradients:
-                #     g_loss = g_loss / self.config.accumulate_batch_size * self.config.final_batch_size
-                # g_loss.backward()  # back-propagation
-                # torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
-                # if self.config.accumulate_gradients:
-                #     self.n_samples_in_grad_buffer += data.num_graphs
-                #     if (self.n_samples_in_grad_buffer > self.config.accumulate_batch_size) or last_batch:
-                #         g_optimizer.step()
-                #         g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-                #         self.n_samples_in_grad_buffer = 0
-                # else:
-                #     g_optimizer.step()  # update parameters
-                #     g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-
+            epoch_stats_dict = self.log_supercell_examples(supercell_examples, i, rand_batch_ind, epoch_stats_dict)
+            g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
+            epoch_stats_dict['generated cell parameters'].extend(generated_samples)
         else:
             g_err.append(np.zeros(1))
             g_loss_record.extend(np.zeros(data.num_graphs))
@@ -1126,41 +1088,50 @@ class Modeller():
 
         return dataset_builder
 
+    def sampling_prep(self):
+        dataset_builder = self.training_prep()
+        del dataset_builder
+        generator, discriminator, g_optimizer, g_schedulers, \
+        d_optimizer, d_schedulers, params1, params2 \
+            = self.init_gan(self.config, self.config.dataDims)
+
+        self.config.final_batch_size = self.config.min_batch_size
+
+        extra_test_set_path = self.config.extra_test_set_paths
+        extra_test_loader = get_extra_test_loader(self.config, extra_test_set_path, dataDims=self.config.dataDims,
+                                                  pg_dict=self.point_groups, sg_dict=self.space_groups, lattice_dict=self.lattice_type)
+
+        self.randn_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice features'],
+                                                          means=self.config.dataDims['lattice means'],
+                                                          stds=self.config.dataDims['lattice stds'],
+                                                          normed_length_means=self.config.dataDims['lattice normed length means'],
+                                                          normed_length_stds=self.config.dataDims['lattice normed length stds'],
+                                                          cov_mat=self.config.dataDims['lattice cov mat'])
+
+        # blind_test_identifiers = [
+        #     'OBEQUJ', 'OBEQOD','NACJAF'] # targets XVI, XVII, XXII
+        #
+        # single_mol_data = extra_test_loader.dataset[extra_test_loader.csd_identifier.index(blind_test_identifiers[-1])]
+
+        single_mol_data = extra_test_loader.dataset[0]
+        collater = Collater(None, None)
+        single_mol_data = collater([single_mol_data for n in range(self.config.final_batch_size)])
+
+        return extra_test_loader, generator, discriminator, \
+               g_optimizer, g_schedulers, d_optimizer, d_schedulers, \
+               params1, params2, single_mol_data
+
     def model_sampling(self):
         '''
         Stun MC annealing on a pretrained discriminator / generator
         '''
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=[self.config.wandb.experiment_tag]):
-            dataset_builder = self.training_prep()
-            del dataset_builder
-            generator, discriminator, g_optimizer, g_schedulers, \
-            d_optimizer, d_schedulers, params1, params2 \
-                = self.init_gan(self.config, self.config.dataDims)
+            extra_test_loader, generator, discriminator, \
+            g_optimizer, g_schedulers, d_optimizer, d_schedulers, \
+            params1, params2, single_mol_data = self.sampling_prep()
 
-            self.config.final_batch_size = self.config.min_batch_size
-
-            extra_test_set_path = self.config.extra_test_set_paths
-            extra_test_loader = get_extra_test_loader(self.config, extra_test_set_path, dataDims=self.config.dataDims,
-                                                      pg_dict=self.point_groups, sg_dict=self.space_groups, lattice_dict=self.lattice_type)
-
-            self.randn_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice features'],
-                                                              means=self.config.dataDims['lattice means'],
-                                                              stds=self.config.dataDims['lattice stds'],
-                                                              normed_length_means=self.config.dataDims['lattice normed length means'],
-                                                              normed_length_stds=self.config.dataDims['lattice normed length stds'],
-                                                              cov_mat=self.config.dataDims['lattice cov mat'])
-            # blind_test_identifiers = [
-            #     'OBEQUJ', 'OBEQOD','NACJAF'] # targets XVI, XVII, XXII
-            #
-            # single_mol_data = extra_test_loader.dataset[extra_test_loader.csd_identifier.index(blind_test_identifiers[-1])]
-
-            n_samples = 200  # self.config.min_batch_size
-            single_mol_data = extra_test_loader.dataset[0]
-            collater = Collater(None, None)
-            single_mol_data = collater([single_mol_data for n in range(n_samples)])
-
-            # init_samples = self.randn_generator.forward(n_samples, single_mol_data)
-            init_samples = generator.forward(n_samples=single_mol_data.num_graphs,
+            randn_samples = self.randn_generator.forward(self.config.final_batch_size, single_mol_data)
+            gen_samples = generator.forward(n_samples=single_mol_data.num_graphs,
                                              conditions=single_mol_data.cuda()
                                              )
 
@@ -1168,7 +1139,7 @@ class Modeller():
             discriminator.eval()
             with torch.no_grad():
                 smc_sampler = mcmcSampler(
-                    gammas=np.logspace(-4, 0, n_samples),
+                    gammas=np.logspace(-4, 0, self.config.final_batch_size),
                     seedInd=0,
                     acceptance_mode=None,
                     debug=True,
@@ -1188,7 +1159,7 @@ class Modeller():
                 run sampling
                 '''
                 sampling_dict = smc_sampler(discriminator, self.supercell_builder,
-                                            single_mol_data, init_samples.cpu().detach().numpy(), self.config.sample_steps)
+                                            single_mol_data, gen_samples.cpu().detach().numpy(), self.config.sample_steps)
 
             # np.save(f'../sampling_output_run_{self.config.run_num}', sampling_dict)
 
@@ -1199,9 +1170,8 @@ class Modeller():
             #                                                                 supercell_size=1, graph_convolution_cutoff=7)
             #
             # best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular=True)
-            self.report_sampling(sampling_dict)
+            # self.report_sampling(sampling_dict)
 
-        return sampling_dict
 
     def generate_discriminator_negatives(self, epoch_stats_dict, config, data, generator, i):
         n_generators = sum([config.train_discriminator_adversarially, self.config.train_discriminator_on_noise, self.config.train_discriminator_on_randn])
@@ -1559,12 +1529,14 @@ class Modeller():
         return generator_convergence, discriminator_convergence
 
     def model_checkpointing(self, epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict):
-        if (epoch > 0) and (epoch % 5 == 0):
-            if config.machine == 'cluster':  # every 5 epochs, save a checkpoint
+        if config.machine == 'cluster':  # every 5 epochs, save a checkpoint
+            if (epoch > 0) and (epoch % 5 == 0):
                 # saving early-stopping checkpoint
                 save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
                 save_checkpoint(epoch, generator, g_optimizer, self.config.generator.__dict__, 'generator_' + str(config.run_num) + f'_epoch_{epoch}')
 
+            # or save any checkpoint which is a new best
+            if epoch > 0:
                 if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss'][:-1]):
                     print("Saving discriminator checkpoint")
                     save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
@@ -2089,10 +2061,11 @@ class Modeller():
             z = np.ones_like(x)
 
         fig = go.Figure()
-        fig.add_trace(go.Scattergl(x=np.log10(x + 1e-3), y=np.log10(y + 1e-3), showlegend=False,
+        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
                                    mode='markers', marker=dict(color=z), opacity=1))
         fig.layout.margin = layout.margin
         fig.update_layout(xaxis_title='Packing Loss', yaxis_title='vdW Loss')
+        fig.update_layout(yaxis_range=[0, 10], xaxis_range=[0, 2])
 
         # fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
         if self.config.wandb.log_figures:
@@ -2178,7 +2151,7 @@ class Modeller():
 
         # fig.layout.paper_bgcolor = 'rgba(0,0,0,0)'
         # fig.layout.plot_bgcolor = 'rgba(0,0,0,0)'
-        fig.update_layout(width=800, height=600, font=dict(size=12),xaxis_range=[-1,4])
+        fig.update_layout(width=800, height=600, font=dict(size=12), xaxis_range=[-1, 4])
         fig.layout.margin = layout.margin
         fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
         fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing prediction')
@@ -2316,8 +2289,10 @@ class Modeller():
                                  x=[corr[label] for corr in sorted_correlates_dict.values()],
                                  textposition='auto',
                                  orientation='h',
+                                 text=[corr[label] for corr in sorted_correlates_dict.values()],
                                  ))
         fig.update_layout(barmode='relative')
+        fig.update_traces(texttemplate='%{text:.2f}')
         fig.update_yaxes(title_font=dict(size=10), tickfont=dict(size=10))
 
         fig.layout.margin = layout.margin

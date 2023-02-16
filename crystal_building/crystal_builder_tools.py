@@ -42,6 +42,7 @@ asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMR
     '29': [0.25, 1, 1],  # Pca21
     '30': [0.5, 1, 0.5],  # Pnc2
     '31': [0.5, 0.5, 1],  # Pmn21
+    '61': [0.5, 0.5, 0.5], # Pbca
 }
 
 
@@ -578,7 +579,7 @@ def random_crystaldata_alignment(data):
     coords_list = [data.pos[data.ptr[i]:data.ptr[i+1]] for i in range(data.num_graphs)]
     coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
 
-    rotation_matrix_list = torch.Tensor(Rotation.random(num=data.num_graphs).as_matrix(), device = data.x.device)
+    rotation_matrix_list = torch.tensor(Rotation.random(num=data.num_graphs).as_matrix(), device = data.x.device,dtype=data.pos.dtype)
     #transformed_coords = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)]
 
     data.pos = torch.cat([torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)])

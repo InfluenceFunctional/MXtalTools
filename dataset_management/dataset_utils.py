@@ -685,7 +685,7 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
         dataset = dataset.drop(columns='level_0')
     dataset = dataset.reset_index()
 
-    dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo delete this after next BT refeaturization
+    #dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo delete this after next BT refeaturization
 
     extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
                                           sg_dict=sg_dict,
