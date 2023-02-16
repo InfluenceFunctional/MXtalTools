@@ -192,6 +192,7 @@ def add_args(parser):
 
     # generator model settings
     parser.add_argument('--generator_canonical_conformer_orientation', type=str, default='standardized')  # standardized or random
+    parser.add_argument('--generator_positional_embedding', type=str, default='sph')  # sph or pos
     parser.add_argument('--generator_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
     parser.add_argument('--generator_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
     parser.add_argument('--generator_graph_filters', type=int, default=28)  # number of neurons per graph convolution
@@ -225,6 +226,7 @@ def add_args(parser):
     add_bool_arg(parser, 'generator_conditional_modelling', default=True)  # whether to use molecular features as conditions for normalizing flow model
 
     update_args2config(args2config, 'generator_canonical_conformer_orientation', ['generator', 'canonical_conformer_orientation'])
+    update_args2config(args2config, 'generator_positional_embedding', ['generator', 'positional_embedding'])
     update_args2config(args2config, 'generator_graph_model', ['generator', 'graph_model'])
     update_args2config(args2config, 'generator_atom_embedding_size', ['generator', 'atom_embedding_size'])
     update_args2config(args2config, 'generator_graph_filters', ['generator', 'graph_filters'])
@@ -300,7 +302,6 @@ def add_args(parser):
 
     # cell generator
     parser.add_argument('--gan_loss', type=str, default='standard')  # stnandard only
-    add_bool_arg(parser, 'new_generation', default=True)  # new way of defining the asymmetric unit
     add_bool_arg(parser, 'train_generator_combo', default=False)  # train on a packing + vdw combined score
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
@@ -308,6 +309,7 @@ def add_args(parser):
     add_bool_arg(parser, 'generator_vdw_ramp', default=False)  #
     parser.add_argument('--vdw_ramp_epochs', type=int, default=10)  # None, 'log', 'mse'
     parser.add_argument('--vdw_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
+    parser.add_argument('--vdw_loss_coefficient', type=float, default=1)  # None, 'log', 'mse'
     parser.add_argument('--packing_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
     add_bool_arg(parser, 'train_generator_h_bond', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
@@ -322,7 +324,6 @@ def add_args(parser):
     parser.add_argument('--sample_move_size', type=float, default=0.05)  #
 
     update_args2config(args2config, 'gan_loss')
-    update_args2config(args2config, 'new_generation')
     update_args2config(args2config, 'train_generator_combo')
     update_args2config(args2config, 'train_generator_packing')
     update_args2config(args2config, 'train_generator_adversarially')
@@ -330,6 +331,7 @@ def add_args(parser):
     update_args2config(args2config, 'generator_vdw_ramp')
     update_args2config(args2config, 'vdw_ramp_epochs')
     update_args2config(args2config, 'vdw_loss_rescaling')
+    update_args2config(args2config, 'vdw_loss_coefficient')
     update_args2config(args2config, 'packing_loss_rescaling')
     update_args2config(args2config, 'train_generator_h_bond')
     update_args2config(args2config, 'train_discriminator_adversarially')

@@ -40,7 +40,7 @@ class molecule_graph_model(nn.Module):
                  return_latent=False,
                  crystal_mode=False,
                  crystal_convolution_type=None,
-                 positional_embedding = False,
+                 positional_embedding = 'sph',
                  device='cuda'):
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
@@ -101,7 +101,6 @@ class molecule_graph_model(nn.Module):
                     radial_embedding=self.radial_function,
                     atom_embedding_dims=dataDims['atom embedding dict sizes'],
                     attention_heads=self.num_attention_heads,
-                    positional_embedding=positional_embedding
                 )
             else:
                 print(self.graph_model + ' is not a valid graph model!!')
@@ -113,7 +112,8 @@ class molecule_graph_model(nn.Module):
 
         # initialize global pooling operation
         if self.graph_model is not None:
-            self.global_pool = global_aggregation(self.pooling, self.fc_depth)
+            self.global_pool = global_aggregation(self.pooling, self.fc_depth,
+                                                  geometric_embedding = positional_embedding)
 
         # molecule features FC layer
         if self.n_mol_feats != 0:

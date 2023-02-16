@@ -212,8 +212,8 @@ class MikesGraphNet(torch.nn.Module):
 
         # graph model starts here
         x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector
-        if self.positional_embedding: # embed 3d positions
-            x = x + self.pos_embedding(pos)
+        # if self.positional_embedding: # embed 3d positions
+        #     x = x + self.pos_embedding(pos)
         for n, (convolution, fc, global_agg) in enumerate(zip(self.interaction_blocks, self.fc_blocks, self.global_blocks)):
             if self.crystal_mode:
                 if n < (self.num_blocks - 1):  # to do this molecule-wise, we need to multiply n_repeats by Z for each crystal

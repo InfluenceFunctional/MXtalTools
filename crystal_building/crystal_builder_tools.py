@@ -231,19 +231,19 @@ def ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list,
     return supercell_coords_list, supercell_atoms_list, ref_mol_inds_list, n_copies
 
 
-def update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list):
+def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords_list, ref_mol_inds_list):
     for i in range(supercell_data.num_graphs):
         if i == 0:
             new_batch = torch.ones(len(supercell_atoms_list[i])).int() * i
             new_ptr = torch.zeros(supercell_data.num_graphs + 1)
-            new_ptr[1] = len(supercell_list[0])
+            new_ptr[1] = len(supercell_coords_list[0])
         else:
             new_batch = torch.cat((new_batch, torch.ones(len(supercell_atoms_list[i])).int() * i))
-            new_ptr[i + 1] = new_ptr[i] + len(supercell_list[i])
+            new_ptr[i + 1] = new_ptr[i] + len(supercell_coords_list[i])
 
     # update dataloader with cell info
     supercell_data.x = torch.cat(supercell_atoms_list).type(dtype=torch.float32)
-    supercell_data.pos = torch.cat(supercell_list).type(dtype=torch.float32)
+    supercell_data.pos = torch.cat(supercell_coords_list).type(dtype=torch.float32)
     supercell_data.batch = new_batch.type(dtype=torch.int64)
     supercell_data.ptr = new_ptr.type(dtype=torch.int64)
     supercell_data.aux_ind = torch.cat(ref_mol_inds_list).type(dtype=torch.int)
@@ -568,9 +568,9 @@ def align_crystaldata_to_principal_axes(data, handedness = None):
     # rotation2 = torch.matmul(eye2.reshape(data.num_graphs, 3, 3), torch.linalg.inv(principal_axes_list.reshape(data.num_graphs, 3, 3))) # one step
 
     rotation_matrix_list = [torch.matmul(eye[i], torch.linalg.inv(principal_axes_list[i])) for i in range(data.num_graphs)]
-    transformed_coords = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)]
+    #transformed_coords = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)]
 
-    data.pos = torch.cat(transformed_coords)
+    data.pos = torch.cat([torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)])
 
     return data
 
@@ -579,8 +579,8 @@ def random_crystaldata_alignment(data):
     coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
 
     rotation_matrix_list = torch.Tensor(Rotation.random(num=data.num_graphs).as_matrix(), device = data.x.device)
-    transformed_coords = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)]
+    #transformed_coords = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)]
 
-    data.pos = torch.cat(transformed_coords)
+    data.pos = torch.cat([torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)])
 
     return data

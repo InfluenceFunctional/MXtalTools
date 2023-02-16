@@ -1014,17 +1014,14 @@ class Modeller():
         '''
         build supercells
         '''
-        if self.config.train_generator_adversarially or self.config.train_generator_vdw or self.config.train_generator_combo:
-            supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-                data, generated_samples, self.config.supercell_size,
-                self.config.discriminator.graph_convolution_cutoff,
-                override_sg=self.config.generate_sgs,
-                align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
-            )
+        supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+            data, generated_samples, self.config.supercell_size,
+            self.config.discriminator.graph_convolution_cutoff,
+            override_sg=self.config.generate_sgs,
+            align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
+        )
 
-            data.cell_params = supercell_data.cell_params
-        else:
-            supercell_data, generated_cell_volumes = None, None
+        data.cell_params = supercell_data.cell_params
 
         '''
         #evaluate losses
@@ -1034,19 +1031,13 @@ class Modeller():
         mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(min(10, supercell_data.num_graphs))]
         view(mols)
         '''
-        similarity_penalty = self.compute_similarity_penalty(generated_samples, supercell_data.sg_ind, prior)
+        similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
         discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
         h_bond_score = self.compute_h_bond_score(supercell_data)
-        vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, supercell_data.num_graphs, data)
+        vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, data.num_graphs, data)
         packing_loss, packing_prediction, packing_target, = \
             self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
-
-        if normed_vdw_penalty is not None:
-            # packing_range = [0.55, 0.75]
-            # outside_reasonable_packing_loss = F.smooth_l1_loss(packing_prediction, packing_target, beta=.1, reduction='none')
-            combo_score = 1 / (1 + (normed_vdw_penalty ** 2 + packing_loss ** 2))  # torch.exp(-(normed_vdw_overlap + outside_reasonable_packing_loss))
-        else:
-            combo_score = None
+        combo_score = torch.log(10 / (10 + ((self.config.vdw_loss_coefficient * vdw_penalty) ** 2 + packing_loss ** 2)))  # torch.exp(-(normed_vdw_overlap + outside_reasonable_packing_loss))
 
         return discriminator_score, generated_samples.cpu().detach().numpy(), \
                packing_loss, packing_prediction.cpu().detach().numpy(), \
@@ -1804,7 +1795,7 @@ class Modeller():
         self.gan_reporting(epoch, train_loader, None, test_epoch_stats_dict,
                            extra_test_dict=extra_test_epoch_stats_dict)
 
-    def compute_similarity_penalty(self, generated_samples, sg_ind, prior):
+    def compute_similarity_penalty(self, generated_samples, prior):
         '''
         punish batches in which the samples are too self-similar
 
@@ -1880,7 +1871,7 @@ class Modeller():
             return scores, normed_vdw_overlap_sum / torch.diff(data.ptr)
 
         else:
-            return None, None, None
+            return None, None
 
     def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, adversarial_score, adversarial_loss, vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score):
         g_losses_list = []
@@ -1908,12 +1899,14 @@ class Modeller():
                 ramp_level = min(1, 0.001 + self.epoch / self.config.vdw_ramp_epochs)
                 vdw_loss *= ramp_level
 
+            vdw_loss *= self.config.vdw_loss_coefficient
             if self.config.vdw_loss_rescaling == 'log':
-                vdw_loss_f = torch.log(1 + vdw_loss)  # soft rescaling
+                vdw_loss_f = torch.log(1 + vdw_loss)  # soft rescaling to be gentler on outliers
             elif self.config.vdw_loss_rescaling is None:
                 vdw_loss_f = vdw_loss
             elif self.config.vdw_loss_rescaling == 'mse':
-                vdw_loss_f = vdw_loss ** 2  # todo take this back to ^2 when finished testing
+                vdw_loss_f = vdw_loss ** 2
+
             g_losses_list.append(vdw_loss_f)
 
         if self.config.train_generator_h_bond:
@@ -2042,7 +2035,10 @@ class Modeller():
             y = np.concatenate(epoch_stats_dict['generator packing prediction'])  # generator_losses['generator packing loss']
 
             xy = np.vstack([x, y])
-            z = gaussian_kde(xy)(xy)
+            try:
+                z = gaussian_kde(xy)(xy)
+            except:
+                z = np.ones_like(x)
 
             xline = np.asarray([np.amin(x), np.amax(x)])
             linreg_result = linregress(x, y)
@@ -2087,7 +2083,10 @@ class Modeller():
         x = generator_losses['packing normed mae']
         y = generator_losses['per mol vdw loss']
         xy = np.vstack([x, y])
-        z = gaussian_kde(xy)(xy)
+        try:
+            z = gaussian_kde(xy)(xy)
+        except:
+            z = np.ones_like(x)
 
         fig = go.Figure()
         fig.add_trace(go.Scattergl(x=np.log10(x + 1e-3), y=np.log10(y + 1e-3), showlegend=False,
@@ -2179,7 +2178,7 @@ class Modeller():
 
         # fig.layout.paper_bgcolor = 'rgba(0,0,0,0)'
         # fig.layout.plot_bgcolor = 'rgba(0,0,0,0)'
-        fig.update_layout(width=800, height=600, font=dict(size=12))
+        fig.update_layout(width=800, height=600, font=dict(size=12),xaxis_range=[-1,4])
         fig.layout.margin = layout.margin
         fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
         fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing prediction')

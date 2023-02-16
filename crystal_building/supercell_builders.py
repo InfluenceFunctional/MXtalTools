@@ -1,6 +1,4 @@
-import numpy as np
-from ase.calculators import lj
-from ase import Atoms
+from scipy.spatial.transform import Rotation
 import torch
 import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn
@@ -8,7 +6,8 @@ from crystal_building.crystal_builder_tools import \
     (update_supercell_data, compute_lattice_vector_overlap,
      coor_trans_matrix,
      ref_to_supercell, clean_cell_output, invert_coords,
-     compute_Ip_handedness, align_crystaldata_to_principal_axes, asym_unit_dict)
+     compute_Ip_handedness, align_crystaldata_to_principal_axes, asym_unit_dict,
+     euler_XYZ_rotation_matrix)
 
 
 def override_sg_info(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
@@ -204,6 +203,14 @@ class SupercellBuilder():
                                              torch.stack((2 * q[:, 1] * q[:, 2] + 2 * q[:, 0] * q[:, 3], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 2] * q[:, 3] - 2 * q[:, 0] * q[:, 1]), dim=1),
                                              torch.stack((2 * q[:, 1] * q[:, 3] - 2 * q[:, 0] * q[:, 2], 2 * q[:, 2] * q[:, 3] + 2 * q[:, 0] * q[:, 1], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 2] ** 2), dim=1)),
                                             dim=1)
+
+        # fully random rotations
+        #applied_rotation_list = torch.tensor(Rotation.random(num=len(mol_rotation)).as_matrix(), device=mol_rotation.device,dtype=mol_rotation.dtype)
+
+        #euler angles -> rotation matrix
+        # applied_rotation_list = torch.stack([
+        #     euler_XYZ_rotation_matrix(mol_rotation[i].cpu()) for i in range(len(mol_rotation))
+        # ]).to(mol_rotation.device)
 
         return applied_rotation_list
 
