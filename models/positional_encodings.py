@@ -250,8 +250,11 @@ class PosEncoding3D(nn.Module):  # a global aggregation function using spherical
         self.register_buffer("inv_freq", inv_freq)
 
     def forward(self, pos):
-        x_emb = get_emb(torch.einsum('i,j->ij', (pos[:, 0], self.inv_freq)))
-        y_emb = get_emb(torch.einsum('i,j->ij', (pos[:, 1], self.inv_freq)))
-        z_emb = get_emb(torch.einsum('i,j->ij', (pos[:, 2], self.inv_freq)))
-        return torch.cat((x_emb, y_emb, z_emb), dim=-1)
+        #x_emb = get_emb(torch.einsum('i,j->ij', (pos[:, 0], self.inv_freq)))
+        #y_emb = get_emb(torch.einsum('i,j->ij', (pos[:, 1], self.inv_freq)))
+        #z_emb = get_emb(torch.einsum('i,j->ij', (pos[:, 2], self.inv_freq)))
+        return torch.cat((
+            get_emb(torch.einsum('i,j->ij', (pos[:, 0], self.inv_freq))),
+            get_emb(torch.einsum('i,j->ij', (pos[:, 1], self.inv_freq))),
+            get_emb(torch.einsum('i,j->ij', (pos[:, 2], self.inv_freq)))), dim=-1)
 

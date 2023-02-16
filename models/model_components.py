@@ -7,7 +7,7 @@ import torch_geometric.nn as gnn
 import torch.nn.functional as F
 
 class general_MLP(nn.Module):
-    def __init__(self, layers, filters, input_dim, output_dim, activation='gelu', seed=0, dropout=0, conditioning_dim=0, norm=None):
+    def __init__(self, layers, filters, input_dim, output_dim, activation='gelu', seed=0, dropout=0, conditioning_dim=0, norm=None,bias=True):
         super(general_MLP, self).__init__()
         # initialize constants and layers
         self.n_layers = layers
@@ -22,7 +22,7 @@ class general_MLP(nn.Module):
         torch.manual_seed(seed)
 
         self.fc_layers = torch.nn.ModuleList([
-            nn.Linear(self.n_filters, self.n_filters)
+            nn.Linear(self.n_filters, self.n_filters,bias=bias)
             for _ in range(self.n_layers)
         ])
 

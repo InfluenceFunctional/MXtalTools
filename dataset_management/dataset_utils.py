@@ -70,7 +70,7 @@ class BuildDataset:
         lattice_features = self.get_cell_features(dataset)
         targets = self.get_targets(dataset)
         self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets)
-        if True: # make dataset a bunch of the same molecule
+        if False: # make dataset a bunch of the same molecule
             identifiers = [item.csd_identifier for item in self.datapoints]
             index = identifiers.index('PIQTOY') # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
             new_datapoints = [self.datapoints[index] for i in range(self.final_dataset_length)]

@@ -8,12 +8,13 @@ from models.basis_functions import BesselBasisLayer, GaussianEmbedding
 from torch_geometric import nn as gnn
 from models.positional_encodings import PosEncoding3D
 
+
 class global_aggregation(nn.Module):
     '''
     wrapper for several types of global aggregation functions
     '''
 
-    def __init__(self, agg_func, filters, geometric_embedding = 'sph'):
+    def __init__(self, agg_func, filters, geometric_embedding='sph'):
         super(global_aggregation, self).__init__()
         self.agg_func = agg_func
         if agg_func == 'mean':
@@ -28,15 +29,15 @@ class global_aggregation(nn.Module):
         elif agg_func == 'combo':
             self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
             self.agg_list3 = [gnn.global_sort_pool]
-            #self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))])  # aggregation functions requiring parameters
+            # self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))])  # aggregation functions requiring parameters
             self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(
-                general_MLP(input_dim = filters,
+                general_MLP(input_dim=filters,
                             output_dim=1,
-                            layers = 4,
-                            filters = filters,
-                            activation = 'leaky relu',
-                            norm = None),
-                #nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1))
+                            layers=4,
+                            filters=filters,
+                            activation='leaky relu',
+                            norm=None),
+                # nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1))
             )])  # aggregation functions requiring parameters
             self.agg_fc = general_MLP(
                 layers=4,
@@ -44,10 +45,10 @@ class global_aggregation(nn.Module):
                 input_dim=filters * (len(self.agg_list1) + 1 + 3),
                 output_dim=filters,
                 norm=None,
-                dropout=0) # condense to correct number of filters
+                dropout=0)  # condense to correct number of filters
         elif agg_func == 'geometric':  # global aggregation via geometry-involved pooling
-            self.agg = SphGeoPooling(in_channels=filters,num_radial = 50, spherical_order=11,
-                                     embedding = geometric_embedding)
+            self.agg = SphGeoPooling(in_channels=filters, num_radial=50, spherical_order=11,
+                                     embedding=geometric_embedding)
 
     def forward(self, x, pos, batch):
         if self.agg_func == 'set2set':
@@ -56,7 +57,7 @@ class global_aggregation(nn.Module):
         elif self.agg_func == 'combo':
             output1 = [agg(x, batch) for agg in self.agg_list1]
             output2 = [agg(x, batch) for agg in self.agg_list2]
-            output3 = [agg(x,batch,3) for agg in self.agg_list3]
+            output3 = [agg(x, batch, 3) for agg in self.agg_list3]
             return self.agg_fc(torch.cat((output1 + output2 + output3), dim=1))
         elif self.agg_func == 'geometric':
             '''
@@ -82,7 +83,7 @@ class global_aggregation(nn.Module):
 
 class SphGeoPooling(nn.Module):  # a global aggregation function using spherical harmonics
     def __init__(self, in_channels, num_radial=50, spherical_order=11, cutoff=10,
-                 activation='leaky relu', dropout=0, norm=None, embedding = 'sph'):
+                 activation='leaky relu', dropout=0, norm=None, embedding='sph'):
         super(SphGeoPooling, self).__init__()
 
         self.embedding = embedding
@@ -93,25 +94,47 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
             self.num_radial = num_radial
             self.num_spherical = int(torch.sum(torch.Tensor(self.sph_od_list) * 2 + 1))
             self.radial_basis = BesselBasisLayer(num_radial=num_radial, cutoff=cutoff)
-            #self.radial_basis = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
-            input_dim =  in_channels + num_radial + self.num_spherical
+            # self.radial_basis = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
+            input_dim = in_channels + num_radial + self.num_spherical
         elif self.embedding == 'pos':
             # fourier basis
             encoding_channels = in_channels // 3 + ((in_channels // 3) % 2)
             self.pos_encoding = PosEncoding3D(encoding_channels, cutoff)
             input_dim = int(in_channels + encoding_channels * 3)
+        elif self.embedding == 'combo':
+            # radial and spherical basis layers
+            self.spherical_order = spherical_order
+            self.sph_od_list = [i for i in range(spherical_order)]
+            self.num_radial = num_radial
+            self.num_spherical = int(torch.sum(torch.Tensor(self.sph_od_list) * 2 + 1))
+            self.radial_basis = BesselBasisLayer(num_radial=num_radial, cutoff=cutoff)
+            # self.radial_basis = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
+
+            # fourier basis
+            encoding_channels = in_channels // 3 + ((in_channels // 3) % 2)
+            self.pos_encoding = PosEncoding3D(encoding_channels, cutoff)
+
+            input_dim = int(in_channels + encoding_channels * 3)
+
+            self.mlp2 = general_MLP(layers=4, filters=in_channels,
+                                    input_dim= in_channels + num_radial + self.num_spherical,
+                                    output_dim=in_channels,
+                                    activation=activation,
+                                    norm=norm,
+                                    dropout=dropout,
+                                    bias=False)
 
         # message generation
         self.mlp = general_MLP(layers=4, filters=in_channels,
-                               input_dim = input_dim,
+                               input_dim=input_dim,
                                output_dim=in_channels,
                                activation=activation,
                                norm=norm,
-                               dropout=dropout)
+                               dropout=dropout,
+                               bias=False)
 
         # message aggregation
         self.global_pool = global_aggregation('combo', in_channels)
-
 
     def forward(self, x, pos, batch):
         '''
@@ -126,51 +149,71 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
             dists = torch.linalg.norm(pos, dim=-1)  # centroids are at (0,0,0)
             rbf = self.radial_basis(dists)
             sbf = o3.spherical_harmonics(self.sph_od_list, x=pos, normalize=True, normalization='component')
-            messages = torch.cat((rbf,sbf),dim=-1)
-            #messages = self.mlp(torch.cat((x, rbf, sbf), dim=-1))
-            #messages = self.mlp(torch.cat((x, torch.ones_like(rbf), torch.ones_like(sbf)), dim=-1))
+            messages = torch.cat((rbf, sbf), dim=-1)
+            # messages = self.mlp(torch.cat((x, rbf, sbf), dim=-1))
+            # messages = self.mlp(torch.cat((x, torch.ones_like(rbf), torch.ones_like(sbf)), dim=-1))
+            # aggregation
+            return self.mlp(
+                torch.cat((
+                    self.global_pool(x, pos, batch), gnn.global_add_pool(messages, batch)),
+                    dim=-1))
+
         elif self.embedding == 'pos':
             messages = self.pos_encoding(pos)
-            #messages = self.mlp(x + self.pos_encoding(pos))
-
-        '''
-        do node aggregation
-        '''
-
-        # aggregation
-        return self.mlp(torch.cat((self.global_pool(x,pos, batch), gnn.global_add_pool(messages,batch)),dim=-1))
+            # messages = self.mlp(x + self.pos_encoding(pos))
+            # aggregation
+            return self.global_pool(
+                self.mlp(torch.cat((
+                    x, messages),
+                    dim=-1)), pos, batch)
 
 
-''' embedding test
-import matplotlib.pyplot as plt
-d1 = torch.cdist(pos,pos,p=2).cpu().detach().numpy()
-d2 = torch.cdist(tot_emb,tot_emb,p=2).cpu().detach().numpy()
-plt.clf()
-plt.scatter(d1.flatten()[:10000],d2.flatten()[:10000])
+        elif self.embedding == 'combo':
+            dists = torch.linalg.norm(pos, dim=-1)  # centroids are at (0,0,0)
+            rbf = self.radial_basis(dists)
+            sbf = o3.spherical_harmonics(self.sph_od_list, x=pos, normalize=True, normalization='component')
+            graph_embedding = gnn.global_add_pool(torch.cat((rbf, sbf), dim=-1), batch)
+            node_embeddings = self.pos_encoding(pos)
 
+            # aggregation
+            return self.mlp2(
+                torch.cat((
+                    self.global_pool(
+                        self.mlp(torch.cat((
+                            x, node_embeddings),
+                            dim=-1)),
+                        pos, batch),
+                    graph_embedding), dim=-1))
 
-xx = torch.rand(100,3).to('cuda')*20
-dists = torch.linalg.norm(xx, dim=-1)  # centroids are at (0,0,0)
-rbf = self.radial_basis(dists)
-sbf = spherical_harmonics(self.sph_od_list, x=xx, normalize=True, normalization='component')
-reps = torch.cat((rbf,sbf),dim=-1)
-x,y,z = xx.T
-channels = 25
-inv_freq = 1 / ((xx.max()-xx.min()) *10000 ** (torch.arange(0, channels, 2,device='cuda').float() / channels))
-x_emb = get_emb(torch.einsum('i,j->ij',(x,inv_freq)))
-y_emb = get_emb(torch.einsum('i,j->ij',(y,inv_freq)))
-z_emb = get_emb(torch.einsum('i,j->ij',(z,inv_freq)))
-tot_emb = torch.cat((x_emb,y_emb,z_emb),dim=-1)
-d1 = torch.cdist(xx,xx,p=2).cpu().detach().numpy()
-d2 = torch.cdist(reps,reps,p=2).cpu().detach().numpy()
-d3 = torch.cdist(tot_emb, tot_emb, p=2).cpu().detach().numpy()
-plt.clf()
-plt.subplot(1,2,1)
-plt.scatter(d1.flatten(),d3.flatten(),alpha=0.25)
-plt.subplot(2,2,2)
-plt.imshow(reps.cpu().detach().numpy())
-plt.subplot(2,2,4)
-plt.imshow(tot_emb.cpu().detach().numpy())
-
-'''
-
+            ''' embedding test
+            import matplotlib.pyplot as plt
+            d1 = torch.cdist(pos,pos,p=2).cpu().detach().numpy()
+            d2 = torch.cdist(tot_emb,tot_emb,p=2).cpu().detach().numpy()
+            plt.clf()
+            plt.scatter(d1.flatten()[:10000],d2.flatten()[:10000])
+            
+            
+            xx = torch.rand(100,3).to('cuda')*20
+            dists = torch.linalg.norm(xx, dim=-1)  # centroids are at (0,0,0)
+            rbf = self.radial_basis(dists)
+            sbf = spherical_harmonics(self.sph_od_list, x=xx, normalize=True, normalization='component')
+            reps = torch.cat((rbf,sbf),dim=-1)
+            x,y,z = xx.T
+            channels = 25
+            inv_freq = 1 / ((xx.max()-xx.min()) *10000 ** (torch.arange(0, channels, 2,device='cuda').float() / channels))
+            x_emb = get_emb(torch.einsum('i,j->ij',(x,inv_freq)))
+            y_emb = get_emb(torch.einsum('i,j->ij',(y,inv_freq)))
+            z_emb = get_emb(torch.einsum('i,j->ij',(z,inv_freq)))
+            tot_emb = torch.cat((x_emb,y_emb,z_emb),dim=-1)
+            d1 = torch.cdist(xx,xx,p=2).cpu().detach().numpy()
+            d2 = torch.cdist(reps,reps,p=2).cpu().detach().numpy()
+            d3 = torch.cdist(tot_emb, tot_emb, p=2).cpu().detach().numpy()
+            plt.clf()
+            plt.subplot(1,2,1)
+            plt.scatter(d1.flatten(),d3.flatten(),alpha=0.25)
+            plt.subplot(2,2,2)
+            plt.imshow(reps.cpu().detach().numpy())
+            plt.subplot(2,2,4)
+            plt.imshow(tot_emb.cpu().detach().numpy())
+            
+            '''
