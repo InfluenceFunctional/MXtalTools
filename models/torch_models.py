@@ -37,6 +37,7 @@ class molecule_graph_model(nn.Module):
                  radial_function,
                  max_num_neighbors,
                  convolution_cutoff,
+                 max_molecule_size,
                  return_latent=False,
                  crystal_mode=False,
                  crystal_convolution_type=None,
@@ -113,7 +114,11 @@ class molecule_graph_model(nn.Module):
         # initialize global pooling operation
         if self.graph_model is not None:
             self.global_pool = global_aggregation(self.pooling, self.fc_depth,
-                                                  geometric_embedding = positional_embedding)
+                                                  geometric_embedding = positional_embedding,
+                                                  num_radial=num_radial,
+                                                  spherical_order = num_spherical,
+                                                  radial_embedding=radial_function,
+                                                  max_molecule_size = max_molecule_size)
 
         # molecule features FC layer
         if self.n_mol_feats != 0:

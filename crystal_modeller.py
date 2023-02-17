@@ -274,11 +274,11 @@ class Modeller():
         scheduler1 = lr_scheduler.ReduceLROnPlateau(
             g_optimizer,
             mode='min',
-            factor=0.1,
-            patience=100,
+            factor=0.5,
+            patience=50,
             threshold=1e-4,
             threshold_mode='rel',
-            cooldown=15
+            cooldown=50
         )
         lr_lambda = lambda epoch: self.config.lr_growth_lambda
         scheduler2 = lr_scheduler.MultiplicativeLR(g_optimizer, lr_lambda=lr_lambda)
@@ -288,11 +288,11 @@ class Modeller():
         scheduler4 = lr_scheduler.ReduceLROnPlateau(
             d_optimizer,
             mode='min',
-            factor=0.1,
-            patience=100,
+            factor=0.5,
+            patience=50,
             threshold=1e-4,
             threshold_mode='rel',
-            cooldown=15
+            cooldown=50
         )
         lr_lambda = lambda epoch: self.config.lr_growth_lambda
         scheduler5 = lr_scheduler.MultiplicativeLR(d_optimizer, lr_lambda=lr_lambda)

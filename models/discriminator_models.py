@@ -37,7 +37,8 @@ class crystal_discriminator(nn.Module):
             convolution_cutoff=config.discriminator.graph_convolution_cutoff,
             crystal_mode=True,
             device=config.device,
-            crystal_convolution_type = config.discriminator.crystal_convolution_type
+            crystal_convolution_type = config.discriminator.crystal_convolution_type,
+            max_molecule_size=config.max_molecule_radius,
         )
         self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
 

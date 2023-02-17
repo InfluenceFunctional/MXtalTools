@@ -36,6 +36,7 @@ class molecule_regressor(nn.Module):
             max_num_neighbors=config.generator.max_num_neighbors,
             convolution_cutoff=config.generator.graph_convolution_cutoff,
             device=config.device,
+            max_molecule_size = config.max_molecule_radius,
         )
         self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
 

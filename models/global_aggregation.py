@@ -14,7 +14,7 @@ class global_aggregation(nn.Module):
     wrapper for several types of global aggregation functions
     '''
 
-    def __init__(self, agg_func, filters, geometric_embedding='sph'):
+    def __init__(self, agg_func, filters, geometric_embedding='sph', num_radial = 50, spherical_order = 11, radial_embedding='bessel', max_molecule_size = 10):
         super(global_aggregation, self).__init__()
         self.agg_func = agg_func
         if agg_func == 'mean':
@@ -47,8 +47,8 @@ class global_aggregation(nn.Module):
                 norm=None,
                 dropout=0)  # condense to correct number of filters
         elif agg_func == 'geometric':  # global aggregation via geometry-involved pooling
-            self.agg = SphGeoPooling(in_channels=filters, num_radial=50, spherical_order=11,
-                                     embedding=geometric_embedding)
+            self.agg = SphGeoPooling(in_channels=filters, num_radial=num_radial, spherical_order=spherical_order, cutoff = max_molecule_size,
+                                     embedding=geometric_embedding, radial_embedding = radial_embedding)
 
     def forward(self, x, pos, batch):
         if self.agg_func == 'set2set':
@@ -83,19 +83,27 @@ class global_aggregation(nn.Module):
 
 class SphGeoPooling(nn.Module):  # a global aggregation function using spherical harmonics
     def __init__(self, in_channels, num_radial=50, spherical_order=11, cutoff=10,
-                 activation='leaky relu', dropout=0, norm=None, embedding='sph'):
+                 activation='leaky relu', dropout=0, norm=None, embedding='sph', radial_embedding = 'bessel'):
         super(SphGeoPooling, self).__init__()
 
         self.embedding = embedding
-        if self.embedding == 'sph':
+        if (self.embedding == 'sph') or (self.embedding == 'sph2'):
             # radial and spherical basis layers
             self.spherical_order = spherical_order
             self.sph_od_list = [i for i in range(spherical_order)]
             self.num_radial = num_radial
             self.num_spherical = int(torch.sum(torch.Tensor(self.sph_od_list) * 2 + 1))
-            self.radial_basis = BesselBasisLayer(num_radial=num_radial, cutoff=cutoff)
-            # self.radial_basis = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
-            input_dim = in_channels + num_radial + self.num_spherical
+            if radial_embedding == 'bessel':
+                self.radial_basis = BesselBasisLayer(num_radial=num_radial, cutoff=cutoff)
+            elif radial_embedding == 'gaussian':
+                self.radial_basis = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
+            else:
+                assert False, 'invalid radial embedding function'
+            if self.embedding == 'sph':
+                input_dim = in_channels + num_radial + self.num_spherical
+            elif self.embedding == 'sph2':
+                input_dim = in_channels + num_radial * self.num_spherical
+
         elif self.embedding == 'pos':
             # fourier basis
             encoding_channels = in_channels // 3 + ((in_channels // 3) % 2)
@@ -145,14 +153,19 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
         generate edge embedding
         '''
         # spherical harmonic embedding
-        if self.embedding == 'sph':
+        if self.embedding == 'sph' or self.embedding == 'sph2':
             dists = torch.linalg.norm(pos, dim=-1)  # centroids are at (0,0,0)
+            if dists.max() > self.radial_basis.cutoff:
+                assert False, 'too-large molecule somehow got into the dataset'
             rbf = self.radial_basis(dists)
             sbf = o3.spherical_harmonics(self.sph_od_list, x=pos, normalize=True, normalization='component')
-            messages = torch.cat((rbf, sbf), dim=-1)
             # messages = self.mlp(torch.cat((x, rbf, sbf), dim=-1))
             # messages = self.mlp(torch.cat((x, torch.ones_like(rbf), torch.ones_like(sbf)), dim=-1))
-            # aggregation
+            if self.embedding == 'sph':
+                messages = torch.cat((rbf, sbf), dim=-1)
+            elif self.embedding == 'sph2':
+                messages = torch.einsum('ni,nj->nij', (rbf, sbf)).reshape(-1, self.num_radial * self.num_spherical)  # outer product and flatten
+            # alternatively, torch linear or bilinear (very expensive)
             return self.mlp(
                 torch.cat((
                     self.global_pool(x, pos, batch), gnn.global_add_pool(messages, batch)),
@@ -168,7 +181,7 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
                     dim=-1)), pos, batch)
 
 
-        elif self.embedding == 'combo':
+        elif self.embedding == 'combo': # todo deprecated until we decide whether sph or sph2 is better
             dists = torch.linalg.norm(pos, dim=-1)  # centroids are at (0,0,0)
             rbf = self.radial_basis(dists)
             sbf = o3.spherical_harmonics(self.sph_od_list, x=pos, normalize=True, normalization='component')

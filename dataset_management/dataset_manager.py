@@ -246,7 +246,7 @@ class Miner():
         # cases where the csd has the wrong number of molecules
         n_bad_inds = len(bad_inds)
         # self.config.max_molecule_radius
-        mol_radii = [np.amax(np.linalg.norm(coords - coords.mean(0), axis=-1)) for coords in self.dataset['atom coords']]
+        mol_radii = np.asarray([np.amax(np.linalg.norm(coords - coords.mean(0), axis=-1)) for coords in self.dataset['atom coords']])
         bad_inds.extend(np.argwhere(np.asarray(mol_radii) > self.max_molecule_radius)[:, 0])
         print('molecule too long filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
