@@ -930,11 +930,7 @@ class Modeller():
                    vdw_overlap(self.vdw_radii, crystaldata=real_supercell_data), \
                    vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data)
 
-    def train_generator(self, generator, discriminator, data, i):
-        '''
-        train the generator
-        '''
-
+    def get_generator_samples(self, data, generator):
         '''
         conformer orentation setting
         '''
@@ -972,6 +968,15 @@ class Modeller():
         [[generated_samples, latent], prior, condition] = generator.forward(
             n_samples=data.num_graphs, conditions=data.to(self.config.device),
             return_latent=True, return_condition=True, return_prior=True)
+
+        return generated_samples, prior
+
+
+    def train_generator(self, generator, discriminator, data, i):
+        '''
+        train the generator
+        '''
+        generated_samples, prior = self.get_generator_samples(data, generator)
 
         '''
         build supercells
@@ -1181,8 +1186,8 @@ class Modeller():
         if self.config.train_discriminator_adversarially:
             ii = i % n_generators
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:  # randomly sample which generator to use at each iteration
-                generated_samples_i = generator.forward(n_samples=data.num_graphs, conditions=data.to(config.device))
-                handedness = None
+                generated_samples_i, _ = self.get_generator_samples(data, generator)
+                handedness = torch.ones(len(generated_samples_i),device=generated_samples_i.device)
                 epoch_stats_dict['generator sample source'].extend(np.zeros(len(generated_samples_i)))
 
         if self.config.train_discriminator_on_randn:
