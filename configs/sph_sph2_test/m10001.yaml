@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10001
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures' or 'sampling'
 gan_loss: standard # standard only
@@ -21,15 +21,15 @@ train_discriminator_adversarially: False
 train_discriminator_on_randn: False
 train_discriminator_on_noise: False
 generator_noise_level: -1 # -1 for wide range test # noise for distorted generation
-generator_similarity_penalty: 1
+generator_similarity_penalty: 0
 extra_test_period: 10
 extra_test_evaluation: False
-extra_test_set_paths: [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/csd_coumarins_dataset']
+extra_test_set_paths: null #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/csd_coumarins_dataset']
   #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
-d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/discriminator_625'
-g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/generator_636'
+d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/discriminator_404'
+g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_1102'
 
 sample_steps: 100
 sample_move_size: 0.01
@@ -40,27 +40,27 @@ seeds:
 
 # opt - sweep details
 wandb:
-  sample_reporting_frequency: 1
-  experiment_tag: dev
+  sample_reporting_frequency: 5
+  experiment_tag: sph_sph2_test
   log_figures: True
 
 # batching & convergence
 accumulate_gradients: False
-accumulate_batch_size: 10000
+accumulate_batch_size: 1000
 auto_batch_sizing: True
 min_batch_size: 10
-max_batch_size: 1000
+max_batch_size: 2000
 batch_growth_increment: 0.05
-auto_batch_reduction: 0.25 # fraction of tested max batch size to actually start with (unequal graph sizes)
+auto_batch_reduction: 0.6 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 gradient_norm_clip: 1
-lr_growth_lambda: 1.05
-lr_shrink_lambda: 1
+lr_growth_lambda: 1.25
+lr_shrink_lambda: 0.95
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100
@@ -82,30 +82,30 @@ exclude_polymorphs: True
 exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
-include_sgs: ["P-1","P21/c","P212121","C2/c","P21"] #["P-1", "P21/c", "P212121", "C2/c", "Pbca", "P21"]
+include_sgs: ["P-1","P21/c","P212121","C2/c"] #["P-1", "P21/c", "P212121", "C2/c", "Pbca", "P21"]
 include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
 generate_sgs: null #'P2' #'P21/c' # can only do one at a time right now
 supercell_size: 5 # new method - should be very large, automatically pares down
 
-# https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
+# https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups enantomorphic
 
 # discriminator optimizer and model
 discriminator:
-  optimizer: adam
-  learning_rate: 5.0E-6
+  optimizer: adamw
+  learning_rate: 1.0E-5
   max_lr: 5.0E-5
   lr_schedule: True
   beta1: 0.9
   beta2: 0.999
   weight_decay: 0.001
   convergence_eps: 0.00001
-  training_period: 10
+  training_period: 1
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
-  graph_convolution_layers: 4
-  graph_filters: 36
-  atom_embedding_size: 128
+  graph_convolution_layers: 1
+  graph_filters: 12
+  atom_embedding_size: 12
   graph_norm: layer
   num_spherical: 5
   num_radial: 32
@@ -118,16 +118,16 @@ discriminator:
   add_torsional_basis: False #
   pooling: combo
 
-  num_fc_layers: 4
-  fc_depth: 256
+  num_fc_layers: 1
+  fc_depth: 12
   activation: leaky relu
   fc_dropout_probability: 0
   fc_norm_mode: layer
 
 # generator optimizer and model
 generator:
-  optimizer: adamw
-  learning_rate: 5.0E-6
+  optimizer: adam
+  learning_rate: 1.0E-5
   max_lr: 5.0E-5
   lr_schedule: True
   beta1: 0.9 #0.9
@@ -137,14 +137,12 @@ generator:
   positional_noise: 0 # scaling for the randn noise added to all atom positions
 
   canonical_conformer_orientation: 'standardized' # 'standardized' 'random'
-  positional_embedding: 'sph2' # 'sph' or 'pos' or 'combo'
+  positional_embedding: 'sph' # 'sph' or 'pos'
   graph_convolution_layers: 4
   graph_filters: 128
   atom_embedding_size: 256
   graph_norm: layer
-  # applies to geometric aggregation as well
-  # large numbers of radial and spherical result in extremely huge feature maps in global aggregation
-  num_spherical: 7
+  num_spherical: 6
   num_radial: 32
   graph_convolution_cutoff: 3
   max_num_neighbors: 100
@@ -156,16 +154,16 @@ generator:
   pooling: geometric # combo, geometric
 
   conditioner_num_fc_layers: 2
-  conditioner_fc_depth: 1028
+  conditioner_fc_depth: 512
   conditioner_activation: 'leaky relu'
   conditioner_fc_dropout_probability: 0
-  conditioner_fc_norm_mode: layer
+  conditioner_fc_norm_mode: null
 
-  num_fc_layers: 4
-  fc_depth: 256
+  num_fc_layers: 10
+  fc_depth: 512
   activation: 'leaky relu'
   fc_dropout_probability: 0
-  fc_norm_mode: layer
+  fc_norm_mode: null
 
   prior: multivariate normal
   prior_dimension: 12

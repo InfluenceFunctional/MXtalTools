@@ -621,10 +621,11 @@ class Modeller():
             '''
             train discriminator
             '''
+            skip_step = (i % self.config.discriminator.training_period) != 0  # only train the discriminator every XX steps, assuming n_steps per epoch is much larger than training period
             d_err, d_loss_record, epoch_stats_dict = \
                 self.discriminator_step(discriminator, generator, epoch_stats_dict, data,
                                         d_optimizer, i, update_gradients, d_err, d_loss_record,
-                                        epoch, last_batch=i == (len(dataLoader) - 1))
+                                        skip_step=skip_step, epoch=epoch, last_batch=i == (len(dataLoader) - 1))
 
             '''
             train_generator
@@ -829,38 +830,37 @@ class Modeller():
 
         return None
 
-    def discriminator_step(self, discriminator, generator, epoch_stats_dict, data, d_optimizer, i, update_gradients, d_err, d_loss_record, epoch, last_batch):
-        if epoch % self.config.discriminator.training_period == 0:  # only train the discriminator every XX epochs
-            if self.config.train_discriminator_adversarially or self.config.train_discriminator_on_noise or self.config.train_discriminator_on_randn:
-                generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, self.config, data, generator, i)
+    def discriminator_step(self, discriminator, generator, epoch_stats_dict, data, d_optimizer, i, update_gradients, d_err, d_loss_record, skip_step, epoch, last_batch):
+        if self.config.train_discriminator_adversarially or self.config.train_discriminator_on_noise or self.config.train_discriminator_on_randn:
+            generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, self.config, data, generator, i)
 
-                score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
-                    = self.train_discriminator(generated_samples_i, discriminator, data, i, handedness)
+            score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
+                = self.train_discriminator(generated_samples_i, discriminator, data, i, handedness)
 
-                prediction = torch.cat((score_on_real, score_on_fake))
-                target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
-                d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
+            prediction = torch.cat((score_on_real, score_on_fake))
+            target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
+            d_losses = F.cross_entropy(prediction, target.long(), reduction='none')  # works much better
 
-                d_loss = d_losses.mean()
-                d_err.append(d_loss.data.cpu().detach().numpy())  # average overall loss
+            d_loss = d_losses.mean()
+            d_err.append(d_loss.data.cpu().detach().numpy())  # average overall loss
 
-                if update_gradients:
-                    d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
-                    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
-                    d_loss.backward()  # back-propagation
-                    d_optimizer.step()  # update parameters
+            if update_gradients and (not skip_step):
+                d_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                torch.nn.utils.clip_grad_norm_(discriminator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
+                d_loss.backward()  # back-propagation
+                d_optimizer.step()  # update parameters
 
-                epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
-                epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
-                epoch_stats_dict['real vdw penalty'].extend(real_vdw_score.cpu().detach().numpy())
-                epoch_stats_dict['fake vdw penalty'].extend(fake_vdw_score.cpu().detach().numpy())
-                d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
-                epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
-                epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
+            epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
+            epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
+            epoch_stats_dict['real vdw penalty'].extend(real_vdw_score.cpu().detach().numpy())
+            epoch_stats_dict['fake vdw penalty'].extend(fake_vdw_score.cpu().detach().numpy())
+            d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
+            epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
+            epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
 
-            else:
-                d_err.append(np.zeros(1))
-                d_loss_record.extend(np.zeros(data.num_graphs))
+        else:
+            d_err.append(np.zeros(1))
+            d_loss_record.extend(np.zeros(data.num_graphs))
 
         return d_err, d_loss_record, epoch_stats_dict
 
@@ -970,7 +970,6 @@ class Modeller():
             return_latent=True, return_condition=True, return_prior=True)
 
         return generated_samples, prior
-
 
     def train_generator(self, generator, discriminator, data, i):
         '''
@@ -1137,8 +1136,8 @@ class Modeller():
 
             randn_samples = self.randn_generator.forward(self.config.final_batch_size, single_mol_data)
             gen_samples = generator.forward(n_samples=single_mol_data.num_graphs,
-                                             conditions=single_mol_data.cuda()
-                                             )
+                                            conditions=single_mol_data.cuda()
+                                            )
 
             generator.eval()
             discriminator.eval()
@@ -1177,7 +1176,6 @@ class Modeller():
             # best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular=True)
             # self.report_sampling(sampling_dict)
 
-
     def generate_discriminator_negatives(self, epoch_stats_dict, config, data, generator, i):
         n_generators = sum([config.train_discriminator_adversarially, self.config.train_discriminator_on_noise, self.config.train_discriminator_on_randn])
         gen_random_number = np.random.uniform(0, 1, 1)
@@ -1187,7 +1185,7 @@ class Modeller():
             ii = i % n_generators
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:  # randomly sample which generator to use at each iteration
                 generated_samples_i, _ = self.get_generator_samples(data, generator)
-                handedness = torch.ones(len(generated_samples_i),device=generated_samples_i.device)
+                handedness = torch.ones(len(generated_samples_i), device=generated_samples_i.device)
                 epoch_stats_dict['generator sample source'].extend(np.zeros(len(generated_samples_i)))
 
         if self.config.train_discriminator_on_randn:
