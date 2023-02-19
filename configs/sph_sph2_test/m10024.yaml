@@ -49,7 +49,7 @@ accumulate_gradients: False
 accumulate_batch_size: 1000
 auto_batch_sizing: True
 min_batch_size: 10
-max_batch_size: 2000
+max_batch_size: 1000
 batch_growth_increment: 0.05
 auto_batch_reduction: 0.6 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
