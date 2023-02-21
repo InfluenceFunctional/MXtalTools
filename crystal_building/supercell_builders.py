@@ -17,14 +17,14 @@ def override_sg_info(override_sg, dataDims, supercell_data, symmetries_dict, sym
     # overwrite z value
 
     sg_num = list(symmetries_dict['space_groups'].values()).index(override_sg) + 1  # indexing from 0
-    sg_ind = symmetries_dict['sg_ind_dict'][symmetries_dict['space_groups'][sg_num]]
+    sg_ind = symmetries_dict['sg_feature_ind_dict'][symmetries_dict['space_groups'][sg_num]]
     crysys_ind = symmetries_dict['crysys_ind_dict'][symmetries_dict['lattice_type'][sg_num]]
     z_value_ind = max(list(symmetries_dict['crysys_ind_dict'].values())) + 1  # todo hardcode
 
     #
     supercell_data.x[:, -dataDims['num crystal generation features']] = 0  # set all crystal features to 0
-    supercell_data.x[:, sg_ind] = 1  # set all molecules to the given pg
-    supercell_data.x[:, crysys_ind] = 1  # set all molecules to the given pg
+    supercell_data.x[:, sg_ind] = 1  # set all molecules to the given space group
+    supercell_data.x[:, crysys_ind] = 1  # set all molecules to the given crystal system
     supercell_data.Z = len(sym_ops_list[0]) * torch.ones_like(supercell_data.Z)
     supercell_data.x[:, z_value_ind] = supercell_data.Z[0] * torch.ones_like(supercell_data.x[:, 0])
     supercell_data.sg_ind = sg_num * torch.ones_like(supercell_data.sg_ind)
@@ -292,7 +292,7 @@ class SupercellBuilder():
 
     def set_sym_ops(self, override_sg, supercell_data):
         if override_sg is not None:
-            override_sg_ind = self.symmetries_dict['sg_ind_dict'][override_sg]
+            override_sg_ind = list(self.symmetries_dict['space_groups'].values()).index(override_sg) + 1  # indexing from 0
             sym_ops_list = [torch.Tensor(self.symmetries_dict['sym_ops'][override_sg_ind]).to(supercell_data.x.device) for i in range(supercell_data.num_graphs)]
             supercell_data = override_sg_info(override_sg, self.dataDims, supercell_data, self.symmetries_dict, sym_ops_list)  # todo update the way we handle this
         else:

@@ -11,6 +11,7 @@ import pandas as pd
 from pyxtal import symmetry
 from dataset_management.dataset_manager import Miner
 import os
+import copy
 
 
 class BuildDataset:
@@ -667,16 +668,17 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
     datasets = []
     for path in paths:
         miner = Miner(config=config, dataset_path=path, collect_chunks=False)
+        miner.include_sgs = None
         miner.exclude_nonstandard_settings = False
         miner.exclude_crystal_systems = None
         miner.exclude_polymorphs = False
         miner.exclude_missing_r_factor = False
         miner.exclude_blind_test_targets = False
         dataset_i = miner.load_for_modelling(save_dataset=False, return_dataset=True)
-        if config.test_mode:
-            np.random.seed(config.seeds.dataset)
-            randinds = np.random.choice(len(dataset_i), min(len(dataset_i), 500), replace=False)
-            dataset_i = dataset_i.loc[randinds]
+        # if config.test_mode:
+        #     np.random.seed(config.seeds.dataset)
+        #     randinds = np.random.choice(len(dataset_i), min(len(dataset_i), 500), replace=False)
+        #     dataset_i = dataset_i.loc[randinds]
         datasets.append(dataset_i)
         del miner, dataset_i
 

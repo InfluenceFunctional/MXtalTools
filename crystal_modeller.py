@@ -13,6 +13,7 @@ from scipy.stats import linregress
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.colors import n_colors
 from scipy.stats import gaussian_kde
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -34,7 +35,7 @@ from models.generator_models import crystal_generator
 from models.discriminator_models import crystal_discriminator
 from models.regression_models import molecule_regressor
 from models.torch_models import independent_gaussian_model
-from sampling.STUN_MC import mcmcSampler
+from sampling.MCMC_Sampling import mcmcSampler
 
 
 class Modeller():
@@ -85,6 +86,7 @@ class Modeller():
             self.point_groups = {}
             self.lattice_type = {}
             self.space_groups = {}
+            self.space_group_indices = {}
             for i in tqdm.tqdm(range(1, 231)):
                 sym_group = symmetry.Group(i)
                 general_position_syms = sym_group.wyckoffs_organized[0][0]
@@ -92,12 +94,14 @@ class Modeller():
                 self.point_groups[i] = sym_group.point_group
                 self.lattice_type[i] = sym_group.lattice_type
                 self.space_groups[i] = sym_group.symbol
+                self.space_group_indices[sym_group.symbol] = i
 
             self.sym_info = {}
             self.sym_info['sym_ops'] = self.sym_ops
             self.sym_info['point_groups'] = self.point_groups
             self.sym_info['lattice_type'] = self.lattice_type
             self.sym_info['space_groups'] = self.space_groups
+            self.sym_info['space_group_indices'] = self.space_group_indices
             np.save('symmetry_info', self.sym_info)
 
         # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
@@ -930,15 +934,15 @@ class Modeller():
                    vdw_overlap(self.vdw_radii, crystaldata=real_supercell_data), \
                    vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data)
 
-    def get_generator_samples(self, data, generator):
-        '''
-        conformer orentation setting
-        '''
-        if self.config.generator.canonical_conformer_orientation == 'standardized':
+    def set_molecule_alignment(self,data, right_handed = True, mode_override = None):
+        if mode_override is not None:
+            mode = mode_override
+        else:
+            mode = self.config.generator.canonical_conformer_orientation
+        if mode == 'standardized':
             data = align_crystaldata_to_principal_axes(data)
-        elif self.config.generator.canonical_conformer_orientation == 'random':
+        elif mode == 'random':
             data = random_crystaldata_alignment(data)
-            right_handed = True
             if right_handed:
                 coords_list = [data.pos[data.ptr[i]:data.ptr[i + 1]] for i in range(data.num_graphs)]
                 coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
@@ -947,6 +951,14 @@ class Modeller():
                 for ind, hand in enumerate(handedness):
                     if hand == -1:
                         data.pos[data.batch == ind] = -data.pos[data.batch == ind]  # invert
+
+        return data
+
+    def get_generator_samples(self, data, generator):
+        '''
+        conformer orentation setting
+        '''
+        data = self.set_molecule_alignment(data)
 
         '''
         noise injection
@@ -958,7 +970,7 @@ class Modeller():
         update symmetry information
         '''
         if self.config.generate_sgs is not None:
-            override_sg_ind = self.supercell_builder.symmetries_dict['sg_ind_dict'][self.config.generate_sgs]
+            override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.config.generate_sgs) + 1  # indexing from 0
             sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i in range(data.num_graphs)]
             data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data, self.supercell_builder.symmetries_dict, sym_ops_list)  # todo update the way we handle this
 
@@ -1068,13 +1080,13 @@ class Modeller():
         self.crystal_packing_ind = self.config.dataDims['tracking features dict'].index('crystal packing coefficient')
         self.crystal_density_ind = self.config.dataDims['tracking features dict'].index('crystal calculated density')
         self.mol_size_ind = self.config.dataDims['tracking features dict'].index('molecule num atoms')
-        self.sg_ind_dict = {thing[14:]: ind + self.config.dataDims['num atomwise features'] for ind, thing in enumerate(self.config.dataDims['molecule features']) if 'sg is' in thing}
+        self.sg_feature_ind_dict = {thing[14:]: ind + self.config.dataDims['num atomwise features'] for ind, thing in enumerate(self.config.dataDims['molecule features']) if 'sg is' in thing}
         self.crysys_ind_dict = {thing[18:]: ind + self.config.dataDims['num atomwise features'] for ind, thing in enumerate(self.config.dataDims['molecule features']) if 'crystal system is' in thing}
 
         '''
         add symmetry element indices to symmetry dict
         '''
-        self.sym_info['sg_ind_dict'] = self.sg_ind_dict
+        self.sym_info['sg_feature_ind_dict'] = self.sg_feature_ind_dict
         self.sym_info['crysys_ind_dict'] = self.crysys_ind_dict
 
         ''' 
@@ -1117,13 +1129,11 @@ class Modeller():
         #
         # single_mol_data = extra_test_loader.dataset[extra_test_loader.csd_identifier.index(blind_test_identifiers[-1])]
 
-        single_mol_data = extra_test_loader.dataset[0]
-        collater = Collater(None, None)
-        single_mol_data = collater([single_mol_data for n in range(self.config.final_batch_size)])
+
 
         return extra_test_loader, generator, discriminator, \
                g_optimizer, g_schedulers, d_optimizer, d_schedulers, \
-               params1, params2, single_mol_data
+               params1, params2
 
     def model_sampling(self):
         '''
@@ -1132,48 +1142,165 @@ class Modeller():
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username, tags=[self.config.wandb.experiment_tag]):
             extra_test_loader, generator, discriminator, \
             g_optimizer, g_schedulers, d_optimizer, d_schedulers, \
-            params1, params2, single_mol_data = self.sampling_prep()
-
-            randn_samples = self.randn_generator.forward(self.config.final_batch_size, single_mol_data)
-            gen_samples = generator.forward(n_samples=single_mol_data.num_graphs,
-                                            conditions=single_mol_data.cuda()
-                                            )
+            params1, params2 = self.sampling_prep()
 
             generator.eval()
             discriminator.eval()
-            with torch.no_grad():
-                smc_sampler = mcmcSampler(
-                    gammas=np.logspace(-4, 0, self.config.final_batch_size),
-                    seedInd=0,
-                    acceptance_mode=None,
-                    debug=True,
-                    init_temp=.001,
-                    generator=generator,
-                    move_size=self.config.sample_move_size,
-                    supercell_size=self.config.supercell_size,
-                    graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
-                    vdw_radii=self.vdw_radii,
-                    preset_minimum=None,
-                    spacegroup_to_search=self.config.generate_sgs,
-                    new_minimum_patience=25,
-                    reset_patience=50,
-                )
 
-                '''
-                run sampling
-                '''
-                sampling_dict = smc_sampler(discriminator, self.supercell_builder,
-                                            single_mol_data, gen_samples.cpu().detach().numpy(), self.config.sample_steps)
+            smc_sampler = mcmcSampler(
+                gammas=np.logspace(-4, 0, self.config.final_batch_size),
+                seedInd=0,
+                STUN_mode=False,
+                debug=True,
+                init_adaptive_step_size=0.05,
+                global_temperature = 0.01, # essentially only allow downward moves
+                generator=generator,
+                move_size=self.config.sample_move_size,
+                supercell_size=self.config.supercell_size,
+                graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
+                vdw_radii=self.vdw_radii,
+                preset_minimum=None,
+                spacegroup_to_search='P-1', #self.config.generate_sgs,
+                new_minimum_patience=10,
+                reset_patience=100,
+                optimizer = g_optimizer,
+                gd_sample_proportion = 1,
+                conformer_orientation = self.config.generator.canonical_conformer_orientation,
+            )
+
+            '''
+            run sampling
+            '''
+            single_mol_data_0 = extra_test_loader.dataset[0]
+            collater = Collater(None, None)
+            single_mol_data = collater([single_mol_data_0 for n in range(self.config.final_batch_size)])
+            single_mol_data = self.set_molecule_alignment(single_mol_data, mode_override = 'random') # take all the same conformers for one run
+            override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
+            sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(single_mol_data.x.device) for i in range(single_mol_data.num_graphs)]
+            single_mol_data = override_sg_info('P-1', self.supercell_builder.dataDims, single_mol_data, self.supercell_builder.symmetries_dict, sym_ops_list)
+
+            sampling_dict = smc_sampler(discriminator, self.supercell_builder,
+                                        single_mol_data.clone().cuda(), None,
+                                        self.config.sample_steps, optimizer = d_optimizer)
+
+
+            '''
+            reporting
+            '''
+
+            layout = go.Layout(
+                margin=go.layout.Margin(
+                    l=0,  # left margin
+                    r=0,  # right margin
+                    b=0,  # bottom margin
+                    t=40,  # top margin
+                )
+            )
+            n_samples = len(sampling_dict['scores'])
+            num_iters = sampling_dict['scores'].shape[1]
+
+
+            # todo score known polymorphs for comparison
+
+            # '''
+            # telemetry summary
+            # '''
+            # fig = make_subplots(cols=2, rows=2, subplot_titles=['Best Model Score', 'Min vdw Score', 'Mean Acceptance Rate', 'Step Size'])
+            # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.amax(sampling_dict['scores'], axis=0)), col=1, row=1)
+            # # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['stun score'], axis=0)), col=2, row=1)
+            # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.amin(sampling_dict['vdw penalties'], axis=0)), col=2, row=1)
+            # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['acceptance ratio'], axis=0)), col=1, row=2)
+            # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(np.log10(sampling_dict['step size']), axis=0)), col=2, row=2)
+            # fig.update_layout(showlegend=False)
+            # # fig.update_yaxes(range=[-1, 1], row=1, col=2)
+            # # fig.update_yaxes(range=[-2, 0], row=1, col=2)
+            # fig.update_yaxes(range=[-16, 16], row=1, col=1)
+            # fig.layout.margin = layout.margin
+            # # fig.write_image('../paper1_figs/sampling_telemetry_summary.png')
+            # # wandb.log({'Sampling Telemetry Summary': fig})
+            # if self.config.machine == 'local':
+            #     import plotly.io as pio
+            #     pio.renderers.default = 'browser'
+            #     fig.show()
+
+            '''
+            full telemetry
+            '''
+            colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', self.config.final_batch_size, colortype='rgb')
+            fig = make_subplots(cols=2, rows=2, subplot_titles=['Model Score', 'vdw Score', 'Acceptance Rate', 'step size'])
+            for i in range(n_samples):
+                opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']), a_min=0.1, a_max=1)
+                fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['scores'][i], opacity=opacity, line_color = colors[i],name=f'run_{i}'),
+                              col=1, row=1)
+                fig.add_trace(go.Scattergl(x=smc_sampler.resampled_state_record[i], y=sampling_dict['scores'][i][smc_sampler.resampled_state_record[i]],
+                                           mode='markers',line_color = colors[i], marker=dict(size=10)),
+                              col=1,row=1)
+            for i in range(n_samples):
+                opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
+                                  a_min=0.1, a_max=1)
+                fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['vdw penalties'][i], opacity=opacity, line_color = colors[i],name=f'run_{i}'),
+                              col=2, row=1)
+            for i in range(n_samples):
+                opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
+                                  a_min=0.1, a_max=1)
+                fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity, line_color = colors[i],name=f'run_{i}'),
+                              col=1, row=2)
+            for i in range(n_samples):
+                opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
+                                  a_min=0.1, a_max=1)
+                fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['step size'][i]), opacity=opacity, line_color = colors[i],name=f'run_{i}'),
+                              col=2, row=2)
+            fig.update_layout(showlegend=True)
+            # fig.update_yaxes(range=[0, 1], row=1, col=2)
+            fig.layout.margin = layout.margin
+            # fig.write_image('../paper1_figs/sampling_telemetry.png')
+            # wandb.log({'Sampling Telemetry': fig})
+            if self.config.machine == 'local':
+                import plotly.io as pio
+                pio.renderers.default = 'browser'
+                fig.show()
+
+            # todo sample orientations are not standardized in the same basis if the initial orientation is random
+            # must either redo analysis after each cell construction or do analysis in some absolute bases i.e. RDF
+            all_samples = torch.tensor(sampling_dict['samples'].reshape(12, self.config.final_batch_size * self.config.sample_steps).T)
+            all_scores = torch.tensor(sampling_dict['scores'].reshape(self.config.final_batch_size * self.config.sample_steps))
+            all_vdws = torch.tensor(sampling_dict['vdw penalties'].reshape(self.config.final_batch_size * self.config.sample_steps))
+            combo_score = torch.exp(-all_vdws) * all_scores
+            sort_inds = torch.argsort(torch.tensor(all_scores))#torch.argsort(torch.tensor(all_scores))
+            best_samples = all_samples[sort_inds[-100:]]
+            dists = torch.cdist(best_samples, best_samples)
+            single_mol_data.pos = torch.tensor(single_mol_data.pos, dtype=torch.float32)
+            single_mol_data.T_fc = torch.tensor(single_mol_data.T_fc, dtype=torch.float32)
+
+
+            good_cells, _, _ = self.supercell_builder.build_supercells(single_mol_data, torch.tensor(best_samples[-single_mol_data.num_graphs:], device='cuda', dtype=torch.float32),
+                                                                 supercell_size=self.config.supercell_size,
+                                                                 graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
+                                                                 override_sg='P-1',
+                                                                 align_molecules=False,)
+
+            mols = [ase_mol_from_crystaldata(good_cells, ii, highlight_aux=True, exclusion_level='distance', inclusion_distance=40) for ii in range(good_cells.num_graphs)]
+            view(mols)
+
+            '''
+            single_mol_data_0 = extra_test_loader.dataset[0]
+            big_single_mol_data = collater([single_mol_data_0 for n in range(len(all_samples))]).cuda()
+            override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
+            sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
+            big_single_mol_data = override_sg_info('P-1', self.supercell_builder.dataDims, big_single_mol_data, self.supercell_builder.symmetries_dict, sym_ops_list)
+            processed_cell_params = torch.cat(self.supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda()),dim=-1).T
+            del big_single_mol_data
+            
+            plt.figure(2)
+            plt.clf()  # parameter evolution
+            for i in range(12):
+                plt.subplot(4, 3, i + 1)
+                plt.plot(processed_cell_params.reshape(12, 10, 1000)[i].T.cpu().detach().numpy(), '-')
+            
+            '''
+            aa = 1
 
             # np.save(f'../sampling_output_run_{self.config.run_num}', sampling_dict)
-
-            # best_inds = np.argsort(sampling_dict['scores'].flatten())
-            # best_samples = sampling_dict['samples'].reshape(12, n_samples * num_iters)[:, best_inds[:n_samples]].T
-            #
-            # best_supercells, _, _ = self.supercell_builder.build_supercells(single_mol_data.clone(), torch.Tensor(best_samples).cuda(),
-            #                                                                 supercell_size=1, graph_convolution_cutoff=7)
-            #
-            # best_rdfs, rr = crystal_rdf(best_supercells, rrange=[0, 10], bins=100, intermolecular=True)
             # self.report_sampling(sampling_dict)
 
     def generate_discriminator_negatives(self, epoch_stats_dict, config, data, generator, i):
@@ -1592,23 +1719,45 @@ class Modeller():
         '''
         telemetry summary
         '''
-        fig = make_subplots(cols=3, rows=2, subplot_titles=['Best Model Score', 'Average STUN Score', 'Min vdw Score', 'Mean Acceptance Rate', 'Mean Temperature'])
+        fig = make_subplots(cols=2, rows=2, subplot_titles=['Best Model Score','Min vdw Score', 'Mean Acceptance Rate', 'Mean Temperature'])
         fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-np.amin(sampling_dict['scores'], axis=0)), col=1, row=1)
-        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['stun score'], axis=0)), col=2, row=1)
-        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-np.amin(sampling_dict['vdw penalties'], axis=0)), col=3, row=1)
+        #fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['stun score'], axis=0)), col=2, row=1)
+        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-np.amin(sampling_dict['vdw penalties'], axis=0)), col=2, row=1)
         fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['acceptance ratio'], axis=0)), col=1, row=2)
-        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(np.log10(sampling_dict['temperature']), axis=0)), col=2, row=2)
+        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(np.log10(sampling_dict['step size']), axis=0)), col=2, row=2)
         fig.update_layout(showlegend=False)
-        fig.update_yaxes(range=[-1, 1], row=1, col=2)
-        fig.update_yaxes(range=[-2, 0], row=1, col=3)
+        #fig.update_yaxes(range=[-1, 1], row=1, col=2)
+        #fig.update_yaxes(range=[-2, 0], row=1, col=2)
         fig.update_yaxes(range=[-16, 16], row=1, col=1)
         fig.layout.margin = layout.margin
         # fig.write_image('../paper1_figs/sampling_telemetry_summary.png')
-        wandb.log({'Sampling Telemetry Summary': fig})
+        #wandb.log({'Sampling Telemetry Summary': fig})
         if self.config.machine == 'local':
             import plotly.io as pio
             pio.renderers.default = 'browser'
             fig.show()
+
+        '''
+        full telemetry
+        '''
+        fig = make_subplots(cols=2, rows=2, subplot_titles=['Model Score','vdw Score', 'Acceptance Rate', 'step size'])
+        for i in range(n_samples):
+            opacity = np.clip(1 - np.abs(np.amin(sampling_dict['scores'][i]) - np.amin(sampling_dict['scores'])) / np.amin(sampling_dict['scores']), a_min = 0.1, a_max = 1)
+            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['scores'][i], opacity = opacity), col=1, row=1)
+            #fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['stun score'][i], opacity = opacity), col=2, row=1)
+            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['vdw penalties'][i], opacity = opacity), col=2, row=1)
+            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity), col=1, row=2)
+            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['step size'][i]), opacity= opacity), col=2, row=2)
+        fig.update_layout(showlegend=False)
+        #fig.update_yaxes(range=[0, 1], row=1, col=2)
+        fig.layout.margin = layout.margin
+        #fig.write_image('../paper1_figs/sampling_telemetry.png')
+        #wandb.log({'Sampling Telemetry': fig})
+        if self.config.machine == 'local':
+            import plotly.io as pio
+            pio.renderers.default = 'browser'
+            fig.show()
+
 
         # crystal_identifier = test_epoch_stats_dict['identifiers'][sample_ind]
         #
@@ -1666,28 +1815,12 @@ class Modeller():
         #     pio.renderers.default = 'browser'
         #     fig.show()
 
-        '''
-        full telemetry
-        '''
-        # fig = make_subplots(cols=3, rows=2, subplot_titles=['Model Score', 'STUN Score','vdw Score', 'Acceptance Rate', 'Temperature'])
-        # for i in range(n_samples):
-        #     opacity = np.clip(1 - np.abs(np.amin(sampling_dict['scores'][i]) - np.amin(sampling_dict['scores'])) / np.amin(sampling_dict['scores']), a_min = 0.1, a_max = 1)
-        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['scores'][i], opacity = opacity), col=1, row=1)
-        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['stun score'][i], opacity = opacity), col=2, row=1)
-        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['vdw penalties'][i], opacity = opacity), col=3, row=1)
-        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity), col=1, row=2)
-        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['temperature'][i]), opacity= opacity), col=2, row=2)
-        # fig.update_layout(showlegend=False)
-        # fig.update_yaxes(range=[0, 1], row=1, col=2)
-        # fig.layout.margin = layout.margin
-        # fig.write_image('../paper1_figs/sampling_telemetry.png')
-        # wandb.log({'Sampling Telemetry': fig})
-        # if self.config.machine == 'local':
-        #     import plotly.io as pio
-        #     pio.renderers.default = 'browser'
-        #     fig.show()
-        #
 
+
+
+        '''
+        some distance work
+        '''
         # supercell_data, generated_cell_volumes, overlaps_list = \
         #     self.supercell_builder.build_supercells(single_mol_data.clone().to(init_samples.device), init_samples,
         #                                             self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff,
@@ -1707,8 +1840,9 @@ class Modeller():
         #     for j in range(i, supercell_data.num_graphs):
         #         dists2[i, j] = compute_rdf_distance(rdfs_list2[i], rdfs_list2[j], rr)
 
-        # agglomerative clustering and dendrogram
-        # setting distance_threshold=0 ensures we compute the full tree.
+        ''' agglomerative clustering and dendrogram
+        setting distance_threshold=0 ensures we compute the full tree.
+        '''
         # from sklear.cluster import AgglomerativeClustering
         # plt.clf()
         # model = AgglomerativeClustering(distance_threshold=0, linkage="average", affinity='precomputed', n_clusters=None)

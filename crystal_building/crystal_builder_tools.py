@@ -124,8 +124,8 @@ def coor_trans_matrix(cell_lengths, cell_angles):
     vol = torch.sign(val) * torch.prod(cell_lengths, dim=1) * torch.sqrt(torch.abs(val))  # technically a signed quanitity
 
     ''' Setting the transformation matrix '''
-    T_fc_list = torch.zeros((len(cell_lengths), 3, 3), device = cell_lengths.device)
-    T_cf_list = torch.zeros((len(cell_lengths), 3, 3), device = cell_lengths.device)
+    T_fc_list = torch.zeros((len(cell_lengths), 3, 3), device = cell_lengths.device, dtype = cell_lengths.dtype)
+    T_cf_list = torch.zeros((len(cell_lengths), 3, 3), device = cell_lengths.device, dtype = cell_lengths.dtype)
 
     ''' Converting from cartesian to fractional '''
     T_cf_list[:, 0, 0] = 1.0 / cell_lengths[:, 0]
@@ -275,18 +275,12 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
         mol_position = mol_position * stds[6:9] + means[6:9]
         mol_rotation = mol_rotation * stds[9:12] + means[9:12]
 
-    tanh_cutoff = 9
     # TODO write a bounding function instead of all this ad-hoc stuff
 
     cell_lengths = F.softplus(cell_lengths - 0.1) + 0.1  # enforces positive nonzero
-    # mix of tanh and hardtanh allows us to get close to the limits, but still with a finite gradient outside the range
 
     cell_angles = enforce_1d_bound(cell_angles, x_span = torch.pi/2 * 0.8,x_center = torch.pi/2, mode='soft') # prevent too-skinny cells
     mol_position = enforce_1d_bound(mol_position, 0.5, 0.5, mode='soft')
-    # norm1 = torch.pi / 2
-    #cell_angles = F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1#(tanh_cutoff*(F.hardtanh((cell_angles - norm1) / norm1) * norm1 + norm1) + (F.tanh((cell_angles - norm1) / norm1) * norm1 + norm1)) / (tanh_cutoff + 1)  # squeeze to -pi/2...pi/2 then re-add pi/2 to make the range 0-pi
-    #norm2 = 0.5
-    #mol_position = F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2#(tanh_cutoff*(F.hardtanh((mol_position - norm2) / norm2) * norm2 + norm2) + (F.tanh((mol_position - norm2) / norm2) * norm2 + norm2)) / (tanh_cutoff + 1)  # soft squeeze to -0.5 to 0.5, then re-add 0.5 to make the range 0-1
 
     if (rotation_type == 'fractional rotvec') or return_transforms:
         pass  # T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(cell_lengths, cell_angles)
@@ -297,14 +291,9 @@ def clean_cell_output(cell_lengths, cell_angles, mol_position, mol_rotation, lat
     elif rotation_type == 'cartesian rotvec':
         pass
 
-
-    #norm3 = torch.pi
-    #normed_norms = F.hardtanh((norms - norm3) / norm3) * norm3 + norm3#(tanh_cutoff*(F.hardtanh((norms - norm3) / norm3) * norm3 + norm3) + (F.tanh((norms - norm3) / norm3) * norm3 + norm3)) / (tanh_cutoff + 1) #F.tanh(norms / torch.pi) * torch.pi  # the norm should be between -pi to pi
-    # norm rotation vectors by their length (rotvec length determines rotation angle
     norms = torch.linalg.norm(mol_rotation, dim=1)
     normed_norms = enforce_1d_bound(norms, torch.pi, torch.pi, mode='soft')
     mol_rotation = mol_rotation / norms[:, None] * normed_norms[:, None]  # renormalize
-
 
     for i in range(len(cell_lengths)):
         if enforce_crystal_system:
@@ -580,8 +569,6 @@ def random_crystaldata_alignment(data):
     coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
 
     rotation_matrix_list = torch.tensor(Rotation.random(num=data.num_graphs).as_matrix(), device = data.x.device,dtype=data.pos.dtype)
-    #transformed_coords = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)]
-
     data.pos = torch.cat([torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(data.num_graphs)])
 
     return data
