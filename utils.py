@@ -23,10 +23,10 @@ from scipy.spatial.transform import Rotation
 from scipy.cluster.hierarchy import dendrogram
 from torch_scatter import scatter
 
-
 '''
 general utilities
 '''
+
 
 def plot_dendrogram(model, **kwargs):
     # Create linkage matrix and then plot the dendrogram
@@ -1880,17 +1880,16 @@ def delete_from_dataframe(df, inds):
 
 
 # @nb.jit(nopython=True)
-def compute_principal_axes_np(coords, masses=None):
-    if masses is None:
-        masses = np.ones(len(coords))
-    points = (coords - coords.T.dot(masses) / np.sum(masses))
+def compute_principal_axes_np(coords):
+    points = coords - coords.mean(0)
+
     x, y, z = points.T
-    Ixx = np.sum(masses * (y ** 2 + z ** 2))
-    Iyy = np.sum(masses * (x ** 2 + z ** 2))
-    Izz = np.sum(masses * (x ** 2 + y ** 2))
-    Ixy = -np.sum(masses * x * y)
-    Iyz = -np.sum(masses * y * z)
-    Ixz = -np.sum(masses * x * z)
+    Ixx = np.sum((y ** 2 + z ** 2))
+    Iyy = np.sum((x ** 2 + z ** 2))
+    Izz = np.sum((x ** 2 + y ** 2))
+    Ixy = -np.sum(x * y)
+    Iyz = -np.sum(y * z)
+    Ixz = -np.sum(x * z)
     I = np.array([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]])  # inertial tensor
     Ipm, Ip = np.linalg.eig(I)  # principal inertial tensor
     Ipm, Ip = np.real(Ipm), np.real(Ip)
@@ -1906,41 +1905,37 @@ def compute_principal_axes_np(coords, masses=None):
     direction = points[max_ind]
     direction = np.divide(direction, np.linalg.norm(direction))
     overlaps = Ip.dot(direction)  # check if the principal components point towards or away from the CoG
-    # if any(overlaps == 0):  # exactly zero is invalid
-    #    overlaps[overlaps == 0] = 1e-9
-    if np.any(np.abs(overlaps) < 1e-8):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+
+    Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
+    if np.any(np.abs(overlaps) < 1e-3):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
         # align the 'good' vectors
-        Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
-        fix_ind = np.argmin(np.abs(overlaps))
-        other_vectors = np.delete(np.arange(3), fix_ind)
-        check_direction = np.cross(Ip[other_vectors[0]], Ip[other_vectors[1]])  # todo definition of 'right handed' changes depending on which vector has no overlap
-        # align the 'bad' vector to be right handed w.r.t. the others
-        Ip[fix_ind] = check_direction  # Ip[fix_ind] * np.sign(np.dot(check_direction, Ip[fix_ind]))
-    else:
-        Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
+        fix_ind = np.argmin(np.abs(overlaps)) # vector with vanishing overlap
+        if compute_Ip_handedness(Ip) < 0: # make sure result is right handed
+            Ip[fix_ind] = -Ip[fix_ind]
 
     return Ip, Ipm, I
 
-def compute_inertial_tensor(x,y,z):
+def compute_inertial_tensor(x, y, z):
     Ixy = -torch.sum(x * y)
     Iyz = -torch.sum(y * z)
     Ixz = -torch.sum(x * z)
-    #I = torch.tensor([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]],device=points.device)  # inertial tensor
+    # I = torch.tensor([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]],device=points.device)  # inertial tensor
     I = torch.tensor(
         [[torch.sum((y ** 2 + z ** 2)), Ixy, Ixz],
          [Ixy, torch.sum((x ** 2 + z ** 2)), Iyz],
-         [Ixz, Iyz, torch.sum((x ** 2 + y ** 2))]],device=x.device)  # inertial tensor
+         [Ixz, Iyz, torch.sum((x ** 2 + y ** 2))]], device=x.device)  # inertial tensor
 
     Ipm, Ip = torch.linalg.eig(I)  # principal inertial tensor
 
     return I, Ip, Ipm
+
 
 def single_molecule_principal_axes(coords, masses=None, return_direction=False):
     if masses is not None:
         print('inertial tensor is purely geometric!')
     x, y, z = coords.T
 
-    I, Ip, Ipm = compute_inertial_tensor(x,y,z)
+    I, Ip, Ipm = compute_inertial_tensor(x, y, z)
 
     Ipm, Ip = torch.real(Ipm), torch.real(Ip)
     sort_inds = torch.argsort(Ipm)
@@ -1973,8 +1968,10 @@ def single_molecule_principal_axes(coords, masses=None, return_direction=False):
     else:
         return Ip, Ipm, I
 
+
 def batch_molecule_principal_axes(coords_list):
-    all_coords = torch.cat(coords_list)
+    coords_list_centred = [coord - coord.mean(0) for coord in coords_list]
+    all_coords = torch.cat(coords_list_centred)
 
     ptrs = [0]
     ptrs.extend([len(coord) for coord in coords_list])
@@ -2002,24 +1999,20 @@ def batch_molecule_principal_axes(coords_list):
     max_ind = torch.stack([torch.argmax(dists[batch == i]) + ptrs[i] for i in range(len(ptrs) - 1)])  # find furthest atom in each mol
     direction = all_coords[max_ind]
     overlaps = torch.einsum('nij,nj->ni', (Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
-    overlaps[overlaps == 0] = 1e-9  # can't have exactly zero overlap
 
     Ip_fin = torch.zeros_like(Ip)
     for ii, Ip_i in enumerate(Ip):
-        if any(torch.abs(overlaps[ii]) < 1e-8):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
-            # align the 'good' vectors
-            Ip_i = (Ip_i.T * torch.sign(overlaps[ii])).T  # if the vectors have negative overlap, flip the direction
-            fix_ind = torch.argmin(torch.abs(overlaps[ii]))
-            other_vectors = np.delete(np.arange(3), fix_ind)
-            check_direction = torch.cross(Ip_i[other_vectors[0]], Ip_i[other_vectors[1]])
-            # align the 'bad' vector
-            Ip_i[fix_ind] = check_direction  # Ip[fix_ind] * torch.sign(torch.dot(check_direction, Ip[fix_ind]))
-            Ip_fin[ii] = Ip_i
-        else:
-            Ip_i = (Ip_i.T * torch.sign(overlaps[ii])).T  # if the vectors have negative overlap, flip the direction
-            Ip_fin[ii] = Ip_i
+        Ip_i = (Ip_i.T * torch.sign(overlaps[ii])).T  # if the vectors have negative overlap, flip the direction
+        if any(torch.abs(overlaps[ii]) < 1e-3):  # if any overlaps are vanishing (up to 32 bit precision), determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+            # enforce right-handedness in the free vector
+            fix_ind = torch.argmin(torch.abs(overlaps[ii])) # vector with vanishing overlap
+            if compute_Ip_handedness(Ip_i) < 0: # make sure result is right handed
+                Ip_i[fix_ind] = -Ip_i[fix_ind]
+
+        Ip_fin[ii] = Ip_i
 
     return Ip_fin, Ipm, I
+
 
 def coor_trans_matrix_torch(opt, v, a, return_vol=False):
     ''' Calculate cos and sin of cell angles '''
@@ -2227,6 +2220,7 @@ def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None,
 def torch_ptp(tensor):
     return torch.max(tensor) - torch.min(tensor)
 
+
 #
 # def ref_cell_to_pymatgen_istruc(data, i):
 #     pymat_struct = structure.IStructure(species=data.x[data.batch == i, 0].repeat(data.Z[i]),
@@ -2352,14 +2346,14 @@ def compute_rdf_distance(target_rdf, sample_rdf, rr):
 
     nonzero_element_pairs = torch.sum(torch.sum(target_rdf + sample_rdf, axis=1) > 0)
 
-    target_pdf = torch.nan_to_num(target_rdf / target_rdf.sum(1)[:,None])
-    sample_pdf = torch.nan_to_num(sample_rdf / sample_rdf.sum(1)[:,None])
+    target_pdf = torch.nan_to_num(target_rdf / target_rdf.sum(1)[:, None])
+    sample_pdf = torch.nan_to_num(sample_rdf / sample_rdf.sum(1)[:, None])
 
     target_cdf = torch.cumsum(target_pdf, axis=-1)
     sample_cdf = torch.cumsum(sample_pdf, axis=-1)
 
     # norm distance according to bin width
-    emd = torch.sum(torch.abs(target_cdf - sample_cdf), axis=(0,1)) * (rr[1]-rr[0])
+    emd = torch.sum(torch.abs(target_cdf - sample_cdf), axis=(0, 1)) * (rr[1] - rr[0])
 
     return emd / nonzero_element_pairs  # manual normalizaion elementwise
 
@@ -2383,28 +2377,70 @@ def histogram_overlap(d1, d2):
     return np.sum(np.minimum(d1, d2)) / np.average((d1.sum(), d2.sum()))
 
 
-def softmax_and_score(score, temperature=1):
-    if isinstance(score, np.ndarray):
-        score = np_softmax(score.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
-        tanned = np.tan((score - 0.5) * np.pi)
-        return (np.sign(tanned) * np.log10(np.abs(tanned)))
+def softmax_and_score(raw_classwise_output, temperature=1, old_method = False):
+    '''
+    toy around
+    plt.clf()
+    xx = np.concatenate((-np.logspace(2,-4,1001),np.logspace(-4,2,1001)))
+    raw_output = np.concatenate((np.ones_like(xx)[:,None],xx[:,None]),axis=-1)
+    so = np_softmax(raw_output)[:,1]
+    score = softmax_and_score(raw_output)
 
-    elif torch.is_tensor(score):
-        score = F.softmax(score / temperature,dim=-1)[:,1]
-        tanned = torch.tan((score - 0.5) * torch.pi)
-        return (torch.sign(tanned) * torch.log10(torch.abs(tanned)))
+
+    Parameters
+    ----------
+    raw_classwise_output
+    temperature
+    old_method
+
+    Returns
+    -------
+
+    '''
+    if not old_method: # turns out you get almost identically the same answer by simply dividing the activations, much simpler
+        if isinstance(raw_classwise_output, np.ndarray):
+            soft_activation = np_softmax(raw_classwise_output)
+            return np.log10(soft_activation[:,1]/soft_activation[:,0])
+        elif torch.is_tensor(raw_classwise_output):
+            soft_activation = F.softmax(raw_classwise_output,dim=-1)
+            return torch.log10(soft_activation[:,1]/soft_activation[:,0])
+
+    else:
+        if isinstance(raw_classwise_output, np.ndarray):
+            softmax_output = np_softmax(raw_classwise_output.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
+            tanned = np.tan((softmax_output - 0.5) * np.pi)
+            sign = (raw_classwise_output[:,1] > raw_classwise_output[:,0]) * 2 - 1 # values very close to zero can realize a sign error
+            return (sign * np.log10(1+np.abs(tanned))) # new factor of 1+ conditions the function about zero
+
+        elif torch.is_tensor(raw_classwise_output):
+            softmax_output = F.softmax(raw_classwise_output / temperature, dim=-1)[:, 1]
+            tanned = torch.tan((softmax_output - 0.5) * torch.pi)
+            sign = (raw_classwise_output[:,1] > raw_classwise_output[:,0]) * 2 - 1 # values very close to zero can realize a sign error
+            return (sign * torch.log10(1+torch.abs(tanned)))
+    # else:
+    #     temperature = 15 # this function is very close to the original without the discontinuity, though it tapers near the extremes
+    #     range = 15.88 # extreme limit of original version
+    #     if isinstance(raw_classwise_output, np.ndarray):
+    #         softmax_output = np_softmax(raw_classwise_output.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
+    #         return (softmax_output - 0.5) * 2 # range -1 to 1
+    #
+    #     elif torch.is_tensor(raw_classwise_output):
+    #         softmax_output = F.softmax(raw_classwise_output / temperature, dim=-1)[:, 1]
+    #         return (softmax_output - 0.5) * 2
+
 
 def norm_scores(score, tracking_features, dataDims):
     # norm the incoming score according to its respective molecular surface area (assuming sphere)
     # also correct by spherical defect (non-crystal factor)
-    volume = tracking_features[:,dataDims['tracking features dict'].index('molecule volume')]
-    #radius = (3/4/np.pi * volume)**(1/3)
-    #surface_area = 4*np.pi*radius**2
-    #eccentricity = tracking_features[:,config.dataDims['tracking features dict'].index('molecule eccentricity')]
-    #surface_area = tracking_features[:,config.dataDims['tracking features dict'].index('molecule freeSASA')]
+    volume = tracking_features[:, dataDims['tracking features dict'].index('molecule volume')]
+    # radius = (3/4/np.pi * volume)**(1/3)
+    # surface_area = 4*np.pi*radius**2
+    # eccentricity = tracking_features[:,config.dataDims['tracking features dict'].index('molecule eccentricity')]
+    # surface_area = tracking_features[:,config.dataDims['tracking features dict'].index('molecule freeSASA')]
     return score / volume
 
-def enforce_1d_bound(x, x_span, x_center, mode='soft'): # soft or hard
+
+def enforce_1d_bound(x, x_span, x_center, mode='soft'):  # soft or hard
     '''
     constrains function to range x_center plus/minus x_span
     Parameters
@@ -2419,13 +2455,21 @@ def enforce_1d_bound(x, x_span, x_center, mode='soft'): # soft or hard
 
     '''
     if mode == 'soft':
-        bounded = F.tanh((x-x_center) / x_span) * x_span + x_center
+        bounded = F.tanh((x - x_center) / x_span) * x_span + x_center
     elif mode == 'hard':
-        bounded = F.hardtanh((x-x_center) / x_span) * x_span + x_center
+        bounded = F.hardtanh((x - x_center) / x_span) * x_span + x_center
     else:
         raise ValueError
 
     return bounded
+
+def undo_1d_bound(x, x_span, x_center, mode = 'soft'):
+    # todo: hard mode
+
+    if True:
+        return x_span * torch.atanh((x-x_center)/x_span) + x_center
+
+
 
 def reload_model(model, optimizer, path):
     checkpoint = torch.load(path)
@@ -2440,7 +2484,7 @@ def reload_model(model, optimizer, path):
 
 
 def compute_num_h_bonds(supercell_data, dataDims, i):
-    batch_inds = torch.arange(supercell_data.ptr[i], supercell_data.ptr[i + 1],device=supercell_data.x.device)
+    batch_inds = torch.arange(supercell_data.ptr[i], supercell_data.ptr[i + 1], device=supercell_data.x.device)
 
     # find the canonical conformers
     canonical_conformers_inds = torch.where(supercell_data.aux_ind[batch_inds] == 0)[0]
@@ -2454,6 +2498,7 @@ def compute_num_h_bonds(supercell_data, dataDims, i):
     acceptors_pos = supercell_data.pos[batch_inds[canonical_conformers_inds[canonical_conformer_acceptors_inds]]]
 
     return torch.sum(torch.cdist(donors_pos, acceptors_pos, p=2) < 3.3)
+
 
 '''
 # look at all kinds of activations

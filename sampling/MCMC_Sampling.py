@@ -3,11 +3,13 @@ import tqdm
 import numpy as np
 import torch.nn.functional as F
 import torch
+import torch.optim as optim
 from utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 from crystal_building.crystal_builder_tools import \
     (batch_molecule_principal_axes, compute_Ip_handedness,
-     random_crystaldata_alignment, align_crystaldata_to_principal_axes)
+     random_crystaldata_alignment, align_crystaldata_to_principal_axes,
+     unit_cell_analysis)
 from crystal_building.supercell_builders import override_sg_info
 
 '''
@@ -34,7 +36,6 @@ class mcmcSampler:
                  debug=False,
                  global_temperature=1,
                  init_adaptive_step_size=1,
-                 move_size=0.01,
                  supercell_size=5,
                  graph_convolution_cutoff=6,
                  vdw_radii=None,
@@ -43,8 +44,6 @@ class mcmcSampler:
                  new_minimum_patience=1e3,
                  target_acceptance_rate=0.234,  # found this in a paper - optimal MCMC acceptance ratio
                  spacegroup_to_search='P-1',
-                 optimizer=None,
-                 gd_sample_proportion=0,  # proportion of proposed steps to be drawn by gradient descent on the cell parameters
                  conformer_orientation='random',
                  ):
         self.conformer_orientation = conformer_orientation
@@ -61,16 +60,14 @@ class mcmcSampler:
         self.adaptive_step_size = [self.init_adaptive_step_size for _ in range(self.nruns)]
         self.dim = 12
         self.generator = generator
-        self.move_size = move_size
         self.supercell_size = supercell_size
         self.graph_convolution_cutoff = graph_convolution_cutoff
         self.vdw_radii = vdw_radii
         self.preset_minimum = preset_minimum
         self.reset_patience = reset_patience
-        self.optimizer = optimizer
-        self.gd_sample_proportion = gd_sample_proportion
         self.new_minimum_patience = new_minimum_patience
         self.acceptance_history = self.new_minimum_patience  # trailing history over which to compute acceptance rate statistics
+        self.move_size = 1  # manually rescale proposed move sizes
 
         np.random.seed(int(seedInd))  # initial seed is randomized over pipeline iterations
         torch.manual_seed(seedInd)
@@ -78,21 +75,22 @@ class mcmcSampler:
         if self.debug:
             self.initialize_debug_statistics()
 
-    def __call__(self, model, builder, crystaldata, init_samples, iters, optimizer = None):
+    def __call__(self, model, builder, crystaldata, init_samples, iters, optimizer=None):
         self.resampled_state_record = [[0] for _ in range(self.nruns)]
         if init_samples is None:
             self.fresh_config_ind = 0
             self.resample_state(crystaldata, 0, reset_all=True)
         else:
             self.current_state = init_samples
-        self.optimizer = optimizer
-        self.builder = builder
+        self.supercell_builder = builder
         self.run_sampling(model, crystaldata, iters)
 
         outputs = {
             "samples": np.stack(self.all_samples).T,
+            "canonical samples": np.stack(self.all_samples_canonical).T,
             "scores": -np.stack(self.all_scores).T,  # reset correct score sign
             "vdw penalties": np.stack(self.all_vdw_penalties).T,
+            "resampled state record": self.resampled_state_record,
         }
         if self.debug:
             outputs['step size'] = np.stack(self.adaptive_step_size_record)
@@ -106,7 +104,10 @@ class mcmcSampler:
         :return:
         '''
         # crystaldata = self.align_crystaldata(crystaldata)
-        return self.generator.forward(n_samples=crystaldata.num_graphs, conditions=crystaldata.clone()).cpu().detach().numpy()
+        if self.generator._get_name() == 'crystal_generator':
+            return self.generator.forward(n_samples=crystaldata.num_graphs, conditions=crystaldata).cpu().detach().numpy()
+        else:
+            return self.generator.forward(crystaldata.num_graphs, crystaldata).cpu().detach().numpy()
 
     def resample_state(self, crystaldata, ind, reset_all=False):
         """
@@ -139,8 +140,6 @@ class mcmcSampler:
         self.pickDimRandints = np.random.choice([0, 1, 2, 4, 6, 8, 9, 10, 11], size=(self.nruns, self.randintsResampleAt))  # don't change alpha and gamma, for now
         # self.pickDimRandints = np.random.randint(6, self.dim, size=(self.nruns, self.randintsResampleAt))
         self.alphaRandoms = np.random.random((self.nruns, self.randintsResampleAt)).astype(float)
-        self.gd_step_size_randoms = np.random.random((self.nruns, self.randintsResampleAt)).astype(float)
-        self.move_type_randoms = np.random.random(self.randintsResampleAt).astype(float)
 
     def initialize_optima(self, scores, vdw_penalties):
         """
@@ -150,6 +149,7 @@ class mcmcSampler:
         # trajectory
         self.all_scores = np.zeros((self.run_iters, self.nruns))  # record optima of the score function
         self.all_samples = np.zeros((self.run_iters, self.nruns, self.dim))
+        self.all_samples_canonical = np.zeros((self.run_iters, self.nruns, self.dim))
         self.all_vdw_penalties = np.zeros_like(self.all_scores)
         self.accepted_inds = [[0] for _ in range(self.nruns)]
         self.new_optima_inds = [[] for i in range(self.nruns)]
@@ -162,6 +162,8 @@ class mcmcSampler:
 
         self.all_scores[0] = scores
         self.all_samples[0] = self.current_state
+        self.current_state_canonical = np.copy(self.proposed_state_canonical)
+        self.all_samples_canonical[0] = np.copy(self.proposed_state_canonical)
         self.all_vdw_penalties[0] = vdw_penalties
         for i in range(self.nruns):
             self.new_optima_inds[i].append(0)
@@ -195,9 +197,9 @@ class mcmcSampler:
         '''
         set symmetry info
         '''
-        override_sg_ind = list(self.builder.symmetries_dict['space_groups'].values()).index(self.sg_to_search) + 1
-        sym_ops_list = [torch.Tensor(self.builder.symmetries_dict['sym_ops'][override_sg_ind]).to(crystaldata.x.device) for i in range(crystaldata.num_graphs)]
-        crystaldata = override_sg_info(self.sg_to_search, self.builder.dataDims, crystaldata, self.builder.symmetries_dict, sym_ops_list)
+        override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.sg_to_search) + 1
+        sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(crystaldata.x.device) for i in range(crystaldata.num_graphs)]
+        crystaldata = override_sg_info(self.sg_to_search, self.supercell_builder.dataDims, crystaldata, self.supercell_builder.symmetries_dict, sym_ops_list)
 
         score_model = score_model.cuda()
         crystaldata = crystaldata.cuda()
@@ -205,12 +207,8 @@ class mcmcSampler:
         score_model.eval()
         for self.iter in tqdm.tqdm(range(self.run_iters), miniters=int(self.run_iters / 25)):  # sample for a certain number of iterations
             self.random_number_index = self.iter % self.randintsResampleAt  # random number index
-            if self.move_type_randoms[self.random_number_index] > self.gd_sample_proportion:
-                with torch.no_grad():  # random MCMC move
-                    self.iterate(score_model, crystaldata, proposal_type = 'mc')  # try a monte-carlo step!
-            else:
-                with torch.enable_grad():  # move determined by gradient descent on score model
-                    self.iterate(score_model, crystaldata, proposal_type = 'gd')
+            with torch.no_grad():  # random MCMC move
+                self.iterate(score_model, crystaldata, proposal_type='mc')  # try a monte-carlo step!
 
             if (self.iter % self.deltaIter == 0) and (self.iter > 0):  # every N iterations do some reporting / updating
                 self.update_annealing_parameters(crystaldata)  # change temperature or other conditions
@@ -218,14 +216,12 @@ class mcmcSampler:
             if self.iter % self.randintsResampleAt == 0:  # periodically resample random numbers
                 self.resample_random_numbers()
 
-
     def prop_random_configs(self):
         """
         propose a new ensemble of configurations
         :param ind:
         :return:
         """
-        # todo step-size controls and gradient descent-based proposal
 
         self.proposed_states = np.copy(self.current_state) if isinstance(self.current_state, np.ndarray) else torch.clone(self.current_state)
         # todo vectorize
@@ -233,7 +229,7 @@ class mcmcSampler:
             self.proposed_states[i, self.pickDimRandints[i, self.random_number_index]] += self.move_randns[i, self.random_number_index] * self.adaptive_step_size[i]
             # self.proposed_states[i, :] = self.move_randns[i, :, self.random_number_index] * self.adaptive_step_size[i] # collective move
 
-    def iterate(self, score_model, crystaldata, proposal_type = 'mc'):
+    def iterate(self, score_model, crystaldata, proposal_type='mc'):
         """
         run chainLength cycles of the sampler
         process: 1) propose state, 2) compute acceptance ratio, 3) sample against this ratio and accept/reject move
@@ -241,10 +237,7 @@ class mcmcSampler:
         """
 
         # propose a new state
-        if proposal_type == 'mc':
-            self.prop_random_configs()
-        elif proposal_type == 'gd': # gradient descent
-            self.prop_gd_configs(score_model, crystaldata)
+        self.prop_random_configs()
 
         # even if it didn't change, just run it anyway (big parallel - to hard to disentangle)
         # compute acceptance ratio
@@ -263,26 +256,6 @@ class mcmcSampler:
         self.recordTrajectory()  # if we accept the move, update the trajectory
         if self.debug:  # record a bunch of detailed outputs
             self.record_debug_statistics()
-
-    def prop_gd_configs(self, score_model, crystaldata):
-
-        current_state = torch.tensor(self.current_state, requires_grad=True, device='cuda', dtype=torch.float32)
-        proposed_supercells, _, _ = self.builder.build_supercells(crystaldata, current_state,
-                                                                  supercell_size=self.supercell_size,
-                                                                  graph_convolution_cutoff=self.graph_convolution_cutoff,
-                                                                  override_sg=self.sg_to_search,
-                                                                  align_molecules=False, )
-
-        output = score_model(proposed_supercells.clone().cuda(), return_dists=False)
-
-        score = -softmax_and_score(output)
-        self.optimizer.zero_grad()
-        score.mean().backward() # compute gradients
-        state_gradients = current_state.grad.cpu().detach().numpy()
-
-        self.proposed_states = np.copy(self.current_state) if isinstance(self.current_state, np.ndarray) else torch.clone(self.current_state)
-        self.proposed_states += state_gradients * np.asarray(self.adaptive_step_size)[:, None] * self.gd_step_size_randoms[:, self.random_number_index][:, None]
-
 
     def align_crystaldata(self, crystaldata):
         if self.conformer_orientation == 'standardized':
@@ -315,6 +288,7 @@ class mcmcSampler:
         for i in range(self.nruns):
             if self.alphaRandoms[i, self.random_number_index] < acceptance_ratio[i]:  # accept
                 self.current_state[i] = np.copy(self.proposed_states[i]) if isinstance(self.proposed_states[i], np.ndarray) else torch.clone(self.proposed_states[i])
+                self.current_state_canonical[i] = np.copy(self.proposed_state_canonical[i]) if isinstance(self.proposed_state_canonical[i], np.ndarray) else torch.clone(self.proposed_state_canonical[i])
                 self.current_scores[i] = proposed_sample_scores[i]
                 self.current_vdw_penalties[i] = proposed_vdw_penalties[i]
                 self.accepted_inds[i].append(self.iter)
@@ -324,6 +298,7 @@ class mcmcSampler:
     def recordTrajectory(self):
         self.all_scores[self.iter] = self.current_scores
         self.all_samples[self.iter] = self.current_state
+        self.all_samples_canonical[self.iter] = self.current_state_canonical
         self.all_vdw_penalties[self.iter] = self.current_vdw_penalties
 
     def compute_score_difference(self, scores):
@@ -367,11 +342,11 @@ class mcmcSampler:
         :param config:
         :return:
         """
-        proposed_supercells, _, _ = self.builder.build_supercells(crystaldata, torch.Tensor(self.proposed_states),
-                                                                  supercell_size=self.supercell_size,
-                                                                  graph_convolution_cutoff=self.graph_convolution_cutoff,
-                                                                  override_sg=self.sg_to_search,
-                                                                  align_molecules=False, )
+        proposed_supercells, _, _ = self.supercell_builder.build_supercells(crystaldata, torch.Tensor(self.proposed_states),
+                                                                            supercell_size=self.supercell_size,
+                                                                            graph_convolution_cutoff=self.graph_convolution_cutoff,
+                                                                            override_sg=self.sg_to_search,
+                                                                            align_molecules=False, )
 
         output, dist_dict = score_model(proposed_supercells.clone().cuda(), return_dists=True)
 
@@ -381,6 +356,20 @@ class mcmcSampler:
                                   num_graphs=crystaldata.num_graphs).cpu().detach().numpy()
 
         score = -softmax_and_score(output).cpu().detach().numpy()  # we want actually to maximize the score
+        # todo get the standardized canonical orienattion
+        correct_position = np.zeros((proposed_supercells.num_graphs, 3))
+        correct_rotation = np.zeros((proposed_supercells.num_graphs, 3))
+        for jj in range(proposed_supercells.num_graphs):  # all assuming fully right handed
+            correct_position[jj], correct_rotation[jj], handedness \
+                = unit_cell_analysis(proposed_supercells.ref_cell_pos[jj],
+                                     proposed_supercells.sg_ind[jj],
+                                     self.supercell_builder.asym_unit_dict,
+                                     torch.linalg.inv(proposed_supercells.T_fc[jj]),
+                                     enforce_right_handedness = True)
+        # renormalize
+        nonstandardized_state = proposed_supercells.cell_params.cpu().detach().numpy()
+        nonstandardized_state[:, -3:] = correct_rotation
+        self.proposed_state_canonical = (nonstandardized_state - self.supercell_builder.dataDims['lattice means']) / self.supercell_builder.dataDims['lattice stds']
 
         return score, vdw_penalty, proposed_supercells
 
@@ -408,12 +397,12 @@ class mcmcSampler:
             else:
                 self.adaptive_step_size[i] = self.adaptive_step_size[i] * (1 + 0.1 * np.random.random(1)[0])
 
-            if self.adaptive_step_size[i] < 1e-5:  # if the step size gets too small, simply reset
-                self.resetInd[i] = self.iter
-                self.resample_state(crystaldata, i)  # re-randomize selected trajectories
-                self.adaptive_step_size[i] = self.init_adaptive_step_size  # reset temperature
-                self.accepted_inds[i] = []  # reset acceptance stats
-                self.current_scores[i] = 100  # to avoid recomputing, just set it high so the next step will automatically be accpted
+            # if self.adaptive_step_size[i] < 1e-5:  # if the step size gets too small, simply reset
+            #     self.resetInd[i] = self.iter
+            #     self.resample_state(crystaldata, i)  # re-randomize selected trajectories
+            #     self.adaptive_step_size[i] = self.init_adaptive_step_size  # reset temperature
+            #     self.accepted_inds[i] = []  # reset acceptance stats
+            #     self.current_scores[i] = 100  # to avoid recomputing, just set it high so the next step will automatically be accpted
 
             # if we haven't found a new minimum in a long time, randomize input and do a temperature boost
             if (self.iter - self.resetInd[i]) > self.reset_patience:  # within xx of the last reset

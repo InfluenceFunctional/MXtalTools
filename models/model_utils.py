@@ -128,25 +128,34 @@ def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_le
     mols = [ase_mol_from_crystaldata(supercell_data,i,exclusion_level = 'convolve with', highlight_aux=True) for i in range(10)]
     view(mols)
     '''
-
+    data = data.clone().cpu().detach()
     if data.batch is not None:  # more than one crystal in the datafile
         atom_inds = torch.where(data.batch == index)[0]
     else:
         atom_inds = torch.arange(len(data.x))
 
-    if exclusion_level == 'ref only':
+    if exclusion_level == 'conformer': # only the canonical conformer itself
         inside_inds = torch.where(data.aux_ind == 0)[0]
         new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
         atom_inds = new_atom_inds
         coords = data.pos[atom_inds].cpu().detach().numpy()
 
-    elif exclusion_level == 'convolve with':
+    elif exclusion_level == 'unit cell':
+        # assume that by construction the first Z molecules are the ones in the unit cell
+        # todo THIS IS NOT ACTUALLY THE CASE - identify centroids and pick the ones inside
+        inside_inds = (torch.arange(data.mol_size[index] * data.Z[index]) + data.ptr[index]).long()
+        atom_inds = inside_inds
+        coords = data.pos[inside_inds].cpu().detach().numpy()
+
+        # todo separately, mode for any atoms inside the unit cell
+
+    elif exclusion_level == 'convolve with': # atoms potentially in the convolutional field
         inside_inds = torch.where(data.aux_ind < 2)[0]
         new_atom_inds = torch.stack([ind for ind in atom_inds if ind in inside_inds])
         atom_inds = new_atom_inds
         coords = data.pos[atom_inds].cpu().detach().numpy()
 
-    elif exclusion_level == 'distance':
+    elif exclusion_level == 'distance': # atoms within a certain distance of the conformer radius
         crystal_coords = data.pos[atom_inds]
         crystal_inds = data.aux_ind[atom_inds]
 

@@ -1,5 +1,5 @@
 import numpy as np
-from utils import compute_principal_axes_np, single_molecule_principal_axes, enforce_1d_bound, batch_molecule_principal_axes
+from utils import compute_principal_axes_np, single_molecule_principal_axes, enforce_1d_bound, batch_molecule_principal_axes, compute_Ip_handedness
 from scipy.spatial.transform import Rotation
 import torch
 import time
@@ -44,20 +44,6 @@ asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMR
     '31': [0.5, 0.5, 1],  # Pmn21
     '61': [0.5, 0.5, 0.5], # Pbca
 }
-
-
-def compute_Ip_handedness(Ip): # todo remove duplicate function
-    if isinstance(Ip, np.ndarray):
-        if Ip.ndim == 2:
-            return np.sign(np.dot(Ip[0], np.cross(Ip[1], Ip[2])).sum())
-        elif Ip.ndim == 3:
-            return np.sign(np.dot(Ip[:, 0], np.cross(Ip[:, 1], Ip[:, 2])).sum())
-
-    elif torch.is_tensor(Ip):
-        if Ip.ndim == 2:
-            return torch.sign(torch.mul(Ip[0], torch.cross(Ip[1], Ip[2])).sum()).float()
-        elif Ip.ndim == 3:
-            return torch.sign(torch.mul(Ip[:, 0], torch.cross(Ip[:, 1], Ip[:, 2], dim=1)).sum(1))
 
 
 def axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
@@ -232,7 +218,7 @@ def ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list,
     return supercell_coords_list, supercell_atoms_list, ref_mol_inds_list, n_copies
 
 
-def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords_list, ref_mol_inds_list):
+def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords_list, ref_mol_inds_list, reference_cell_list):
     for i in range(supercell_data.num_graphs):
         if i == 0:
             new_batch = torch.ones(len(supercell_atoms_list[i])).int() * i
@@ -248,6 +234,7 @@ def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords
     supercell_data.batch = new_batch.type(dtype=torch.int64)
     supercell_data.ptr = new_ptr.type(dtype=torch.int64)
     supercell_data.aux_ind = torch.cat(ref_mol_inds_list).type(dtype=torch.int)
+    supercell_data.ref_cell_pos = reference_cell_list
 
     return supercell_data
 
@@ -479,7 +466,7 @@ def f_c_transform(coords, T_fc):
 def find_coord_in_box(coords, box):
     return np.where((coords[:, 0] < box[0]) * (coords[:, 1] < box[1]) * (coords[:, 2] < box[2]))[0]
 
-def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_right_handedness = False):
+def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_right_handedness = True):
     '''
 
     Parameters
@@ -492,11 +479,18 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
     -------
 
     '''
-    asym_unit = np.asarray(asym_unit_dict[str(int(sg_ind))]) # will only work for units which we have written down the parameterization for
+    if isinstance(unit_cell_coords, np.ndarray):
+        asym_unit = np.asarray(asym_unit_dict[str(int(sg_ind))])  # will only work for units which we have written down the parameterization for
+    else:
+        unit_cell_coords = unit_cell_coords.cpu().detach().numpy()
+        asym_unit = asym_unit_dict[str(int(sg_ind))].cpu().detach().numpy()
+        T_cf = T_cf.cpu().detach().numpy()
+
     centroids = unit_cell_coords.mean(-2)
     centroids_fractional = np.inner(T_cf, centroids).T
     centroids_fractional -= np.floor(centroids_fractional)
     canonical_conformer_ind = find_coord_in_box(centroids_fractional, asym_unit)
+    # todo catch failure mode where no conformers are found (usually two right on the edge) or multiple are found
 
     # if len(canonical_conformer_ind) != 1: # only one of these is allowed to be in the asym unit
     #     # some cells use nonstandard symmetries & therefore asymmetric unit definitions
@@ -510,9 +504,9 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
     alignment = np.eye(3)
     if not enforce_right_handedness:
         alignment[0,0] = handedness
-    rotation_matrix = np.inner(Ip_axes, np.linalg.inv(alignment))
+    rotation_matrix = np.inner(alignment, np.linalg.inv(Ip_axes))#np.inner(Ip_axes, np.linalg.inv(alignment))
 
-    mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()
+    mol_orientation = -Rotation.from_matrix(rotation_matrix).as_rotvec()
     mol_position = centroids_fractional[canonical_conformer_ind[0]]
 
     return mol_position, mol_orientation, handedness

@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10031
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures' or 'sampling'
 gan_loss: standard # standard only
@@ -40,8 +40,8 @@ seeds:
 
 # opt - sweep details
 wandb:
-  sample_reporting_frequency: 1
-  experiment_tag: dev
+  sample_reporting_frequency: 5
+  experiment_tag: adversarial_test
   log_figures: True
 
 # batching & convergence
@@ -51,7 +51,7 @@ auto_batch_sizing: True
 min_batch_size: 10
 max_batch_size: 1000
 batch_growth_increment: 0.05
-auto_batch_reduction: 0.25 # fraction of tested max batch size to actually start with (unequal graph sizes)
+auto_batch_reduction: 0.6 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 5000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 gradient_norm_clip: 1
@@ -60,7 +60,7 @@ lr_shrink_lambda: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 10000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100
@@ -104,8 +104,8 @@ discriminator:
 
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
   graph_convolution_layers: 4
-  graph_filters: 36
-  atom_embedding_size: 128
+  graph_filters: 128
+  atom_embedding_size: 256
   graph_norm: layer
   num_spherical: 5
   num_radial: 32
@@ -142,13 +142,11 @@ generator:
   graph_filters: 128
   atom_embedding_size: 256
   graph_norm: layer
-  # applies to geometric aggregation as well
-  # large numbers of radial and spherical result in extremely huge feature maps in global aggregation
-  num_spherical: 7
+  num_spherical: 6
   num_radial: 32
   graph_convolution_cutoff: 3
   max_num_neighbors: 100
-  radial_function: 'gaussian' # mikenet only
+  radial_function: 'bessel' # mikenet only
   num_attention_heads: 4 # mikenet GATv2 mode only - must evenly divide graph filters
   graph_convolution: 'TransformerConv' # GATv2, schnet, or full message passing, or 'TransformerConv'
   add_spherical_basis: False # mikenet only
@@ -156,16 +154,16 @@ generator:
   pooling: geometric # combo, geometric
 
   conditioner_num_fc_layers: 2
-  conditioner_fc_depth: 1028
+  conditioner_fc_depth: 512
   conditioner_activation: 'leaky relu'
   conditioner_fc_dropout_probability: 0
-  conditioner_fc_norm_mode: layer
+  conditioner_fc_norm_mode: null
 
-  num_fc_layers: 4
-  fc_depth: 256
+  num_fc_layers: 10
+  fc_depth: 512
   activation: 'leaky relu'
   fc_dropout_probability: 0
-  fc_norm_mode: layer
+  fc_norm_mode: null
 
   prior: multivariate normal
   prior_dimension: 12

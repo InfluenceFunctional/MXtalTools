@@ -62,7 +62,8 @@ class SupercellBuilder():
 
 
     def build_supercells(self, data, cell_sample, supercell_size, graph_convolution_cutoff, target_handedness=None,
-                         override_sg=None, skip_cell_cleaning=False, standardized_sample=True, align_molecules = True):
+                         override_sg=None, skip_cell_cleaning=False, standardized_sample=True, align_molecules = True,
+                         rescale_asymmetric_unit = True):
         '''
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to supercell with appropriate cluster size
@@ -74,7 +75,7 @@ class SupercellBuilder():
         sym_ops_list, supercell_data = self.set_sym_ops(override_sg, supercell_data)
 
         cell_lengths, cell_angles, mol_position, mol_rotation = \
-            self.process_cell_params(supercell_data, cell_sample, skip_cell_cleaning, standardized_sample)
+            self.process_cell_params(supercell_data, cell_sample, skip_cell_cleaning, standardized_sample, rescale_asymmetric_unit=rescale_asymmetric_unit)
 
         T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(cell_lengths, cell_angles)
 
@@ -105,7 +106,7 @@ class SupercellBuilder():
 
         overlaps_list = None  # expensive and not currently used # compute_lattice_vector_overlap(final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors.to(supercell_data.x.device))
 
-        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
+        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, reference_cell_list)
 
         return supercell_data, generated_cell_volumes, overlaps_list
 
@@ -129,7 +130,7 @@ class SupercellBuilder():
                              cutoff=config.discriminator.graph_convolution_cutoff,
                              sorted_fractional_translations=self.sorted_fractional_translations)
 
-        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list)
+        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, supercell_data.ref_cell_pos)
 
         # if return_overlaps:  # todo finish this
         #     overlaps_list = compute_lattice_vector_overlap(masses_list, final_coords_list, T_cf_list, self.normed_lattice_vectors=self.self.normed_lattice_vectors)
@@ -137,10 +138,10 @@ class SupercellBuilder():
 
         return supercell_data.to(config.device)
 
-    def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True):
+    def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True, rescale_asymmetric_unit = True):
         if skip_cell_cleaning:  # don't clean up
             if standardized_sample:
-                destandardized_cell_sample = (cell_sample * torch.Tensor(self.dataDims['lattice stds'])) + torch.Tensor(self.dataDims['lattice means'])  # destandardize
+                destandardized_cell_sample = (cell_sample * torch.tensor(self.dataDims['lattice stds'],device=self.device,dtype=cell_sample.dtype)) + torch.tensor(self.dataDims['lattice means'],device=self.device,dtype=cell_sample.dtype)  # destandardize
                 cell_lengths, cell_angles, mol_position, mol_rotation = destandardized_cell_sample.split(3, 1)
             else:
                 cell_lengths, cell_angles, mol_position, mol_rotation = cell_sample.split(3, 1)
@@ -153,7 +154,7 @@ class SupercellBuilder():
 
         # TODO convert from asymmetric unit to full cell fractional coordinates
 
-        if True: # todo assert only our prepared sgs will be allowed
+        if rescale_asymmetric_unit: # todo assert only our prepared sgs will be allowed
             mol_position = self.scale_asymmetric_unit(mol_position, supercell_data.sg_ind)
 
         return cell_lengths, cell_angles, mol_position, mol_rotation
@@ -297,6 +298,8 @@ class SupercellBuilder():
             supercell_data = override_sg_info(override_sg, self.dataDims, supercell_data, self.symmetries_dict, sym_ops_list)  # todo update the way we handle this
         else:
             sym_ops_list = [torch.Tensor(supercell_data.symmetry_operators[n]).to(supercell_data.x.device) for n in range(len(supercell_data.symmetry_operators))]
+
+        supercell_data.symmetry_operators = sym_ops_list
 
         return sym_ops_list, supercell_data
 

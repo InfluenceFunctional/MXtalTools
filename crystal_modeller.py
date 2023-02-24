@@ -1,3 +1,4 @@
+import numpy as np
 import wandb
 import glob
 from torch import backends, optim
@@ -16,6 +17,7 @@ import plotly.express as px
 from plotly.colors import n_colors
 from scipy.stats import gaussian_kde
 import matplotlib.pyplot as plt
+from sklearn.cluster import AgglomerativeClustering
 from PIL import Image
 
 from utils import *
@@ -30,12 +32,12 @@ from crystal_building.supercell_builders import SupercellBuilder, override_sg_in
 from models.model_utils import *
 from models.crystal_rdf import crystal_rdf
 from models.vdw_overlap import vdw_overlap, raw_vdw_overlap
-from sampling.SampleOptimization import gradient_descent_sampling
 from models.generator_models import crystal_generator
 from models.discriminator_models import crystal_discriminator
 from models.regression_models import molecule_regressor
 from models.torch_models import independent_gaussian_model
 from sampling.MCMC_Sampling import mcmcSampler
+from sampling.SampleOptimization import gradient_descent_sampling
 
 
 class Modeller():
@@ -934,7 +936,7 @@ class Modeller():
                    vdw_overlap(self.vdw_radii, crystaldata=real_supercell_data), \
                    vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data)
 
-    def set_molecule_alignment(self,data, right_handed = True, mode_override = None):
+    def set_molecule_alignment(self, data, right_handed=True, mode_override=None):
         if mode_override is not None:
             mode = mode_override
         else:
@@ -1129,8 +1131,6 @@ class Modeller():
         #
         # single_mol_data = extra_test_loader.dataset[extra_test_loader.csd_identifier.index(blind_test_identifiers[-1])]
 
-
-
         return extra_test_loader, generator, discriminator, \
                g_optimizer, g_schedulers, d_optimizer, d_schedulers, \
                params1, params2
@@ -1151,157 +1151,280 @@ class Modeller():
                 gammas=np.logspace(-4, 0, self.config.final_batch_size),
                 seedInd=0,
                 STUN_mode=False,
-                debug=True,
-                init_adaptive_step_size=0.05,
-                global_temperature = 0.01, # essentially only allow downward moves
-                generator=generator,
-                move_size=self.config.sample_move_size,
+                debug=False,
+                init_adaptive_step_size=self.config.sample_move_size,
+                global_temperature=0.00001,  # essentially only allow downward moves
+                generator=self.randn_generator, # generator,
                 supercell_size=self.config.supercell_size,
                 graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
                 vdw_radii=self.vdw_radii,
                 preset_minimum=None,
-                spacegroup_to_search='P-1', #self.config.generate_sgs,
-                new_minimum_patience=10,
-                reset_patience=100,
-                optimizer = g_optimizer,
-                gd_sample_proportion = 1,
-                conformer_orientation = self.config.generator.canonical_conformer_orientation,
+                spacegroup_to_search='P-1',  # self.config.generate_sgs,
+                new_minimum_patience=25,
+                reset_patience=50,
+                conformer_orientation=self.config.generator.canonical_conformer_orientation,
             )
 
             '''
             run sampling
             '''
+            # prep the conformers
             single_mol_data_0 = extra_test_loader.dataset[0]
             collater = Collater(None, None)
             single_mol_data = collater([single_mol_data_0 for n in range(self.config.final_batch_size)])
-            single_mol_data = self.set_molecule_alignment(single_mol_data, mode_override = 'random') # take all the same conformers for one run
+            single_mol_data = self.set_molecule_alignment(single_mol_data, mode_override='random')  # take all the same conformers for one run
             override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
             sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(single_mol_data.x.device) for i in range(single_mol_data.num_graphs)]
             single_mol_data = override_sg_info('P-1', self.supercell_builder.dataDims, single_mol_data, self.supercell_builder.symmetries_dict, sym_ops_list)
 
             sampling_dict = smc_sampler(discriminator, self.supercell_builder,
                                         single_mol_data.clone().cuda(), None,
-                                        self.config.sample_steps, optimizer = d_optimizer)
-
+                                        self.config.sample_steps)
 
             '''
             reporting
             '''
 
-            layout = go.Layout(
-                margin=go.layout.Margin(
-                    l=0,  # left margin
-                    r=0,  # right margin
-                    b=0,  # bottom margin
-                    t=40,  # top margin
-                )
-            )
-            n_samples = len(sampling_dict['scores'])
-            num_iters = sampling_dict['scores'].shape[1]
+            self.sampling_telemetry_plot(sampling_dict)
+            self.cell_params_tracking_plot(sampling_dict, collater, extra_test_loader)
 
+            # todo limit or batch sample numbers
+            best_samples, best_samples_scores, best_cells = self.sample_clustering(sampling_dict, collater, extra_test_loader, discriminator)
+
+
+            # todo must de-clean incoming samples so that we have a continuous line without a break
+            # destandardize samples
+            unclean_best_samples = self.de_clean_samples(best_samples, best_cells.sg_ind)
+
+            #init_samples = generator.forward(n_samples=single_mol_data.num_graphs, conditions=single_mol_data.cuda())
+            single_mol_data = collater([single_mol_data_0 for n in range(len(best_samples))])
+            gd_sampling_dict = gradient_descent_sampling(
+                discriminator, unclean_best_samples, single_mol_data.clone(), self.supercell_builder,
+                n_iter = 500,lr =1e-3,
+                optimizer_func = optim.Rprop,
+                return_vdw=True, vdw_radii=self.vdw_radii,
+                supercell_size=self.config.supercell_size,
+                cutoff=self.config.discriminator.graph_convolution_cutoff,
+                generate_sgs='P-1',  # self.config.generate_sgs
+                align_molecules = True, # always true here
+            )
+
+
+            # todo process refined samples
 
             # todo score known polymorphs for comparison
+            extra_test_sample = next(iter(extra_test_loader)).cuda()
+            sample_supercells = self.supercell_builder.real_cell_to_supercell(extra_test_sample, self.config)
+            known_sample_scores = softmax_and_score(discriminator(sample_supercells.clone()))
 
-            # '''
-            # telemetry summary
-            # '''
-            # fig = make_subplots(cols=2, rows=2, subplot_titles=['Best Model Score', 'Min vdw Score', 'Mean Acceptance Rate', 'Step Size'])
-            # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.amax(sampling_dict['scores'], axis=0)), col=1, row=1)
-            # # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['stun score'], axis=0)), col=2, row=1)
-            # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.amin(sampling_dict['vdw penalties'], axis=0)), col=2, row=1)
-            # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['acceptance ratio'], axis=0)), col=1, row=2)
-            # fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(np.log10(sampling_dict['step size']), axis=0)), col=2, row=2)
-            # fig.update_layout(showlegend=False)
-            # # fig.update_yaxes(range=[-1, 1], row=1, col=2)
-            # # fig.update_yaxes(range=[-2, 0], row=1, col=2)
-            # fig.update_yaxes(range=[-16, 16], row=1, col=1)
-            # fig.layout.margin = layout.margin
-            # # fig.write_image('../paper1_figs/sampling_telemetry_summary.png')
-            # # wandb.log({'Sampling Telemetry Summary': fig})
-            # if self.config.machine == 'local':
-            #     import plotly.io as pio
-            #     pio.renderers.default = 'browser'
-            #     fig.show()
-
-            '''
-            full telemetry
-            '''
-            colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', self.config.final_batch_size, colortype='rgb')
-            fig = make_subplots(cols=2, rows=2, subplot_titles=['Model Score', 'vdw Score', 'Acceptance Rate', 'step size'])
-            for i in range(n_samples):
-                opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']), a_min=0.1, a_max=1)
-                fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['scores'][i], opacity=opacity, line_color = colors[i],name=f'run_{i}'),
-                              col=1, row=1)
-                fig.add_trace(go.Scattergl(x=smc_sampler.resampled_state_record[i], y=sampling_dict['scores'][i][smc_sampler.resampled_state_record[i]],
-                                           mode='markers',line_color = colors[i], marker=dict(size=10)),
-                              col=1,row=1)
-            for i in range(n_samples):
-                opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
-                                  a_min=0.1, a_max=1)
-                fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['vdw penalties'][i], opacity=opacity, line_color = colors[i],name=f'run_{i}'),
-                              col=2, row=1)
-            for i in range(n_samples):
-                opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
-                                  a_min=0.1, a_max=1)
-                fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity, line_color = colors[i],name=f'run_{i}'),
-                              col=1, row=2)
-            for i in range(n_samples):
-                opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
-                                  a_min=0.1, a_max=1)
-                fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['step size'][i]), opacity=opacity, line_color = colors[i],name=f'run_{i}'),
-                              col=2, row=2)
-            fig.update_layout(showlegend=True)
-            # fig.update_yaxes(range=[0, 1], row=1, col=2)
-            fig.layout.margin = layout.margin
-            # fig.write_image('../paper1_figs/sampling_telemetry.png')
-            # wandb.log({'Sampling Telemetry': fig})
-            if self.config.machine == 'local':
-                import plotly.io as pio
-                pio.renderers.default = 'browser'
-                fig.show()
-
-            # todo sample orientations are not standardized in the same basis if the initial orientation is random
-            # must either redo analysis after each cell construction or do analysis in some absolute bases i.e. RDF
-            all_samples = torch.tensor(sampling_dict['samples'].reshape(12, self.config.final_batch_size * self.config.sample_steps).T)
-            all_scores = torch.tensor(sampling_dict['scores'].reshape(self.config.final_batch_size * self.config.sample_steps))
-            all_vdws = torch.tensor(sampling_dict['vdw penalties'].reshape(self.config.final_batch_size * self.config.sample_steps))
-            combo_score = torch.exp(-all_vdws) * all_scores
-            sort_inds = torch.argsort(torch.tensor(all_scores))#torch.argsort(torch.tensor(all_scores))
-            best_samples = all_samples[sort_inds[-100:]]
-            dists = torch.cdist(best_samples, best_samples)
-            single_mol_data.pos = torch.tensor(single_mol_data.pos, dtype=torch.float32)
-            single_mol_data.T_fc = torch.tensor(single_mol_data.T_fc, dtype=torch.float32)
-
-
-            good_cells, _, _ = self.supercell_builder.build_supercells(single_mol_data, torch.tensor(best_samples[-single_mol_data.num_graphs:], device='cuda', dtype=torch.float32),
-                                                                 supercell_size=self.config.supercell_size,
-                                                                 graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
-                                                                 override_sg='P-1',
-                                                                 align_molecules=False,)
-
-            mols = [ase_mol_from_crystaldata(good_cells, ii, highlight_aux=True, exclusion_level='distance', inclusion_distance=40) for ii in range(good_cells.num_graphs)]
-            view(mols)
-
-            '''
-            single_mol_data_0 = extra_test_loader.dataset[0]
-            big_single_mol_data = collater([single_mol_data_0 for n in range(len(all_samples))]).cuda()
-            override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
-            sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
-            big_single_mol_data = override_sg_info('P-1', self.supercell_builder.dataDims, big_single_mol_data, self.supercell_builder.symmetries_dict, sym_ops_list)
-            processed_cell_params = torch.cat(self.supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda()),dim=-1).T
-            del big_single_mol_data
-            
-            plt.figure(2)
-            plt.clf()  # parameter evolution
-            for i in range(12):
-                plt.subplot(4, 3, i + 1)
-                plt.plot(processed_cell_params.reshape(12, 10, 1000)[i].T.cpu().detach().numpy(), '-')
-            
-            '''
             aa = 1
+            plt.clf()
+            plt.plot(gd_sampling_dict['scores'])
 
             # np.save(f'../sampling_output_run_{self.config.run_num}', sampling_dict)
             # self.report_sampling(sampling_dict)
+
+    def de_clean_samples(self,samples,sg_inds):
+        means = self.supercell_builder.dataDims['lattice means']
+        stds = self.supercell_builder.dataDims['lattice stds']
+
+        # soft clipping to ensure correct range with finite gradients
+        cell_lengths = torch.Tensor(samples[:, :3] * stds[0:3] + means[0:3])
+        cell_angles = torch.Tensor(samples[:, 3:6] * stds[3:6] + means[3:6])
+        mol_position = torch.Tensor(samples[:, 6:9] * stds[6:9] + means[6:9])
+        mol_rotation = torch.Tensor(samples[:, 9:12] * stds[9:12] + means[9:12])
+
+        # descale asymmetric unit
+        descaled_mol_position = mol_position.clone()
+        for i, ind in enumerate(sg_inds):
+            descaled_mol_position[i, :] = mol_position[i, :] / self.supercell_builder.asym_unit_dict[str(int(ind))].cpu()
+
+        # undo cleaning
+        unclean_cell_lengths = np.log(np.exp(cell_lengths) - np.exp(1) ** (1 / 10))
+        unclean_cell_angles = undo_1d_bound(cell_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='soft')
+        unclean_mol_position = undo_1d_bound(descaled_mol_position, 0.5, 0.5, mode='soft')
+        norms = torch.linalg.norm(mol_rotation, dim=1)
+        unclean_norms = undo_1d_bound(norms, torch.pi, torch.pi, mode='soft')
+        unclean_mol_rotation = mol_rotation / norms[:, None] * unclean_norms[:, None]
+
+        # restandardize samples
+        unclean_cell_lengths = (unclean_cell_lengths.detach().numpy() - means[0:3]) / stds[0:3]
+        unclean_cell_angles = (unclean_cell_angles.detach().numpy() - means[3:6]) / stds[3:6]
+        unclean_mol_position = (unclean_mol_position.detach().numpy() - means[6:9]) / stds[6:9]
+        unclean_mol_rotation = (unclean_mol_rotation.detach().numpy() - means[9:12]) / stds[9:12]
+
+        unclean_best_samples = np.concatenate((unclean_cell_lengths, unclean_cell_angles, unclean_mol_position, unclean_mol_rotation), axis=1)
+        return unclean_best_samples
+
+    def sample_clustering(self,sampling_dict, collater, extra_test_loader, discriminator):
+
+        # first level filter - remove subsequent duplicates
+        filtered_samples = [[sampling_dict['canonical samples'][:,ii,0]] for ii in range(self.config.final_batch_size)]
+        filtered_samples_inds = [[0] for ii in range(self.config.final_batch_size)]
+        for i in range(1,self.config.sample_steps):
+            for j in range(self.config.final_batch_size):
+                if not all(sampling_dict['canonical samples'][:,j,i] == sampling_dict['canonical samples'][:,j,i-1]):
+                    filtered_samples[j].append(sampling_dict['canonical samples'][:,j,i])
+                    filtered_samples_inds[j].append(i)
+        filtered_samples = [torch.tensor(filtered_samples[ii],requires_grad=False,dtype=torch.float32) for ii in range(self.config.final_batch_size)]
+        filtered_samples_inds = [np.asarray(filtered_samples_inds[ii]) for ii in range(self.config.final_batch_size)]
+        filtered_samples_scores = [np.asarray(sampling_dict['scores'][ii,filtered_samples_inds[ii]]) for ii in range(self.config.final_batch_size)]
+
+        all_filtered_samples = np.concatenate(filtered_samples)
+        all_filtered_samples_scores = np.concatenate(filtered_samples_scores)
+        dists = torch.cdist(torch.Tensor(all_filtered_samples),torch.Tensor(all_filtered_samples)).detach().numpy()
+
+        model = AgglomerativeClustering(distance_threshold=1, linkage="average", affinity='euclidean', n_clusters=None)
+        model = model.fit(all_filtered_samples)
+        n_clusters = model.n_clusters_
+        classes = model.labels_
+
+        '''
+        visualize classwise distances
+        '''
+        class_distances = np.zeros((n_clusters,n_clusters))
+        for i in range(n_clusters):
+            for j in range(n_clusters):
+                if j >= i:
+                    class_distances[i,j] = np.mean(dists[classes == i][:,classes==j])
+
+        # #plot the top three levels of the dendrogram
+        # plt.clf()
+        # plt.subplot(1,2,1)
+        # plot_dendrogram(model, truncate_mode="level", p=3)
+        # plt.xlabel("Number of points in node (or index of point if no parenthesis).")
+        # plt.show()
+        # plt.subplot(1,2,2)
+        # plt.imshow(class_distances)
+
+        '''
+        pick out best samples in each class with reasonably good scoress
+        '''
+        best_samples = np.zeros((n_clusters,12))
+        best_samples_scores = np.zeros((n_clusters))
+        for i in range(n_clusters):
+            best_ind = np.argmax(all_filtered_samples_scores[classes == i])
+            best_samples_scores[i] = all_filtered_samples_scores[classes==i][best_ind]
+            best_samples[i] = all_filtered_samples[classes==i][best_ind]
+
+        single_mol_data_0 = extra_test_loader.dataset[0]
+        big_single_mol_data = collater([single_mol_data_0 for n in range(len(best_samples))]).cuda()
+        override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
+        sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
+        big_single_mol_data = override_sg_info('P-1', self.supercell_builder.dataDims, big_single_mol_data, self.supercell_builder.symmetries_dict, sym_ops_list)
+
+        best_cells, _, _ = self.supercell_builder.build_supercells(big_single_mol_data, torch.tensor(best_samples, device='cuda', dtype=torch.float32),
+                                                                   supercell_size=self.config.supercell_size,
+                                                                   graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
+                                                                   override_sg='P-1',
+                                                                   align_molecules=True,
+                                                                   skip_cell_cleaning = True,
+                                                                   rescale_asymmetric_unit=False,
+                                                                   standardized_sample=True,)
+
+        assert np.mean(np.abs(best_cells.cell_params.cpu().detach().numpy() - (best_samples * self.supercell_builder.dataDims['lattice stds'] + self.supercell_builder.dataDims['lattice means']))) < 1e-4
+        ss = softmax_and_score(discriminator(best_cells.clone().cuda())).cpu().detach().numpy()
+
+        # mols = [ase_mol_from_crystaldata(best_cells, ii, highlight_aux=True, exclusion_level='distance', inclusion_distance=5) for ii in range(best_cells.num_graphs)]
+        # view(mols)
+
+        return best_samples, best_samples_scores, best_cells.cpu().detach()
+
+
+    def sampling_telemetry_plot(self, sampling_dict):
+        n_samples = len(sampling_dict['scores'])
+        num_iters = sampling_dict['scores'].shape[1]
+
+        self.layout = go.Layout(
+            margin=go.layout.Margin(
+                l=0,  # left margin
+                r=0,  # right margin
+                b=0,  # bottom margin
+                t=40,  # top margin
+            )
+        )
+
+        '''
+        full telemetry
+        '''
+        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', self.config.final_batch_size, colortype='rgb')
+        fig = make_subplots(cols=2, rows=1, subplot_titles=['Model Score', 'vdw Score'])
+        for i in range(n_samples):
+            x = np.arange(num_iters)
+            y = sampling_dict['scores'][i]
+            opacity = np.clip(1 - np.abs(np.amax(y) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']), a_min=0.1, a_max=1)
+            fig.add_trace(go.Scattergl(x=x, y=y, opacity=opacity, line_color=colors[i], name=f'score_{i}'),
+                          col=1, row=1)
+            fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][i], y=y[sampling_dict['resampled state record'][i]],
+                                       mode='markers', line_color=colors[i], marker=dict(size=10), opacity=1,showlegend=False),
+                          col=1, row=1)
+        for i in range(n_samples):
+            y = -sampling_dict['vdw penalties'][i]
+            opacity = 0.75 #np.clip(1 - np.abs(np.amax(y) - np.amax(-sampling_dict['vdw penalties'])) / np.amax(-sampling_dict['vdw penalties']), a_min=0.1, a_max=1)
+            fig.add_trace(go.Scattergl(x=x, y=y, opacity=opacity, line_color=colors[i], name=f'vdw_{i}'),
+                          col=2, row=1)
+            fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][i], y=y[sampling_dict['resampled state record'][i]],
+                                       mode='markers', line_color=colors[i], marker=dict(size=10), opacity=1,showlegend=False),
+                          col=2, row=1)
+        # for i in range(n_samples):
+        #     opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
+        #                       a_min=0.1, a_max=1)
+        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity, line_color=colors[i], name=f'run_{i}'),
+        #                   col=1, row=2)
+        # for i in range(n_samples):
+        #     opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
+        #                       a_min=0.1, a_max=1)
+        #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['step size'][i]), opacity=opacity, line_color=colors[i], name=f'run_{i}'),
+        #                   col=2, row=2)
+        fig.update_layout(showlegend=True)
+        # fig.update_yaxes(range=[0, 1], row=1, col=2)
+        fig.layout.margin = self.layout.margin
+        # fig.write_image('../paper1_figs/sampling_telemetry.png')
+        # wandb.log({'Sampling Telemetry': fig})
+        if self.config.machine == 'local':
+            import plotly.io as pio
+            pio.renderers.default = 'browser'
+            fig.show()
+
+
+    def cell_params_tracking_plot(self, sampling_dict, collater, extra_test_loader):
+        all_samples = torch.tensor(sampling_dict['canonical samples'].reshape(12, self.config.final_batch_size * self.config.sample_steps).T)
+        single_mol_data_0 = extra_test_loader.dataset[0]
+        big_single_mol_data = collater([single_mol_data_0 for n in range(len(all_samples))]).cuda()
+        override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
+        sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
+        big_single_mol_data = override_sg_info('P-1', self.supercell_builder.dataDims, big_single_mol_data, self.supercell_builder.symmetries_dict, sym_ops_list)
+        processed_cell_params = torch.cat(self.supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda(), rescale_asymmetric_unit=False, skip_cell_cleaning=True), dim=-1).T
+        del big_single_mol_data
+
+        processed_cell_params = processed_cell_params.reshape(12, self.config.final_batch_size, self.config.sample_steps).cpu().detach().numpy()
+
+        fig = make_subplots(rows=4, cols=3, subplot_titles=[
+            'a', 'b', 'c', 'alpha', 'beta', 'gamma',
+            'x', 'y', 'z', 'phi', 'psi', 'theta'
+        ])
+        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', min(10, self.config.final_batch_size), colortype='rgb')
+        for i in range(12):
+            row = i // 3 + 1
+            col = i % 3 + 1
+            x = np.arange(self.config.sample_steps * self.config.final_batch_size)
+            for j in range(min(10, self.config.final_batch_size)):
+                y = processed_cell_params[i, j]
+                opacity = np.clip(1 - np.abs(np.ptp(y) - np.ptp(processed_cell_params[i])) / np.ptp(processed_cell_params[i]), a_min=0.1, a_max=1)
+                fig.add_trace(go.Scattergl(x=x, y=y, line_color=colors[j], opacity=opacity),
+                              row=row, col=col)
+                fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][j], y=y[sampling_dict['resampled state record'][j]],
+                                           mode='markers', line_color=colors[j], marker=dict(size=7), opacity=opacity, showlegend=False),
+                              row=row, col=col)
+
+        fig.update_layout(showlegend=False)
+        fig.layout.margin = self.layout.margin
+        # fig.write_image('../paper1_figs/sampling_telemetry.png')
+        # wandb.log({'Sampling Telemetry': fig})
+        if self.config.machine == 'local':
+            import plotly.io as pio
+            pio.renderers.default = 'browser'
+            fig.show()
 
     def generate_discriminator_negatives(self, epoch_stats_dict, config, data, generator, i):
         n_generators = sum([config.train_discriminator_adversarially, self.config.train_discriminator_on_noise, self.config.train_discriminator_on_randn])
@@ -1659,7 +1782,7 @@ class Modeller():
         return generator_convergence, discriminator_convergence
 
     def model_checkpointing(self, epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict):
-        if config.machine == 'cluster':  # every 5 epochs, save a checkpoint
+        if True: #config.machine == 'cluster':  # every 5 epochs, save a checkpoint
             if (epoch > 0) and (epoch % 5 == 0):
                 # saving early-stopping checkpoint
                 save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
@@ -1694,166 +1817,6 @@ class Modeller():
 
         return d_optimizer, d_learning_rate, d_hit_max_lr, g_optimizer, g_learning_rate, g_hit_max_lr
 
-    def report_sampling(self, sampling_dict):
-        '''
-        score
-        stun
-        acceptance rate
-        temperature
-        overall distribution
-        CLUSTERING
-        '''
-        # todo fix this up
-
-        layout = go.Layout(
-            margin=go.layout.Margin(
-                l=0,  # left margin
-                r=0,  # right margin
-                b=0,  # bottom margin
-                t=40,  # top margin
-            )
-        )
-        n_samples = len(sampling_dict['scores'])
-        num_iters = sampling_dict['scores'].shape[1]
-
-        '''
-        telemetry summary
-        '''
-        fig = make_subplots(cols=2, rows=2, subplot_titles=['Best Model Score','Min vdw Score', 'Mean Acceptance Rate', 'Mean Temperature'])
-        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-np.amin(sampling_dict['scores'], axis=0)), col=1, row=1)
-        #fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['stun score'], axis=0)), col=2, row=1)
-        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-np.amin(sampling_dict['vdw penalties'], axis=0)), col=2, row=1)
-        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(sampling_dict['acceptance ratio'], axis=0)), col=1, row=2)
-        fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.mean(np.log10(sampling_dict['step size']), axis=0)), col=2, row=2)
-        fig.update_layout(showlegend=False)
-        #fig.update_yaxes(range=[-1, 1], row=1, col=2)
-        #fig.update_yaxes(range=[-2, 0], row=1, col=2)
-        fig.update_yaxes(range=[-16, 16], row=1, col=1)
-        fig.layout.margin = layout.margin
-        # fig.write_image('../paper1_figs/sampling_telemetry_summary.png')
-        #wandb.log({'Sampling Telemetry Summary': fig})
-        if self.config.machine == 'local':
-            import plotly.io as pio
-            pio.renderers.default = 'browser'
-            fig.show()
-
-        '''
-        full telemetry
-        '''
-        fig = make_subplots(cols=2, rows=2, subplot_titles=['Model Score','vdw Score', 'Acceptance Rate', 'step size'])
-        for i in range(n_samples):
-            opacity = np.clip(1 - np.abs(np.amin(sampling_dict['scores'][i]) - np.amin(sampling_dict['scores'])) / np.amin(sampling_dict['scores']), a_min = 0.1, a_max = 1)
-            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['scores'][i], opacity = opacity), col=1, row=1)
-            #fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['stun score'][i], opacity = opacity), col=2, row=1)
-            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=-sampling_dict['vdw penalties'][i], opacity = opacity), col=2, row=1)
-            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity), col=1, row=2)
-            fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['step size'][i]), opacity= opacity), col=2, row=2)
-        fig.update_layout(showlegend=False)
-        #fig.update_yaxes(range=[0, 1], row=1, col=2)
-        fig.layout.margin = layout.margin
-        #fig.write_image('../paper1_figs/sampling_telemetry.png')
-        #wandb.log({'Sampling Telemetry': fig})
-        if self.config.machine == 'local':
-            import plotly.io as pio
-            pio.renderers.default = 'browser'
-            fig.show()
-
-
-        # crystal_identifier = test_epoch_stats_dict['identifiers'][sample_ind]
-        #
-        # '''
-        # plt.clf()
-        # import matplotlib as mpl
-        # for i,file in enumerate(files):
-        #     plt.subplot(2,3,i+1)
-        #     sampling_dict = np.load(file, allow_pickle=True).item()
-        #     plt.hist2d(x=np.nan_to_num(-sampling_dict['scores'].flatten()),
-        #            y=np.nan_to_num(-sampling_dict['vdw penalties'].flatten()),
-        #            bins = 50,
-        #            range=[[-16,16],[-5,0.2]],
-        #            norm=mpl.colors.LogNorm())
-        #
-        # '''
-        #
-        # fig = go.Figure()
-        # viridis = px.colors.sequential.Viridis
-        # fig.add_trace(go.Histogram2d(x=-sampling_dict['scores'].flatten(),
-        #                              y=-sampling_dict['vdw penalties'].flatten(),
-        #                              xbins=dict(start=-16, end=16, size=32 / 50),
-        #                              ybins=dict(start=-2, end=0.1, size=1 / 50),
-        #                              showscale=False,
-        #                              colorscale=[
-        #                                  [0, viridis[0]],
-        #                                  [1. / 1000000, viridis[2]],
-        #                                  [1. / 10000, viridis[4]],
-        #                                  [1. / 100, viridis[7]],
-        #                                  [1., viridis[9]],
-        #                              ],
-        #                              colorbar=dict(
-        #                                  tick0=0,
-        #                                  tickmode='array',
-        #                                  tickvals=[0, 1000, 10000]
-        #                              )))
-        #
-        # fig.add_trace(go.Scattergl(x=softmax_and_score(test_epoch_stats_dict['discriminator real score'][sample_ind]),
-        #                            y=test_epoch_stats_dict['real vdw penalty'][sample_ind][None],
-        #                            mode='markers',
-        #                            showlegend=False,
-        #                            marker=dict(
-        #                                symbol='circle',
-        #                                color='white',
-        #                                size=25,
-        #                                line=dict(width=1, color='black')
-        #                            )))
-        #
-        # fig.layout.margin = layout.margin
-        # fig.update_layout(title=crystal_identifier)
-        # # fig.write_image('../paper1_figs/sampling_scores.png')
-        # wandb.log({'Sampling Scores': fig})
-        # if self.config.machine == 'local':
-        #     import plotly.io as pio
-        #     pio.renderers.default = 'browser'
-        #     fig.show()
-
-
-
-
-        '''
-        some distance work
-        '''
-        # supercell_data, generated_cell_volumes, overlaps_list = \
-        #     self.supercell_builder.build_supercells(single_mol_data.clone().to(init_samples.device), init_samples,
-        #                                             self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff,
-        #                                             override_sg = self.config.generate_sgs)
-        #
-        # rdfs_list, rr, rdfs_dict_list = crystal_rdf(supercell_data, rrange=[0, self.config.discriminator.graph_convolution_cutoff],
-        #                                             bins=200, mode='intermolecular', raw_density=True, atomwise=True)
-        # dists = torch.zeros((supercell_data.num_graphs, supercell_data.num_graphs))
-        # for i in range(supercell_data.num_graphs):
-        #     for j in range(i, supercell_data.num_graphs):
-        #         dists[i, j] = compute_rdf_distance(rdfs_list[i], rdfs_list[j], rr)
-        #
-        # rdfs_list2, rr, rdfs_dict_list = crystal_rdf(supercell_data, rrange=[0, self.config.discriminator.graph_convolution_cutoff],
-        #                                              bins=200, mode='intermolecular', raw_density=True, atomwise=False, elementwise=True)
-        # dists2 = torch.zeros((supercell_data.num_graphs, supercell_data.num_graphs))
-        # for i in range(supercell_data.num_graphs):
-        #     for j in range(i, supercell_data.num_graphs):
-        #         dists2[i, j] = compute_rdf_distance(rdfs_list2[i], rdfs_list2[j], rr)
-
-        ''' agglomerative clustering and dendrogram
-        setting distance_threshold=0 ensures we compute the full tree.
-        '''
-        # from sklear.cluster import AgglomerativeClustering
-        # plt.clf()
-        # model = AgglomerativeClustering(distance_threshold=0, linkage="average", affinity='precomputed', n_clusters=None)
-        # model = model.fit(dists.cpu().detach().numpy())
-        #
-        # # plot the top three levels of the dendrogram
-        # plot_dendrogram(model, truncate_mode="level", p=3)
-        # plt.xlabel("Number of points in node (or index of point if no parenthesis).")
-        # plt.show()
-
-        return None
 
     def post_run_evaluation(self, epoch, generator, discriminator, d_optimizer, g_optimizer, metrics_dict, train_loader, test_loader, extra_test_loader):
         '''
@@ -2225,7 +2188,7 @@ class Modeller():
             wandb.log({'Generated Supercells': wandb.Molecule(open(f"supercell_{i}.pdb"), caption=identifiers[i] + ' ' + sgs[i])})
 
         mols = [ase_mol_from_crystaldata(generated_supercell_examples,
-                                         index=i, exclusion_level='ref only')
+                                         index=i, exclusion_level='conformer')
                 for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
         for i in range(len(mols)):
             ase.io.write(f'conformer_{i}.pdb', mols[i])
