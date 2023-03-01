@@ -258,3 +258,19 @@ class PosEncoding3D(nn.Module):  # a global aggregation function using spherical
             get_emb(torch.einsum('i,j->ij', (pos[:, 1], self.inv_freq))),
             get_emb(torch.einsum('i,j->ij', (pos[:, 2], self.inv_freq)))), dim=-1)
 
+class PosEncoding2D(nn.Module):  # a global aggregation function using spherical harmonics
+    def __init__(self, channels, cutoff):
+        super(PosEncoding2D, self).__init__()
+
+        inv_freq = 1 / ((cutoff) * 10000 ** (torch.arange(0, channels, 2).float() / channels))
+        self.register_buffer("inv_freq", inv_freq)
+
+    def forward(self, pos):
+        #x_emb = get_emb(torch.einsum('i,j->ij', (pos[:, 0], self.inv_freq)))
+        #y_emb = get_emb(torch.einsum('i,j->ij', (pos[:, 1], self.inv_freq)))
+        #z_emb = get_emb(torch.einsum('i,j->ij', (pos[:, 2], self.inv_freq)))
+        return torch.cat((
+            get_emb(torch.einsum('i,j->ij', (pos[:, 0], self.inv_freq))),
+            get_emb(torch.einsum('i,j->ij', (pos[:, 1], self.inv_freq))),
+        ),dim=-1)
+

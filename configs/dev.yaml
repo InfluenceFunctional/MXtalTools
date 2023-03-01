@@ -5,8 +5,10 @@ explicit_run_enumeration: False
 skip_saving_and_loading: True
 run_num: 0
 anomaly_detection: False
-mode: gan # 'gan' or 'regression' or 'figures' or 'sampling'
+mode: sampling # 'gan' or 'regression' or 'figures' or 'sampling'
 gan_loss: standard # standard only
+save_checkpoints: False
+
 train_generator_packing: False
 train_generator_vdw: False
 generator_vdw_ramp: False
@@ -28,8 +30,8 @@ extra_test_set_paths: [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/csd_coumarins_
   #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
                         #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
-d_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/discriminator_625'
-g_model_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_10010'
+d_model_path: 'C:\Users\mikem\Desktop\CSP_runs\models/cluster/discriminator_10032'
+g_model_path: 'C:\Users\mikem\Desktop\CSP_runs\models/cluster/generator_10010'
 
 sample_steps: 1000
 sample_move_size: 0.001

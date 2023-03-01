@@ -62,7 +62,8 @@ class MikesGraphNet(torch.nn.Module):
         if positional_embedding:
             self.pos_embedding = PosEncoding3D(hidden_channels//3,cutoff=10)
 
-        self.atom_embeddings = EmbeddingBlock(hidden_channels, atom_embedding_dims, num_atom_features, embedding_hidden_dimension, activation)
+        self.atom_embeddings = EmbeddingBlock(hidden_channels, atom_embedding_dims, num_atom_features, embedding_hidden_dimension,
+                                              activation)
 
         self.interaction_blocks = torch.nn.ModuleList([
             GCBlock(graph_convolution_filters,
@@ -206,7 +207,7 @@ class MikesGraphNet(torch.nn.Module):
 
         else:
             edge_index = gnn.radius_graph(pos, r=self.cutoff, batch=batch,
-                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target')
+                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target') # note - requires batch be monotonically increasing
 
         dist, rbf, sbf, tbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
 
@@ -237,6 +238,7 @@ class MikesGraphNet(torch.nn.Module):
                 x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution - residual is already inside the conv operator
                 #x = self.inside_norm2[n](x)
                 x = x + fc(x)  # feature-wise 1D convolution, FC includes residual
+                #x = fc(x)
 
         if return_dists:  # return dists, batch #, and inside/outside identity, and atomic number
             dist_output = {}
@@ -276,8 +278,7 @@ class EmbeddingBlock(torch.nn.Module):
     def __init__(self, hidden_channels, embedding_size, num_atom_features, embedding_dimension, activation='gelu'):
         super(EmbeddingBlock, self).__init__()
         self.num_embeddings = 1
-        for key in embedding_size.keys():
-            self.embeddings = nn.Embedding(int(embedding_size[key]), embedding_dimension)
+        self.embeddings = nn.Embedding(embedding_size, embedding_dimension)
         self.linear = nn.Linear(embedding_dimension + num_atom_features - self.num_embeddings, hidden_channels)
         self.activation = Activation(activation, hidden_channels)
 
@@ -350,6 +351,8 @@ class GCBlock(torch.nn.Module):
                 num_filters=graph_convolution_filters,
                 cutoff=5
                 , )
+        elif convolution_mode == 'none':
+            self.GConv = nn.Identity()
 
     def compute_edge_attributes(self, edge_index, rbf, idx_ji, sbf=None, tbf=None, idx_kj=None):
         if tbf is not None:
@@ -384,6 +387,8 @@ class GCBlock(torch.nn.Module):
         # convolve # todo only update nodes which will actually pass messages on this round
         if self.convolution_mode.lower() == 'schnet':
             x = self.GConv(x, edge_index, dists, edge_attr)
+        elif self.convolution_mode.lower() == 'none':
+            pass
         else:
             x = self.GConv(x, edge_index, edge_attr)
 

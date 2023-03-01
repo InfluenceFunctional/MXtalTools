@@ -21,6 +21,8 @@ class global_aggregation(nn.Module):
             self.agg = gnn.global_mean_pool
         elif agg_func == 'sum':
             self.agg = gnn.global_add_pool
+        elif agg_func == 'max':
+            self.agg = gnn.global_max_pool
         elif agg_func == 'attention':
             self.agg = gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))
         elif agg_func == 'set2set':
@@ -28,7 +30,7 @@ class global_aggregation(nn.Module):
             self.agg_fc = nn.Linear(filters * 2, filters)  # condense to correct number of filters
         elif agg_func == 'combo':
             self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
-            self.agg_list3 = [gnn.global_sort_pool]
+            #self.agg_list3 = [gnn.global_sort_pool]
             # self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))])  # aggregation functions requiring parameters
             self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(
                 general_MLP(input_dim=filters,
@@ -40,9 +42,9 @@ class global_aggregation(nn.Module):
                 # nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1))
             )])  # aggregation functions requiring parameters
             self.agg_fc = general_MLP(
-                layers=4,
+                layers=1,
                 filters=filters,
-                input_dim=filters * (len(self.agg_list1) + 1 + 3),
+                input_dim=filters * (len(self.agg_list1) + 1),
                 output_dim=filters,
                 norm=None,
                 dropout=0)  # condense to correct number of filters
@@ -50,35 +52,20 @@ class global_aggregation(nn.Module):
             self.agg = SphGeoPooling(in_channels=filters, num_radial=num_radial, spherical_order=spherical_order, cutoff = max_molecule_size,
                                      embedding=geometric_embedding, radial_embedding = radial_embedding)
 
-    def forward(self, x, pos, batch):
+    def forward(self, x, pos, batch, output_dim = None):
         if self.agg_func == 'set2set':
-            x = self.agg(x, batch)
+            x = self.agg(x, batch, size = output_dim)
             return self.agg_fc(x)
         elif self.agg_func == 'combo':
-            output1 = [agg(x, batch) for agg in self.agg_list1]
-            output2 = [agg(x, batch) for agg in self.agg_list2]
-            output3 = [agg(x, batch, 3) for agg in self.agg_list3]
-            return self.agg_fc(torch.cat((output1 + output2 + output3), dim=1))
+            output1 = [agg(x, batch, size = output_dim) for agg in self.agg_list1]
+            output2 = [agg(x, batch, size = output_dim) for agg in self.agg_list2]
+            #output3 = [agg(x, batch, 3, size = output_dim) for agg in self.agg_list3]
+            return self.agg_fc(torch.cat((output1 + output2), dim=1))
+
         elif self.agg_func == 'geometric':
-            '''
-            # check activations
-            import matplotlib.pyplot as plt
-            from scipy.spatial.transform import Rotation
-
-            a1 = self.agg(x, pos, batch)
-            num_graphs = batch[-1]+1
-            rotation_matrix_list = torch.tensor(Rotation.random(num=num_graphs).as_matrix(), device=x.device,dtype=pos.dtype)
-            transformed_coords = [torch.einsum('ji, mj->mi', (rotation_matrix_list[i], pos[batch==i])) for i in range(num_graphs)]
-            pos2 = torch.cat(transformed_coords)
-            a2 = self.agg(x,pos2,batch)
-            plt.clf()
-            plt.plot(a1[0].cpu().detach().numpy(),'.')
-            plt.plot(a2[0].cpu().detach().numpy(),'.')
-            '''
-
-            return self.agg(x, pos, batch)
+            return self.agg(x, pos, batch, dim_size = output_dim)
         else:
-            return self.agg(x, batch)
+            return self.agg(x, batch, size = output_dim)
 
 
 class SphGeoPooling(nn.Module):  # a global aggregation function using spherical harmonics
@@ -154,7 +141,7 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
         # message aggregation
         self.global_pool = global_aggregation('combo', in_channels)
 
-    def forward(self, x, pos, batch):
+    def forward(self, x, pos, batch, dim_size = None):
         '''
         assume positions are pre-centred on the molecule centroids
         '''
@@ -180,7 +167,7 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
             # alternatively, torch linear or bilinear (very expensive)
             return self.mlp(
                 torch.cat((
-                    self.global_pool(x, pos, batch), gnn.global_add_pool(messages, batch)),
+                    self.global_pool(x, pos, batch, dim_size = dim_size), gnn.global_add_pool(messages, batch)),
                     dim=-1))
 
         elif self.embedding == 'pos':
@@ -190,7 +177,7 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
             return self.global_pool(
                 self.mlp(torch.cat((
                     x, messages),
-                    dim=-1)), pos, batch)
+                    dim=-1)), pos, batch, dim_size = dim_size)
 
 
         elif self.embedding == 'combo': # todo deprecated until we decide whether sph or sph2 is better
@@ -207,8 +194,9 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
                         self.mlp(torch.cat((
                             x, node_embeddings),
                             dim=-1)),
-                        pos, batch),
+                        pos, batch, dim_size = dim_size),
                     graph_embedding), dim=-1))
+
 
             ''' embedding test
             import matplotlib.pyplot as plt

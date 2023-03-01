@@ -119,6 +119,9 @@ def load_model(config, model, optimizer):
 
     return model, optimizer
 
+def crystals_to_ase_mols(crystaldata, max_ind = np.inf, highlight_aux = False, exclusion_level = 'distance', inclusion_distance = 4):
+    return [ase_mol_from_crystaldata(crystaldata,ii,highlight_aux = highlight_aux, exclusion_level = exclusion_level, inclusion_distance = inclusion_distance)
+            for ii in range(min(max_ind, crystaldata.num_graphs))]
 
 def ase_mol_from_crystaldata(data, index=None, highlight_aux=False, exclusion_level=None, inclusion_distance=4):
     '''

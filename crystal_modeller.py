@@ -1154,7 +1154,7 @@ class Modeller():
                 debug=False,
                 init_adaptive_step_size=self.config.sample_move_size,
                 global_temperature=0.00001,  # essentially only allow downward moves
-                generator=self.randn_generator, # generator,
+                generator=generator,
                 supercell_size=self.config.supercell_size,
                 graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
                 vdw_radii=self.vdw_radii,
@@ -1177,42 +1177,44 @@ class Modeller():
             sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(single_mol_data.x.device) for i in range(single_mol_data.num_graphs)]
             single_mol_data = override_sg_info('P-1', self.supercell_builder.dataDims, single_mol_data, self.supercell_builder.symmetries_dict, sym_ops_list)
 
-            sampling_dict = smc_sampler(discriminator, self.supercell_builder,
-                                        single_mol_data.clone().cuda(), None,
-                                        self.config.sample_steps)
+            smc_sampling_dict = smc_sampler(discriminator, self.supercell_builder,
+                                            single_mol_data.clone().cuda(), None,
+                                            self.config.sample_steps)
 
             '''
             reporting
             '''
 
-            self.sampling_telemetry_plot(sampling_dict)
-            self.cell_params_tracking_plot(sampling_dict, collater, extra_test_loader)
+            self.sampling_telemetry_plot(smc_sampling_dict)
+            self.cell_params_tracking_plot(smc_sampling_dict, collater, extra_test_loader)
+            best_smc_samples, best_smc_samples_scores, best_smc_cells = self.sample_clustering(smc_sampling_dict, collater, extra_test_loader, discriminator)
 
-            # todo limit or batch sample numbers
-            best_samples, best_samples_scores, best_cells = self.sample_clustering(sampling_dict, collater, extra_test_loader, discriminator)
-
-
-            # todo must de-clean incoming samples so that we have a continuous line without a break
             # destandardize samples
-            unclean_best_samples = self.de_clean_samples(best_samples, best_cells.sg_ind)
-
-            #init_samples = generator.forward(n_samples=single_mol_data.num_graphs, conditions=single_mol_data.cuda())
-            single_mol_data = collater([single_mol_data_0 for n in range(len(best_samples))])
+            unclean_best_samples = self.de_clean_samples(best_smc_samples, best_smc_cells.sg_ind)
+            single_mol_data = collater([single_mol_data_0 for n in range(len(best_smc_samples))])
             gd_sampling_dict = gradient_descent_sampling(
                 discriminator, unclean_best_samples, single_mol_data.clone(), self.supercell_builder,
-                n_iter = 500,lr =1e-3,
-                optimizer_func = optim.Rprop,
+                n_iter=500, lr=1e-3,
+                optimizer_func=optim.Rprop,
                 return_vdw=True, vdw_radii=self.vdw_radii,
                 supercell_size=self.config.supercell_size,
                 cutoff=self.config.discriminator.graph_convolution_cutoff,
                 generate_sgs='P-1',  # self.config.generate_sgs
-                align_molecules = True, # always true here
+                align_molecules=True,  # always true here
             )
-
+            gd_sampling_dict['canonical samples'] = gd_sampling_dict['samples']
+            gd_sampling_dict['resampled state record'] = [[0] for _ in range(len(unclean_best_samples))]
+            gd_sampling_dict['scores'] = gd_sampling_dict['scores'].T
+            gd_sampling_dict['vdw penalties'] = gd_sampling_dict['vdw'].T
+            gd_sampling_dict['canonical samples'] = np.swapaxes(gd_sampling_dict['canonical samples'],0,2)
+            self.sampling_telemetry_plot(gd_sampling_dict)
+            self.cell_params_tracking_plot(gd_sampling_dict, collater, extra_test_loader)
+            best_gd_samples, best_gd_samples_scores, best_gd_cells = self.sample_clustering(gd_sampling_dict, collater, extra_test_loader, discriminator)
 
             # todo process refined samples
 
-            # todo score known polymorphs for comparison
+            # todo compare final samples to known minima
+
             extra_test_sample = next(iter(extra_test_loader)).cuda()
             sample_supercells = self.supercell_builder.real_cell_to_supercell(extra_test_sample, self.config)
             known_sample_scores = softmax_and_score(discriminator(sample_supercells.clone()))
@@ -1224,7 +1226,7 @@ class Modeller():
             # np.save(f'../sampling_output_run_{self.config.run_num}', sampling_dict)
             # self.report_sampling(sampling_dict)
 
-    def de_clean_samples(self,samples,sg_inds):
+    def de_clean_samples(self, samples, sg_inds):
         means = self.supercell_builder.dataDims['lattice means']
         stds = self.supercell_builder.dataDims['lattice stds']
 
@@ -1256,23 +1258,25 @@ class Modeller():
         unclean_best_samples = np.concatenate((unclean_cell_lengths, unclean_cell_angles, unclean_mol_position, unclean_mol_rotation), axis=1)
         return unclean_best_samples
 
-    def sample_clustering(self,sampling_dict, collater, extra_test_loader, discriminator):
+    def sample_clustering(self, sampling_dict, collater, extra_test_loader, discriminator):
 
         # first level filter - remove subsequent duplicates
-        filtered_samples = [[sampling_dict['canonical samples'][:,ii,0]] for ii in range(self.config.final_batch_size)]
-        filtered_samples_inds = [[0] for ii in range(self.config.final_batch_size)]
-        for i in range(1,self.config.sample_steps):
-            for j in range(self.config.final_batch_size):
-                if not all(sampling_dict['canonical samples'][:,j,i] == sampling_dict['canonical samples'][:,j,i-1]):
-                    filtered_samples[j].append(sampling_dict['canonical samples'][:,j,i])
+        n_runs = sampling_dict['canonical samples'].shape[1]
+        n_steps = sampling_dict['canonical samples'].shape[2]
+        filtered_samples = [[sampling_dict['canonical samples'][:, ii, 0]] for ii in range(n_runs)]
+        filtered_samples_inds = [[0] for ii in range(n_runs)]
+        for i in range(1, n_steps):
+            for j in range(n_runs):
+                if not all(sampling_dict['canonical samples'][:, j, i] == sampling_dict['canonical samples'][:, j, i - 1]):
+                    filtered_samples[j].append(sampling_dict['canonical samples'][:, j, i])
                     filtered_samples_inds[j].append(i)
-        filtered_samples = [torch.tensor(filtered_samples[ii],requires_grad=False,dtype=torch.float32) for ii in range(self.config.final_batch_size)]
-        filtered_samples_inds = [np.asarray(filtered_samples_inds[ii]) for ii in range(self.config.final_batch_size)]
-        filtered_samples_scores = [np.asarray(sampling_dict['scores'][ii,filtered_samples_inds[ii]]) for ii in range(self.config.final_batch_size)]
+        filtered_samples = [torch.tensor(filtered_samples[ii], requires_grad=False, dtype=torch.float32) for ii in range(n_runs)]
+        filtered_samples_inds = [np.asarray(filtered_samples_inds[ii]) for ii in range(n_runs)]
+        filtered_samples_scores = [np.asarray(sampling_dict['scores'][ii, filtered_samples_inds[ii]]) for ii in range(n_runs)]
 
         all_filtered_samples = np.concatenate(filtered_samples)
         all_filtered_samples_scores = np.concatenate(filtered_samples_scores)
-        dists = torch.cdist(torch.Tensor(all_filtered_samples),torch.Tensor(all_filtered_samples)).detach().numpy()
+        dists = torch.cdist(torch.Tensor(all_filtered_samples), torch.Tensor(all_filtered_samples)).detach().numpy()
 
         model = AgglomerativeClustering(distance_threshold=1, linkage="average", affinity='euclidean', n_clusters=None)
         model = model.fit(all_filtered_samples)
@@ -1282,11 +1286,11 @@ class Modeller():
         '''
         visualize classwise distances
         '''
-        class_distances = np.zeros((n_clusters,n_clusters))
+        class_distances = np.zeros((n_clusters, n_clusters))
         for i in range(n_clusters):
             for j in range(n_clusters):
                 if j >= i:
-                    class_distances[i,j] = np.mean(dists[classes == i][:,classes==j])
+                    class_distances[i, j] = np.mean(dists[classes == i][:, classes == j])
 
         # #plot the top three levels of the dendrogram
         # plt.clf()
@@ -1300,29 +1304,35 @@ class Modeller():
         '''
         pick out best samples in each class with reasonably good scoress
         '''
-        best_samples = np.zeros((n_clusters,12))
+        best_samples = np.zeros((n_clusters, 12))
         best_samples_scores = np.zeros((n_clusters))
         for i in range(n_clusters):
             best_ind = np.argmax(all_filtered_samples_scores[classes == i])
-            best_samples_scores[i] = all_filtered_samples_scores[classes==i][best_ind]
-            best_samples[i] = all_filtered_samples[classes==i][best_ind]
+            best_samples_scores[i] = all_filtered_samples_scores[classes == i][best_ind]
+            best_samples[i] = all_filtered_samples[classes == i][best_ind]
 
+        sort_inds = np.argsort(best_samples_scores)
+        best_samples = best_samples[sort_inds]
+        best_samples_scores = best_samples_scores[sort_inds]
+
+        n_samples_to_build = min(100, len(best_samples))
+        best_samples_to_build = best_samples[:n_samples_to_build]
         single_mol_data_0 = extra_test_loader.dataset[0]
-        big_single_mol_data = collater([single_mol_data_0 for n in range(len(best_samples))]).cuda()
+        big_single_mol_data = collater([single_mol_data_0 for n in range(n_samples_to_build)]).cuda()
         override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
         sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
         big_single_mol_data = override_sg_info('P-1', self.supercell_builder.dataDims, big_single_mol_data, self.supercell_builder.symmetries_dict, sym_ops_list)
 
-        best_cells, _, _ = self.supercell_builder.build_supercells(big_single_mol_data, torch.tensor(best_samples, device='cuda', dtype=torch.float32),
+        best_cells, _, _ = self.supercell_builder.build_supercells(big_single_mol_data, torch.tensor(best_samples_to_build, device='cuda', dtype=torch.float32),
                                                                    supercell_size=self.config.supercell_size,
                                                                    graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
                                                                    override_sg='P-1',
                                                                    align_molecules=True,
-                                                                   skip_cell_cleaning = True,
+                                                                   skip_cell_cleaning=True,
                                                                    rescale_asymmetric_unit=False,
-                                                                   standardized_sample=True,)
+                                                                   standardized_sample=True, )
 
-        assert np.mean(np.abs(best_cells.cell_params.cpu().detach().numpy() - (best_samples * self.supercell_builder.dataDims['lattice stds'] + self.supercell_builder.dataDims['lattice means']))) < 1e-4
+        assert np.mean(np.abs(best_cells.cell_params.cpu().detach().numpy() - (best_samples_to_build * self.supercell_builder.dataDims['lattice stds'] + self.supercell_builder.dataDims['lattice means']))) < 1e-4
         ss = softmax_and_score(discriminator(best_cells.clone().cuda())).cpu().detach().numpy()
 
         # mols = [ase_mol_from_crystaldata(best_cells, ii, highlight_aux=True, exclusion_level='distance', inclusion_distance=5) for ii in range(best_cells.num_graphs)]
@@ -1330,9 +1340,8 @@ class Modeller():
 
         return best_samples, best_samples_scores, best_cells.cpu().detach()
 
-
     def sampling_telemetry_plot(self, sampling_dict):
-        n_samples = len(sampling_dict['scores'])
+        n_runs = len(sampling_dict['scores'])
         num_iters = sampling_dict['scores'].shape[1]
 
         self.layout = go.Layout(
@@ -1347,24 +1356,24 @@ class Modeller():
         '''
         full telemetry
         '''
-        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', self.config.final_batch_size, colortype='rgb')
+        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', n_runs, colortype='rgb')
         fig = make_subplots(cols=2, rows=1, subplot_titles=['Model Score', 'vdw Score'])
-        for i in range(n_samples):
+        for i in range(n_runs):
             x = np.arange(num_iters)
             y = sampling_dict['scores'][i]
             opacity = np.clip(1 - np.abs(np.amax(y) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']), a_min=0.1, a_max=1)
             fig.add_trace(go.Scattergl(x=x, y=y, opacity=opacity, line_color=colors[i], name=f'score_{i}'),
                           col=1, row=1)
             fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][i], y=y[sampling_dict['resampled state record'][i]],
-                                       mode='markers', line_color=colors[i], marker=dict(size=10), opacity=1,showlegend=False),
+                                       mode='markers', line_color=colors[i], marker=dict(size=10), opacity=1, showlegend=False),
                           col=1, row=1)
-        for i in range(n_samples):
+        for i in range(n_runs):
             y = -sampling_dict['vdw penalties'][i]
-            opacity = 0.75 #np.clip(1 - np.abs(np.amax(y) - np.amax(-sampling_dict['vdw penalties'])) / np.amax(-sampling_dict['vdw penalties']), a_min=0.1, a_max=1)
+            opacity = np.clip(1 - np.abs(np.amax(y) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']), a_min=0.1, a_max=1)
             fig.add_trace(go.Scattergl(x=x, y=y, opacity=opacity, line_color=colors[i], name=f'vdw_{i}'),
                           col=2, row=1)
             fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][i], y=y[sampling_dict['resampled state record'][i]],
-                                       mode='markers', line_color=colors[i], marker=dict(size=10), opacity=1,showlegend=False),
+                                       mode='markers', line_color=colors[i], marker=dict(size=10), opacity=1, showlegend=False),
                           col=2, row=1)
         # for i in range(n_samples):
         #     opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
@@ -1386,9 +1395,11 @@ class Modeller():
             pio.renderers.default = 'browser'
             fig.show()
 
-
     def cell_params_tracking_plot(self, sampling_dict, collater, extra_test_loader):
-        all_samples = torch.tensor(sampling_dict['canonical samples'].reshape(12, self.config.final_batch_size * self.config.sample_steps).T)
+        num_iters = sampling_dict['scores'].shape[1]
+        n_runs = sampling_dict['canonical samples'].shape[1]
+
+        all_samples = torch.tensor(sampling_dict['canonical samples'].reshape(12, n_runs * num_iters).T)
         single_mol_data_0 = extra_test_loader.dataset[0]
         big_single_mol_data = collater([single_mol_data_0 for n in range(len(all_samples))]).cuda()
         override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
@@ -1397,20 +1408,20 @@ class Modeller():
         processed_cell_params = torch.cat(self.supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda(), rescale_asymmetric_unit=False, skip_cell_cleaning=True), dim=-1).T
         del big_single_mol_data
 
-        processed_cell_params = processed_cell_params.reshape(12, self.config.final_batch_size, self.config.sample_steps).cpu().detach().numpy()
+        processed_cell_params = processed_cell_params.reshape(12, n_runs, num_iters).cpu().detach().numpy()
 
         fig = make_subplots(rows=4, cols=3, subplot_titles=[
             'a', 'b', 'c', 'alpha', 'beta', 'gamma',
             'x', 'y', 'z', 'phi', 'psi', 'theta'
         ])
-        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', min(10, self.config.final_batch_size), colortype='rgb')
+        colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', min(10, n_runs), colortype='rgb')
         for i in range(12):
             row = i // 3 + 1
             col = i % 3 + 1
-            x = np.arange(self.config.sample_steps * self.config.final_batch_size)
-            for j in range(min(10, self.config.final_batch_size)):
+            x = np.arange(num_iters * n_runs)
+            for j in range(min(10, n_runs)):
                 y = processed_cell_params[i, j]
-                opacity = np.clip(1 - np.abs(np.ptp(y) - np.ptp(processed_cell_params[i])) / np.ptp(processed_cell_params[i]), a_min=0.1, a_max=1)
+                opacity = 0.75 #np.clip(1 - np.abs(np.ptp(y) - np.ptp(processed_cell_params[i])) / np.ptp(processed_cell_params[i]), a_min=0.1, a_max=1)
                 fig.add_trace(go.Scattergl(x=x, y=y, line_color=colors[j], opacity=opacity),
                               row=row, col=col)
                 fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][j], y=y[sampling_dict['resampled state record'][j]],
@@ -1782,7 +1793,7 @@ class Modeller():
         return generator_convergence, discriminator_convergence
 
     def model_checkpointing(self, epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict):
-        if True: #config.machine == 'cluster':  # every 5 epochs, save a checkpoint
+        if config.save_checkpoints:  # config.machine == 'cluster':  # every 5 epochs, save a checkpoint
             if (epoch > 0) and (epoch % 5 == 0):
                 # saving early-stopping checkpoint
                 save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
@@ -1816,7 +1827,6 @@ class Modeller():
         print(f"Learning rates are d={d_lr:.5f}, g={g_lr:.5f}")
 
         return d_optimizer, d_learning_rate, d_hit_max_lr, g_optimizer, g_learning_rate, g_hit_max_lr
-
 
     def post_run_evaluation(self, epoch, generator, discriminator, d_optimizer, g_optimizer, metrics_dict, train_loader, test_loader, extra_test_loader):
         '''

@@ -42,6 +42,7 @@ class molecule_graph_model(nn.Module):
                  crystal_mode=False,
                  crystal_convolution_type=None,
                  positional_embedding = 'sph',
+                 atom_embedding_dims = None,
                  device='cuda'):
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
@@ -76,7 +77,13 @@ class molecule_graph_model(nn.Module):
         self.crystal_mode = crystal_mode
         self.crystal_convolution_type = crystal_convolution_type
 
+        if dataDims is None:
+            self.atom_embedding_dims = atom_embedding_dims # todo clean this up
+        else:
+            self.atom_embedding_dims = list(dataDims['atom embedding dict sizes'].values())[0]
+
         torch.manual_seed(seed)
+
 
         if self.graph_model is not None:
             if self.graph_model == 'mike':  # mike's net - others currently deprecated. For future, implement new convolutions in the mikenet class
@@ -93,14 +100,14 @@ class molecule_graph_model(nn.Module):
                     max_num_neighbors=self.max_num_neighbors,
                     cutoff=self.graph_convolution_cutoff,
                     activation='gelu',
-                    embedding_hidden_dimension=self.embedding_dim,
+                    embedding_hidden_dimension=atom_embedding_dims,
                     num_atom_features=self.n_atom_feats,
                     norm=self.graph_norm,
                     dropout=self.fc_dropout_probability,
                     spherical_embedding=self.add_spherical_basis,
                     torsional_embedding=self.add_torsional_basis,
                     radial_embedding=self.radial_function,
-                    atom_embedding_dims=dataDims['atom embedding dict sizes'],
+                    atom_embedding_dims=atom_embedding_dims,
                     attention_heads=self.num_attention_heads,
                 )
             else:
@@ -137,16 +144,27 @@ class molecule_graph_model(nn.Module):
 
         self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
 
-    def forward(self, data, return_latent=False, return_dists=False):
+    def forward(self, data=None, x=None, pos=None, batch=None, ptr=None, aux_ind=None, num_graphs = None, return_latent=False, return_dists=False):
+        if data is not None:
+            x = data.x
+            pos = data.pos
+            batch = data.batch
+            aux_ind = data.aux_ind
+            ptr = data.ptr
+            num_graphs = data.num_graphs
+
         extra_outputs = {}
         if self.graph_model is not None:
-            x, dists_dict = self.graph_net(data.x[:, :self.n_atom_feats], data.pos, data.batch, ptr=data.ptr, ref_mol_inds=data.aux_ind, return_dists=return_dists)  # get atoms encoding
+            x, dists_dict = self.graph_net(x[:, :self.n_atom_feats], pos, batch, ptr=ptr, ref_mol_inds=aux_ind, return_dists=return_dists)  # get atoms encoding
             if self.crystal_mode:  # model only outputs ref mol atoms - many fewer
-                x = self.global_pool(x, data.pos, data.batch[torch.where(data.aux_ind == 0)[0]])
+                x = self.global_pool(x, pos, batch[torch.where(aux_ind == 0)[0]], output_dim = num_graphs)
             else:
-                x = self.global_pool(x, data.pos, data.batch)  # aggregate atoms to molecule
+                x = self.global_pool(x, pos, batch, output_dim = num_graphs)  # aggregate atoms to molecule
 
-        mol_feats = self.mol_fc(data.x[data.ptr[:-1], -self.n_mol_feats:])  # molecule features are repeated, only need one per molecule (hence data.ptr)
+        if self.n_mol_feats > 0:
+            mol_feats = self.mol_fc(x[ptr[:-1], -self.n_mol_feats:])  # molecule features are repeated, only need one per molecule (hence data.ptr)
+        else:
+            mol_feats = None
 
         if self.graph_model is not None:
             x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features

@@ -37,6 +37,7 @@ def add_args(parser):
     parser.add_argument("--g_model_path", default=None, type=str)
     add_bool_arg(parser, 'extra_test_evaluation', default=False)
     parser.add_argument("--extra_test_set_paths", default=None, type=list)
+    add_bool_arg(parser,"save_checkpoints", default=False) # will revert to True on cluster machine
 
     update_args2config(args2config, 'yaml_config')
     update_args2config(args2config, 'run_num')
@@ -52,6 +53,8 @@ def add_args(parser):
     update_args2config(args2config, 'g_model_path')
     update_args2config(args2config, 'extra_test_evaluation')
     update_args2config(args2config, 'extra_test_set_paths')
+    update_args2config(args2config, 'save_checkpoints')
+
 
     # wandb
     parser.add_argument('--wandb_experiment_tag', type=str, default='MCryGAN_dev')
@@ -354,6 +357,7 @@ def process_config(config):
     elif config.machine == 'cluster':
         config.workdir = '/scratch/mk8347/csd_runs/'
         config.dataset_path = '/scratch/mk8347/csd_runs/datasets/full_dataset'
+        config.save_checkpoints = True
 
     config.seeds.model = config.seeds.model % 10
     config.seeds.dataset = config.seeds.dataset % 10

@@ -2336,6 +2336,9 @@ def np_hardtanh(x):
     return F.hardtanh(torch.Tensor(x)).detach().numpy()
 
 
+def torch_emd(x,y):
+    return torch.sum(torch.abs(torch.cumsum(x,dim=-1)-torch.cumsum(y,dim=-1)),dim=-1)
+
 def compute_rdf_distance(target_rdf, sample_rdf, rr):
     '''
     earth mover's distance
@@ -2499,6 +2502,35 @@ def compute_num_h_bonds(supercell_data, dataDims, i):
 
     return torch.sum(torch.cdist(donors_pos, acceptors_pos, p=2) < 3.3)
 
+
+def make_grid(gridpoint_lim, n_gridpoints, cart_dim):
+    grid = torch.zeros((n_gridpoints ** cart_dim, cart_dim))
+    if cart_dim == 2:
+        if n_gridpoints == 1:
+            grid_vals = torch.linspace(0, 1, n_gridpoints)
+        else:
+            grid_vals = torch.linspace(-gridpoint_lim, gridpoint_lim, n_gridpoints)
+        ind = 0
+        for i in range(len(grid_vals)):
+            for j in range(len(grid_vals)):
+                grid[ind, 0] = grid_vals[i]
+                grid[ind, 1] = grid_vals[j]
+                ind += 1
+    elif cart_dim == 3:
+        if n_gridpoints == 1:
+            grid_vals = torch.linspace(0, 1, n_gridpoints)
+        else:
+            grid_vals = torch.linspace(-gridpoint_lim, gridpoint_lim, n_gridpoints)
+        ind = 0
+        for i in range(len(grid_vals)):
+            for j in range(len(grid_vals)):
+                for k in range(len(grid_vals)):
+                    grid[ind, 0] = grid_vals[i]
+                    grid[ind, 1] = grid_vals[j]
+                    grid[ind, 2] = grid_vals[k]
+                    ind += 1
+
+    return grid
 
 '''
 # look at all kinds of activations

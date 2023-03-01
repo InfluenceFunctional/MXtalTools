@@ -6,46 +6,79 @@ from torch import nn
 import torch_geometric.nn as gnn
 import torch.nn.functional as F
 
+
 class general_MLP(nn.Module):
-    def __init__(self, layers, filters, input_dim, output_dim, activation='gelu', seed=0, dropout=0, conditioning_dim=0, norm=None,bias=True):
+    def __init__(self, layers, filters, input_dim, output_dim,
+                 activation='gelu', seed=0, dropout=0, conditioning_dim=0,
+                 norm=None, bias=True, norm_after_linear=False):
         super(general_MLP, self).__init__()
         # initialize constants and layers
+
         self.n_layers = layers
-        self.n_filters = filters
+
+        if isinstance(filters, list):
+            self.n_filters = filters
+        else:
+            self.n_filters = [filters for n in range(layers + 1)]
+            self.same_depth = True
+
+        if self.n_filters.count(self.n_filters[0]) != len(self.n_filters):  # if they are not all the same, we need residue adjustments
+            self.same_depth = False
+            self.residue_adjust = torch.nn.ModuleList([
+                nn.Linear(self.n_filters[i], self.n_filters[i + 1], bias=False)
+                for i in range(self.n_layers)
+            ])
+        else:
+            self.same_depth = True
+
+        self.input_filters = self.n_filters
+        self.output_filters = self.n_filters
+
         self.conditioning_dim = conditioning_dim
         self.output_dim = output_dim
         self.input_dim = input_dim + conditioning_dim
         self.norm_mode = norm
         self.dropout_p = dropout
         self.activation = activation
+        self.norm_after_linear = norm_after_linear
 
         torch.manual_seed(seed)
 
         self.fc_layers = torch.nn.ModuleList([
-            nn.Linear(self.n_filters, self.n_filters,bias=bias)
-            for _ in range(self.n_layers)
+            nn.Linear(self.n_filters[i], self.n_filters[i + 1], bias=bias)
+            for i in range(self.n_layers)
         ])
+        if norm_after_linear:
+            self.fc_norms = torch.nn.ModuleList([
+                Normalization(self.norm_mode, self.n_filters[i + 1])
+                for i in range(self.n_layers)
+            ])
+            self.fc_activations = torch.nn.ModuleList([
+                Activation(activation, self.n_filters[i + 1])
+                for i in range(self.n_layers)
+            ])
 
-        self.fc_norms = torch.nn.ModuleList([
-            Normalization(self.norm_mode, self.n_filters)
-            for _ in range(self.n_layers)
-        ])
+        else:
+            self.fc_norms = torch.nn.ModuleList([
+                Normalization(self.norm_mode, self.n_filters[i])
+                for i in range(self.n_layers)
+            ])
+            self.fc_activations = torch.nn.ModuleList([
+                Activation(activation, self.n_filters[i])
+                for i in range(self.n_layers)
+            ])
 
         self.fc_dropouts = torch.nn.ModuleList([
             nn.Dropout(p=self.dropout_p)
             for _ in range(self.n_layers)
         ])
 
-        self.fc_activations = torch.nn.ModuleList([
-            Activation(activation, self.n_filters)
-            for _ in range(self.n_layers)
-        ])
+        self.init_layer = nn.Linear(self.input_dim, self.n_filters[0])  # set appropriate sizing
+        self.output_layer = nn.Linear(self.n_filters[-1], self.output_dim, bias=False)
 
-        self.init_layer = nn.Linear(self.input_dim, self.n_filters)  # set appropriate sizing
-        self.output_layer = nn.Linear(self.n_filters, self.output_dim, bias=False)
-
-    def forward(self, x, conditions=None, return_latent=False):
-        if type(x) == torch_geometric.data.batch.CrystalDataBatch:  # extract conditions from trailing atomic features
+    def forward(self, x, conditions=None, return_latent=False, batch = None):
+        if 'geometric' in str(type(x)):  # extract conditions from trailing atomic features
+            # todo fix above
             # if x.num_graphs == 1:
             #     x = x.x[:, -self.input_dim:]
             # else:
@@ -60,10 +93,17 @@ class general_MLP(nn.Module):
 
             x = torch.cat((x, conditions), dim=1)
 
-        x = self.init_layer(x) # get the right feature depth
+        x = self.init_layer(x)  # get the right feature depth
 
-        for norm, linear, activation, dropout in zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts):
-            x = x + dropout(activation(linear(norm(x))))  # residue
+        for i, (norm, linear, activation, dropout) in enumerate(zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
+            if self.same_depth:
+                res = x.clone()
+            else:
+                res = self.residue_adjust[i](x)
+            if self.norm_after_linear:
+                x = res + dropout(activation(norm(linear(x),batch=batch)))  # residue
+            else:
+                x = res + dropout(activation(linear(norm(x,batch=batch))))  # residue
 
         if return_latent:
             return self.output_layer(x), x
@@ -74,12 +114,13 @@ class general_MLP(nn.Module):
 class Normalization(nn.Module):
     def __init__(self, norm, filters, *args, **kwargs):
         super().__init__()
+        self.norm_type = norm
         if norm == 'batch':
-            self.norm = nn.BatchNorm1d(filters)
+            self.norm = gnn.BatchNorm(filters)
         elif norm == 'layer':
-            self.norm = nn.LayerNorm(filters)
+            self.norm = gnn.LayerNorm(filters)
         elif norm == 'instance':
-            self.norm = nn.InstanceNorm1d(filters) # not tested
+            self.norm = gnn.InstanceNorm(filters)  # not tested
         elif norm == 'graph':
             self.norm = gnn.GraphNorm(filters)
         elif norm is None:
@@ -88,8 +129,8 @@ class Normalization(nn.Module):
             print(norm + " is not a valid normalization")
             sys.exit()
 
-    def forward(self, input, batch = None):
-        if batch is not None:
+    def forward(self, input, batch=None):
+        if batch is not None and self.norm_type != 'batch':
             return self.norm(input, batch)
 
         return self.norm(input)
