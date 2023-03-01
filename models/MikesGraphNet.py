@@ -278,7 +278,7 @@ class EmbeddingBlock(torch.nn.Module):
     def __init__(self, hidden_channels, embedding_size, num_atom_features, embedding_dimension, activation='gelu'):
         super(EmbeddingBlock, self).__init__()
         self.num_embeddings = 1
-        self.embeddings = nn.Embedding(embedding_size, embedding_dimension)
+        self.embeddings = nn.Embedding(embedding_size + 1, embedding_dimension)
         self.linear = nn.Linear(embedding_dimension + num_atom_features - self.num_embeddings, hidden_channels)
         self.activation = Activation(activation, hidden_channels)
 
