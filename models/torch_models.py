@@ -34,7 +34,7 @@ class molecule_graph_model(nn.Module):
                  num_attention_heads,
                  add_spherical_basis,
                  add_torsional_basis,
-                 atom_embedding_size,
+                 graph_embedding_size,
                  radial_function,
                  max_num_neighbors,
                  convolution_cutoff,
@@ -43,7 +43,7 @@ class molecule_graph_model(nn.Module):
                  crystal_mode=False,
                  crystal_convolution_type=None,
                  positional_embedding = 'sph',
-                 atom_embedding_dims = None,
+                 atom_embedding_dims = 5,
                  device='cuda'):
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
@@ -74,15 +74,16 @@ class molecule_graph_model(nn.Module):
             self.n_atom_feats -= self.n_mol_feats
         self.pooling = pooling
         self.fc_norm_mode = fc_norm_mode
-        self.embedding_dim = atom_embedding_size
+        self.graph_embedding_size = graph_embedding_size
         self.crystal_mode = crystal_mode
         self.crystal_convolution_type = crystal_convolution_type
         self.max_molecule_size = max_molecule_size
+        self.atom_embedding_dims = atom_embedding_dims # todo clean this up
 
         if dataDims is None:
-            self.atom_embedding_dims = atom_embedding_dims # todo clean this up
+            self.num_atom_types = None
         else:
-            self.atom_embedding_dims = list(dataDims['atom embedding dict sizes'].values())[0]
+            self.num_atom_types = list(dataDims['atom embedding dict sizes'].values())[0] + 1
 
         torch.manual_seed(seed)
 
@@ -95,7 +96,7 @@ class molecule_graph_model(nn.Module):
                     graph_convolution_filters=self.graph_filters,
                     graph_convolution=self.graph_convolution,
                     out_channels=self.fc_depth,
-                    hidden_channels=self.embedding_dim,
+                    hidden_channels=self.graph_embedding_size,
                     num_blocks=self.graph_convolution_layers,
                     num_radial=self.num_radial,
                     num_spherical=self.num_spherical,
@@ -109,7 +110,7 @@ class molecule_graph_model(nn.Module):
                     spherical_embedding=self.add_spherical_basis,
                     torsional_embedding=self.add_torsional_basis,
                     radial_embedding=self.radial_function,
-                    atom_embedding_dims=self.atom_embedding_dims,
+                    num_atom_types=self.num_atom_types,
                     attention_heads=self.num_attention_heads,
                 )
             else:

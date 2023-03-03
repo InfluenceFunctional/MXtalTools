@@ -1,5 +1,5 @@
-# import os
-# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+import os
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 import numpy as np
 import wandb
 import glob
@@ -223,9 +223,9 @@ class Modeller():
             if config.train_generator_conditioner:
                 config.conditioner_classes = {
                     'other':1,
-                    6:2,
-                    7:3,
-                    8:4,
+                    #6:2,
+                    #7:3,
+                    #8:4,
                     }
                 conditioner_classes_dict = {i: config.conditioner_classes['other'] for i in range(101)}
                 for i,(key,value) in enumerate(config.conditioner_classes.items()):
@@ -931,7 +931,7 @@ class Modeller():
             epoch_stats_dict['reconstruction_loss'].append(reconstruction_loss.cpu().detach().numpy())
             epoch_stats_dict['generator packing loss'].append(packing_loss.cpu().detach().numpy())
 
-            conditioning_losses = packing_loss + reconstruction_loss
+            conditioning_losses = reconstruction_loss #packing_loss + reconstruction_loss
             g_loss = (conditioning_losses).mean()
             g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
 
@@ -1049,37 +1049,37 @@ class Modeller():
             data = data.cuda()
             data = self.set_molecule_alignment(data)
 
-            '''
-            noise injection
-            '''
-            if self.config.generator.positional_noise > 0:
-                data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
+            # '''
+            # noise injection
+            # '''
+            # if self.config.generator.positional_noise > 0:
+            #     data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
+            #
+            # '''
+            # update symmetry information
+            # '''
+            # if self.config.generate_sgs is not None:
+            #     override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.config.generate_sgs) + 1  # indexing from 0
+            #     sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i in range(data.num_graphs)]
+            #     data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data, self.supercell_builder.symmetries_dict, sym_ops_list)  # todo update the way we handle this
 
-            '''
-            update symmetry information
-            '''
-            if self.config.generate_sgs is not None:
-                override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.config.generate_sgs) + 1  # indexing from 0
-                sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i in range(data.num_graphs)]
-                data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data, self.supercell_builder.symmetries_dict, sym_ops_list)  # todo update the way we handle this
+            point_cloud_prediction, packing_prediction = generator(data.clone())
 
-            point_cloud_prediction, packing_prediction = generator(data)
-
-            n_bins = int((self.config.max_molecule_radius) * 2 / 0.5) + 1 # make up for odd in stride
+            n_target_bins = int((self.config.max_molecule_radius) * 2 + 1)# / 0.5) + 1 # make up for odd in stride
             batch_size = len(point_cloud_prediction)
-            buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_bins + 1, device='cuda')) - 1
-            target = torch.zeros((batch_size, n_bins, n_bins, n_bins), dtype=torch.long, device=point_cloud_prediction.device)
+            buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_target_bins + 1, device='cuda')) - 1
+            target = torch.zeros((batch_size, n_target_bins, n_target_bins, n_target_bins), dtype=torch.long, device=point_cloud_prediction.device)
             for ii in range(batch_size):
-                target[ii, buckets[data.batch == ii, 0], buckets[data.batch == ii, 1], buckets[data.batch == ii, 2]] = data.x[data.batch == ii,0].long()
+                target[ii, buckets[data.batch == ii, 0], buckets[data.batch == ii, 1], buckets[data.batch == ii, 2]] = torch.clip(data.x[data.batch == ii,0],max=1).long()
 
-            for ind, (key,value) in enumerate(self.config.conditioner_classes.items()):
-                target[target == key] = -value # negative, so this next step works quickly
-            target[target > 0] = 1  # setting for 'other'
-            target = -target
-            target[target == -1] = 1
+            # for ind, (key,value) in enumerate(self.config.conditioner_classes.items()):
+            #     target[target == key] = -value # negative, so this next step works quickly
+            # target[target > 0] = 1  # setting for 'other'
+            # target = -target
+            # target[target == -1] = 1
 
-            packing_loss = F.mse_loss(packing_prediction[:,0], data.y.float(), reduction='none')
-            reconstruction_loss = F.cross_entropy(point_cloud_prediction, target,reduction = 'none').mean([-3,-2,-1])
+            packing_loss = F.smooth_l1_loss(packing_prediction[:,0], data.y.float(), reduction='none')
+            reconstruction_loss = F.cross_entropy(point_cloud_prediction, target,reduction = 'none').mean([-3,-2,-1]) / (torch.sum(target>0)/len(target.flatten()))
 
             return packing_loss, reconstruction_loss, target[0:8].cpu().detach().numpy(), point_cloud_prediction[0:8].cpu().detach().numpy(), data.y.cpu().detach().numpy(), packing_prediction.cpu().detach().numpy()
 

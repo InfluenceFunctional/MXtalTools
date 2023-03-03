@@ -1,5 +1,4 @@
 '''import statements'''
-import wandb
 import argparse
 import warnings
 
@@ -9,7 +8,7 @@ warnings.filterwarnings("ignore", category=UserWarning)  # annoying w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
 # warnings.filterwarnings("ignore", category=PerformanceWarning) # annoying pandas error
 
-from utils import load_yaml, add_bool_arg, get_config
+from utils import add_bool_arg, get_config
 from crystal_modeller import Modeller
 
 

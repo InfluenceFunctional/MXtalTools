@@ -26,6 +26,7 @@ from torch_geometric.transforms import spherical, polar
 import torch_geometric.nn as gnn
 from plotly.subplots import make_subplots
 from models.torch_models import molecule_graph_model
+from models.generator_models import PointCloudDecoder
 import os
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
@@ -39,18 +40,18 @@ for run in range(n_runs):
     randints = np.random.randint(0, len(multipliers), size=8)
 
     avg_num_particles_per_sample = 12
-    cartesian_dimension = 2
-    n_bins = 31 # not used in conv mode, currently
+    cartesian_dimension = 3
+    n_bins = 10 # not used in conv mode, currently
     n_gridpoints = 1
     convergence_criteria = 1e-7  # minimum improvement in last history_length epochs
-    n_particle_types = 6
+    n_particle_types = 1
 
-    model_type = 'encoder'  # 'mike' 'encoder' 'e3' WIP
+    model_type = 'GraphAutoencoder'  # 'mike' 'encoder' '
     decoder_type = 'conv'  # 'mlp' or 'conv'
     gconv_type = 'none'  # 'TransformerConv' 'none'
     initial_transform = None
     embedding_type = 'pos'  # 'pos' 'rad' 'sph' 'polar'
-    batch_size = 1000  # int(10 * multipliers[randints[0]])
+    batch_size = 100  # int(10 * multipliers[randints[0]])
     init_lr = 1e-3  # 1e-6 * multipliers[randints[1]]
     lr_lambda = 0.999  # (1 - 0.001 * multipliers[randints[2]])
     n_layers = 1  # int(max(1, 1 * multipliers[randints[3]]))
@@ -288,6 +289,80 @@ for run in range(n_runs):
                 return self.decoder(output)
 
 
+    class molecule_autoencoder(nn.Module):
+        def __init__(self, **kwargs):
+            super(molecule_autoencoder, self).__init__()
+
+            self.device = 'cuda'
+
+            '''
+            conditioning model
+            '''
+            conv_embedding_dim = 128
+            self.conditioner = molecule_graph_model(
+                dataDims=None,
+                seed=0,
+                num_atom_feats=cartesian_dimension + 1,
+                num_mol_feats=0,
+                output_dimension=conv_embedding_dim * 3 ** cartesian_dimension,
+                activation='leaky relu',
+                num_fc_layers=n_layers,
+                fc_depth=n_filters,
+                fc_dropout_probability=0,
+                fc_norm_mode=norm_type_1,
+                graph_model='mike',
+                graph_filters=encoder_filters // 4,
+                graph_convolutional_layers=encoder_layers,
+                concat_mol_to_atom_features=False,
+                pooling=pooling,
+                graph_norm=norm_type_2,
+                num_spherical=6,
+                num_radial=50,
+                graph_convolution=gconv_type,
+                num_attention_heads=4,
+                add_spherical_basis=False,
+                add_torsional_basis=False,
+                graph_embedding_size=512,
+                radial_function='gaussian',
+                max_num_neighbors=100,
+                convolution_cutoff=2,
+                max_molecule_size=1,
+                return_latent=False,
+                crystal_mode=False,
+                crystal_convolution_type=None,
+                positional_embedding='sph3',
+                atom_embedding_dims=n_particle_types,
+                device='cuda',
+            )
+
+            '''
+            generator model
+            common atom types
+            '''
+            n_target_bins = n_bins # make up for odd in stride
+            strides = [2, 2, 2]  # that brings it to 30 3-7-15-31, -2 for final conv
+            current_size = 29
+            if n_target_bins < current_size:
+                strides = [2, 2]
+                current_size = 13
+            if n_target_bins < current_size:
+                strides = [2]
+                current_size = 5
+
+            diff = n_target_bins - current_size
+            for _ in range(diff // 2):  # must be an even number of bins in this approach
+                strides += [1]  # pad up to the required layers
+
+            self.decoder = PointCloudDecoder(input_filters=conv_embedding_dim,
+                                             n_classes=n_particle_types + 1,
+                                             strides=strides)
+
+
+        def forward(self, x, pos, batch, num_graphs):
+            conditions_encoding = self.conditioner(x=x, pos=pos, batch=batch, num_graphs=num_graphs)
+            return self.decoder(conditions_encoding)
+
+
     grid_index = torch.tensor(list(itertools.product([n for n in range(n_bins)], repeat=cartesian_dimension))).cuda()
     grid_index -= n_bins // 2  # center basis vectors on the origin
     converged = False
@@ -320,7 +395,7 @@ for run in range(n_runs):
                 num_attention_heads=4,
                 add_spherical_basis=False,
                 add_torsional_basis=False,
-                atom_embedding_size=512,
+                graph_embedding_size=512,
                 radial_function='gaussian',
                 max_num_neighbors=100,
                 convolution_cutoff=2,
@@ -332,9 +407,12 @@ for run in range(n_runs):
                 atom_embedding_dims=n_particle_types,
                 device='cuda',
             )
+        elif model_type == 'GraphAutoencoder':
+            model = molecule_autoencoder()
 
         optimizer = optim.Adam(model.parameters(), lr=init_lr)
         scheduler = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: lr_lambda)
+        wandb.watch((model), log_graph=True, log_freq=100)
 
         '''
         training loop
@@ -353,6 +431,11 @@ for run in range(n_runs):
             if model_type == 'encoder':
                 output = model(torch.cat((particle_types[:, None], particle_coords), dim=-1), batch)
             elif model_type == 'mike':
+                output = model(x=torch.cat((particle_types[:, None], particle_coords), dim=-1),
+                               pos=particle_coords,
+                               batch=batch,
+                               num_graphs=batch_size)
+            elif model_type == 'GraphAutoencoder':
                 output = model(x=torch.cat((particle_types[:, None], particle_coords), dim=-1),
                                pos=particle_coords,
                                batch=batch,

@@ -31,7 +31,7 @@ class crystal_discriminator(nn.Module):
             num_attention_heads=config.discriminator.num_attention_heads,
             add_spherical_basis=config.discriminator.add_spherical_basis,
             add_torsional_basis=config.discriminator.add_torsional_basis,
-            atom_embedding_size=config.discriminator.atom_embedding_size,
+            graph_embedding_size=config.discriminator.atom_embedding_size,
             radial_function=config.discriminator.radial_function,
             max_num_neighbors=config.discriminator.max_num_neighbors,
             convolution_cutoff=config.discriminator.graph_convolution_cutoff,

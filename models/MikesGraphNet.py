@@ -22,7 +22,7 @@ class MikesGraphNet(torch.nn.Module):
                  num_blocks: int,
                  num_spherical: int,
                  num_radial: int,
-                 atom_embedding_dims,
+                 num_atom_types = 101,
                  cutoff: float = 5.0,
                  max_num_neighbors: int = 32,
                  envelope_exponent: int = 5,
@@ -62,7 +62,7 @@ class MikesGraphNet(torch.nn.Module):
         if positional_embedding:
             self.pos_embedding = PosEncoding3D(hidden_channels//3,cutoff=10)
 
-        self.atom_embeddings = EmbeddingBlock(hidden_channels, atom_embedding_dims, num_atom_features, embedding_hidden_dimension,
+        self.atom_embeddings = EmbeddingBlock(hidden_channels, num_atom_types, num_atom_features, embedding_hidden_dimension,
                                               activation)
 
         self.interaction_blocks = torch.nn.ModuleList([
@@ -98,19 +98,7 @@ class MikesGraphNet(torch.nn.Module):
             nn.Identity()
             for _ in range(num_blocks)
         ])
-        #
-        # self.inside_norm1 = torch.nn.ModuleList([
-        #     Normalization(norm='layer',filters=hidden_channels)
-        #     for _ in range(num_blocks)
-        # ])
-        # self.inside_norm1 = torch.nn.ModuleList([
-        #     Normalization(norm='layer',filters=hidden_channels)
-        #     for _ in range(num_blocks)
-        # ])
-        # self.global_blocks = torch.nn.ModuleList([
-        #     GlobalBlock(hidden_channels, graph_convolution_filters, norm, dropout, activation)
-        #     for _ in range(num_blocks)
-        # ])
+
 
         self.output_layer = nn.Linear(hidden_channels, out_channels)
 
@@ -275,11 +263,11 @@ class MikesGraphNet(torch.nn.Module):
 
 
 class EmbeddingBlock(torch.nn.Module):
-    def __init__(self, hidden_channels, embedding_size, num_atom_features, embedding_dimension, activation='gelu'):
+    def __init__(self, hidden_channels, num_atom_types, num_atom_features, atom_type_embedding_dimension, activation='gelu'):
         super(EmbeddingBlock, self).__init__()
         self.num_embeddings = 1
-        self.embeddings = nn.Embedding(embedding_size + 1, embedding_dimension)
-        self.linear = nn.Linear(embedding_dimension + num_atom_features - self.num_embeddings, hidden_channels)
+        self.embeddings = nn.Embedding(num_atom_types + 1, atom_type_embedding_dimension)
+        self.linear = nn.Linear(atom_type_embedding_dimension + num_atom_features - self.num_embeddings, hidden_channels)
         self.activation = Activation(activation, hidden_channels)
 
     def forward(self, x):

@@ -51,7 +51,7 @@ class crystal_generator(nn.Module):
                 num_attention_heads=config.generator.num_attention_heads,
                 add_spherical_basis=config.generator.add_spherical_basis,
                 add_torsional_basis=config.generator.add_torsional_basis,
-                atom_embedding_size=config.generator.atom_embedding_size,
+                graph_embedding_size=config.generator.atom_embedding_size,
                 radial_function=config.generator.radial_function,
                 max_num_neighbors=config.generator.max_num_neighbors,
                 convolution_cutoff=config.generator.graph_convolution_cutoff,
@@ -122,9 +122,10 @@ class molecule_autoencoder(nn.Module):
         conditioning model
         '''
         self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
-        conv_embedding_dim = 128
+        conv_embedding_dim = 256
         self.conditioner = molecule_graph_model(
-            dataDims,
+            dataDims=dataDims,
+            atom_embedding_dims = len(config.conditioner_classes) + 1,
             seed=config.seeds.model,
             num_atom_feats=dataDims['num atom features'] + 3 - self.crystal_features_to_ignore, # we will add directly the normed coordinates to the node features
             num_mol_feats=dataDims['num mol features'] - self.crystal_features_to_ignore,
@@ -137,7 +138,7 @@ class molecule_autoencoder(nn.Module):
             graph_model=config.generator.graph_model,
             graph_filters=config.generator.graph_filters,
             graph_convolutional_layers=config.generator.graph_convolution_layers,
-            concat_mol_to_atom_features=True,
+            concat_mol_to_atom_features=False,
             pooling=config.generator.pooling,
             graph_norm=config.generator.graph_norm,
             num_spherical=config.generator.num_spherical,
@@ -146,29 +147,29 @@ class molecule_autoencoder(nn.Module):
             num_attention_heads=config.generator.num_attention_heads,
             add_spherical_basis=config.generator.add_spherical_basis,
             add_torsional_basis=config.generator.add_torsional_basis,
-            atom_embedding_size=config.generator.atom_embedding_size,
+            graph_embedding_size=config.generator.atom_embedding_size,
             radial_function=config.generator.radial_function,
             max_num_neighbors=config.generator.max_num_neighbors,
             convolution_cutoff=config.generator.graph_convolution_cutoff,
             positional_embedding = config.generator.positional_embedding,
-            max_molecule_size=config.max_molecule_radius,
+            max_molecule_size=1,
         )
 
         '''
         generator model
         common atom types
         '''
-        n_bins = int((config.max_molecule_radius) * 2 / 0.5) + 1 # make up for odd in stride
+        n_target_bins = int((config.max_molecule_radius) * 2 + 1)# / 0.5) + 1 # make up for odd in stride
         strides = [2,2,2] # that brings it to 30 3-7-15-31, -2 for final conv
         current_size = 29
-        if n_bins < current_size:
+        if n_target_bins < current_size:
             strides = [2,2]
             current_size = 13
-        if n_bins < current_size:
+        if n_target_bins < current_size:
             strides = [2]
             current_size = 5
 
-        diff = n_bins - current_size
+        diff = n_target_bins - current_size
         for _ in range(diff//2): # must be an even number of bins in this approach
             strides += [1] # pad up to the required layers
 
@@ -189,5 +190,6 @@ class molecule_autoencoder(nn.Module):
     def forward(self, data):
         normed_coords = data.pos / self.conditioner.max_molecule_size # norm coords by maximum molecule radius
         data.x = torch.cat((data.x[:,:-self.crystal_features_to_ignore],normed_coords),dim=-1) # concatenate position to input features
+
         conditions_encoding = self.conditioner(data)
         return self.decoder(conditions_encoding), self.mlp(conditions_encoding) # return decoder and regression target

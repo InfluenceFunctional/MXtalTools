@@ -31,7 +31,7 @@ class molecule_regressor(nn.Module):
             num_attention_heads=config.generator.num_attention_heads,
             add_spherical_basis=config.generator.add_spherical_basis,
             add_torsional_basis=config.generator.add_torsional_basis,
-            atom_embedding_size=config.generator.atom_embedding_size,
+            graph_embedding_size=config.generator.atom_embedding_size,
             radial_function=config.generator.radial_function,
             max_num_neighbors=config.generator.max_num_neighbors,
             convolution_cutoff=config.generator.graph_convolution_cutoff,
