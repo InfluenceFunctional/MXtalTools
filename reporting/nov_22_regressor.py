@@ -14,8 +14,8 @@ def nice_regression_plots(config):
     target_mean = config.dataDims['target mean']
     target_std = config.dataDims['target std']
 
-    target = np.asarray(test_epoch_stats_dict['generator packing target'])
-    prediction = np.asarray(test_epoch_stats_dict['generator packing prediction'])
+    target = np.asarray(test_epoch_stats_dict['generator density target'])
+    prediction = np.asarray(test_epoch_stats_dict['generator density prediction'])
     orig_target = target * target_std + target_mean
     orig_prediction = prediction * target_std + target_mean
 

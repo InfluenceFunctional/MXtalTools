@@ -1,3 +1,5 @@
+# import os
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 import numpy as np
 import wandb
 import glob
@@ -32,12 +34,14 @@ from crystal_building.supercell_builders import SupercellBuilder, override_sg_in
 from models.model_utils import *
 from models.crystal_rdf import crystal_rdf
 from models.vdw_overlap import vdw_overlap, raw_vdw_overlap
-from models.generator_models import crystal_generator
+from models.generator_models import crystal_generator, molecule_autoencoder
 from models.discriminator_models import crystal_discriminator
 from models.regression_models import molecule_regressor
 from models.torch_models import independent_gaussian_model
 from sampling.MCMC_Sampling import mcmcSampler
 from sampling.SampleOptimization import gradient_descent_sampling
+
+
 
 
 class Modeller():
@@ -216,7 +220,22 @@ class Modeller():
             self.config.discriminator.max_lr = max_lr
         print("Initializing models for " + self.config.mode)
         if self.config.mode == 'gan' or self.config.mode == 'sampling':
-            generator = crystal_generator(config, dataDims)
+            if config.train_generator_conditioner:
+                config.conditioner_classes = {
+                    'other':1,
+                    6:2,
+                    7:3,
+                    8:4,
+                    }
+                conditioner_classes_dict = {i: config.conditioner_classes['other'] for i in range(101)}
+                for i,(key,value) in enumerate(config.conditioner_classes.items()):
+                    if key != 'other':
+                        conditioner_classes_dict[key] = config.conditioner_classes[key] # assign all atoms to type other, except these specific ones
+                config.conditioner_classes_dict = conditioner_classes_dict
+
+                generator = molecule_autoencoder(config,dataDims)
+            else:
+                generator = crystal_generator(config, dataDims)
             discriminator = crystal_discriminator(config, dataDims)
         elif self.config.mode == 'regression':
             generator = molecule_regressor(config, dataDims)
@@ -286,9 +305,9 @@ class Modeller():
             threshold_mode='rel',
             cooldown=50
         )
-        lr_lambda = lambda epoch: self.config.lr_growth_lambda
+        lr_lambda = lambda epoch: self.config.generator.lr_growth_lambda
         scheduler2 = lr_scheduler.MultiplicativeLR(g_optimizer, lr_lambda=lr_lambda)
-        lr_lambda2 = lambda epoch: self.config.lr_shrink_lambda
+        lr_lambda2 = lambda epoch: self.config.generator.lr_shrink_lambda
         scheduler3 = lr_scheduler.MultiplicativeLR(g_optimizer, lr_lambda=lr_lambda2)
 
         scheduler4 = lr_scheduler.ReduceLROnPlateau(
@@ -300,9 +319,9 @@ class Modeller():
             threshold_mode='rel',
             cooldown=50
         )
-        lr_lambda = lambda epoch: self.config.lr_growth_lambda
+        lr_lambda = lambda epoch: self.config.discriminator.lr_growth_lambda
         scheduler5 = lr_scheduler.MultiplicativeLR(d_optimizer, lr_lambda=lr_lambda)
-        lr_lambda2 = lambda epoch: self.config.lr_shrink_lambda
+        lr_lambda2 = lambda epoch: self.config.discriminator.lr_shrink_lambda
         scheduler6 = lr_scheduler.MultiplicativeLR(d_optimizer, lr_lambda=lr_lambda2)
 
         g_scheduler = [scheduler1, scheduler2, scheduler3]
@@ -613,7 +632,12 @@ class Modeller():
             'real vdw penalty': [],
             'fake vdw penalty': [],
             'generated supercell examples': None,
+            'target_sample': [],
+            'prediction_sample':[],
+            'reconstruction_loss':[],
+
         }
+
 
         rand_batch_ind = np.random.randint(0, len(dataLoader))
         self.n_samples_in_grad_buffer = 0
@@ -644,7 +668,7 @@ class Modeller():
             '''
             record some stats
             '''
-            if (len(epoch_stats_dict['generated cell parameters']) < i) and record_stats:  # make some samples for analysis if we have none so far from this step
+            if (len(epoch_stats_dict['generated cell parameters']) < i) and record_stats and not self.config.train_generator_conditioner:  # make some samples for analysis if we have none so far from this step
                 generated_samples = generator(len(data.y), z=None, conditions=data.to(self.config.device))
                 epoch_stats_dict['generated cell parameters'].extend(generated_samples.cpu().detach().numpy())
 
@@ -815,15 +839,18 @@ class Modeller():
         Do analysis and upload results to w&b
         '''
         if self.config.mode == 'gan':
-            if test_epoch_stats_dict is not None:
+            if (test_epoch_stats_dict is not None) and not self.config.train_generator_conditioner:
                 if test_epoch_stats_dict['generated cell parameters'] is not None:
                     self.cell_params_analysis(train_loader, test_epoch_stats_dict)
 
                 if self.config.train_generator_packing or self.config.train_generator_vdw or self.config.train_generator_adversarially or self.config.train_generator_combo:
                     self.cell_generation_analysis(test_epoch_stats_dict)
 
-                if self.config.train_discriminator_on_noise or self.config.train_discriminator_on_randn or self.config.train_discriminator_adversarially:
+                if self.config.train_discriminator_on_distorted or self.config.train_discriminator_on_randn or self.config.train_discriminator_adversarially:
                     self.discriminator_analysis(test_epoch_stats_dict)
+
+            if self.config.train_generator_conditioner:
+                self.report_conditioner_training(test_epoch_stats_dict)
 
         elif self.config.mode == 'regression':
             self.log_regression_accuracy(train_epoch_stats_dict, test_epoch_stats_dict)
@@ -837,7 +864,7 @@ class Modeller():
         return None
 
     def discriminator_step(self, discriminator, generator, epoch_stats_dict, data, d_optimizer, i, update_gradients, d_err, d_loss_record, skip_step, epoch, last_batch):
-        if self.config.train_discriminator_adversarially or self.config.train_discriminator_on_noise or self.config.train_discriminator_on_randn:
+        if self.config.train_discriminator_adversarially or self.config.train_discriminator_on_distorted or self.config.train_discriminator_on_randn:
             generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, self.config, data, generator, i)
 
             score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
@@ -871,7 +898,7 @@ class Modeller():
         return d_err, d_loss_record, epoch_stats_dict
 
     def generator_step(self, discriminator, generator, epoch_stats_dict, data, g_optimizer, i, update_gradients, g_err, g_loss_record, rand_batch_ind, last_batch):
-        if any((self.config.train_generator_packing, self.config.train_generator_adversarially, self.config.train_generator_vdw, self.config.train_generator_combo)):
+        if any((self.config.train_generator_packing, self.config.train_generator_adversarially, self.config.train_generator_vdw, self.config.train_generator_combo, self.config.train_generator_h_bond)):
             adversarial_score, generated_samples, packing_loss, packing_prediction, packing_target, \
             vdw_loss, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score, combo_score = \
                 self.train_generator(generator, discriminator, data, i)
@@ -892,6 +919,29 @@ class Modeller():
             epoch_stats_dict = self.log_supercell_examples(supercell_examples, i, rand_batch_ind, epoch_stats_dict)
             g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
             epoch_stats_dict['generated cell parameters'].extend(generated_samples)
+        elif self.config.train_generator_conditioner:
+            packing_loss, reconstruction_loss, target_sample, prediction_sample, packing_true, packing_pred = \
+                self.train_generator(generator, discriminator,data,i)
+
+            if i == 0:
+                epoch_stats_dict['target_sample'].append(target_sample)
+                epoch_stats_dict['prediction_sample'].append(prediction_sample)
+            epoch_stats_dict['generator packing target'].append(packing_true)
+            epoch_stats_dict['generator packing prediction'].append(packing_pred)
+            epoch_stats_dict['reconstruction_loss'].append(reconstruction_loss.cpu().detach().numpy())
+            epoch_stats_dict['generator packing loss'].append(packing_loss.cpu().detach().numpy())
+
+            conditioning_losses = packing_loss + reconstruction_loss
+            g_loss = (conditioning_losses).mean()
+            g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
+
+            if update_gradients:
+                g_optimizer.zero_grad(set_to_none=True)  # reset gradients from previous passes
+                torch.nn.utils.clip_grad_norm_(generator.parameters(), self.config.gradient_norm_clip)  # gradient clipping
+                g_loss.backward()  # back-propagation
+                g_optimizer.step()  # update parameters
+
+            g_loss_record.extend(conditioning_losses.cpu().detach().numpy())  # loss distribution
         else:
             g_err.append(np.zeros(1))
             g_loss_record.extend(np.zeros(data.num_graphs))
@@ -956,7 +1006,7 @@ class Modeller():
 
         return data
 
-    def get_generator_samples(self, data, generator):
+    def get_generator_samples(self, data, generator, return_condition = False):
         '''
         conformer orentation setting
         '''
@@ -983,48 +1033,94 @@ class Modeller():
             n_samples=data.num_graphs, conditions=data.to(self.config.device),
             return_latent=True, return_condition=True, return_prior=True)
 
-        return generated_samples, prior
+        if return_condition:
+            return generated_samples, prior, condition
+        else:
+            return generated_samples, prior
 
     def train_generator(self, generator, discriminator, data, i):
         '''
         train the generator
         '''
-        generated_samples, prior = self.get_generator_samples(data, generator)
 
-        '''
-        build supercells
-        '''
-        supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-            data, generated_samples, self.config.supercell_size,
-            self.config.discriminator.graph_convolution_cutoff,
-            override_sg=self.config.generate_sgs,
-            align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
-        )
+        if self.config.train_generator_conditioner: # train just the conditioner on targeted crystal packing + detailed geometry embedding
+            # minimum resolution of 0.5 Angstrom, to start
+            # limit target to set of useful classes
+            data = data.cuda()
+            data = self.set_molecule_alignment(data)
 
-        data.cell_params = supercell_data.cell_params
+            '''
+            noise injection
+            '''
+            if self.config.generator.positional_noise > 0:
+                data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
 
-        '''
-        #evaluate losses
-        
-        # look at cells
-        from ase.visualize import view
-        mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(min(10, supercell_data.num_graphs))]
-        view(mols)
-        '''
-        similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
-        discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
-        h_bond_score = self.compute_h_bond_score(supercell_data)
-        vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, data.num_graphs, data)
-        packing_loss, packing_prediction, packing_target, = \
-            self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
-        combo_score = torch.log(10 / (10 + ((self.config.vdw_loss_coefficient * vdw_penalty) ** 2 + packing_loss ** 2)))  # torch.exp(-(normed_vdw_overlap + outside_reasonable_packing_loss))
+            '''
+            update symmetry information
+            '''
+            if self.config.generate_sgs is not None:
+                override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.config.generate_sgs) + 1  # indexing from 0
+                sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i in range(data.num_graphs)]
+                data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data, self.supercell_builder.symmetries_dict, sym_ops_list)  # todo update the way we handle this
 
-        return discriminator_score, generated_samples.cpu().detach().numpy(), \
-               packing_loss, packing_prediction.cpu().detach().numpy(), \
-               packing_target.cpu().detach().numpy(), \
-               vdw_penalty, dist_dict, \
-               supercell_data, similarity_penalty, h_bond_score, \
-               combo_score
+            point_cloud_prediction, packing_prediction = generator(data)
+
+            n_bins = int((self.config.max_molecule_radius) * 2 / 0.5) + 1 # make up for odd in stride
+            batch_size = len(point_cloud_prediction)
+            buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_bins + 1, device='cuda')) - 1
+            target = torch.zeros((batch_size, n_bins, n_bins, n_bins), dtype=torch.long, device=point_cloud_prediction.device)
+            for ii in range(batch_size):
+                target[ii, buckets[data.batch == ii, 0], buckets[data.batch == ii, 1], buckets[data.batch == ii, 2]] = data.x[data.batch == ii,0].long()
+
+            for ind, (key,value) in enumerate(self.config.conditioner_classes.items()):
+                target[target == key] = -value # negative, so this next step works quickly
+            target[target > 0] = 1  # setting for 'other'
+            target = -target
+            target[target == -1] = 1
+
+            packing_loss = F.mse_loss(packing_prediction[:,0], data.y.float(), reduction='none')
+            reconstruction_loss = F.cross_entropy(point_cloud_prediction, target,reduction = 'none').mean([-3,-2,-1])
+
+            return packing_loss, reconstruction_loss, target[0:8].cpu().detach().numpy(), point_cloud_prediction[0:8].cpu().detach().numpy(), data.y.cpu().detach().numpy(), packing_prediction.cpu().detach().numpy()
+
+
+        if self.config.train_generator_packing or self.config.train_generator_vdw or self.config.train_generator_combo or self.config.train_generator_adversarially or self.config.train_generator_h_bond:
+            '''
+            build supercells
+            '''
+            generated_samples, prior = self.get_generator_samples(data, generator, return_condition=False)
+
+            supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+                data, generated_samples, self.config.supercell_size,
+                self.config.discriminator.graph_convolution_cutoff,
+                override_sg=self.config.generate_sgs,
+                align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
+            )
+
+            data.cell_params = supercell_data.cell_params
+
+            '''
+            #evaluate losses
+            
+            # look at cells
+            from ase.visualize import view
+            mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(min(10, supercell_data.num_graphs))]
+            view(mols)
+            '''
+            similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
+            discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
+            h_bond_score = self.compute_h_bond_score(supercell_data)
+            vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, data.num_graphs, data)
+            packing_loss, packing_prediction, packing_target, = \
+                self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
+            combo_score = torch.log(10 / (10 + ((vdw_penalty) ** 2 + packing_loss ** 2)))  # torch.exp(-(normed_vdw_overlap + outside_reasonable_packing_loss))
+
+            return discriminator_score, generated_samples.cpu().detach().numpy(), \
+                   packing_loss, packing_prediction.cpu().detach().numpy(), \
+                   packing_target.cpu().detach().numpy(), \
+                   vdw_penalty, dist_dict, \
+                   supercell_data, similarity_penalty, h_bond_score, \
+                   combo_score
 
     def regression_loss(self, generator, data):
         predictions = generator(data.to(generator.model.device))[:, 0]
@@ -1438,7 +1534,7 @@ class Modeller():
             fig.show()
 
     def generate_discriminator_negatives(self, epoch_stats_dict, config, data, generator, i):
-        n_generators = sum([config.train_discriminator_adversarially, self.config.train_discriminator_on_noise, self.config.train_discriminator_on_randn])
+        n_generators = sum([config.train_discriminator_adversarially, self.config.train_discriminator_on_distorted, self.config.train_discriminator_on_randn])
         gen_random_number = np.random.uniform(0, 1, 1)
         gen_randn_range = np.linspace(0, 1, n_generators + 1)
 
@@ -1456,14 +1552,14 @@ class Modeller():
                 handedness = None
                 epoch_stats_dict['generator sample source'].extend(np.ones(len(generated_samples_i)))
 
-        if self.config.train_discriminator_on_noise:
+        if self.config.train_discriminator_on_distorted:
             ii = (i + 2) % n_generators
             if gen_randn_range[ii] < gen_random_number < gen_randn_range[ii + 1]:
                 generated_samples_ii = (data.cell_params - torch.Tensor(self.config.dataDims['lattice means'])) / torch.Tensor(self.config.dataDims['lattice stds'])  # standardize
-                if self.config.generator_noise_level == -1:
+                if self.config.sample_distortion_magnitude == -1:
                     distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, -0.5, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range for evaluation mode
                 else:
-                    distortion = torch.randn_like(generated_samples_ii) * self.config.generator_noise_level
+                    distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
                 generated_samples_i = (generated_samples_ii + distortion).to(config.device)  # add jitter and return in standardized basis
                 handedness = data.asym_unit_handedness
                 epoch_stats_dict['generator sample source'].extend(np.ones(len(generated_samples_i)) * 2)
@@ -1750,10 +1846,10 @@ class Modeller():
 
                 # self.nice_dataset_analysis(self.prep_dataset)
                 self.training_prep()
-                from reporting.nov_22_regressor import nice_regression_plots
-                nice_regression_plots(self.config)
+                #from reporting.nov_22_regressor import nice_regression_plots
+                #nice_regression_plots(self.config)
                 from reporting.nov_22_discriminator_final import nice_scoring_plots
-                nice_scoring_plots(self.config)
+                nice_scoring_plots(self.config,wandb)
 
         return
 
@@ -1977,11 +2073,6 @@ class Modeller():
             epoch_stats_dict['generator per mol vdw loss'].append(vdw_loss.cpu().detach().numpy())
 
         if self.config.train_generator_vdw:
-            if self.config.generator_vdw_ramp:
-                ramp_level = min(1, 0.001 + self.epoch / self.config.vdw_ramp_epochs)
-                vdw_loss *= ramp_level
-
-            vdw_loss *= self.config.vdw_loss_coefficient
             if self.config.vdw_loss_rescaling == 'log':
                 vdw_loss_f = torch.log(1 + vdw_loss)  # soft rescaling to be gentler on outliers
             elif self.config.vdw_loss_rescaling is None:
@@ -2271,6 +2362,82 @@ class Modeller():
         # fig.show()
 
         return None
+
+    def report_conditioner_training(self, epoch_stats_dict):
+        reconstruction_losses = np.concatenate(epoch_stats_dict['reconstruction_loss']).flatten()
+        pack_true =  np.concatenate(epoch_stats_dict['generator packing target']).flatten() * self.config.dataDims['target std'] + self.config.dataDims['target mean']
+        pack_pred = np.concatenate(epoch_stats_dict['generator packing prediction']).flatten() * self.config.dataDims['target std'] + self.config.dataDims['target mean']
+        packing_mae = np.abs(pack_true - pack_pred) / pack_true
+
+        wandb.log({
+            'reconstruction loss': reconstruction_losses.mean(),
+            'packing MAE': packing_mae.mean(),
+        })
+        layout = self.plotly_setup()
+        x = packing_mae
+        y = reconstruction_losses
+        xy = np.vstack([x, y])
+
+
+        try:
+            z = gaussian_kde(xy)(xy)
+        except:
+            z = np.ones_like(x)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
+                                   mode='markers', marker=dict(color=z), opacity=0.5))
+        fig.layout.margin = layout.margin
+        fig.update_layout(xaxis_title='Packing Loss', yaxis_title='Reconstruction Loss')
+
+        # fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
+        if self.config.wandb.log_figures:
+            wandb.log({'Conditioner Loss Balance': fig})
+        if (self.config.machine == 'local') and False:
+            fig.show()
+
+        fig = make_subplots(
+            rows=1, cols=2,
+            specs=[[{'type': 'scene'}, {'type': 'scene'}]])
+
+        for img_i in range(2):
+            sample_guess = epoch_stats_dict['prediction_sample'][0,img_i].argmax(0)
+            sample_density = np_softmax(epoch_stats_dict['prediction_sample'][0, img_i][None,...])[0,1:].sum(0)
+            sample_true = epoch_stats_dict['target_sample'][0,img_i]
+
+            X, Y, Z = (sample_guess + 1).nonzero()
+            fig.add_trace(go.Volume(
+                x=X.flatten(),
+                y=Y.flatten(),
+                z=Z.flatten(),
+                value=sample_density.flatten(),
+                isomin=0.001,
+                isomax=1,
+                opacity=0.05,  # needs to be small to see through all surfaces
+                surface_count=50,  # needs to be a large number for good volume rendering
+                colorscale='Jet',
+                cmin=0,
+                showlegend=True
+            ), row=1, col=img_i+1)
+
+            x, y, z = sample_true.nonzero()
+            fig.add_trace(go.Scatter3d(
+                x=x, y=y, z=z,
+                mode='markers',
+                showlegend=True,
+                marker=dict(
+                    size=10,
+                    color=sample_true[x, y, z],
+                    colorscale='Jet',
+                    cmin=0,
+                    opacity=0.5
+                )), row=1,col=img_i+1)
+            fig.update_layout(showlegend=True)
+
+        if self.config.wandb.log_figures:
+            wandb.log({'Conditioner Reconstruction Samples': fig})
+        if (self.config.machine == 'local') and False:
+            fig.show()
 
     def discriminator_analysis(self, epoch_stats_dict):
         '''

@@ -2339,6 +2339,23 @@ def np_hardtanh(x):
 def torch_emd(x,y):
     return torch.sum(torch.abs(torch.cumsum(x,dim=-1)-torch.cumsum(y,dim=-1)),dim=-1)
 
+def compute_rdf_distance_old(target_rdf, sample_rdf):
+    '''
+    earth mover's distance
+    assuming dimension [sample, element-pair, radius]
+    normed against target rdf (sample is not strictly a PDF in this case)
+    averaged over nnz elements - only works for single type of molecule per call
+    '''
+
+    nonzero_element_pairs = np.sum(np.sum(target_rdf, axis=1) > 0)
+    target_CDF = np.cumsum(target_rdf, axis=-1)
+    sample_CDF = np.cumsum(sample_rdf, axis=-1)
+    norm = target_CDF[:, -1]
+    target_CDF = np.nan_to_num(target_CDF / norm[:, None])
+    sample_CDF = np.nan_to_num(sample_CDF / norm[None, :, None])
+    emd = np.sum(np.abs(target_CDF - sample_CDF), axis=(1, 2))
+    return emd / nonzero_element_pairs  # manual normalizaion elementwise
+
 def compute_rdf_distance(target_rdf, sample_rdf, rr):
     '''
     earth mover's distance
@@ -2380,7 +2397,7 @@ def histogram_overlap(d1, d2):
     return np.sum(np.minimum(d1, d2)) / np.average((d1.sum(), d2.sum()))
 
 
-def softmax_and_score(raw_classwise_output, temperature=1, old_method = False):
+def softmax_and_score(raw_classwise_output, temperature=1, old_method = False, correct_discontinuity = True):
     '''
     toy around
     plt.clf()
@@ -2401,25 +2418,32 @@ def softmax_and_score(raw_classwise_output, temperature=1, old_method = False):
 
     '''
     if not old_method: # turns out you get almost identically the same answer by simply dividing the activations, much simpler
-        if isinstance(raw_classwise_output, np.ndarray):
-            soft_activation = np_softmax(raw_classwise_output)
-            return np.log10(soft_activation[:,1]/soft_activation[:,0])
-        elif torch.is_tensor(raw_classwise_output):
+        if torch.is_tensor(raw_classwise_output):
             soft_activation = F.softmax(raw_classwise_output,dim=-1)
-            return torch.log10(soft_activation[:,1]/soft_activation[:,0])
-
+            score = torch.log10(soft_activation[:,1]/soft_activation[:,0])
+            assert torch.sum(torch.isnan(score)) == 0
+            return score
+        else:
+            soft_activation = np_softmax(raw_classwise_output)
+            score = np.log10(soft_activation[:, 1] / soft_activation[:, 0])
+            assert np.sum(np.isnan(score)) == 0
+            return score
     else:
+        if correct_discontinuity:
+            correction = 1
+        else:
+            correction = 0
         if isinstance(raw_classwise_output, np.ndarray):
             softmax_output = np_softmax(raw_classwise_output.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
             tanned = np.tan((softmax_output - 0.5) * np.pi)
             sign = (raw_classwise_output[:,1] > raw_classwise_output[:,0]) * 2 - 1 # values very close to zero can realize a sign error
-            return (sign * np.log10(1+np.abs(tanned))) # new factor of 1+ conditions the function about zero
+            return (sign * np.log10(correction+np.abs(tanned))) # new factor of 1+ conditions the function about zero
 
         elif torch.is_tensor(raw_classwise_output):
             softmax_output = F.softmax(raw_classwise_output / temperature, dim=-1)[:, 1]
             tanned = torch.tan((softmax_output - 0.5) * torch.pi)
             sign = (raw_classwise_output[:,1] > raw_classwise_output[:,0]) * 2 - 1 # values very close to zero can realize a sign error
-            return (sign * torch.log10(1+torch.abs(tanned)))
+            return (sign * torch.log10(correction+torch.abs(tanned)))
     # else:
     #     temperature = 15 # this function is very close to the original without the discontinuity, though it tapers near the extremes
     #     range = 15.88 # extreme limit of original version
@@ -2431,6 +2455,17 @@ def softmax_and_score(raw_classwise_output, temperature=1, old_method = False):
     #         softmax_output = F.softmax(raw_classwise_output / temperature, dim=-1)[:, 1]
     #         return (softmax_output - 0.5) * 2
 
+'''
+xx = np.concatenate((-np.logspace(1.5,-3,1001),np.logspace(-3,1.5,1001)))
+xx = np.concatenate((np.ones_like(xx)[:,None],xx[:,None]),axis=-1)
+np.sort(xx)
+plt.clf()
+plt.plot(xx[:,1],softmax_and_score(xx,old_method=True,correct_discontinuity=False),'-',alpha=1)
+plt.plot(xx[:,1],softmax_and_score(xx,old_method=True,correct_discontinuity=True),'-',alpha=1)
+plt.legend(('old','new'))
+plt.xlabel('input')
+plt.ylabel('score')
+'''
 
 def norm_scores(score, tracking_features, dataDims):
     # norm the incoming score according to its respective molecular surface area (assuming sphere)

@@ -134,8 +134,7 @@ def add_args(parser):
     add_bool_arg(parser, 'anomaly_detection', default=False)
     add_bool_arg(parser, 'accumulate_gradients', default=False)  # whether to densely connect dimenet outputs
     parser.add_argument('--accumulate_batch_size', type=int, default=100)
-    parser.add_argument('--lr_growth_lambda', type=float, default=0.1)
-    parser.add_argument('--lr_shrink_lambda', type=float, default=0.95)
+
     update_args2config(args2config, 'max_epochs')
     update_args2config(args2config, 'history')
     update_args2config(args2config, 'min_batch_size')
@@ -147,8 +146,7 @@ def add_args(parser):
     update_args2config(args2config, 'anomaly_detection')
     update_args2config(args2config, 'accumulate_gradients')
     update_args2config(args2config, 'accumulate_batch_size')
-    update_args2config(args2config, 'lr_growth_lambda')
-    update_args2config(args2config, 'lr_shrink_lambda')
+
 
     # optimizer settings
     parser.add_argument('--discriminator_optimizer', type=str, default='adamw')  # adam, adamw, sgd
@@ -161,6 +159,8 @@ def add_args(parser):
     parser.add_argument('--discriminator_training_period', type=int, default=5)  # period between discriminator training
     add_bool_arg(parser, 'discriminator_lr_schedule', default=False)
     parser.add_argument('--discriminator_positional_noise', type=float, default=0)
+    parser.add_argument('--discriminator_lr_growth_lambda', type=float, default=0.1)
+    parser.add_argument('--discriminator_lr_shrink_lambda', type=float, default=0.95)
 
     parser.add_argument('--generator_optimizer', type=str, default='adamw')  # adam, adamw, sgd
     parser.add_argument('--generator_learning_rate', type=float, default=1e-5)  # base learning rate
@@ -171,6 +171,8 @@ def add_args(parser):
     parser.add_argument('--generator_convergence_eps', type=float, default=1e-5)
     add_bool_arg(parser, 'generator_lr_schedule', default=False)
     parser.add_argument('--generator_positional_noise', type=float, default=0)
+    parser.add_argument('--generator_lr_growth_lambda', type=float, default=0.1)
+    parser.add_argument('--generator_lr_shrink_lambda', type=float, default=0.95)
 
     update_args2config(args2config, 'discriminator_optimizer', ['discriminator', 'optimizer'])
     update_args2config(args2config, 'discriminator_learning_rate', ['discriminator', 'learning_rate'])
@@ -182,6 +184,8 @@ def add_args(parser):
     update_args2config(args2config, 'discriminator_training_period', ['discriminator', 'training_period'])
     update_args2config(args2config, 'discriminator_lr_schedule', ['discriminator', 'lr_schedule'])
     update_args2config(args2config, 'discriminator_positional_noise', ['discriminator', 'positional_noise'])
+    update_args2config(args2config, 'discriminator_lr_growth_lambda', ['discriminator', 'lr_growth_lambda'])
+    update_args2config(args2config, 'discriminator_lr_shrink_lambda', ['discriminator', 'lr_shrink_lambda'])
 
     update_args2config(args2config, 'generator_optimizer', ['generator', 'optimizer'])
     update_args2config(args2config, 'generator_learning_rate', ['generator', 'learning_rate'])
@@ -192,6 +196,8 @@ def add_args(parser):
     update_args2config(args2config, 'generator_convergence_eps', ['generator', 'convergence_eps'])
     update_args2config(args2config, 'generator_lr_schedule', ['generator', 'lr_schedule'])
     update_args2config(args2config, 'generator_positional_noise', ['generator', 'positional_noise'])
+    update_args2config(args2config, 'generator_lr_growth_lambda', ['generator', 'lr_growth_lambda'])
+    update_args2config(args2config, 'generator_lr_shrink_lambda', ['generator', 'lr_shrink_lambda'])
 
     # generator model settings
     parser.add_argument('--generator_canonical_conformer_orientation', type=str, default='standardized')  # standardized or random
@@ -305,20 +311,19 @@ def add_args(parser):
 
     # cell generator
     parser.add_argument('--gan_loss', type=str, default='standard')  # stnandard only
+    add_bool_arg(parser, 'train_generator_conditioner', default=False)  #
+    add_bool_arg(parser, 'freeze_generator_conditioner', default=False)  #
     add_bool_arg(parser, 'train_generator_combo', default=False)  # train on a packing + vdw combined score
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_vdw', default=False)  #
-    add_bool_arg(parser, 'generator_vdw_ramp', default=False)  #
-    parser.add_argument('--vdw_ramp_epochs', type=int, default=10)  # None, 'log', 'mse'
     parser.add_argument('--vdw_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
-    parser.add_argument('--vdw_loss_coefficient', type=float, default=1)  # None, 'log', 'mse'
     parser.add_argument('--packing_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
     add_bool_arg(parser, 'train_generator_h_bond', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
-    add_bool_arg(parser, 'train_discriminator_on_noise', default=False)  # train generator on distorted CSD data
-    parser.add_argument('--generator_noise_level', type=float, default=0)  # amount of noise to add to cell params for distorted cell training
+    add_bool_arg(parser, 'train_discriminator_on_distorted', default=False)  # train generator on distorted CSD data
+    parser.add_argument('--sample_distortion_magnitude', type=float, default=0)  # amount of noise to add to cell params for distorted cell training
     parser.add_argument('--generator_similarity_penalty', type=float, default=0)  # coefficient weighting penalty for self-similarity in generator batches
     parser.add_argument('--extra_test_period', type=int, default=10)  # how often to report stats on the extra test data
     add_bool_arg(parser, 'sample_after_training', default=False)  # run sampler after model converges
@@ -327,20 +332,19 @@ def add_args(parser):
     parser.add_argument('--sample_move_size', type=float, default=0.05)  #
 
     update_args2config(args2config, 'gan_loss')
+    update_args2config(args2config, 'train_generator_conditioner')
+    update_args2config(args2config, 'freeze_generator_conditioner')
     update_args2config(args2config, 'train_generator_combo')
     update_args2config(args2config, 'train_generator_packing')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_vdw')
-    update_args2config(args2config, 'generator_vdw_ramp')
-    update_args2config(args2config, 'vdw_ramp_epochs')
-    update_args2config(args2config, 'vdw_loss_rescaling')
-    update_args2config(args2config, 'vdw_loss_coefficient')
     update_args2config(args2config, 'packing_loss_rescaling')
+    update_args2config(args2config, 'vdw_loss_rescaling')
     update_args2config(args2config, 'train_generator_h_bond')
     update_args2config(args2config, 'train_discriminator_adversarially')
     update_args2config(args2config, 'train_discriminator_on_randn')
-    update_args2config(args2config, 'train_discriminator_on_noise')
-    update_args2config(args2config, 'generator_noise_level')
+    update_args2config(args2config, 'train_discriminator_on_distorted')
+    update_args2config(args2config, 'sample_distortion_magnitude')
     update_args2config(args2config, 'generator_similarity_penalty')
     update_args2config(args2config, 'extra_test_period')
     update_args2config(args2config, 'sample_after_training')

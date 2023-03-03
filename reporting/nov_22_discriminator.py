@@ -2,7 +2,7 @@ from plotly.colors import n_colors
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import numpy as np
-from utils import softmax_and_score, norm_scores, compute_rdf_distance, normalize, earth_movers_distance_np, histogram_overlap
+from utils import softmax_and_score, norm_scores, compute_rdf_distance_old, normalize, earth_movers_distance_np, histogram_overlap
 from scipy.stats import linregress
 
 
@@ -93,10 +93,10 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
     distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)[0]
 
     if config.gan_loss == 'standard':
-        scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'])
-        scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds])
+        scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'],old_method = True, correct_discontinuity = True)
+        scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds],old_method = True, correct_discontinuity = True)
         # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
-        scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds])
+        scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds],old_method = True, correct_discontinuity = True)
 
         tracking_features_dict['Test Real'] = {feat: vec for feat, vec in zip(config.dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'].T)}
         tracking_features_dict['Test Distorted'] = {feat: vec for feat, vec in zip(config.dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'][distorted_inds].T)}
@@ -108,19 +108,19 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
             scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking features'][distorted_inds], config.dataDims)
 
         if train_epoch_stats_dict is not None:
-            scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'])
+            scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'],old_method = True, correct_discontinuity = True)
             tracking_features_dict['Train Real'] = {feat: vec for feat, vec in zip(config.dataDims['tracking features dict'], train_epoch_stats_dict['tracking features'].T)}
 
             if size_normed_score:
                 scores_dict['Train Real'] = norm_scores(scores_dict['Train Real'], train_epoch_stats_dict['tracking features'], config.dataDims)
 
-            vdw_penalty_dict['Train Real'] = train_epoch_stats_dict['real vdw penalty']
+            vdw_penalty_dict['Train Real'] = train_epoch_stats_dict['real vdW penalty']
             wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
             wandb.log({'Train score std': np.std(scores_dict['Train Real'])})
 
-        vdw_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdw penalty']
-        vdw_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake vdw penalty'][randn_inds]
-        vdw_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake vdw penalty'][distorted_inds]
+        vdw_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdW penalty']
+        vdw_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake vdW penalty'][randn_inds]
+        vdw_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake vdW penalty'][distorted_inds]
 
         wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
         wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})
@@ -147,7 +147,7 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
 
             target_index = target_identifiers_inds[target]
             raw_scores = extra_test_dict['scores'][target_index]
-            scores = softmax_and_score(raw_scores)
+            scores = softmax_and_score(raw_scores[None,:],old_method = True, correct_discontinuity = True)
             scores_dict[target + ' exp'] = scores
 
             tracking_features_dict[target + ' exp'] = {feat: vec for feat, vec in zip(config.dataDims['tracking features dict'], extra_test_dict['tracking features'][target_index][None, :].T)}
@@ -155,7 +155,7 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
             if size_normed_score:
                 scores_dict[target + ' exp'] = norm_scores(scores_dict[target + ' exp'], extra_test_dict['tracking features'][target_index][None, :], config.dataDims)
 
-            vdw_penalty_dict[target + ' exp'] = extra_test_dict['vdw penalty'][target_index][None]
+            vdw_penalty_dict[target + ' exp'] = extra_test_dict['vdW penalty'][target_index][None]
 
             wandb.log({f'Average {target} exp score': np.average(scores)})
 
@@ -165,7 +165,7 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
         if all_identifiers[target] != []:  # record sample data
             target_indices = all_identifiers[target]
             raw_scores = extra_test_dict['scores'][target_indices]
-            scores = softmax_and_score(raw_scores)
+            scores = softmax_and_score(raw_scores, old_method=True, correct_discontinuity=True)
             scores_dict[target] = scores
             tracking_features_dict[target] = {feat: vec for feat, vec in zip(config.dataDims['tracking features dict'], extra_test_dict['tracking features'][target_indices].T)}
 
@@ -173,7 +173,7 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
                 scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking features'][target_indices], config.dataDims)
 
             # energy_dict[target] = extra_test_dict['atomistic energy'][target_indices]
-            vdw_penalty_dict[target] = extra_test_dict['vdw penalty'][target_indices]
+            vdw_penalty_dict[target] = extra_test_dict['vdW penalty'][target_indices]
 
             wandb.log({f'Average {target} score': np.average(scores)})
             wandb.log({f'Average {target} std': np.std(scores)})
@@ -181,8 +181,8 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
             submission_full_rdf = extra_test_dict['full rdf'][target_indices]
             submission_inter_rdf = extra_test_dict['intermolecular rdf'][target_indices]
 
-            rdf_full_distance_dict[target] = compute_rdf_distance(target_full_rdf, submission_full_rdf)
-            rdf_inter_distance_dict[target] = compute_rdf_distance(target_inter_rdf, submission_inter_rdf)
+            rdf_full_distance_dict[target] = compute_rdf_distance_old(target_full_rdf, submission_full_rdf)
+            rdf_inter_distance_dict[target] = compute_rdf_distance_old(target_inter_rdf, submission_inter_rdf)
 
             # correlate losses with molecular features
             tracking_features = np.asarray(extra_test_dict['tracking features'])
@@ -299,8 +299,8 @@ def violin_vdw_plot(config, wandb, layout, all_identifiers, vdw_penalty_dict, ta
     fig.update_layout(xaxis_title='Model Score')
     fig.update_layout(font=dict(size=18))
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='log vdw Penalty')
-    wandb.log({'vdw Penalty': fig})
+    fig.update_layout(xaxis_title='log vdW penalty')
+    wandb.log({'vdW Penalty': fig})
 
 def violin_scores_plot2(config, wandb, layout, all_identifiers, scores_dict, BT_target_scores, BT_submission_scores, BT_scores_dists, BT_balanced_dist):
 

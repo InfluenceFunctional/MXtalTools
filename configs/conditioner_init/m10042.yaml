@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10042
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures' or 'sampling'
 gan_loss: standard # standard only
@@ -52,17 +52,16 @@ accumulate_gradients: False
 accumulate_batch_size: 10000
 auto_batch_sizing: True
 min_batch_size: 50
-max_batch_size: 1000
+max_batch_size: 10000
 batch_growth_increment: 0.05
-auto_batch_reduction: 0.25 # fraction of tested max batch size to actually start with (unequal graph sizes)
+auto_batch_reduction: 0.4 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 5000 # 0 epochs takes us straight to evaluation mode
 history: 1000
 gradient_norm_clip: 1
 
-
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 10000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100
@@ -107,9 +106,9 @@ discriminator:
   lr_shrink_lambda: 1
 
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
-  graph_convolution_layers: 4
-  graph_filters: 36
-  atom_embedding_size: 128
+  graph_convolution_layers: 1
+  graph_filters: 4
+  atom_embedding_size: 4
   graph_norm: graph
   num_spherical: 5
   num_radial: 32
@@ -122,30 +121,30 @@ discriminator:
   add_torsional_basis: False #
   pooling: combo
 
-  num_fc_layers: 4
-  fc_depth: 256
+  num_fc_layers: 1
+  fc_depth: 4
   activation: leaky relu
   fc_dropout_probability: 0
   fc_norm_mode: layer
 
 # generator optimizer and model
 generator:
-  optimizer: adamw
-  learning_rate: 2.0E-3
+  optimizer: adam
+  learning_rate: 1.0E-3
   max_lr: 1.0E-3
-  lr_schedule: True
+  lr_schedule: False
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
   weight_decay: 0.01
   convergence_eps: 0.00001
   positional_noise: 0 # scaling for the randn noise added to all atom positions
   lr_growth_lambda: 1.05
-  lr_shrink_lambda: 0.99
+  lr_shrink_lambda: 1
 
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   graph_convolution_layers: 4
   graph_filters: 64
-  atom_embedding_size: 512
+  atom_embedding_size: 1024
   graph_norm: graph
   num_spherical: 7
   num_radial: 12
@@ -162,7 +161,7 @@ generator:
   conditioner_num_fc_layers: 2
   conditioner_fc_depth: 1024
   conditioner_activation: 'leaky relu'
-  conditioner_fc_dropout_probability: 0.25
+  conditioner_fc_dropout_probability: 0
   conditioner_fc_norm_mode: layer
 
   num_fc_layers: 4

@@ -4,6 +4,7 @@ import sys
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from models.global_aggregation import global_aggregation
 from models.model_components import general_MLP
 from torch.distributions import MultivariateNormal
@@ -76,6 +77,7 @@ class molecule_graph_model(nn.Module):
         self.embedding_dim = atom_embedding_size
         self.crystal_mode = crystal_mode
         self.crystal_convolution_type = crystal_convolution_type
+        self.max_molecule_size = max_molecule_size
 
         if dataDims is None:
             self.atom_embedding_dims = atom_embedding_dims # todo clean this up
@@ -100,14 +102,14 @@ class molecule_graph_model(nn.Module):
                     max_num_neighbors=self.max_num_neighbors,
                     cutoff=self.graph_convolution_cutoff,
                     activation='gelu',
-                    embedding_hidden_dimension=atom_embedding_dims,
+                    embedding_hidden_dimension=self.atom_embedding_dims,
                     num_atom_features=self.n_atom_feats,
                     norm=self.graph_norm,
                     dropout=self.fc_dropout_probability,
                     spherical_embedding=self.add_spherical_basis,
                     torsional_embedding=self.add_torsional_basis,
                     radial_embedding=self.radial_function,
-                    atom_embedding_dims=atom_embedding_dims,
+                    atom_embedding_dims=self.atom_embedding_dims,
                     attention_heads=self.num_attention_heads,
                 )
             else:
@@ -154,17 +156,17 @@ class molecule_graph_model(nn.Module):
             num_graphs = data.num_graphs
 
         extra_outputs = {}
+        if self.n_mol_feats > 0:
+            mol_feats = self.mol_fc(x[ptr[:-1], -self.n_mol_feats:])  # molecule features are repeated, only need one per molecule (hence data.ptr)
+        else:
+            mol_feats = None
+
         if self.graph_model is not None:
             x, dists_dict = self.graph_net(x[:, :self.n_atom_feats], pos, batch, ptr=ptr, ref_mol_inds=aux_ind, return_dists=return_dists)  # get atoms encoding
             if self.crystal_mode:  # model only outputs ref mol atoms - many fewer
                 x = self.global_pool(x, pos, batch[torch.where(aux_ind == 0)[0]], output_dim = num_graphs)
             else:
                 x = self.global_pool(x, pos, batch, output_dim = num_graphs)  # aggregate atoms to molecule
-
-        if self.n_mol_feats > 0:
-            mol_feats = self.mol_fc(x[ptr[:-1], -self.n_mol_feats:])  # molecule features are repeated, only need one per molecule (hence data.ptr)
-        else:
-            mol_feats = None
 
         if self.graph_model is not None:
             x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
@@ -228,3 +230,40 @@ class independent_gaussian_model(nn.Module):
 
     def score(self, samples):
         return self.prior.log_prob(samples)
+
+
+class PointCloudDecoder(nn.Module):
+    def __init__(self, input_filters, n_classes, strides):
+        super(PointCloudDecoder, self).__init__()
+        '''
+        model to deconvolve a 1D vector to an NxNxN array of voxel classwise probabilities
+        '''
+        self.strides = strides
+        self.num_blocks = len(strides)
+        image_depths = torch.linspace(input_filters, n_classes, self.num_blocks + 1).long()
+
+        conv = nn.ConvTranspose3d
+        bn = nn.BatchNorm3d
+
+        self.unflatten = nn.Unflatten(dim=1, unflattened_size=(input_filters, 3, 3, 3))
+
+        # stride 2 adds 2N+1 rows and columns
+        # stride 1 adds 2 row and column
+        self.conv_blocks = torch.nn.ModuleList([
+            conv(in_channels=image_depths[n], out_channels=image_depths[n + 1], kernel_size=3, stride=strides[n], output_padding=0)
+            for n in range(self.num_blocks)
+        ])
+
+        self.bn_blocks = torch.nn.ModuleList([
+            bn(image_depths[n + 1])
+            for n in range(self.num_blocks)
+        ])
+
+        self.final_conv = nn.Conv3d(in_channels=image_depths[-1], out_channels=n_classes, kernel_size=3, padding=0)
+
+    def forward(self,x):
+        x = self.unflatten(x)
+        for bn, conv in zip(self.bn_blocks, self.conv_blocks): # upscale and deconvolve
+            x = F.leaky_relu_(bn(conv(x)))
+
+        return self.final_conv(x) # process to output

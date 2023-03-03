@@ -1,4 +1,3 @@
-# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 import numpy as np
 import torch
 from ase import Atoms
@@ -26,7 +25,7 @@ def set_lr(schedulers, optimizer, lr_schedule, learning_rate, max_lr, err_tr, hi
             else:
                 hit_max_lr = True
         elif hit_max_lr:
-            if lr > learning_rate:
+            if lr > 1e-6:
                 schedulers[2].step()  # start reducing lr
     lr = optimizer.param_groups[0]['lr']
     return optimizer, lr

@@ -208,7 +208,7 @@ class mcmcSampler:
         for self.iter in tqdm.tqdm(range(self.run_iters), miniters=int(self.run_iters / 25)):  # sample for a certain number of iterations
             self.random_number_index = self.iter % self.randintsResampleAt  # random number index
             with torch.no_grad():  # random MCMC move
-                self.iterate(score_model, crystaldata, proposal_type='mc')  # try a monte-carlo step!
+                self.iterate(score_model, crystaldata)  # try a monte-carlo step!
 
             if (self.iter % self.deltaIter == 0) and (self.iter > 0):  # every N iterations do some reporting / updating
                 self.update_annealing_parameters(crystaldata)  # change temperature or other conditions
@@ -229,7 +229,7 @@ class mcmcSampler:
             self.proposed_states[i, self.pickDimRandints[i, self.random_number_index]] += self.move_randns[i, self.random_number_index] * self.adaptive_step_size[i]
             # self.proposed_states[i, :] = self.move_randns[i, :, self.random_number_index] * self.adaptive_step_size[i] # collective move
 
-    def iterate(self, score_model, crystaldata, proposal_type='mc'):
+    def iterate(self, score_model, crystaldata):
         """
         run chainLength cycles of the sampler
         process: 1) propose state, 2) compute acceptance ratio, 3) sample against this ratio and accept/reject move

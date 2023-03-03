@@ -4,13 +4,13 @@ import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 from scipy.stats import linregress
-from nov_22_discriminator import process_discriminator_evaluation_data
+from reporting.nov_22_discriminator import process_discriminator_evaluation_data
 
 '''
 figures which were actually used in the paper
 '''
 
-def nice_scoring_plots(config):
+def nice_scoring_plots(config,wandb):
     test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/275_test_epoch_stats_dict.npy', allow_pickle=True).item()
     extra_test_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/275_extra_test_dict.npy', allow_pickle=True).item()
 
@@ -20,8 +20,9 @@ def nice_scoring_plots(config):
     scores_dict, all_identifiers, blind_test_targets, target_identifiers, \
     target_identifiers_inds, BT_target_scores, BT_submission_scores, \
     BT_scores_dists, BT_balanced_dist, vdw_penalty_dict, tracking_features_dict = \
-        process_discriminator_evaluation_data(extra_test_dict,
-                                              test_epoch_stats_dict, None, size_normed_score=False)
+        process_discriminator_evaluation_data(config,wandb,extra_test_dict,
+                                              test_epoch_stats_dict,
+                                              None, size_normed_score=False)
 
     del test_epoch_stats_dict
     del extra_test_dict
@@ -594,4 +595,5 @@ def nice_scoring_plots(config):
     if config.machine == 'local':
         fig.show()
 
+    aa = 1
     return None

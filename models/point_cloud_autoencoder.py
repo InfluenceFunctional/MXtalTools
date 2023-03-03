@@ -27,7 +27,8 @@ import torch_geometric.nn as gnn
 from plotly.subplots import make_subplots
 from models.torch_models import molecule_graph_model
 import os
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 n_runs = 1
 multipliers = np.asarray((1, 2, 4, 8, 16, 32))
@@ -37,38 +38,39 @@ backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
 for run in range(n_runs):
     randints = np.random.randint(0, len(multipliers), size=8)
 
-    avg_num_particles_per_sample = 10
-    cart_dim = 3
-    n_bins = 6
+    avg_num_particles_per_sample = 12
+    cartesian_dimension = 2
+    n_bins = 31 # not used in conv mode, currently
     n_gridpoints = 1
-    convergence_criteria = 1e-3  # minimum improvement in last history_length epochs
-    n_particle_types = 5
+    convergence_criteria = 1e-7  # minimum improvement in last history_length epochs
+    n_particle_types = 6
 
-    model_type = 'mike' # 'mike' 'e3' WIP
-    gconv_type = 'none' # 'TransformerConv' 'none'
+    model_type = 'encoder'  # 'mike' 'encoder' 'e3' WIP
+    decoder_type = 'conv'  # 'mlp' or 'conv'
+    gconv_type = 'none'  # 'TransformerConv' 'none'
     initial_transform = None
     embedding_type = 'pos'  # 'pos' 'rad' 'sph' 'polar'
-    batch_size = 500  # int(10 * multipliers[randints[0]])
+    batch_size = 1000  # int(10 * multipliers[randints[0]])
     init_lr = 1e-3  # 1e-6 * multipliers[randints[1]]
     lr_lambda = 0.999  # (1 - 0.001 * multipliers[randints[2]])
-    n_layers = 1 # int(max(1, 1 * multipliers[randints[3]]))
-    n_filters = 1024  # int(64 * multipliers[randints[4]])
+    n_layers = 1  # int(max(1, 1 * multipliers[randints[3]]))
+    n_filters = 512  # int(64 * multipliers[randints[4]])
     encoder_layers = 2  # int(max(1, 1 * multipliers[randints[5]]))
-    encoder_filters = 1024#[64,128,256,1024,2048,4096] # n_layers +1 entries # int(256 * multipliers[randints[6]])
-    encoding_output_depth = encoder_filters // (n_gridpoints ** cart_dim)  # int(256 * multipliers[randints[7]])
-    norm_type_1 = 'graph' # 'graph' 'layer' 'batch' if np.random.randint(0, 2) == 1 else None
+    encoder_filters = 512  # [64,128,256,1024,2048,4096] # n_layers +1 entries # int(256 * multipliers[randints[6]])
+    encoding_output_depth = encoder_filters // (n_gridpoints ** cartesian_dimension)  # int(256 * multipliers[randints[7]])
+    norm_type_1 = 'graph'  # 'graph' 'layer' 'batch' if np.random.randint(0, 2) == 1 else None
     norm_type_2 = 'layer'  # 'batch' if np.random.randint(0, 2) == 1 else None
     pooling = 'max'  # 'combo' 'max' 'mean' 'attention'
 
     n_epochs = int(1e7 / batch_size)
     history_length = int(1e5 / batch_size)
-    target_shape = [batch_size] + [n_bins for n in range(cart_dim)]
+    target_shape = [batch_size] + [n_bins for n in range(cartesian_dimension)]
 
     config = {
         'embedding_type': embedding_type,
         'pooling': pooling,
         'avg_num_particles_per_sample': avg_num_particles_per_sample,
-        'cart_dim': cart_dim,
+        'cartesian_dimension': cartesian_dimension,
         'batch_size': batch_size,
         'n_bins': n_bins,
         'n_epochs': n_epochs,
@@ -91,13 +93,83 @@ for run in range(n_runs):
     init model
     '''
 
+
+    class ConvDecoder(torch.nn.Module):
+        def __init__(self, image_dim, n_particle_types):
+            super(ConvDecoder, self).__init__()
+            self.num_blocks = 5
+
+            image_depths = torch.linspace(image_dim, n_particle_types + 1, self.num_blocks + 1).long()
+
+            if cartesian_dimension == 2:
+                conv = nn.Conv2d
+                bn = nn.BatchNorm2d
+                self.unflatten = nn.Unflatten(dim=1, unflattened_size=(image_dim, 3, 3))
+
+            elif cartesian_dimension == 3:
+                conv = nn.Conv3d
+                bn = nn.BatchNorm3d
+                self.unflatten = nn.Unflatten(dim=1, unflattened_size=(image_dim, 3, 3,3))
+
+            # self.upsample_blocks = torch.nn.ModuleList([
+            #     nn.Upsample(scale_factor=1.5)
+            #     for n in range(self.num_blocks)
+            # ])
+
+            # self.conv_blocks = torch.nn.ModuleList([
+            #     conv(in_channels=image_depths[n], out_channels=image_depths[n + 1], kernel_size=3, stride=1, padding=1)
+            #     for n in range(self.num_blocks)
+            # ])
+            # self.bn_blocks = torch.nn.ModuleList([
+            #     bn(image_depths[n + 1])
+            #     for n in range(self.num_blocks)
+            # ])
+            # self.conv_blocks2 = torch.nn.ModuleList([
+            #     conv(in_channels=image_depths[-1], out_channels=image_depths[-1], kernel_size=3, stride=1, padding=1)
+            #     for n in range(self.num_blocks)
+            # ])
+            # self.bn_blocks2 = torch.nn.ModuleList([
+            #     bn(image_depths[-1])
+            #     for n in range(self.num_blocks)
+            # ])
+
+            self.final_conv = conv(in_channels=image_depths[-1], out_channels=n_particle_types + 1, kernel_size=3, stride=1,padding=0)
+
+            strides = [2,2,1,1,1]
+            self.upsample_blocks = torch.nn.ModuleList([
+                nn.Identity()
+                for n in range(self.num_blocks)
+            ])
+
+            self.conv_blocks = torch.nn.ModuleList([
+                nn.ConvTranspose2d(in_channels=image_depths[n], out_channels=image_depths[n+1], kernel_size=3, stride=strides[n], output_padding=0)
+                for n in range(self.num_blocks)
+            ])
+            self.bn_blocks = torch.nn.ModuleList([
+                nn.BatchNorm2d(image_depths[n+1])
+                for n in range(self.num_blocks)
+            ])
+
+        def forward(self, x):
+            x = self.unflatten(x)
+            for i, (us, conv, bn) in enumerate(zip(self.upsample_blocks, self.conv_blocks, self.bn_blocks)):
+                x = F.leaky_relu_(bn(conv(us(x))))
+
+            # for i, (conv, bn) in enumerate(zip(self.conv_blocks2, self.bn_blocks2)):
+            #     x = x + F.leaky_relu_(bn(conv(x)))
+
+            x = self.final_conv(x)
+
+            return x
+
+
     class graph_encoder(torch.nn.Module):
         def __init__(self):
             super(graph_encoder, self).__init__()
             # grid of points over which to sample
             gridpoint_lim = 1 - 1 / n_gridpoints
-            grid = make_grid(gridpoint_lim, n_gridpoints, cart_dim)
-            shift_vector = torch.repeat_interleave(grid,batch_size * avg_num_particles_per_sample,dim=0)
+            grid = make_grid(gridpoint_lim, n_gridpoints, cartesian_dimension)
+            shift_vector = torch.repeat_interleave(grid, batch_size * avg_num_particles_per_sample, dim=0)
 
             self.register_buffer("grid", grid)
             self.register_buffer("shift_vector", shift_vector)
@@ -109,15 +181,28 @@ for run in range(n_runs):
             self.init_transform = initial_transform
 
             if embedding_type == 'pos' or embedding_type == 'polar':
-                embedding_dim = cart_dim
+                embedding_dim = cartesian_dimension
             elif embedding_type == 'rad':
                 embedding_dim = self.num_radial
             elif embedding_type == 'sph':
                 embedding_dim = self.num_radial + self.num_spherical
 
+            if decoder_type == 'mlp':
+                self.output_dim = (n_particle_types + 1) * n_bins ** cartesian_dimension
+            elif decoder_type == 'conv':
+                initial_conv_dim = 128
+                if cartesian_dimension == 2:
+                    self.output_dim = 3 * 3 * initial_conv_dim
+                    image_dim = self.output_dim // 3 // 3
+                elif cartesian_dimension == 3:
+                    self.output_dim = 3 * 3 * 3 * initial_conv_dim
+                    image_dim = self.output_dim // 3 // 3 // 3
+
+                self.decoder = ConvDecoder(image_dim, n_particle_types)
+
             self.mlp = general_MLP(layers=n_layers, filters=n_filters,
-                                   input_dim=self.encoding_dim * len(grid),  # self.num_radial * cart_dim, #avg_num_particles_per_sample*cart_dim,
-                                   output_dim=n_particle_types * n_bins ** cart_dim,
+                                   input_dim=self.encoding_dim * len(grid),  # self.num_radial * cartesian_dimension, #avg_num_particles_per_sample*cartesian_dimension,
+                                   output_dim=self.output_dim,  # n_particle_types * n_bins ** cartesian_dimension,
                                    dropout=0,
                                    norm=norm_type_1,
                                    activation='leaky relu',
@@ -138,7 +223,6 @@ for run in range(n_runs):
             # self.pos_encoding = PosEncoding2D(self.num_radial, 1)
             self.global_aggregation = global_aggregation(pooling, filters=self.encoding_dim * len(grid))
 
-
         def transform(self, pos, batch):
             if self.init_transform is None:
                 init_embedding = pos
@@ -146,14 +230,14 @@ for run in range(n_runs):
             return init_embedding
 
         def encode(self, pos, batch):
-            # return pos.reshape(len(pos), avg_num_particles_per_sample*cart_dim) # just give it the positions directly
+            # return pos.reshape(len(pos), avg_num_particles_per_sample*cartesian_dimension) # just give it the positions directly
             # encoding = self.pos_encoding(pos)
             # return scatter(encoding,batch,dim=0)
 
-            type = pos[:,0].tile(len(self.grid),1) #atom type
-            pos_i = pos[:,1:].tile(len(self.grid),1) #atom position
+            type = pos[:, 0].tile(len(self.grid), 1)  # atom type
+            pos_i = pos[:, 1:].tile(len(self.grid), 1)  # atom position
             batch_i = batch.tile(len(self.grid))
-            pos_i = pos_i - self.shift_vector # shifted coordinates
+            pos_i = pos_i - self.shift_vector  # shifted coordinates
 
             if embedding_type == 'pos':
                 embedding = pos_i
@@ -169,7 +253,7 @@ for run in range(n_runs):
                 embedding[:, 0] = rho[:, 0]
                 embedding[:, 1] = theta[:, 0]
 
-                if cart_dim == 3:
+                if cartesian_dimension == 3:
                     phi = torch.acos(pos_i[..., 2] / rho.view(-1)).view(-1, 1)
                     phi = phi / torch.pi
                     embedding[:, 2] = phi[:, 0]
@@ -179,15 +263,15 @@ for run in range(n_runs):
             elif embedding_type == 'sph':
                 dists = torch.linalg.norm(pos_i, dim=-1)
                 rbf = self.radial_basis(dists)
-                if cart_dim == 2:
+                if cartesian_dimension == 2:
                     sbf = o3.spherical_harmonics(self.sph_od_list, x=torch.cat((pos_i, torch.zeros_like(pos_i)), dim=-1)[:, :3], normalize=True, normalization='component')
-                elif cart_dim == 3:
+                elif cartesian_dimension == 3:
                     sbf = o3.spherical_harmonics(self.sph_od_list, x=pos_i, normalize=True, normalization='component')
                 embedding = torch.cat((rbf, sbf), dim=-1)
 
-            encoding = self.mlp2(torch.cat((type,embedding),dim=-1),batch=batch_i)
+            encoding = self.mlp2(torch.cat((type[0, :, None], embedding), dim=-1), batch=batch_i)
             encoding = torch.hstack(encoding.split(batch_size * avg_num_particles_per_sample, dim=0))
-            graph_output = self.global_aggregation(encoding, pos=None, batch=batch, output_dim = batch_size)
+            graph_output = self.global_aggregation(encoding, pos=None, batch=batch, output_dim=batch_size)
 
             if len(graph_output) != batch_size:
                 assert False
@@ -195,12 +279,16 @@ for run in range(n_runs):
             return graph_output
 
         def forward(self, pos, batch):
-            init_embedding = self.transform(pos,batch)
+            init_embedding = self.transform(pos, batch)
             encoding = self.encode(init_embedding, batch)
             output = self.mlp(encoding)
-            return output
+            if decoder_type == 'mlp':
+                return output
+            elif decoder_type == 'conv':
+                return self.decoder(output)
 
-    grid_index = torch.tensor(list(itertools.product([n for n in range(n_bins)], repeat=cart_dim))).cuda()
+
+    grid_index = torch.tensor(list(itertools.product([n for n in range(n_bins)], repeat=cartesian_dimension))).cuda()
     grid_index -= n_bins // 2  # center basis vectors on the origin
     converged = False
     with wandb.init(project='shape_encoding', entity='mkilgour', config=config):
@@ -210,41 +298,40 @@ for run in range(n_runs):
             model = graph_encoder()
         elif model_type == 'mike':
             model = molecule_graph_model(
-                dataDims = None,
-                seed = 0,
-                num_atom_feats = cart_dim + 1,
-                num_mol_feats =0,
-                output_dimension = (n_particle_types + 1) * n_bins ** cart_dim,
-                activation = 'leaky relu',
-                num_fc_layers = n_layers,
-                fc_depth = n_filters,
-                fc_dropout_probability = 0,
-                fc_norm_mode = norm_type_1,
-                graph_model = 'mike',
-                graph_filters = encoder_filters//4,
-                graph_convolutional_layers = encoder_layers,
-                concat_mol_to_atom_features = False,
-                pooling = pooling,
-                graph_norm = norm_type_2,
-                num_spherical = 6,
-                num_radial = 50,
-                graph_convolution = gconv_type,
-                num_attention_heads = 4,
-                add_spherical_basis = False,
-                add_torsional_basis = False,
-                atom_embedding_size = 512,
-                radial_function = 'gaussian',
-                max_num_neighbors = 100,
-                convolution_cutoff = 2,
-                max_molecule_size = 1,
+                dataDims=None,
+                seed=0,
+                num_atom_feats=cartesian_dimension + 1,
+                num_mol_feats=0,
+                output_dimension=(n_particle_types + 1) * n_bins ** cartesian_dimension,
+                activation='leaky relu',
+                num_fc_layers=n_layers,
+                fc_depth=n_filters,
+                fc_dropout_probability=0,
+                fc_norm_mode=norm_type_1,
+                graph_model='mike',
+                graph_filters=encoder_filters // 4,
+                graph_convolutional_layers=encoder_layers,
+                concat_mol_to_atom_features=False,
+                pooling=pooling,
+                graph_norm=norm_type_2,
+                num_spherical=6,
+                num_radial=50,
+                graph_convolution=gconv_type,
+                num_attention_heads=4,
+                add_spherical_basis=False,
+                add_torsional_basis=False,
+                atom_embedding_size=512,
+                radial_function='gaussian',
+                max_num_neighbors=100,
+                convolution_cutoff=2,
+                max_molecule_size=1,
                 return_latent=False,
                 crystal_mode=False,
                 crystal_convolution_type=None,
                 positional_embedding='sph3',
-                atom_embedding_dims = n_particle_types,
+                atom_embedding_dims=n_particle_types,
                 device='cuda',
             )
-
 
         optimizer = optim.Adam(model.parameters(), lr=init_lr)
         scheduler = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: lr_lambda)
@@ -258,42 +345,38 @@ for run in range(n_runs):
         for epoch in tqdm.tqdm(range(n_epochs), miniters=n_epochs // 100, mininterval=30):
             epoch_loss = []
             # just make a random one every epoch
-            batch = torch.randint(low=0, high=batch_size, size=(batch_size * avg_num_particles_per_sample, 1),device='cuda')[:, 0]  # batch index
+            batch = torch.randint(low=0, high=batch_size, size=(batch_size * avg_num_particles_per_sample, 1), device='cuda')[:, 0]  # batch index
             batch = batch[torch.argsort(batch)]
-            particle_coords = torch.rand(batch_size * avg_num_particles_per_sample, cart_dim,device='cuda') * 2 - 1  # particle positions with mean of avg_num_particles_per_sample particles per sample
-            particle_types = torch.randint(low=1,high=n_particle_types+1, size = (batch_size * avg_num_particles_per_sample,1),device='cuda')[:,0]
+            particle_coords = torch.rand(batch_size * avg_num_particles_per_sample, cartesian_dimension, device='cuda') * 2 - 1  # particle positions with mean of avg_num_particles_per_sample particles per sample
+            particle_types = torch.randint(low=1, high=n_particle_types + 1, size=(batch_size * avg_num_particles_per_sample, 1), device='cuda')[:, 0]
+
+            if model_type == 'encoder':
+                output = model(torch.cat((particle_types[:, None], particle_coords), dim=-1), batch)
+            elif model_type == 'mike':
+                output = model(x=torch.cat((particle_types[:, None], particle_coords), dim=-1),
+                               pos=particle_coords,
+                               batch=batch,
+                               num_graphs=batch_size)
+
+            n_bins = output.shape[-1]
             buckets = torch.bucketize(particle_coords, torch.linspace(-1, 1, n_bins + 1, device='cuda')) - 1
 
-            if cart_dim == 2:
+            if cartesian_dimension == 2:
                 target = torch.zeros((batch_size, n_bins, n_bins), dtype=torch.long, device='cuda')
                 for ii in range(batch_size):
                     target[ii, buckets[batch == ii, 0], buckets[batch == ii, 1]] = particle_types[batch == ii]
-            elif cart_dim == 3:
+            elif cartesian_dimension == 3:
                 target = torch.zeros((batch_size, n_bins, n_bins, n_bins), dtype=torch.long, device='cuda')
                 for ii in range(batch_size):
-                    target[ii, buckets[batch == ii, 0], buckets[batch == ii, 1],buckets[batch == ii, 2]] = particle_types[batch == ii]
+                    target[ii, buckets[batch == ii, 0], buckets[batch == ii, 1], buckets[batch == ii, 2]] = particle_types[batch == ii]
 
-            # if cart_dim == 2:
-            #     target = torch.stack([torch.histogramdd(particle_coords[batch == ii], range=[-1, 1, -1, 1], bins=n_bins)[0] for ii in range(batch_size)]).cuda()
-            # elif cart_dim == 3:
-            #     target = torch.stack([torch.histogramdd(particle_coords[batch == ii], range=[-1, 1, -1, 1, -1, 1], bins=n_bins)[0] for ii in range(batch_size)]).cuda()
-            #target = target.clip(min=0, max=1)
+            if decoder_type == 'mlp':
+                if cartesian_dimension == 2:
+                    output = output.reshape(batch_size, 1 + n_particle_types, n_bins, n_bins)
+                elif cartesian_dimension == 3:
+                    output = output.reshape(batch_size, 1 + n_particle_types, n_bins, n_bins, n_bins)
 
-            if model_type == 'encoder':
-                output = model(torch.cat((particle_types, particle_coords), dim=-1), batch)
-            elif model_type == 'mike':
-                output = model(x=torch.cat((particle_types[:,None], particle_coords), dim=-1),
-                               pos=particle_coords,
-                               batch=batch,
-                               num_graphs = batch_size)
-
-            if cart_dim == 2:
-                output = output.reshape(batch_size, 1+n_particle_types, n_bins, n_bins)
-            elif cart_dim == 3:
-                output = output.reshape(batch_size, 1+n_particle_types, n_bins, n_bins, n_bins)
-            #bce_loss = F.binary_cross_entropy_with_logits(output, target, reduction='none').mean()
-            bce_loss = F.cross_entropy(output,target)
-
+            bce_loss = F.cross_entropy(output, target)
             loss = bce_loss
 
             optimizer.zero_grad()
@@ -306,16 +389,21 @@ for run in range(n_runs):
                 scheduler.step()
 
             if epoch % 200 == 0:
-                if cart_dim == 2:
-                    fig = make_subplots(rows=2,cols=4)
+                if cartesian_dimension == 2:
+                    fig = make_subplots(rows=2, cols=4)
                     for img_i in range(4):
-                        fig.add_trace(go.Heatmap(z=output[img_i].argmax(0).cpu().detach().numpy()),
-                                      row = 1, col = img_i+1)
-                        fig.add_trace(go.Heatmap(z=target[img_i].cpu().detach().numpy(),),
-                                      row = 2, col = img_i+1)
+                        if n_particle_types == 1:
+                            output_data = output[img_i, 1].sigmoid()
+                        else:
+                            output_data = output[img_i].argmax(0)
+
+                        fig.add_trace(go.Heatmap(z=output_data.cpu().detach().numpy()),
+                                      row=1, col=img_i + 1)
+                        fig.add_trace(go.Heatmap(z=target[img_i].cpu().detach().numpy(), ),
+                                      row=2, col=img_i + 1)
 
 
-                elif cart_dim == 3:
+                elif cartesian_dimension == 3:
                     fig = make_subplots(
                         rows=2, cols=2,
                         specs=[[{'type': 'scene'}, {'type': 'scene'}],
@@ -323,7 +411,10 @@ for run in range(n_runs):
 
                     for img_i in range(2):
                         for img_j in range(2):
-                            sample_guess = output[img_i * 2 + img_j].argmax(0).cpu().detach().numpy()
+                            if n_particle_types == 1:
+                                sample_guess = output[img_i * 2 + img_j, 1].sigmoid().cpu().detach().numpy()
+                            else:
+                                sample_guess = output[img_i * 2 + img_j].argmax(0).cpu().detach().numpy()
                             sample_true = target[img_i * 2 + img_j].cpu().detach().numpy()
 
                             X, Y, Z = (sample_guess + 1).nonzero()
@@ -403,7 +494,7 @@ for run in range(n_runs):
 
         loss_record = torch.stack(loss_record).cpu().detach().numpy()
 
-    a = 1
+a = 1
 '''
     plt.figure(1)
     plt.clf()
@@ -417,14 +508,14 @@ for run in range(n_runs):
 
     plt.figure(2)
     plt.clf()
-    if cart_dim == 2:
+    if cartesian_dimension == 2:
         for ii in np.arange(1, 40, 2):
             plt.subplot(5, 8, ii)
             plt.imshow(torch.sigmoid((output[ii])).cpu().detach().numpy())
             plt.subplot(5, 8, ii + 1)
             plt.imshow(target[ii].cpu().detach().numpy())
         plt.tight_layout()
-    elif cart_dim == 3:
+    elif cartesian_dimension == 3:
         fig = plt.figure(2)
         plt.clf()
         sample = torch.sigmoid(output).cpu().detach().numpy()
@@ -445,17 +536,17 @@ for run in range(n_runs):
 '''old
  # 1D sliced wasserstein distance (earth mover's distance)
             n_dirs = 50
-            dir = torch.randn((n_dirs, cart_dim), device='cuda')
+            dir = torch.randn((n_dirs, cartesian_dimension), device='cuda')
             dir /= torch.linalg.norm(dir, dim=-1)[:, None]
 
             #rand_intercepts = torch.random(n_dirs)
-            target_weights = target.reshape(batch_size,n_bins**cart_dim) # tested - same indexing as target_grid
+            target_weights = target.reshape(batch_size,n_bins**cartesian_dimension) # tested - same indexing as target_grid
             target_vectors = grid_index[:, None, :] * target_weights.T[:, :, None]
             target_overlap = torch.einsum('mnj,kj->nkm', (target_vectors, dir))
 
-            output_weights = torch.sigmoid(output.reshape(batch_size,n_bins**cart_dim)) # tested - same indexing as target_grid
+            output_weights = torch.sigmoid(output.reshape(batch_size,n_bins**cartesian_dimension)) # tested - same indexing as target_grid
             output_vectors = grid_index[:, None, :] * output_weights.T[:, :, None]
             output_overlap = torch.einsum('mnj,kj->nkm', (output_vectors, dir))
 
-            emd_loss = torch_emd(target_overlap, output_overlap).mean(1) / (n_bins ** cart_dim) # averge over slices
+            emd_loss = torch_emd(target_overlap, output_overlap).mean(1) / (n_bins ** cartesian_dimension) # averge over slices
 '''
