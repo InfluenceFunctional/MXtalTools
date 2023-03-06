@@ -79,6 +79,7 @@ class MikesGraphNet(torch.nn.Module):
                     )
             for _ in range(num_blocks)
         ])
+        self.convolution_mode = graph_convolution
 
         self.fc_blocks = torch.nn.ModuleList([
             general_MLP(
@@ -223,7 +224,8 @@ class MikesGraphNet(torch.nn.Module):
 
             else:
                 #x = self.inside_norm1[n](x)
-                x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution - residual is already inside the conv operator
+                if self.convolution_mode != 'none':
+                    x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution - residual is already inside the conv operator
                 #x = self.inside_norm2[n](x)
                 x = x + fc(x)  # feature-wise 1D convolution, FC includes residual
                 #x = fc(x)

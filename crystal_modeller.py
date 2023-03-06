@@ -1048,20 +1048,21 @@ class Modeller():
             # limit target to set of useful classes
             data = data.cuda()
             data = self.set_molecule_alignment(data)
+            if len(self.config.conditioner_classes) == 1:
+                data.x[:,0] = 1
+            '''
+            noise injection
+            '''
+            if self.config.generator.positional_noise > 0:
+                data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
 
-            # '''
-            # noise injection
-            # '''
-            # if self.config.generator.positional_noise > 0:
-            #     data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
-            #
-            # '''
-            # update symmetry information
-            # '''
-            # if self.config.generate_sgs is not None:
-            #     override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.config.generate_sgs) + 1  # indexing from 0
-            #     sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i in range(data.num_graphs)]
-            #     data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data, self.supercell_builder.symmetries_dict, sym_ops_list)  # todo update the way we handle this
+            '''
+            update symmetry information
+            '''
+            if self.config.generate_sgs is not None:
+                override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.config.generate_sgs) + 1  # indexing from 0
+                sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i in range(data.num_graphs)]
+                data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data, self.supercell_builder.symmetries_dict, sym_ops_list)  # todo update the way we handle this
 
             point_cloud_prediction, packing_prediction = generator(data.clone())
 

@@ -44,6 +44,7 @@ class molecule_graph_model(nn.Module):
                  crystal_convolution_type=None,
                  positional_embedding = 'sph',
                  atom_embedding_dims = 5,
+                 skip_mlp = False,
                  device='cuda'):
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
@@ -79,14 +80,17 @@ class molecule_graph_model(nn.Module):
         self.crystal_convolution_type = crystal_convolution_type
         self.max_molecule_size = max_molecule_size
         self.atom_embedding_dims = atom_embedding_dims # todo clean this up
+        self.skip_mlp = skip_mlp
+
+        if self.num_fc_layers == 0:
+            self.skip_mlp = True
 
         if dataDims is None:
-            self.num_atom_types = None
+            self.num_atom_types = 101
         else:
             self.num_atom_types = list(dataDims['atom embedding dict sizes'].values())[0] + 1
 
         torch.manual_seed(seed)
-
 
         if self.graph_model is not None:
             if self.graph_model == 'mike':  # mike's net - others currently deprecated. For future, implement new convolutions in the mikenet class
@@ -169,10 +173,11 @@ class molecule_graph_model(nn.Module):
             else:
                 x = self.global_pool(x, pos, batch, output_dim = num_graphs)  # aggregate atoms to molecule
 
-        if self.graph_model is not None:
-            x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
-        else:
-            x = self.gnn_mlp(mol_feats)
+        if not self.skip_mlp:
+            if self.graph_model is not None:
+                x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
+            else:
+                x = self.gnn_mlp(mol_feats)
 
         output = self.output_fc(x)
 
@@ -239,12 +244,14 @@ class PointCloudDecoder(nn.Module):
         '''
         model to deconvolve a 1D vector to an NxNxN array of voxel classwise probabilities
         '''
+        #strides = [1.5,1.5,1.5,2,1.23]
+
         self.strides = strides
         self.num_blocks = len(strides)
-        image_depths = torch.linspace(input_filters, n_classes, self.num_blocks + 1).long()
+        image_depths = torch.linspace(input_filters, n_classes, self.num_blocks+1).long()
 
         conv = nn.ConvTranspose3d
-        bn = nn.BatchNorm3d
+        bn = nn.LayerNorm # nn.InstanceNorm3d #nn.BatchNorm3d
 
         self.unflatten = nn.Unflatten(dim=1, unflattened_size=(input_filters, 3, 3, 3))
 
@@ -254,17 +261,62 @@ class PointCloudDecoder(nn.Module):
             conv(in_channels=image_depths[n], out_channels=image_depths[n + 1], kernel_size=3, stride=strides[n], output_padding=0)
             for n in range(self.num_blocks)
         ])
+        img_size = [3]
+        for i,stride in enumerate(self.strides):
+            if stride == 2:
+                img_size += [2*img_size[i] + 1]
+            elif stride == 1:
+                img_size += [img_size[i] + 2]
 
+        # for layer norm
         self.bn_blocks = torch.nn.ModuleList([
-            bn(image_depths[n + 1])
+            bn([img_size[n+1],img_size[n+1],img_size[n+1]])
             for n in range(self.num_blocks)
         ])
+        # self.conv_blocks2 = torch.nn.ModuleList([ # smoothing convolution
+        #     nn.Conv3d(in_channels=image_depths[n+1], out_channels=image_depths[n+1], kernel_size=3, padding=1)
+        #     for n in range(self.num_blocks)
+        # ])
+        #
+        # self.upscale_blocks = torch.nn.ModuleList([
+        #     nn.Upsample(scale_factor=strides[n])
+        #     for n in range(self.num_blocks)
+        # ])
+        #
+        #
+        # self.conv_blocks = torch.nn.ModuleList([ # depthwise convolution
+        #     nn.Conv3d(in_channels=image_depths[n], out_channels=image_depths[n+1], kernel_size=[1,1,1], padding=0)
+        #     for n in range(self.num_blocks)
+        # ])
+
+        # self.bn_blocks = torch.nn.ModuleList([
+        #     bn(int(image_depths[n+1]))
+        #     for n in range(self.num_blocks)
+        # ])
+
+        # self.conv_blocks2 = torch.nn.ModuleList([ # spatial convolution
+        #     nn.Conv3d(in_channels=image_depths[n+1], out_channels=image_depths[n+1], kernel_size=3, padding=1)
+        #     for n in range(self.num_blocks)
+        # ])
+        #
+        # self.bn_blocks2 = torch.nn.ModuleList([
+        #     bn(image_depths[n+1])
+        #     for n in range(self.num_blocks)
+        # ])
 
         self.final_conv = nn.Conv3d(in_channels=image_depths[-1], out_channels=n_classes, kernel_size=3, padding=0)
 
     def forward(self,x):
         x = self.unflatten(x)
         for bn, conv in zip(self.bn_blocks, self.conv_blocks): # upscale and deconvolve
-            x = F.leaky_relu_(bn(conv(x)))
+            x = F.gelu(bn(conv(x)))
+        #     x = x + F.leaky_relu(bn2(conv2(x)))
+        #
+        # for bn, conv,us, bn2, conv2 in zip(self.bn_blocks, self.conv_blocks, self.upscale_blocks, self.bn_blocks2, self.conv_blocks2): # upscale and deconvolve
+        #     x = F.leaky_relu(bn(conv(us(x))))
+        #     x = x + F.leaky_relu(bn2(conv2(x)))
+
+        # for bn, conv in zip(self.bn_blocks2, self.conv_blocks2): # upscale and deconvolve
+        #     x = F.leaky_relu_(bn(conv(x)))
 
         return self.final_conv(x) # process to output

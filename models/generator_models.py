@@ -117,12 +117,13 @@ class molecule_autoencoder(nn.Module):
         super(molecule_autoencoder, self).__init__()
 
         self.device = config.device
+        torch.manual_seed(config.seeds.model)
 
         '''
         conditioning model
         '''
         self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
-        conv_embedding_dim = 256
+        conv_embedding_dim = 128
         self.conditioner = molecule_graph_model(
             dataDims=dataDims,
             atom_embedding_dims = len(config.conditioner_classes) + 1,
@@ -153,7 +154,9 @@ class molecule_autoencoder(nn.Module):
             convolution_cutoff=config.generator.graph_convolution_cutoff,
             positional_embedding = config.generator.positional_embedding,
             max_molecule_size=1,
+            skip_mlp = False
         )
+
 
         '''
         generator model
