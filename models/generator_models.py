@@ -164,7 +164,7 @@ class molecule_autoencoder(nn.Module):
         generator model
         common atom types
         '''
-        n_target_bins = int((config.max_molecule_radius) * 2 / 0.5) + 1 # half-angstrom resolution, make up for odd in stride
+        n_target_bins = int((config.max_molecule_radius) * 2 / config.generator.autoencoder_resolution) + 1 # half-angstrom resolution, make up for odd in stride
         strides = [2,2,2] # that brings it to 30 3-7-15-31, -2 for final conv
         current_size = 29
         if n_target_bins < current_size:

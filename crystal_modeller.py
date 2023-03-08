@@ -1087,7 +1087,7 @@ class Modeller():
 
             point_cloud_prediction, packing_prediction = generator(data.clone())
 
-            n_target_bins = int((self.config.max_molecule_radius) * 2 / 0.5) + 1 # make up for odd in stride
+            n_target_bins = int((self.config.max_molecule_radius) * 2 / self.config.generator.autoencoder_resolution) + 1 # make up for odd in stride
             batch_size = len(point_cloud_prediction)
             buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_target_bins - 1, device='cuda'))
             target = torch.zeros((batch_size, n_target_bins, n_target_bins, n_target_bins), dtype=torch.long, device=point_cloud_prediction.device)

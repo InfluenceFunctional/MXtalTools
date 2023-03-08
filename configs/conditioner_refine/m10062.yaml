@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10062
 anomaly_detection: False
 mode: gan # 'gan' or 'regression' or 'figures' or 'sampling'
 gan_loss: standard # standard only
@@ -43,8 +43,8 @@ seeds:
 
 # opt - sweep details
 wandb:
-  sample_reporting_frequency: 5
-  experiment_tag: dev
+  sample_reporting_frequency: 10
+  experiment_tag: conditioner_refine
   log_figures: True
 
 # batching & convergence
@@ -53,7 +53,7 @@ accumulate_batch_size: 10000
 auto_batch_sizing: False
 grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 200
+max_batch_size: 10000
 batch_growth_increment: 0.25
 auto_batch_reduction: 0.05 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 5000 # 0 epochs takes us straight to evaluation mode
@@ -63,7 +63,7 @@ gradient_norm_clip: 10
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 10000
+dataset_length: 1000000
 feature_richness: minimal # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100
@@ -146,9 +146,9 @@ generator:
   lr_shrink_lambda: 0.975
 
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
-  graph_convolution_layers: 1
+  graph_convolution_layers: 4
   graph_filters: 256
-  atom_embedding_size: 256
+  atom_embedding_size: 512
   graph_norm: null
   num_spherical: 6
   num_radial: 50
@@ -168,7 +168,7 @@ generator:
   conditioner_fc_dropout_probability: 0.5
   conditioner_fc_norm_mode: null
   decoder_embedding_dim: 128
-  autoencoder_resolution: 0.25 # angstrom
+  autoencoder_resolution: 0.5 # angstrom
 
   num_fc_layers: 1
   fc_depth: 128
