@@ -120,13 +120,13 @@ def nice_regression_plots(config):
                                marker_color='rgba(0,0,100,1)', ), row=2, col=2)
     fig.update_layout(showlegend=False)
 
-    fig.update_yaxes(title_text=r'$\text{Predicted Packing Coefficient}$', row=1, col=1, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
-    fig.update_yaxes(title_text=r'$\text{Predicted Density }(g/cm^3)$', row=1, col=2, dtick=0.5, range=[0.8, 4], tickformat=".1f")
-    fig.update_xaxes(title_text=r'$\text{True Packing Coefficient}$', row=1, col=1, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
-    fig.update_xaxes(title_text=r'$\text{True Density }(g/cm^3)$', row=1, col=2, dtick=0.5, range=[0.8, 4], tickformat=".1f")
+    fig.update_yaxes(title_text='Predicted Packing Coefficient', row=1, col=1, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
+    fig.update_yaxes(title_text='Predicted Density (g/cm<sup>3</sup>)', row=1, col=2, dtick=0.5, range=[0.8, 4], tickformat=".1f")
+    fig.update_xaxes(title_text='True Packing Coefficient', row=1, col=1, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
+    fig.update_xaxes(title_text='True Density (g/cm<sup>3</sup>)', row=1, col=2, dtick=0.5, range=[0.8, 4], tickformat=".1f")
 
-    fig.update_xaxes(title_text=r'$\text{Packing Coefficient Error}$', row=2, col=1, dtick=0.05, tickformat=".2f")
-    fig.update_xaxes(title_text=r'$\text{Density Error}(g/cm^3)$', row=2, col=2, dtick=0.1, tickformat=".1f")
+    fig.update_xaxes(title_text='Packing Coefficient Error', row=2, col=1, dtick=0.05, tickformat=".2f")
+    fig.update_xaxes(title_text='Density Error (g/cm<sup>3</sup>)', row=2, col=2, dtick=0.1, tickformat=".1f")
 
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
@@ -136,8 +136,9 @@ def nice_regression_plots(config):
     fig.layout.annotations[1].update(x=0.575)
     fig.layout.annotations[3].update(x=0.575)
 
-    fig.update_layout(height=600, width=800)
+    fig.update_layout(height=600, width=800, font_family="Arial")
     fig.layout.margin = layout.margin
+    fig.layout.margin.b += 20
 
     fig.write_image('../paper1_figs/regression_distributions.png', scale=4)
     if config.machine == 'local':
@@ -199,4 +200,21 @@ def nice_regression_plots(config):
     #     plt.hist(tracking_features[:, i], density=True, bins=25,alpha=0.5)
     # plt.tight_layout()
 
+    fig = go.Figure()
+    xline = [0, 10]  # np.linspace(max(min(target_density), min(predicted_density)), min(max(target_density), max(predicted_density)), 2)
+    fig.add_trace(go.Scattergl(x=target_density, y=predicted_density, mode='markers', marker=dict(color=z2), opacity=0.1),
+                  )
+    fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)'))
+    fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+
+    fig.update_yaxes(title_text=r'$\text{Predicted Density }$', dtick=0.5, range=[0.8, 4], tickformat=".1f")
+    fig.update_xaxes(title_text=r'$\text{True Density }$', dtick=0.5, range=[0.8, 4], tickformat=".1f")
+    fig.update_layout(showlegend=False)
+    fig.update_xaxes(title_font=dict(size=18), tickfont=dict(size=14))
+    fig.update_yaxes(title_font=dict(size=18), tickfont=dict(size=14))
+
+    fig.update_layout(height=400, width=400)
+    fig.write_image('../paper1_figs/TOC_regression.png', scale=4)
+
     return None
+

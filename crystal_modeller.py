@@ -1,5 +1,5 @@
-import os
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+# import os
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 import numpy as np
 import wandb
 import glob
@@ -207,17 +207,21 @@ class Modeller():
             g_checkpoint = torch.load(config.g_model_path)
             # save learning rates so we can un-overwrite them
             max_lr = self.config.generator.max_lr * 1
-            lr = self.config.generator.learning_rate * 1
+            init_lr = self.config.generator.init_lr * 1
+            min_lr = self.config.generator.min_lr * 1
             self.config.generator = Namespace(**g_checkpoint['config'])  # overwrite the settings for the model
-            self.config.generator.learning_rate = lr
+            self.config.generator.init_lr = init_lr
             self.config.generator.max_lr = max_lr
+            self.config.generator.min_lr = min_lr
         if self.config.d_model_path is not None:
             d_checkpoint = torch.load(config.d_model_path)
-            max_lr = self.config.discriminator.max_lr * 1
-            lr = self.config.discriminator.learning_rate * 1
+            max_lr = self.config.generator.max_lr * 1
+            init_lr = self.config.generator.init_lr * 1
+            min_lr = self.config.generator.min_lr * 1
             self.config.discriminator = Namespace(**d_checkpoint['config'])
-            self.config.discriminator.learning_rate = lr
+            self.config.generator.init_lr = init_lr
             self.config.discriminator.max_lr = max_lr
+            self.config.generator.min_lr = min_lr
         print("Initializing models for " + self.config.mode)
         if self.config.mode == 'gan' or self.config.mode == 'sampling':
             if config.train_generator_conditioner:
@@ -259,11 +263,11 @@ class Modeller():
         momentum = 0
 
         if self.config.generator.optimizer == 'adam':
-            g_optimizer = optim.Adam(generator.parameters(), amsgrad=amsgrad, lr=config.generator.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+            g_optimizer = optim.Adam(generator.parameters(), amsgrad=amsgrad, lr=config.generator.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
         elif self.config.generator.optimizer == 'adamw':
-            g_optimizer = optim.AdamW(generator.parameters(), amsgrad=amsgrad, lr=config.generator.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+            g_optimizer = optim.AdamW(generator.parameters(), amsgrad=amsgrad, lr=config.generator.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
         elif self.config.generator.optimizer == 'sgd':
-            g_optimizer = optim.SGD(generator.parameters(), lr=config.generator.learning_rate, momentum=momentum, weight_decay=weight_decay)
+            g_optimizer = optim.SGD(generator.parameters(), lr=config.generator.init_lr, momentum=momentum, weight_decay=weight_decay)
         else:
             print(config.generator.optimizer + ' is not a valid optimizer')
             sys.exit()
@@ -275,11 +279,11 @@ class Modeller():
         momentum = 0
 
         if self.config.discriminator.optimizer == 'adam':
-            d_optimizer = optim.Adam(discriminator.parameters(), amsgrad=amsgrad, lr=config.discriminator.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+            d_optimizer = optim.Adam(discriminator.parameters(), amsgrad=amsgrad, lr=config.discriminator.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
         elif self.config.discriminator.optimizer == 'adamw':
-            d_optimizer = optim.AdamW(discriminator.parameters(), amsgrad=amsgrad, lr=config.discriminator.learning_rate, betas=(beta1, beta2), weight_decay=weight_decay)
+            d_optimizer = optim.AdamW(discriminator.parameters(), amsgrad=amsgrad, lr=config.discriminator.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
         elif self.config.discriminator.optimizer == 'sgd':
-            d_optimizer = optim.SGD(discriminator.parameters(), lr=config.discriminator.learning_rate, momentum=momentum, weight_decay=weight_decay)
+            d_optimizer = optim.SGD(discriminator.parameters(), lr=config.discriminator.init_lr, momentum=momentum, weight_decay=weight_decay)
         else:
             print(config.discriminator.optimizer + ' is not a valid optimizer')
             sys.exit()
@@ -300,10 +304,10 @@ class Modeller():
             g_optimizer,
             mode='min',
             factor=0.5,
-            patience=50,
+            patience=500,
             threshold=1e-4,
             threshold_mode='rel',
-            cooldown=50
+            cooldown=500
         )
         lr_lambda = lambda epoch: self.config.generator.lr_growth_lambda
         scheduler2 = lr_scheduler.MultiplicativeLR(g_optimizer, lr_lambda=lr_lambda)
@@ -314,10 +318,10 @@ class Modeller():
             d_optimizer,
             mode='min',
             factor=0.5,
-            patience=50,
+            patience=500,
             threshold=1e-4,
             threshold_mode='rel',
-            cooldown=50
+            cooldown=500
         )
         lr_lambda = lambda epoch: self.config.discriminator.lr_growth_lambda
         scheduler5 = lr_scheduler.MultiplicativeLR(d_optimizer, lr_lambda=lr_lambda)
@@ -424,7 +428,7 @@ class Modeller():
             else:
                 print('Getting dataloaders for pre-determined batch size')
                 train_loader, test_loader = get_dataloaders(dataset_builder, self.config)
-                self.config.final_batch_size = self.config.max_batch_size
+                self.config.final_batch_size = self.config.min_batch_size
 
             del dataset_builder
             print("Training batch size set to {}".format(self.config.final_batch_size))
@@ -1046,6 +1050,23 @@ class Modeller():
         if self.config.train_generator_conditioner: # train just the conditioner on targeted crystal packing + detailed geometry embedding
             # minimum resolution of 0.5 Angstrom, to start
             # limit target to set of useful classes
+            if generator.training: # replace training data with a random point cloud, and do test on real molecules
+                # batch_size = data.num_graphs
+                # avg_num_particles_per_sample = 15
+                # cartesian_dimension = 3
+                # n_particle_types = len(self.config.conditioner_classes)
+                # batch = torch.randint(low=0, high=batch_size, size=(len(data.x), 1))[:, 0]  # batch index
+                # batch = batch[torch.argsort(batch)]
+                particle_coords = torch.rand(len(data.x), 3,device=data.pos.device,dtype=data.pos.dtype) * 2 - 1  # particle positions with mean of avg_num_particles_per_sample particles per sample
+                particle_coords *= self.config.max_molecule_radius
+                # particle_types = torch.randint(low=1, high=n_particle_types + 1, size=(len(data.x), data.x.shape[1])) # only first column is used anyway, later columns kept for indexing purposes
+
+                data.pos = particle_coords
+                # data.batch = batch
+                # data.x = particle_types
+                # data.ptr = torch.cat((torch.zeros(1),torch.argwhere(torch.diff(data.batch))[:,0] + 1,torch.ones(1) * len(data.x))).long()
+
+
             data = data.cuda()
             data = self.set_molecule_alignment(data)
             if len(self.config.conditioner_classes) == 1:
@@ -1066,18 +1087,18 @@ class Modeller():
 
             point_cloud_prediction, packing_prediction = generator(data.clone())
 
-            n_target_bins = int((self.config.max_molecule_radius) * 2 + 1)# / 0.5) + 1 # make up for odd in stride
+            n_target_bins = int((self.config.max_molecule_radius) * 2 / 0.5) + 1 # make up for odd in stride
             batch_size = len(point_cloud_prediction)
-            buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_target_bins + 1, device='cuda')) - 1
+            buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_target_bins - 1, device='cuda'))
             target = torch.zeros((batch_size, n_target_bins, n_target_bins, n_target_bins), dtype=torch.long, device=point_cloud_prediction.device)
             for ii in range(batch_size):
-                target[ii, buckets[data.batch == ii, 0], buckets[data.batch == ii, 1], buckets[data.batch == ii, 2]] = torch.clip(data.x[data.batch == ii,0],max=1).long()
+                target[ii, buckets[data.batch == ii, 0], buckets[data.batch == ii, 1], buckets[data.batch == ii, 2]] = data.x[data.batch==ii,0].long()#torch.clip(data.x[data.batch == ii,0],max=1).long()
 
-            # for ind, (key,value) in enumerate(self.config.conditioner_classes.items()):
-            #     target[target == key] = -value # negative, so this next step works quickly
-            # target[target > 0] = 1  # setting for 'other'
-            # target = -target
-            # target[target == -1] = 1
+            for ind, (key,value) in enumerate(self.config.conditioner_classes.items()):
+                target[target == key] = -value # negative, so this next step works quickly
+            target[target > 0] = 1  # setting for 'other'
+            target = -target
+            target[target == -1] = 1
 
             packing_loss = F.smooth_l1_loss(packing_prediction[:,0], data.y.float(), reduction='none')
             reconstruction_loss = F.cross_entropy(point_cloud_prediction, target,reduction = 'none').mean([-3,-2,-1]) / (torch.sum(target>0)/len(target.flatten()))
@@ -1847,8 +1868,8 @@ class Modeller():
 
                 # self.nice_dataset_analysis(self.prep_dataset)
                 self.training_prep()
-                #from reporting.nov_22_regressor import nice_regression_plots
-                #nice_regression_plots(self.config)
+                from reporting.nov_22_regressor import nice_regression_plots
+                nice_regression_plots(self.config)
                 from reporting.nov_22_discriminator_final import nice_scoring_plots
                 nice_scoring_plots(self.config,wandb)
 
@@ -1867,7 +1888,7 @@ class Modeller():
         return train_loader, test_loader
 
     def update_batch_size(self, train_loader, test_loader, extra_test_loader):
-        if self.config.auto_batch_sizing:
+        if self.config.grow_batch_size:
             if (train_loader.batch_size < len(train_loader.dataset)) and (train_loader.batch_size < self.config.max_batch_size):  # if the batch is smaller than the dataset
                 increment = max(4, int(train_loader.batch_size * self.config.batch_growth_increment))  # increment batch size
                 train_loader = update_dataloader_batch_size(train_loader, train_loader.batch_size + increment)
@@ -1911,13 +1932,13 @@ class Modeller():
                   g_schedulers, g_optimizer, g_err_tr, g_hit_max_lr):
         # update learning rate
         d_optimizer, d_lr = set_lr(d_schedulers, d_optimizer, self.config.discriminator.lr_schedule,
-                                   self.config.discriminator.learning_rate, self.config.discriminator.max_lr, d_err_tr, d_hit_max_lr)
+                                   self.config.discriminator.min_lr, self.config.discriminator.max_lr, d_err_tr, d_hit_max_lr)
         d_learning_rate = d_optimizer.param_groups[0]['lr']
         if d_learning_rate >= self.config.discriminator.max_lr: d_hit_max_lr = True
 
         # update learning rate
         g_optimizer, g_lr = set_lr(g_schedulers, g_optimizer, self.config.generator.lr_schedule,
-                                   self.config.generator.learning_rate, self.config.generator.max_lr, g_err_tr, g_hit_max_lr)
+                                   self.config.generator.min_lr, self.config.generator.max_lr, g_err_tr, g_hit_max_lr)
         g_learning_rate = g_optimizer.param_groups[0]['lr']
         if g_learning_rate >= self.config.generator.max_lr: g_hit_max_lr = True
 

@@ -595,5 +595,34 @@ def nice_scoring_plots(config,wandb):
     if config.machine == 'local':
         fig.show()
 
+    fig = go.Figure()
+    label = 'Test Real'
+    fig.add_trace(go.Violin(x=scores_dict[label], name='Real',
+                            side='positive', orientation='h', width=4,
+                            meanline_visible=True, bandwidth=bandwidth1, points=False),
+                  )
+    # label = 'BT Submissions'
+    # fig.add_trace(go.Violin(x=BT_submission_scores, name='BT 5&6 Subs.',
+    #                         side='positive', orientation='h', width=4,
+    #                         meanline_visible=True, bandwidth=bandwidth1, points=False),
+    #               )
+
+    fig.add_trace(go.Violin(x=np.concatenate((scores_dict['Test Randn'], scores_dict['Test Distorted'])), name='Fake',
+                            side='positive', orientation='h', width=4,
+                            meanline_visible=True, bandwidth=bandwidth1, points=False),
+                  )
+
+
+    fig.update_xaxes(title_font=dict(size=20), tickfont=dict(size=14))
+    fig.update_yaxes(title_font=dict(size=20), tickfont=dict(size=20))
+    fig.update_xaxes(title_text=r'$\text{Score}$')
+    fig.update_layout(showlegend=False, yaxis_showgrid=True, xaxis_showgrid=False, width=350, height=350)
+    fig.layout.margin = layout.margin
+    fig.layout.margin.b = 60
+
+    fig.write_image('../paper1_figs/ToC_discriminator.png', scale=4)
+    if config.machine == 'local':
+        fig.show()
+
     aa = 1
     return None

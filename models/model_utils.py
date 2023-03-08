@@ -13,20 +13,18 @@ def get_grad_norm(model):
     return norm
 
 
-def set_lr(schedulers, optimizer, lr_schedule, learning_rate, max_lr, err_tr, hit_max_lr):
+def set_lr(schedulers, optimizer, lr_schedule, min_lr, max_lr, err_tr, hit_max_lr):
     if lr_schedule:
         lr = optimizer.param_groups[0]['lr']
-        if lr > 1e-6:
+        if lr > min_lr:
             schedulers[0].step(np.mean(np.asarray(err_tr)))  # plateau scheduler
 
         if not hit_max_lr:
-            if lr <= max_lr:
-                schedulers[1].step()
-            else:
-                hit_max_lr = True
+            schedulers[1].step()
         elif hit_max_lr:
-            if lr > 1e-6:
+            if lr > min_lr:
                 schedulers[2].step()  # start reducing lr
+
     lr = optimizer.param_groups[0]['lr']
     return optimizer, lr
 

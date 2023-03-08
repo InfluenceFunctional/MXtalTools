@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from models.global_aggregation import global_aggregation
 from models.model_components import general_MLP
 from torch.distributions import MultivariateNormal
+import numpy as np
 from ase import Atoms
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 
@@ -42,9 +43,9 @@ class molecule_graph_model(nn.Module):
                  return_latent=False,
                  crystal_mode=False,
                  crystal_convolution_type=None,
-                 positional_embedding = 'sph',
-                 atom_embedding_dims = 5,
-                 skip_mlp = False,
+                 positional_embedding='sph',
+                 atom_embedding_dims=5,
+                 skip_mlp=False,
                  device='cuda'):
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
@@ -79,7 +80,7 @@ class molecule_graph_model(nn.Module):
         self.crystal_mode = crystal_mode
         self.crystal_convolution_type = crystal_convolution_type
         self.max_molecule_size = max_molecule_size
-        self.atom_embedding_dims = atom_embedding_dims # todo clean this up
+        self.atom_embedding_dims = atom_embedding_dims  # todo clean this up
         self.skip_mlp = skip_mlp
 
         if self.num_fc_layers == 0:
@@ -128,11 +129,11 @@ class molecule_graph_model(nn.Module):
         # initialize global pooling operation
         if self.graph_model is not None:
             self.global_pool = global_aggregation(self.pooling, self.fc_depth,
-                                                  geometric_embedding = positional_embedding,
+                                                  geometric_embedding=positional_embedding,
                                                   num_radial=num_radial,
-                                                  spherical_order = num_spherical,
+                                                  spherical_order=num_spherical,
                                                   radial_embedding=radial_function,
-                                                  max_molecule_size = max_molecule_size)
+                                                  max_molecule_size=max_molecule_size)
 
         # molecule features FC layer
         if self.n_mol_feats != 0:
@@ -151,7 +152,7 @@ class molecule_graph_model(nn.Module):
 
         self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
 
-    def forward(self, data=None, x=None, pos=None, batch=None, ptr=None, aux_ind=None, num_graphs = None, return_latent=False, return_dists=False):
+    def forward(self, data=None, x=None, pos=None, batch=None, ptr=None, aux_ind=None, num_graphs=None, return_latent=False, return_dists=False):
         if data is not None:
             x = data.x
             pos = data.pos
@@ -169,9 +170,9 @@ class molecule_graph_model(nn.Module):
         if self.graph_model is not None:
             x, dists_dict = self.graph_net(x[:, :self.n_atom_feats], pos, batch, ptr=ptr, ref_mol_inds=aux_ind, return_dists=return_dists)  # get atoms encoding
             if self.crystal_mode:  # model only outputs ref mol atoms - many fewer
-                x = self.global_pool(x, pos, batch[torch.where(aux_ind == 0)[0]], output_dim = num_graphs)
+                x = self.global_pool(x, pos, batch[torch.where(aux_ind == 0)[0]], output_dim=num_graphs)
             else:
-                x = self.global_pool(x, pos, batch, output_dim = num_graphs)  # aggregate atoms to molecule
+                x = self.global_pool(x, pos, batch, output_dim=num_graphs)  # aggregate atoms to molecule
 
         if not self.skip_mlp:
             if self.graph_model is not None:
@@ -193,6 +194,7 @@ class molecule_graph_model(nn.Module):
             return output, extra_outputs
         else:
             return output
+
 
 class independent_gaussian_model(nn.Module):
     def __init__(self, input_dim, means, stds, normed_length_means, normed_length_stds, cov_mat=None):
@@ -239,84 +241,57 @@ class independent_gaussian_model(nn.Module):
 
 
 class PointCloudDecoder(nn.Module):
-    def __init__(self, input_filters, n_classes, strides):
+    def __init__(self, input_filters, n_classes, strides, mode='conv_transpose'):
         super(PointCloudDecoder, self).__init__()
         '''
         model to deconvolve a 1D vector to an NxNxN array of voxel classwise probabilities
         '''
-        #strides = [1.5,1.5,1.5,2,1.23]
+        # strides = [1.5,1.5,1.5,2,1.23]
 
+
+        self.mode = mode
         self.strides = strides
         self.num_blocks = len(strides)
-        image_depths = torch.linspace(input_filters, n_classes, self.num_blocks+1).long()
+        #self.image_depths = torch.linspace(input_filters, n_classes, self.num_blocks + 1).long()
+        self.image_depths = torch.linspace(input_filters, input_filters//2, self.num_blocks + 1).long()
 
         conv = nn.ConvTranspose3d
-        bn = nn.LayerNorm # nn.InstanceNorm3d #nn.BatchNorm3d
+        bn = nn.LayerNorm  # nn.InstanceNorm3d #nn.BatchNorm3d
 
         self.unflatten = nn.Unflatten(dim=1, unflattened_size=(input_filters, 3, 3, 3))
 
         # stride 2 adds 2N+1 rows and columns
         # stride 1 adds 2 row and column
         self.conv_blocks = torch.nn.ModuleList([
-            conv(in_channels=image_depths[n], out_channels=image_depths[n + 1], kernel_size=3, stride=strides[n], output_padding=0)
+            conv(in_channels=self.image_depths[n], out_channels=self.image_depths[n + 1], kernel_size=3, stride=strides[n], output_padding=0)
             for n in range(self.num_blocks)
         ])
         img_size = [3]
-        for i,stride in enumerate(self.strides):
+        for i, stride in enumerate(self.strides):
             if stride == 2:
-                img_size += [2*img_size[i] + 1]
+                img_size += [2 * img_size[i] + 1]
             elif stride == 1:
                 img_size += [img_size[i] + 2]
 
         # for layer norm
         self.bn_blocks = torch.nn.ModuleList([
-            bn([img_size[n+1],img_size[n+1],img_size[n+1]])
+            bn([img_size[n + 1], img_size[n + 1], img_size[n + 1]])
             for n in range(self.num_blocks)
         ])
-        # self.conv_blocks2 = torch.nn.ModuleList([ # smoothing convolution
-        #     nn.Conv3d(in_channels=image_depths[n+1], out_channels=image_depths[n+1], kernel_size=3, padding=1)
-        #     for n in range(self.num_blocks)
-        # ])
-        #
-        # self.upscale_blocks = torch.nn.ModuleList([
-        #     nn.Upsample(scale_factor=strides[n])
-        #     for n in range(self.num_blocks)
-        # ])
-        #
-        #
-        # self.conv_blocks = torch.nn.ModuleList([ # depthwise convolution
-        #     nn.Conv3d(in_channels=image_depths[n], out_channels=image_depths[n+1], kernel_size=[1,1,1], padding=0)
-        #     for n in range(self.num_blocks)
-        # ])
+        self.final_conv = nn.Conv3d(in_channels=self.image_depths[-1], out_channels=n_classes, kernel_size=(3,3,3), padding=0)
 
-        # self.bn_blocks = torch.nn.ModuleList([
-        #     bn(int(image_depths[n+1]))
-        #     for n in range(self.num_blocks)
-        # ])
 
-        # self.conv_blocks2 = torch.nn.ModuleList([ # spatial convolution
-        #     nn.Conv3d(in_channels=image_depths[n+1], out_channels=image_depths[n+1], kernel_size=3, padding=1)
-        #     for n in range(self.num_blocks)
-        # ])
-        #
-        # self.bn_blocks2 = torch.nn.ModuleList([
-        #     bn(image_depths[n+1])
-        #     for n in range(self.num_blocks)
-        # ])
 
-        self.final_conv = nn.Conv3d(in_channels=image_depths[-1], out_channels=n_classes, kernel_size=3, padding=0)
+    def forward(self, x):
+        if self.mode == 'conv_transpose':
+            x = self.unflatten(x)
+            for bn, conv in zip(self.bn_blocks, self.conv_blocks):  # upscale and deconvolve
+                x = F.gelu(bn(conv(x)))
 
-    def forward(self,x):
-        x = self.unflatten(x)
-        for bn, conv in zip(self.bn_blocks, self.conv_blocks): # upscale and deconvolve
-            x = F.gelu(bn(conv(x)))
-        #     x = x + F.leaky_relu(bn2(conv2(x)))
-        #
-        # for bn, conv,us, bn2, conv2 in zip(self.bn_blocks, self.conv_blocks, self.upscale_blocks, self.bn_blocks2, self.conv_blocks2): # upscale and deconvolve
-        #     x = F.leaky_relu(bn(conv(us(x))))
-        #     x = x + F.leaky_relu(bn2(conv2(x)))
+            return self.final_conv(x)  # process to output
 
-        # for bn, conv in zip(self.bn_blocks2, self.conv_blocks2): # upscale and deconvolve
-        #     x = F.leaky_relu_(bn(conv(x)))
-
-        return self.final_conv(x) # process to output
+        elif self.mode == 'mlp': # todo this is wrong, need to do it by grouped channels
+            x = self.unflatten_blocks[0](x)
+            x = F.gelu(self.conv_blocks[0](x))
+            x = self.unflatten_blocks[1](x.flatten(1))
+            return self.final_conv(x)

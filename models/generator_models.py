@@ -123,7 +123,7 @@ class molecule_autoencoder(nn.Module):
         conditioning model
         '''
         self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
-        conv_embedding_dim = 128
+        conv_embedding_dim = config.generator.decoder_embedding_dim
         self.conditioner = molecule_graph_model(
             dataDims=dataDims,
             atom_embedding_dims = len(config.conditioner_classes) + 1,
@@ -154,6 +154,8 @@ class molecule_autoencoder(nn.Module):
             convolution_cutoff=config.generator.graph_convolution_cutoff,
             positional_embedding = config.generator.positional_embedding,
             max_molecule_size=1,
+            crystal_mode=False,
+            crystal_convolution_type= None,
             skip_mlp = False
         )
 
@@ -162,7 +164,7 @@ class molecule_autoencoder(nn.Module):
         generator model
         common atom types
         '''
-        n_target_bins = int((config.max_molecule_radius) * 2 + 1)# / 0.5) + 1 # make up for odd in stride
+        n_target_bins = int((config.max_molecule_radius) * 2 / 0.5) + 1 # half-angstrom resolution, make up for odd in stride
         strides = [2,2,2] # that brings it to 30 3-7-15-31, -2 for final conv
         current_size = 29
         if n_target_bins < current_size:

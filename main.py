@@ -128,6 +128,7 @@ def add_args(parser):
     parser.add_argument('--max_batch_size', type=int, default=10000)
     parser.add_argument('--batch_growth_increment', type=int, default=0.05)
     add_bool_arg(parser, 'auto_batch_sizing', default=True)  # whether to densely connect dimenet outputs
+    add_bool_arg(parser, 'grow_batch_size', default=True)  # whether to densely connect dimenet outputs
     parser.add_argument('--auto_batch_reduction', type=float, default=0.2)  # leeway factor to reduce batch size at end of auto-sizing run
     parser.add_argument('--gradient_norm_clip', type=float, default=1)
     add_bool_arg(parser, 'anomaly_detection', default=False)
@@ -140,6 +141,7 @@ def add_args(parser):
     update_args2config(args2config, 'max_batch_size')
     update_args2config(args2config, 'batch_growth_increment')
     update_args2config(args2config, 'auto_batch_sizing')
+    update_args2config(args2config, 'grow_batch_size')
     update_args2config(args2config, 'auto_batch_reduction')
     update_args2config(args2config, 'gradient_norm_clip')
     update_args2config(args2config, 'anomaly_detection')
@@ -149,8 +151,9 @@ def add_args(parser):
 
     # optimizer settings
     parser.add_argument('--discriminator_optimizer', type=str, default='adamw')  # adam, adamw, sgd
-    parser.add_argument('--discriminator_learning_rate', type=float, default=1e-5)  # base learning rate
+    parser.add_argument('--discriminator_init_lr', type=float, default=1e-5)  # base learning rate
     parser.add_argument('--discriminator_max_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--discriminator_min_lr', type=float, default=1e-3)  # for warmup schedules
     parser.add_argument('--discriminator_beta1', type=float, default=0.9)  # adam and adamw opt
     parser.add_argument('--discriminator_beta2', type=float, default=0.999)  # adam and adamw opt
     parser.add_argument('--discriminator_weight_decay', type=float, default=0.01)  # for opt
@@ -162,8 +165,9 @@ def add_args(parser):
     parser.add_argument('--discriminator_lr_shrink_lambda', type=float, default=0.95)
 
     parser.add_argument('--generator_optimizer', type=str, default='adamw')  # adam, adamw, sgd
-    parser.add_argument('--generator_learning_rate', type=float, default=1e-5)  # base learning rate
+    parser.add_argument('--generator_init_lr', type=float, default=1e-5)  # base learning rate
     parser.add_argument('--generator_max_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--generator_min_lr', type=float, default=1e-3)  # for warmup schedules
     parser.add_argument('--generator_beta1', type=float, default=0.9)  # adam and adamw opt
     parser.add_argument('--generator_beta2', type=float, default=0.999)  # adam and adamw opt
     parser.add_argument('--generator_weight_decay', type=float, default=0.01)  # for opt
@@ -174,8 +178,9 @@ def add_args(parser):
     parser.add_argument('--generator_lr_shrink_lambda', type=float, default=0.95)
 
     update_args2config(args2config, 'discriminator_optimizer', ['discriminator', 'optimizer'])
-    update_args2config(args2config, 'discriminator_learning_rate', ['discriminator', 'learning_rate'])
+    update_args2config(args2config, 'discriminator_init_lr', ['discriminator', 'init_lr'])
     update_args2config(args2config, 'discriminator_max_lr', ['discriminator', 'max_lr'])
+    update_args2config(args2config, 'discriminator_min_lr', ['discriminator', 'min_lr'])
     update_args2config(args2config, 'discriminator_beta1', ['discriminator', 'beta1'])
     update_args2config(args2config, 'discriminator_beta2', ['discriminator', 'beta2'])
     update_args2config(args2config, 'discriminator_weight_decay', ['discriminator', 'weight_decay'])
@@ -187,8 +192,9 @@ def add_args(parser):
     update_args2config(args2config, 'discriminator_lr_shrink_lambda', ['discriminator', 'lr_shrink_lambda'])
 
     update_args2config(args2config, 'generator_optimizer', ['generator', 'optimizer'])
-    update_args2config(args2config, 'generator_learning_rate', ['generator', 'learning_rate'])
+    update_args2config(args2config, 'generator_init_lr', ['generator', 'init_lr'])
     update_args2config(args2config, 'generator_max_lr', ['generator', 'max_lr'])
+    update_args2config(args2config, 'generator_min_lr', ['generator', 'min_lr'])
     update_args2config(args2config, 'generator_beta1', ['generator', 'beta1'])
     update_args2config(args2config, 'generator_beta2', ['generator', 'beta2'])
     update_args2config(args2config, 'generator_weight_decay', ['generator', 'weight_decay'])
@@ -215,6 +221,7 @@ def add_args(parser):
     add_bool_arg(parser, 'generator_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
     add_bool_arg(parser, 'generator_add_torsional_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
     parser.add_argument('--generator_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
+    parser.add_argument('--generator_decoder_embedding_dim', type=int, default=64)  # number of neurons per graph convolution
 
     parser.add_argument('--generator_conditioner_num_fc_layers', type=int, default=1)  # number of layers in NN models
     parser.add_argument('--generator_conditioner_fc_depth', type=int, default=27)  # number of neurons per NN layer
@@ -233,6 +240,7 @@ def add_args(parser):
     parser.add_argument('--generator_prior_dimension', type=int, default=12)  # type of prior distribution
     add_bool_arg(parser, 'generator_conditional_modelling', default=True)  # whether to use molecular features as conditions for normalizing flow model
 
+    update_args2config(args2config, 'generator_decoder_embedding_dim', ['generator', 'decoder_embedding_dim'])
     update_args2config(args2config, 'generator_canonical_conformer_orientation', ['generator', 'canonical_conformer_orientation'])
     update_args2config(args2config, 'generator_positional_embedding', ['generator', 'positional_embedding'])
     update_args2config(args2config, 'generator_graph_model', ['generator', 'graph_model'])

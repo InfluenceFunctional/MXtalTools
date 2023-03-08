@@ -38,42 +38,47 @@ workdir = 'C:/Users\mikem\Desktop/CSP_runs/point_cloud_encodings'
 os.chdir(workdir)  # move to working dir
 
 model_name = 'encoder_1'
-avg_num_particles_per_sample = 2 # initial number
-max_num_particles = 20
+avg_num_particles_per_sample = 10  # initial number
+max_num_particles = 10
 cartesian_dimension = 3
-n_bins = 5 # not used in conv mode, currently
+n_bins = 20
 n_gridpoints = 1
 convergence_criteria = 1e-7  # minimum improvement in last history_length epochs
 n_particle_types = 1
 
-model_type = 'GraphAutoencoder'  # 'mike' 'encoder' '
-decoder_type = 'conv'  # 'mlp' or 'conv'
 gconv_type = 'none'  # 'TransformerConv' 'none'
-initial_transform = None
 embedding_type = 'pos'  # 'pos' 'rad' 'sph' 'polar'
 batch_size = 10
-batch_size_growth_lambda = 1.0025
-max_batch_size = 1000
-init_lr = 2e-3
+batch_size_growth_lambda = 1.0005
+max_batch_size = 200
+init_lr = 1e-4
 lr_growth_lambda = 1.001
-lr_shrink_lambda = 0.999
-min_lr = 1e-3
-max_lr = 1e-3
-weight_decay = 0
-n_layers = 1
-n_filters = 64
+lr_shrink_lambda = 0.9995
+min_lr = 5e-4 #1e-5
+max_lr = 1e-3 #1e-2
+weight_decay = 0.01
+n_layers = 4
+n_filters = 512
+fc_dropout = 0.5
 encoder_layers = 1
-encoder_filters = 64
+encoder_filters = 256
 encoding_output_depth = encoder_filters // (n_gridpoints ** cartesian_dimension)
-norm_type_1 = 'graph'  # 'graph' 'layer' 'batch' if np.random.randint(0, 2) == 1 else None
-norm_type_2 = 'layer'  # 'batch' if np.random.randint(0, 2) == 1 else None
+norm_type_1 = None # 'graph' 'layer' 'batch' if np.random.randint(0, 2) == 1 else None
+norm_type_2 = None  # 'batch' if np.random.randint(0, 2) == 1 else None
 pooling = 'max'  # 'combo' 'max' 'mean' 'attention'
-conv_embedding_dim = 16
+conv_embedding_dim = 128
+resolution_scaling = [5, 2]  # [2,
+decoder_mode = 'conv_transpose'  # 'mlp' 'conv_transpose' 'upscale' WIP
+gauss_sigma = 0 #1
+gauss_kernel_size = 5
 
-n_epochs = int(1e7 / batch_size)
-history_length = 100 #int(1e4 / batch_size)
+n_epochs = int(1e5 / batch_size)
+history_length = 100  # int(1e4 / batch_size)
 
 config = {
+    'fc_dropout': fc_dropout,
+    'decoder_mode': decoder_mode,
+    'resolution_scaling': resolution_scaling,
     'weight_decay': weight_decay,
     'init_lr': init_lr,
     'max_lr': max_lr,
@@ -104,6 +109,17 @@ config = {
 init model
 '''
 
+def make_gaussian_kernel(sigma, kernel_size):
+    ks = int(sigma * kernel_size)
+    if ks % 2 == 0:
+        ks += 1
+    ts = torch.linspace(-ks // 2, ks // 2 + 1, ks)
+    gauss = torch.exp((-(ts / sigma)**2 / 2))
+    kernel = gauss / gauss.sum()
+
+    return kernel
+
+
 class molecule_autoencoder(nn.Module):
     def __init__(self):
         super(molecule_autoencoder, self).__init__()
@@ -115,69 +131,77 @@ class molecule_autoencoder(nn.Module):
         '''
         conditioning model
         '''
-        self.conditioner = molecule_graph_model(
-            dataDims=None,
-            seed=seed,
-            atom_embedding_dims= n_particle_types + 1,
-            num_atom_feats=cartesian_dimension + 1,
-            num_mol_feats=0,
-            output_dimension=conv_embedding_dim * 3 ** cartesian_dimension,
-            activation='gelu',
-            num_fc_layers=n_layers,
-            fc_depth=n_filters,
-            fc_dropout_probability=0,
-            fc_norm_mode=norm_type_1,
-            graph_model='mike',
-            graph_filters=encoder_filters // 4,
-            graph_convolutional_layers=encoder_layers,
-            concat_mol_to_atom_features=False,
-            pooling=pooling,
-            graph_norm=norm_type_2,
-            num_spherical=6,
-            num_radial=50,
-            graph_convolution=gconv_type,
-            num_attention_heads=4,
-            add_spherical_basis=False,
-            add_torsional_basis=False,
-            graph_embedding_size=512,
-            radial_function='gaussian',
-            max_num_neighbors=100,
-            convolution_cutoff=2,
-            max_molecule_size=1,
-            return_latent=False,
-            crystal_mode=False,
-            crystal_convolution_type=None,
-            positional_embedding='sph3',
-            device='cuda',
-            skip_mlp = True
-        )
+        if True:
+            self.conditioner = molecule_graph_model(
+                dataDims=None,
+                seed=seed,
+                atom_embedding_dims=n_particle_types + 1,
+                num_atom_feats=cartesian_dimension + 1,
+                num_mol_feats=0,
+                output_dimension=conv_embedding_dim * 3 ** cartesian_dimension,
+                activation='gelu',
+                num_fc_layers=n_layers,
+                fc_depth=n_filters,
+                fc_dropout_probability=fc_dropout,
+                fc_norm_mode=norm_type_1,
+                graph_model='mike',
+                graph_filters=encoder_filters // 4,
+                graph_convolutional_layers=encoder_layers,
+                concat_mol_to_atom_features=False,
+                pooling=pooling,
+                graph_norm=norm_type_2,
+                num_spherical=6,
+                num_radial=50,
+                graph_convolution=gconv_type,
+                num_attention_heads=4,
+                add_spherical_basis=False,
+                add_torsional_basis=False,
+                graph_embedding_size=512,
+                radial_function='gaussian',
+                max_num_neighbors=100,
+                convolution_cutoff=2,
+                max_molecule_size=1,
+                return_latent=False,
+                crystal_mode=False,
+                crystal_convolution_type=None,
+                positional_embedding='sph3',
+                device='cuda',
+                skip_mlp=False,
+            )
 
         '''
         generator model
         common atom types
         '''
-        n_target_bins = n_bins  # / 0.5) + 1 # make up for odd in stride
-        strides = [2, 2, 2]  # that brings it to 30 3-7-15-31, -2 for final conv
-        current_size = 29
-        if n_target_bins < current_size:
-            strides = [2, 2]
-            current_size = 13
-        if n_target_bins < current_size:
-            strides = [2]
-            current_size = 5
+        if decoder_mode == 'conv_transpose':
+            n_target_bins = n_bins  # / 0.5) + 1 # make up for odd in stride
+            strides = [2, 2, 2]  # that brings it to 30 3-7-15-31, -2 for final conv
+            current_size = 29
+            if n_target_bins < current_size:
+                strides = [2, 2]
+                current_size = 13
+            if n_target_bins < current_size:
+                strides = [2]
+                current_size = 5
 
-        diff = n_target_bins - current_size
-        for _ in range(diff // 2):  # must be an even number of bins in this approach
-            strides += [1]  # pad up to the required layers
+            diff = n_target_bins - current_size
+            for _ in range(diff // 2):  # must be an even number of bins in this approach
+                strides += [1]  # pad up to the required layers
+            resolution_scaling_input = strides
+        else:
+            resolution_scaling_input = resolution_scaling
+
 
         self.decoder = PointCloudDecoder(input_filters=conv_embedding_dim,
                                          n_classes=n_particle_types + 1,
-                                         strides=strides)
+                                         strides=resolution_scaling_input,
+                                         mode=decoder_mode)
 
     def forward(self, x, pos, batch, num_graphs):
         conditions_encoding = self.conditioner(x=x, pos=pos, batch=batch, num_graphs=num_graphs)
 
         return self.decoder(conditions_encoding)
+
 
 grid_index = torch.tensor(list(itertools.product([n for n in range(n_bins)], repeat=cartesian_dimension))).cuda()
 grid_index -= n_bins // 2  # center basis vectors on the origin
@@ -186,49 +210,10 @@ hit_max_lr = False
 with wandb.init(project='shape_encoding', entity='mkilgour', config=config):
     wandb.log(config)
     torch.random.manual_seed(0)
-    if model_type == 'encoder':
-        model = graph_encoder()
-    elif model_type == 'mike':
-        model = molecule_graph_model(
-            dataDims=None,
-            seed=0,
-            num_atom_feats=cartesian_dimension + 1,
-            num_mol_feats=0,
-            output_dimension=(n_particle_types + 1) * n_bins ** cartesian_dimension,
-            activation='gelu',
-            num_fc_layers=n_layers,
-            fc_depth=n_filters,
-            fc_dropout_probability=0,
-            fc_norm_mode=norm_type_1,
-            graph_model='mike',
-            graph_filters=encoder_filters // 4,
-            graph_convolutional_layers=encoder_layers,
-            concat_mol_to_atom_features=False,
-            pooling=pooling,
-            graph_norm=norm_type_2,
-            num_spherical=6,
-            num_radial=50,
-            graph_convolution=gconv_type,
-            num_attention_heads=4,
-            add_spherical_basis=False,
-            add_torsional_basis=False,
-            graph_embedding_size=512,
-            radial_function='gaussian',
-            max_num_neighbors=100,
-            convolution_cutoff=2,
-            max_molecule_size=1,
-            return_latent=False,
-            crystal_mode=False,
-            crystal_convolution_type=None,
-            positional_embedding='sph3',
-            atom_embedding_dims=n_particle_types,
-            device='cuda',
-        )
-    elif model_type == 'GraphAutoencoder':
-        model = molecule_autoencoder()
+    model = molecule_autoencoder()
 
     optimizer = optim.AdamW(model.parameters(), lr=init_lr, weight_decay=weight_decay)
-    #optimizer = optim.Adam(model.parameters(), lr=init_lr)#, weight_decay=weight_decay)
+    # optimizer = optim.Adam(model.parameters(), lr=init_lr)#, weight_decay=weight_decay)
     scheduler1 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: lr_shrink_lambda)
     scheduler2 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: lr_growth_lambda)
 
@@ -237,34 +222,28 @@ with wandb.init(project='shape_encoding', entity='mkilgour', config=config):
     '''
     training loop
     '''
+
     model.cuda()
     model.train()
     loss_record = []
     for epoch in tqdm.tqdm(range(n_epochs), miniters=n_epochs // 100, mininterval=30):
         epoch_loss = []
         if batch_size < max_batch_size:
-            batch_size += max(1,int(batch_size * (-1 + batch_size_growth_lambda)))
+            batch_size += max(1, int(batch_size * (-1 + batch_size_growth_lambda)))
         # just make a random one every epoch
         if (epoch % 400 == 0) and (epoch > 400):
             if avg_num_particles_per_sample < max_num_particles:
-                avg_num_particles_per_sample += 1 # add one particle per hundred epochs
+                avg_num_particles_per_sample += 1  # add one particle per hundred epochs
         batch = torch.randint(low=0, high=batch_size, size=(batch_size * avg_num_particles_per_sample, 1), device='cuda')[:, 0]  # batch index
         batch = batch[torch.argsort(batch)]
         particle_coords = torch.rand(batch_size * avg_num_particles_per_sample, cartesian_dimension, device='cuda') * 2 - 1  # particle positions with mean of avg_num_particles_per_sample particles per sample
         particle_types = torch.randint(low=1, high=n_particle_types + 1, size=(batch_size * avg_num_particles_per_sample, 1), device='cuda')[:, 0]
 
-        if model_type == 'encoder':
-            output = model(torch.cat((particle_types[:, None], particle_coords), dim=-1), batch)
-        elif model_type == 'mike':
-            output = model(x=torch.cat((particle_types[:, None], particle_coords), dim=-1),
-                           pos=particle_coords,
-                           batch=batch,
-                           num_graphs=batch_size)
-        elif model_type == 'GraphAutoencoder':
-            output = model(x=torch.cat((particle_types[:, None], particle_coords), dim=-1),
-                           pos=particle_coords,
-                           batch=batch,
-                           num_graphs=batch_size)
+        output = model(x=torch.cat((particle_types[:, None], particle_coords), dim=-1),
+                       pos=particle_coords,
+                       batch=batch,
+                       num_graphs=batch_size)
+
 
         n_bins = output.shape[-1]
         buckets = torch.bucketize(particle_coords, torch.linspace(-1, 1, n_bins + 1, device='cuda')) - 1
@@ -278,19 +257,42 @@ with wandb.init(project='shape_encoding', entity='mkilgour', config=config):
             for ii in range(batch_size):
                 target[ii, buckets[batch == ii, 0], buckets[batch == ii, 1], buckets[batch == ii, 2]] = particle_types[batch == ii]
 
-        if decoder_type == 'mlp':
-            if cartesian_dimension == 2:
-                output = output.reshape(batch_size, 1 + n_particle_types, n_bins, n_bins)
-            elif cartesian_dimension == 3:
-                output = output.reshape(batch_size, 1 + n_particle_types, n_bins, n_bins, n_bins)
+        target = F.one_hot(target, num_classes = n_particle_types + 1).float()
+        target = torch.permute(target, (0,4,1,2,3))
 
-        bce_loss = F.cross_entropy(output, target) / (torch.sum(target > 0) / len(target.flatten()))
+        # gaussian_kernel = make_gaussian_kernel(gauss_sigma, gauss_kernel_size).cuda()
+        # k3d = torch.einsum('i,j,k->ijk', gaussian_kernel, gaussian_kernel, gaussian_kernel)
+        # k3d = k3d / k3d.sum()
+        # for cn in range(1, 1+ n_particle_types):
+        #     target[:,cn][:,None,:,:,:] = F.conv3d(target[:, cn, ...][:, None, :, :, :], k3d.reshape(1, 1, *k3d.shape), stride=1, padding=len(gaussian_kernel) // 2)
+        #
+        # target = target / torch.linalg.norm(target,dim=1)[:,None,:,:,:]
+
+        bce_loss = F.cross_entropy(output, target) #/ (torch.sum(target > 0) / len(target.flatten()))
         loss = bce_loss
+
+        '''
+        fig = go.Figure()
+        x, y, z = sample_true.nonzero()
+        fig.add_trace(go.Scatter3d(
+            x=x, y=y, z=z,
+            mode='markers',
+            showlegend=True,
+            marker=dict(
+                size=10,
+                color=sample_true[x, y, z],
+                colorscale='Jet',
+                cmin=0,
+                opacity=0.5
+            )))
+        fig.update_layout(showlegend=True)
+        fig.show()
+        '''
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        loss_record.append(loss.detach() )
+        loss_record.append(loss.detach())
 
         lr = optimizer.param_groups[0]['lr']
         if lr >= max_lr:
@@ -301,12 +303,48 @@ with wandb.init(project='shape_encoding', entity='mkilgour', config=config):
             if lr > min_lr:
                 scheduler1.step()
 
+        if epoch % 10 == 0:
+            print(f'epoch {epoch} loss {torch.log10(loss.detach()).mean():.3f}')
+            loss_record_tensor = torch.tensor(loss_record)
+            best_loss = loss_record_tensor.min()
+            best_loss_epoch = int(torch.argmin(loss_record_tensor))
+            # ema = torch.exp(torch.arange(-min(epoch,history_length), 1) / 10)
+            # ema /= ema.sum()
+            # trailing_loss = (loss_record_tensor[-history_length:] * ema[-history_length:]).sum()
+            trailing_best = loss_record_tensor[-history_length:].min()
+            if epoch > history_length:
+                best_prior = loss_record_tensor[:-history_length].min()
+            else:
+                best_prior = loss_record_tensor[0]
+
+            convergence_rate = ((best_prior - trailing_best).abs() / best_prior)
+
+            if (epoch > (2 * history_length)) and (convergence_rate < 1e-2):
+                if (convergence_rate < convergence_criteria) or (trailing_best > best_prior):  # converged or diverged
+                    aa = 1
+                    # converged = True
+                    # print("Converged!")
+
+            wandb.log({'loss': loss * (torch.sum(target > 0).cpu().detach().numpy() / len(target.flatten())),
+                       'lr': lr,
+                       'best_loss': best_loss * (torch.sum(target > 0).cpu().detach().numpy() / len(target.flatten())),
+                       'epoch': epoch,
+                       'convergence_rate': convergence_rate,
+                       'bce_loss': bce_loss.mean().cpu().detach().numpy(),# * (torch.sum(target > 0).cpu().detach().numpy() / len(target.flatten())),
+                       'batch_size': batch_size,
+                       })
+
+            if converged:
+                break
+
+
         if epoch % 200 == 0:
-            torch.save({'epoch': epoch,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'config': config},
-                       model_name)
+            if loss_record_tensor[-1] == loss_record_tensor.min():
+                torch.save({'epoch': epoch,
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'config': config},
+                           model_name)
 
             if cartesian_dimension == 2:
                 fig = make_subplots(rows=2, cols=4)
@@ -334,7 +372,7 @@ with wandb.init(project='shape_encoding', entity='mkilgour', config=config):
                             sample_guess = output[img_i * 2 + img_j, 1].sigmoid().cpu().detach().numpy()
                         else:
                             sample_guess = output[img_i * 2 + img_j].argmax(0).cpu().detach().numpy()
-                        sample_true = target[img_i * 2 + img_j].cpu().detach().numpy()
+                        sample_true = target[img_i * 2 + img_j].argmax(0).cpu().detach().numpy()
 
                         X, Y, Z = (sample_guess + 1).nonzero()
                         fig.add_trace(go.Volume(
@@ -377,39 +415,6 @@ with wandb.init(project='shape_encoding', entity='mkilgour', config=config):
             # fig.show()
             wandb.log({"samples": fig})
 
-        if epoch % 10 == 0:
-            print(f'epoch {epoch} loss {torch.log10(loss.detach()).mean():.3f}')
-            loss_record_tensor = torch.tensor(loss_record)
-            best_loss = loss_record_tensor.min()
-            best_loss_epoch = int(torch.argmin(loss_record_tensor))
-            # ema = torch.exp(torch.arange(-min(epoch,history_length), 1) / 10)
-            # ema /= ema.sum()
-            # trailing_loss = (loss_record_tensor[-history_length:] * ema[-history_length:]).sum()
-            trailing_best = loss_record_tensor[-history_length:].min()
-            if epoch > history_length:
-                best_prior = loss_record_tensor[:-history_length].min()
-            else:
-                best_prior = loss_record_tensor[0]
-
-            convergence_rate = ((best_prior - trailing_best).abs() / best_prior)
-
-            if (epoch > (2 * history_length)) and (convergence_rate < 1e-2):
-                if (convergence_rate < convergence_criteria) or (trailing_best > best_prior):  # converged or diverged
-                    aa = 1
-                    #converged = True
-                    #print("Converged!")
-
-            wandb.log({'loss': loss * (torch.sum(target>0).cpu().detach().numpy()/len(target.flatten())),
-                       'lr': lr,
-                       'best_loss': best_loss* (torch.sum(target>0).cpu().detach().numpy()/len(target.flatten())),
-                       'epoch': epoch,
-                       'convergence_rate': convergence_rate,
-                       'bce_loss': bce_loss.mean().cpu().detach().numpy()* (torch.sum(target>0).cpu().detach().numpy()/len(target.flatten())),
-                       'batch_size' : batch_size,
-                       })
-
-            if converged:
-                break
 
     loss_record = torch.stack(loss_record).cpu().detach().numpy()
 
@@ -470,199 +475,199 @@ elif cartesian_dimension == 3:
         emd_loss = torch_emd(target_overlap, output_overlap).mean(1) / (n_bins ** cartesian_dimension) # averge over slices
 '''
 
-
-class graph_encoder(torch.nn.Module):
-    def __init__(self):
-        super(graph_encoder, self).__init__()
-        # grid of points over which to sample
-        gridpoint_lim = 1 - 1 / n_gridpoints
-        grid = make_grid(gridpoint_lim, n_gridpoints, cartesian_dimension)
-        shift_vector = torch.repeat_interleave(grid, batch_size * avg_num_particles_per_sample, dim=0)
-
-        self.register_buffer("grid", grid)
-        self.register_buffer("shift_vector", shift_vector)
-
-        self.num_radial = 50
-        self.sph_od_list = [i for i in range(11)]
-        self.num_spherical = int(torch.sum(torch.Tensor(self.sph_od_list) * 2 + 1))
-        self.encoding_dim = encoding_output_depth
-        self.init_transform = initial_transform
-
-        if embedding_type == 'pos' or embedding_type == 'polar':
-            embedding_dim = cartesian_dimension
-        elif embedding_type == 'rad':
-            embedding_dim = self.num_radial
-        elif embedding_type == 'sph':
-            embedding_dim = self.num_radial + self.num_spherical
-
-        if decoder_type == 'mlp':
-            self.output_dim = (n_particle_types + 1) * n_bins ** cartesian_dimension
-        elif decoder_type == 'conv':
-            initial_conv_dim = 128
-            if cartesian_dimension == 2:
-                self.output_dim = 3 * 3 * initial_conv_dim
-                image_dim = self.output_dim // 3 // 3
-            elif cartesian_dimension == 3:
-                self.output_dim = 3 * 3 * 3 * initial_conv_dim
-                image_dim = self.output_dim // 3 // 3 // 3
-
-            self.decoder = ConvDecoder(image_dim, n_particle_types)
-
-        self.mlp = general_MLP(layers=n_layers, filters=n_filters,
-                               input_dim=self.encoding_dim * len(grid),  # self.num_radial * cartesian_dimension, #avg_num_particles_per_sample*cartesian_dimension,
-                               output_dim=self.output_dim,  # n_particle_types * n_bins ** cartesian_dimension,
-                               dropout=0,
-                               norm=norm_type_1,
-                               activation='gelu',
-                               norm_after_linear=True,
-                               )
-
-        self.mlp2 = general_MLP(layers=encoder_layers, filters=encoder_filters,
-                                input_dim=embedding_dim + 1,
-                                output_dim=self.encoding_dim,
-                                activation='gelu',
-                                norm=norm_type_2,
-                                dropout=0,
-                                norm_after_linear=True)
-
-        cutoff = 1  # / n_gridpoints
-        # self.radial_basis = BesselBasisLayer(num_radial=self.num_radial, cutoff=cutoff)
-        self.radial_basis = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=self.num_radial)
-        # self.pos_encoding = PosEncoding2D(self.num_radial, 1)
-        self.global_aggregation = global_aggregation(pooling, filters=self.encoding_dim * len(grid))
-
-    def transform(self, pos, batch):
-        if self.init_transform is None:
-            init_embedding = pos
-
-        return init_embedding
-
-    def encode(self, pos, batch):
-        # return pos.reshape(len(pos), avg_num_particles_per_sample*cartesian_dimension) # just give it the positions directly
-        # encoding = self.pos_encoding(pos)
-        # return scatter(encoding,batch,dim=0)
-
-        type = pos[:, 0].tile(len(self.grid), 1)  # atom type
-        pos_i = pos[:, 1:].tile(len(self.grid), 1)  # atom position
-        batch_i = batch.tile(len(self.grid))
-        pos_i = pos_i - self.shift_vector  # shifted coordinates
-
-        if embedding_type == 'pos':
-            embedding = pos_i
-        elif embedding_type == 'polar':
-            embedding = torch.zeros_like(pos_i)
-            rho = torch.norm(pos_i, p=2, dim=-1).view(-1, 1)
-            # rho = rho / rho.max()
-
-            theta = torch.atan2(pos_i[..., 1], pos_i[..., 0]).view(-1, 1)
-            theta = theta + (theta < 0).type_as(theta) * (2 * torch.pi)
-            theta = theta / (2 * torch.pi)
-
-            embedding[:, 0] = rho[:, 0]
-            embedding[:, 1] = theta[:, 0]
-
-            if cartesian_dimension == 3:
-                phi = torch.acos(pos_i[..., 2] / rho.view(-1)).view(-1, 1)
-                phi = phi / torch.pi
-                embedding[:, 2] = phi[:, 0]
-        elif embedding_type == 'rad':
-            dists = torch.linalg.norm(pos_i, dim=-1)
-            embedding = self.radial_basis(dists)
-        elif embedding_type == 'sph':
-            dists = torch.linalg.norm(pos_i, dim=-1)
-            rbf = self.radial_basis(dists)
-            if cartesian_dimension == 2:
-                sbf = o3.spherical_harmonics(self.sph_od_list, x=torch.cat((pos_i, torch.zeros_like(pos_i)), dim=-1)[:, :3], normalize=True, normalization='component')
-            elif cartesian_dimension == 3:
-                sbf = o3.spherical_harmonics(self.sph_od_list, x=pos_i, normalize=True, normalization='component')
-            embedding = torch.cat((rbf, sbf), dim=-1)
-
-        encoding = self.mlp2(torch.cat((type[0, :, None], embedding), dim=-1), batch=batch_i)
-        encoding = torch.hstack(encoding.split(batch_size * avg_num_particles_per_sample, dim=0))
-        graph_output = self.global_aggregation(encoding, pos=None, batch=batch, output_dim=batch_size)
-
-        if len(graph_output) != batch_size:
-            assert False
-
-        return graph_output
-
-    def forward(self, pos, batch):
-        init_embedding = self.transform(pos, batch)
-        encoding = self.encode(init_embedding, batch)
-        output = self.mlp(encoding)
-        if decoder_type == 'mlp':
-            return output
-        elif decoder_type == 'conv':
-            return self.decoder(output)
-
-
-
-
-class ConvDecoder(torch.nn.Module):
-    def __init__(self, image_dim, n_particle_types):
-        super(ConvDecoder, self).__init__()
-        self.num_blocks = 5
-
-        image_depths = torch.linspace(image_dim, n_particle_types + 1, self.num_blocks + 1).long()
-
-        if cartesian_dimension == 2:
-            conv = nn.Conv2d
-            bn = nn.BatchNorm2d
-            self.unflatten = nn.Unflatten(dim=1, unflattened_size=(image_dim, 3, 3))
-
-        elif cartesian_dimension == 3:
-            conv = nn.Conv3d
-            bn = nn.BatchNorm3d
-            self.unflatten = nn.Unflatten(dim=1, unflattened_size=(image_dim, 3, 3,3))
-
-        # self.upsample_blocks = torch.nn.ModuleList([
-        #     nn.Upsample(scale_factor=1.5)
-        #     for n in range(self.num_blocks)
-        # ])
-
-        # self.conv_blocks = torch.nn.ModuleList([
-        #     conv(in_channels=image_depths[n], out_channels=image_depths[n + 1], kernel_size=3, stride=1, padding=1)
-        #     for n in range(self.num_blocks)
-        # ])
-        # self.bn_blocks = torch.nn.ModuleList([
-        #     bn(image_depths[n + 1])
-        #     for n in range(self.num_blocks)
-        # ])
-        # self.conv_blocks2 = torch.nn.ModuleList([
-        #     conv(in_channels=image_depths[-1], out_channels=image_depths[-1], kernel_size=3, stride=1, padding=1)
-        #     for n in range(self.num_blocks)
-        # ])
-        # self.bn_blocks2 = torch.nn.ModuleList([
-        #     bn(image_depths[-1])
-        #     for n in range(self.num_blocks)
-        # ])
-
-        self.final_conv = conv(in_channels=image_depths[-1], out_channels=n_particle_types + 1, kernel_size=3, stride=1,padding=0)
-
-        strides = [2,2,1,1,1]
-        self.upsample_blocks = torch.nn.ModuleList([
-            nn.Identity()
-            for n in range(self.num_blocks)
-        ])
-
-        self.conv_blocks = torch.nn.ModuleList([
-            nn.ConvTranspose2d(in_channels=image_depths[n], out_channels=image_depths[n+1], kernel_size=3, stride=strides[n], output_padding=0)
-            for n in range(self.num_blocks)
-        ])
-        self.bn_blocks = torch.nn.ModuleList([
-            nn.BatchNorm2d(image_depths[n+1])
-            for n in range(self.num_blocks)
-        ])
-
-    def forward(self, x):
-        x = self.unflatten(x)
-        for i, (us, conv, bn) in enumerate(zip(self.upsample_blocks, self.conv_blocks, self.bn_blocks)):
-            x = F.leaky_relu_(bn(conv(us(x))))
-
-        # for i, (conv, bn) in enumerate(zip(self.conv_blocks2, self.bn_blocks2)):
-        #     x = x + F.leaky_relu_(bn(conv(x)))
-
-        x = self.final_conv(x)
-
-        return x
-
+#
+# class graph_encoder(torch.nn.Module):
+#     def __init__(self):
+#         super(graph_encoder, self).__init__()
+#         # grid of points over which to sample
+#         gridpoint_lim = 1 - 1 / n_gridpoints
+#         grid = make_grid(gridpoint_lim, n_gridpoints, cartesian_dimension)
+#         shift_vector = torch.repeat_interleave(grid, batch_size * avg_num_particles_per_sample, dim=0)
+#
+#         self.register_buffer("grid", grid)
+#         self.register_buffer("shift_vector", shift_vector)
+#
+#         self.num_radial = 50
+#         self.sph_od_list = [i for i in range(11)]
+#         self.num_spherical = int(torch.sum(torch.Tensor(self.sph_od_list) * 2 + 1))
+#         self.encoding_dim = encoding_output_depth
+#         self.init_transform = initial_transform
+#
+#         if embedding_type == 'pos' or embedding_type == 'polar':
+#             embedding_dim = cartesian_dimension
+#         elif embedding_type == 'rad':
+#             embedding_dim = self.num_radial
+#         elif embedding_type == 'sph':
+#             embedding_dim = self.num_radial + self.num_spherical
+#
+#         if decoder_type == 'mlp':
+#             self.output_dim = (n_particle_types + 1) * n_bins ** cartesian_dimension
+#         elif decoder_type == 'conv':
+#             initial_conv_dim = 128
+#             if cartesian_dimension == 2:
+#                 self.output_dim = 3 * 3 * initial_conv_dim
+#                 image_dim = self.output_dim // 3 // 3
+#             elif cartesian_dimension == 3:
+#                 self.output_dim = 3 * 3 * 3 * initial_conv_dim
+#                 image_dim = self.output_dim // 3 // 3 // 3
+#
+#             self.decoder = ConvDecoder(image_dim, n_particle_types)
+#
+#         self.mlp = general_MLP(layers=n_layers, filters=n_filters,
+#                                input_dim=self.encoding_dim * len(grid),  # self.num_radial * cartesian_dimension, #avg_num_particles_per_sample*cartesian_dimension,
+#                                output_dim=self.output_dim,  # n_particle_types * n_bins ** cartesian_dimension,
+#                                dropout=0,
+#                                norm=norm_type_1,
+#                                activation='gelu',
+#                                norm_after_linear=True,
+#                                )
+#
+#         self.mlp2 = general_MLP(layers=encoder_layers, filters=encoder_filters,
+#                                 input_dim=embedding_dim + 1,
+#                                 output_dim=self.encoding_dim,
+#                                 activation='gelu',
+#                                 norm=norm_type_2,
+#                                 dropout=0,
+#                                 norm_after_linear=True)
+#
+#         cutoff = 1  # / n_gridpoints
+#         # self.radial_basis = BesselBasisLayer(num_radial=self.num_radial, cutoff=cutoff)
+#         self.radial_basis = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=self.num_radial)
+#         # self.pos_encoding = PosEncoding2D(self.num_radial, 1)
+#         self.global_aggregation = global_aggregation(pooling, filters=self.encoding_dim * len(grid))
+#
+#     def transform(self, pos, batch):
+#         if self.init_transform is None:
+#             init_embedding = pos
+#
+#         return init_embedding
+#
+#     def encode(self, pos, batch):
+#         # return pos.reshape(len(pos), avg_num_particles_per_sample*cartesian_dimension) # just give it the positions directly
+#         # encoding = self.pos_encoding(pos)
+#         # return scatter(encoding,batch,dim=0)
+#
+#         type = pos[:, 0].tile(len(self.grid), 1)  # atom type
+#         pos_i = pos[:, 1:].tile(len(self.grid), 1)  # atom position
+#         batch_i = batch.tile(len(self.grid))
+#         pos_i = pos_i - self.shift_vector  # shifted coordinates
+#
+#         if embedding_type == 'pos':
+#             embedding = pos_i
+#         elif embedding_type == 'polar':
+#             embedding = torch.zeros_like(pos_i)
+#             rho = torch.norm(pos_i, p=2, dim=-1).view(-1, 1)
+#             # rho = rho / rho.max()
+#
+#             theta = torch.atan2(pos_i[..., 1], pos_i[..., 0]).view(-1, 1)
+#             theta = theta + (theta < 0).type_as(theta) * (2 * torch.pi)
+#             theta = theta / (2 * torch.pi)
+#
+#             embedding[:, 0] = rho[:, 0]
+#             embedding[:, 1] = theta[:, 0]
+#
+#             if cartesian_dimension == 3:
+#                 phi = torch.acos(pos_i[..., 2] / rho.view(-1)).view(-1, 1)
+#                 phi = phi / torch.pi
+#                 embedding[:, 2] = phi[:, 0]
+#         elif embedding_type == 'rad':
+#             dists = torch.linalg.norm(pos_i, dim=-1)
+#             embedding = self.radial_basis(dists)
+#         elif embedding_type == 'sph':
+#             dists = torch.linalg.norm(pos_i, dim=-1)
+#             rbf = self.radial_basis(dists)
+#             if cartesian_dimension == 2:
+#                 sbf = o3.spherical_harmonics(self.sph_od_list, x=torch.cat((pos_i, torch.zeros_like(pos_i)), dim=-1)[:, :3], normalize=True, normalization='component')
+#             elif cartesian_dimension == 3:
+#                 sbf = o3.spherical_harmonics(self.sph_od_list, x=pos_i, normalize=True, normalization='component')
+#             embedding = torch.cat((rbf, sbf), dim=-1)
+#
+#         encoding = self.mlp2(torch.cat((type[0, :, None], embedding), dim=-1), batch=batch_i)
+#         encoding = torch.hstack(encoding.split(batch_size * avg_num_particles_per_sample, dim=0))
+#         graph_output = self.global_aggregation(encoding, pos=None, batch=batch, output_dim=batch_size)
+#
+#         if len(graph_output) != batch_size:
+#             assert False
+#
+#         return graph_output
+#
+#     def forward(self, pos, batch):
+#         init_embedding = self.transform(pos, batch)
+#         encoding = self.encode(init_embedding, batch)
+#         output = self.mlp(encoding)
+#         if decoder_type == 'mlp':
+#             return output
+#         elif decoder_type == 'conv':
+#             return self.decoder(output)
+#
+#
+#
+#
+# class ConvDecoder(torch.nn.Module):
+#     def __init__(self, image_dim, n_particle_types):
+#         super(ConvDecoder, self).__init__()
+#         self.num_blocks = 5
+#
+#         image_depths = torch.linspace(image_dim, n_particle_types + 1, self.num_blocks + 1).long()
+#
+#         if cartesian_dimension == 2:
+#             conv = nn.Conv2d
+#             bn = nn.BatchNorm2d
+#             self.unflatten = nn.Unflatten(dim=1, unflattened_size=(image_dim, 3, 3))
+#
+#         elif cartesian_dimension == 3:
+#             conv = nn.Conv3d
+#             bn = nn.BatchNorm3d
+#             self.unflatten = nn.Unflatten(dim=1, unflattened_size=(image_dim, 3, 3,3))
+#
+#         # self.upsample_blocks = torch.nn.ModuleList([
+#         #     nn.Upsample(scale_factor=1.5)
+#         #     for n in range(self.num_blocks)
+#         # ])
+#
+#         # self.conv_blocks = torch.nn.ModuleList([
+#         #     conv(in_channels=image_depths[n], out_channels=image_depths[n + 1], kernel_size=3, stride=1, padding=1)
+#         #     for n in range(self.num_blocks)
+#         # ])
+#         # self.bn_blocks = torch.nn.ModuleList([
+#         #     bn(image_depths[n + 1])
+#         #     for n in range(self.num_blocks)
+#         # ])
+#         # self.conv_blocks2 = torch.nn.ModuleList([
+#         #     conv(in_channels=image_depths[-1], out_channels=image_depths[-1], kernel_size=3, stride=1, padding=1)
+#         #     for n in range(self.num_blocks)
+#         # ])
+#         # self.bn_blocks2 = torch.nn.ModuleList([
+#         #     bn(image_depths[-1])
+#         #     for n in range(self.num_blocks)
+#         # ])
+#
+#         self.final_conv = conv(in_channels=image_depths[-1], out_channels=n_particle_types + 1, kernel_size=3, stride=1,padding=0)
+#
+#         strides = [2,2,1,1,1]
+#         self.upsample_blocks = torch.nn.ModuleList([
+#             nn.Identity()
+#             for n in range(self.num_blocks)
+#         ])
+#
+#         self.conv_blocks = torch.nn.ModuleList([
+#             nn.ConvTranspose2d(in_channels=image_depths[n], out_channels=image_depths[n+1], kernel_size=3, stride=strides[n], output_padding=0)
+#             for n in range(self.num_blocks)
+#         ])
+#         self.bn_blocks = torch.nn.ModuleList([
+#             nn.BatchNorm2d(image_depths[n+1])
+#             for n in range(self.num_blocks)
+#         ])
+#
+#     def forward(self, x):
+#         x = self.unflatten(x)
+#         for i, (us, conv, bn) in enumerate(zip(self.upsample_blocks, self.conv_blocks, self.bn_blocks)):
+#             x = F.leaky_relu_(bn(conv(us(x))))
+#
+#         # for i, (conv, bn) in enumerate(zip(self.conv_blocks2, self.bn_blocks2)):
+#         #     x = x + F.leaky_relu_(bn(conv(x)))
+#
+#         x = self.final_conv(x)
+#
+#         return x
+#
