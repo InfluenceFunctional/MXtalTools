@@ -225,12 +225,17 @@ class Modeller():
         print("Initializing models for " + self.config.mode)
         if self.config.mode == 'gan' or self.config.mode == 'sampling':
             if config.train_generator_conditioner:
-                config.conditioner_classes = {
-                    'other':1,
-                    #6:2,
-                    #7:3,
-                    #8:4,
-                    }
+                if config.generator.conditioner_class_type == 'minimal':
+                    config.conditioner_classes = { # only a few substantial atom types
+                        'other':1,
+                        }
+                elif config.generator.conditioner_class_type == 'full':
+                    config.conditioner_classes = { # only a few substantial atom types
+                        'other':1,
+                        6:2,
+                        7:3,
+                        8:4,
+                        }
                 conditioner_classes_dict = {i: config.conditioner_classes['other'] for i in range(101)}
                 for i,(key,value) in enumerate(config.conditioner_classes.items()):
                     if key != 'other':
@@ -1088,6 +1093,7 @@ class Modeller():
             point_cloud_prediction, packing_prediction = generator(data.clone())
 
             n_target_bins = int((self.config.max_molecule_radius) * 2 / self.config.generator.autoencoder_resolution) + 1 # make up for odd in stride
+            _, n_target_bins = get_strides(n_target_bins)  # automatically find the right number of strides within 4-5 steps (minimizes overall stack depth)
             batch_size = len(point_cloud_prediction)
             buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_target_bins - 1, device='cuda'))
             target = torch.zeros((batch_size, n_target_bins, n_target_bins, n_target_bins), dtype=torch.long, device=point_cloud_prediction.device)
@@ -2451,7 +2457,7 @@ class Modeller():
                     size=10,
                     color=sample_true[x, y, z],
                     colorscale='Jet',
-                    cmin=0,
+                    cmin=0, cmax =6,
                     opacity=0.5
                 )), row=1,col=img_i+1)
             fig.update_layout(showlegend=True)

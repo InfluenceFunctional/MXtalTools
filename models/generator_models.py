@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import sys
+from utils import get_strides
 from torch.distributions import MultivariateNormal, Uniform
 from models.torch_models import molecule_graph_model, PointCloudDecoder
 from models.model_components import general_MLP
@@ -164,19 +165,26 @@ class molecule_autoencoder(nn.Module):
         generator model
         common atom types
         '''
-        n_target_bins = int((config.max_molecule_radius) * 2 / config.generator.autoencoder_resolution) + 1 # half-angstrom resolution, make up for odd in stride
-        strides = [2,2,2] # that brings it to 30 3-7-15-31, -2 for final conv
-        current_size = 29
-        if n_target_bins < current_size:
-            strides = [2,2]
-            current_size = 13
-        if n_target_bins < current_size:
-            strides = [2]
-            current_size = 5
+        # stride 4 adds 3N - 1
+        # stride 3 adds 2N
+        # stride 2 adds N+1
+        # stride 1 adds 2
+        # n_target_bins = int((config.max_molecule_radius) * 2 / config.generator.autoencoder_resolution) + 1
+        # strides = [2,2,2] # that brings it to 30 3-7-15-31,
+        # current_size = 29
+        # if n_target_bins < current_size:
+        #     strides = [2,2]
+        #     current_size = 13
+        # if n_target_bins < current_size:
+        #     strides = [2]
+        #     current_size = 5
+        #
+        # diff = n_target_bins - current_size
+        # for _ in range(diff//2): # must be an even number of bins in this approach
+        #     strides += [1] # pad up to the required layers
 
-        diff = n_target_bins - current_size
-        for _ in range(diff//2): # must be an even number of bins in this approach
-            strides += [1] # pad up to the required layers
+        n_target_bins = int((config.max_molecule_radius) * 2 / config.generator.autoencoder_resolution)
+        strides, final_image_size = get_strides(n_target_bins) # automatically find the right number of strides within 4-5 steps (minimizes overall stack depth)
 
         self.decoder = PointCloudDecoder(input_filters = conv_embedding_dim,
                                          n_classes = len(config.conditioner_classes) + 1,

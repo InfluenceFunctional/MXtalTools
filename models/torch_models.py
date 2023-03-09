@@ -260,8 +260,10 @@ class PointCloudDecoder(nn.Module):
 
         self.unflatten = nn.Unflatten(dim=1, unflattened_size=(input_filters, 3, 3, 3))
 
-        # stride 2 adds 2N+1 rows and columns
-        # stride 1 adds 2 row and column
+        # stride 4 adds 3N - 1
+        # stride 3 adds 2N
+        # stride 2 adds N+1
+        # stride 1 adds 2
         self.conv_blocks = torch.nn.ModuleList([
             conv(in_channels=self.image_depths[n], out_channels=self.image_depths[n + 1], kernel_size=3, stride=strides[n], output_padding=0)
             for n in range(self.num_blocks)
@@ -269,16 +271,22 @@ class PointCloudDecoder(nn.Module):
         img_size = [3]
         for i, stride in enumerate(self.strides):
             if stride == 2:
-                img_size += [2 * img_size[i] + 1]
+                img_size += [img_size[i] + img_size[i] + 1]
             elif stride == 1:
                 img_size += [img_size[i] + 2]
+            elif stride == 3:
+                img_size += [img_size[i] + 2*img_size[i]]
+            elif stride == 4:
+                img_size += [img_size[i] + 3*img_size[i] - 1]
+
 
         # for layer norm
         self.bn_blocks = torch.nn.ModuleList([
             bn([img_size[n + 1], img_size[n + 1], img_size[n + 1]])
             for n in range(self.num_blocks)
         ])
-        self.final_conv = nn.Conv3d(in_channels=self.image_depths[-1], out_channels=n_classes, kernel_size=(3,3,3), padding=0)
+        self.final_conv = nn.Conv3d(in_channels=self.image_depths[-1], out_channels=n_classes, kernel_size=(1,1,1), padding=0)
+        #self.final_conv = nn.Conv3d(in_channels=self.image_depths[-1], out_channels=n_classes, kernel_size=(3,3,3), padding=0)
 
 
 

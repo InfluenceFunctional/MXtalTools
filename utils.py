@@ -2567,6 +2567,50 @@ def make_grid(gridpoint_lim, n_gridpoints, cart_dim):
 
     return grid
 
+def get_strides(n_target_bins):
+    target_size = n_target_bins
+    tolerance = -1
+    converged = False
+    while not converged and tolerance < 4:
+        tolerance += 1
+        for i in range(4):
+            for j in range(4):
+                for k in range(4):
+                    for l in range(4):
+                        inds = [1, 2, 3, 4]
+                        strides = [inds[i], inds[j], inds[k], inds[l]]
+                        img_size = [3]
+                        for ii, stride in enumerate(strides):
+                            if stride == 1:
+                                img_size += [img_size[ii] + 2]
+                            elif stride == 2:
+                                img_size += [img_size[ii] + img_size[ii] + 1]
+                            elif stride == 3:
+                                img_size += [img_size[ii] + 2 * img_size[ii]]
+                            elif stride == 4:
+                                img_size += [img_size[ii] + 3 * img_size[ii] - 1]
+
+                        if (img_size[-1] == target_size - tolerance):
+                            converged = True
+                        if converged:
+                            #print(strides)
+                            #print(img_size[-1])
+                            break
+                    if converged:
+                        break
+                if converged:
+                    break
+            if converged:
+                break
+
+    for n in range(tolerance):
+        strides += [1]
+
+    if converged:
+        return strides, img_size[-1] + 2*tolerance
+    else:
+        assert False, 'could not manage this resolution with current strided setup'
+
 '''
 # look at all kinds of activations
 plt.clf()

@@ -22,7 +22,7 @@ def update_args2config(args2config, arg, config=None):
 def add_args(parser):
     # high level
     args2config = {}
-    parser.add_argument('--yaml_config', type=str, default='configs/m10060.yaml', required=False)
+    parser.add_argument('--yaml_config', type=str, default='configs/dev.yaml', required=False)
     parser.add_argument('--run_num', type=int, default=0)
     add_bool_arg(parser, 'explicit_run_enumeration', default=False)  # if this is True, the next run be fresh, in directory 'run%d'%run_num, if false, regular behaviour. Note: only use this on fresh runs
     add_bool_arg(parser, 'test_mode', default=True)
@@ -235,12 +235,14 @@ def add_args(parser):
     parser.add_argument('--generator_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
     parser.add_argument('--generator_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
     parser.add_argument('--generator_conditioning_mode', type=str, default='graph model')  # how to derive molecular conditioning - graph model or just selected features
-    parser.add_argument('--generator_autoencoder_resolution', type=float, default=0.5)  # how to derive molecular conditioning - graph model or just selected features
+    parser.add_argument('--generator_autoencoder_resolution', type=float, default=0.5)  #\
+    parser.add_argument('--generator_conditioner_class_type', type=str, default='minimal') # 'minimal' or 'full'
 
     parser.add_argument('--generator_prior', type=str, default='multivariate normal')  # type of prior distribution
     parser.add_argument('--generator_prior_dimension', type=int, default=12)  # type of prior distribution
     add_bool_arg(parser, 'generator_conditional_modelling', default=True)  # whether to use molecular features as conditions for normalizing flow model
 
+    update_args2config(args2config, 'generator_conditioner_class_type', ['generator', 'conditioner_class_type'])
     update_args2config(args2config, 'generator_decoder_embedding_dim', ['generator', 'decoder_embedding_dim'])
     update_args2config(args2config, 'generator_canonical_conformer_orientation', ['generator', 'canonical_conformer_orientation'])
     update_args2config(args2config, 'generator_positional_embedding', ['generator', 'positional_embedding'])
