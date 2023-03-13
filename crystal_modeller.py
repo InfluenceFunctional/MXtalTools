@@ -42,8 +42,6 @@ from sampling.MCMC_Sampling import mcmcSampler
 from sampling.SampleOptimization import gradient_descent_sampling
 
 
-
-
 class Modeller():
     def __init__(self, config):
         self.config = config
@@ -222,27 +220,33 @@ class Modeller():
             self.config.generator.init_lr = init_lr
             self.config.discriminator.max_lr = max_lr
             self.config.generator.min_lr = min_lr
+        if self.config.conditioner_path is not None:
+            conditioner_checkpoint = torch.load(config.g_model_path)
+            # save learning rates so we can un-overwrite them
+            self.config.generator = Namespace(**conditioner_checkpoint['config'])  # overwrite the settings for the model
+
+
         print("Initializing models for " + self.config.mode)
         if self.config.mode == 'gan' or self.config.mode == 'sampling':
             if config.train_generator_conditioner:
                 if config.generator.conditioner_class_type == 'minimal':
-                    config.conditioner_classes = { # only a few substantial atom types
-                        'other':1,
-                        }
+                    config.conditioner_classes = {  # only a few substantial atom types
+                        'other': 1,
+                    }
                 elif config.generator.conditioner_class_type == 'full':
-                    config.conditioner_classes = { # only a few substantial atom types
-                        'other':1,
-                        6:2,
-                        7:3,
-                        8:4,
-                        }
+                    config.conditioner_classes = {  # only a few substantial atom types
+                        'other': 1,
+                        6: 2,
+                        7: 3,
+                        8: 4,
+                    }
                 conditioner_classes_dict = {i: config.conditioner_classes['other'] for i in range(101)}
-                for i,(key,value) in enumerate(config.conditioner_classes.items()):
+                for i, (key, value) in enumerate(config.conditioner_classes.items()):
                     if key != 'other':
-                        conditioner_classes_dict[key] = config.conditioner_classes[key] # assign all atoms to type other, except these specific ones
+                        conditioner_classes_dict[key] = config.conditioner_classes[key]  # assign all atoms to type other, except these specific ones
                 config.conditioner_classes_dict = conditioner_classes_dict
 
-                generator = molecule_autoencoder(config,dataDims)
+                generator = molecule_autoencoder(config, dataDims)
             else:
                 generator = crystal_generator(config, dataDims)
             discriminator = crystal_discriminator(config, dataDims)
@@ -614,46 +618,9 @@ class Modeller():
         g_err = []
         g_loss_record = []
 
-        epoch_stats_dict = {
-            'tracking features': [],
-            'identifiers': [],
-            'discriminator real score': [],
-            'discriminator fake score': [],
-            'generator adversarial loss': [],
-            'generator per mol vdw loss': [],
-            'generator h bond loss': [],
-            'generator packing loss': [],
-            'generator packing prediction': [],
-            'generator packing target': [],
-            'generator packing mae': [],
-            'generator similarity loss': [],
-            'generator combo loss': [],
-            'generator intra distance hist': [],
-            'generator inter distance hist': [],
-            'real intra distance hist': [],
-            'real inter distance hist': [],
-            'generated cell parameters': [],
-            'final generated cell parameters': [],
-            'generated supercell examples dict': [],
-            'generator sample source': [],
-            'generated sample distances': [],
-            'distortion level': [],
-            'real vdw penalty': [],
-            'fake vdw penalty': [],
-            'generated supercell examples': None,
-            'target_sample': [],
-            'prediction_sample':[],
-            'reconstruction_loss':[],
-
-        }
-
+        epoch_stats_dict = {}
 
         rand_batch_ind = np.random.randint(0, len(dataLoader))
-        self.n_samples_in_grad_buffer = 0
-
-        # if update_gradients:
-        #     g_optimizer.zero_grad(set_to_none=True)
-        #     d_optimizer.zero_grad(set_to_none=True)
 
         for i, data in enumerate(tqdm.tqdm(dataLoader, miniters=int(len(dataLoader) / 10))):
 
@@ -665,7 +632,6 @@ class Modeller():
                 self.discriminator_step(discriminator, generator, epoch_stats_dict, data,
                                         d_optimizer, i, update_gradients, d_err, d_loss_record,
                                         skip_step=skip_step, epoch=epoch, last_batch=i == (len(dataLoader) - 1))
-
             '''
             train_generator
             '''
@@ -673,17 +639,17 @@ class Modeller():
                 self.generator_step(discriminator, generator, epoch_stats_dict, data,
                                     g_optimizer, i, update_gradients, g_err, g_loss_record,
                                     rand_batch_ind, last_batch=i == (len(dataLoader) - 1))
-
             '''
             record some stats
             '''
             if (len(epoch_stats_dict['generated cell parameters']) < i) and record_stats and not self.config.train_generator_conditioner:  # make some samples for analysis if we have none so far from this step
                 generated_samples = generator(len(data.y), z=None, conditions=data.to(self.config.device))
-                epoch_stats_dict['generated cell parameters'].extend(generated_samples.cpu().detach().numpy())
+                epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generated cell parameters',
+                                                     generated_samples.cpu().detach().numpy(), mode='extend')
 
             if record_stats:
-                epoch_stats_dict['tracking features'].extend(data.tracking.cpu().detach().numpy())
-                epoch_stats_dict['identifiers'].extend(data.csd_identifier)
+                epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'tracking features', data.tracking.cpu().detach().numpy())
+                epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'identifiers', data.csd_identifier)
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -892,13 +858,15 @@ class Modeller():
                 d_loss.backward()  # back-propagation
                 d_optimizer.step()  # update parameters
 
-            epoch_stats_dict['discriminator real score'].extend(score_on_real.cpu().detach().numpy())
-            epoch_stats_dict['discriminator fake score'].extend(score_on_fake.cpu().detach().numpy())
-            epoch_stats_dict['real vdw penalty'].extend(real_vdw_score.cpu().detach().numpy())
-            epoch_stats_dict['fake vdw penalty'].extend(fake_vdw_score.cpu().detach().numpy())
+            stats_keys = ['discriminator real score', 'discriminator fake score',
+                          'real vdw penalty', 'fake vdw penalty',
+                          'generated cell parameters', 'final generated cell parameters']
+            stats_values = [score_on_real.cpu().detach().numpy(), score_on_fake.cpu().detach().numpy(),
+                            real_vdw_score.cpu().detach().numpy(), fake_vdw_score.cpu().detach().numpy(),
+                            generated_samples_i.cpu().detach().numpy(), generated_samples]
+
+            epoch_stats_dict = update_stats_dict(epoch_stats_dict, stats_keys, stats_values, mode='extend')
             d_loss_record.extend(d_losses.cpu().detach().numpy())  # overall loss distribution
-            epoch_stats_dict['generated cell parameters'].extend(generated_samples_i.cpu().detach().numpy())
-            epoch_stats_dict['final generated cell parameters'].extend(generated_samples)
 
         else:
             d_err.append(np.zeros(1))
@@ -927,20 +895,27 @@ class Modeller():
 
             epoch_stats_dict = self.log_supercell_examples(supercell_examples, i, rand_batch_ind, epoch_stats_dict)
             g_loss_record.extend(g_losses.cpu().detach().numpy())  # loss distribution
-            epoch_stats_dict['generated cell parameters'].extend(generated_samples)
+            epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generated cell parameters', generated_samples, mode='extend')
+
         elif self.config.train_generator_conditioner:
-            packing_loss, reconstruction_loss, target_sample, prediction_sample, packing_true, packing_pred = \
-                self.train_generator(generator, discriminator,data,i)
+            packing_loss, reconstruction_loss, target_sample, prediction_sample, \
+            packing_true, packing_pred, particle_dist_true, particle_dist_pred = \
+                self.train_conditioner(generator, discriminator, data, i)
+
+            stats_keys = ['generator packing loss', 'generator packing prediction',
+                          'generator particle prediction', 'generator particle true',
+                          'reconstruction loss', 'generator packing loss']
+            stats_values = [packing_true, packing_pred,
+                            particle_dist_pred, particle_dist_true,
+                            reconstruction_loss.cpu().detach().numpy(), packing_loss.cpu().detach().numpy()]
 
             if i == 0:
-                epoch_stats_dict['target_sample'].append(target_sample)
-                epoch_stats_dict['prediction_sample'].append(prediction_sample)
-            epoch_stats_dict['generator packing target'].append(packing_true)
-            epoch_stats_dict['generator packing prediction'].append(packing_pred)
-            epoch_stats_dict['reconstruction_loss'].append(reconstruction_loss.cpu().detach().numpy())
-            epoch_stats_dict['generator packing loss'].append(packing_loss.cpu().detach().numpy())
+                stats_keys += ['target_sample', 'prediction_sample']
+                stats_values += [target_sample, prediction_sample]
 
-            conditioning_losses = reconstruction_loss #packing_loss + reconstruction_loss
+            epoch_stats_dict = update_stats_dict(epoch_stats_dict, stats_keys, stats_values)
+
+            conditioning_losses = reconstruction_loss  # packing_loss + reconstruction_loss
             g_loss = (conditioning_losses).mean()
             g_err.append(g_loss.data.cpu().detach().numpy())  # average loss
 
@@ -1015,7 +990,7 @@ class Modeller():
 
         return data
 
-    def get_generator_samples(self, data, generator, return_condition = False):
+    def get_generator_samples(self, data, generator, return_condition=False):
         '''
         conformer orentation setting
         '''
@@ -1052,103 +1027,108 @@ class Modeller():
         train the generator
         '''
 
-        if self.config.train_generator_conditioner: # train just the conditioner on targeted crystal packing + detailed geometry embedding
-            # minimum resolution of 0.5 Angstrom, to start
-            # limit target to set of useful classes
-            if generator.training: # replace training data with a random point cloud, and do test on real molecules
-                # batch_size = data.num_graphs
-                # avg_num_particles_per_sample = 15
-                # cartesian_dimension = 3
-                # n_particle_types = len(self.config.conditioner_classes)
-                # batch = torch.randint(low=0, high=batch_size, size=(len(data.x), 1))[:, 0]  # batch index
-                # batch = batch[torch.argsort(batch)]
-                particle_coords = torch.rand(len(data.x), 3,device=data.pos.device,dtype=data.pos.dtype) * 2 - 1  # particle positions with mean of avg_num_particles_per_sample particles per sample
-                particle_coords *= self.config.max_molecule_radius
-                # particle_types = torch.randint(low=1, high=n_particle_types + 1, size=(len(data.x), data.x.shape[1])) # only first column is used anyway, later columns kept for indexing purposes
-
-                data.pos = particle_coords
-                # data.batch = batch
-                # data.x = particle_types
-                # data.ptr = torch.cat((torch.zeros(1),torch.argwhere(torch.diff(data.batch))[:,0] + 1,torch.ones(1) * len(data.x))).long()
-
-
-            data = data.cuda()
-            data = self.set_molecule_alignment(data)
-            if len(self.config.conditioner_classes) == 1:
-                data.x[:,0] = 1
-            '''
-            noise injection
-            '''
-            if self.config.generator.positional_noise > 0:
-                data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
-
-            '''
-            update symmetry information
-            '''
-            if self.config.generate_sgs is not None:
-                override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.config.generate_sgs) + 1  # indexing from 0
-                sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i in range(data.num_graphs)]
-                data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data, self.supercell_builder.symmetries_dict, sym_ops_list)  # todo update the way we handle this
-
-            point_cloud_prediction, packing_prediction = generator(data.clone())
-
-            n_target_bins = int((self.config.max_molecule_radius) * 2 / self.config.generator.autoencoder_resolution) + 1 # make up for odd in stride
-            _, n_target_bins = get_strides(n_target_bins)  # automatically find the right number of strides within 4-5 steps (minimizes overall stack depth)
-            batch_size = len(point_cloud_prediction)
-            buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_target_bins - 1, device='cuda'))
-            target = torch.zeros((batch_size, n_target_bins, n_target_bins, n_target_bins), dtype=torch.long, device=point_cloud_prediction.device)
-            for ii in range(batch_size):
-                target[ii, buckets[data.batch == ii, 0], buckets[data.batch == ii, 1], buckets[data.batch == ii, 2]] = data.x[data.batch==ii,0].long()#torch.clip(data.x[data.batch == ii,0],max=1).long()
-
-            for ind, (key,value) in enumerate(self.config.conditioner_classes.items()):
-                target[target == key] = -value # negative, so this next step works quickly
-            target[target > 0] = 1  # setting for 'other'
-            target = -target
-            target[target == -1] = 1
-
-            packing_loss = F.smooth_l1_loss(packing_prediction[:,0], data.y.float(), reduction='none')
-            reconstruction_loss = F.cross_entropy(point_cloud_prediction, target,reduction = 'none').mean([-3,-2,-1]) / (torch.sum(target>0)/len(target.flatten()))
-
-            return packing_loss, reconstruction_loss, target[0:8].cpu().detach().numpy(), point_cloud_prediction[0:8].cpu().detach().numpy(), data.y.cpu().detach().numpy(), packing_prediction.cpu().detach().numpy()
-
-
         if self.config.train_generator_packing or self.config.train_generator_vdw or self.config.train_generator_combo or self.config.train_generator_adversarially or self.config.train_generator_h_bond:
             '''
             build supercells
             '''
-            generated_samples, prior = self.get_generator_samples(data, generator, return_condition=False)
+        generated_samples, prior = self.get_generator_samples(data, generator, return_condition=False)
 
-            supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-                data, generated_samples, self.config.supercell_size,
-                self.config.discriminator.graph_convolution_cutoff,
-                override_sg=self.config.generate_sgs,
-                align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
-            )
+        supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+            data, generated_samples, self.config.supercell_size,
+            self.config.discriminator.graph_convolution_cutoff,
+            override_sg=self.config.generate_sgs,
+            align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
+        )
 
-            data.cell_params = supercell_data.cell_params
+        data.cell_params = supercell_data.cell_params
 
-            '''
-            #evaluate losses
-            
-            # look at cells
-            from ase.visualize import view
-            mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(min(10, supercell_data.num_graphs))]
-            view(mols)
-            '''
-            similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
-            discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
-            h_bond_score = self.compute_h_bond_score(supercell_data)
-            vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, data.num_graphs, data)
-            packing_loss, packing_prediction, packing_target, = \
-                self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
-            combo_score = torch.log(10 / (10 + ((vdw_penalty) ** 2 + packing_loss ** 2)))  # torch.exp(-(normed_vdw_overlap + outside_reasonable_packing_loss))
+        '''
+        #evaluate losses
+        
+        # look at cells
+        from ase.visualize import view
+        mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(min(10, supercell_data.num_graphs))]
+        view(mols)
+        '''
+        similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
+        discriminator_score, dist_dict = self.score_adversarially(supercell_data, discriminator)
+        h_bond_score = self.compute_h_bond_score(supercell_data)
+        vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, data.num_graphs, data)
+        packing_loss, packing_prediction, packing_target, = \
+            self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
+        combo_score = torch.log(10 / (10 + ((vdw_penalty) ** 2 + packing_loss ** 2)))  # torch.exp(-(normed_vdw_overlap + outside_reasonable_packing_loss))
 
-            return discriminator_score, generated_samples.cpu().detach().numpy(), \
-                   packing_loss, packing_prediction.cpu().detach().numpy(), \
-                   packing_target.cpu().detach().numpy(), \
-                   vdw_penalty, dist_dict, \
-                   supercell_data, similarity_penalty, h_bond_score, \
-                   combo_score
+        return discriminator_score, generated_samples.cpu().detach().numpy(), \
+               packing_loss, packing_prediction.cpu().detach().numpy(), \
+               packing_target.cpu().detach().numpy(), \
+               vdw_penalty, dist_dict, \
+               supercell_data, similarity_penalty, h_bond_score, \
+               combo_score
+
+    def train_conditioner(self, generator, discriminator, data, i):
+        # minimum resolution of 0.5 Angstrom, to start
+        # limit target to set of useful classes
+        if generator.training:  # replace training data with a random point cloud, and do test on real molecules
+            # batch_size = data.num_graphs
+            # avg_num_particles_per_sample = 15
+            # cartesian_dimension = 3
+            # n_particle_types = len(self.config.conditioner_classes)
+            # batch = torch.randint(low=0, high=batch_size, size=(len(data.x), 1))[:, 0]  # batch index
+            # batch = batch[torch.argsort(batch)]
+            particle_coords = torch.rand(len(data.x), 3, device=data.pos.device, dtype=data.pos.dtype) * 2 - 1  # particle positions with mean of avg_num_particles_per_sample particles per sample
+            particle_coords *= self.config.max_molecule_radius
+            # particle_types = torch.randint(low=1, high=n_particle_types + 1, size=(len(data.x), data.x.shape[1])) # only first column is used anyway, later columns kept for indexing purposes
+
+            data.pos = particle_coords
+            # data.batch = batch
+            # data.x = particle_types
+            # data.ptr = torch.cat((torch.zeros(1),torch.argwhere(torch.diff(data.batch))[:,0] + 1,torch.ones(1) * len(data.x))).long()
+
+        data = data.cuda()
+        data = self.set_molecule_alignment(data)
+        if len(self.config.conditioner_classes) == 1:
+            data.x[:, 0] = 1
+        '''
+        noise injection
+        '''
+        if self.config.generator.positional_noise > 0:
+            data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
+
+        '''
+        update symmetry information
+        '''
+        if self.config.generate_sgs is not None:
+            override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.config.generate_sgs) + 1  # indexing from 0
+            sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i in range(data.num_graphs)]
+            data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data, self.supercell_builder.symmetries_dict, sym_ops_list)  # todo update the way we handle this
+
+        point_cloud_prediction, packing_prediction = generator(data.clone())
+
+        n_target_bins = int((self.config.max_molecule_radius) * 2 / self.config.generator.autoencoder_resolution) + 1  # make up for odd in stride
+        _, n_target_bins = get_strides(n_target_bins)  # automatically find the right number of strides within 4-5 steps (minimizes overall stack depth)
+        batch_size = len(point_cloud_prediction)
+        buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_target_bins - 1, device='cuda'))
+        target = torch.zeros((batch_size, n_target_bins, n_target_bins, n_target_bins), dtype=torch.long, device=point_cloud_prediction.device)
+        for ii in range(batch_size):
+            target[ii, buckets[data.batch == ii, 0], buckets[data.batch == ii, 1], buckets[data.batch == ii, 2]] = data.x[data.batch == ii, 0].long()  # torch.clip(data.x[data.batch == ii,0],max=1).long()
+
+        for ind, (key, value) in enumerate(self.config.conditioner_classes.items()):
+            target[target == key] = -value  # negative, so this next step works quickly
+        target[target > 0] = 1  # setting for 'other'
+        target = -target
+        target[target == -1] = 1
+
+        packing_loss = F.smooth_l1_loss(packing_prediction[:, 0], data.y.float(), reduction='none')
+        reconstruction_loss = F.cross_entropy(point_cloud_prediction, target, reduction='none').mean([-3, -2, -1]) / (torch.sum(target > 0) / len(target.flatten()))
+
+        # true_dist = F.one_hot(target).permute(0, 4, 1, 2, 3).flatten(2, 4)
+        # pred_dist = F.softmax(point_cloud_prediction.flatten(2, 4), dim=1)
+
+        return packing_loss, reconstruction_loss, \
+               target[0:8].cpu().detach().numpy(), point_cloud_prediction[0:8].cpu().detach().numpy(), \
+               data.y.cpu().detach().numpy(), packing_prediction.cpu().detach().numpy(), \
+               torch.mean(F.one_hot(target).permute(0, 4, 1, 2, 3).flatten(2, 4).float(), dim=(0, 2)).cpu().detach().numpy(), \
+               torch.mean(F.softmax(point_cloud_prediction.flatten(2, 4), dim=1).float(), dim=(0, 2)).cpu().detach().numpy()
 
     def regression_loss(self, generator, data):
         predictions = generator(data.to(generator.model.device))[:, 0]
@@ -1330,7 +1310,7 @@ class Modeller():
             gd_sampling_dict['resampled state record'] = [[0] for _ in range(len(unclean_best_samples))]
             gd_sampling_dict['scores'] = gd_sampling_dict['scores'].T
             gd_sampling_dict['vdw penalties'] = gd_sampling_dict['vdw'].T
-            gd_sampling_dict['canonical samples'] = np.swapaxes(gd_sampling_dict['canonical samples'],0,2)
+            gd_sampling_dict['canonical samples'] = np.swapaxes(gd_sampling_dict['canonical samples'], 0, 2)
             self.sampling_telemetry_plot(gd_sampling_dict)
             self.cell_params_tracking_plot(gd_sampling_dict, collater, extra_test_loader)
             best_gd_samples, best_gd_samples_scores, best_gd_cells = self.sample_clustering(gd_sampling_dict, collater, extra_test_loader, discriminator)
@@ -1545,7 +1525,7 @@ class Modeller():
             x = np.arange(num_iters * n_runs)
             for j in range(min(10, n_runs)):
                 y = processed_cell_params[i, j]
-                opacity = 0.75 #np.clip(1 - np.abs(np.ptp(y) - np.ptp(processed_cell_params[i])) / np.ptp(processed_cell_params[i]), a_min=0.1, a_max=1)
+                opacity = 0.75  # np.clip(1 - np.abs(np.ptp(y) - np.ptp(processed_cell_params[i])) / np.ptp(processed_cell_params[i]), a_min=0.1, a_max=1)
                 fig.add_trace(go.Scattergl(x=x, y=y, line_color=colors[j], opacity=opacity),
                               row=row, col=col)
                 fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][j], y=y[sampling_dict['resampled state record'][j]],
@@ -1877,7 +1857,7 @@ class Modeller():
                 from reporting.nov_22_regressor import nice_regression_plots
                 nice_regression_plots(self.config)
                 from reporting.nov_22_discriminator_final import nice_scoring_plots
-                nice_scoring_plots(self.config,wandb)
+                nice_scoring_plots(self.config, wandb)
 
         return
 
@@ -1918,19 +1898,19 @@ class Modeller():
 
     def model_checkpointing(self, epoch, config, discriminator, generator, d_optimizer, g_optimizer, g_err_te, d_err_te, metrics_dict):
         if config.save_checkpoints:  # config.machine == 'cluster':  # every 5 epochs, save a checkpoint
-            if (epoch > 0) and (epoch % 5 == 0):
-                # saving early-stopping checkpoint
-                save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
-                save_checkpoint(epoch, generator, g_optimizer, self.config.generator.__dict__, 'generator_' + str(config.run_num) + f'_epoch_{epoch}')
+            # if (epoch > 0) and (epoch % 5 == 0):
+            #     # saving early-stopping checkpoint
+            #     save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num) + f'_epoch_{epoch}')
+            #     save_checkpoint(epoch, generator, g_optimizer, self.config.generator.__dict__, 'generator_' + str(config.run_num) + f'_epoch_{epoch}')
 
             # or save any checkpoint which is a new best
             if epoch > 0:
                 if np.average(d_err_te) < np.amin(metrics_dict['discriminator test loss'][:-1]):
                     print("Saving discriminator checkpoint")
-                    save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'discriminator_' + str(config.run_num))
+                    save_checkpoint(epoch, discriminator, d_optimizer, self.config.discriminator.__dict__, 'best_discriminator_' + str(config.run_num))
                 if np.average(g_err_te) < np.amin(metrics_dict['generator test loss'][:-1]):
                     print("Saving generator checkpoint")
-                    save_checkpoint(epoch, generator, g_optimizer, self.config.generator.__dict__, 'generator_' + str(config.run_num))
+                    save_checkpoint(epoch, generator, g_optimizer, self.config.generator.__dict__, 'best_generator_' + str(config.run_num))
 
         return None
 
@@ -2081,24 +2061,28 @@ class Modeller():
 
     def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, adversarial_score, adversarial_loss, vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score):
         g_losses_list = []
+        stats_keys, stats_values = [], []
         if self.config.train_generator_packing:
             g_losses_list.append(packing_loss.float())
 
         if packing_loss is not None:
-            epoch_stats_dict['generator packing loss'].append(packing_loss.cpu().detach().numpy())
-            epoch_stats_dict['generator packing prediction'].append(packing_prediction)
-            epoch_stats_dict['generator packing target'].append(packing_target)
-            epoch_stats_dict['generator packing mae'].append(np.abs(packing_prediction - packing_target) / packing_target)
+            stats_keys += ['generator packing loss', 'generator packign prediction',
+                           'generator packing target', 'generator packing mae']
+            stats_values += [packing_loss.cpu().detach().numpy(), packing_prediction,
+                             packing_target, np.abs(packing_prediction - packing_target) / packing_target]
 
         if adversarial_score is not None:
             softmax_adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
             adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
-            epoch_stats_dict['generator adversarial loss'].append(adversarial_loss.cpu().detach().numpy())
+            stats_keys += ['generator adversarial loss']
+            stats_values += [adversarial_loss.cpu().detach().numpy()]
+
         if self.config.train_generator_adversarially:
             g_losses_list.append(adversarial_loss)
 
         if vdw_loss is not None:
-            epoch_stats_dict['generator per mol vdw loss'].append(vdw_loss.cpu().detach().numpy())
+            stats_keys += ['generator per mol vdw loss']
+            stats_values += [vdw_loss.cpu().detach().numpy()]
 
         if self.config.train_generator_vdw:
             if self.config.vdw_loss_rescaling == 'log':
@@ -2113,7 +2097,8 @@ class Modeller():
         if self.config.train_generator_h_bond:
             g_losses_list.append(h_bond_score)
         if vdw_loss is not None:
-            epoch_stats_dict['generator h bond loss'].append(h_bond_score.cpu().detach().numpy())
+            stats_keys += ['generator h bond loss']
+            stats_values += [h_bond_score.cpu().detach().numpy()]
 
         if self.config.generator_similarity_penalty != 0:
             if similarity_penalty is not None:
@@ -2122,13 +2107,17 @@ class Modeller():
                 print('similarity penalty was none')
         if similarity_penalty is not None:
             epoch_stats_dict['generator similarity loss'].append(similarity_penalty.cpu().detach().numpy())
+            stats_keys += ['generator similarity loss']
+            stats_values += [similarity_penalty.cpu().detach().numpy()]
 
         if self.config.train_generator_combo:
             g_losses_list.append(-combo_score)
         if combo_score is not None:
-            epoch_stats_dict['generator combo loss'].append(1 - combo_score.cpu().detach().numpy())
+            stats_keys += ['generator combo loss']
+            stats_values += [1 - combo_score.cpu().detach().numpy()]
 
         g_losses = torch.sum(torch.stack(g_losses_list), dim=0)
+        epoch_stats_dict = update_stats_dict(epoch_stats_dict, stats_keys, stats_values)
 
         return g_losses, epoch_stats_dict
 
@@ -2153,9 +2142,12 @@ class Modeller():
     def log_supercell_examples(self, supercell_examples, i, rand_batch_ind, epoch_stats_dict):
         if (supercell_examples is not None) and (i == rand_batch_ind):  # for a random batch in the epoch
             epoch_stats_dict['generated supercell examples'] = supercell_examples.cpu().detach()
-            if supercell_examples.num_graphs > 100:  # todo find a way to take only the few that we need - maybe using the Collater
-                print('WARNING. Saving over 100 supercells for analysis')
-        epoch_stats_dict['final generated cell parameters'].extend(supercell_examples.cell_params.cpu().detach().numpy())
+            # if supercell_examples.num_graphs > 100:  # todo find a way to take only the few that we need - maybe using the Collater
+            #     print('WARNING. Saving over 100 supercells for analysis')
+
+        epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'final generated cell parameters',
+                                             supercell_examples.cell_params.cpu().detach().numpy(), mode='extend')
+
         del supercell_examples
         return epoch_stats_dict
 
@@ -2393,7 +2385,7 @@ class Modeller():
 
     def report_conditioner_training(self, epoch_stats_dict):
         reconstruction_losses = np.concatenate(epoch_stats_dict['reconstruction_loss']).flatten()
-        pack_true =  np.concatenate(epoch_stats_dict['generator packing target']).flatten() * self.config.dataDims['target std'] + self.config.dataDims['target mean']
+        pack_true = np.concatenate(epoch_stats_dict['generator packing target']).flatten() * self.config.dataDims['target std'] + self.config.dataDims['target mean']
         pack_pred = np.concatenate(epoch_stats_dict['generator packing prediction']).flatten() * self.config.dataDims['target std'] + self.config.dataDims['target mean']
         packing_mae = np.abs(pack_true - pack_pred) / pack_true
 
@@ -2405,7 +2397,6 @@ class Modeller():
         x = packing_mae
         y = reconstruction_losses
         xy = np.vstack([x, y])
-
 
         try:
             z = gaussian_kde(xy)(xy)
@@ -2429,9 +2420,9 @@ class Modeller():
             specs=[[{'type': 'scene'}, {'type': 'scene'}]])
 
         for img_i in range(2):
-            sample_guess = epoch_stats_dict['prediction_sample'][0,img_i].argmax(0)
-            sample_density = np_softmax(epoch_stats_dict['prediction_sample'][0, img_i][None,...])[0,1:].sum(0)
-            sample_true = epoch_stats_dict['target_sample'][0,img_i]
+            sample_guess = epoch_stats_dict['prediction_sample'][0, img_i].argmax(0)
+            sample_density = np_softmax(epoch_stats_dict['prediction_sample'][0, img_i][None, ...])[0, 1:].sum(0)
+            sample_true = epoch_stats_dict['target_sample'][0, img_i]
 
             X, Y, Z = (sample_guess + 1).nonzero()
             fig.add_trace(go.Volume(
@@ -2439,14 +2430,15 @@ class Modeller():
                 y=Y.flatten(),
                 z=Z.flatten(),
                 value=sample_density.flatten(),
-                isomin=0.001,
+                isomin=0.0001,
                 isomax=1,
                 opacity=0.05,  # needs to be small to see through all surfaces
                 surface_count=50,  # needs to be a large number for good volume rendering
                 colorscale='Jet',
                 cmin=0,
-                showlegend=True
-            ), row=1, col=img_i+1)
+                showlegend=True,
+                # caps=dict(x_show=False, y_show=False, z_show=False),
+            ), row=1, col=img_i + 1)
 
             x, y, z = sample_true.nonzero()
             fig.add_trace(go.Scatter3d(
@@ -2457,15 +2449,30 @@ class Modeller():
                     size=10,
                     color=sample_true[x, y, z],
                     colorscale='Jet',
-                    cmin=0, cmax =6,
+                    cmin=0, cmax=6,
                     opacity=0.5
-                )), row=1,col=img_i+1)
+                )), row=1, col=img_i + 1)
             fig.update_layout(showlegend=True)
 
         if self.config.wandb.log_figures:
             wandb.log({'Conditioner Reconstruction Samples': fig})
         if (self.config.machine == 'local') and False:
             fig.show()
+
+        class_names = ['empty'] + [str(key) for key in self.config.conditioner_classes.keys()]
+        fig = go.Figure()
+        fig.add_trace(go.Bar(name='True', x=class_names, y=epoch_stats_dict['generator particle true'].mean(0)))
+        fig.add_trace(go.Bar(name='Predictions', x=class_names, y=epoch_stats_dict['generator particle prediction'].mean(0)))
+        fig.update_layout(barmode='group')
+        fig.update_yaxes(type='log')
+        fig.layout.margin = layout.margin
+
+        if self.config.wandb.log_figures:
+            wandb.log({'Conditioner Classwise Density': fig})
+        if (self.config.machine == 'local') and False:
+            fig.show()
+
+        return None
 
     def discriminator_analysis(self, epoch_stats_dict):
         '''

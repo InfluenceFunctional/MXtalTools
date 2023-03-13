@@ -34,6 +34,7 @@ def add_args(parser):
     add_bool_arg(parser, 'skip_saving_and_loading', default=True)
     parser.add_argument("--d_model_path", default=None, type=str)
     parser.add_argument("--g_model_path", default=None, type=str)
+    parser.add_argument("--conditioner_path", default=None, type=str)
     add_bool_arg(parser, 'extra_test_evaluation', default=False)
     parser.add_argument("--extra_test_set_paths", default=None, type=list)
     add_bool_arg(parser,"save_checkpoints", default=False) # will revert to True on cluster machine
@@ -50,6 +51,7 @@ def add_args(parser):
     update_args2config(args2config, 'skip_saving_and_loading')
     update_args2config(args2config, 'd_model_path')
     update_args2config(args2config, 'g_model_path')
+    update_args2config(args2config, 'conditioner_path')
     update_args2config(args2config, 'extra_test_evaluation')
     update_args2config(args2config, 'extra_test_set_paths')
     update_args2config(args2config, 'save_checkpoints')
@@ -342,6 +344,7 @@ def add_args(parser):
     parser.add_argument('--sample_ind', type=int, default=0)  # which sample from test dataset to sample
     parser.add_argument('--sample_steps', type=int, default=1000)  #
     parser.add_argument('--sample_move_size', type=float, default=0.05)  #
+    add_bool_arg(parser, 'freeze_conditioner', True) # freeze conditioner when training generator
 
     update_args2config(args2config, 'gan_loss')
     update_args2config(args2config, 'train_generator_conditioner')

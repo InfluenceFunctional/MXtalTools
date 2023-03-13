@@ -1909,11 +1909,12 @@ def compute_principal_axes_np(coords):
     Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
     if np.any(np.abs(overlaps) < 1e-3):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
         # align the 'good' vectors
-        fix_ind = np.argmin(np.abs(overlaps)) # vector with vanishing overlap
-        if compute_Ip_handedness(Ip) < 0: # make sure result is right handed
+        fix_ind = np.argmin(np.abs(overlaps))  # vector with vanishing overlap
+        if compute_Ip_handedness(Ip) < 0:  # make sure result is right handed
             Ip[fix_ind] = -Ip[fix_ind]
 
     return Ip, Ipm, I
+
 
 def compute_inertial_tensor(x, y, z):
     Ixy = -torch.sum(x * y)
@@ -2005,8 +2006,8 @@ def batch_molecule_principal_axes(coords_list):
         Ip_i = (Ip_i.T * torch.sign(overlaps[ii])).T  # if the vectors have negative overlap, flip the direction
         if any(torch.abs(overlaps[ii]) < 1e-3):  # if any overlaps are vanishing (up to 32 bit precision), determine the direction via the RHR (if two overlaps are vanishing, this will not work)
             # enforce right-handedness in the free vector
-            fix_ind = torch.argmin(torch.abs(overlaps[ii])) # vector with vanishing overlap
-            if compute_Ip_handedness(Ip_i) < 0: # make sure result is right handed
+            fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap
+            if compute_Ip_handedness(Ip_i) < 0:  # make sure result is right handed
                 Ip_i[fix_ind] = -Ip_i[fix_ind]
 
         Ip_fin[ii] = Ip_i
@@ -2336,8 +2337,9 @@ def np_hardtanh(x):
     return F.hardtanh(torch.Tensor(x)).detach().numpy()
 
 
-def torch_emd(x,y):
-    return torch.sum(torch.abs(torch.cumsum(x,dim=-1)-torch.cumsum(y,dim=-1)),dim=-1)
+def torch_emd(x, y):
+    return torch.sum(torch.abs(torch.cumsum(x, dim=-1) - torch.cumsum(y, dim=-1)), dim=-1)
+
 
 def compute_rdf_distance_old(target_rdf, sample_rdf):
     '''
@@ -2355,6 +2357,7 @@ def compute_rdf_distance_old(target_rdf, sample_rdf):
     sample_CDF = np.nan_to_num(sample_CDF / norm[None, :, None])
     emd = np.sum(np.abs(target_CDF - sample_CDF), axis=(1, 2))
     return emd / nonzero_element_pairs  # manual normalizaion elementwise
+
 
 def compute_rdf_distance(target_rdf, sample_rdf, rr):
     '''
@@ -2397,7 +2400,7 @@ def histogram_overlap(d1, d2):
     return np.sum(np.minimum(d1, d2)) / np.average((d1.sum(), d2.sum()))
 
 
-def softmax_and_score(raw_classwise_output, temperature=1, old_method = False, correct_discontinuity = True):
+def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, correct_discontinuity=True):
     '''
     toy around
     plt.clf()
@@ -2417,10 +2420,10 @@ def softmax_and_score(raw_classwise_output, temperature=1, old_method = False, c
     -------
 
     '''
-    if not old_method: # turns out you get almost identically the same answer by simply dividing the activations, much simpler
+    if not old_method:  # turns out you get almost identically the same answer by simply dividing the activations, much simpler
         if torch.is_tensor(raw_classwise_output):
-            soft_activation = F.softmax(raw_classwise_output,dim=-1)
-            score = torch.log10(soft_activation[:,1]/soft_activation[:,0])
+            soft_activation = F.softmax(raw_classwise_output, dim=-1)
+            score = torch.log10(soft_activation[:, 1] / soft_activation[:, 0])
             assert torch.sum(torch.isnan(score)) == 0
             return score
         else:
@@ -2436,14 +2439,14 @@ def softmax_and_score(raw_classwise_output, temperature=1, old_method = False, c
         if isinstance(raw_classwise_output, np.ndarray):
             softmax_output = np_softmax(raw_classwise_output.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
             tanned = np.tan((softmax_output - 0.5) * np.pi)
-            sign = (raw_classwise_output[:,1] > raw_classwise_output[:,0]) * 2 - 1 # values very close to zero can realize a sign error
-            return (sign * np.log10(correction+np.abs(tanned))) # new factor of 1+ conditions the function about zero
+            sign = (raw_classwise_output[:, 1] > raw_classwise_output[:, 0]) * 2 - 1  # values very close to zero can realize a sign error
+            return (sign * np.log10(correction + np.abs(tanned)))  # new factor of 1+ conditions the function about zero
 
         elif torch.is_tensor(raw_classwise_output):
             softmax_output = F.softmax(raw_classwise_output / temperature, dim=-1)[:, 1]
             tanned = torch.tan((softmax_output - 0.5) * torch.pi)
-            sign = (raw_classwise_output[:,1] > raw_classwise_output[:,0]) * 2 - 1 # values very close to zero can realize a sign error
-            return (sign * torch.log10(correction+torch.abs(tanned)))
+            sign = (raw_classwise_output[:, 1] > raw_classwise_output[:, 0]) * 2 - 1  # values very close to zero can realize a sign error
+            return (sign * torch.log10(correction + torch.abs(tanned)))
     # else:
     #     temperature = 15 # this function is very close to the original without the discontinuity, though it tapers near the extremes
     #     range = 15.88 # extreme limit of original version
@@ -2454,6 +2457,7 @@ def softmax_and_score(raw_classwise_output, temperature=1, old_method = False, c
     #     elif torch.is_tensor(raw_classwise_output):
     #         softmax_output = F.softmax(raw_classwise_output / temperature, dim=-1)[:, 1]
     #         return (softmax_output - 0.5) * 2
+
 
 '''
 xx = np.concatenate((-np.logspace(1.5,-3,1001),np.logspace(-3,1.5,1001)))
@@ -2466,6 +2470,7 @@ plt.legend(('old','new'))
 plt.xlabel('input')
 plt.ylabel('score')
 '''
+
 
 def norm_scores(score, tracking_features, dataDims):
     # norm the incoming score according to its respective molecular surface area (assuming sphere)
@@ -2501,12 +2506,12 @@ def enforce_1d_bound(x, x_span, x_center, mode='soft'):  # soft or hard
 
     return bounded
 
-def undo_1d_bound(x, x_span, x_center, mode = 'soft'):
+
+def undo_1d_bound(x, x_span, x_center, mode='soft'):
     # todo: hard mode
 
     if True:
-        return x_span * torch.atanh((x-x_center)/x_span) + x_center
-
+        return x_span * torch.atanh((x - x_center) / x_span) + x_center
 
 
 def reload_model(model, optimizer, path):
@@ -2567,6 +2572,7 @@ def make_grid(gridpoint_lim, n_gridpoints, cart_dim):
 
     return grid
 
+
 def get_strides(n_target_bins):
     target_size = n_target_bins
     tolerance = -1
@@ -2593,8 +2599,8 @@ def get_strides(n_target_bins):
                         if (img_size[-1] == target_size - tolerance):
                             converged = True
                         if converged:
-                            #print(strides)
-                            #print(img_size[-1])
+                            # print(strides)
+                            # print(img_size[-1])
                             break
                     if converged:
                         break
@@ -2607,9 +2613,35 @@ def get_strides(n_target_bins):
         strides += [1]
 
     if converged:
-        return strides, img_size[-1] + 2*tolerance
+        return strides, img_size[-1] + 2 * tolerance
     else:
         assert False, 'could not manage this resolution with current strided setup'
+
+
+def update_stats_dict(dict, keys, values, mode='append'):
+    if isinstance(keys,list):
+        for key, value in zip(keys,values):
+            #if torch.is_tensor(value):
+                #value = value.cpu().detach().numpy()
+            if key not in dict.keys():
+                dict[key] = []
+
+            if mode == 'append':
+                dict[key].append(value)
+            elif mode == 'extend':
+                dict[key].extend(value)
+    else:
+        key, value = keys, values
+        if key not in dict.keys():
+            dict[key] = []
+
+        if mode == 'append':
+            dict[key].append(value)
+        elif mode == 'extend':
+            dict[key].extend(value)
+
+    return dict
+
 
 '''
 # look at all kinds of activations
