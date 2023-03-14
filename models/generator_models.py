@@ -1,9 +1,11 @@
+import sys
+
 import torch
 import torch.nn as nn
-import sys
 from torch.distributions import MultivariateNormal, Uniform
-from models.torch_models import molecule_graph_model
+
 from models.model_components import general_MLP
+from models.torch_models import molecule_graph_model
 
 
 class crystal_generator(nn.Module):
@@ -55,7 +57,7 @@ class crystal_generator(nn.Module):
             positional_embedding=config.conditioner.positional_embedding,
             max_molecule_size=config.max_molecule_radius,
         )
-
+        
         '''
         generator model
         '''
