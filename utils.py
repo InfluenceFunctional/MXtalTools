@@ -22,6 +22,8 @@ from scipy.spatial.transform import Rotation
 # from pymatgen.io import cif
 from scipy.cluster.hierarchy import dendrogram
 from torch_scatter import scatter
+from torch import optim
+import torch.optim.lr_scheduler as lr_scheduler
 
 '''
 general utilities
@@ -52,31 +54,16 @@ def plot_dendrogram(model, **kwargs):
 
 
 def weight_reset(m):
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.Conv3d) or isinstance(m, nn.ConvTranspose3d):
         m.reset_parameters()
 
 
-def initialize_metrics_dict(metrics):
+def initialize_dict_of_lists(keys):
     m_dict = {}
-    for metric in metrics:
+    for metric in keys:
         m_dict[metric] = []
 
     return m_dict
-
-
-def printRecord(statement):
-    """
-    print a string to command line output and a text file
-    :param statement:
-    :return:
-    """
-    print(statement)
-    if os.path.exists('record.txt'):
-        with open('record.txt', 'a') as file:
-            file.write('\n' + statement)
-    else:
-        with open('record.txt', 'w') as file:
-            file.write('\n' + statement)
 
 
 def add_bool_arg(parser, name, default=False):
@@ -2619,10 +2606,11 @@ def get_strides(n_target_bins):
 
 
 def update_stats_dict(dict, keys, values, mode='append'):
-    if isinstance(keys,list):
-        for key, value in zip(keys,values):
-            #if torch.is_tensor(value):
-                #value = value.cpu().detach().numpy()
+    if isinstance(keys, list):
+        for key, value in zip(keys, values):
+            # if isinstance(value, list):
+            #     value = np.stack(value)
+
             if key not in dict.keys():
                 dict[key] = []
 
@@ -2634,6 +2622,9 @@ def update_stats_dict(dict, keys, values, mode='append'):
         key, value = keys, values
         if key not in dict.keys():
             dict[key] = []
+        #
+        # if isinstance(value, list):
+        #     value = np.stack(value)
 
         if mode == 'append':
             dict[key].append(value)
@@ -2641,6 +2632,45 @@ def update_stats_dict(dict, keys, values, mode='append'):
             dict[key].extend(value)
 
     return dict
+
+
+def init_optimizer(optim_config, model):
+    # init optimizers
+    amsgrad = True
+    beta1 = optim_config.beta1  # 0.9
+    beta2 = optim_config.beta2  # 0.999
+    weight_decay = optim_config.weight_decay  # 0.01
+    momentum = 0
+
+    if optim_config.optimizer == 'adam':
+        optimizer = optim.Adam(model.parameters(), amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+    elif optim_config.optimizer == 'adamw':
+        optimizer = optim.AdamW(model.parameters(), amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+    elif optim_config.optimizer == 'sgd':
+        optimizer = optim.SGD(model.parameters(), lr=optim_config.init_lr, momentum=momentum, weight_decay=weight_decay)
+    else:
+        print(optim_config.optimizer + ' is not a valid optimizer')
+        sys.exit()
+
+    return optimizer
+
+
+def init_schedulers(config, optimizer):
+    scheduler1 = lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='min',
+        factor=0.5,
+        patience=500,
+        threshold=1e-4,
+        threshold_mode='rel',
+        cooldown=500
+    )
+    lr_lambda = lambda epoch: config.lr_growth_lambda
+    scheduler2 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda)
+    lr_lambda2 = lambda epoch: config.lr_shrink_lambda
+    scheduler3 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda2)
+
+    return [scheduler1, scheduler2, scheduler3]
 
 
 '''

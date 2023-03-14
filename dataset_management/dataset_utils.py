@@ -35,9 +35,7 @@ class BuildDataset:
         self.include_organic = config.include_organic
         self.include_organometallic = config.include_organometallic
         self.model_mode = config.mode
-        self.conditional_modelling = config.generator.conditional_modelling
         self.include_sgs = config.include_sgs
-        self.conditioning_mode = config.generator.conditioning_mode
         self.include_pgs = config.include_pgs
         self.replace_dataDims = replace_dataDims
         if override_length is not None:
@@ -696,7 +694,7 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
                                           override_length=len(dataset),
                                           premade_dataset=dataset)
 
-    extra_test_loader = DataLoader(extra_test_set_builder.datapoints, batch_size=config.final_batch_size, shuffle=False, num_workers=0, pin_memory=False)
+    extra_test_loader = DataLoader(extra_test_set_builder.datapoints, batch_size=config.current_batch_size, shuffle=False, num_workers=0, pin_memory=False)
     del dataset, extra_test_set_builder
     return extra_test_loader
 
@@ -741,9 +739,7 @@ old version for use in figure generation
 #         self.include_organic = config.include_organic
 #         self.include_organometallic = config.include_organometallic
 #         self.model_mode = config.mode
-#         self.conditional_modelling = config.generator.conditional_modelling
 #         self.include_sgs = config.include_sgs
-#         self.conditioning_mode = config.generator.conditioning_mode
 #         self.include_pgs = config.include_pgs
 #         self.replace_dataDims = replace_dataDims
 #         if override_length is not None:

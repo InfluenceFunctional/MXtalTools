@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10073
 anomaly_detection: False
 mode: autoencoder # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
 save_checkpoints: False # will do it always on cluster, only locally if True
@@ -45,7 +45,7 @@ seeds:
 # opt - sweep details
 wandb:
   sample_reporting_frequency: 5
-  experiment_tag: dev
+  experiment_tag: conditioner_refine3
   log_figures: True
 
 # batching & convergence
@@ -54,23 +54,22 @@ accumulate_batch_size: 10000
 auto_batch_sizing: False
 grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 1000
+max_batch_size: 10000
 batch_growth_increment: 0.25
 auto_batch_reduction: 0.05 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
 history: 5000
 gradient_norm_clip: 10
 
-
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100
-max_num_atoms: 20
+max_num_atoms: 100
 min_num_atoms: 8 # target XVI has only 9 heavy atoms
-max_molecule_radius: 5 # angstroms
+max_molecule_radius: 10 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -167,7 +166,7 @@ conditioner_optimizer:
   lr_schedule: True
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
-  weight_decay: 0.01
+  weight_decay: 1
   convergence_eps: 0.00001
   lr_growth_lambda: 1.05
   lr_shrink_lambda: 0.975
@@ -176,7 +175,7 @@ conditioner:
   positional_noise: 0 # scaling for the randn noise added to all atom positions
   graph_convolution_layers: 2
   graph_filters: 64
-  atom_embedding_size: 512
+  atom_embedding_size: 128
   graph_norm: null
   num_spherical: 6
   num_radial: 50
@@ -190,15 +189,15 @@ conditioner:
   pooling: max # combo, geometric max mean sum attention
   positional_embedding: 'sph3' # 'sph' or 'pos' or 'combo', for 'geometric' pooling
 
-  num_fc_layers: 2
-  fc_depth: 1024
+  num_fc_layers: 4
+  fc_depth: 2048
   activation: 'gelu'
   fc_dropout_probability: 0.5
   fc_norm_mode: null
 
-  decoder_embedding_dim: 128
+  decoder_embedding_dim: 64
   decoder_resolution: 0.5 # angstrom
-  decoder_classes: 'minimal' # 'minimal' or 'full'
+  decoder_classes: 'full' # 'minimal' or 'full'
 
 regressor_optimizer:
   optimizer: adamw

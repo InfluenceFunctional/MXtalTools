@@ -32,9 +32,10 @@ def add_args(parser):
     parser.add_argument("--device", default="cuda", type=str)  # 'cuda' or 'cpu'
     parser.add_argument("--mode", default="gan", type=str)  # 'gan' or 'regression'
     add_bool_arg(parser, 'skip_saving_and_loading', default=True)
-    parser.add_argument("--d_model_path", default=None, type=str)
-    parser.add_argument("--g_model_path", default=None, type=str)
+    parser.add_argument("--discriminator_path", default=None, type=str)
+    parser.add_argument("--generator_path", default=None, type=str)
     parser.add_argument("--conditioner_path", default=None, type=str)
+    parser.add_argument("--regressor_path", default=None, type=str)
     add_bool_arg(parser, 'extra_test_evaluation', default=False)
     parser.add_argument("--extra_test_set_paths", default=None, type=list)
     add_bool_arg(parser,"save_checkpoints", default=False) # will revert to True on cluster machine
@@ -49,9 +50,10 @@ def add_args(parser):
     update_args2config(args2config, 'device')
     update_args2config(args2config, 'mode')
     update_args2config(args2config, 'skip_saving_and_loading')
-    update_args2config(args2config, 'd_model_path')
-    update_args2config(args2config, 'g_model_path')
+    update_args2config(args2config, 'discriminator_path')
+    update_args2config(args2config, 'generator_path')
     update_args2config(args2config, 'conditioner_path')
+    update_args2config(args2config, 'regressor_path')
     update_args2config(args2config, 'extra_test_evaluation')
     update_args2config(args2config, 'extra_test_set_paths')
     update_args2config(args2config, 'save_checkpoints')
@@ -152,121 +154,218 @@ def add_args(parser):
 
 
     # optimizer settings
-    parser.add_argument('--discriminator_optimizer', type=str, default='adamw')  # adam, adamw, sgd
-    parser.add_argument('--discriminator_init_lr', type=float, default=1e-5)  # base learning rate
-    parser.add_argument('--discriminator_max_lr', type=float, default=1e-3)  # for warmup schedules
-    parser.add_argument('--discriminator_min_lr', type=float, default=1e-3)  # for warmup schedules
-    parser.add_argument('--discriminator_beta1', type=float, default=0.9)  # adam and adamw opt
-    parser.add_argument('--discriminator_beta2', type=float, default=0.999)  # adam and adamw opt
-    parser.add_argument('--discriminator_weight_decay', type=float, default=0.01)  # for opt
-    parser.add_argument('--discriminator_convergence_eps', type=float, default=1e-5)
-    parser.add_argument('--discriminator_training_period', type=int, default=5)  # period between discriminator training
-    add_bool_arg(parser, 'discriminator_lr_schedule', default=False)
-    parser.add_argument('--discriminator_positional_noise', type=float, default=0)
-    parser.add_argument('--discriminator_lr_growth_lambda', type=float, default=0.1)
-    parser.add_argument('--discriminator_lr_shrink_lambda', type=float, default=0.95)
+    parser.add_argument('--discriminator_optimizer_optimizer', type=str, default='adamw')  # adam, adamw, sgd
+    parser.add_argument('--discriminator_optimizer_init_lr', type=float, default=1e-5)  # base learning rate
+    parser.add_argument('--discriminator_optimizer_max_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--discriminator_optimizer_min_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--discriminator_optimizer_beta1', type=float, default=0.9)  # adam and adamw opt
+    parser.add_argument('--discriminator_optimizer_beta2', type=float, default=0.999)  # adam and adamw opt
+    parser.add_argument('--discriminator_optimizer_weight_decay', type=float, default=0.01)  # for opt
+    parser.add_argument('--discriminator_optimizer_convergence_eps', type=float, default=1e-5)
+    parser.add_argument('--discriminator_optimizer_training_period', type=int, default=5)  # period between discriminator training
+    add_bool_arg(parser, 'discriminator_optimizer_lr_schedule', default=False)
+    parser.add_argument('--discriminator_optimizer_lr_growth_lambda', type=float, default=0.1)
+    parser.add_argument('--discriminator_optimizer_lr_shrink_lambda', type=float, default=0.95)
 
-    parser.add_argument('--generator_optimizer', type=str, default='adamw')  # adam, adamw, sgd
-    parser.add_argument('--generator_init_lr', type=float, default=1e-5)  # base learning rate
-    parser.add_argument('--generator_max_lr', type=float, default=1e-3)  # for warmup schedules
-    parser.add_argument('--generator_min_lr', type=float, default=1e-3)  # for warmup schedules
-    parser.add_argument('--generator_beta1', type=float, default=0.9)  # adam and adamw opt
-    parser.add_argument('--generator_beta2', type=float, default=0.999)  # adam and adamw opt
-    parser.add_argument('--generator_weight_decay', type=float, default=0.01)  # for opt
-    parser.add_argument('--generator_convergence_eps', type=float, default=1e-5)
-    add_bool_arg(parser, 'generator_lr_schedule', default=False)
+    parser.add_argument('--generator_optimizer_optimizer', type=str, default='adamw')  # adam, adamw, sgd
+    parser.add_argument('--generator_optimizer_init_lr', type=float, default=1e-5)  # base learning rate
+    parser.add_argument('--generator_optimizer_max_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--generator_optimizer_min_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--generator_optimizer_beta1', type=float, default=0.9)  # adam and adamw opt
+    parser.add_argument('--generator_optimizer_beta2', type=float, default=0.999)  # adam and adamw opt
+    parser.add_argument('--generator_optimizer_weight_decay', type=float, default=0.01)  # for opt
+    parser.add_argument('--generator_optimizer_convergence_eps', type=float, default=1e-5)
+    add_bool_arg(parser, 'generator_optimizer_lr_schedule', default=False)
+    parser.add_argument('--generator_optimizer_lr_growth_lambda', type=float, default=0.1)
+    parser.add_argument('--generator_optimizer_lr_shrink_lambda', type=float, default=0.95)
+
+    parser.add_argument('--conditioner_optimizer_optimizer', type=str, default='adamw')  # adam, adamw, sgd
+    parser.add_argument('--conditioner_optimizer_init_lr', type=float, default=1e-5)  # base learning rate
+    parser.add_argument('--conditioner_optimizer_max_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--conditioner_optimizer_min_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--conditioner_optimizer_beta1', type=float, default=0.9)  # adam and adamw opt
+    parser.add_argument('--conditioner_optimizer_beta2', type=float, default=0.999)  # adam and adamw opt
+    parser.add_argument('--conditioner_optimizer_weight_decay', type=float, default=0.01)  # for opt
+    parser.add_argument('--conditioner_optimizer_convergence_eps', type=float, default=1e-5)
+    add_bool_arg(parser, 'conditioner_optimizer_lr_schedule', default=False)
+    parser.add_argument('--conditioner_optimizer_lr_growth_lambda', type=float, default=0.1)
+    parser.add_argument('--conditioner_optimizer_lr_shrink_lambda', type=float, default=0.95)
+
+    parser.add_argument('--regressor_optimizer_optimizer', type=str, default='adamw')  # adam, adamw, sgd
+    parser.add_argument('--regressor_optimizer_init_lr', type=float, default=1e-5)  # base learning rate
+    parser.add_argument('--regressor_optimizer_max_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--regressor_optimizer_min_lr', type=float, default=1e-3)  # for warmup schedules
+    parser.add_argument('--regressor_optimizer_beta1', type=float, default=0.9)  # adam and adamw opt
+    parser.add_argument('--regressor_optimizer_beta2', type=float, default=0.999)  # adam and adamw opt
+    parser.add_argument('--regressor_optimizer_weight_decay', type=float, default=0.01)  # for opt
+    parser.add_argument('--regressor_optimizer_convergence_eps', type=float, default=1e-5)
+    add_bool_arg(parser, 'regressor_optimizer_lr_schedule', default=False)
+    parser.add_argument('--regressor_optimizer_lr_growth_lambda', type=float, default=0.1)
+    parser.add_argument('--regressor_optimizer_lr_shrink_lambda', type=float, default=0.95)
+
     parser.add_argument('--generator_positional_noise', type=float, default=0)
-    parser.add_argument('--generator_lr_growth_lambda', type=float, default=0.1)
-    parser.add_argument('--generator_lr_shrink_lambda', type=float, default=0.95)
+    parser.add_argument('--conditioner_positional_noise', type=float, default=0)
+    parser.add_argument('--regressor_positional_noise', type=float, default=0)
+    parser.add_argument('--discriminator_positional_noise', type=float, default=0)
 
-    update_args2config(args2config, 'discriminator_optimizer', ['discriminator', 'optimizer'])
-    update_args2config(args2config, 'discriminator_init_lr', ['discriminator', 'init_lr'])
-    update_args2config(args2config, 'discriminator_max_lr', ['discriminator', 'max_lr'])
-    update_args2config(args2config, 'discriminator_min_lr', ['discriminator', 'min_lr'])
-    update_args2config(args2config, 'discriminator_beta1', ['discriminator', 'beta1'])
-    update_args2config(args2config, 'discriminator_beta2', ['discriminator', 'beta2'])
-    update_args2config(args2config, 'discriminator_weight_decay', ['discriminator', 'weight_decay'])
-    update_args2config(args2config, 'discriminator_convergence_eps', ['discriminator', 'convergence_eps'])
-    update_args2config(args2config, 'discriminator_training_period', ['discriminator', 'training_period'])
-    update_args2config(args2config, 'discriminator_lr_schedule', ['discriminator', 'lr_schedule'])
-    update_args2config(args2config, 'discriminator_positional_noise', ['discriminator', 'positional_noise'])
-    update_args2config(args2config, 'discriminator_lr_growth_lambda', ['discriminator', 'lr_growth_lambda'])
-    update_args2config(args2config, 'discriminator_lr_shrink_lambda', ['discriminator', 'lr_shrink_lambda'])
+    update_args2config(args2config, 'discriminator_optimizer_optimizer', ['discriminator_optimizer', 'optimizer'])
+    update_args2config(args2config, 'discriminator_optimizer_init_lr', ['discriminator_optimizer', 'init_lr'])
+    update_args2config(args2config, 'discriminator_optimizer_max_lr', ['discriminator_optimizer', 'max_lr'])
+    update_args2config(args2config, 'discriminator_optimizer_min_lr', ['discriminator_optimizer', 'min_lr'])
+    update_args2config(args2config, 'discriminator_optimizer_beta1', ['discriminator_optimizer', 'beta1'])
+    update_args2config(args2config, 'discriminator_optimizer_beta2', ['discriminator_optimizer', 'beta2'])
+    update_args2config(args2config, 'discriminator_optimizer_weight_decay', ['discriminator_optimizer', 'weight_decay'])
+    update_args2config(args2config, 'discriminator_optimizer_convergence_eps', ['discriminator_optimizer', 'convergence_eps'])
+    update_args2config(args2config, 'discriminator_optimizer_training_period', ['discriminator_optimizer', 'training_period'])
+    update_args2config(args2config, 'discriminator_optimizer_lr_schedule', ['discriminator_optimizer', 'lr_schedule'])
+    update_args2config(args2config, 'discriminator_optimizer_lr_growth_lambda', ['discriminator_optimizer', 'lr_growth_lambda'])
+    update_args2config(args2config, 'discriminator_optimizer_lr_shrink_lambda', ['discriminator_optimizer', 'lr_shrink_lambda'])
 
-    update_args2config(args2config, 'generator_optimizer', ['generator', 'optimizer'])
-    update_args2config(args2config, 'generator_init_lr', ['generator', 'init_lr'])
-    update_args2config(args2config, 'generator_max_lr', ['generator', 'max_lr'])
-    update_args2config(args2config, 'generator_min_lr', ['generator', 'min_lr'])
-    update_args2config(args2config, 'generator_beta1', ['generator', 'beta1'])
-    update_args2config(args2config, 'generator_beta2', ['generator', 'beta2'])
-    update_args2config(args2config, 'generator_weight_decay', ['generator', 'weight_decay'])
-    update_args2config(args2config, 'generator_convergence_eps', ['generator', 'convergence_eps'])
-    update_args2config(args2config, 'generator_lr_schedule', ['generator', 'lr_schedule'])
+    update_args2config(args2config, 'generator_optimizer_optimizer', ['generator_optimizer', 'optimizer'])
+    update_args2config(args2config, 'generator_optimizer_init_lr', ['generator_optimizer', 'init_lr'])
+    update_args2config(args2config, 'generator_optimizer_max_lr', ['generator_optimizer', 'max_lr'])
+    update_args2config(args2config, 'generator_optimizer_min_lr', ['generator_optimizer', 'min_lr'])
+    update_args2config(args2config, 'generator_optimizer_beta1', ['generator_optimizer', 'beta1'])
+    update_args2config(args2config, 'generator_optimizer_beta2', ['generator_optimizer', 'beta2'])
+    update_args2config(args2config, 'generator_optimizer_weight_decay', ['generator_optimizer', 'weight_decay'])
+    update_args2config(args2config, 'generator_optimizer_convergence_eps', ['generator_optimizer', 'convergence_eps'])
+    update_args2config(args2config, 'generator_optimizer_lr_schedule', ['generator_optimizer', 'lr_schedule'])
+    update_args2config(args2config, 'generator_optimizer_lr_growth_lambda', ['generator_optimizer', 'lr_growth_lambda'])
+    update_args2config(args2config, 'generator_optimizer_lr_shrink_lambda', ['generator_optimizer', 'lr_shrink_lambda'])
+
+    update_args2config(args2config, 'conditioner_optimizer_optimizer', ['conditioner_optimizer', 'optimizer'])
+    update_args2config(args2config, 'conditioner_optimizer_init_lr', ['conditioner_optimizer', 'init_lr'])
+    update_args2config(args2config, 'conditioner_optimizer_max_lr', ['conditioner_optimizer', 'max_lr'])
+    update_args2config(args2config, 'conditioner_optimizer_min_lr', ['conditioner_optimizer', 'min_lr'])
+    update_args2config(args2config, 'conditioner_optimizer_beta1', ['conditioner_optimizer', 'beta1'])
+    update_args2config(args2config, 'conditioner_optimizer_beta2', ['conditioner_optimizer', 'beta2'])
+    update_args2config(args2config, 'conditioner_optimizer_weight_decay', ['conditioner_optimizer', 'weight_decay'])
+    update_args2config(args2config, 'conditioner_optimizer_convergence_eps', ['conditioner_optimizer', 'convergence_eps'])
+    update_args2config(args2config, 'conditioner_optimizer_lr_schedule', ['conditioner_optimizer', 'lr_schedule'])
+    update_args2config(args2config, 'conditioner_optimizer_lr_growth_lambda', ['conditioner_optimizer', 'lr_growth_lambda'])
+    update_args2config(args2config, 'conditioner_optimizer_lr_shrink_lambda', ['conditioner_optimizer', 'lr_shrink_lambda'])
+
+    update_args2config(args2config, 'regressor_optimizer_optimizer', ['regressor_optimizer', 'optimizer'])
+    update_args2config(args2config, 'regressor_optimizer_init_lr', ['regressor_optimizer', 'init_lr'])
+    update_args2config(args2config, 'regressor_optimizer_max_lr', ['regressor_optimizer', 'max_lr'])
+    update_args2config(args2config, 'regressor_optimizer_min_lr', ['regressor_optimizer', 'min_lr'])
+    update_args2config(args2config, 'regressor_optimizer_beta1', ['regressor_optimizer', 'beta1'])
+    update_args2config(args2config, 'regressor_optimizer_beta2', ['regressor_optimizer', 'beta2'])
+    update_args2config(args2config, 'regressor_optimizer_weight_decay', ['regressor_optimizer', 'weight_decay'])
+    update_args2config(args2config, 'regressor_optimizer_convergence_eps', ['regressor_optimizer', 'convergence_eps'])
+    update_args2config(args2config, 'regressor_optimizer_lr_schedule', ['regressor_optimizer', 'lr_schedule'])
+    update_args2config(args2config, 'regressor_optimizer_lr_growth_lambda', ['regressor_optimizer', 'lr_growth_lambda'])
+    update_args2config(args2config, 'regressor_optimizer_lr_shrink_lambda', ['regressor_optimizer', 'lr_shrink_lambda'])
+
+    update_args2config(args2config, 'conditioner_positional_noise', ['conditioner', 'positional_noise'])
+    update_args2config(args2config, 'regressor_positional_noise', ['regressor', 'positional_noise'])
     update_args2config(args2config, 'generator_positional_noise', ['generator', 'positional_noise'])
-    update_args2config(args2config, 'generator_lr_growth_lambda', ['generator', 'lr_growth_lambda'])
-    update_args2config(args2config, 'generator_lr_shrink_lambda', ['generator', 'lr_shrink_lambda'])
+    update_args2config(args2config, 'discriminator_positional_noise', ['discriminator', 'positional_noise'])
 
     # generator model settings
+    parser.add_argument('--regressor_positional_embedding', type=str, default='sph')  # sph or pos
+    parser.add_argument('--regressor_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
+    parser.add_argument('--regressor_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
+    parser.add_argument('--regressor_graph_filters', type=int, default=28)  # number of neurons per graph convolution
+    parser.add_argument('--regressor_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'GATv2' 'full message passing'
+    parser.add_argument('--regressor_graph_convolutions_layers', type=int, default=0)  # number of graph convolution blocks
+    parser.add_argument('--regressor_graph_norm', type=str, default='layer')  # None, 'layer', 'graph'
+    parser.add_argument('--regressor_num_spherical', type=int, default=6)  # dime angular basis functions, default is 6
+    parser.add_argument('--regressor_num_radial', type=int, default=12)  # dime radial basis functions, default is 12
+    parser.add_argument('--regressor_graph_convolution_cutoff', type=int, default=5)  # dime default is 5.0 A, schnet default is 10
+    parser.add_argument('--regressor_max_num_neighbors', type=int, default=32)  # dime default is 32
+    parser.add_argument('--regressor_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
+    add_bool_arg(parser, 'regressor_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    add_bool_arg(parser, 'regressor_add_torsional_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    parser.add_argument('--regressor_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
+
+    parser.add_argument('--regressor_num_fc_layers', type=int, default=1)  # number of layers in NN models
+    parser.add_argument('--regressor_fc_depth', type=int, default=27)  # number of neurons per NN layer
+    parser.add_argument('--regressor_activation', type=str, default='gelu')
+    parser.add_argument('--regressor_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
+    parser.add_argument('--regressor_fc_norm_mode', type=str, default='layer')
+
+    parser.add_argument('--conditioner_positional_embedding', type=str, default='sph')  # sph or pos
+    parser.add_argument('--conditioner_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
+    parser.add_argument('--conditioner_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
+    parser.add_argument('--conditioner_graph_filters', type=int, default=28)  # number of neurons per graph convolution
+    parser.add_argument('--conditioner_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'GATv2' 'full message passing'
+    parser.add_argument('--conditioner_graph_convolutions_layers', type=int, default=0)  # number of graph convolution blocks
+    parser.add_argument('--conditioner_graph_norm', type=str, default='layer')  # None, 'layer', 'graph'
+    parser.add_argument('--conditioner_num_spherical', type=int, default=6)  # dime angular basis functions, default is 6
+    parser.add_argument('--conditioner_num_radial', type=int, default=12)  # dime radial basis functions, default is 12
+    parser.add_argument('--conditioner_graph_convolution_cutoff', type=int, default=5)  # dime default is 5.0 A, schnet default is 10
+    parser.add_argument('--conditioner_max_num_neighbors', type=int, default=32)  # dime default is 32
+    parser.add_argument('--conditioner_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
+    add_bool_arg(parser, 'conditioner_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    add_bool_arg(parser, 'conditioner_add_torsional_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
+    parser.add_argument('--conditioner_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
+
+    parser.add_argument('--conditioner_num_fc_layers', type=int, default=1)  # number of layers in NN models
+    parser.add_argument('--conditioner_fc_depth', type=int, default=27)  # number of neurons per NN layer
+    parser.add_argument('--conditioner_activation', type=str, default='gelu')
+    parser.add_argument('--conditioner_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
+    parser.add_argument('--conditioner_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
+    parser.add_argument('--conditioner_decoder_resolution', type=float, default=0.5)  #\
+    parser.add_argument('--conditioner_decoder_classes', type=str, default='minimal') # 'minimal' or 'full'
+    parser.add_argument('--conditioner_decoder_embedding_dim', type=int, default=64)  # number of neurons per graph convolution
+
     parser.add_argument('--generator_canonical_conformer_orientation', type=str, default='standardized')  # standardized or random
-    parser.add_argument('--generator_positional_embedding', type=str, default='sph')  # sph or pos
-    parser.add_argument('--generator_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
-    parser.add_argument('--generator_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
-    parser.add_argument('--generator_graph_filters', type=int, default=28)  # number of neurons per graph convolution
-    parser.add_argument('--generator_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'GATv2' 'full message passing'
-    parser.add_argument('--generator_graph_convolutions_layers', type=int, default=0)  # number of graph convolution blocks
-    parser.add_argument('--generator_graph_norm', type=str, default='layer')  # None, 'layer', 'graph'
-    parser.add_argument('--generator_num_spherical', type=int, default=6)  # dime angular basis functions, default is 6
-    parser.add_argument('--generator_num_radial', type=int, default=12)  # dime radial basis functions, default is 12
-    parser.add_argument('--generator_graph_convolution_cutoff', type=int, default=5)  # dime default is 5.0 A, schnet default is 10
-    parser.add_argument('--generator_max_num_neighbors', type=int, default=32)  # dime default is 32
-    parser.add_argument('--generator_radial_function', type=str, default='bessel')  # 'bessel' or 'gaussian' - only applies to mikenet
-    add_bool_arg(parser, 'generator_add_spherical_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
-    add_bool_arg(parser, 'generator_add_torsional_basis', default=False)  # include spherical information in message aggregation - only applies to mikenet
-    parser.add_argument('--generator_pooling', type=str, default='attention')  # 'mean', 'attention', 'set2set', 'combo'
-    parser.add_argument('--generator_decoder_embedding_dim', type=int, default=64)  # number of neurons per graph convolution
-
-    parser.add_argument('--generator_conditioner_num_fc_layers', type=int, default=1)  # number of layers in NN models
-    parser.add_argument('--generator_conditioner_fc_depth', type=int, default=27)  # number of neurons per NN layer
-    parser.add_argument('--generator_conditioner_activation', type=str, default='gelu')
-    parser.add_argument('--generator_conditioner_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
-    parser.add_argument('--generator_conditioner_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
-
     parser.add_argument('--generator_num_fc_layers', type=int, default=1)  # number of layers in NN models
     parser.add_argument('--generator_fc_depth', type=int, default=27)  # number of neurons per NN layer
     parser.add_argument('--generator_activation', type=str, default='gelu')
     parser.add_argument('--generator_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
     parser.add_argument('--generator_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
-    parser.add_argument('--generator_conditioning_mode', type=str, default='graph model')  # how to derive molecular conditioning - graph model or just selected features
-    parser.add_argument('--generator_autoencoder_resolution', type=float, default=0.5)  #\
-    parser.add_argument('--generator_conditioner_class_type', type=str, default='minimal') # 'minimal' or 'full'
 
     parser.add_argument('--generator_prior', type=str, default='multivariate normal')  # type of prior distribution
     parser.add_argument('--generator_prior_dimension', type=int, default=12)  # type of prior distribution
-    add_bool_arg(parser, 'generator_conditional_modelling', default=True)  # whether to use molecular features as conditions for normalizing flow model
 
-    update_args2config(args2config, 'generator_conditioner_class_type', ['generator', 'conditioner_class_type'])
-    update_args2config(args2config, 'generator_decoder_embedding_dim', ['generator', 'decoder_embedding_dim'])
+    update_args2config(args2config, 'regressor_positional_embedding', ['regressor', 'positional_embedding'])
+    update_args2config(args2config, 'regressor_graph_model', ['regressor', 'graph_model'])
+    update_args2config(args2config, 'regressor_atom_embedding_size', ['regressor', 'atom_embedding_size'])
+    update_args2config(args2config, 'regressor_graph_filters', ['regressor', 'graph_filters'])
+    update_args2config(args2config, 'regressor_graph_convolution', ['regressor', 'graph_convolution'])
+    update_args2config(args2config, 'regressor_graph_convolutions_layers', ['regressor', 'graph_convolutions_layers'])
+    update_args2config(args2config, 'regressor_graph_norm', ['regressor', 'graph_norm'])
+    update_args2config(args2config, 'regressor_num_spherical', ['regressor', 'num_spherical'])
+    update_args2config(args2config, 'regressor_num_radial', ['regressor', 'num_radial'])
+    update_args2config(args2config, 'regressor_graph_convolution_cutoff', ['regressor', 'graph_convolution_cutoff'])
+    update_args2config(args2config, 'regressor_max_num_neighbors', ['regressor', 'max_num_neighbors'])
+    update_args2config(args2config, 'regressor_radial_function', ['regressor', 'radial_function'])
+    update_args2config(args2config, 'regressor_add_spherical_basis', ['regressor', 'add_spherical_basis'])
+    update_args2config(args2config, 'regressor_add_torsional_basis', ['regressor', 'add_torsional_basis'])
+    update_args2config(args2config, 'regressor_pooling', ['regressor', 'pooling'])
+    update_args2config(args2config, 'regressor_num_fc_layers', ['regressor', 'num_fc_layers'])
+    update_args2config(args2config, 'regressor_fc_depth', ['regressor', 'fc_depth'])
+    update_args2config(args2config, 'regressor_activation', ['regressor', 'activation'])
+    update_args2config(args2config, 'regressor_fc_dropout_probability', ['regressor', 'fc_dropout_probability'])
+    update_args2config(args2config, 'regressor_fc_norm_mode', ['regressor', 'fc_norm_mode'])
+
+    update_args2config(args2config, 'conditioner_positional_embedding', ['conditioner', 'positional_embedding'])
+    update_args2config(args2config, 'conditioner_graph_model', ['conditioner', 'graph_model'])
+    update_args2config(args2config, 'conditioner_atom_embedding_size', ['conditioner', 'atom_embedding_size'])
+    update_args2config(args2config, 'conditioner_graph_filters', ['conditioner', 'graph_filters'])
+    update_args2config(args2config, 'conditioner_graph_convolution', ['conditioner', 'graph_convolution'])
+    update_args2config(args2config, 'conditioner_graph_convolutions_layers', ['conditioner', 'graph_convolutions_layers'])
+    update_args2config(args2config, 'conditioner_graph_norm', ['conditioner', 'graph_norm'])
+    update_args2config(args2config, 'conditioner_num_spherical', ['conditioner', 'num_spherical'])
+    update_args2config(args2config, 'conditioner_num_radial', ['conditioner', 'num_radial'])
+    update_args2config(args2config, 'conditioner_graph_convolution_cutoff', ['conditioner', 'graph_convolution_cutoff'])
+    update_args2config(args2config, 'conditioner_max_num_neighbors', ['conditioner', 'max_num_neighbors'])
+    update_args2config(args2config, 'conditioner_radial_function', ['conditioner', 'radial_function'])
+    update_args2config(args2config, 'conditioner_add_spherical_basis', ['conditioner', 'add_spherical_basis'])
+    update_args2config(args2config, 'conditioner_add_torsional_basis', ['conditioner', 'add_torsional_basis'])
+    update_args2config(args2config, 'conditioner_pooling', ['conditioner', 'pooling'])
+    update_args2config(args2config, 'conditioner_num_fc_layers', ['conditioner', 'num_fc_layers'])
+    update_args2config(args2config, 'conditioner_fc_depth', ['conditioner', 'fc_depth'])
+    update_args2config(args2config, 'conditioner_activation', ['conditioner', 'activation'])
+    update_args2config(args2config, 'conditioner_fc_dropout_probability', ['conditioner', 'fc_dropout_probability'])
+    update_args2config(args2config, 'conditioner_fc_norm_mode', ['conditioner', 'fc_norm_mode'])
+    update_args2config(args2config, 'conditioner_decoder_resolution', ['conditioner', 'decoder_resolution'])
+    update_args2config(args2config, 'conditioner_decoder_classes', ['conditioner', 'decoder_classes'])
+    update_args2config(args2config, 'conditioner_decoder_embedding_dim', ['conditioner', 'decoder_embedding_dim'])
+
     update_args2config(args2config, 'generator_canonical_conformer_orientation', ['generator', 'canonical_conformer_orientation'])
-    update_args2config(args2config, 'generator_positional_embedding', ['generator', 'positional_embedding'])
-    update_args2config(args2config, 'generator_graph_model', ['generator', 'graph_model'])
-    update_args2config(args2config, 'generator_atom_embedding_size', ['generator', 'atom_embedding_size'])
-    update_args2config(args2config, 'generator_graph_filters', ['generator', 'graph_filters'])
-    update_args2config(args2config, 'generator_graph_convolution', ['generator', 'graph_convolution'])
-    update_args2config(args2config, 'generator_graph_convolutions_layers', ['generator', 'graph_convolutions_layers'])
-    update_args2config(args2config, 'generator_graph_norm', ['generator', 'graph_norm'])
-    update_args2config(args2config, 'generator_num_spherical', ['generator', 'num_spherical'])
-    update_args2config(args2config, 'generator_num_radial', ['generator', 'num_radial'])
-    update_args2config(args2config, 'generator_graph_convolution_cutoff', ['generator', 'graph_convolution_cutoff'])
-    update_args2config(args2config, 'generator_max_num_neighbors', ['generator', 'max_num_neighbors'])
-    update_args2config(args2config, 'generator_radial_function', ['generator', 'radial_function'])
-    update_args2config(args2config, 'generator_add_spherical_basis', ['generator', 'add_spherical_basis'])
-    update_args2config(args2config, 'generator_add_torsional_basis', ['generator', 'add_torsional_basis'])
-    update_args2config(args2config, 'generator_pooling', ['generator', 'pooling'])
-    update_args2config(args2config, 'generator_conditioner_num_fc_layers', ['generator', 'conditioner_num_fc_layers'])
-    update_args2config(args2config, 'generator_conditioner_fc_depth', ['generator', 'conditioner_fc_depth'])
-    update_args2config(args2config, 'generator_conditioner_activation', ['generator', 'conditioner_activation'])
-    update_args2config(args2config, 'generator_conditioner_fc_dropout_probability', ['generator', 'conditioner_fc_dropout_probability'])
-    update_args2config(args2config, 'generator_conditioner_fc_norm_mode', ['generator', 'conditioner_fc_norm_mode'])
     update_args2config(args2config, 'generator_num_fc_layers', ['generator', 'num_fc_layers'])
     update_args2config(args2config, 'generator_fc_depth', ['generator', 'fc_depth'])
     update_args2config(args2config, 'generator_activation', ['generator', 'activation'])
@@ -274,9 +373,6 @@ def add_args(parser):
     update_args2config(args2config, 'generator_fc_norm_mode', ['generator', 'fc_norm_mode'])
     update_args2config(args2config, 'generator_prior', ['generator', 'prior'])
     update_args2config(args2config, 'generator_prior_dimension', ['generator', 'prior_dimension'])
-    update_args2config(args2config, 'generator_conditional_modelling', ['generator', 'conditional_modelling'])
-    update_args2config(args2config, 'generator_conditioning_mode', ['generator', 'conditioning_mode'])
-    update_args2config(args2config, 'generator_autoencoder_resolution', ['generator', 'autoencoder_resolution'])
 
 
     # crystal cell graph Net
@@ -324,8 +420,6 @@ def add_args(parser):
     update_args2config(args2config, 'discriminator_fc_norm_mode', ['discriminator', 'fc_norm_mode'])
 
     # cell generator
-    parser.add_argument('--gan_loss', type=str, default='standard')  # stnandard only
-    add_bool_arg(parser, 'train_generator_conditioner', default=False)  #
     add_bool_arg(parser, 'freeze_generator_conditioner', default=False)  #
     add_bool_arg(parser, 'train_generator_combo', default=False)  # train on a packing + vdw combined score
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
@@ -344,10 +438,7 @@ def add_args(parser):
     parser.add_argument('--sample_ind', type=int, default=0)  # which sample from test dataset to sample
     parser.add_argument('--sample_steps', type=int, default=1000)  #
     parser.add_argument('--sample_move_size', type=float, default=0.05)  #
-    add_bool_arg(parser, 'freeze_conditioner', True) # freeze conditioner when training generator
 
-    update_args2config(args2config, 'gan_loss')
-    update_args2config(args2config, 'train_generator_conditioner')
     update_args2config(args2config, 'freeze_generator_conditioner')
     update_args2config(args2config, 'train_generator_combo')
     update_args2config(args2config, 'train_generator_packing')
