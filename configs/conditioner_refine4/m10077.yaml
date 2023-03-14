@@ -69,7 +69,7 @@ max_crystal_temperature: 10000
 min_crystal_temperature: -100
 max_num_atoms: 100
 min_num_atoms: 8 # target XVI has only 9 heavy atoms
-max_molecule_radius: 10 # angstroms
+max_molecule_radius: 5 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1

@@ -3,7 +3,7 @@ machine: "cluster"
 device: "cuda"
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 10076
+run_num: 10080
 anomaly_detection: False
 mode: autoencoder # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
 save_checkpoints: True # will do it always on cluster, only locally if True
@@ -64,7 +64,7 @@ gradient_norm_clip: 10
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
 dataset_length: 1000000
-feature_richness: full # full or minimal
+feature_richness: minimal # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100
 max_num_atoms: 100
@@ -195,7 +195,7 @@ conditioner:
   fc_dropout_probability: 0.5
   fc_norm_mode: null
 
-  decoder_embedding_dim: 64
+  decoder_embedding_dim: 128
   decoder_resolution: 0.5 # angstrom
   decoder_classes: 'full' # 'minimal' or 'full'
 
