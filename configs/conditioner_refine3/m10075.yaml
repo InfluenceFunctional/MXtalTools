@@ -6,7 +6,7 @@ skip_saving_and_loading: True
 run_num: 10075
 anomaly_detection: False
 mode: autoencoder # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
-save_checkpoints: False # will do it always on cluster, only locally if True
+save_checkpoints: True # will do it always on cluster, only locally if True
 
 # for GAN training
 freeze_generator_conditioner: True # exclusive with pretraining geometry
