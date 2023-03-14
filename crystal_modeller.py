@@ -1907,7 +1907,7 @@ class Modeller():
                     save_checkpoint(epoch, generator, generator_optimizer, self.config.generator.__dict__, 'best_generator_' + str(config.run_num))
                 if np.average(autoencoder_err_te) < np.amin(metrics_dict['autoencoder test loss'][:-1]):
                     print("Saving discriminator checkpoint")
-                    save_checkpoint(epoch, autoencoder, autoencoder_optimizer, self.config.autoencoder.__dict__, 'best_autoencoder_' + str(config.run_num))
+                    save_checkpoint(epoch, autoencoder, autoencoder_optimizer, self.config.conditioner.__dict__, 'best_autoencoder_' + str(config.run_num))
                 if np.average(regressor_err_te) < np.amin(metrics_dict['generator test loss'][:-1]):
                     print("Saving regressor checkpoint")
                     save_checkpoint(epoch, regressor, regressor_optimizer, self.config.regressor.__dict__, 'best_regressor_' + str(config.run_num))
