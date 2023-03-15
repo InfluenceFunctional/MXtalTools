@@ -1,5 +1,6 @@
 import torch.nn as nn
 from models.torch_models import molecule_graph_model
+import torch
 
 
 class crystal_discriminator(nn.Module):
@@ -7,6 +8,8 @@ class crystal_discriminator(nn.Module):
         '''
         wrapper for molecule model, with appropriate I/O
         '''
+        torch.manual_seed(config.seeds.model)
+
         super(crystal_discriminator, self).__init__()
         self.model = molecule_graph_model(
             dataDims=dataDims,

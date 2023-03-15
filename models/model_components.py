@@ -73,8 +73,15 @@ class general_MLP(nn.Module):
             for _ in range(self.n_layers)
         ])
 
-        self.init_layer = nn.Linear(self.input_dim, self.n_filters[0])  # set appropriate sizing
-        self.output_layer = nn.Linear(self.n_filters[-1], self.output_dim, bias=False)
+        if self.input_dim != self.n_filters[0]:
+            self.init_layer = nn.Linear(self.input_dim, self.n_filters[0])  # set appropriate sizing
+        else:
+            self.init_layer = nn.Identity()
+
+        if self.output_dim != self.n_filters[-1]:
+            self.output_layer = nn.Linear(self.n_filters[-1], self.output_dim, bias=False)
+        else:
+            self.output_layer = nn.Identity()
 
     def forward(self, x, conditions=None, return_latent=False, batch = None):
         if 'geometric' in str(type(x)):  # extract conditions from trailing atomic features

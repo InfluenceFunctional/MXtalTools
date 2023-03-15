@@ -93,47 +93,37 @@ class molecule_graph_model(nn.Module):
 
         torch.manual_seed(seed)
 
-        if self.graph_model is not None:
-            if self.graph_model == 'mike':  # mike's net - others currently deprecated. For future, implement new convolutions in the mikenet class
-                self.graph_net = MikesGraphNet(
-                    crystal_mode=crystal_mode,
-                    crystal_convolution_type=self.crystal_convolution_type,
-                    graph_convolution_filters=self.graph_filters,
-                    graph_convolution=self.graph_convolution,
-                    out_channels=self.fc_depth,
-                    hidden_channels=self.graph_embedding_size,
-                    num_blocks=self.graph_convolution_layers,
-                    num_radial=self.num_radial,
-                    num_spherical=self.num_spherical,
-                    max_num_neighbors=self.max_num_neighbors,
-                    cutoff=self.graph_convolution_cutoff,
-                    activation='gelu',
-                    embedding_hidden_dimension=self.atom_embedding_dims,
-                    num_atom_features=self.n_atom_feats,
-                    norm=self.graph_norm,
-                    dropout=self.fc_dropout_probability,
-                    spherical_embedding=self.add_spherical_basis,
-                    torsional_embedding=self.add_torsional_basis,
-                    radial_embedding=self.radial_function,
-                    num_atom_types=self.num_atom_types,
-                    attention_heads=self.num_attention_heads,
-                )
-            else:
-                print(self.graph_model + ' is not a valid graph model!!')
-                sys.exit()
-        else:
-            self.graph_net = nn.Identity()
-            self.graph_filters = 0  # no accounting for dime inputs or outputs
-            self.pools = nn.Identity()
+        self.graph_net = MikesGraphNet(
+            crystal_mode=crystal_mode,
+            crystal_convolution_type=self.crystal_convolution_type,
+            graph_convolution_filters=self.graph_filters,
+            graph_convolution=self.graph_convolution,
+            out_channels=self.fc_depth,
+            hidden_channels=self.graph_embedding_size,
+            num_blocks=self.graph_convolution_layers,
+            num_radial=self.num_radial,
+            num_spherical=self.num_spherical,
+            max_num_neighbors=self.max_num_neighbors,
+            cutoff=self.graph_convolution_cutoff,
+            activation='gelu',
+            embedding_hidden_dimension=self.atom_embedding_dims,
+            num_atom_features=self.n_atom_feats,
+            norm=self.graph_norm,
+            dropout=self.fc_dropout_probability,
+            spherical_embedding=self.add_spherical_basis,
+            torsional_embedding=self.add_torsional_basis,
+            radial_embedding=self.radial_function,
+            num_atom_types=self.num_atom_types,
+            attention_heads=self.num_attention_heads,
+        )
 
         # initialize global pooling operation
-        if self.graph_model is not None:
-            self.global_pool = global_aggregation(self.pooling, self.fc_depth,
-                                                  geometric_embedding=positional_embedding,
-                                                  num_radial=num_radial,
-                                                  spherical_order=num_spherical,
-                                                  radial_embedding=radial_function,
-                                                  max_molecule_size=max_molecule_size)
+        self.global_pool = global_aggregation(self.pooling, self.fc_depth,
+                                              geometric_embedding=positional_embedding,
+                                              num_radial=num_radial,
+                                              spherical_order=num_spherical,
+                                              radial_embedding=radial_function,
+                                              max_molecule_size=max_molecule_size)
 
         # molecule features FC layer
         if self.n_mol_feats != 0:
@@ -241,34 +231,15 @@ class independent_gaussian_model(nn.Module):
 
 
 class PointCloudDecoder(nn.Module):
-    def __init__(self, input_filters, n_classes, strides, mode='conv_transpose'):
+    def __init__(self, input_filters, n_classes, strides, init_image_size):
         super(PointCloudDecoder, self).__init__()
         '''
         model to deconvolve a 1D vector to an NxNxN array of voxel classwise probabilities
         '''
-        # strides = [1.5,1.5,1.5,2,1.23]
-
-
-        self.mode = mode
         self.strides = strides
         self.num_blocks = len(strides)
-        #self.image_depths = torch.linspace(input_filters, n_classes, self.num_blocks + 1).long()
-        self.image_depths = torch.linspace(input_filters, input_filters//2, self.num_blocks + 1).long()
 
-        conv = nn.ConvTranspose3d
-        bn = nn.LayerNorm  # nn.InstanceNorm3d #nn.BatchNorm3d
-
-        self.unflatten = nn.Unflatten(dim=1, unflattened_size=(input_filters, 3, 3, 3))
-
-        # stride 4 adds 3N - 1
-        # stride 3 adds 2N
-        # stride 2 adds N+1
-        # stride 1 adds 2
-        self.conv_blocks = torch.nn.ModuleList([
-            conv(in_channels=self.image_depths[n], out_channels=self.image_depths[n + 1], kernel_size=3, stride=strides[n], output_padding=0)
-            for n in range(self.num_blocks)
-        ])
-        img_size = [3]
+        img_size = [init_image_size]
         for i, stride in enumerate(self.strides):
             if stride == 2:
                 img_size += [img_size[i] + img_size[i] + 1]
@@ -279,6 +250,26 @@ class PointCloudDecoder(nn.Module):
             elif stride == 4:
                 img_size += [img_size[i] + 3*img_size[i] - 1]
 
+        n_voxels = torch.Tensor(img_size) ** 3
+        self.image_depths = torch.maximum(torch.ceil(n_voxels[0] * input_filters / n_voxels),torch.ones_like(n_voxels)*64).long()
+        #total_layer_size = n_voxels * self.image_depths
+        #self.image_depths = torch.linspace(input_filters, n_classes, self.num_blocks + 1).long()
+        #self.image_depths = torch.linspace(input_filters, input_filters, self.num_blocks + 1).long()
+
+
+        conv = nn.ConvTranspose3d
+        bn = nn.LayerNorm  # nn.InstanceNorm3d #nn.BatchNorm3d
+
+        self.unflatten = nn.Unflatten(dim=1, unflattened_size=(input_filters, init_image_size, init_image_size, init_image_size))
+
+        # stride 4 adds 3N - 1
+        # stride 3 adds 2N
+        # stride 2 adds N+1
+        # stride 1 adds 2
+        self.conv_blocks = torch.nn.ModuleList([
+            conv(in_channels=self.image_depths[n], out_channels=self.image_depths[n + 1], kernel_size=3, stride=strides[n], output_padding=0)
+            for n in range(self.num_blocks)
+        ])
 
         # for layer norm
         self.bn_blocks = torch.nn.ModuleList([
@@ -289,17 +280,10 @@ class PointCloudDecoder(nn.Module):
         #self.final_conv = nn.Conv3d(in_channels=self.image_depths[-1], out_channels=n_classes, kernel_size=(3,3,3), padding=0)
 
 
-
     def forward(self, x):
-        if self.mode == 'conv_transpose':
-            x = self.unflatten(x)
-            for bn, conv in zip(self.bn_blocks, self.conv_blocks):  # upscale and deconvolve
-                x = F.gelu(bn(conv(x)))
+        x = self.unflatten(x)
+        for bn, conv in zip(self.bn_blocks, self.conv_blocks):  # upscale and deconvolve
+            x = F.gelu(bn(conv(x)))
 
-            return self.final_conv(x)  # process to output
+        return self.final_conv(x)  # process to output
 
-        elif self.mode == 'mlp': # todo this is wrong, need to do it by grouped channels
-            x = self.unflatten_blocks[0](x)
-            x = F.gelu(self.conv_blocks[0](x))
-            x = self.unflatten_blocks[1](x.flatten(1))
-            return self.final_conv(x)

@@ -26,13 +26,15 @@ class crystal_generator(nn.Module):
         conditioning model
         '''
         self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
+        torch.manual_seed(config.seeds.model)
 
         self.conditioner = molecule_graph_model(
-            dataDims,
+            dataDims=dataDims,
+            atom_embedding_dims=config.conditioner.init_atom_embedding_dim,
             seed=config.seeds.model,
             num_atom_feats=dataDims['num atom features'] + 3 - self.crystal_features_to_ignore,  # we will add directly the normed coordinates to the node features
             num_mol_feats=dataDims['num mol features'] - self.crystal_features_to_ignore,
-            output_dimension=config.conditioner.fc_depth,
+            output_dimension=config.conditioner.output_dim,  # starting size for decoder model
             activation=config.conditioner.activation,
             num_fc_layers=config.conditioner.num_fc_layers,
             fc_depth=config.conditioner.fc_depth,
@@ -41,7 +43,7 @@ class crystal_generator(nn.Module):
             graph_model=config.conditioner.graph_model,
             graph_filters=config.conditioner.graph_filters,
             graph_convolutional_layers=config.conditioner.graph_convolution_layers,
-            concat_mol_to_atom_features=True,
+            concat_mol_to_atom_features=False, # todo relax this later
             pooling=config.conditioner.pooling,
             graph_norm=config.conditioner.graph_norm,
             num_spherical=config.conditioner.num_spherical,
@@ -55,9 +57,13 @@ class crystal_generator(nn.Module):
             max_num_neighbors=config.conditioner.max_num_neighbors,
             convolution_cutoff=config.conditioner.graph_convolution_cutoff,
             positional_embedding=config.conditioner.positional_embedding,
-            max_molecule_size=config.max_molecule_radius,
+            max_molecule_size=1,
+            crystal_mode=False,
+            crystal_convolution_type=None,
+            skip_mlp=False
         )
-        
+
+        self.rescale_output_dims = nn.Linear(config.conditioner.output_dim, config.generator.fc_depth)
         '''
         generator model
         '''
@@ -67,7 +73,7 @@ class crystal_generator(nn.Module):
                                  dropout=config.generator.fc_dropout_probability,
                                  input_dim=self.latent_dim,
                                  output_dim=dataDims['num lattice features'],
-                                 conditioning_dim=config.conditioner.fc_depth,
+                                 conditioning_dim=config.generator.fc_depth,
                                  seed=config.seeds.model
                                  )
 
@@ -83,6 +89,7 @@ class crystal_generator(nn.Module):
             normed_coords = conditions.pos / self.conditioner.max_molecule_size  # norm coords by maximum molecule radius
             conditions.x = torch.cat((conditions.x[:, :-self.crystal_features_to_ignore], normed_coords), dim=-1)  # concatenate to input features
             conditions_encoding = self.conditioner(conditions)
+            conditions_encoding = self.rescale_output_dims(conditions_encoding)
         else:
             conditions_encoding = None
 

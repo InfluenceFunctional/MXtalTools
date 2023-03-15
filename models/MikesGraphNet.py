@@ -95,13 +95,11 @@ class MikesGraphNet(torch.nn.Module):
             for _ in range(num_blocks)
         ])
 
-        self.global_blocks = torch.nn.ModuleList([
-            nn.Identity()
-            for _ in range(num_blocks)
-        ])
 
-
-        self.output_layer = nn.Linear(hidden_channels, out_channels)
+        if hidden_channels != out_channels:
+            self.output_layer = nn.Linear(hidden_channels, out_channels)
+        else:
+            self.output_layer = nn.Identity()
 
     def get_geom_embedding(self, edge_index, pos, num_nodes):
         '''
@@ -204,7 +202,7 @@ class MikesGraphNet(torch.nn.Module):
         x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector
         # if self.positional_embedding: # embed 3d positions
         #     x = x + self.pos_embedding(pos)
-        for n, (convolution, fc, global_agg) in enumerate(zip(self.interaction_blocks, self.fc_blocks, self.global_blocks)):
+        for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
             if self.crystal_mode:
                 if n < (self.num_blocks - 1):  # to do this molecule-wise, we need to multiply n_repeats by Z for each crystal
                     x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
@@ -226,9 +224,8 @@ class MikesGraphNet(torch.nn.Module):
                 #x = self.inside_norm1[n](x)
                 if self.convolution_mode != 'none':
                     x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution - residual is already inside the conv operator
-                #x = self.inside_norm2[n](x)
-                x = x + fc(x)  # feature-wise 1D convolution, FC includes residual
-                #x = fc(x)
+
+                x = fc(x)  # feature-wise 1D convolution, FC includes residual
 
         if return_dists:  # return dists, batch #, and inside/outside identity, and atomic number
             dist_output = {}
@@ -270,7 +267,6 @@ class EmbeddingBlock(torch.nn.Module):
         self.num_embeddings = 1
         self.embeddings = nn.Embedding(num_atom_types + 1, atom_type_embedding_dimension)
         self.linear = nn.Linear(atom_type_embedding_dimension + num_atom_features - self.num_embeddings, hidden_channels)
-        self.activation = Activation(activation, hidden_channels)
 
     def forward(self, x):
         if x.dim() == 1:
@@ -279,7 +275,7 @@ class EmbeddingBlock(torch.nn.Module):
         embedding = self.embeddings(x[:, 0].long())
         concat_vec = torch.cat([embedding, x[:, self.num_embeddings:]], dim=-1)
 
-        return self.activation(self.linear(concat_vec))
+        return self.linear(concat_vec)
 
 
 class GCBlock(torch.nn.Module):

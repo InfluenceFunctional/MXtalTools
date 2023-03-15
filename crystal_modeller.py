@@ -1,7 +1,6 @@
 # import os
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 import numpy as np
-import wandb
 import glob
 from torch import backends, optim
 from torch_geometric.loader.dataloader import Collater
@@ -40,6 +39,9 @@ from models.regression_models import molecule_regressor
 from models.torch_models import independent_gaussian_model
 from sampling.MCMC_Sampling import mcmcSampler
 from sampling.SampleOptimization import gradient_descent_sampling
+
+import wandb
+
 
 
 class Modeller():
@@ -205,7 +207,7 @@ class Modeller():
         '''
         self.config = self.reload_model_checkpoints(self.config)
 
-        generator, discriminator, conditioner, regressor = nn.Linear(1, 1), nn.Linear(1, 1), nn.Linear(1, 1), nn.Linear(1, 1)
+        generator, discriminator, conditioner, regressor = nn.Linear(1, 1), nn.Linear(1, 1), nn.Linear(1, 1), nn.Linear(1, 1) # init dummy models
         print("Initializing model(s) for " + self.config.mode)
         if self.config.mode == 'gan' or self.config.mode == 'sampling':
             generator = crystal_generator(self.config, self.config.dataDims)
@@ -233,14 +235,26 @@ class Modeller():
         conditioner_optimizer = init_optimizer(self.config.conditioner_optimizer, conditioner)
         regressor_optimizer = init_optimizer(self.config.regressor_optimizer, regressor)
 
-        if self.config.generator_path is not None:
+        if self.config.generator_path is not None and self.config.mode == 'gan':
             generator, generator_optimizer = reload_model(generator, generator_optimizer, self.config.generator_path)
-        if self.config.discriminator_path is not None:
+        if self.config.discriminator_path is not None and self.config.mode == 'gan':
             discriminator, discriminator_optimizer = reload_model(discriminator, discriminator_optimizer, self.config.discriminator_path)
-        if self.config.conditioner_path is not None:
+        if self.config.conditioner_path is not None and self.config.mode == 'autoencoder':
             conditioner, conditioner_optimizer = reload_model(conditioner, conditioner_optimizer, self.config.conditioner_path)
-        if self.config.regressor_path is not None:
+        if self.config.regressor_path is not None and self.config.mode == 'regression':
             regressor, regressor_optimizer = reload_model(discriminator, regressor_optimizer, self.config.regressor_path)
+
+        if self.config.mode == 'gan' and self.config.conditioner_path is not None:
+            checkpoint = torch.load(self.config.conditioner_path)
+            if list(checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+                for i in list(checkpoint['model_state_dict']):
+                    checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
+
+            conditioner_model_state = {key[12:]:value for key, value in checkpoint['model_state_dict'].items() if 'conditioner' in key}
+            generator.conditioner.load_state_dict(conditioner_model_state)
+            if self.config.freeze_generator_conditioner:
+                generator.conditioner.requires_grad_(False) # todo confirm this works
+                generator_optimizer = init_optimizer(self.config.generator_optimizer, generator, freeze_params = True)
 
         generator_schedulers = init_schedulers(self.config.generator_optimizer, generator_optimizer)
         discriminator_schedulers = init_schedulers(self.config.discriminator_optimizer, discriminator_optimizer)
@@ -569,7 +583,8 @@ class Modeller():
             '''
             loss, loss_record, epoch_stats_dict = \
                 self.conditioner_step(conditioner, epoch_stats_dict, data,
-                                      conditioner_optimizer, i, update_gradients, loss, loss_record)
+                                      conditioner_optimizer, i, epoch,
+                                      update_gradients, loss, loss_record)
 
             if record_stats:
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'tracking features', data.tracking.cpu().detach().numpy(), mode='extend')
@@ -779,7 +794,7 @@ class Modeller():
                 if ('loss' in key) and (train_epoch_stats_dict[key] is not None):
                     special_losses['Train ' + key] = np.average(np.concatenate(train_epoch_stats_dict[key]))
                 if ('score' in key) and (train_epoch_stats_dict[key] is not None):
-                    score = softmax_and_score(np.concatenate(train_epoch_stats_dict[key]))
+                    score = softmax_and_score(train_epoch_stats_dict[key])
                     special_losses['Train ' + key] = np.average(score)
 
         if test_epoch_stats_dict is not None:
@@ -787,7 +802,7 @@ class Modeller():
                 if ('loss' in key) and (test_epoch_stats_dict[key] is not None):
                     special_losses['Test ' + key] = np.average(np.concatenate(test_epoch_stats_dict[key]))
                 if ('score' in key) and (test_epoch_stats_dict[key] is not None):
-                    score = softmax_and_score(np.concatenate(test_epoch_stats_dict[key]))
+                    score = softmax_and_score(test_epoch_stats_dict[key])
                     special_losses['Test ' + key] = np.average(score)
 
         wandb.log(special_losses)
@@ -863,7 +878,7 @@ class Modeller():
                 self.train_generator(generator, discriminator, data, i)
 
             generator_losses, epoch_stats_dict = self.aggregate_generator_losses(
-                epoch_stats_dict, packing_loss, adversarial_score, adversarial_score,
+                epoch_stats_dict, packing_loss, adversarial_score,
                 vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score)
 
             generator_loss = generator_losses.mean()
@@ -885,10 +900,16 @@ class Modeller():
 
         return generator_err, generator_loss_record, epoch_stats_dict
 
-    def conditioner_step(self, conditioner, epoch_stats_dict, data, conditioner_optimizer, i, update_gradients, loss, loss_record):
+    def conditioner_step(self, conditioner, epoch_stats_dict, data, conditioner_optimizer, i, epoch, update_gradients, loss, loss_record):
+        if (epoch < 50) and (i%2 == 0):
+            rand_sample = True
+        else:
+            rand_sample = False
+
         packing_loss, reconstruction_loss, target_sample, prediction_sample, \
-        packing_true, packing_pred, particle_dist_true, particle_dist_pred = \
-            self.train_conditioner(conditioner, data, i)
+        packing_true, packing_pred, particle_dist_true, particle_dist_pred,\
+            real_sample= \
+            self.train_conditioner(conditioner, data, rand_sample)
 
         stats_keys = ['conditioner packing target', 'conditioner packing prediction',
                       'conditioner particle prediction', 'conditioner particle true',
@@ -903,7 +924,11 @@ class Modeller():
 
         epoch_stats_dict = update_stats_dict(epoch_stats_dict, stats_keys, stats_values)
 
-        conditioning_losses = reconstruction_loss  # packing_loss + reconstruction_loss
+        if real_sample:
+            conditioning_losses = reconstruction_loss  #+ packing_loss
+        else:
+            conditioning_losses = reconstruction_loss + packing_loss
+
         conditioner_loss = (conditioning_losses).mean()
         loss.append(conditioner_loss.data.cpu().detach().numpy())  # average loss
 
@@ -1050,10 +1075,12 @@ class Modeller():
                    supercell_data, similarity_penalty, h_bond_score, \
                    combo_score
 
-    def train_conditioner(self, conditioner, data, i):
+    def train_conditioner(self, conditioner, data, rand_sample):
         # minimum resolution of 0.5 Angstrom, to start
         # limit target to set of useful classes
-        if conditioner.training:  # replace training data with a random point cloud, and do test on real molecules
+        sample_real = True
+        if conditioner.training and rand_sample:  # replace training data with a random point cloud, and do test on real molecules
+            sample_real = False
             # batch_size = data.num_graphs
             # avg_num_particles_per_sample = 15
             # cartesian_dimension = 3
@@ -1090,7 +1117,7 @@ class Modeller():
         point_cloud_prediction, packing_prediction = conditioner(data.clone())
 
         n_target_bins = int((self.config.max_molecule_radius) * 2 / self.config.conditioner.decoder_resolution) + 1  # make up for odd in stride
-        _, n_target_bins = get_strides(n_target_bins)  # automatically find the right number of strides within 4-5 steps (minimizes overall stack depth)
+        _, n_target_bins = get_strides(n_target_bins, init_size=self.config.conditioner.init_decoder_size)  # automatically find the right number of strides within 4-5 steps (minimizes overall stack depth)
         batch_size = len(point_cloud_prediction)
         buckets = torch.bucketize(data.pos, torch.linspace(-self.config.max_molecule_radius, self.config.max_molecule_radius, n_target_bins - 1, device='cuda'))
         target = torch.zeros((batch_size, n_target_bins, n_target_bins, n_target_bins), dtype=torch.long, device=point_cloud_prediction.device)
@@ -1113,7 +1140,8 @@ class Modeller():
                target[0:8].cpu().detach().numpy(), point_cloud_prediction[0:8].cpu().detach().numpy(), \
                data.y.cpu().detach().numpy(), packing_prediction.cpu().detach().numpy(), \
                torch.mean(F.one_hot(target).permute(0, 4, 1, 2, 3).flatten(2, 4).float(), dim=(0, 2)).cpu().detach().numpy(), \
-               torch.mean(F.softmax(point_cloud_prediction.flatten(2, 4), dim=1).float(), dim=(0, 2)).cpu().detach().numpy()
+               torch.mean(F.softmax(point_cloud_prediction.flatten(2, 4), dim=1).float(), dim=(0, 2)).cpu().detach().numpy(),\
+               sample_real
 
     def regression_loss(self, generator, data):
         predictions = generator(data.to(generator.model.device))[:, 0]
@@ -1908,7 +1936,7 @@ class Modeller():
                 if np.average(conditioner_err_te) < np.amin(metrics_dict['conditioner test loss'][:-1]):
                     print("Saving conditioner checkpoint")
                     save_checkpoint(epoch, conditioner, conditioner_optimizer, self.config.conditioner.__dict__, 'best_conditioner_' + str(config.run_num))
-                if np.average(regressor_err_te) < np.amin(metrics_dict['generator test loss'][:-1]):
+                if np.average(regressor_err_te) < np.amin(metrics_dict['regressor test loss'][:-1]):
                     print("Saving regressor checkpoint")
                     save_checkpoint(epoch, regressor, regressor_optimizer, self.config.regressor.__dict__, 'best_regressor_' + str(config.run_num))
 
@@ -2074,7 +2102,7 @@ class Modeller():
         else:
             return None, None
 
-    def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, adversarial_score, adversarial_loss, vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score):
+    def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, adversarial_score, vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score):
         generator_losses_list = []
         stats_keys, stats_values = [], []
         if self.config.train_generator_packing:
@@ -2110,8 +2138,8 @@ class Modeller():
             generator_losses_list.append(vdw_loss_f)
 
         if self.config.train_generator_h_bond:
-            generator_losses_list.append(h_bond_score)
-        if vdw_loss is not None:
+            generator_losses_list.appefnd(h_bond_score)
+        if h_bond_score is not None:
             stats_keys += ['generator h bond loss']
             stats_values += [h_bond_score.cpu().detach().numpy()]
 
@@ -2217,20 +2245,21 @@ class Modeller():
         generator_loss_keys = ['generator packing prediction', 'generator packing target', 'generator per mol vdw loss', 'generator adversarial loss', 'generator h bond loss', 'generator combo loss']
         generator_losses = {}
         for key in generator_loss_keys:
-            if epoch_stats_dict[key] is not None:
-                if key == 'generator adversarial loss':
-                    if self.config.train_generator_adversarially:
-                        generator_losses[key[10:]] = np.concatenate(epoch_stats_dict[key])
+            if key in epoch_stats_dict.keys():
+                if epoch_stats_dict[key] is not None:
+                    if key == 'generator adversarial loss':
+                        if self.config.train_generator_adversarially:
+                            generator_losses[key[10:]] = np.concatenate(epoch_stats_dict[key])
+                        else:
+                            pass
                     else:
-                        pass
-                else:
-                    generator_losses[key[10:]] = np.concatenate(epoch_stats_dict[key])
+                        generator_losses[key[10:]] = np.concatenate(epoch_stats_dict[key])
 
-                if key == 'generator packing target':
-                    generator_losses['packing normed mae'] = np.abs(generator_losses['packing prediction'] - generator_losses['packing target']) / generator_losses['packing target']
-                    del generator_losses['packing prediction'], generator_losses['packing target']
-            else:
-                generator_losses[key[10:]] = None
+                    if key == 'generator packing target':
+                        generator_losses['packing normed mae'] = np.abs(generator_losses['packing prediction'] - generator_losses['packing target']) / generator_losses['packing target']
+                        del generator_losses['packing prediction'], generator_losses['packing target']
+                else:
+                    generator_losses[key[10:]] = None
 
         return generator_losses, {key: np.average(value) for i, (key, value) in enumerate(generator_losses.items()) if value is not None}
 
@@ -2411,23 +2440,23 @@ class Modeller():
         x = packing_mae
         y = reconstruction_losses
         xy = np.vstack([x, y])
-
-        try:
-            z = gaussian_kde(xy)(xy)
-        except:
-            z = np.ones_like(x)
-
-        fig = go.Figure()
-        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                                   mode='markers', marker=dict(color=z), opacity=0.5))
-        fig.layout.margin = layout.margin
-        fig.update_layout(xaxis_title='Packing Loss', yaxis_title='Reconstruction Loss')
-
-        # fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
-        if self.config.wandb.log_figures:
-            wandb.log({'Conditioner Loss Balance': fig})
-        if (self.config.machine == 'local') and False:
-            fig.show()
+        #
+        # try:
+        #     z = gaussian_kde(xy)(xy)
+        # except:
+        #     z = np.ones_like(x)
+        #
+        # fig = go.Figure()
+        # fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
+        #                            mode='markers', marker=dict(color=z), opacity=0.5))
+        # fig.layout.margin = layout.margin
+        # fig.update_layout(xaxis_title='Packing Loss', yaxis_title='Reconstruction Loss')
+        #
+        # # fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
+        # if self.config.wandb.log_figures:
+        #     wandb.log({'Conditioner Loss Balance': fig})
+        # if (self.config.machine == 'local') and False:
+        #     fig.show()
 
         fig = make_subplots(
             rows=1, cols=2,
@@ -2483,6 +2512,37 @@ class Modeller():
 
         if self.config.wandb.log_figures:
             wandb.log({'Conditioner Classwise Density': fig})
+        if (self.config.machine == 'local') and False:
+            fig.show()
+
+
+        x = pack_true  # generator_losses['generator per mol vdw loss']
+        y = pack_pred  # generator_losses['generator packing loss']
+
+        xy = np.vstack([x, y])
+        try:
+            z = gaussian_kde(xy)(xy)
+        except:
+            z = np.ones_like(x)
+
+        xline = np.asarray([np.amin(x), np.amax(x)])
+        linreg_result = linregress(x, y)
+        yline = xline * linreg_result.slope + linreg_result.intercept
+
+        fig = go.Figure()
+        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
+                                   mode='markers', marker=dict(color=z), opacity=1))
+
+        fig.add_trace(go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}, m={linreg_result.slope:.3f}'))
+
+        fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)', showlegend=False))
+
+        fig.layout.margin = layout.margin
+        fig.update_layout(xaxis_title='packing target', yaxis_title='packing prediction')
+
+        # fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
+        if self.config.wandb.log_figures:
+            wandb.log({'Cell Packing': fig})
         if (self.config.machine == 'local') and False:
             fig.show()
 
@@ -2552,7 +2612,7 @@ class Modeller():
                                     side='positive', orientation='h', width=4,
                                     meanline_visible=True, bandwidth=bandwidth1, points=False),
                           row=1, col=1)
-            fig.add_trace(go.Violin(x=-np.log(vdw_penalty_dict[label] + 1e-6), name=legend_label, line_color=plot_color_dict[label],
+            fig.add_trace(go.Violin(x=-np.log10(vdw_penalty_dict[label] + 1e-3), name=legend_label, line_color=plot_color_dict[label],
                                     side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth2, points=False),
                           row=1, col=2)
 
@@ -2564,7 +2624,7 @@ class Modeller():
         cscale[0][0] = 0
 
         fig.add_trace(go.Histogram2d(x=all_scores_i,
-                                     y=-np.log(all_vdws + 1e-6),
+                                     y=-np.log10(all_vdws + 1e-3),
                                      showscale=False,
                                      nbinsy=50, nbinsx=200,
                                      colorscale=cscale,
@@ -2676,11 +2736,11 @@ class Modeller():
             config.discriminator = Namespace(**discriminator_checkpoint['config'])
 
         if config.conditioner_path is not None:
-            conditioner_checkpoint = torch.load(config.generator_path)
+            conditioner_checkpoint = torch.load(config.conditioner_path)
             config.conditioner = Namespace(**conditioner_checkpoint['config'])  # overwrite the settings for the model
 
         if config.regressor_path is not None:
-            regressor_checkpoint = torch.load(config.generator_path)
+            regressor_checkpoint = torch.load(config.regressor_path)
             config.regressor = Namespace(**regressor_checkpoint['config'])  # overwrite the settings for the model
 
         return config

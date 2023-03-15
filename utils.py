@@ -2302,9 +2302,9 @@ def normed_score(x):
 def np_softmax(x, temperature=1):
     if x.ndim == 1:
         x = x[None, :]
-    # return F.softmax(torch.Tensor(x), dim=1).cpu().detach().numpy()
+    x = x.astype(float)
     probabilities = np.exp(x / temperature) / np.sum(np.exp(x / temperature), axis=1)[:, None]
-
+    assert np.sum(np.isnan(probabilities)) == 0
     return probabilities
 
 
@@ -2560,7 +2560,7 @@ def make_grid(gridpoint_lim, n_gridpoints, cart_dim):
     return grid
 
 
-def get_strides(n_target_bins):
+def get_strides(n_target_bins, init_size = 3):
     target_size = n_target_bins
     tolerance = -1
     converged = False
@@ -2572,7 +2572,7 @@ def get_strides(n_target_bins):
                     for l in range(4):
                         inds = [1, 2, 3, 4]
                         strides = [inds[i], inds[j], inds[k], inds[l]]
-                        img_size = [3]
+                        img_size = [init_size]
                         for ii, stride in enumerate(strides):
                             if stride == 1:
                                 img_size += [img_size[ii] + 2]
@@ -2634,7 +2634,7 @@ def update_stats_dict(dict, keys, values, mode='append'):
     return dict
 
 
-def init_optimizer(optim_config, model):
+def init_optimizer(optim_config, model, freeze_params = False):
     # init optimizers
     amsgrad = True
     beta1 = optim_config.beta1  # 0.9
@@ -2642,12 +2642,17 @@ def init_optimizer(optim_config, model):
     weight_decay = optim_config.weight_decay  # 0.01
     momentum = 0
 
+    if freeze_params:
+        model_params = [ param for param in model.parameters() if param.requires_grad == True]
+    else:
+        model_params = model.parameters()
+
     if optim_config.optimizer == 'adam':
-        optimizer = optim.Adam(model.parameters(), amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        optimizer = optim.Adam(model_params, amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
     elif optim_config.optimizer == 'adamw':
-        optimizer = optim.AdamW(model.parameters(), amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        optimizer = optim.AdamW(model_params, amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
     elif optim_config.optimizer == 'sgd':
-        optimizer = optim.SGD(model.parameters(), lr=optim_config.init_lr, momentum=momentum, weight_decay=weight_decay)
+        optimizer = optim.SGD(model_params, lr=optim_config.init_lr, momentum=momentum, weight_decay=weight_decay)
     else:
         print(optim_config.optimizer + ' is not a valid optimizer')
         sys.exit()

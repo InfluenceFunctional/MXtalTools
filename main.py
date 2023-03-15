@@ -285,9 +285,12 @@ def add_args(parser):
     parser.add_argument('--regressor_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
     parser.add_argument('--regressor_fc_norm_mode', type=str, default='layer')
 
+    parser.add_argument('--conditioner_init_decoder_size', type=int, default=3)  # int
+    parser.add_argument('--conditioner_init_atom_embedding_dim', type=int, default=5)  # int
     parser.add_argument('--conditioner_positional_embedding', type=str, default='sph')  # sph or pos
     parser.add_argument('--conditioner_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
     parser.add_argument('--conditioner_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
+    parser.add_argument('--conditioner_output_dim', type=int, default=128)  # embedding dimension for atoms
     parser.add_argument('--conditioner_graph_filters', type=int, default=28)  # number of neurons per graph convolution
     parser.add_argument('--conditioner_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'GATv2' 'full message passing'
     parser.add_argument('--conditioner_graph_convolutions_layers', type=int, default=0)  # number of graph convolution blocks
@@ -341,6 +344,10 @@ def add_args(parser):
     update_args2config(args2config, 'regressor_fc_dropout_probability', ['regressor', 'fc_dropout_probability'])
     update_args2config(args2config, 'regressor_fc_norm_mode', ['regressor', 'fc_norm_mode'])
 
+    update_args2config(args2config, 'conditioner_init_decoder_size', ['conditioner', 'init_decoder_size'])
+    update_args2config(args2config, 'conditioner_init_atom_embedding_dim', ['conditioner', 'init_atom_embedding_dim'])
+    update_args2config(args2config, 'conditioner_output_dim', ['conditioner', 'output_dim'])
+    update_args2config(args2config, 'conditioner_positional_embedding', ['conditioner', 'positional_embedding'])
     update_args2config(args2config, 'conditioner_positional_embedding', ['conditioner', 'positional_embedding'])
     update_args2config(args2config, 'conditioner_graph_model', ['conditioner', 'graph_model'])
     update_args2config(args2config, 'conditioner_atom_embedding_size', ['conditioner', 'atom_embedding_size'])
