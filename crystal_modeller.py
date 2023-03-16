@@ -837,9 +837,13 @@ class Modeller():
 
     def discriminator_step(self, discriminator, generator, epoch_stats_dict, data, discriminator_optimizer, i, update_gradients, discriminator_err, discriminator_loss_record, skip_step, epoch, last_batch):
         if self.config.train_discriminator_adversarially or self.config.train_discriminator_on_distorted or self.config.train_discriminator_on_randn:
-            generated_samples_i, handedness, epoch_stats_dict = self.generate_discriminator_negatives(epoch_stats_dict, self.config, data, generator, i)
+            generated_samples_i, handedness, epoch_stats_dict = \
+                self.generate_discriminator_negatives(epoch_stats_dict, self.config, data, generator, i)
 
-            score_on_real, score_on_fake, generated_samples, real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
+
+            # todo separate generated samples data objects from original real crystals
+            score_on_real, score_on_fake, generated_samples, \
+            real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
                 = self.train_discriminator(generated_samples_i, discriminator, data, i, handedness)
 
             prediction = torch.cat((score_on_real, score_on_fake))

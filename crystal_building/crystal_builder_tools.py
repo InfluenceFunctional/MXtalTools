@@ -167,6 +167,7 @@ def ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list,
     supercell_atoms_list = []
     ref_mol_inds_list = []
     copies = []
+    z_values = [len(ref_list) for ref_list in reference_cell_list] # todo delete once generator method is separated
     for i, (ref_cell, cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, z_values)):
         if type(ref_cell) == np.ndarray:
             ref_cell = torch.tensor(ref_cell,device = device)
