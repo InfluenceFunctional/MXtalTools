@@ -840,7 +840,6 @@ class Modeller():
             generated_samples_i, handedness, epoch_stats_dict = \
                 self.generate_discriminator_negatives(epoch_stats_dict, self.config, data, generator, i)
 
-
             # todo separate generated samples data objects from original real crystals
             score_on_real, score_on_fake, generated_samples, \
             real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score \
@@ -2110,14 +2109,14 @@ class Modeller():
     def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, adversarial_score, vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score):
         generator_losses_list = []
         stats_keys, stats_values = [], []
-        if self.config.train_generator_packing:
-            generator_losses_list.append(packing_loss.float())
-
         if packing_loss is not None:
             stats_keys += ['generator packing loss', 'generator packing prediction',
                            'generator packing target', 'generator packing mae']
             stats_values += [packing_loss.cpu().detach().numpy(), packing_prediction,
                              packing_target, np.abs(packing_prediction - packing_target) / packing_target]
+
+            if self.config.train_generator_packing:
+                generator_losses_list.append(packing_loss.float())
 
         if adversarial_score is not None:
             softmax_adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
@@ -2125,43 +2124,48 @@ class Modeller():
             stats_keys += ['generator adversarial loss']
             stats_values += [adversarial_loss.cpu().detach().numpy()]
 
-        if self.config.train_generator_adversarially:
-            generator_losses_list.append(adversarial_loss)
+            if self.config.train_generator_adversarially:
+                generator_losses_list.append(adversarial_loss)
 
         if vdw_loss is not None:
             stats_keys += ['generator per mol vdw loss']
             stats_values += [vdw_loss.cpu().detach().numpy()]
 
-        if self.config.train_generator_vdw:
-            if self.config.vdw_loss_rescaling == 'log':
-                vdw_loss_f = torch.log(1 + vdw_loss)  # soft rescaling to be gentler on outliers
-            elif self.config.vdw_loss_rescaling is None:
-                vdw_loss_f = vdw_loss
-            elif self.config.vdw_loss_rescaling == 'mse':
-                vdw_loss_f = vdw_loss ** 2
+            if self.config.train_generator_vdw:
+                if self.config.vdw_loss_rescaling == 'log':
+                    vdw_loss_f = torch.log(1 + vdw_loss)  # soft rescaling to be gentler on outliers
+                elif self.config.vdw_loss_rescaling is None:
+                    vdw_loss_f = vdw_loss
+                elif self.config.vdw_loss_rescaling == 'mse':
+                    vdw_loss_f = vdw_loss ** 2
 
-            generator_losses_list.append(vdw_loss_f)
+                generator_losses_list.append(vdw_loss_f)
 
-        if self.config.train_generator_h_bond:
-            generator_losses_list.append(h_bond_score)
+
         if h_bond_score is not None:
+            if self.config.train_generator_h_bond:
+                generator_losses_list.append(h_bond_score)
+
             stats_keys += ['generator h bond loss']
             stats_values += [h_bond_score.cpu().detach().numpy()]
 
-        if self.config.generator_similarity_penalty != 0:
-            if similarity_penalty is not None:
-                generator_losses_list.append(self.config.generator_similarity_penalty * similarity_penalty)
-            else:
-                print('similarity penalty was none')
+
         if similarity_penalty is not None:
             stats_keys += ['generator similarity loss']
             stats_values += [similarity_penalty.cpu().detach().numpy()]
 
-        if self.config.train_generator_combo:
-            generator_losses_list.append(-combo_score)
+            if self.config.generator_similarity_penalty != 0:
+                if similarity_penalty is not None:
+                    generator_losses_list.append(self.config.generator_similarity_penalty * similarity_penalty)
+                else:
+                    print('similarity penalty was none')
+
         if combo_score is not None:
             stats_keys += ['generator combo loss']
             stats_values += [1 - combo_score.cpu().detach().numpy()]
+
+            if self.config.train_generator_combo:
+                generator_losses_list.append(-combo_score)
 
         generator_losses = torch.sum(torch.stack(generator_losses_list), dim=0)
         epoch_stats_dict = update_stats_dict(epoch_stats_dict, stats_keys, stats_values)
