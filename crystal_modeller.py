@@ -2139,7 +2139,7 @@ class Modeller():
             generator_losses_list.append(vdw_loss_f)
 
         if self.config.train_generator_h_bond:
-            generator_losses_list.appefnd(h_bond_score)
+            generator_losses_list.append(h_bond_score)
         if h_bond_score is not None:
             stats_keys += ['generator h bond loss']
             stats_values += [h_bond_score.cpu().detach().numpy()]
