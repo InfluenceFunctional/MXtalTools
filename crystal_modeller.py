@@ -901,10 +901,11 @@ class Modeller():
         return generator_err, generator_loss_record, epoch_stats_dict
 
     def conditioner_step(self, conditioner, epoch_stats_dict, data, conditioner_optimizer, i, epoch, update_gradients, loss, loss_record):
-        if (epoch < 50) and (i%2 == 0):
-            rand_sample = True
-        else:
-            rand_sample = False
+        # if (epoch < 50) and (i%2 == 0):
+        #     rand_sample = True
+        # else:
+        #     rand_sample = False
+        rand_sample = False # only real data
 
         packing_loss, reconstruction_loss, target_sample, prediction_sample, \
         packing_true, packing_pred, particle_dist_true, particle_dist_pred,\
@@ -924,7 +925,7 @@ class Modeller():
 
         epoch_stats_dict = update_stats_dict(epoch_stats_dict, stats_keys, stats_values)
 
-        if real_sample:
+        if not real_sample:
             conditioning_losses = reconstruction_loss  #+ packing_loss
         else:
             conditioning_losses = reconstruction_loss + packing_loss
@@ -1139,7 +1140,7 @@ class Modeller():
         return packing_loss, reconstruction_loss, \
                target[0:8].cpu().detach().numpy(), point_cloud_prediction[0:8].cpu().detach().numpy(), \
                data.y.cpu().detach().numpy(), packing_prediction.cpu().detach().numpy(), \
-               torch.mean(F.one_hot(target).permute(0, 4, 1, 2, 3).flatten(2, 4).float(), dim=(0, 2)).cpu().detach().numpy(), \
+               torch.mean(F.one_hot(target, num_classes = self.config.max_atomic_number).permute(0, 4, 1, 2, 3).flatten(2, 4).float(), dim=(0, 2)).cpu().detach().numpy(), \
                torch.mean(F.softmax(point_cloud_prediction.flatten(2, 4), dim=1).float(), dim=(0, 2)).cpu().detach().numpy(),\
                sample_real
 
@@ -2473,7 +2474,7 @@ class Modeller():
                 y=Y.flatten(),
                 z=Z.flatten(),
                 value=sample_density.flatten(),
-                isomin=0.0001,
+                isomin=0.00001,
                 isomax=1,
                 opacity=0.05,  # needs to be small to see through all surfaces
                 surface_count=50,  # needs to be a large number for good volume rendering
@@ -2752,12 +2753,12 @@ class Modeller():
             }
         elif self.config.conditioner.decoder_classes == 'full':
             self.config.conditioner_classes = {  # only a few substantial atom types
-                'other': 1,
-                6: 2,
-                7: 3,
-                8: 4,
+                'other': 1, # boron or smaller
             }
-        conditioner_classes_dict = {i: self.config.conditioner_classes['other'] for i in range(101)}
+            for i in range(2, self.config.max_atomic_number + 1):
+                self.config.conditioner_classes[i] = i
+
+        conditioner_classes_dict = {i: self.config.conditioner_classes['other'] for i in range(self.config.max_atomic_number)}
         for i, (key, value) in enumerate(self.config.conditioner_classes.items()):
             if key != 'other':
                 conditioner_classes_dict[key] = self.config.conditioner_classes[key]  # assign all atoms to type other, except these specific ones

@@ -285,6 +285,7 @@ def add_args(parser):
     parser.add_argument('--regressor_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
     parser.add_argument('--regressor_fc_norm_mode', type=str, default='layer')
 
+    parser.add_argument('--conditioner_concat_mol_features', type=bool, default=True)
     parser.add_argument('--conditioner_init_decoder_size', type=int, default=3)  # int
     parser.add_argument('--conditioner_init_atom_embedding_dim', type=int, default=5)  # int
     parser.add_argument('--conditioner_positional_embedding', type=str, default='sph')  # sph or pos
@@ -344,6 +345,8 @@ def add_args(parser):
     update_args2config(args2config, 'regressor_fc_dropout_probability', ['regressor', 'fc_dropout_probability'])
     update_args2config(args2config, 'regressor_fc_norm_mode', ['regressor', 'fc_norm_mode'])
 
+
+    update_args2config(args2config, 'conditioner_concat_mol_features', ['conditioner', 'concat_mol_features'])
     update_args2config(args2config, 'conditioner_init_decoder_size', ['conditioner', 'init_decoder_size'])
     update_args2config(args2config, 'conditioner_init_atom_embedding_dim', ['conditioner', 'init_atom_embedding_dim'])
     update_args2config(args2config, 'conditioner_output_dim', ['conditioner', 'output_dim'])
@@ -515,3 +518,5 @@ if __name__ == '__main__':
         predictor.model_sampling()
     else:
         predictor.train()
+
+# todo replace dicts with data classes

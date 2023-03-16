@@ -1,6 +1,7 @@
 import sys
 
 import torch
+import torch.nn.functional as F
 import torch.nn as nn
 from torch.distributions import MultivariateNormal, Uniform
 
@@ -43,7 +44,7 @@ class crystal_generator(nn.Module):
             graph_model=config.conditioner.graph_model,
             graph_filters=config.conditioner.graph_filters,
             graph_convolutional_layers=config.conditioner.graph_convolution_layers,
-            concat_mol_to_atom_features=False, # todo relax this later
+            concat_mol_to_atom_features=config.conditioner.concat_mol_features,
             pooling=config.conditioner.pooling,
             graph_norm=config.conditioner.graph_norm,
             num_spherical=config.conditioner.num_spherical,
@@ -57,7 +58,7 @@ class crystal_generator(nn.Module):
             max_num_neighbors=config.conditioner.max_num_neighbors,
             convolution_cutoff=config.conditioner.graph_convolution_cutoff,
             positional_embedding=config.conditioner.positional_embedding,
-            max_molecule_size=1,
+            max_molecule_size=config.max_molecule_radius,
             crystal_mode=False,
             crystal_convolution_type=None,
             skip_mlp=False
@@ -90,6 +91,8 @@ class crystal_generator(nn.Module):
             conditions.x = torch.cat((conditions.x[:, :-self.crystal_features_to_ignore], normed_coords), dim=-1)  # concatenate to input features
             conditions_encoding = self.conditioner(conditions)
             conditions_encoding = self.rescale_output_dims(conditions_encoding)
+            sg_one_hot = F.one_hot(torch.tensor(conditions.sg_ind,device = conditions.x.device, dtype=torch.long),
+                                   num_classes=230) # one-hot encoding of the space group
         else:
             conditions_encoding = None
 

@@ -33,7 +33,7 @@ class molecule_autoencoder(nn.Module):
             graph_model=config.conditioner.graph_model,
             graph_filters=config.conditioner.graph_filters,
             graph_convolutional_layers=config.conditioner.graph_convolution_layers,
-            concat_mol_to_atom_features=False, # todo relax this later
+            concat_mol_to_atom_features=config.conditioner.concat_mol_features,
             pooling=config.conditioner.pooling,
             graph_norm=config.conditioner.graph_norm,
             num_spherical=config.conditioner.num_spherical,
@@ -72,13 +72,13 @@ class molecule_autoencoder(nn.Module):
                                          strides=strides,
                                          init_image_size = config.conditioner.init_decoder_size)
 
-        self.mlp = general_MLP(input_dim=conv_embedding_dim * config.conditioner.init_decoder_size**3,
+        self.mlp = general_MLP(input_dim=config.conditioner.decoder_embedding_dim * config.conditioner.init_decoder_size**3,
                                layers=2,
                                output_dim=1,
-                               filters=config.conditioner.fc_depth,
-                               norm=config.conditioner.fc_norm_mode,
-                               dropout=config.conditioner.fc_dropout_probability,
-                               activation='leaky relu')
+                               filters=256,
+                               norm='layer',
+                               dropout=0.1,
+                               activation='gelu')
 
     def forward(self, data):
         #normed_coords = data.pos / self.conditioner.max_molecule_size  # norm coords by maximum molecule radius

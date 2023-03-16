@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10085
 anomaly_detection: False
 mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
 save_checkpoints: True # will do it always on cluster, only locally if True
@@ -19,9 +19,9 @@ train_generator_h_bond: False # maximize h bonding (non-directional)
 train_generator_adversarially: True
 generator_similarity_penalty: 0
 
-train_discriminator_adversarially: False
-train_discriminator_on_randn: False
-train_discriminator_on_distorted: False
+train_discriminator_adversarially: True
+train_discriminator_on_randn: True
+train_discriminator_on_distorted: True
 sample_distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
 extra_test_period: 10
@@ -44,27 +44,26 @@ seeds:
 
 # opt - sweep details
 wandb:
-  sample_reporting_frequency: 5
-  experiment_tag: dev
+  sample_reporting_frequency: 3
+  experiment_tag: prototype_pretraining
   log_figures: True
 
 # batching & convergence
 accumulate_gradients: False
 accumulate_batch_size: 10000
-auto_batch_sizing: False
+auto_batch_sizing: False # todo DEPRECATED
+auto_batch_reduction: 0.05 # fraction of tested max batch size to actually start with (unequal graph sizes)
 grow_batch_size: True
 min_batch_size: 10
 max_batch_size: 1000
 batch_growth_increment: 0.05
-auto_batch_reduction: 0.05 # fraction of tested max batch size to actually start with (unequal graph sizes)
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
 history: 5000
 gradient_norm_clip: 10
 
-
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 10000
+dataset_length: 1000000
 feature_richness: minimal # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100
@@ -96,9 +95,9 @@ supercell_size: 5 # new method - should be very large, automatically pares down
 # discriminator optimizer and model
 discrimiator_optimizer:
   optimizer: adam
-  init_lr: 1.0E-4
-  max_lr: 1.0E-3
-  min_lr: 1.0E-4
+  init_lr: 1.0E-6
+  max_lr: 2.0E-5
+  min_lr: 5.0E-6
   lr_schedule: True
   beta1: 0.9
   beta2: 0.999
@@ -120,7 +119,7 @@ discriminator:
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 1 # mikenet GATv2 mode only - must evenly divide graph filters
+  num_attention_heads: 4 # mikenet GATv2 mode only - must evenly divide graph filters
   graph_convolution: 'TransformerConv' # 'full message passing' or schnet or 'GATv2'
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False #
@@ -143,14 +142,14 @@ generator_optimizer:
   beta2: 0.999 #0.999
   weight_decay: 0.01
   convergence_eps: 0.00001
-  lr_growth_lambda: 1.1
-  lr_shrink_lambda: 0.975
+  lr_growth_lambda: 1.05
+  lr_shrink_lambda: 0.99
 
 generator:
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   positional_noise: 0 # scaling for the randn noise added to all atom positions
-  num_fc_layers: 8
-  fc_depth: 1024
+  num_fc_layers: 4
+  fc_depth: 256
   activation: 'gelu'
   fc_dropout_probability: 0
   fc_norm_mode: layer
@@ -170,14 +169,14 @@ conditioner_optimizer:
   weight_decay: 0.01
   convergence_eps: 0.00001
   lr_growth_lambda: 1.01
-  lr_shrink_lambda: 0.975
+  lr_shrink_lambda: 0.99
 
 conditioner:
-  concat_mol_features: False
+  init_decoder_size: 1
   init_atom_embedding_dim: 5
   positional_noise: 0 # scaling for the randn noise added to all atom positions
   graph_convolution_layers: 2
-  graph_filters: 64
+  graph_filters: 32
   atom_embedding_size: 128
   output_dim: 128
   graph_norm: null
@@ -201,9 +200,7 @@ conditioner:
 
   decoder_embedding_dim: 2048
   decoder_resolution: 0.5 # angstrom
-  decoder_classes: 'minimal' # 'minimal' or 'full'
-  init_decoder_size: 1
-
+  decoder_classes: 'full' # 'minimal' or 'full'
 
 regressor_optimizer:
   optimizer: adamw
