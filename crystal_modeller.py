@@ -1140,7 +1140,7 @@ class Modeller():
         return packing_loss, reconstruction_loss, \
                target[0:8].cpu().detach().numpy(), point_cloud_prediction[0:8].cpu().detach().numpy(), \
                data.y.cpu().detach().numpy(), packing_prediction.cpu().detach().numpy(), \
-               torch.mean(F.one_hot(target, num_classes = self.config.max_atomic_number).permute(0, 4, 1, 2, 3).flatten(2, 4).float(), dim=(0, 2)).cpu().detach().numpy(), \
+               torch.mean(F.one_hot(target, num_classes = self.config.max_atomic_number + 1).permute(0, 4, 1, 2, 3).flatten(2, 4).float(), dim=(0, 2)).cpu().detach().numpy(), \
                torch.mean(F.softmax(point_cloud_prediction.flatten(2, 4), dim=1).float(), dim=(0, 2)).cpu().detach().numpy(),\
                sample_real
 
