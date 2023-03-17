@@ -19,7 +19,6 @@ class molecule_regressor(nn.Module):
             fc_depth=config.regressor.fc_depth,
             fc_dropout_probability=config.regressor.fc_dropout_probability,
             fc_norm_mode=config.regressor.fc_norm_mode,
-            graph_model=config.regressor.graph_model,
             graph_filters=config.regressor.graph_filters,
             graph_convolutional_layers=config.regressor.graph_convolution_layers,
             concat_mol_to_atom_features=True,

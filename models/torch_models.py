@@ -23,7 +23,6 @@ class molecule_graph_model(nn.Module):
                  fc_depth,
                  fc_dropout_probability,
                  fc_norm_mode,
-                 graph_model,
                  graph_filters,
                  graph_convolutional_layers,
                  concat_mol_to_atom_features,
@@ -56,7 +55,6 @@ class molecule_graph_model(nn.Module):
         self.fc_depth = fc_depth
         self.fc_dropout_probability = fc_dropout_probability
         self.fc_norm_mode = fc_norm_mode
-        self.graph_model = graph_model
         self.graph_convolution = graph_convolution
         self.output_classes = output_dimension
         self.graph_convolution_layers = graph_convolutional_layers
@@ -157,26 +155,19 @@ class molecule_graph_model(nn.Module):
         else:
             mol_feats = None
 
-        if self.graph_model is not None:
-            x, dists_dict = self.graph_net(x[:, :self.n_atom_feats], pos, batch, ptr=ptr, ref_mol_inds=aux_ind, return_dists=return_dists)  # get atoms encoding
-            if self.crystal_mode:  # model only outputs ref mol atoms - many fewer
-                x = self.global_pool(x, pos, batch[torch.where(aux_ind == 0)[0]], output_dim=num_graphs)
-            else:
-                x = self.global_pool(x, pos, batch, output_dim=num_graphs)  # aggregate atoms to molecule
+        x, dists_dict = self.graph_net(x[:, :self.n_atom_feats], pos, batch, ptr=ptr, ref_mol_inds=aux_ind, return_dists=return_dists)  # get atoms encoding
+        if self.crystal_mode:  # model only outputs ref mol atoms - many fewer
+            x = self.global_pool(x, pos, batch[torch.where(aux_ind == 0)[0]], output_dim=num_graphs)
+        else:
+            x = self.global_pool(x, pos, batch, output_dim=num_graphs)  # aggregate atoms to molecule
 
-        if not self.skip_mlp:
-            if self.graph_model is not None:
-                x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
-            else:
-                x = self.gnn_mlp(mol_feats)
+        x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
+
 
         output = self.output_fc(x)
 
         if return_dists:
-            if self.graph_model is not None:
-                extra_outputs['dists dict'] = dists_dict
-            else:
-                extra_outputs['dists dict'] = None
+            extra_outputs['dists dict'] = dists_dict
         if return_latent:
             extra_outputs['latent'] = output.cpu().detach().numpy()
 

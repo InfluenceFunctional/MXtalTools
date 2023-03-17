@@ -2513,6 +2513,16 @@ def reload_model(model, optimizer, path):
     return model, optimizer
 
 
+def compute_packing_coeff(data, mol_volume_ind):
+    volumes_list = []
+    for i in range(data.num_graphs):
+        volumes_list.append(cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6]))
+    volumes = torch.stack(volumes_list)
+    z_values = torch.tensor([len(data.ref_cell_pos[ii]) for ii in range(data.num_graphs)],
+                            dtype=torch.float64, device = volumes.device) # todo remove this when we fix Z values
+    coeffs = z_values * data.tracking[:, mol_volume_ind] / volumes
+    return coeffs
+
 def compute_num_h_bonds(supercell_data, dataDims, i):
     batch_inds = torch.arange(supercell_data.ptr[i], supercell_data.ptr[i + 1], device=supercell_data.x.device)
 

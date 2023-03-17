@@ -30,7 +30,6 @@ class molecule_autoencoder(nn.Module):
             fc_depth=config.conditioner.fc_depth,
             fc_dropout_probability=config.conditioner.fc_dropout_probability,
             fc_norm_mode=config.conditioner.fc_norm_mode,
-            graph_model=config.conditioner.graph_model,
             graph_filters=config.conditioner.graph_filters,
             graph_convolutional_layers=config.conditioner.graph_convolution_layers,
             concat_mol_to_atom_features=config.conditioner.concat_mol_features,

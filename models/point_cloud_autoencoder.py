@@ -144,7 +144,6 @@ class molecule_autoencoder(nn.Module):
                 fc_depth=n_filters,
                 fc_dropout_probability=fc_dropout,
                 fc_norm_mode=norm_type_1,
-                graph_model='mike',
                 graph_filters=encoder_filters // 4,
                 graph_convolutional_layers=encoder_layers,
                 concat_mol_to_atom_features=False,

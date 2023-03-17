@@ -264,7 +264,6 @@ def add_args(parser):
 
     # generator model settings
     parser.add_argument('--regressor_positional_embedding', type=str, default='sph')  # sph or pos
-    parser.add_argument('--regressor_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
     parser.add_argument('--regressor_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
     parser.add_argument('--regressor_graph_filters', type=int, default=28)  # number of neurons per graph convolution
     parser.add_argument('--regressor_graph_convolution', type=str, default='full message passing')  # type of graph convolution for mikenet only 'GATv2' 'full message passing'
@@ -289,7 +288,6 @@ def add_args(parser):
     parser.add_argument('--conditioner_init_decoder_size', type=int, default=3)  # int
     parser.add_argument('--conditioner_init_atom_embedding_dim', type=int, default=5)  # int
     parser.add_argument('--conditioner_positional_embedding', type=str, default='sph')  # sph or pos
-    parser.add_argument('--conditioner_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
     parser.add_argument('--conditioner_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
     parser.add_argument('--conditioner_output_dim', type=int, default=128)  # embedding dimension for atoms
     parser.add_argument('--conditioner_graph_filters', type=int, default=28)  # number of neurons per graph convolution
@@ -325,7 +323,6 @@ def add_args(parser):
     parser.add_argument('--generator_prior_dimension', type=int, default=12)  # type of prior distribution
 
     update_args2config(args2config, 'regressor_positional_embedding', ['regressor', 'positional_embedding'])
-    update_args2config(args2config, 'regressor_graph_model', ['regressor', 'graph_model'])
     update_args2config(args2config, 'regressor_atom_embedding_size', ['regressor', 'atom_embedding_size'])
     update_args2config(args2config, 'regressor_graph_filters', ['regressor', 'graph_filters'])
     update_args2config(args2config, 'regressor_graph_convolution', ['regressor', 'graph_convolution'])
@@ -352,7 +349,6 @@ def add_args(parser):
     update_args2config(args2config, 'conditioner_output_dim', ['conditioner', 'output_dim'])
     update_args2config(args2config, 'conditioner_positional_embedding', ['conditioner', 'positional_embedding'])
     update_args2config(args2config, 'conditioner_positional_embedding', ['conditioner', 'positional_embedding'])
-    update_args2config(args2config, 'conditioner_graph_model', ['conditioner', 'graph_model'])
     update_args2config(args2config, 'conditioner_atom_embedding_size', ['conditioner', 'atom_embedding_size'])
     update_args2config(args2config, 'conditioner_graph_filters', ['conditioner', 'graph_filters'])
     update_args2config(args2config, 'conditioner_graph_convolution', ['conditioner', 'graph_convolution'])
@@ -386,7 +382,6 @@ def add_args(parser):
 
 
     # crystal cell graph Net
-    parser.add_argument('--discriminator_graph_model', type=str, default='mike')  # 'dime', or 'schnet', or 'mike' or None
     parser.add_argument('--discriminator_crystal_convolution_type', type=int, default=1)  # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
     parser.add_argument('--discriminator_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
     parser.add_argument('--discriminator_graph_filters', type=int, default=28)  # number of neurons per graph convolution
@@ -408,7 +403,6 @@ def add_args(parser):
     parser.add_argument('--discriminator_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
     parser.add_argument('--discriminator_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
 
-    update_args2config(args2config, 'discriminator_graph_model', ['discriminator', 'graph_model'])
     update_args2config(args2config, 'discriminator_crystal_convolution_type', ['discriminator', 'crystal_convolution_type'])
     update_args2config(args2config, 'discriminator_atom_embedding_size', ['discriminator', 'atom_embedding_size'])
     update_args2config(args2config, 'discriminator_graph_filters', ['discriminator', 'graph_filters'])

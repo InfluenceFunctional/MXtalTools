@@ -22,7 +22,6 @@ class crystal_discriminator(nn.Module):
             fc_depth=config.discriminator.fc_depth,
             fc_dropout_probability=config.discriminator.fc_dropout_probability,
             fc_norm_mode=config.discriminator.fc_norm_mode,
-            graph_model=config.discriminator.graph_model,
             graph_filters=config.discriminator.graph_filters,
             graph_convolutional_layers=config.discriminator.graph_convolution_layers,
             concat_mol_to_atom_features=True,
