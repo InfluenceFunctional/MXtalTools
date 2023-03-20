@@ -16,7 +16,7 @@ vdw_loss_rescaling: null
 packing_loss_rescaling: null
 train_generator_combo: False
 train_generator_h_bond: False # maximize h bonding (non-directional)
-train_generator_adversarially: False
+train_generator_adversarially: True
 generator_similarity_penalty: 0
 
 train_discriminator_adversarially: True
