@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10113
 anomaly_detection: False
 mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
 save_checkpoints: True # will do it always on cluster, only locally if True
@@ -11,12 +11,12 @@ save_checkpoints: True # will do it always on cluster, only locally if True
 # for GAN training
 freeze_generator_conditioner: False # exclusive with pretraining geometry
 train_generator_packing: True
-train_generator_vdw: False
+train_generator_vdw: True
 vdw_loss_rescaling: null
 packing_loss_rescaling: null
 train_generator_combo: False
 train_generator_h_bond: False # maximize h bonding (non-directional)
-train_generator_adversarially: True
+train_generator_adversarially: False
 generator_similarity_penalty: 0
 
 train_discriminator_adversarially: False
@@ -30,9 +30,9 @@ extra_test_set_paths: [ 'C:/Users/mikem/Desktop/CSP_runs/datasets/csd_coumarins_
   #[ 'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_5_dataset',
   #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_6_dataset',
 #'C:/Users/mikem/Desktop/CSP_runs/datasets/blind_test_targets',]
-discriminator_path: 'C:\Users\mikem\Desktop\CSP_runs\models/cluster/best_discriminator_10088'
-generator_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/best_generator_10096'
-conditioner_path: null #'C:\Users\mikem\Desktop\CSP_runs\models/cluster/best_conditioner_10084'
+discriminator_path: '/home/mk8347/scratch/csd_runs/models/best_discriminator_10088'
+generator_path: null #
+conditioner_path: null #'/home/mk8347/scratch/csd_runs/models/best_conditioner_10084'
 regressor_path: null
 
 sample_steps: 1000
@@ -45,7 +45,7 @@ seeds:
 # opt - sweep details
 wandb:
   sample_reporting_frequency: 5
-  experiment_tag: dev
+  experiment_tag: generator3
   log_figures: True
 
 # batching & convergence
@@ -55,11 +55,11 @@ auto_batch_sizing: False # todo DEPRECATED
 auto_batch_reduction: 0.05 # fraction of tested max batch size to actually start with (unequal graph sizes)
 grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 1000
+max_batch_size: 10000
 batch_growth_increment: 0.05
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
 history: 5000
-gradient_norm_clip: 1
+gradient_norm_clip: 10
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
@@ -69,7 +69,7 @@ max_crystal_temperature: 10000
 min_crystal_temperature: -100
 max_num_atoms: 100
 min_num_atoms: 5 # target XVI has only 9 heavy atoms
-max_molecule_radius: 5 # angstroms
+max_molecule_radius: 10 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -134,9 +134,9 @@ discriminator:
 # generator optimizer and model
 generator_optimizer:
   optimizer: adamw
-  init_lr: 1.0E-5
-  max_lr: 1.0E-4
-  min_lr: 1.0E-5
+  init_lr: 1.0E-4
+  max_lr: 1.0E-3
+  min_lr: 1.0E-4
   lr_schedule: True
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
@@ -146,10 +146,10 @@ generator_optimizer:
   lr_shrink_lambda: 0.99
 
 generator:
-  canonical_conformer_orientation: 'standardized' # 'standardized' 'random'
+  canonical_conformer_orientation: 'random' # 'standardized' 'random'
   positional_noise: 0 # scaling for the randn noise added to all atom positions
   num_fc_layers: 4
-  fc_depth: 512
+  fc_depth: 256
   activation: 'gelu'
   fc_dropout_probability: 0
   fc_norm_mode: null
