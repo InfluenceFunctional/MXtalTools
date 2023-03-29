@@ -1,5 +1,5 @@
 import torch.nn as nn
-from models.torch_models import molecule_graph_model
+from models.base_models import molecule_graph_model
 
 
 class molecule_regressor(nn.Module):

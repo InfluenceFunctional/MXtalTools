@@ -1,8 +1,8 @@
 import os
 from shutil import copyfile
 
-path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/Submissions/'
-dump_path = 'C:/Users/mikem/Desktop/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/'
+path = 'C:/Users\mikem\crystals\/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/Submissions/'
+dump_path = 'C:/Users\mikem\crystals\/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/'
 
 blind_test_targets = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
                       'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',

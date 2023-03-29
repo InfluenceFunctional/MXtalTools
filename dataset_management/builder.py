@@ -1,4 +1,4 @@
-from utils import chunkify
+from common.utils import chunkify
 import numpy as np
 
 try:
@@ -13,7 +13,7 @@ import os
 import pandas as pd
 import sys
 from dataset_management.molecule_featurizer import CustomGraphFeaturizer
-from dataset_management.dataset_manager import Miner
+from dataset_management.manager import Miner
 
 
 class CCDC_helper():

@@ -1,9 +1,9 @@
 import torch
 from torch import nn as nn
 from torch_geometric.nn import global_max_pool
-from models.model_components import general_MLP
-from models.torch_models import molecule_graph_model, PointCloudDecoder
-from utils import get_strides
+from models.components import general_MLP
+from models.base_models import molecule_graph_model, PointCloudDecoder
+from models.utils import get_strides
 
 
 class molecule_autoencoder(nn.Module):

@@ -1,17 +1,16 @@
 import torch
 import numpy as np
-from utils import standardize
+from common.utils import standardize
 from dataset_management.CrystalData import CrystalData
-from crystal_building.crystal_builder_tools import unit_cell_analysis
-from crystal_building.crystal_builder_tools import asym_unit_dict as asymmetric_unit_dict
+from crystal_building.utils import unit_cell_analysis
+from crystal_building.utils import asym_unit_dict as asymmetric_unit_dict
 import sys
 from torch_geometric.loader import DataLoader
 import tqdm
 import pandas as pd
 from pyxtal import symmetry
-from dataset_management.dataset_manager import Miner
+from dataset_management.manager import Miner
 import os
-import copy
 
 
 class BuildDataset:

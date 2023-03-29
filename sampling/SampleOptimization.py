@@ -1,6 +1,6 @@
 import numpy as np
 import tqdm
-from utils import softmax_and_score
+from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 import torch.nn.functional as F
 import torch.optim as optim

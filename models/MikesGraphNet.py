@@ -1,7 +1,7 @@
 from math import pi as PI
 
 from models.basis_functions import TorsionalEmbedding, SphericalBasisLayer, GaussianEmbedding, BesselBasisLayer
-from models.model_components import Normalization, Activation
+from models.components import Normalization, Activation
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,8 +10,8 @@ from torch_scatter import scatter
 from torch_sparse import SparseTensor
 import torch_geometric.nn as gnn
 from models.asymmetric_radius_graph import asymmetric_radius_graph
-from models.model_components import general_MLP
-from models.positional_encodings import PosEncoding3D
+from models.components import general_MLP
+from old.positional_encodings import PosEncoding3D
 
 
 class MikesGraphNet(torch.nn.Module):

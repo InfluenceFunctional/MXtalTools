@@ -211,7 +211,6 @@ def nice_scoring_plots(config,wandb):
     fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['Test Real'], row=2, col=2)
     fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['Test Real'], row=2, col=2)
 
-    fig.update_layout(showlegend=False, yaxis_showgrid=True)
 
     fig.update_layout(showlegend=False, yaxis_showgrid=True, width=1000, height=500)
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))

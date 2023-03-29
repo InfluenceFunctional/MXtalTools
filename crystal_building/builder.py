@@ -1,13 +1,9 @@
-from scipy.spatial.transform import Rotation
 import torch
 import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn
-from crystal_building.crystal_builder_tools import \
-    (update_supercell_data, compute_lattice_vector_overlap,
-     coor_trans_matrix,
-     ref_to_supercell, clean_cell_output, invert_coords,
-     compute_Ip_handedness, align_crystaldata_to_principal_axes, asym_unit_dict,
-     euler_XYZ_rotation_matrix)
+from crystal_building.utils import \
+    (update_supercell_data, coor_trans_matrix,
+     ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, asym_unit_dict)
 
 
 def override_sg_info(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):

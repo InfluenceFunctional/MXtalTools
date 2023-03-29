@@ -1,6 +1,7 @@
 import torch
 from models.asymmetric_radius_graph import asymmetric_radius_graph
-from utils import parallel_compute_rdf_torch
+from common.rdf_calculation import parallel_compute_rdf_torch
+
 
 def crystal_rdf(crystaldata, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False):
     '''

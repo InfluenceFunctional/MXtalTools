@@ -8,7 +8,7 @@ warnings.filterwarnings("ignore", category=UserWarning)  # annoying w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
 # warnings.filterwarnings("ignore", category=PerformanceWarning) # annoying pandas error
 
-from utils import add_bool_arg, get_config
+from common.utils import add_bool_arg, get_config
 from crystal_modeller import Modeller
 
 
@@ -64,21 +64,23 @@ def add_args(parser):
     parser.add_argument('--wandb_username', type=str, default='mkilgour')
     parser.add_argument('--wandb_project_name', type=str, default='MCryGAN')
     parser.add_argument('--wandb_sample_reporting_frequency', type=int, default=1)
+    parser.add_argument('--wandb_mini_csp_frequency', type=int, default=1)
     add_bool_arg(parser, 'wandb_log_figures', default=True)
 
     update_args2config(args2config, 'wandb_experiment_tag', ['wandb', 'experiment_tag'])
     update_args2config(args2config, 'wandb_username', ['wandb', 'username'])
     update_args2config(args2config, 'wandb_project_name', ['wandb', 'project_name'])
     update_args2config(args2config, 'wandb_sample_reporting_frequency', ['wandb', 'sample_reporting_frequency'])
+    update_args2config(args2config, 'wandb_mini_csp_frequency', ['wandb', 'mini_csp_frequency'])
     update_args2config(args2config, 'wandb_log_figures', ['wandb', 'log_figures'])
 
     # dataset settings
     # todo update target - mostly not used
     parser.add_argument('--target', type=str,
                         default='molecule spherical defect')  # 'rings', 'groups', 'screw', 'inversion','rotoinversion','mirror','rotation','glide', 'crystal system', 'lattice centering', 'spherical', 'planar'(not in Jan17 dataset)
-    parser.add_argument("--dataset_path", type=str, default='C:/Users\mikem\Desktop\CSP_runs\datasets/full_dataset')
+    parser.add_argument("--dataset_path", type=str, default="C:/Users\mikem\crystals\CSP_runs\datasets/full_dataset")
     parser.add_argument('--dataset_length', type=int, default=int(1e3))  # maximum number of items in the dataset before filtration
-    parser.add_argument('--feature_richness', type=str, default='minimal')  # atom & molecule feature richness
+    parser.add_argument('--feature_richness', type=str, default="minimal")  # atom & molecule feature richness
 
     # dataset composition
     parser.add_argument('--include_sgs', type=str, default=None)  # ['P21/c'] spacegroups to explicitly include in modelling - new!
@@ -467,7 +469,7 @@ def add_args(parser):
 
 def process_config(config):
     if config.machine == 'local':
-        config.workdir = 'C:/Users\mikem\Desktop/CSP_runs'
+        config.workdir = 'C:/Users\mikem\crystals\CSP_runs'
     elif config.machine == 'cluster':
         config.workdir = '/scratch/mk8347/csd_runs/'
         config.dataset_path = '/scratch/mk8347/csd_runs/datasets/full_dataset'
@@ -483,7 +485,7 @@ def process_config(config):
         if config.machine == 'cluster':
             config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
         else:
-            config.dataset_path = 'C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset'
+            config.dataset_path = 'C:/Users\mikem\crystals\CSP_runs\datasets/test_dataset'
 
     return config
 
@@ -507,10 +509,10 @@ if __name__ == '__main__':
     '''
     predictor = Modeller(config)
     if config.mode == 'figures':
-        predictor.make_nice_figures()
+        predictor.nov_22_figures()
     elif config.mode == 'sampling':
         predictor.model_sampling()
     else:
         predictor.train()
 
-# todo replace dicts with data classes
+# todo replace common dicts with data classes

@@ -1,34 +1,18 @@
 '''
 can a model recreate the point cloud positions given an encoding?
 '''
-import torch
 from torch import backends, optim
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils import data
-import matplotlib.pyplot as plt
-import numpy as np
-from models.model_components import *
+from models.components import *
 import tqdm
 import plotly.graph_objects as go
-from models.basis_functions import GaussianEmbedding, BesselBasisLayer
-from models.positional_encodings import PosEncoding3D, PosEncoding2D
-from torch_scatter import scatter
-import time
-from e3nn import o3
 from torch.optim import lr_scheduler
 import wandb
-from models.global_aggregation import global_aggregation
-from scipy.stats import wasserstein_distance
-from utils import make_grid, torch_emd
 import itertools
-from torch_geometric.transforms import spherical, polar
-import torch_geometric.nn as gnn
 from plotly.subplots import make_subplots
-from models.torch_models import molecule_graph_model
+from models.base_models import molecule_graph_model
 from models.generator_models import PointCloudDecoder
 import os
-from dataset_management.dataset_utils import update_dataloader_batch_size
+from dataset_management.utils import update_dataloader_batch_size
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 

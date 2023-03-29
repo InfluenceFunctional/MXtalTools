@@ -1,14 +1,12 @@
 import numpy as np
-from utils import compute_principal_axes_np, single_molecule_principal_axes, enforce_1d_bound, batch_molecule_principal_axes, compute_Ip_handedness
+from models.utils import enforce_1d_bound
+from common.geometry_calculations import compute_principal_axes_np, single_molecule_principal_axes, batch_molecule_principal_axes, compute_Ip_handedness
 from scipy.spatial.transform import Rotation
 import torch
-import time
-import torch.nn.utils.rnn as rnn
 import torch.nn.functional as F
 import sys
 #from pymatgen.symmetry import analyzer
 #from pymatgen.core import (structure, lattice)
-import tqdm
 
 asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
     '1': [1, 1, 1],  # P1
@@ -220,13 +218,14 @@ def ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list,
 
 
 def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords_list, ref_mol_inds_list, reference_cell_list):
+    device = supercell_data.x.device
     for i in range(supercell_data.num_graphs):
         if i == 0:
-            new_batch = torch.ones(len(supercell_atoms_list[i])).int() * i
-            new_ptr = torch.zeros(supercell_data.num_graphs + 1)
+            new_batch = torch.ones(len(supercell_atoms_list[i]),device = device).int() * i
+            new_ptr = torch.zeros(supercell_data.num_graphs + 1, device=device)
             new_ptr[1] = len(supercell_coords_list[0])
         else:
-            new_batch = torch.cat((new_batch, torch.ones(len(supercell_atoms_list[i])).int() * i))
+            new_batch = torch.cat((new_batch, torch.ones(len(supercell_atoms_list[i]), device=device).int() * i))
             new_ptr[i + 1] = new_ptr[i] + len(supercell_coords_list[i])
 
     # update dataloader with cell info

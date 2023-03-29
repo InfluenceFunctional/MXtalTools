@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.global_aggregation import global_aggregation
-from models.model_components import general_MLP
+from models.components import general_MLP
 from torch.distributions import MultivariateNormal
 import numpy as np
 from ase import Atoms

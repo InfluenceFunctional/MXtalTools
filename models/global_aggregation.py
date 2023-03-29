@@ -1,12 +1,10 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from models.model_components import general_MLP
+from models.components import general_MLP
 from e3nn import o3
-from e3nn.nn import FullyConnectedNet
 from models.basis_functions import BesselBasisLayer, GaussianEmbedding
 from torch_geometric import nn as gnn
-from models.positional_encodings import PosEncoding3D
+from old.positional_encodings import PosEncoding3D
 
 
 class global_aggregation(nn.Module):

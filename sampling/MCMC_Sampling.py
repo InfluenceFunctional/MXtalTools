@@ -1,16 +1,14 @@
 '''import statements'''
 import tqdm
 import numpy as np
-import torch.nn.functional as F
 import torch
-import torch.optim as optim
-from utils import softmax_and_score
+from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
-from crystal_building.crystal_builder_tools import \
-    (batch_molecule_principal_axes, compute_Ip_handedness,
-     random_crystaldata_alignment, align_crystaldata_to_principal_axes,
+from crystal_building.utils import \
+    (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
      unit_cell_analysis)
-from crystal_building.supercell_builders import override_sg_info
+from common.geometry_calculations import batch_molecule_principal_axes, compute_Ip_handedness
+from crystal_building.builder import override_sg_info
 
 '''
 This script uses Markov Chain Monte Carlo, including the STUN algorithm, to optimize a given function

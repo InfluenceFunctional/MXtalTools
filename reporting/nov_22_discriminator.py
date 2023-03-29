@@ -2,7 +2,9 @@ from plotly.colors import n_colors
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import numpy as np
-from utils import softmax_and_score, norm_scores, compute_rdf_distance_old, normalize, earth_movers_distance_np, histogram_overlap
+from common.utils import normalize, earth_movers_distance_np, histogram_overlap
+from models.utils import softmax_and_score, norm_scores
+from common.rdf_calculation import compute_rdf_distance_old
 from scipy.stats import linregress
 
 

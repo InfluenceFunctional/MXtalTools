@@ -5,8 +5,8 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.distributions import MultivariateNormal, Uniform
 
-from models.model_components import general_MLP
-from models.torch_models import molecule_graph_model
+from models.components import general_MLP
+from models.base_models import molecule_graph_model
 
 
 class crystal_generator(nn.Module):
