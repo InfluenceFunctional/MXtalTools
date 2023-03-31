@@ -19,7 +19,7 @@ import tqdm
 
 from crystal_building.coordinate_transformations import cell_vol
 from crystal_building.utils import *
-from crystal_building.builder import SupercellBuilder, override_sg_info
+from crystal_building.builder import SupercellBuilder, update_sg_to_all_crystals, update_crystal_symmetry_elements
 from dataset_management.manager import Miner
 from dataset_management.utils import BuildDataset, get_dataloaders, update_dataloader_batch_size, \
     get_extra_test_loader
@@ -30,7 +30,8 @@ from models.generator_models import crystal_generator
 from models.utils import *
 from models.regression_models import molecule_regressor
 from models.base_models import independent_gaussian_model
-from models.vdw_overlap import vdw_overlap, raw_vdw_overlap
+from models.utils import compute_h_bond_score, get_vdw_penalty, cell_density_loss
+from models.vdw_overlap import vdw_overlap
 from reporting.online import cell_params_analysis, log_supercell_examples, plotly_setup, cell_density_plot, all_losses_plot, report_conditioner_training, process_discriminator_outputs, discriminator_scores_plot, \
     plot_generator_loss_correlates, plot_discriminator_score_correlates, mini_csp_reporting, sampling_telemetry_plot, cell_params_tracking_plot
 from sampling.MCMC_Sampling import mcmcSampler
@@ -39,6 +40,9 @@ from common.utils import *
 from common.utils import update_gan_metrics
 from sampling.utils import de_clean_samples, sample_clustering
 
+
+# https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
+# https://dictionary.iucr.org/Sohncke_groups#:~:text=Sohncke%20groups%20are%20the%20three,in%20the%20chiral%20space%20groups.
 
 class Modeller:
     def __init__(self, config):
@@ -323,9 +327,11 @@ class Modeller:
         autoencoder
         GAN (generator and/or discriminator)
         """
-        with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username,
+        with wandb.init(config=self.config,
+                        project=self.config.wandb.project_name,
+                        entity=self.config.wandb.username,
                         tags=[self.config.wandb.experiment_tag]):
-            wandb.run.name = wandb.config.machine + '_' + str(wandb.config.run_num)  # overwrite procedurally generated run name with our run name
+            wandb.run.name = wandb.config.machine + '_' + str(self.config.mode) + '_' + str(wandb.config.run_num)  # overwrite procedurally generated run name with our run name
             wandb.run.save()
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
 
@@ -454,7 +460,7 @@ class Modeller:
                                           regressor_te_record)
 
                         # sometimes to detailed reporting
-                        if epoch % self.config.wandb.sample_reporting_frequency == 0:
+                        if (epoch % self.config.wandb.sample_reporting_frequency) == 0:
                             self.detailed_reporting(epoch, train_loader, train_epoch_stats_dict, test_epoch_stats_dict,
                                                     extra_test_dict=extra_test_epoch_stats_dict)
 
@@ -977,13 +983,13 @@ class Modeller:
         # generate fakes & create supercell data
         real_supercell_data = self.supercell_builder.real_cell_to_supercell(data, self.config)
 
-        generated_samples_i, handedness, epoch_stats_dict = \
+        generated_samples_i, epoch_stats_dict = \
             self.generate_discriminator_negatives(epoch_stats_dict, data, generator, i)
+
         fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
             data, generated_samples_i, self.config.supercell_size,
             self.config.discriminator.graph_convolution_cutoff,
-            override_sg=self.config.generate_sgs,
-            target_handedness=handedness, align_molecules=False)
+            align_molecules=False)
 
         if self.config.device.lower() == 'cuda':  # redundant
             real_supercell_data = real_supercell_data.cuda()
@@ -1024,8 +1030,11 @@ class Modeller:
             mode = mode_override
         else:
             mode = self.config.generator.canonical_conformer_orientation
+
         if mode == 'standardized':
             data = align_crystaldata_to_principal_axes(data)
+            data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
+
         elif mode == 'random':
             data = random_crystaldata_alignment(data)
             if right_handed:
@@ -1037,81 +1046,94 @@ class Modeller:
                     if hand == -1:
                         data.pos[data.batch == ind] = -data.pos[data.batch == ind]  # invert
 
+                data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
+
         return data
 
-    def get_generator_samples(self, data, generator, return_condition=False):
-        '''
-        conformer orentation setting
-        '''
-        data = self.set_molecule_alignment(data)
+    def get_generator_samples(self, mol_data, generator):
+        """
+        @param mol_data: CrystalData object containing information on the starting conformer
+        @param generator:
+        @return:
+        """
+        # conformer orentation setting
+        mol_data = self.set_molecule_alignment(mol_data)
 
-        '''
-        noise injection
-        '''
+        # noise injection
         if self.config.generator.positional_noise > 0:
-            data.pos += torch.randn_like(data.pos) * self.config.generator.positional_noise
+            mol_data.pos += torch.randn_like(mol_data.pos) * self.config.generator.positional_noise
 
-        '''
-        update symmetry information
-        '''
+        # update symmetry information
         if self.config.generate_sgs is not None:
-            override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(
-                self.config.generate_sgs) + 1  # indexing from 0
-            sym_ops_list = [
-                torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i
-                in range(data.num_graphs)]
-            data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data,
-                                    self.supercell_builder.symmetries_dict,
-                                    sym_ops_list)  # todo update the way we handle this
+            mol_data = update_crystal_symmetry_elements(mol_data, self.config.generate_sgs, self.config.dataDims,
+                                                        self.sym_info)
 
-        '''
-        generate samples
-        '''
+
+        # generate the samples
         [[generated_samples, latent], prior, condition] = generator.forward(
-            n_samples=data.num_graphs, conditions=data.to(self.config.device).clone(),
+            n_samples=mol_data.num_graphs, conditions=mol_data.to(self.config.device).clone(),
             return_latent=True, return_condition=True, return_prior=True)
 
-        if return_condition:
-            return generated_samples, prior, condition
-        else:
-            return generated_samples, prior
+        return generated_samples, prior
 
     def train_generator(self, generator, discriminator, data, i):
-        '''
+        """
         train the generator
-        '''
+        """
 
-        if self.config.train_generator_packing or self.config.train_generator_vdw or self.config.train_generator_combo or self.config.train_generator_adversarially or self.config.train_generator_h_bond:
+        if any((self.config.train_generator_packing,
+                self.config.train_generator_vdw,
+                self.config.train_generator_combo,
+                self.config.train_generator_adversarially,
+                self.config.train_generator_h_bond)):
             '''
             build supercells
             '''
-            generated_samples, prior = self.get_generator_samples(data, generator, return_condition=False)
+            generated_samples, prior = self.get_generator_samples(data, generator)
 
             supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
                 data, generated_samples, self.config.supercell_size,
                 self.config.discriminator.graph_convolution_cutoff,
-                override_sg=self.config.generate_sgs,
                 align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
             )
 
             data.cell_params = supercell_data.cell_params
 
-            '''
-            #evaluate losses
-            
-            # look at cells
-            from ase.visualize import view
-            mols = [ase_mol_from_crystaldata(supercell_data, i, exclusion_level='convolve with', highlight_aux=True) for i in range(min(10, supercell_data.num_graphs))]
-            view(mols)
-            '''
             similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
             discriminator_score, dist_dict = self.score_adversarially(supercell_data.clone(), discriminator)
-            h_bond_score = self.compute_h_bond_score(supercell_data)
-            vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, data.num_graphs, data)
+            h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, supercell_data)
+            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, data.num_graphs, data)
             packing_loss, packing_prediction, packing_target, = \
-                self.cell_density_loss(data, generated_samples, precomputed_volumes=generated_cell_volumes)
-            combo_score = torch.log(10 / (10 + ((
-                                                    vdw_penalty) ** 2 + packing_loss ** 2)))  # torch.exp(-(normed_vdw_overlap + outside_reasonable_packing_loss))
+                cell_density_loss(self.config.packing_loss_rescaling,
+                                  self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
+                                  self.mol_volume_ind,
+                                  self.config.dataDims['target mean'], self.config.dataDims['target std'],
+                                  data, generated_samples, precomputed_volumes=generated_cell_volumes)
+
+            # combo
+            f1 = 100  # for sharp sigmoid scaling
+            # accept packing within range 0.675 +/- 0.125
+            packing_center = 0.675
+            packing_span = 0.125
+            packing_range_loss = F.sigmoid(-f1 * (packing_prediction - packing_center + packing_span)) * (-(packing_prediction - packing_center)) + \
+                                 F.sigmoid(f1 * (packing_prediction - packing_center - packing_span)) * (packing_prediction - packing_center)
+
+            vdw_span = 0.5  # accept vdw overlaps of up to 0.5 angstrom
+            vdw_range_loss = F.sigmoid(f1 * (vdw_penalty - vdw_span)) * vdw_penalty
+
+            # combo score is the two above bracketing losses plus the adversarial probability we want to minimize
+            discriminator_loss = F.softmax(discriminator_score / 5, dim=-1)[:, 0]  # high temperature for more linear gradient
+            combo_score = -(vdw_range_loss + packing_range_loss + discriminator_loss)
+
+            ''' # visualize contributions
+            fig = go.Figure()
+            fig.add_trace(go.Bar(name='packing',x = np.arange(len(packing_range_loss)), y=packing_range_loss.cpu().detach().numpy()))
+            fig.add_trace(go.Bar(name='vdw',x = np.arange(len(packing_range_loss)), y=vdw_range_loss.cpu().detach().numpy()))
+            fig.add_trace(go.Bar(name='discrim',x = np.arange(len(packing_range_loss)), y=discriminator_loss.cpu().detach().numpy()))
+            fig.update_layout(showlegend=True)
+            fig.update_yaxes(type="log")
+            fig.show()
+            '''
 
             return discriminator_score, generated_samples.cpu().detach().numpy(), \
                 packing_loss, packing_prediction.cpu().detach().numpy(), \
@@ -1161,9 +1183,9 @@ class Modeller:
             sym_ops_list = [
                 torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(data.x.device) for i
                 in range(data.num_graphs)]
-            data = override_sg_info(self.config.generate_sgs, self.config.dataDims, data,
-                                    self.supercell_builder.symmetries_dict,
-                                    sym_ops_list)  # todo update the way we handle this
+            data = update_sg_to_all_crystals(self.config.generate_sgs, self.config.dataDims, data,
+                                             self.supercell_builder.symmetries_dict,
+                                             sym_ops_list)  # todo update the way we handle this
 
         point_cloud_prediction, packing_prediction = conditioner(data.clone())
 
@@ -1211,44 +1233,6 @@ class Modeller:
         targets = data.y
         return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions, targets
 
-    def cell_density_loss(self, data, raw_sample, precomputed_volumes=None):
-        '''
-        compute packing coefficients for generated cells
-        '''
-        if precomputed_volumes is None:
-            volumes_list = []
-            for i in range(len(raw_sample)):
-                volumes_list.append(cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6]))
-            volumes = torch.stack(volumes_list)
-        else:
-            volumes = precomputed_volumes
-
-        generated_packing_coeffs = data.Z * data.tracking[:, self.mol_volume_ind] / volumes
-        standardized_gen_packing_coeffs = (generated_packing_coeffs - self.config.dataDims['target mean']) / \
-                                          self.config.dataDims['target std']
-
-        csd_packing_coeffs = data.tracking[:,
-                             self.config.dataDims['tracking features dict'].index('crystal packing coefficient')]
-        standardized_csd_packing_coeffs = (csd_packing_coeffs - self.config.dataDims['target mean']) / \
-                                          self.config.dataDims[
-                                              'target std']  # requires that packing coefficnet is set as regression target in main
-
-        if self.config.packing_loss_rescaling == 'log':
-            packing_loss = torch.log(
-                1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs,
-                                     reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
-        elif self.config.packing_loss_rescaling is None:
-            packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs,
-                                            reduction='none')
-        elif self.config.packing_loss_rescaling == 'mse':
-            packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs,
-                                      reduction='none')
-
-        if self.config.test_mode:
-            assert torch.sum(torch.isnan(packing_loss)) == 0
-
-        return packing_loss, generated_packing_coeffs, csd_packing_coeffs
-
     def misc_pre_training_items(self):
         dataset_builder = BuildDataset(self.config, pg_dict=self.point_groups,
                                        sg_dict=self.space_groups,
@@ -1258,6 +1242,15 @@ class Modeller:
         del self.prep_dataset  # we don't actually want this huge thing floating around
         self.config.dataDims = dataset_builder.get_dimension()
 
+
+        self.n_generators = sum((self.config.train_discriminator_on_randn, self.config.train_discriminator_on_distorted, self.config.train_discriminator_adversarially))
+        self.generator_ind_list = []
+        if self.config.train_discriminator_adversarially:
+            self.generator_ind_list.append(1)
+        if self.config.train_discriminator_on_randn:
+            self.generator_ind_list.append(2)
+        if self.config.train_discriminator_on_distorted:
+            self.generator_ind_list.append(3)
         '''
         init supercell builder
         '''
@@ -1276,11 +1269,19 @@ class Modeller:
         self.crysys_ind_dict = {thing[18:]: ind + self.config.dataDims['num atomwise features'] for ind, thing in
                                 enumerate(self.config.dataDims['molecule features']) if 'crystal system is' in thing}
 
+        if self.config.feature_richness == 'full':
+            self.num_acceptors_ind = self.config.dataDims['tracking features dict'].index('molecule num acceptors')
+            self.num_donors_ind = self.config.dataDims['tracking features dict'].index('molecule num donors')
+            self.atom_acceptor_ind = self.config.dataDims['atom features'].index('atom is H bond acceptor')
+            self.atom_donor_ind = self.config.dataDims['atom features'].index('atom is H bond donor')
+
         '''
         add symmetry element indices to symmetry dict
         '''
-        self.sym_info['sg_feature_ind_dict'] = self.sg_feature_ind_dict
-        self.sym_info['crysys_ind_dict'] = self.crysys_ind_dict
+        # todo build separate
+        self.sym_info['sg_feature_ind_dict'] = self.sg_feature_ind_dict # SG indices in input features
+        self.sym_info['crysys_ind_dict'] = self.crysys_ind_dict # crysys indices in input features
+        self.sym_info['crystal_z_value_ind'] = self.config.dataDims['num atomwise features'] + self.config.dataDims['molecule features'].index('crystal z value')  # Z value index in input features
 
         ''' 
         init gaussian generator for cell parameter sampling
@@ -1332,9 +1333,9 @@ class Modeller:
             params1, params2
 
     def model_sampling(self):  # todo combine with mini-CSP module
-        '''
+        """ DEPRECATED
         Stun MC annealing on a pretrained discriminator / generator
-        '''
+        """
         with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username,
                         tags=[self.config.wandb.experiment_tag]):
             extra_test_loader, generator, discriminator, \
@@ -1374,8 +1375,8 @@ class Modeller:
             override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
             sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
                 single_mol_data.x.device) for i in range(single_mol_data.num_graphs)]
-            single_mol_data = override_sg_info('P-1', self.supercell_builder.dataDims, single_mol_data,
-                                               self.supercell_builder.symmetries_dict, sym_ops_list)
+            single_mol_data = update_sg_to_all_crystals('P-1', self.supercell_builder.dataDims, single_mol_data,
+                                                        self.supercell_builder.symmetries_dict, sym_ops_list)
 
             smc_sampling_dict = smc_sampler(discriminator, self.supercell_builder,
                                             single_mol_data.clone().cuda(), None,
@@ -1439,32 +1440,18 @@ class Modeller:
         @return:
         """
 
-        # todo clean up this randomization code, which runs on ever iter
-        n_generators = sum([self.config.train_discriminator_adversarially, self.config.train_discriminator_on_distorted,
-                            self.config.train_discriminator_on_randn])
+        gen_randint = np.random.randint(0, self.n_generators, 1)
+        generator_ind = self.generator_ind_list[int(gen_randint)]  # randomly select which generator to use from the available set
 
-        gen_randint = np.random.randint(0, n_generators, 1)
-        generator_ind_list = []
         if self.config.train_discriminator_adversarially:
-            generator_ind_list.append(1)
-        if self.config.train_discriminator_on_randn:
-            generator_ind_list.append(2)
-        if self.config.train_discriminator_adversarially:
-            generator_ind_list.append(3)
-
-        generator_ind = generator_ind_list[int(gen_randint)]  # randomly select which generator to use from the available set
-
-        if self.config.train_discriminator_on_distorted:
             if generator_ind == 1:  # randomly sample which generator to use at each iteration
                 generated_samples_i, _ = self.get_generator_samples(data, generator)
-                handedness = torch.ones(len(generated_samples_i), device=generated_samples_i.device)
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.zeros(len(generated_samples_i)), mode='extend')
 
         if self.config.train_discriminator_on_randn:
             if generator_ind == 2:
                 generated_samples_i = self.randn_generator.forward(data.num_graphs, data).to(self.config.device)
-                handedness = None
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.ones(len(generated_samples_i)), mode='extend')
 
@@ -1485,17 +1472,16 @@ class Modeller:
                 else:
                     # add a random fraction of the original cell length - make the cell larger
                     distortion = torch.zeros_like(generated_samples_ii)
-                    distortion[:, 0:3] = (torch.rand_like(distortion[:, 0:3]) * data.cell_params[:,0:3] - lattice_means[:3]) / lattice_stds[:3]
+                    distortion[:, 0:3] = torch.randn_like(distortion[:, 0:3]).abs()
 
                 generated_samples_i = (generated_samples_ii + distortion).to(self.config.device)  # add jitter and return in standardized basis
-                handedness = data.asym_unit_handedness
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.ones(len(generated_samples_i)) * 2, mode='extend')
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'distortion level',
                                                      torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy(),
                                                      mode='extend')
 
-        return generated_samples_i.float(), handedness, epoch_stats_dict
+        return generated_samples_i.float(), epoch_stats_dict
 
     def log_regression_accuracy(self, train_epoch_stats_dict, test_epoch_stats_dict):
         target_mean = self.config.dataDims['target mean']
@@ -1663,8 +1649,8 @@ class Modeller:
 
             # self.nice_dataset_analysis(self.prep_dataset)
             self.misc_pre_training_items()
-            from reporting.nov_22_regressor import nice_regression_plots
-            nice_regression_plots(self.config)
+            #from reporting.nov_22_regressor import nice_regression_plots
+            #nice_regression_plots(self.config)
             from reporting.nov_22_discriminator_final import nice_scoring_plots
             nice_scoring_plots(self.config, wandb)
 
@@ -1898,32 +1884,6 @@ class Modeller:
 
         return discriminator_score, dist_dict
 
-    def get_vdw_penalty(self, dist_dict=None, num_graphs=None, data=None):
-        if dist_dict is not None:  # supercell_data is not None: # do vdw computation even if we don't need it
-            vdw_overlap_sum, normed_vdw_overlap_sum, penalties = \
-                raw_vdw_overlap(self.vdw_radii, dists=dist_dict['intermolecular dist'],
-                                atomic_numbers=dist_dict['intermolecular dist atoms'],
-                                batch_numbers=dist_dict['intermolecular dist batch'],
-                                num_graphs=num_graphs)
-
-            scores = torch.nan_to_num(
-                torch.stack(
-                    [torch.sum(penalties[ii]) for ii in range(num_graphs)]
-                )) / torch.diff(data.ptr)
-            #
-            # top_scores = torch.nan_to_num(
-            #     torch.stack(
-            #         # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
-            #         [torch.max(penalties[ii]) if (len(penalties[ii]) > 0) else torch.zeros(1)[0].to(vdw_overlap_sum.device) for ii in range(num_graphs)]
-            #     ))
-            #
-            # scores = (scores_i + top_scores) / 2
-
-            return scores, normed_vdw_overlap_sum / torch.diff(data.ptr)
-
-        else:
-            return None, None
-
     def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, adversarial_score, vdw_loss,
                                    similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score):
         generator_losses_list = []
@@ -2010,35 +1970,6 @@ class Modeller:
         plot_generator_loss_correlates(self.config, wandb, epoch_stats_dict, generator_losses, layout)
 
         return None
-
-    def compute_h_bond_score(self, supercell_data=None):
-        if (supercell_data is not None) and (
-                self.config.feature_richness == 'full'):  # supercell_data is not None: # do vdw computation even if we don't need it
-            # get the total per-molecule counts
-            mol_acceptors = supercell_data.tracking[:,
-                            self.config.dataDims['tracking features dict'].index('molecule num acceptors')]
-            mol_donors = supercell_data.tracking[:,
-                         self.config.dataDims['tracking features dict'].index('molecule num donors')]
-
-            '''
-            count pairs within a close enough bubble ~2.7-3.3 Angstroms
-            '''
-            h_bonds_loss = []
-            for i in range(supercell_data.num_graphs):
-                if (mol_donors[i]) > 0 and (mol_acceptors[i] > 0):
-                    h_bonds = compute_num_h_bonds(supercell_data, self.config.dataDims, i)
-
-                    bonds_per_possible_bond = h_bonds / min(mol_donors[i], mol_acceptors[i])
-                    h_bond_loss = 1 - torch.tanh(2 * bonds_per_possible_bond)  # smoother gradient about 0
-
-                    h_bonds_loss.append(h_bond_loss)
-                else:
-                    h_bonds_loss.append(torch.zeros(1)[0].to(supercell_data.x.device))
-            h_bond_loss_f = torch.stack(h_bonds_loss)
-        else:
-            h_bond_loss_f = None
-
-        return h_bond_loss_f
 
     def log_cubic_defect(self, epoch_stats_dict):
         cleaned_samples = epoch_stats_dict['final generated cell parameters']
@@ -2129,9 +2060,10 @@ class Modeller:
             pens = vdw_penalties[i].cpu().detach()
             fig.add_trace(go.Violin(x=pens[pens != 0], side='positive', orientation='h',
                                     bandwidth=0.01, width=1, showlegend=False, opacity=1,
-                                    name=f'{supercell_examples.csd_identifier[i]} <br /> ' +
+                                    name=f'{supercell_examples.csd_identifier[i]} : ' + f'SG={self.sym_info["space_groups"][int(supercell_examples.sg_ind[i])]} <br /> ' +
                                          f'c_t={target_packing[i]:.2f} c_p={generated_packing_coeffs[i]:.2f} <br /> ' +
-                                         f'tot_norm_ov={normed_vdw_loss[i]:.2f}'),
+                                         f'tot_norm_ov={normed_vdw_loss[i]:.2f}'
+                                    ),
                           )
 
             molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
@@ -2154,12 +2086,12 @@ class Modeller:
                         opacity=0.75
                     )
                 )
-            except: # ValueError("molecule was rejected by rdkit"):
+            except:  # ValueError("molecule was rejected by rdkit"):
                 pass
 
         # fig.layout.paper_bgcolor = 'rgba(0,0,0,0)'
         # fig.layout.plot_bgcolor = 'rgba(0,0,0,0)'
-        fig.update_layout(width=800, height=600, font=dict(size=12), xaxis_range=[-1, 4])
+        fig.update_layout(width=800, height=800, font=dict(size=12), xaxis_range=[-1, 4])
         fig.layout.margin = layout.margin
         fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
         fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing prediction')
@@ -2259,8 +2191,8 @@ class Modeller:
         RDF_shape = [10, 100]
 
         discriminator_score, dist_dict = self.score_adversarially(real_supercell_data.clone(), discriminator)
-        h_bond_score = self.compute_h_bond_score(real_supercell_data)
-        vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, real_data.num_graphs, real_data)
+        h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, real_supercell_data)
+        vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data)
         real_rdf, rr = crystal_rdf(real_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular')
 
         volumes_list = []
@@ -2290,14 +2222,13 @@ class Modeller:
             fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
                 fake_data, samples, self.config.supercell_size,
                 self.config.discriminator.graph_convolution_cutoff,
-                override_sg=self.config.generate_sgs,
                 align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
             )
             fake_supercell_data = fake_supercell_data.cuda()  # remove soon
 
             discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator)
-            h_bond_score = self.compute_h_bond_score(fake_supercell_data)
-            vdw_penalty, normed_vdw_penalty = self.get_vdw_penalty(dist_dict, fake_data.num_graphs, fake_data)
+            h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, fake_supercell_data)
+            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data)
             rdf, rr = crystal_rdf(fake_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular')
 
             volumes_list = []

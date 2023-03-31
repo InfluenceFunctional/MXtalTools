@@ -26,15 +26,15 @@ class crystal_generator(nn.Module):
         '''
         conditioning model
         '''
-        self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
+        self.crystal_features = config.dataDims['num crystal generation features']
         torch.manual_seed(config.seeds.model)
 
         self.conditioner = molecule_graph_model(
             dataDims=dataDims,
             atom_embedding_dims=config.conditioner.init_atom_embedding_dim,
             seed=config.seeds.model,
-            num_atom_feats=dataDims['num atom features'] + 3 - self.crystal_features_to_ignore,  # we will add directly the normed coordinates to the node features
-            num_mol_feats=dataDims['num mol features'] - self.crystal_features_to_ignore,
+            num_atom_feats=dataDims['num atom features'] + 3 - self.crystal_features,  # we will add directly the normed coordinates to the node features
+            num_mol_feats=dataDims['num mol features'] - self.crystal_features,
             output_dimension=config.conditioner.output_dim,  # starting size for decoder model
             activation=config.conditioner.activation,
             num_fc_layers=config.conditioner.num_fc_layers,
@@ -73,7 +73,7 @@ class crystal_generator(nn.Module):
                                  dropout=config.generator.fc_dropout_probability,
                                  input_dim=self.latent_dim,
                                  output_dim=dataDims['num lattice features'],
-                                 conditioning_dim=config.generator.fc_depth,
+                                 conditioning_dim=config.generator.fc_depth + self.crystal_features,  # include crystal information for the generator
                                  seed=config.seeds.model
                                  )
 
@@ -82,16 +82,16 @@ class crystal_generator(nn.Module):
         return self.prior.sample((n_samples,)).to(self.device)
 
     def forward(self, n_samples, z=None, conditions=None, return_latent=False, return_condition=False, return_prior=False):
-        if z is None:  # sample random numbers from simple prior
+        if z is None:  # sample random numbers from prior distribution
             z = self.sample_latent(n_samples)
 
         if conditions is not None:  # conditions here is a crystal data object
             normed_coords = conditions.pos / self.conditioner.max_molecule_size  # norm coords by maximum molecule radius
-            conditions.x = torch.cat((conditions.x[:, :-self.crystal_features_to_ignore], normed_coords), dim=-1)  # concatenate to input features
+            crystal_information = conditions.x[:, -self.crystal_features:]
+            conditions.x = torch.cat((conditions.x[:, :-self.crystal_features], normed_coords), dim=-1)  # concatenate to input features, leaving out crystal info from conditioner
             conditions_encoding = self.conditioner(conditions)
             conditions_encoding = self.rescale_output_dims(conditions_encoding)
-            sg_one_hot = F.one_hot(torch.tensor(conditions.sg_ind,device = conditions.x.device, dtype=torch.long),
-                                   num_classes=230) # one-hot encoding of the space group
+            conditions_encoding = torch.cat((conditions_encoding, crystal_information[conditions.ptr[:-1]]),dim=-1)
         else:
             conditions_encoding = None
 

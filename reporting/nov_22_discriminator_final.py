@@ -11,8 +11,8 @@ figures which were actually used in the paper
 '''
 
 def nice_scoring_plots(config,wandb):
-    test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/275_test_epoch_stats_dict.npy', allow_pickle=True).item()
-    extra_test_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/275_extra_test_dict.npy', allow_pickle=True).item()
+    test_epoch_stats_dict = np.load('C:/Users\mikem\crystals\CSP_runs/275_test_epoch_stats_dict.npy', allow_pickle=True).item()
+    extra_test_dict = np.load('C:/Users\mikem\crystals\CSP_runs/275_extra_test_dict.npy', allow_pickle=True).item()
 
     tracking_features = test_epoch_stats_dict['tracking features']
     identifiers_list = extra_test_dict['identifiers']
@@ -310,7 +310,7 @@ def nice_scoring_plots(config,wandb):
     fig.update_layout(width=1600, height=600)
     fig.update_layout(font=dict(size=12))
     fig.layout.margin = layout.margin
-    fig.write_image('../paper1_figs/functional_group_scores.png', scale=4)
+    fig.write_image('../paper1_figs/functional_group_scores.png', scale=2)
     if config.machine == 'local':
         fig.show()
     aa = 1

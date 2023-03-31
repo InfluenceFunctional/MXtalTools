@@ -68,9 +68,9 @@ class BuildDataset:
         lattice_features = self.get_cell_features(dataset)
         targets = self.get_targets(dataset)
         self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets)
-        if False: # make dataset a bunch of the same molecule
+        if False:  # make dataset a bunch of the same molecule
             identifiers = [item.csd_identifier for item in self.datapoints]
-            index = identifiers.index('NICOAM03') #PIQTOY # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
+            index = identifiers.index('NICOAM03')  # PIQTOY # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
             new_datapoints = [self.datapoints[index] for i in range(self.final_dataset_length)]
             self.datapoints = new_datapoints
         self.shuffle_datapoints()
@@ -89,11 +89,11 @@ class BuildDataset:
                                   'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
                                   'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
                                   'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
-                                  'molecule volume', # dummy variable
+                                  'molecule volume',  # dummy variable
                                   ]
         elif self.feature_richness == 'minimal':
             self.atom_keys = ['atom Z']
-            self.molecule_keys = []#['molecule volume']
+            self.molecule_keys = []  # ['molecule volume']
 
         self.crystal_keys = ['crystal spacegroup symbol', 'crystal spacegroup number',
                              'crystal calculated density', 'crystal packing coefficient',
@@ -176,7 +176,7 @@ class BuildDataset:
         '''
         from crystal_building.coordinate_transformations import cell_vol
         cell_volume = np.asarray([cell_vol(
-            [dataset['crystal cell a'][i],dataset['crystal cell b'][i],dataset['crystal cell c'][i]],
+            [dataset['crystal cell a'][i], dataset['crystal cell b'][i], dataset['crystal cell c'][i]],
             [dataset['crystal alpha'][i], dataset['crystal beta'][i], dataset['crystal gamma'][i]])
             for i in range(len(dataset))
         ])
@@ -188,13 +188,13 @@ class BuildDataset:
         check for heavy atoms
         '''
         from dataset_management.molecule_featurizer import get_range_fraction
-        znums = [10,18,36,54]
+        znums = [10, 18, 36, 54]
         for znum in znums:
-            dataset[f'molecule atom heavier than {znum} fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200] ) for atom_list in dataset['atom Z']])
+            dataset[f'molecule atom heavier than {znum} fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200]) for atom_list in dataset['atom Z']])
 
         '''
         update cell parameterization to new method
-        ''' # todo delete this and re-featurize the full dataset
+        '''  # todo delete this and re-featurize the full dataset
         for key in asymmetric_unit_dict:
             asymmetric_unit_dict[key] = torch.Tensor(asymmetric_unit_dict[key])
 
@@ -206,11 +206,11 @@ class BuildDataset:
             position[ii], rotation[ii], handedness[ii] = unit_cell_analysis(unit_cell_coords, sg_ind, asymmetric_unit_dict, T_cf)
 
         dataset['crystal asymmetric unit centroid x'], \
-        dataset['crystal asymmetric unit centroid y'], \
-        dataset['crystal asymmetric unit centroid z'] = position.T
+            dataset['crystal asymmetric unit centroid y'], \
+            dataset['crystal asymmetric unit centroid z'] = position.T
         dataset['crystal asymmetric unit rotvec 1'], \
-        dataset['crystal asymmetric unit rotvec 2'], \
-        dataset['crystal asymmetric unit rotvec 3'] = rotation.T
+            dataset['crystal asymmetric unit rotvec 2'], \
+            dataset['crystal asymmetric unit rotvec 3'] = rotation.T
         dataset['crystal asymmetric unit handedness'] = handedness
 
         return dataset
@@ -517,17 +517,17 @@ class BuildDataset:
         keys_to_add.extend(self.crystal_keys)
         if 'crystal spacegroup symbol' in keys_to_add:
             keys_to_add.remove('crystal spacegroup symbol')  # we don't want to deal with strings
-        if ('crystal system' in keys_to_add):
-            pass#keys_to_add.remove('crystal system')  # we don't want to deal with strings
-        if ('crystal lattice centring' in keys_to_add):
-            pass#keys_to_add.remove('crystal lattice centring')  # we don't want to deal with strings
-        if ('crystal point group' in keys_to_add):
+        if 'crystal system' in keys_to_add:
+            pass  # keys_to_add.remove('crystal system')  # we don't want to deal with strings
+        if 'crystal lattice centring' in keys_to_add:
+            pass  # keys_to_add.remove('crystal lattice centring')  # we don't want to deal with strings
+        if 'crystal point group' in keys_to_add:
             keys_to_add.remove('crystal point group')  # we don't want to deal with strings
 
         for key in dataset.keys():
             if ('molecule' in key) and ('fraction' in key):
                 keys_to_add.append(key)
-            if ('molecule has' in key):
+            if 'molecule has' in key:
                 keys_to_add.append(key)
 
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it
@@ -537,7 +537,7 @@ class BuildDataset:
         for column, key in enumerate(keys_to_add):
             if key == 'crystal r factor':
                 feature_vector_i = np.asarray(dataset[key])
-                feature_vector = np.zeros_like(feature_vector_i,dtype=np.float)
+                feature_vector = np.zeros_like(feature_vector_i, dtype=np.float)
                 for jj in range(len(feature_vector)):
                     if feature_vector_i[jj] != None:
                         if feature_vector_i[jj].lower() != 'none':
@@ -557,7 +557,7 @@ class BuildDataset:
             elif feature_vector.dtype == 'O':
                 # assign integers to unique elements
                 uniques = np.unique(feature_vector)
-                uniques_dict = {uniques[i]:i for i in range(len(uniques))}
+                uniques_dict = {uniques[i]: i for i in range(len(uniques))}
                 self.unique_dicts.append([key, uniques_dict])
                 new_feature_vector = [uniques_dict[feat] for feat in feature_vector]
                 feature_vector = np.asarray(new_feature_vector)
@@ -646,8 +646,10 @@ def get_dataloaders(dataset_builder, config, override_batch_size=None):
 
     return tr, te
 
+
 def update_dataloader_batch_size(loader, new_batch_size):
     return DataLoader(loader.dataset, batch_size=new_batch_size, shuffle=True, num_workers=loader.num_workers, pin_memory=loader.pin_memory)
+
 
 def delete_from_dataset(dataset, good_inds):
     print("Deleting unwanted entries")
@@ -684,7 +686,7 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
         dataset = dataset.drop(columns='level_0')
     dataset = dataset.reset_index()
 
-    #dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo delete this after next BT refeaturization
+    # dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo delete this after next BT refeaturization
 
     extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
                                           sg_dict=sg_dict,
@@ -697,14 +699,14 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
     del dataset, extra_test_set_builder
     return extra_test_loader
 
-
-'''
-old version for use in figure generation
-'''
+#
+# '''
+# old version for use in figure generation
+# '''
 #
 # import torch
 # import numpy as np
-# from utils import standardize
+# from common.utils import standardize
 # from dataset_management.CrystalData import CrystalData
 # from torch_geometric.data import Data
 # import sys
@@ -714,7 +716,7 @@ old version for use in figure generation
 # import matplotlib.pyplot as plt
 # import pandas as pd
 # from pyxtal import symmetry
-# from dataset_management.dataset_manager import Miner
+# from dataset_management.manager import Miner
 #
 #
 # class BuildDataset:
@@ -780,7 +782,7 @@ old version for use in figure generation
 #         # define relevant features for analysis
 #         if self.feature_richness == 'full':
 #             self.atom_keys = ['atom Z',
-#                               'atom mass', 'atom is H bond acceptor',
+#                               'atom mass', 'atom is H bond acceptor', 'atom is H bond donor',
 #                               'atom valence', 'atom vdW radius',  # 'atom is aromatic', # issue with aromaticity in test sets
 #                               'atom on a ring', 'atom degree', 'atom electronegativity']  # 'atom chirality', todo check chirality measure
 #             self.molecule_keys = ['molecule volume',
@@ -1190,16 +1192,16 @@ old version for use in figure generation
 #                             'molecule num rotatable bonds', 'molecule planarity', 'molecule polarity',
 #                             'molecule spherical defect', 'molecule eccentricity', 'molecule radius of gyration',
 #                             'molecule principal moment 1', 'molecule principal moment 2', 'molecule principal moment 3',
-#                             'crystal r factor', 'crystal density'
+#                             'crystal r factor', 'crystal density', 'crystal temperature'
 #                             ])
 #
 #         keys_to_add.extend(self.crystal_keys)
 #         if 'crystal spacegroup symbol' in keys_to_add:
 #             keys_to_add.remove('crystal spacegroup symbol')  # we don't want to deal with strings
 #         if ('crystal system' in keys_to_add):
-#             keys_to_add.remove('crystal system')  # we don't want to deal with strings
+#             pass#keys_to_add.remove('crystal system')  # we don't want to deal with strings
 #         if ('crystal lattice centring' in keys_to_add):
-#             keys_to_add.remove('crystal lattice centring')  # we don't want to deal with strings
+#             pass#keys_to_add.remove('crystal lattice centring')  # we don't want to deal with strings
 #         if ('crystal point group' in keys_to_add):
 #             keys_to_add.remove('crystal point group')  # we don't want to deal with strings
 #
@@ -1208,18 +1210,18 @@ old version for use in figure generation
 #                 keys_to_add.append(key)
 #             if ('molecule has' in key):
 #                 keys_to_add.append(key)
-#             # if key == 'molecule freeSASA':
+#             #if key == 'molecule freeSASA':
 #             #    keys_to_add.append(key) #not yet in our cluster datasets
 #
 #         print("Preparing molecule/crystal tracking features")
 #         if self.target in keys_to_add:  # don't add molecule target if we are going to model it
 #             keys_to_add.remove(self.target)
-#
+#         self.unique_dicts = []
 #         feature_array = np.zeros((self.dataset_length, len(keys_to_add)), dtype=float)
 #         for column, key in enumerate(keys_to_add):
 #             if key == 'crystal r factor':
 #                 feature_vector_i = np.asarray(dataset[key])
-#                 feature_vector = np.zeros_like(feature_vector_i)
+#                 feature_vector = np.zeros_like(feature_vector_i,dtype=np.float)
 #                 for jj in range(len(feature_vector)):
 #                     if feature_vector_i[jj] != None:
 #                         if feature_vector_i[jj].lower() != 'none':
@@ -1234,11 +1236,15 @@ old version for use in figure generation
 #                 pass
 #             elif feature_vector.dtype == float:
 #                 feature_vector = feature_vector
-#             elif feature_vector.dtype == int:
-#                 if len(np.unique(feature_vector)) > 2:
-#                     feature_vector = feature_vector
-#                 else:
-#                     feature_vector = np.asarray(feature_vector == np.amax(feature_vector))  # turn it into a bool
+#             elif (feature_vector.dtype == int) or (feature_vector.dtype == np.int64):
+#                 feature_vector = feature_vector
+#             elif feature_vector.dtype == 'O':
+#                 # assign integers to unique elements
+#                 uniques = np.unique(feature_vector)
+#                 uniques_dict = {uniques[i]:i for i in range(len(uniques))}
+#                 self.unique_dicts.append([key, uniques_dict])
+#                 new_feature_vector = [uniques_dict[feat] for feat in feature_vector]
+#                 feature_vector = np.asarray(new_feature_vector)
 #
 #             feature_array[:, column] = feature_vector
 #
@@ -1269,6 +1275,7 @@ old version for use in figure generation
 #
 #             'num atom features': len(self.atom_keys) + len(self.mol_keys),
 #             'num atomwise features': len(self.atom_keys),
+#             'atom features': self.atom_keys,
 #             'atom means': self.atom_means,
 #             'atom stds': self.atom_stds,
 #

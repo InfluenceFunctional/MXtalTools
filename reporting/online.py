@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 from common.utils import update_stats_dict, np_softmax
-from crystal_building.builder import override_sg_info
+from crystal_building.builder import update_sg_to_all_crystals
 from models.utils import softmax_and_score
 
 
@@ -604,7 +604,7 @@ def mini_csp_reporting(config, wandb, sampling_dict, real_samples_dict, real_dat
     fig = make_subplots(rows=2, cols=2, vertical_spacing=0.075,
                         horizontal_spacing=0.075)
 
-    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', real_data.num_graphs, colortype='rgb')
+    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', min(15, real_data.num_graphs), colortype='rgb')
 
     for i, label in enumerate(scores_labels):  # todo record sample stats in canonical frame for rebuilding
         legend_label = label
@@ -738,6 +738,7 @@ def sampling_telemetry_plot(config, wandb, sampling_dict):
 
 
 def cell_params_tracking_plot(wandb, supercell_builder, layout, config, sampling_dict, collater, extra_test_loader):
+    # DEPRECATED
     num_iters = sampling_dict['scores'].shape[1]
     n_runs = sampling_dict['canonical samples'].shape[1]
 
@@ -747,12 +748,10 @@ def cell_params_tracking_plot(wandb, supercell_builder, layout, config, sampling
     override_sg_ind = list(supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
     sym_ops_list = [torch.Tensor(supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
         big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
-    big_single_mol_data = override_sg_info('P-1', supercell_builder.dataDims, big_single_mol_data,
-                                           supercell_builder.symmetries_dict, sym_ops_list)
-    processed_cell_params = torch.cat(
-        supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda(),
-                                              rescale_asymmetric_unit=False, skip_cell_cleaning=True),
-        dim=-1).T
+    big_single_mol_data = update_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
+                                                    supercell_builder.symmetries_dict, sym_ops_list)
+    processed_cell_params = torch.cat(supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda(),
+                                              rescale_asymmetric_unit=False, skip_cell_cleaning=True),dim=-1).T
     del big_single_mol_data
 
     processed_cell_params = processed_cell_params.reshape(12, n_runs, num_iters).cpu().detach().numpy()

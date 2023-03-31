@@ -9,7 +9,8 @@ def nice_regression_plots(config):
     '''
     Calculations
     '''
-    test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/951_test_epoch_stats_dict.npy', allow_pickle=True).item()
+    #test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/951_test_epoch_stats_dict.npy', allow_pickle=True).item()
+    test_epoch_stats_dict = np.load('C:/Users\mikem\crystals\CSP_runs/951_test_epoch_stats_dict.npy', allow_pickle=True).item()
 
     target_mean = config.dataDims['target mean']
     target_std = config.dataDims['target std']

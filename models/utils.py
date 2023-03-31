@@ -4,11 +4,12 @@ import numpy as np
 import torch
 from ase import Atoms
 from torch import optim
-from torch.nn import functional as F
+from torch.nn import functional as F, functional
 from torch.optim import lr_scheduler as lr_scheduler
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import np_softmax
+from models.vdw_overlap import raw_vdw_overlap
 
 
 def get_grad_norm(model):
@@ -317,7 +318,7 @@ def undo_1d_bound(x: torch.tensor, x_span, x_center, mode='soft'):
         raise ValueError("bound must be of type 'soft'")
 
 
-def reload_model(model, optimizer, path):
+def reload_model(model, optimizer, path, reload_optimizer = False):
     """
     load model and state dict from path
     includes fix for potential dataparallel issue
@@ -328,7 +329,8 @@ def reload_model(model, optimizer, path):
             checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
 
     model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if reload_optimizer:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     return model, optimizer
 
@@ -348,9 +350,11 @@ def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.te
     return coeffs
 
 
-def compute_num_h_bonds(supercell_data, dataDims, i):
+def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     """
     compute the number of hydrogen bonds, up to a loose range (3.3 angstroms), and non-directionally
+    @param atom_donor_ind: index in tracking features to find donor status
+    @param atom_acceptor_ind: index in tracking features to find acceptor status
     @param supercell_data: crystal data
     @param dataDims: useful information
     @param i: cell index we are checking
@@ -363,8 +367,8 @@ def compute_num_h_bonds(supercell_data, dataDims, i):
     outside_inds = torch.where(supercell_data.aux_ind[batch_inds] == 1)[0]
 
     # identify and count canonical conformer acceptors and intermolecular donors
-    canonical_conformer_acceptors_inds = torch.where(supercell_data.x[batch_inds[canonical_conformers_inds], dataDims['atom features'].index('atom is H bond acceptor')] == 1)[0]
-    outside_donors_inds = torch.where(supercell_data.x[batch_inds[outside_inds], dataDims['atom features'].index('atom is H bond donor')] == 1)[0]
+    canonical_conformer_acceptors_inds = torch.where(supercell_data.x[batch_inds[canonical_conformers_inds], atom_acceptor_ind] == 1)[0]
+    outside_donors_inds = torch.where(supercell_data.x[batch_inds[outside_inds], atom_donor_ind] == 1)[0]
 
     donors_pos = supercell_data.pos[batch_inds[outside_inds[outside_donors_inds]]]
     acceptors_pos = supercell_data.pos[batch_inds[canonical_conformers_inds[canonical_conformer_acceptors_inds]]]
@@ -431,3 +435,93 @@ def save_checkpoint(epoch, model, optimizer, config, model_name):
                 'config': config},
                "../models/" + model_name)
     return None
+
+
+def compute_h_bond_score(feature_richness, atom_acceptor_ind, atom_donor_ind, num_acceptors_ind, num_donors_ind, supercell_data=None):
+    if (supercell_data is not None) and (
+            feature_richness == 'full'):  # supercell_data is not None: # do vdw computation even if we don't need it
+        # get the total per-molecule counts
+        mol_acceptors = supercell_data.tracking[:, num_acceptors_ind]
+        mol_donors = supercell_data.tracking[:, num_donors_ind]
+
+        '''
+        count pairs within a close enough bubble ~2.7-3.3 Angstroms
+        '''
+        h_bonds_loss = []
+        for i in range(supercell_data.num_graphs):
+            if (mol_donors[i]) > 0 and (mol_acceptors[i] > 0):
+                h_bonds = compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i)
+
+                bonds_per_possible_bond = h_bonds / min(mol_donors[i], mol_acceptors[i])
+                h_bond_loss = 1 - torch.tanh(2 * bonds_per_possible_bond)  # smoother gradient about 0
+
+                h_bonds_loss.append(h_bond_loss)
+            else:
+                h_bonds_loss.append(torch.zeros(1)[0].to(supercell_data.x.device))
+        h_bond_loss_f = torch.stack(h_bonds_loss)
+    else:
+        h_bond_loss_f = None
+
+    return h_bond_loss_f
+
+
+def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, data=None):
+    if dist_dict is not None:  # supercell_data is not None: # do vdw computation even if we don't need it
+        vdw_overlap_sum, normed_vdw_overlap_sum, penalties = \
+            raw_vdw_overlap(vdw_radii, dists=dist_dict['intermolecular dist'],
+                            atomic_numbers=dist_dict['intermolecular dist atoms'],
+                            batch_numbers=dist_dict['intermolecular dist batch'],
+                            num_graphs=num_graphs)
+
+        scores = torch.nan_to_num(
+            torch.stack(
+                [torch.sum(penalties[ii]) for ii in range(num_graphs)]
+            )) / torch.diff(data.ptr)
+        #
+        # top_scores = torch.nan_to_num(
+        #     torch.stack(
+        #         # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
+        #         [torch.max(penalties[ii]) if (len(penalties[ii]) > 0) else torch.zeros(1)[0].to(vdw_overlap_sum.device) for ii in range(num_graphs)]
+        #     ))
+        #
+        # scores = (scores_i + top_scores) / 2
+
+        return scores, normed_vdw_overlap_sum / torch.diff(data.ptr)
+
+    else:
+        return None, None
+
+
+def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
+                      packing_mean, packing_std, data, raw_sample, precomputed_volumes=None):
+    '''
+    compute packing coefficients for generated cells
+    '''
+    if precomputed_volumes is None:
+        volumes_list = []
+        for i in range(len(raw_sample)):
+            volumes_list.append(cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6]))
+        volumes = torch.stack(volumes_list)
+    else:
+        volumes = precomputed_volumes
+
+    generated_packing_coeffs = data.Z * data.tracking[:, mol_volume_ind] / volumes
+    standardized_gen_packing_coeffs = (generated_packing_coeffs - packing_mean) / packing_std
+
+    csd_packing_coeffs = data.tracking[:, packing_coeff_ind]
+    standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_std) / packing_std  # requires that packing coefficnet is set as regression target in main
+
+    if packing_loss_rescaling == 'log':
+        packing_loss = torch.log(
+            1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs,
+                                 reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
+    elif packing_loss_rescaling is None:
+        packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs,
+                                        reduction='none')
+    elif packing_loss_rescaling == 'mse':
+        packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs,
+                                  reduction='none')
+
+    assert torch.sum(torch.isnan(packing_loss)) == 0
+
+    return packing_loss, generated_packing_coeffs, csd_packing_coeffs

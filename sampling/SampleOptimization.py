@@ -10,7 +10,7 @@ import torch
 def gradient_descent_sampling(discriminator, init_samples, single_mol_data, supercell_builder, n_iter, lr, optimizer_func,
                               return_vdw=False, vdw_radii=None, supercell_size=5, cutoff=6, generate_sgs='P-1',
                               align_molecules = False):
-    '''
+    ''' DEPRECATED
     for a given sample
     1) generate a score from a discriminator model
     2) backpropagate the score as a loss to the original cell parameters
@@ -61,7 +61,6 @@ def gradient_descent_sampling(discriminator, init_samples, single_mol_data, supe
             supercell_builder.build_supercells(single_mol_data, sample,
                                                supercell_size=supercell_size,
                                                graph_convolution_cutoff=cutoff,
-                                               override_sg=generate_sgs,
                                                align_molecules=align_molecules,
                                                skip_cell_cleaning = False, # first iter are pre-cleaned cells
                                                rescale_asymmetric_unit= True, # first iter are pre-cleaned cells

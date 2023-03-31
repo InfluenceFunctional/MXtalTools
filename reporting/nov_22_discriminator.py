@@ -94,7 +94,7 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
     randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)[0]
     distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)[0]
 
-    if config.gan_loss == 'standard':
+    if True: # config.gan_loss == 'standard':
         scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'],old_method = True, correct_discontinuity = True)
         scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds],old_method = True, correct_discontinuity = True)
         # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]

@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering
 
-from crystal_building.builder import override_sg_info
+from crystal_building.builder import update_sg_to_all_crystals
 from models.utils import undo_1d_bound, softmax_and_score
 
 
@@ -42,6 +42,7 @@ def de_clean_samples(supercell_builder, samples, sg_inds):
 
 
 def sample_clustering(supercell_builder, config, sampling_dict, collater, extra_test_loader, discriminator):
+    # DEPRECATED
 
     # first level filter - remove subsequent duplicates
     n_runs = sampling_dict['canonical samples'].shape[1]
@@ -108,15 +109,14 @@ def sample_clustering(supercell_builder, config, sampling_dict, collater, extra_
     override_sg_ind = list(supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
     sym_ops_list = [torch.Tensor(supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
         big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
-    big_single_mol_data = override_sg_info('P-1', supercell_builder.dataDims, big_single_mol_data,
-                                           supercell_builder.symmetries_dict, sym_ops_list)
+    big_single_mol_data = update_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
+                                                    supercell_builder.symmetries_dict, sym_ops_list)
 
     best_cells, _, _ = supercell_builder.build_supercells(big_single_mol_data,
                                                           torch.tensor(best_samples_to_build, device='cuda',
                                                                             dtype=torch.float32),
                                                           supercell_size=config.supercell_size,
                                                           graph_convolution_cutoff=config.discriminator.graph_convolution_cutoff,
-                                                          override_sg='P-1',
                                                           align_molecules=True,
                                                           skip_cell_cleaning=True,
                                                           rescale_asymmetric_unit=False,
