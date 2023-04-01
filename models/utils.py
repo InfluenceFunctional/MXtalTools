@@ -465,7 +465,7 @@ def compute_h_bond_score(feature_richness, atom_acceptor_ind, atom_donor_ind, nu
     return h_bond_loss_f
 
 
-def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, data=None):
+def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, mol_sizes=None):
     if dist_dict is not None:  # supercell_data is not None: # do vdw computation even if we don't need it
         vdw_overlap_sum, normed_vdw_overlap_sum, penalties = \
             raw_vdw_overlap(vdw_radii, dists=dist_dict['intermolecular dist'],
@@ -476,7 +476,7 @@ def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, data=None):
         scores = torch.nan_to_num(
             torch.stack(
                 [torch.sum(penalties[ii]) for ii in range(num_graphs)]
-            )) / torch.diff(data.ptr)
+            )) / mol_sizes
         #
         # top_scores = torch.nan_to_num(
         #     torch.stack(
@@ -486,7 +486,7 @@ def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, data=None):
         #
         # scores = (scores_i + top_scores) / 2
 
-        return scores, normed_vdw_overlap_sum / torch.diff(data.ptr)
+        return scores, normed_vdw_overlap_sum / mol_sizes
 
     else:
         return None, None

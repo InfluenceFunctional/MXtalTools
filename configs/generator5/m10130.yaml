@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10130
 anomaly_detection: False
 mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
 save_checkpoints: True # will do it always on cluster, only locally if True
@@ -27,7 +27,7 @@ sample_distortion_magnitude: -1 # -1 for wide range test # noise for distorted g
 extra_test_period: 10
 extra_test_evaluation: False
 extra_test_set_paths: null #[ 'C:/Users\mikem\crystals\CSP_runs\datasets/csd_coumarins_dataset' ]
-discriminator_path: 'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_discriminator_10088'
+discriminator_path: '/home/mk8347/scratch/csd_runs/models/best_discriminator_10088'
 generator_path: null #'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_generator_10115'
 conditioner_path: null #'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_conditioner_10084'
 regressor_path: null
@@ -41,9 +41,9 @@ seeds:
 
 # opt - sweep details
 wandb:
-  mini_csp_frequency: 1000
+  mini_csp_frequency: 5
   sample_reporting_frequency: 5
-  experiment_tag: dev
+  experiment_tag: generator4
   log_figures: True
 
 # batching & convergence
@@ -54,20 +54,20 @@ auto_batch_reduction: 0.05 # DEPRECATED # fraction of tested max batch size to a
 grow_batch_size: True
 min_batch_size: 10
 max_batch_size: 1000
-batch_growth_increment: 0.01 # fraction of batch size to grow by each epoch
+batch_growth_increment: 0.025 # fraction of batch size to grow by each epoch
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
 history: 5000
 gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 1000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100
 max_num_atoms: 100
 min_num_atoms: 5 # target XVI has only 9 heavy atoms
-max_molecule_radius: 10 # angstroms
+max_molecule_radius: 5 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -85,7 +85,7 @@ exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
 include_sgs: [ "P-1","P21/c","P212121","C2/c" ] #["P-1", "P21/c", "P212121", "C2/c", "Pbca", "P21"]
 include_pgs: null #[222,-1,2/m] #[222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: ["P-1"]#,"P21/c","P212121","C2/c"] #'P2' #'P21/c' # can only do one at a time right now
+generate_sgs: ["P-1"] #,"P21/c","P212121","C2/c"] #'P2' #'P21/c' # can only do one at a time right now
 supercell_size: 5 # new method - should be very large, automatically pares down
 
 

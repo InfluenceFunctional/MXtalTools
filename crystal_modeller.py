@@ -1099,7 +1099,10 @@ class Modeller:
             similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
             discriminator_score, dist_dict = self.score_adversarially(supercell_data.clone(), discriminator)
             h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, supercell_data)
-            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, supercell_data.num_graphs, supercell_data)
+            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii,
+                                                              dist_dict=dist_dict,
+                                                              num_graphs=data.num_graphs,
+                                                              mol_sizes=data.mol_size)  # don't change last point from data
             packing_loss, packing_prediction, packing_target, = cell_density_loss(
                 self.config.packing_loss_rescaling,
                 self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
@@ -2188,7 +2191,7 @@ class Modeller:
 
         discriminator_score, dist_dict = self.score_adversarially(real_supercell_data.clone(), discriminator)
         h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, real_supercell_data)
-        vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data)
+        vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data.mol_size)
         real_rdf, rr = crystal_rdf(real_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular')
 
         volumes_list = []
@@ -2224,7 +2227,7 @@ class Modeller:
 
             discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator)
             h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, fake_supercell_data)
-            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data)
+            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data.mol_size)
             # rdf, rr = crystal_rdf(fake_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular')
 
             volumes_list = []
