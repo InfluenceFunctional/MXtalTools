@@ -41,9 +41,9 @@ seeds:
 
 # opt - sweep details
 wandb:
-  mini_csp_frequency: 5
+  mini_csp_frequency: 20
   sample_reporting_frequency: 5
-  experiment_tag: generator4
+  experiment_tag: generator5
   log_figures: True
 
 # batching & convergence
