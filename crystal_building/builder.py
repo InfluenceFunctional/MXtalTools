@@ -97,8 +97,8 @@ class SupercellBuilder():
 
         sym_ops_list, supercell_data = self.set_sym_ops(supercell_data)
 
-        cell_lengths, cell_angles, mol_position, mol_rotation = \
-            self.process_cell_params(supercell_data, cell_sample, skip_cell_cleaning, standardized_sample, rescale_asymmetric_unit=rescale_asymmetric_unit)
+        cell_lengths, cell_angles, mol_position, mol_rotation = self.process_cell_params(
+            supercell_data, cell_sample, skip_cell_cleaning, standardized_sample, rescale_asymmetric_unit=rescale_asymmetric_unit)
 
         T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(cell_lengths, cell_angles)
 

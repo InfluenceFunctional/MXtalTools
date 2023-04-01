@@ -1068,7 +1068,6 @@ class Modeller:
             mol_data = update_crystal_symmetry_elements(mol_data, self.config.generate_sgs, self.config.dataDims,
                                                         self.sym_info)
 
-
         # generate the samples
         [[generated_samples, latent], prior, condition] = generator.forward(
             n_samples=mol_data.num_graphs, conditions=mol_data.to(self.config.device).clone(),
@@ -1097,18 +1096,16 @@ class Modeller:
                 align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
             )
 
-            data.cell_params = supercell_data.cell_params
-
             similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
             discriminator_score, dist_dict = self.score_adversarially(supercell_data.clone(), discriminator)
             h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, supercell_data)
-            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, data.num_graphs, data)
-            packing_loss, packing_prediction, packing_target, = \
-                cell_density_loss(self.config.packing_loss_rescaling,
-                                  self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
-                                  self.mol_volume_ind,
-                                  self.config.dataDims['target mean'], self.config.dataDims['target std'],
-                                  data, generated_samples, precomputed_volumes=generated_cell_volumes)
+            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, supercell_data.num_graphs, supercell_data)
+            packing_loss, packing_prediction, packing_target, = cell_density_loss(
+                self.config.packing_loss_rescaling,
+                self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
+                self.mol_volume_ind,
+                self.config.dataDims['target mean'], self.config.dataDims['target std'],
+                supercell_data, generated_samples, precomputed_volumes=generated_cell_volumes)
 
             # combo
             f1 = 100  # for sharp sigmoid scaling
@@ -1242,7 +1239,6 @@ class Modeller:
         del self.prep_dataset  # we don't actually want this huge thing floating around
         self.config.dataDims = dataset_builder.get_dimension()
 
-
         self.n_generators = sum((self.config.train_discriminator_on_randn, self.config.train_discriminator_on_distorted, self.config.train_discriminator_adversarially))
         self.generator_ind_list = []
         if self.config.train_discriminator_adversarially:
@@ -1279,8 +1275,8 @@ class Modeller:
         add symmetry element indices to symmetry dict
         '''
         # todo build separate
-        self.sym_info['sg_feature_ind_dict'] = self.sg_feature_ind_dict # SG indices in input features
-        self.sym_info['crysys_ind_dict'] = self.crysys_ind_dict # crysys indices in input features
+        self.sym_info['sg_feature_ind_dict'] = self.sg_feature_ind_dict  # SG indices in input features
+        self.sym_info['crysys_ind_dict'] = self.crysys_ind_dict  # crysys indices in input features
         self.sym_info['crystal_z_value_ind'] = self.config.dataDims['num atomwise features'] + self.config.dataDims['molecule features'].index('crystal z value')  # Z value index in input features
 
         ''' 
@@ -1649,8 +1645,8 @@ class Modeller:
 
             # self.nice_dataset_analysis(self.prep_dataset)
             self.misc_pre_training_items()
-            #from reporting.nov_22_regressor import nice_regression_plots
-            #nice_regression_plots(self.config)
+            # from reporting.nov_22_regressor import nice_regression_plots
+            # nice_regression_plots(self.config)
             from reporting.nov_22_discriminator_final import nice_scoring_plots
             nice_scoring_plots(self.config, wandb)
 
@@ -2229,7 +2225,7 @@ class Modeller:
             discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator)
             h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, fake_supercell_data)
             vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data)
-            rdf, rr = crystal_rdf(fake_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular')
+            # rdf, rr = crystal_rdf(fake_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular')
 
             volumes_list = []
             for i in range(fake_data.num_graphs):
@@ -2245,7 +2241,7 @@ class Modeller:
             sampling_dict['density'][:, ii] = fake_packing_coeffs.cpu().detach().numpy()
             sampling_dict['h bond score'][:, ii] = h_bond_score.cpu().detach().numpy()
             sampling_dict['cell params'][:, ii, :] = fake_supercell_data.cell_params.cpu().detach().numpy()
-            sampling_dict['RDF'][:, ii, :] = rdf.cpu().detach().numpy()
+            # sampling_dict['RDF'][:, ii, :] = rdf.cpu().detach().numpy()
 
         mini_csp_reporting(self.config, wandb, sampling_dict, real_samples_dict, real_data)
         return None

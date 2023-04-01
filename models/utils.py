@@ -494,9 +494,10 @@ def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, data=None):
 
 def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
                       packing_mean, packing_std, data, raw_sample, precomputed_volumes=None):
-    '''
+    """
     compute packing coefficients for generated cells
-    '''
+    compute losses relating to packing density
+    """
     if precomputed_volumes is None:
         volumes_list = []
         for i in range(len(raw_sample)):
@@ -509,7 +510,7 @@ def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
     standardized_gen_packing_coeffs = (generated_packing_coeffs - packing_mean) / packing_std
 
     csd_packing_coeffs = data.tracking[:, packing_coeff_ind]
-    standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_std) / packing_std  # requires that packing coefficnet is set as regression target in main
+    standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_mean) / packing_std  # requires that packing coefficnet is set as regression target in main
 
     if packing_loss_rescaling == 'log':
         packing_loss = torch.log(
