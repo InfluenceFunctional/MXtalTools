@@ -22,7 +22,7 @@ def reload_model_checkpoints(config):
     pass
 
 
-class CrystalScore(Proxy):
+class MolecularCrystalScore(Proxy):
     def __init__(self, model: str = "score_model_1", use_aux_scores=False, **kwargs):
         """
         Parameters
@@ -31,7 +31,7 @@ class CrystalScore(Proxy):
             The name of the pretrained model to be used for prediction.
 
         use_aux_scores : bool
-            Whether to use auxiliary heuristic scores
+            Whether to use auxiliary heuristic scores in addition to score from the proxy model
         """
         super().__init__(**kwargs)
         self.use_aux_scores = use_aux_scores

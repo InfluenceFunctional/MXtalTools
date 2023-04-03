@@ -1898,9 +1898,9 @@ class Modeller:
 
         if adversarial_score is not None:
             softmax_adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
-            adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
-            # adversarial_loss = 10-softmax_and_score(adversarial_score) # linearized score
-            # adversarial_loss = 1-softmax_adversarial_score # simply maximize P(real)
+            # adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
+            adversarial_loss = 10 - softmax_and_score(adversarial_score)  # linearized score
+            # adversarial_loss = 1-softmax_adversarial_score  # simply maximize P(real) (small gradients near 0 and 1)
             stats_keys += ['generator adversarial loss']
             stats_values += [adversarial_loss.cpu().detach().numpy()]
             stats_keys += ['generator adversarial score']
