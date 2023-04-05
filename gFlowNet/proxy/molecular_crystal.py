@@ -1,15 +1,9 @@
-import pickle
 from argparse import Namespace
-from typing import Union
 
-import numpy as np
-import numpy.typing as npt
 import torch
-from sklearn.ensemble import RandomForestRegressor
 
-from crystal_building.builder import SupercellBuilder
+from crystal_building.builder import SupercellBuilder, update_crystal_symmetry_elements
 from gflownet.proxy.base import Proxy
-from gflownet.utils.common import download_file_if_not_exists
 from models.discriminator_models import crystal_discriminator
 from models.utils import softmax_and_score, compute_h_bond_score, get_vdw_penalty, cell_density_loss, reload_model
 
@@ -18,15 +12,21 @@ SCORE_MODELS = {
 }
 
 
-def reload_model_checkpoints(config):
-    pass
-
-
 class MolecularCrystalScore(Proxy):
-    def __init__(self, model: str = "score_model_1", use_aux_scores=False, **kwargs):
+    def __init__(self, config, sym_info, mol_volume_ind,
+                 model: str = "score_model_1", use_aux_scores=False, **kwargs):
         """
         Parameters
         ----------
+        config : namespace
+            Config object containing information on the model setup and characteristics of the dataset (dataDims)
+
+        sym_info : dict
+            Containing information on symmetry operations, point groups, lattice types and space group symbols for the 230 space groups
+
+        mol_volume_ind : int
+            index for the molecule volume in crystal_data.tracking features [n_crystals, n_features]
+
         model : str
             The name of the pretrained model to be used for prediction.
 
@@ -35,6 +35,9 @@ class MolecularCrystalScore(Proxy):
         """
         super().__init__(**kwargs)
         self.use_aux_scores = use_aux_scores
+        self.config = config
+        self.sym_info = sym_info
+        self.mol_volume_ind = mol_volume_ind
 
         if SCORE_MODELS.get(model) is None:
             raise ValueError(
@@ -51,8 +54,7 @@ class MolecularCrystalScore(Proxy):
         self.model, _ = reload_model(self.model, None, self.config.discriminator_path)  # reload weights
 
         # prep crystal builder
-        self.supercell_builder = SupercellBuilder(self.sym_ops, self.sym_info, self.normed_lattice_vectors,
-                                                  self.atom_weights, self.config.dataDims)
+        self.supercell_builder = SupercellBuilder(self.sym_info, self.config.dataDims)
 
     @torch.no_grad()
     def __call__(
@@ -63,9 +65,10 @@ class MolecularCrystalScore(Proxy):
         """
         Args
         ----
-        molecule_data : CrystalData object containing atom, and molecule-scale features
+        molecule_data : CrystalData object containing atom and molecule-scale features
+        (same one used to condition crystal parameters' generation)
 
-        crystal_parameters : proposed cell params
+        crystal_parameters : proposed cell params in format [n_crystals, 13]
         SG_ind | a,b,c | alpha,beta,gamma | x,y,z | phi,psi,theta
 
         Returns
@@ -73,23 +76,40 @@ class MolecularCrystalScore(Proxy):
         scores : model score, optionally augmented by heuristic auxiliary functions
 
         """
-        crystal_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-            molecule_data, crystal_parameters, self.config.supercell_size,
-            self.config.discriminator.graph_convolution_cutoff,
-            align_molecules=False,
-        )
-        model_output, dist_dict = self.model(crystal_data.clone(), return_dists=True)
+        cell_params = crystal_parameters[:, 1:]
+        space_groups = crystal_parameters[:, 0]
 
-        model_score = softmax_and_score(model_output)
+        # overwrite space group and accompanying symmetry info to molecule objects
+        molecule_data = update_crystal_symmetry_elements(molecule_data,
+                                                         space_groups,
+                                                         self.config.dataDims,
+                                                         self.sym_info)
+
+        crystal_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+            molecule_data,
+            cell_params,
+            supercell_size=5,
+            graph_convolution_cutoff=6,
+            align_molecules=False)
+
+        model_output, dist_dict = self.model(crystal_data.clone(), return_dists=True)
+        model_score = softmax_and_score(model_output)  # convert output to score
 
         if self.use_aux_scores:
-            h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, supercell_data)
+            # h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, crystal_data)
             vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, crystal_data.num_graphs, crystal_data)
-            packing_loss, packing_prediction, packing_target, = \
-                cell_density_loss(self.config.packing_loss_rescaling,
-                                  self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
-                                  self.mol_volume_ind,
-                                  self.config.dataDims['target mean'], self.config.dataDims['target std'],
-                                  crystal_data, crystal_parameters, precomputed_volumes=generated_cell_volumes)
+            packing_loss, packing_prediction, packing_target, = cell_density_loss(
+                None,
+                self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
+                self.mol_volume_ind,
+                self.config.dataDims['target mean'],
+                self.config.dataDims['target std'],
+                crystal_data,
+                cell_params,
+                precomputed_volumes=generated_cell_volumes)
+
+            model_score -= (packing_loss + vdw_penalty)  # subtract auxiliary losses
+
+        # todo log auxiliary losses and a few crystal samples for analysis
 
         return model_score
