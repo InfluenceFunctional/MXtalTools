@@ -55,13 +55,12 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
     return mol_data
 
 
-class SupercellBuilder():
-    def __init__(self, sym_ops, symmetries_dict, normed_lattice_vectors, atom_weights, dataDims, supercell_scale=5, device='cuda'):
-        self.sym_ops = sym_ops
-        self.atom_weights = atom_weights
+class SupercellBuilder:
+    def __init__(self, symmetries_dict, dataDims, supercell_scale=5, device='cuda'):
+        self.sym_ops = symmetries_dict['sym_ops']
         self.symmetries_dict = symmetries_dict
         self.dataDims = dataDims
-        self.normed_lattice_vectors = normed_lattice_vectors
+        self.normed_lattice_vectors = None  # deprecated for now
         self.device = device
         # confirm sym ops we are using agree with these settings
         # todo confirm these make right crystals

@@ -10,13 +10,13 @@ save_checkpoints: True # will do it always on cluster, only locally if True
 
 # for GAN training
 freeze_generator_conditioner: False
-train_generator_packing: False
-train_generator_vdw: False
+train_generator_packing: True
+train_generator_vdw: True
 vdw_loss_rescaling: null
 packing_loss_rescaling: null
 train_generator_combo: False
 train_generator_h_bond: False # (non-directional)
-train_generator_adversarially: True
+train_generator_adversarially: False
 generator_similarity_penalty: 0
 
 train_discriminator_adversarially: False
@@ -32,7 +32,7 @@ generator_path: 'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_generator_
 conditioner_path: null
 regressor_path: null
 
-sample_steps: 1000
+sample_steps: 10
 sample_move_size: 0.001
 
 seeds:
@@ -61,7 +61,7 @@ gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 10000
+dataset_length: 100
 feature_richness: full # full or minimal
 max_crystal_temperature: 10000
 min_crystal_temperature: -100

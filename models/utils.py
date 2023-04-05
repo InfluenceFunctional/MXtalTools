@@ -526,3 +526,21 @@ def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
     assert torch.sum(torch.isnan(packing_loss)) == 0
 
     return packing_loss, generated_packing_coeffs, csd_packing_coeffs
+
+
+def compute_combo_score(packing_prediction, vdw_penalty, discriminator_raw_output):
+    # combo
+    f1 = 100  # for sharp sigmoid scaling
+    # accept packing within range 0.675 +/- 0.125
+    packing_center = 0.675
+    packing_span = 0.125
+    packing_range_loss = F.sigmoid(-f1 * (packing_prediction - packing_center + packing_span)) * (-(packing_prediction - packing_center)) + \
+                         F.sigmoid(f1 * (packing_prediction - packing_center - packing_span)) * (packing_prediction - packing_center)
+
+    vdw_span = 0.5  # accept vdw overlaps of up to 0.5 angstrom
+    vdw_range_loss = F.sigmoid(f1 * (vdw_penalty - vdw_span)) * vdw_penalty
+
+    # combo score is the two above bracketing losses plus the adversarial probability we want to minimize
+    discriminator_loss = F.softmax(discriminator_raw_output / 5, dim=-1)[:, 0]  # high temperature for more linear gradient
+    combo_score = -(vdw_range_loss + packing_range_loss + discriminator_loss)
+    return combo_score

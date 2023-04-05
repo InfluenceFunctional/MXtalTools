@@ -51,7 +51,6 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
     wandb.log(overlaps_1d.copy())
     wandb.log(sample_means)
     wandb.log(sample_stds)
-    print("1D Overlap With Data:{:.3f}".format(average_overlap))
 
     if config.wandb.log_figures:
         fig_dict = {}  # consider replacing by Joy plot

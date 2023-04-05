@@ -51,7 +51,7 @@ def single_point_compute_rdf_torch(dists, density=None, range=None, bins=None):
     return rdf, rr[:-1] + torch.diff(rr)  # rdf and x-axis
 
 
-def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None, remove_radial_scaling=False):
+def parallel_compute_rdf_torch(dists_list, raw_density=True, rrange=None, bins=None, remove_radial_scaling=False):
     '''
     compute the radial distribution for a single particle
     dists: array of pairwise distances of nearby particles from the reference
@@ -59,16 +59,19 @@ def parallel_compute_rdf_torch(dists_list, density=None, rrange=None, bins=None,
     hist_range = [0.5, 10] if rrange is None else rrange
     hist_bins = 100 if bins is None else bins
 
-    if density is None:  # estimate the density from the distances
+    if not raw_density:  # estimate the density from the distances
         rdf_density = torch.zeros(len(dists_list)).to(dists_list[0].device)
         for i in range(len(dists_list)):
             dists = dists_list[i]
-            sorted_dists = torch.sort(dists)[0][:len(dists) // 2]  # we will use 1/2 the dist radius to avoid edge / cutoff effects
-            volume = 4 / 3 * torch.pi * torch_ptp(sorted_dists) ** 3  # volume of a sphere #np.ptp(sorted_dists[:, 0]) * np.ptp(sorted_dists[:, 1]) * np.ptp(sorted_dists[:, 2])
-            # number of particles divided by the volume
-            rdf_density[i] = len(sorted_dists) / volume
+            try:
+                sorted_dists = torch.sort(dists)[0][:len(dists) // 2]  # we will use 1/2 the dist radius to avoid edge / cutoff effects
+                volume = 4 / 3 * torch.pi * torch_ptp(sorted_dists) ** 3  # volume of a sphere #np.ptp(sorted_dists[:, 0]) * np.ptp(sorted_dists[:, 1]) * np.ptp(sorted_dists[:, 2])
+                # number of particles divided by the volume
+                rdf_density[i] = len(sorted_dists) / volume
+            except:
+                rdf_density[i] = 1
     else:
-        rdf_density = density
+        rdf_density = torch.ones(len(dists_list),device=dists_list[0].device,dtype=torch.float32)
 
     hh_list = torch.stack([torch.histc(dists, min=hist_range[0], max=hist_range[1], bins=hist_bins) for dists in dists_list])
     rr = torch.linspace(hist_range[0], hist_range[1], hist_bins + 1).to(hh_list.device)

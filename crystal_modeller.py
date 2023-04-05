@@ -1,7 +1,9 @@
-# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 import glob
 import os
 import time
+
+#os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+
 
 import ase.io
 import matplotlib.pyplot as plt
@@ -30,7 +32,7 @@ from models.generator_models import crystal_generator
 from models.utils import *
 from models.regression_models import molecule_regressor
 from models.base_models import independent_gaussian_model
-from models.utils import compute_h_bond_score, get_vdw_penalty, cell_density_loss
+from models.utils import compute_h_bond_score, get_vdw_penalty, cell_density_loss, compute_combo_score
 from models.vdw_overlap import vdw_overlap
 from reporting.online import cell_params_analysis, log_supercell_examples, plotly_setup, cell_density_plot, all_losses_plot, report_conditioner_training, process_discriminator_outputs, discriminator_scores_plot, \
     plot_generator_loss_correlates, plot_discriminator_score_correlates, mini_csp_reporting, sampling_telemetry_plot, cell_params_tracking_plot
@@ -43,6 +45,7 @@ from sampling.utils import de_clean_samples, sample_clustering
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
 # https://dictionary.iucr.org/Sohncke_groups#:~:text=Sohncke%20groups%20are%20the%20three,in%20the%20chiral%20space%20groups.
+
 
 class Modeller:
     def __init__(self, config):
@@ -466,7 +469,7 @@ class Modeller:
 
                         # sometimes test the generator on a mini CSP problem
                         if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0):
-                            self.mini_csp_analysis(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator)
+                            self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator)
 
                         # save checkpoints
                         self.model_checkpointing(epoch, self.config, discriminator, generator, conditioner, regressor,
@@ -903,12 +906,12 @@ class Modeller:
         if any((self.config.train_generator_packing, self.config.train_generator_adversarially,
                 self.config.train_generator_vdw, self.config.train_generator_combo,
                 self.config.train_generator_h_bond)):
-            adversarial_score, generated_samples, packing_loss, packing_prediction, packing_target, \
+            discriminator_raw_output, generated_samples, packing_loss, packing_prediction, packing_target, \
                 vdw_loss, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score, combo_score = \
                 self.train_generator(generator, discriminator, data, i)
 
             generator_losses, epoch_stats_dict = self.aggregate_generator_losses(
-                epoch_stats_dict, packing_loss, adversarial_score,
+                epoch_stats_dict, packing_loss, discriminator_raw_output,
                 vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score)
 
             generator_loss = generator_losses.mean()
@@ -990,6 +993,7 @@ class Modeller:
             data, generated_samples_i, self.config.supercell_size,
             self.config.discriminator.graph_convolution_cutoff,
             align_molecules=False)
+
 
         if self.config.device.lower() == 'cuda':  # redundant
             real_supercell_data = real_supercell_data.cuda()
@@ -1097,35 +1101,21 @@ class Modeller:
             )
 
             similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
-            discriminator_score, dist_dict = self.score_adversarially(supercell_data.clone(), discriminator)
+            discriminator_raw_output, dist_dict = self.score_adversarially(supercell_data.clone(), discriminator)
             h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, supercell_data)
             vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii,
                                                               dist_dict=dist_dict,
                                                               num_graphs=data.num_graphs,
-                                                              mol_sizes=data.mol_size)  # don't change last point from data
+                                                              mol_sizes=data.mol_size)
             packing_loss, packing_prediction, packing_target, = cell_density_loss(
                 self.config.packing_loss_rescaling,
                 self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
                 self.mol_volume_ind,
                 self.config.dataDims['target mean'], self.config.dataDims['target std'],
                 supercell_data, generated_samples, precomputed_volumes=generated_cell_volumes)
+            combo_score = compute_combo_score(packing_prediction, vdw_penalty, discriminator_raw_output)
 
-            # combo
-            f1 = 100  # for sharp sigmoid scaling
-            # accept packing within range 0.675 +/- 0.125
-            packing_center = 0.675
-            packing_span = 0.125
-            packing_range_loss = F.sigmoid(-f1 * (packing_prediction - packing_center + packing_span)) * (-(packing_prediction - packing_center)) + \
-                                 F.sigmoid(f1 * (packing_prediction - packing_center - packing_span)) * (packing_prediction - packing_center)
-
-            vdw_span = 0.5  # accept vdw overlaps of up to 0.5 angstrom
-            vdw_range_loss = F.sigmoid(f1 * (vdw_penalty - vdw_span)) * vdw_penalty
-
-            # combo score is the two above bracketing losses plus the adversarial probability we want to minimize
-            discriminator_loss = F.softmax(discriminator_score / 5, dim=-1)[:, 0]  # high temperature for more linear gradient
-            combo_score = -(vdw_range_loss + packing_range_loss + discriminator_loss)
-
-            ''' # visualize contributions
+            '''  # visualize contributions
             fig = go.Figure()
             fig.add_trace(go.Bar(name='packing',x = np.arange(len(packing_range_loss)), y=packing_range_loss.cpu().detach().numpy()))
             fig.add_trace(go.Bar(name='vdw',x = np.arange(len(packing_range_loss)), y=vdw_range_loss.cpu().detach().numpy()))
@@ -1135,7 +1125,7 @@ class Modeller:
             fig.show()
             '''
 
-            return discriminator_score, generated_samples.cpu().detach().numpy(), \
+            return discriminator_raw_output, generated_samples.cpu().detach().numpy(), \
                 packing_loss, packing_prediction.cpu().detach().numpy(), \
                 packing_target.cpu().detach().numpy(), \
                 vdw_penalty, dist_dict, \
@@ -1253,8 +1243,7 @@ class Modeller:
         '''
         init supercell builder
         '''
-        self.supercell_builder = SupercellBuilder(self.sym_ops, self.sym_info, self.normed_lattice_vectors,
-                                                  self.atom_weights, self.config.dataDims)
+        self.supercell_builder = SupercellBuilder(self.sym_info, self.config.dataDims)
 
         '''
         set tracking feature indices & property dicts we will use later
@@ -1463,8 +1452,7 @@ class Modeller:
 
                 if i % 2 == 0:  # alternate between random distortions and specifically diffuse cells
                     if self.config.sample_distortion_magnitude == -1:
-                        distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, -0.5,
-                                                                                             len(generated_samples_ii)).to(
+                        distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, -0.5, len(generated_samples_ii)).to(
                             generated_samples_ii.device)[:, None]  # wider range for evaluation mode
                     else:
                         distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
@@ -1883,7 +1871,7 @@ class Modeller:
 
         return discriminator_score, dist_dict
 
-    def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, adversarial_score, vdw_loss,
+    def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, discriminator_raw_output, vdw_loss,
                                    similarity_penalty, packing_prediction, packing_target, h_bond_score, combo_score):
         generator_losses_list = []
         stats_keys, stats_values = [], []
@@ -1896,15 +1884,15 @@ class Modeller:
             if self.config.train_generator_packing:
                 generator_losses_list.append(packing_loss.float())
 
-        if adversarial_score is not None:
-            softmax_adversarial_score = F.softmax(adversarial_score, dim=1)[:, 1]  # modified minimax
+        if discriminator_raw_output is not None:
+            softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax
             # adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
-            adversarial_loss = 10 - softmax_and_score(adversarial_score)  # linearized score
+            adversarial_loss = 10 - softmax_and_score(discriminator_raw_output)  # linearized score
             # adversarial_loss = 1-softmax_adversarial_score  # simply maximize P(real) (small gradients near 0 and 1)
             stats_keys += ['generator adversarial loss']
             stats_values += [adversarial_loss.cpu().detach().numpy()]
             stats_keys += ['generator adversarial score']
-            stats_values += [adversarial_score.cpu().detach().numpy()]
+            stats_values += [discriminator_raw_output.cpu().detach().numpy()]
 
             if self.config.train_generator_adversarially:
                 generator_losses_list.append(adversarial_loss)
@@ -2177,7 +2165,7 @@ class Modeller:
                     key]  # assign all atoms to type other, except these specific ones
         self.config.conditioner_classes_dict = conditioner_classes_dict
 
-    def mini_csp_analysis(self, data_loader, generator, discriminator):
+    def mini_csp(self, data_loader, generator, discriminator):
         print('Starting Mini CSP')
         generator.eval()
         discriminator.eval()
@@ -2185,14 +2173,13 @@ class Modeller:
         real_supercell_data = self.supercell_builder.real_cell_to_supercell(real_data, self.config)
 
         num_molecules = real_data.num_graphs
-        samples_per_molecule = 200
-        n_sampling_iters = samples_per_molecule
+        n_sampling_iters = self.config.sample_steps
         RDF_shape = [10, 100]
 
         discriminator_score, dist_dict = self.score_adversarially(real_supercell_data.clone(), discriminator)
         h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, real_supercell_data)
         vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data.mol_size)
-        real_rdf, rr = crystal_rdf(real_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular')
+        #real_rdf, rr, atom_inds = crystal_rdf(real_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular',atomwise=True)
 
         volumes_list = []
         for i in range(real_data.num_graphs):
@@ -2205,7 +2192,8 @@ class Modeller:
                              'density': real_packing_coeffs.cpu().detach().numpy(),
                              'h bond score': h_bond_score.cpu().detach().numpy(),
                              'cell params': real_data.cell_params.cpu().detach().numpy(),
-                             'RDF': real_rdf.cpu().detach().numpy()}
+                             #'RDF': real_rdf.cpu().detach().numpy()
+                             }
 
         sampling_dict = {'score': np.zeros((num_molecules, n_sampling_iters)),
                          'vdw overlap': np.zeros((num_molecules, n_sampling_iters)),
@@ -2247,4 +2235,70 @@ class Modeller:
             # sampling_dict['RDF'][:, ii, :] = rdf.cpu().detach().numpy()
 
         mini_csp_reporting(self.config, wandb, sampling_dict, real_samples_dict, real_data)
+        #
+        # # playing with rdfs
+        # lattice_means = torch.tensor(self.config.dataDims['lattice means'], device=real_data.cell_params.device)
+        # lattice_stds = torch.tensor(self.config.dataDims['lattice stds'], device=real_data.cell_params.device)  # standardize
+        # distortions_list = []
+        # distorted_samples_std = []
+        # distorted_samples = []
+        # orig_sample = real_data.cell_params.cpu().detach().numpy()
+        # orig_sample_std = (real_data.cell_params - lattice_means) / lattice_stds
+        # fake_rdfs = []
+        # n_sampling_iters = 100
+        # real_rdf, rr, real_atom_inds = crystal_rdf(
+        #     real_supercell_data, rrange=[0, 10], bins=100,
+        #     mode='intermolecular', atomwise=True, raw_density=True)
+        #
+        # atoms_lists = []
+        # for _ in tqdm.tqdm(range(n_sampling_iters)):
+        #     generated_samples_ii = (real_data.cell_params - lattice_means) / lattice_stds
+        #     #distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, -0.5, len(generated_samples_ii)).to(
+        #     #    generated_samples_ii.device)[:, None]  # wider range for evaluation mode
+        #
+        #     distortion = torch.zeros_like(generated_samples_ii)
+        #     distortion[:,0] += torch.randn_like(generated_samples_ii)[:,0]
+        #
+        #     generated_samples_i = (generated_samples_ii + distortion).to(self.config.device).float()  # add jitter and return in standardized basis
+        #
+        #     fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+        #         real_data, generated_samples_i, self.config.supercell_size,
+        #         self.config.discriminator.graph_convolution_cutoff,
+        #         align_molecules=False)
+        #
+        #     fake_rdf, rr, atoms_list = crystal_rdf(
+        #         fake_supercell_data, rrange=[0, 10], bins=100,
+        #         mode='intermolecular', atomwise=True, raw_density=True)
+        #
+        #     atoms_lists.append(atoms_list)
+        #     fake_rdfs.append(fake_rdf)
+        #     distorted_samples.append(fake_supercell_data.cell_params.cpu().detach().numpy())
+        #     distortions_list.append(distortion.cpu().detach().numpy())
+        #     distorted_samples_std.append(generated_samples_i.cpu().detach().numpy())
+        #
+        # distortions_list = np.asarray(distortions_list)
+        # distorted_samples_std = np.asarray(distorted_samples_std)
+        # distorted_samples = np.asarray(distorted_samples)
+        # fake_rdfs_concat = [torch.stack([fake_rdfs[j][i] for j in range(n_sampling_iters)]) for i in range(num_molecules)]
+        #
+        # num_molecules = real_data.num_graphs
+        # real_fake_prior_dists = np.zeros((num_molecules, n_sampling_iters))
+        # real_fake_rdf_dists = torch.zeros((num_molecules, n_sampling_iters))
+        # for i in range(num_molecules):
+        #     for j in range(n_sampling_iters):
+        #         real_fake_rdf_dists[i, j] = (earth_movers_distance_torch(real_rdf[i], fake_rdfs_concat[i][j]) * (rr[1] - rr[0])).mean()
+        #         real_fake_prior_dists[i, j] = np.sum(np.abs(orig_sample[i] - distorted_samples[j, i]) / np.abs(orig_sample[i]))
+        #
+        # real_fake_rdf_dists = real_fake_rdf_dists.cpu().detach().numpy()
+        #
+        # from plotly.subplots import make_subplots
+        #
+        # fig = make_subplots(cols=4, rows=3)
+        # for i in range(num_molecules):
+        #     row = i // 4 + 1
+        #     col = i % 4 + 1
+        #     fig.add_trace(go.Scattergl(x=real_fake_prior_dists[i], y=real_fake_rdf_dists[i], mode='markers'),
+        #                   row=row, col=col)
+        # fig.show()
+
         return None
