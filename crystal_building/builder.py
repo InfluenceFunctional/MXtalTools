@@ -108,27 +108,27 @@ class SupercellBuilder:
             supercell_data = align_crystaldata_to_principal_axes(supercell_data, handedness=target_handedness)
 
         coords_list = []
-        atoms_list = []
+        atomic_number_list = []
         for i in range(supercell_data.num_graphs):
-            atoms_list.append(supercell_data.x[supercell_data.batch == i])
+            atomic_number_list.append(supercell_data.x[supercell_data.batch == i])
             coords_list.append(supercell_data.pos[supercell_data.batch == i])
 
         rotations_list = self.rotvec_to_rmat(mol_rotation)
-        final_coords_list = []
+        canonical_conformer_coords_list = []
         for i, (rotation, coords, T_fc, new_frac_pos) in enumerate(zip(rotations_list, coords_list, T_fc_list, mol_position)):
-            final_coords_list.append(torch.inner(rotation, coords - coords.mean(0)).T + torch.inner(T_fc, new_frac_pos))
+            canonical_conformer_coords_list.append(torch.inner(rotation, coords - coords.mean(0)).T + torch.inner(T_fc, new_frac_pos))
 
-        reference_cell_list = self.build_unit_cell(supercell_data.clone(), final_coords_list, T_fc_list, T_cf_list, sym_ops_list)
+        unit_cell_coords_list = self.build_unit_cell(supercell_data.clone(), canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
 
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            ref_to_supercell(reference_cell_list, cell_vector_list, T_fc_list, atoms_list, supercell_data.Z,
+            ref_to_supercell(unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.Z,
                              supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
                              sorted_fractional_translations=self.sorted_fractional_translations)
 
         overlaps_list = None  # expensive and not currently used # compute_lattice_vector_overlap(final_coords_list, T_cf_list, normed_lattice_vectors=self.normed_lattice_vectors.to(supercell_data.x.device))
 
-        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, reference_cell_list)
+        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, unit_cell_coords_list)
 
         return supercell_data, generated_cell_volumes, overlaps_list
 

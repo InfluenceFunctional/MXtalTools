@@ -35,7 +35,7 @@ class BuildDataset:
         self.include_organometallic = config.include_organometallic
         self.model_mode = config.mode
         self.include_sgs = config.include_sgs
-        self.include_pgs = config.include_pgs
+        self.include_pgs = config.include_pgs  # NO LONGER NECESSARY
         self.replace_dataDims = replace_dataDims
         if override_length is not None:
             self.max_dataset_length = override_length
@@ -45,6 +45,9 @@ class BuildDataset:
 
         self.set_keys()
         self.get_syms(pg_dict, sg_dict, lattice_dict)
+
+        if self.include_sgs is None:
+            self.include_sgs = [self.sg_dict[int(key)] for key in asymmetric_unit_dict.keys()]
 
         '''
         actually load the dataset
@@ -132,9 +135,10 @@ class BuildDataset:
             print("Modelling with crystals from " + str(self.include_sgs))
 
     def add_last_minute_features_quickly(self, dataset, config):
-        '''
-        add some missing one-hot features
-        '''
+        """
+        add or update a few features
+        # todo incorporate these in next dataset build
+        """
 
         '''
         z value
@@ -203,7 +207,8 @@ class BuildDataset:
             unit_cell_coords = dataset['crystal reference cell coords'][ii]
             sg_ind = dataset['crystal spacegroup number'][ii]
             T_cf = dataset['crystal cf transform'][ii]
-            position[ii], rotation[ii], handedness[ii] = unit_cell_analysis(unit_cell_coords, sg_ind, asymmetric_unit_dict, T_cf)
+            position[ii], rotation[ii], handedness[ii] = unit_cell_analysis(
+                unit_cell_coords, sg_ind, asymmetric_unit_dict, T_cf, enforce_right_handedness=False)
 
         dataset['crystal asymmetric unit centroid x'], \
             dataset['crystal asymmetric unit centroid y'], \

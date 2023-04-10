@@ -364,7 +364,7 @@ class mcmcSampler:
                                      proposed_supercells.sg_ind[jj],
                                      self.supercell_builder.asym_unit_dict,
                                      torch.linalg.inv(proposed_supercells.T_fc[jj]),
-                                     enforce_right_handedness = True)
+                                     enforce_right_handedness = False) # todo replace this with the raw cell params
         # renormalize
         nonstandardized_state = proposed_supercells.cell_params.cpu().detach().numpy()
         nonstandardized_state[:, -3:] = correct_rotation

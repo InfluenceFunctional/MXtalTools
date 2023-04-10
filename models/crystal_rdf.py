@@ -1,3 +1,5 @@
+import itertools
+
 import torch
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from common.rdf_calculation import parallel_compute_rdf_torch
@@ -24,7 +26,6 @@ def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=
         # if we have no inside/outside labels, just consider the whole thing one big molecule
         in_inds = torch.arange(len(crystal_data.pos)).to(device)
         out_inds = in_inds
-
 
     edges = asymmetric_radius_graph(crystal_data.pos,
                                     batch=crystal_data.batch,
@@ -60,9 +61,9 @@ def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=
         rdfs_array_list = []
         rdfs_dict_list = []
         all_atom_inds = []
-        #abs_atom_inds = []
+        # abs_atom_inds = []
         for i in range(crystal_data.num_graphs):
-            #all_atom_inds.append(torch.arange(crystal_data.mol_size[i]).tile(int((crystal_data.batch == i).sum() // crystal_data.mol_size[i])))
+            # all_atom_inds.append(torch.arange(crystal_data.mol_size[i]).tile(int((crystal_data.batch == i).sum() // crystal_data.mol_size[i])))
             # assume only that the order of atoms is patterned in all images
             canonical_conformer_coords = crystal_data.pos[crystal_data.ptr[i]:crystal_data.ptr[i] + int(crystal_data.mol_size[i])]
             centroid = canonical_conformer_coords.mean(0)
@@ -70,26 +71,28 @@ def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=
             # TODO if any dists are within 32 bit uncertainty, we have to break the symmetry somehow
             inds = torch.argsort(mol_dists)
             all_atom_inds.append(inds.tile(int((crystal_data.batch == i).sum() // crystal_data.mol_size[i])))
-            #abs_atom_inds.append(all_atom_inds[-1] + crystal_data.ptr[i])
+            # abs_atom_inds.append(all_atom_inds[-1] + crystal_data.ptr[i])
 
         atom_inds = torch.cat(all_atom_inds)
-        #abs_atom_inds = torch.cat(abs_atom_inds)
+        # abs_atom_inds = torch.cat(abs_atom_inds)
 
         atoms = [atom_inds[edges[0]], atom_inds[edges[1]]]
+
         ind = 0
         for n in range(crystal_data.num_graphs):
-            # all possible combinations of atoms on this graph
-            atom_pairs = []
-            for i in range(int(crystal_data.mol_size[n])):
-                for j in range(i,int(crystal_data.mol_size[n])):
-                    atom_pairs.append([i, j])
-            atom_pairs = torch.Tensor(atom_pairs)
+            # all possible combinations of unique atoms on this graph
+            atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystal_data.mol_size[n])), 2)))
+            rdfs_dict_list.append(atom_pairs)  # record the pairs for reporting purposes
 
-            rdfs_dict_list.append(atom_pairs)  # record the pairs
+            # todo this is the slow step which holds up the calculation - use ptr to reduce the size of these vectors
+            dists_in_this_crystal = crystal_number == n
+            atoms_in_atom_pairs = [torch.logical_and(atoms[0] == atom_pairs[m, 0], atoms[1] == atom_pairs[m, 1]) for m in range(len(atom_pairs))]
+            relevant_atoms_lists = [dists[torch.logical_and(dists_in_this_crystal, atoms_in_atom_pairs[m])]
+                                    for m in range(len(atom_pairs))]
+            # end slow step
 
-            rdfs_array, rr = parallel_compute_rdf_torch([dists[(crystal_number == n) * (atoms[0] == atom_pairs[m, 0]) * (atoms[1] == atom_pairs[m, 1])]
-                                                         for m in range(len(atom_pairs))],
-                                                        rrange=rrange, bins=bins, raw_density = True)
+            rdfs_array, rr = parallel_compute_rdf_torch(relevant_atoms_lists,
+                                                        rrange=rrange, bins=bins, raw_density=True)
             ind += 1
 
             rdfs_array_list.append(rdfs_array)

@@ -273,6 +273,7 @@ def np_softmax(x: np.ndarray, temperature=1):
 def earth_movers_distance_torch(x: torch.tensor, y: torch.tensor):
     """
     earth mover's distance between two PDFs
+    not normalized or aggregated
     """
     return torch.sum(torch.abs(torch.cumsum(x, dim=-1) - torch.cumsum(y, dim=-1)), dim=-1)
 

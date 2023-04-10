@@ -2,7 +2,7 @@ import glob
 import os
 import time
 
-#os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 
 import ase.io
@@ -66,7 +66,6 @@ class Modeller:
         move to it
         :return:
         """
-
         periodic_table = rdkit.Chem.GetPeriodicTable()
         self.atom_weights = {}
         self.vdw_radii = {}
@@ -113,6 +112,15 @@ class Modeller:
             self.sym_info['space_group_indices'] = self.space_group_indices
             np.save('symmetry_info', self.sym_info)
 
+        # set space groups to be included and generated
+        if self.config.generate_sgs is None:
+            # generate samples in every space group in the asym dict (eventually, all sgs)
+            self.config.override_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
+
+        if self.config.include_sgs is None:
+            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
+
+
         # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
         # not currently used as we are not computing the overlaps
         # supercell_scale = self.config.supercell_size  # t
@@ -154,6 +162,8 @@ class Modeller:
             print('Initializing dataset took {} seconds'.format(int(time.time() - t0)))
         else:
             print("Must provide a run_num if not creating a new workdir!")
+
+
 
     def make_new_working_directory(self):  # make working directory
         """
@@ -982,18 +992,22 @@ class Modeller:
 
         return loss, loss_record, epoch_stats_dict
 
-    def train_discriminator(self, discriminator, generator, data, i, epoch_stats_dict):
+    def train_discriminator(self, discriminator, generator, real_data, i, epoch_stats_dict):
         # generate fakes & create supercell data
-        real_supercell_data = self.supercell_builder.real_cell_to_supercell(data, self.config)
+        real_supercell_data = self.supercell_builder.real_cell_to_supercell(real_data, self.config)
 
-        generated_samples_i, epoch_stats_dict = \
-            self.generate_discriminator_negatives(epoch_stats_dict, data, generator, i)
+        generated_samples_i, epoch_stats_dict, negative_type = \
+            self.generate_discriminator_negatives(epoch_stats_dict, real_data, generator, i)
 
         fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-            data, generated_samples_i, self.config.supercell_size,
+            real_data, generated_samples_i, self.config.supercell_size,
             self.config.discriminator.graph_convolution_cutoff,
-            align_molecules=False)
-
+            align_molecules=(negative_type != 'generated'),
+            rescale_asymmetric_unit=(negative_type != 'distorted'),
+            skip_cell_cleaning=(negative_type == 'distorted'),
+            standardized_sample=True,
+            target_handedness=real_data.asym_unit_handedness,
+        )
 
         if self.config.device.lower() == 'cuda':  # redundant
             real_supercell_data = real_supercell_data.cuda()
@@ -1418,11 +1432,11 @@ class Modeller:
             # np.save(f'../sampling_output_run_{self.config.run_num}', sampling_dict)
             # self.report_sampling(sampling_dict)
 
-    def generate_discriminator_negatives(self, epoch_stats_dict, data, generator, i):
+    def generate_discriminator_negatives(self, epoch_stats_dict, real_data, generator, i):
         """
         use one of the available cell generation tools to sample cell parameters, to be fed to the discriminator
         @param epoch_stats_dict:
-        @param data:
+        @param real_data:
         @param generator:
         @param i:
         @return:
@@ -1433,26 +1447,29 @@ class Modeller:
 
         if self.config.train_discriminator_adversarially:
             if generator_ind == 1:  # randomly sample which generator to use at each iteration
-                generated_samples_i, _ = self.get_generator_samples(data, generator)
+                negative_type = 'generator'
+                generated_samples_i, _ = self.get_generator_samples(real_data, generator)
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.zeros(len(generated_samples_i)), mode='extend')
 
         if self.config.train_discriminator_on_randn:
             if generator_ind == 2:
-                generated_samples_i = self.randn_generator.forward(data.num_graphs, data).to(self.config.device)
+                negative_type = 'randn'
+                generated_samples_i = self.randn_generator.forward(real_data.num_graphs, real_data).to(self.config.device)
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.ones(len(generated_samples_i)), mode='extend')
 
         if self.config.train_discriminator_on_distorted:
             if generator_ind == 3:
-                lattice_means = torch.tensor(self.config.dataDims['lattice means'], device=data.cell_params.device)
-                lattice_stds = torch.tensor(self.config.dataDims['lattice stds'], device=data.cell_params.device)  # standardize
+                negative_type = 'distorted'
+                lattice_means = torch.tensor(self.config.dataDims['lattice means'], device=real_data.cell_params.device)
+                lattice_stds = torch.tensor(self.config.dataDims['lattice stds'], device=real_data.cell_params.device)  # standardize
 
-                generated_samples_ii = (data.cell_params - lattice_means) / lattice_stds
+                generated_samples_ii = (real_data.cell_params - lattice_means) / lattice_stds
 
                 if i % 2 == 0:  # alternate between random distortions and specifically diffuse cells
                     if self.config.sample_distortion_magnitude == -1:
-                        distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, -0.5, len(generated_samples_ii)).to(
+                        distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, 0.5, len(generated_samples_ii)).to(
                             generated_samples_ii.device)[:, None]  # wider range for evaluation mode
                     else:
                         distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
@@ -1468,7 +1485,7 @@ class Modeller:
                                                      torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy(),
                                                      mode='extend')
 
-        return generated_samples_i.float(), epoch_stats_dict
+        return generated_samples_i.float(), epoch_stats_dict, negative_type
 
     def log_regression_accuracy(self, train_epoch_stats_dict, test_epoch_stats_dict):
         target_mean = self.config.dataDims['target mean']
@@ -2179,7 +2196,7 @@ class Modeller:
         discriminator_score, dist_dict = self.score_adversarially(real_supercell_data.clone(), discriminator)
         h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, real_supercell_data)
         vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data.mol_size)
-        #real_rdf, rr, atom_inds = crystal_rdf(real_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular',atomwise=True)
+        # real_rdf, rr, atom_inds = crystal_rdf(real_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular',atomwise=True)
 
         volumes_list = []
         for i in range(real_data.num_graphs):
@@ -2192,7 +2209,7 @@ class Modeller:
                              'density': real_packing_coeffs.cpu().detach().numpy(),
                              'h bond score': h_bond_score.cpu().detach().numpy(),
                              'cell params': real_data.cell_params.cpu().detach().numpy(),
-                             #'RDF': real_rdf.cpu().detach().numpy()
+                             # 'RDF': real_rdf.cpu().detach().numpy()
                              }
 
         sampling_dict = {'score': np.zeros((num_molecules, n_sampling_iters)),
@@ -2235,36 +2252,49 @@ class Modeller:
             # sampling_dict['RDF'][:, ii, :] = rdf.cpu().detach().numpy()
 
         mini_csp_reporting(self.config, wandb, sampling_dict, real_samples_dict, real_data)
-        #
-        # # playing with rdfs
+
+        # playing with rdfs
         # lattice_means = torch.tensor(self.config.dataDims['lattice means'], device=real_data.cell_params.device)
         # lattice_stds = torch.tensor(self.config.dataDims['lattice stds'], device=real_data.cell_params.device)  # standardize
-        # distortions_list = []
-        # distorted_samples_std = []
-        # distorted_samples = []
+        #
         # orig_sample = real_data.cell_params.cpu().detach().numpy()
         # orig_sample_std = (real_data.cell_params - lattice_means) / lattice_stds
-        # fake_rdfs = []
-        # n_sampling_iters = 100
         # real_rdf, rr, real_atom_inds = crystal_rdf(
         #     real_supercell_data, rrange=[0, 10], bins=100,
         #     mode='intermolecular', atomwise=True, raw_density=True)
         #
+        #
+        # distortions_list = []
+        # distorted_samples_std = []
+        # distorted_samples = []
+        # fake_rdfs = []
+        # n_sampling_iters = 40
+        #
         # atoms_lists = []
-        # for _ in tqdm.tqdm(range(n_sampling_iters)):
-        #     generated_samples_ii = (real_data.cell_params - lattice_means) / lattice_stds
-        #     #distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, -0.5, len(generated_samples_ii)).to(
+        # for indd in tqdm.tqdm(range(n_sampling_iters)):
+        #     real_data_i = real_data.clone()
+        #     generated_samples_ii = (real_data_i.cell_params - lattice_means) / lattice_stds
+        #     # distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, -0.5, len(generated_samples_ii)).to(
         #     #    generated_samples_ii.device)[:, None]  # wider range for evaluation mode
         #
         #     distortion = torch.zeros_like(generated_samples_ii)
-        #     distortion[:,0] += torch.randn_like(generated_samples_ii)[:,0]
+        #
+        #     #distortion = torch.randn_like(generated_samples_ii)
+        #     # distortion[:, 0].log_normal_() # += torch.rand_like(generated_samples_ii)[:, 0]
+        #     distortion[:,0] += torch.logspace(-3, 1, n_sampling_iters)[indd, None].cuda()
         #
         #     generated_samples_i = (generated_samples_ii + distortion).to(self.config.device).float()  # add jitter and return in standardized basis
         #
+        #     for jj in range(fake_data.num_graphs):
+        #         if fake_data.asym_unit_handedness[jj] == -1:
+        #             fake_data.pos[fake_data.batch == jj] = -fake_data.pos[fake_data.batch == jj]
+        #
         #     fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-        #         real_data, generated_samples_i, self.config.supercell_size,
+        #         real_data_i, generated_samples_i, self.config.supercell_size,
         #         self.config.discriminator.graph_convolution_cutoff,
-        #         align_molecules=False)
+        #         align_molecules=True, skip_cell_cleaning=True,
+        #         target_handedness=real_data.asym_unit_handedness,
+        #         rescale_asymmetric_unit=False)
         #
         #     fake_rdf, rr, atoms_list = crystal_rdf(
         #         fake_supercell_data, rrange=[0, 10], bins=100,
@@ -2286,7 +2316,10 @@ class Modeller:
         # real_fake_rdf_dists = torch.zeros((num_molecules, n_sampling_iters))
         # for i in range(num_molecules):
         #     for j in range(n_sampling_iters):
-        #         real_fake_rdf_dists[i, j] = (earth_movers_distance_torch(real_rdf[i], fake_rdfs_concat[i][j]) * (rr[1] - rr[0])).mean()
+        #         real_fake_rdf_dists[i, j] = (earth_movers_distance_torch(real_rdf[i], fake_rdfs_concat[i][j])
+        #                                      / (real_rdf[i].sum()/2 + fake_rdfs_concat[i][j].sum()/2) # norm by respective sums to make a symmetric distance
+        #                                      / (rr[1] - rr[0])  # norm by bin width
+        #                                      ).mean()  # average over atom pairs
         #         real_fake_prior_dists[i, j] = np.sum(np.abs(orig_sample[i] - distorted_samples[j, i]) / np.abs(orig_sample[i]))
         #
         # real_fake_rdf_dists = real_fake_rdf_dists.cpu().detach().numpy()
@@ -2299,6 +2332,11 @@ class Modeller:
         #     col = i % 4 + 1
         #     fig.add_trace(go.Scattergl(x=real_fake_prior_dists[i], y=real_fake_rdf_dists[i], mode='markers'),
         #                   row=row, col=col)
+        #
+        # fig.update_xaxes(type="log")
+        # fig.update_yaxes(type="log")
         # fig.show()
+
+
 
         return None
