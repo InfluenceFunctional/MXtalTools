@@ -4,7 +4,6 @@ import time
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
-
 import ase.io
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go

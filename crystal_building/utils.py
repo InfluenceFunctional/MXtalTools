@@ -88,6 +88,7 @@ asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMR
 }
 
 
+
 def axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
     """
     todo this is not my original code, though I have rewritten it for torch
@@ -542,14 +543,7 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
     centroids_fractional -= np.floor(centroids_fractional)
     canonical_conformer_index = find_coord_in_box(centroids_fractional, asym_unit)
 
-    # todo catch failure mode where no conformers are found (usually two right on the edge) or multiple are found
-    # if len(canonical_conformer_ind) != 1: # only one of these is allowed to be in the asym unit
-    #     # some cells use nonstandard symmetries & therefore asymmetric unit definitions
-    #     # just pick one in that case - # todo we will filter these later
-    #     canonical_conformer_ind = canonical_conformer_ind[0]
-
-    # always take 0th entry (sometimes multiple are found - see above issue)
-    canonical_conformer_coords = unit_cell_coords[canonical_conformer_index[0]]
+    canonical_conformer_coords = unit_cell_coords[canonical_conformer_index[0]] # we enforce in the filtering step that there must be exactly one centroid in the canonical asymmetric unit
 
     # next we need to compute the inverse of the rotation required to align the molecule with the cartesian axes
     Ip_axes, _, _ = compute_principal_axes_np(canonical_conformer_coords)
