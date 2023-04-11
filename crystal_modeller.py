@@ -5,11 +5,12 @@ import time
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 import ase.io
+import ase.data
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
-import rdkit.Chem
-import rdkit.Chem.AllChem
-import rdkit.Chem.Draw
+# import rdkit.Chem
+# import rdkit.Chem.AllChem
+# import rdkit.Chem.Draw
 import wandb
 from PIL import Image
 from pyxtal import symmetry
@@ -65,12 +66,12 @@ class Modeller:
         move to it
         :return:
         """
-        periodic_table = rdkit.Chem.GetPeriodicTable()
+
         self.atom_weights = {}
         self.vdw_radii = {}
         for i in range(100):
-            self.atom_weights[i] = periodic_table.GetAtomicWeight(i)
-            self.vdw_radii[i] = periodic_table.GetRvdw(i)
+            self.atom_weights[i] = ase.data.atomic_masses[i]
+            self.vdw_radii[i] = ase.data.vdw_radii[i]
 
         # generate symmetry info dict if we don't already have it
         if os.path.exists('symmetry_info.npy'):
@@ -119,7 +120,6 @@ class Modeller:
         if self.config.include_sgs is None:
             self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-
         # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
         # not currently used as we are not computing the overlaps
         # supercell_scale = self.config.supercell_size  # t
@@ -161,8 +161,6 @@ class Modeller:
             print('Initializing dataset took {} seconds'.format(int(time.time() - t0)))
         else:
             print("Must provide a run_num if not creating a new workdir!")
-
-
 
     def make_new_working_directory(self):  # make working directory
         """
@@ -756,9 +754,7 @@ class Modeller:
 
     @staticmethod
     def adversarial_score(discriminator, data):
-        output, extra_outputs = discriminator(data,
-                                              return_dists=True)  # reshape output from flat filters to channels * filters per channel
-
+        output, extra_outputs = discriminator(data.clone(), return_dists=True)  # reshape output from flat filters to channels * filters per channel
         return output, extra_outputs['dists dict']
 
     @staticmethod
@@ -1114,7 +1110,7 @@ class Modeller:
             )
 
             similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
-            discriminator_raw_output, dist_dict = self.score_adversarially(supercell_data.clone(), discriminator)
+            discriminator_raw_output, dist_dict = self.score_adversarially(supercell_data, discriminator)
             h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, supercell_data)
             vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii,
                                                               dist_dict=dist_dict,
@@ -1874,6 +1870,10 @@ class Modeller:
 
         """
         if supercell_data is not None:  # if we built the supercells, we'll want to do this analysis anyway
+            if self.config.discriminator.positional_noise > 0:
+                supercell_data.pos += torch.randn_like(
+                    supercell_data.pos) * self.config.discriminator.positional_noise
+
             if (self.config.device.lower() == 'cuda') and (supercell_data.x.device != 'cuda'):
                 supercell_data = supercell_data.cuda()
 
@@ -1903,8 +1903,9 @@ class Modeller:
         if discriminator_raw_output is not None:
             softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax
             # adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
-            adversarial_loss = 10 - softmax_and_score(discriminator_raw_output)  # linearized score
+            # adversarial_loss = 10 - softmax_and_score(discriminator_raw_output)  # linearized score
             # adversarial_loss = 1-softmax_adversarial_score  # simply maximize P(real) (small gradients near 0 and 1)
+            adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:, 1]  # high temp smears out the function over a wider range
             stats_keys += ['generator adversarial loss']
             stats_values += [adversarial_loss.cpu().detach().numpy()]
             stats_keys += ['generator adversarial score']
@@ -2069,28 +2070,30 @@ class Modeller:
                                     ),
                           )
 
-            molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
-            try:
-                rdkit.Chem.AllChem.Compute2DCoords(molecule)
-                rdkit.Chem.AllChem.GenerateDepictionMatching2DStructure(molecule, molecule)
-                pil_image = rdkit.Chem.Draw.MolToImage(molecule, size=(500, 500))
-                pil_image.save('mol_img.png', 'png')
-                # Add trace
-                img = Image.open("mol_img.png")
-                # Add images
-                fig.add_layout_image(
-                    dict(
-                        source=img,
-                        xref="x domain", yref="y domain",
-                        x=.1 + (.15 * (i % 2)), y=i / 10.5 + 0.05,
-                        sizex=.15, sizey=.15,
-                        xanchor="center",
-                        yanchor="middle",
-                        opacity=0.75
-                    )
-                )
-            except:  # ValueError("molecule was rejected by rdkit"):
-                pass
+            # Can only run this section with RDKit installed, which doesn't always work
+            # Commented out - not that important anyway.
+            # molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
+            # try:
+            #     rdkit.Chem.AllChem.Compute2DCoords(molecule)
+            #     rdkit.Chem.AllChem.GenerateDepictionMatching2DStructure(molecule, molecule)
+            #     pil_image = rdkit.Chem.Draw.MolToImage(molecule, size=(500, 500))
+            #     pil_image.save('mol_img.png', 'png')
+            #     # Add trace
+            #     img = Image.open("mol_img.png")
+            #     # Add images
+            #     fig.add_layout_image(
+            #         dict(
+            #             source=img,
+            #             xref="x domain", yref="y domain",
+            #             x=.1 + (.15 * (i % 2)), y=i / 10.5 + 0.05,
+            #             sizex=.15, sizey=.15,
+            #             xanchor="center",
+            #             yanchor="middle",
+            #             opacity=0.75
+            #         )
+            #     )
+            # except:  # ValueError("molecule was rejected by rdkit"):
+            #     pass
 
         # fig.layout.paper_bgcolor = 'rgba(0,0,0,0)'
         # fig.layout.plot_bgcolor = 'rgba(0,0,0,0)'
@@ -2335,7 +2338,5 @@ class Modeller:
         # fig.update_xaxes(type="log")
         # fig.update_yaxes(type="log")
         # fig.show()
-
-
 
         return None

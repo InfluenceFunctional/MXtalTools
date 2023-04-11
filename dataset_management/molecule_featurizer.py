@@ -6,8 +6,9 @@ from common.geometry_calculations import compute_principal_axes_np, compute_Ip_h
 from common.utils import *
 import numpy.linalg as linalg
 import tqdm
-import rdkit.Chem as Chem
-from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
+# don't need these for regular runs (screws up the python env in some cases)
+#import rdkit.Chem as Chem
+#from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
 from crystal_building.coordinate_transformations import coor_trans_matrix
 from mendeleev import element as element_table
 from crystal_building.utils import (get_cell_fractional_centroids, c_f_transform)

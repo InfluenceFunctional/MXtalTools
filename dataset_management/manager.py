@@ -242,7 +242,7 @@ class Miner():
                     bad_inds.append(j)
             print('Blind test targets caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
-        # todo add a filter for when the asymmetric unit definition is nonstandard (returns more than one centroid)
+        # filter for when the asymmetric unit definition is nonstandard (returns more than one centroid)
         n_bad_inds = len(bad_inds)
         for ii in range(len(self.dataset['atom coords'])):
             sg_ind = self.dataset['crystal spacegroup number'][ii]
