@@ -14,9 +14,9 @@ train_generator_packing: True
 train_generator_vdw: True
 vdw_loss_rescaling: null
 packing_loss_rescaling: null
-train_generator_combo: True
+train_generator_combo: False
 train_generator_h_bond: False # (non-directional)
-train_generator_adversarially: True
+train_generator_adversarially: False
 generator_similarity_penalty: 0
 
 train_discriminator_adversarially: False
@@ -27,12 +27,12 @@ sample_distortion_magnitude: -1 # -1 for wide range test # noise for distorted g
 extra_test_period: 10
 extra_test_evaluation: False
 extra_test_set_paths: null
-discriminator_path: 'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_discriminator_10088'
-generator_path: 'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_generator_10135'
+discriminator_path: 'C:/Users\mikem\crystals\CSP_runs\models/best_discriminator_1354'  # 'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_discriminator_10088'
+generator_path: null #'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_generator_10135'
 conditioner_path: null
 regressor_path: null
 
-sample_steps: 10
+sample_steps: 20
 sample_move_size: 0.001
 
 seeds:
@@ -52,7 +52,7 @@ accumulate_batch_size: 100 # DEPRECATED
 auto_batch_sizing: False # DEPRECATED
 auto_batch_reduction: 0.05 # DEPRECATED # fraction of tested max batch size to actually start with (unequal graph sizes)
 grow_batch_size: True
-min_batch_size: 10
+min_batch_size: 40
 max_batch_size: 10000
 batch_growth_increment: 0.01 # fraction of batch size to grow by each epoch
 max_epochs: 10000 # 0 epochs takes us straight to evaluation mode
@@ -83,9 +83,9 @@ exclude_polymorphs: True
 exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
-include_sgs: [ "P-1","P21/c","P212121","C2/c"]
-include_pgs: null # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: ["P-1","P21/c","P212121","C2/c"]
+include_sgs: null  # [ "P-1","P21/c","P212121","C2/c"]
+include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
+generate_sgs: null  # ["P-1","P21/c","P212121","C2/c"]
 supercell_size: 5 # new method - should be very large, automatically pares down
 
 
@@ -107,26 +107,26 @@ discrimiator_optimizer:
 discriminator:
   positional_noise: 0.05  # scaling for the randn noise added to all atom positions
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
-  graph_convolution_layers: 4
+  graph_convolution_layers: 2
   graph_filters: 36
-  atom_embedding_size: 128
-  graph_norm: graph
+  atom_embedding_size: 64
+  graph_norm: null
   num_spherical: 5
   num_radial: 32
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
   radial_function: 'bessel' # mikenet only
-  num_attention_heads: 4 # mikenet GATv2 mode only - must evenly divide graph filters
+  num_attention_heads: 1 # mikenet GATv2 mode only - must evenly divide graph filters
   graph_convolution: 'TransformerConv' # 'full message passing' or schnet or 'GATv2'
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False #
   pooling: combo
 
-  num_fc_layers: 4
-  fc_depth: 256
+  num_fc_layers: 2
+  fc_depth: 264
   activation: gelu
   fc_dropout_probability: 0
-  fc_norm_mode: layer
+  fc_norm_mode: null
 
 #generator optimizer and model
 generator_optimizer:
@@ -144,7 +144,7 @@ generator_optimizer:
 
 generator:
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
-  positional_noise: 0.05 # scaling for the randn noise added to all atom positions
+  positional_noise: 0 # scaling for the randn noise added to all atom positions
   num_fc_layers: 4
   fc_depth: 256
   activation: 'gelu'

@@ -596,9 +596,9 @@ def plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout)
 
 
 def mini_csp_reporting(config, wandb, sampling_dict, real_samples_dict, real_data):
-    '''
-    report on key metrics
-    '''
+    """
+    report on key metrics from mini-csp
+    """
     scores_labels = ['score', 'vdw overlap', 'density', 'h bond score']
     fig = make_subplots(rows=2, cols=2, vertical_spacing=0.075,
                         horizontal_spacing=0.075)
@@ -606,7 +606,6 @@ def mini_csp_reporting(config, wandb, sampling_dict, real_samples_dict, real_dat
     colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', min(15, real_data.num_graphs), colortype='rgb')
 
     for i, label in enumerate(scores_labels):  # todo record sample stats in canonical frame for rebuilding
-        legend_label = label
         for j in range(min(15, real_data.num_graphs)):
             bandwidth1 = np.ptp(sampling_dict[label][j]) / 50
             row = i // 2 + 1
@@ -619,6 +618,7 @@ def mini_csp_reporting(config, wandb, sampling_dict, real_samples_dict, real_dat
                                     side='positive', orientation='h', width=4, line_color=colors[j],
                                     meanline_visible=True, bandwidth=bandwidth1),
                           row=row, col=col)
+    # todo add a fig for sum of all samples
 
     layout = go.Layout(
         margin=go.layout.Margin(

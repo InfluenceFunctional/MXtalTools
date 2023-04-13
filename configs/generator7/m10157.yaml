@@ -27,7 +27,7 @@ sample_distortion_magnitude: 0.0001 # -1 for wide range test # noise for distort
 extra_test_period: 10
 extra_test_evaluation: False
 extra_test_set_paths: null
-discriminator_path: 'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_discriminator_10088'
+discriminator_path: '/home/mk8347/scratch/csd_runs/models/best_discriminator_10088'
 generator_path: null #'C:/Users\mikem\crystals\CSP_runs\models/cluster/best_generator_10135'
 conditioner_path: null
 regressor_path: null

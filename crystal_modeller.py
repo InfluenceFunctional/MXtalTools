@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 # import rdkit.Chem.AllChem
 # import rdkit.Chem.Draw
 import wandb
-from PIL import Image
+#from PIL import Image
 from pyxtal import symmetry
 from scipy.stats import linregress
 from torch import backends
@@ -115,10 +115,10 @@ class Modeller:
         # set space groups to be included and generated
         if self.config.generate_sgs is None:
             # generate samples in every space group in the asym dict (eventually, all sgs)
-            self.config.override_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
+            self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()] # todo confirm this is working
 
         if self.config.include_sgs is None:
-            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
+            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()] # todo confirm this is working
 
         # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
         # not currently used as we are not computing the overlaps
@@ -1464,7 +1464,7 @@ class Modeller:
 
                 if i % 2 == 0:  # alternate between random distortions and specifically diffuse cells
                     if self.config.sample_distortion_magnitude == -1:
-                        distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, 0.5, len(generated_samples_ii)).to(
+                        distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-.5, 0.5, len(generated_samples_ii)).to(
                             generated_samples_ii.device)[:, None]  # wider range for evaluation mode
                     else:
                         distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
@@ -2198,7 +2198,7 @@ class Modeller:
         discriminator_score, dist_dict = self.score_adversarially(real_supercell_data.clone(), discriminator)
         h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, real_supercell_data)
         vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data.mol_size)
-        # real_rdf, rr, atom_inds = crystal_rdf(real_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular',atomwise=True)
+        #real_rdf, rr, atom_inds = crystal_rdf(real_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular', raw_density=True, atomwise=True)
 
         volumes_list = []
         for i in range(real_data.num_graphs):
@@ -2235,7 +2235,7 @@ class Modeller:
             discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator)
             h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, fake_supercell_data)
             vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data.mol_size)
-            # rdf, rr = crystal_rdf(fake_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular')
+            #rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=[0, 10], bins=100, raw_density=True, atomwise=True, mode='intermolecular')
 
             volumes_list = []
             for i in range(fake_data.num_graphs):
@@ -2251,7 +2251,7 @@ class Modeller:
             sampling_dict['density'][:, ii] = fake_packing_coeffs.cpu().detach().numpy()
             sampling_dict['h bond score'][:, ii] = h_bond_score.cpu().detach().numpy()
             sampling_dict['cell params'][:, ii, :] = fake_supercell_data.cell_params.cpu().detach().numpy()
-            # sampling_dict['RDF'][:, ii, :] = rdf.cpu().detach().numpy()
+            #sampling_dict['RDF'][:, ii, :] = rdf.cpu().detach().numpy()
 
         mini_csp_reporting(self.config, wandb, sampling_dict, real_samples_dict, real_data)
 

@@ -34,7 +34,7 @@ def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=
                                     r=max(rrange), max_num_neighbors=500, flow='source_to_target')
 
     # track which edges go with which crystals
-    crystal_number = crystal_data.batch[edges[0]]
+    edge_in_crystal_number = crystal_data.batch[edges[0]]
 
     # compute all the dists
     dists = (crystal_data.pos[edges[0]] - crystal_data.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
@@ -52,8 +52,8 @@ def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=
             for j, element2 in enumerate(relevant_elements):
                 if j >= i:
                     rdfs_dict[ind] = element_symbols[element1] + ' to ' + element_symbols[element2]
-                    rdfs_array[:, ind], rr = parallel_compute_rdf_torch([dists[(crystal_number == n) * (elements[0] == element1) * (elements[1] == element2)] for n in range(crystal_data.num_graphs)],
-                                                                        rrange=rrange, bins=bins, raw_density=True)
+                    rdfs_array[:, ind], rr = parallel_compute_rdf_torch([dists[(edge_in_crystal_number == n) * (elements[0] == element1) * (elements[1] == element2)] for n in range(crystal_data.num_graphs)],
+                                                                        rrange=rrange, bins=bins, raw_density=raw_density)
                     ind += 1
         return rdfs_array, rr, rdfs_dict
 
@@ -76,27 +76,51 @@ def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=
         atom_inds = torch.cat(all_atom_inds)
         # abs_atom_inds = torch.cat(abs_atom_inds)
 
-        atoms = [atom_inds[edges[0]], atom_inds[edges[1]]]
+        atoms_in_edges = [atom_inds[edges[0]], atom_inds[edges[1]]]
 
+        # t0 = time.time()
+        # ind = 0
+        # for n in range(crystal_data.num_graphs):
+        #     # all possible combinations of unique atoms on this graph
+        #     atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystal_data.mol_size[n])), 2)))
+        #     rdfs_dict_list.append(atom_pairs)  # record the pairs for reporting purposes
+        #
+        #     dists_in_this_crystal = edge_in_crystal_number == n  # edge indices in this crystal
+        #
+        #     atoms_in_atom_pairs = [torch.logical_and(atoms_in_edges[0] == atom_pairs[m, 0], atoms_in_edges[1] == atom_pairs[m, 1]) for m in range(len(atom_pairs))]
+        #     relevant_atoms_dists_list = [dists[torch.logical_and(dists_in_this_crystal, atoms_in_atom_pairs[m])]
+        #                                  for m in range(len(atom_pairs))]
+
+        # t1 = time.time()
         ind = 0
         for n in range(crystal_data.num_graphs):
+            # this way is slightly faster than the above, and should scale well to larger batch sizes
             # all possible combinations of unique atoms on this graph
             atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystal_data.mol_size[n])), 2)))
             rdfs_dict_list.append(atom_pairs)  # record the pairs for reporting purposes
 
-            # todo this is the slow step which holds up the calculation - use ptr to reduce the size of these vectors
-            dists_in_this_crystal = crystal_number == n
-            atoms_in_atom_pairs = [torch.logical_and(atoms[0] == atom_pairs[m, 0], atoms[1] == atom_pairs[m, 1]) for m in range(len(atom_pairs))]
-            relevant_atoms_lists = [dists[torch.logical_and(dists_in_this_crystal, atoms_in_atom_pairs[m])]
-                                    for m in range(len(atom_pairs))]
-            # end slow step
+            in_crystal_inds = torch.where(edge_in_crystal_number == n)[0]  # atom indices in this crystal
 
-            rdfs_array, rr = parallel_compute_rdf_torch(relevant_atoms_lists,
-                                                        rrange=rrange, bins=bins, raw_density=True)
+            atom_locations = [[atoms_in_edges[0][in_crystal_inds] == m, atoms_in_edges[1][in_crystal_inds] == m] for m in range(int(atom_pairs.max()) + 1)]
+
+            relevant_atoms_dists_list = [dists[in_crystal_inds[torch.logical_and(atom_locations[int(atom_pairs[m, 0])][0],
+                                                                                 atom_locations[int(atom_pairs[m, 1])][1])]]
+                                         for m in range(len(atom_pairs))]
+            #
+            # t2 = time.time()
+            # aa = 0
+            # for ii in range(len(relevant_atoms_dists_list)):
+            #     aa += torch.sum(torch.abs(relevant_atoms_dists_list2[ii] - relevant_atoms_dists_list[ii]))
+            # print(aa)
+            # print(t1-t0)
+            # print(t2-t1)
+
+            rdfs_array, rr = parallel_compute_rdf_torch(relevant_atoms_dists_list,
+                                                        rrange=rrange, bins=bins, raw_density=raw_density)
             ind += 1
 
             rdfs_array_list.append(rdfs_array)
 
         return rdfs_array_list, rr, rdfs_dict_list
     else:
-        return parallel_compute_rdf_torch([dists[crystal_number == n] for n in range(crystal_data.num_graphs)], rrange=rrange, bins=bins, raw_density=True)
+        return parallel_compute_rdf_torch([dists[edge_in_crystal_number == n] for n in range(crystal_data.num_graphs)], rrange=rrange, bins=bins, raw_density=raw_density)
