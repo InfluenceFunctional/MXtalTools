@@ -651,12 +651,17 @@ class Modeller:
             '''
             train discriminator
             '''
-            skip_step = (i % self.config.discriminator_optimizer.training_period) != 0  # only train the discriminator every XX steps, assuming n_steps per epoch is much larger than training period
+            skip_discriminator_step = False #(i % self.config.discriminator_optimizer.training_period) != 0  # only train the discriminator every XX steps, assuming n_steps per epoch is much larger than training period
+            if i > 0 and self.config.train_discriminator_adversarially:
+                avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:,0]])[:, 1].mean()
+                if avg_generator_score < 0.5:
+                    skip_discriminator_step = True
+
             discriminator_err, discriminator_loss_record, epoch_stats_dict = \
                 self.discriminator_step(discriminator, generator, epoch_stats_dict, data,
                                         discriminator_optimizer, i, update_gradients, discriminator_err,
                                         discriminator_loss_record,
-                                        skip_step=skip_step)
+                                        skip_step=skip_discriminator_step)
             '''
             train_generator
             '''
