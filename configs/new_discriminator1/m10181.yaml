@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10181
 anomaly_detection: False
 mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
 save_checkpoints: True # will do it always on cluster, only locally if True
@@ -43,7 +43,7 @@ seeds:
 wandb:
   mini_csp_frequency: 20
   sample_reporting_frequency: 5
-  experiment_tag: dev
+  experiment_tag: new_discriminator1
   log_figures: True
 
 # batching & convergence
@@ -61,13 +61,13 @@ gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 250
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 100
 min_crystal_temperature: -100
 max_num_atoms: 100
 min_num_atoms: 5 # target XVI has only 9 heavy atoms
-max_molecule_radius: 10 # angstroms
+max_molecule_radius: 100 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -76,7 +76,7 @@ max_packing_coefficient: 0.85
 min_packing_coefficient: 0.55
 include_organic: True
 include_organometallic: True
-max_atomic_number: 20
+max_atomic_number: 100
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
 exclude_polymorphs: True
@@ -85,16 +85,15 @@ exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
 include_sgs: null  # [ "P-1","P21/c","P212121","C2/c"]
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: 'original' #["P-1","P21/c","P212121","C2/c"] # null # 'original' # ["P-1","P21/c","P212121","C2/c"]
+generate_sgs: 'original'' # ["P-1","P21/c","P212121","C2/c"] # null # 'original' # ["P-1","P21/c","P212121","C2/c"]
 supercell_size: 5 # new method - should be very large, automatically pares down
-
 
 # discriminator optimizer and model
 discriminator_optimizer:
   optimizer: adamw
   init_lr: 1.0E-5
-  max_lr: 2.0E-4
-  min_lr: 5.0E-5
+  max_lr: 1.0E-4
+  min_lr: 1.0E-5
   lr_schedule: True
   beta1: 0.9
   beta2: 0.999
@@ -107,26 +106,26 @@ discriminator_optimizer:
 discriminator:
   positional_noise: 0  # scaling for the randn noise added to all atom positions
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
-  graph_convolution_layers: 2
-  graph_filters: 16
-  atom_embedding_size: 32
-  graph_norm: graph
+  graph_convolution_layers: 4
+  graph_filters: 32
+  atom_embedding_size: 64
+  graph_norm: null
   num_spherical: 5
-  num_radial: 12
+  num_radial: 32
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
-  radial_function: 'gaussian' # 'gaussian' or 'bessel'
+  radial_function: 'bessel' # 'gaussian' or 'bessel'
   num_attention_heads: 1 # mikenet GATv2 or TransformerConv mode only - must evenly divide graph filters
   graph_convolution: 'TransformerConv' # 'full message passing' or schnet or 'GATv2' or 'TransformerConv'
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False #
   pooling: combo
 
-  num_fc_layers: 1
-  fc_depth: 32
+  num_fc_layers: 4
+  fc_depth: 64
   activation: gelu
-  fc_dropout_probability: 0.2
-  fc_norm_mode: batch
+  fc_dropout_probability: 0
+  fc_norm_mode: null
 
 #generator optimizer and model
 generator_optimizer:

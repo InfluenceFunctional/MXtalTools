@@ -22,7 +22,7 @@ class MikesGraphNet(torch.nn.Module):
                  num_blocks: int,
                  num_spherical: int,
                  num_radial: int,
-                 num_atom_types = 101,
+                 num_atom_types=101,
                  cutoff: float = 5.0,
                  max_num_neighbors: int = 32,
                  envelope_exponent: int = 5,
@@ -37,7 +37,7 @@ class MikesGraphNet(torch.nn.Module):
                  attention_heads=1,
                  crystal_mode=False,
                  crystal_convolution_type=1,
-                 positional_embedding = False,
+                 positional_embedding=False,
                  ):
         super(MikesGraphNet, self).__init__()
 
@@ -60,7 +60,7 @@ class MikesGraphNet(torch.nn.Module):
         if torsional_embedding:
             self.tbf = TorsionalEmbedding(num_spherical, num_radial, cutoff, bessel_forms=self.sbf.bessel_forms)
         if positional_embedding:
-            self.pos_embedding = PosEncoding3D(hidden_channels//3,cutoff=10)
+            self.pos_embedding = PosEncoding3D(hidden_channels // 3, cutoff=10)
 
         self.atom_embeddings = EmbeddingBlock(hidden_channels, num_atom_types, num_atom_features, embedding_hidden_dimension,
                                               activation)
@@ -83,18 +83,17 @@ class MikesGraphNet(torch.nn.Module):
 
         self.fc_blocks = torch.nn.ModuleList([
             general_MLP(
-                layers = 1,
-                filters = hidden_channels,
-                input_dim = hidden_channels,
-                output_dim = hidden_channels,
-                activation = activation,
-                norm = norm,
-                dropout = dropout,
+                layers=1,
+                filters=hidden_channels,
+                input_dim=hidden_channels,
+                output_dim=hidden_channels,
+                activation=activation,
+                norm=norm,
+                dropout=dropout,
             )
-            #FCBlock(hidden_channels, norm, dropout, activation)
+            # FCBlock(hidden_channels, norm, dropout, activation)
             for _ in range(num_blocks)
         ])
-
 
         if hidden_channels != out_channels:
             self.output_layer = nn.Linear(hidden_channels, out_channels)
@@ -194,7 +193,7 @@ class MikesGraphNet(torch.nn.Module):
 
         else:
             edge_index = gnn.radius_graph(pos, r=self.cutoff, batch=batch,
-                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target') # note - requires batch be monotonically increasing
+                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target')  # note - requires batch be monotonically increasing
 
         dist, rbf, sbf, tbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
 
@@ -205,7 +204,7 @@ class MikesGraphNet(torch.nn.Module):
         for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
             if self.crystal_mode:
                 if n < (self.num_blocks - 1):  # to do this molecule-wise, we need to multiply n_repeats by Z for each crystal
-                    x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
+                    x = x + convolution(x, rbf, dist, edge_index, batch, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
                     x[inside_inds] = x[inside_inds] + (x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, FC includes residual
                     for ii in range(len(ptr) - 1):  # for each crystal
                         x[ptr[ii]:ptr[ii + 1], :] = x[inside_inds[inside_batch == ii]].repeat(n_repeats[ii], 1)  # copy the first unit cell to all periodic images
@@ -214,18 +213,18 @@ class MikesGraphNet(torch.nn.Module):
                     dist_inter, rbf_inter, sbf_inter, tbf_inter, idx_kj_inter, idx_ji_inter = \
                         self.get_geom_embedding(torch.cat((edge_index, edge_index_inter), dim=1), pos, num_nodes=len(z))  # compute for tracking
                     if self.crystal_convolution_type == 2:
-                        x = convolution(x, rbf_inter, dist_inter, torch.cat((edge_index, edge_index_inter), dim=1),
+                        x = convolution(x, rbf_inter, dist_inter, torch.cat((edge_index, edge_index_inter), dim=1), batch,
                                         sbf=sbf_inter, tbf=tbf_inter, idx_kj=idx_kj_inter, idx_ji=idx_ji_inter)  # return only the results of the intermolecular convolution, omitting intermolecular features
                     elif self.crystal_convolution_type == 1:
-                        x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
-                    x = x[inside_inds] + fc(x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, and return only those atoms, FC includes residual
+                        x = x + convolution(x, rbf, dist, edge_index, batch, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
+                    x = x[inside_inds] + fc(x[inside_inds], batch=batch[inside_inds])  # feature-wise 1D convolution on only relevant atoms, and return only those atoms, FC includes residual
 
             else:
-                #x = self.inside_norm1[n](x)
+                # x = self.inside_norm1[n](x)
                 if self.convolution_mode != 'none':
-                    x = x + convolution(x, rbf, dist, edge_index, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution - residual is already inside the conv operator
+                    x = x + convolution(x, rbf, dist, edge_index, batch, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution - residual is already inside the conv operator
 
-                x = fc(x)  # feature-wise 1D convolution, FC includes residual
+                x = fc(x, batch=batch)  # feature-wise 1D convolution, FC includes residual and norm
 
         if return_dists:  # return dists, batch #, and inside/outside identity, and atomic number
             dist_output = {}
@@ -290,17 +289,17 @@ class GCBlock(torch.nn.Module):
         self.norm2 = Normalization(message_norm, graph_convolution_filters)
         self.node_to_message = nn.Linear(hidden_channels, graph_convolution_filters, bias=False)
         self.message_to_node = nn.Linear(graph_convolution_filters, hidden_channels, bias=False)  # don't want to send spurious messages, though it probably doesn't matter anyway
-        self.radial_to_message = nn.Linear(radial_dim, graph_convolution_filters,bias=False)
+        self.radial_to_message = nn.Linear(radial_dim, graph_convolution_filters, bias=False)
         self.convolution_mode = convolution_mode
 
         if spherical:  # need more linear layers to aggregate angular information to radial
             assert spherical_dim is not None, "Spherical information must have a dimension != 0 for spherical message aggregation"
-            self.spherical_to_message = nn.Linear(radial_dim * spherical_dim, graph_convolution_filters,bias=False)
+            self.spherical_to_message = nn.Linear(radial_dim * spherical_dim, graph_convolution_filters, bias=False)
             if not torsional:
                 self.radial_spherical_aggregation = nn.Linear(graph_convolution_filters * 2, graph_convolution_filters, bias=False)  # torch.add  # could also do dot
         if torsional:
             assert spherical
-            self.torsional_to_message = nn.Linear(spherical_dim * spherical_dim * radial_dim, graph_convolution_filters,bias=False)
+            self.torsional_to_message = nn.Linear(spherical_dim * spherical_dim * radial_dim, graph_convolution_filters, bias=False)
             self.radial_torsional_aggregation = nn.Linear(graph_convolution_filters * 2, graph_convolution_filters, bias=False)  # torch.add  # could also do dot
 
         if convolution_mode == 'GATv2':
@@ -364,11 +363,11 @@ class GCBlock(torch.nn.Module):
 
         return edge_attr, edge_index
 
-    def forward(self, x, rbf, dists, edge_index, sbf=None, tbf=None, idx_kj=None, idx_ji=None):
+    def forward(self, x, rbf, dists, edge_index, batch, sbf=None, tbf=None, idx_kj=None, idx_ji=None):
         # convert local information into edge weights
-        x = self.norm1(self.node_to_message(x))
+        x = self.norm1(self.node_to_message(x), batch)
         edge_attr, edge_index = self.compute_edge_attributes(edge_index, rbf, idx_ji, sbf, tbf, idx_kj)
-        edge_attr = self.norm2(edge_attr)
+        edge_attr = self.norm2(edge_attr, batch[edge_index[0]])
 
         # convolve # todo only update nodes which will actually pass messages on this round
         if self.convolution_mode.lower() == 'schnet':

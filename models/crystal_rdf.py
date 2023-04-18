@@ -5,7 +5,7 @@ from models.asymmetric_radius_graph import asymmetric_radius_graph
 from common.rdf_calculation import parallel_compute_rdf_torch
 
 
-def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False):
+def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False, cpu_detach=False):
     """
     compute the RDF for all the supercells in a CrystalData object
     """
@@ -55,6 +55,10 @@ def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=
                     rdfs_array[:, ind], rr = parallel_compute_rdf_torch([dists[(edge_in_crystal_number == n) * (elements[0] == element1) * (elements[1] == element2)] for n in range(crystal_data.num_graphs)],
                                                                         rrange=rrange, bins=bins, raw_density=raw_density)
                     ind += 1
+        if cpu_detach:
+            rdfs_array = rdfs_array.cpu().detach().numpy()
+            rr = rr.cpu().detach().numpy()
+
         return rdfs_array, rr, rdfs_dict
 
     elif atomwise:  # generate atomwise indices which are shared between samples
@@ -118,9 +122,16 @@ def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=
             rdfs_array, rr = parallel_compute_rdf_torch(relevant_atoms_dists_list,
                                                         rrange=rrange, bins=bins, raw_density=raw_density)
             ind += 1
+            if cpu_detach:
+                rdfs_array = rdfs_array.cpu().detach().numpy()
+                rr = rr.cpu().detach().numpy()
 
             rdfs_array_list.append(rdfs_array)
 
         return rdfs_array_list, rr, rdfs_dict_list
     else:
-        return parallel_compute_rdf_torch([dists[edge_in_crystal_number == n] for n in range(crystal_data.num_graphs)], rrange=rrange, bins=bins, raw_density=raw_density)
+        rdfs_array, rr = parallel_compute_rdf_torch([dists[edge_in_crystal_number == n] for n in range(crystal_data.num_graphs)], rrange=rrange, bins=bins, raw_density=raw_density)
+        if cpu_detach:
+            rdfs_array = rdfs_array.cpu().detach().numpy()
+            rr = rr.cpu().detach().numpy()
+        return rdfs_array, rr

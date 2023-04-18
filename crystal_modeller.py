@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 # import rdkit.Chem.AllChem
 # import rdkit.Chem.Draw
 import wandb
-#from PIL import Image
+# from PIL import Image
 from pyxtal import symmetry
 from scipy.stats import linregress
 from torch import backends
@@ -34,8 +34,8 @@ from models.regression_models import molecule_regressor
 from models.base_models import independent_gaussian_model
 from models.utils import compute_h_bond_score, get_vdw_penalty, cell_density_loss, compute_combo_score
 from models.vdw_overlap import vdw_overlap
-from reporting.online import cell_params_analysis, log_supercell_examples, plotly_setup, cell_density_plot, all_losses_plot, report_conditioner_training, process_discriminator_outputs, discriminator_scores_plot, \
-    plot_generator_loss_correlates, plot_discriminator_score_correlates, mini_csp_reporting, sampling_telemetry_plot, cell_params_tracking_plot
+from reporting.online import cell_params_analysis, plotly_setup, cell_density_plot, all_losses_plot, report_conditioner_training, process_discriminator_outputs, discriminator_scores_plot, \
+    plot_generator_loss_correlates, plot_discriminator_score_correlates, log_mini_csp_scores_distributions, sampling_telemetry_plot, cell_params_tracking_plot, sample_wise_analysis, log_best_mini_csp_samples
 from sampling.MCMC_Sampling import mcmcSampler
 from sampling.SampleOptimization import gradient_descent_sampling
 from common.utils import *
@@ -115,12 +115,15 @@ class Modeller:
         # set space groups to be included and generated
         if self.config.generate_sgs is None:
             # generate samples in every space group in the asym dict (eventually, all sgs)
-            self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()] # todo confirm this is working
+            self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
+
+        elif self.config.generate_sgs == 'original':  # leave crystals in their original space groups
+            pass
 
         if self.config.include_sgs is None:
-            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()] # todo confirm this is working
+            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-        # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
+            # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
         # not currently used as we are not computing the overlaps
         # supercell_scale = self.config.supercell_size  # t
         # n_cells = (2 * supercell_scale + 1) ** 3
@@ -417,13 +420,6 @@ class Modeller:
                                                regressor_optimizer=regressor_optimizer,
                                                update_gradients=False, record_stats=True, epoch=epoch)
 
-                            # TODO rebuild a more general extra test evaluation
-                            if False:  # (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0):
-                                extra_test_epoch_stats_dict, time_test_ex = \
-                                    self.discriminator_evaluation(data_loader=extra_test_loader,
-                                                                  discriminator=discriminator)  # compute loss on test set
-                                print(f'Extra test evaluation took {time_test_ex:.1f} seconds')
-
                         print('epoch={}; time_tr={:.1f}s; time_te={:.1f}s'.format(epoch, time_train, time_test))
 
                         # save losses
@@ -475,7 +471,10 @@ class Modeller:
                                                     extra_test_dict=extra_test_epoch_stats_dict)
 
                         # sometimes test the generator on a mini CSP problem
-                        if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0):
+                        if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
+                                any((self.config.train_generator_packing, self.config.train_generator_adversarially,
+                                     self.config.train_generator_vdw, self.config.train_generator_combo,
+                                     self.config.train_generator_h_bond)):
                             self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator)
 
                         # save checkpoints
@@ -506,9 +505,6 @@ class Modeller:
 
                     if self.config.device.lower() == 'cuda':
                         torch.cuda.empty_cache()  # clear GPU, probably unnecessary
-
-                # todo add back some version of this
-                # self.post_run_evaluation(epoch, generator, discriminator, discriminator_optimizer, generator_optimizer, metrics_dict, train_loader, test_loader, extra_test_loader) 
 
     def run_epoch(self, data_loader=None, generator=None, discriminator=None, regressor=None, conditioner=None,
                   generator_optimizer=None, discriminator_optimizer=None, conditioner_optimizer=None, regressor_optimizer=None,
@@ -651,9 +647,9 @@ class Modeller:
             '''
             train discriminator
             '''
-            skip_discriminator_step = False #(i % self.config.discriminator_optimizer.training_period) != 0  # only train the discriminator every XX steps, assuming n_steps per epoch is much larger than training period
+            skip_discriminator_step = False  # (i % self.config.discriminator_optimizer.training_period) != 0  # only train the discriminator every XX steps, assuming n_steps per epoch is much larger than training period
             if i > 0 and self.config.train_discriminator_adversarially:
-                avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:,0]])[:, 1].mean()
+                avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
                 if avg_generator_score < 0.5:
                     skip_discriminator_step = True
 
@@ -934,10 +930,13 @@ class Modeller:
                 generator_loss.backward()  # back-propagation
                 generator_optimizer.step()  # update parameters
 
-            epoch_stats_dict = log_supercell_examples(supercell_examples, i, rand_batch_ind, epoch_stats_dict)
+            epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'final generated cell parameters',
+                                                 supercell_examples.cell_params.cpu().detach().numpy(), mode='extend')
             generator_loss_record.extend(generator_losses.cpu().detach().numpy())  # loss distribution
             epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generated cell parameters', generated_samples,
                                                  mode='extend')
+            del supercell_examples
+
 
         else:
             generator_err.append(np.zeros(1))
@@ -1043,15 +1042,15 @@ class Modeller:
             real_packing_coeffs, fake_packing_coeffs, \
             generated_samples_i
 
-    def set_molecule_alignment(self, data, right_handed=True, mode_override=None):
+    def set_molecule_alignment(self, data, right_handed=False, mode_override=None):
         if mode_override is not None:
             mode = mode_override
         else:
             mode = self.config.generator.canonical_conformer_orientation
 
         if mode == 'standardized':
-            data = align_crystaldata_to_principal_axes(data)
-            data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
+            data = align_crystaldata_to_principal_axes(data, handedness = data.asym_unit_handedness)
+            #data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
 
         elif mode == 'random':
             data = random_crystaldata_alignment(data)
@@ -1068,14 +1067,14 @@ class Modeller:
 
         return data
 
-    def get_generator_samples(self, mol_data, generator):
+    def get_generator_samples(self, mol_data, generator, alignment_override=None):
         """
         @param mol_data: CrystalData object containing information on the starting conformer
         @param generator:
         @return:
         """
         # conformer orentation setting
-        mol_data = self.set_molecule_alignment(mol_data)
+        mol_data = self.set_molecule_alignment(mol_data, mode_override=alignment_override)
 
         # noise injection
         if self.config.generator.positional_noise > 0:
@@ -1084,7 +1083,7 @@ class Modeller:
         # update symmetry information
         if self.config.generate_sgs is not None:
             mol_data = update_crystal_symmetry_elements(mol_data, self.config.generate_sgs, self.config.dataDims,
-                                                        self.sym_info)
+                                                        self.sym_info, randomize_sgs=True)
 
         # generate the samples
         [[generated_samples, latent], prior, condition] = generator.forward(
@@ -1861,7 +1860,7 @@ class Modeller:
 
         return similarity_penalty
 
-    def score_adversarially(self, supercell_data, discriminator):
+    def score_adversarially(self, supercell_data, discriminator, discriminator_noise = None):
         """
         get an adversarial score for generated samples
 
@@ -1875,9 +1874,13 @@ class Modeller:
 
         """
         if supercell_data is not None:  # if we built the supercells, we'll want to do this analysis anyway
-            if self.config.discriminator.positional_noise > 0:
+            if discriminator_noise is not None:
                 supercell_data.pos += torch.randn_like(
-                    supercell_data.pos) * self.config.discriminator.positional_noise
+                    supercell_data.pos) * discriminator_noise
+            else:
+                if self.config.discriminator.positional_noise > 0:
+                    supercell_data.pos += torch.randn_like(
+                        supercell_data.pos) * self.config.discriminator.positional_noise
 
             if (self.config.device.lower() == 'cuda') and (supercell_data.x.device != 'cuda'):
                 supercell_data = supercell_data.cuda()
@@ -1973,9 +1976,6 @@ class Modeller:
         wandb.log(average_losses_dict)
 
         cell_density_plot(self.config, wandb, epoch_stats_dict, layout)
-        all_losses_plot(self.config, wandb, epoch_stats_dict, generator_losses, layout)
-        self.save_3d_structure_examples(epoch_stats_dict)
-        self.sample_wise_analysis(epoch_stats_dict, layout)
         plot_generator_loss_correlates(self.config, wandb, epoch_stats_dict, generator_losses, layout)
 
         return None
@@ -2015,9 +2015,9 @@ class Modeller:
         return generator_losses, {key: np.average(value) for i, (key, value) in enumerate(generator_losses.items()) if
                                   value is not None}
 
-    def save_3d_structure_examples(self, epoch_stats_dict):
-        num_samples = min(10, epoch_stats_dict['generated supercell examples'].num_graphs)
-        generated_supercell_examples = epoch_stats_dict['generated supercell examples']
+    @staticmethod
+    def save_3d_structure_examples(wandb, generated_supercell_examples):
+        num_samples = min(10, generated_supercell_examples.num_graphs)
         identifiers = [generated_supercell_examples.csd_identifier[i] for i in range(num_samples)]
         sgs = [str(int(generated_supercell_examples.sg_ind[i])) for i in range(num_samples)]
 
@@ -2033,83 +2033,10 @@ class Modeller:
         mols = [ase_mol_from_crystaldata(generated_supercell_examples,
                                          index=i, exclusion_level='conformer')
                 for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
+
         for i in range(len(mols)):
             ase.io.write(f'conformer_{i}.pdb', mols[i])
             wandb.log({'Single Conformers': wandb.Molecule(open(f"conformer_{i}.pdb"), caption=identifiers[i])})
-
-        return None
-
-    def sample_wise_analysis(self, epoch_stats_dict, layout):
-        num_samples = 10
-        supercell_examples = epoch_stats_dict['generated supercell examples']
-        vdw_loss, normed_vdw_loss, vdw_penalties = \
-            vdw_overlap(self.vdw_radii, crystaldata=supercell_examples, return_atomwise=True, return_normed=True,
-                        graph_sizes=supercell_examples.tracking[:,
-                                    self.config.dataDims['tracking features dict'].index('molecule num atoms')])
-        vdw_loss /= supercell_examples.tracking[:,
-                    self.config.dataDims['tracking features dict'].index('molecule num atoms')]
-
-        # mol_acceptors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num acceptors')]
-        # mol_donors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num donors')]
-        # possible_h_bonds = torch.amin(torch.vstack((mol_acceptors, mol_donors)), dim=0)
-        # num_h_bonds = torch.stack([compute_num_h_bonds(supercell_examples, self.config.dataDims, i) for i in range(supercell_examples.num_graphs)])
-
-        volumes_list = []
-        for i in range(supercell_examples.num_graphs):
-            volumes_list.append(
-                cell_vol_torch(supercell_examples.cell_params[i, 0:3], supercell_examples.cell_params[i, 3:6]))
-        volumes = torch.stack(volumes_list)
-        generated_packing_coeffs = (supercell_examples.Z * supercell_examples.tracking[:,
-                                                           self.mol_volume_ind] / volumes).cpu().detach().numpy()
-        target_packing = (supercell_examples.y * self.config.dataDims['target std'] + self.config.dataDims[
-            'target mean']).cpu().detach().numpy()
-
-        fig = go.Figure()
-        for i in range(min(supercell_examples.num_graphs, num_samples)):
-            pens = vdw_penalties[i].cpu().detach()
-            fig.add_trace(go.Violin(x=pens[pens != 0], side='positive', orientation='h',
-                                    bandwidth=0.01, width=1, showlegend=False, opacity=1,
-                                    name=f'{supercell_examples.csd_identifier[i]} : ' + f'SG={self.sym_info["space_groups"][int(supercell_examples.sg_ind[i])]} <br /> ' +
-                                         f'c_t={target_packing[i]:.2f} c_p={generated_packing_coeffs[i]:.2f} <br /> ' +
-                                         f'tot_norm_ov={normed_vdw_loss[i]:.2f}'
-                                    ),
-                          )
-
-            # Can only run this section with RDKit installed, which doesn't always work
-            # Commented out - not that important anyway.
-            # molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
-            # try:
-            #     rdkit.Chem.AllChem.Compute2DCoords(molecule)
-            #     rdkit.Chem.AllChem.GenerateDepictionMatching2DStructure(molecule, molecule)
-            #     pil_image = rdkit.Chem.Draw.MolToImage(molecule, size=(500, 500))
-            #     pil_image.save('mol_img.png', 'png')
-            #     # Add trace
-            #     img = Image.open("mol_img.png")
-            #     # Add images
-            #     fig.add_layout_image(
-            #         dict(
-            #             source=img,
-            #             xref="x domain", yref="y domain",
-            #             x=.1 + (.15 * (i % 2)), y=i / 10.5 + 0.05,
-            #             sizex=.15, sizey=.15,
-            #             xanchor="center",
-            #             yanchor="middle",
-            #             opacity=0.75
-            #         )
-            #     )
-            # except:  # ValueError("molecule was rejected by rdkit"):
-            #     pass
-
-        # fig.layout.paper_bgcolor = 'rgba(0,0,0,0)'
-        # fig.layout.plot_bgcolor = 'rgba(0,0,0,0)'
-        fig.update_layout(width=800, height=800, font=dict(size=12), xaxis_range=[-1, 4])
-        fig.layout.margin = layout.margin
-        fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
-        fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing prediction')
-
-        # fig.write_image('../paper1_figs/sampling_scores.png')
-        wandb.log({'Generated Sample Analysis': fig})
-        # fig.show()
 
         return None
 
@@ -2198,12 +2125,15 @@ class Modeller:
 
         num_molecules = real_data.num_graphs
         n_sampling_iters = self.config.sample_steps
-        RDF_shape = [10, 100]
+        rdf_bins = 100
+        rdf_range = [0, 10]
 
         discriminator_score, dist_dict = self.score_adversarially(real_supercell_data.clone(), discriminator)
         h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, real_supercell_data)
         vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data.mol_size)
-        #real_rdf, rr, atom_inds = crystal_rdf(real_supercell_data, rrange=[0, 10], bins=100, mode='intermolecular', raw_density=True, atomwise=True)
+        real_rdf, rr, atom_inds = crystal_rdf(real_supercell_data, rrange=rdf_range,
+                                              bins=rdf_bins, mode='intermolecular',
+                                              raw_density=True, atomwise=True, cpu_detach=True)
 
         volumes_list = []
         for i in range(real_data.num_graphs):
@@ -2216,7 +2146,8 @@ class Modeller:
                              'density': real_packing_coeffs.cpu().detach().numpy(),
                              'h bond score': h_bond_score.cpu().detach().numpy(),
                              'cell params': real_data.cell_params.cpu().detach().numpy(),
-                             # 'RDF': real_rdf.cpu().detach().numpy()
+                             'space group': real_data.sg_ind.cpu().detach().numpy(),
+                             'RDF': real_rdf
                              }
 
         sampling_dict = {'score': np.zeros((num_molecules, n_sampling_iters)),
@@ -2224,124 +2155,58 @@ class Modeller:
                          'density': np.zeros((num_molecules, n_sampling_iters)),
                          'h bond score': np.zeros((num_molecules, n_sampling_iters)),
                          'cell params': np.zeros((num_molecules, n_sampling_iters, 12)),
-                         'RDF': np.zeros((num_molecules, n_sampling_iters, RDF_shape[1]))}
+                         'space group': np.zeros((num_molecules, n_sampling_iters)),
+                         'handedness': np.zeros((num_molecules, n_sampling_iters)),
+                         'RDF': [],
+                         'batch supercell coords': [],
+                         'batch supercell inds': [],
+                         }
+        discriminator = discriminator.eval()
+        generator = generator.eval()
+        with torch.no_grad():
+            for ii in tqdm.tqdm(range(n_sampling_iters)):
+                fake_data = real_data.clone()
+                samples, prior = self.get_generator_samples(fake_data, generator)
 
-        for ii in tqdm.tqdm(range(n_sampling_iters)):
-            fake_data = real_data.clone()
-            samples, prior = self.get_generator_samples(fake_data, generator)
+                fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+                    fake_data, samples, self.config.supercell_size,
+                    self.config.discriminator.graph_convolution_cutoff,
+                    align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
+                )
+                fake_supercell_data = fake_supercell_data.cuda()  # todo remove soon
 
-            fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-                fake_data, samples, self.config.supercell_size,
-                self.config.discriminator.graph_convolution_cutoff,
-                align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
-            )
-            fake_supercell_data = fake_supercell_data.cuda()  # remove soon
+                discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise = 0)
+                h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, fake_supercell_data)
+                vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data.mol_size)
+                # rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=rdf_range, bins=rdf_bins,
+                #                                 raw_density=True, atomwise=True, mode='intermolecular', cpu_detach=True)
 
-            discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator)
-            h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, fake_supercell_data)
-            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data.mol_size)
-            #rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=[0, 10], bins=100, raw_density=True, atomwise=True, mode='intermolecular')
+                volumes_list = []
+                for i in range(fake_data.num_graphs):
+                    volumes_list.append(
+                        cell_vol_torch(fake_supercell_data.cell_params[i, 0:3], fake_supercell_data.cell_params[i, 3:6]))
+                volumes = torch.stack(volumes_list)
 
-            volumes_list = []
-            for i in range(fake_data.num_graphs):
-                volumes_list.append(
-                    cell_vol_torch(fake_supercell_data.cell_params[i, 0:3], fake_supercell_data.cell_params[i, 3:6]))
-            volumes = torch.stack(volumes_list)
+                # todo issue here with division by two - make sure Z assignment is consistent throughout
+                fake_packing_coeffs = fake_supercell_data.Z * fake_supercell_data.tracking[:, self.mol_volume_ind] / volumes
 
-            # todo issue here with division by two - make sure Z assignment is consistent throughout
-            fake_packing_coeffs = fake_supercell_data.Z * fake_supercell_data.tracking[:, self.mol_volume_ind] / volumes
+                sampling_dict['score'][:, ii] = softmax_and_score(discriminator_score).cpu().detach().numpy()
+                sampling_dict['vdw overlap'][:, ii] = vdw_penalty.cpu().detach().numpy()
+                sampling_dict['density'][:, ii] = fake_packing_coeffs.cpu().detach().numpy()
+                sampling_dict['h bond score'][:, ii] = h_bond_score.cpu().detach().numpy()
+                sampling_dict['cell params'][:, ii, :] = fake_supercell_data.cell_params.cpu().detach().numpy()
+                sampling_dict['space group'][:, ii] = fake_supercell_data.sg_ind.cpu().detach().numpy()
+                sampling_dict['handedness'][:, ii] = fake_supercell_data.asym_unit_handedness.cpu().detach().numpy()
+                #sampling_dict['batch supercell coords'].append(fake_supercell_data.pos.cpu().detach().numpy())
+                #sampling_dict['batch supercell inds'].append(fake_supercell_data.batch.cpu().detach().numpy())
+                # sampling_dict['RDF'].append(rdf)
 
-            sampling_dict['score'][:, ii] = softmax_and_score(discriminator_score).cpu().detach().numpy()
-            sampling_dict['vdw overlap'][:, ii] = vdw_penalty.cpu().detach().numpy()
-            sampling_dict['density'][:, ii] = fake_packing_coeffs.cpu().detach().numpy()
-            sampling_dict['h bond score'][:, ii] = h_bond_score.cpu().detach().numpy()
-            sampling_dict['cell params'][:, ii, :] = fake_supercell_data.cell_params.cpu().detach().numpy()
-            #sampling_dict['RDF'][:, ii, :] = rdf.cpu().detach().numpy()
+        """ what do we want from reporting
+        1) plot scores from the distribution of all samples (see our normal scores plot)
+   
+        """
 
-        mini_csp_reporting(self.config, wandb, sampling_dict, real_samples_dict, real_data)
-
-        # playing with rdfs
-        # lattice_means = torch.tensor(self.config.dataDims['lattice means'], device=real_data.cell_params.device)
-        # lattice_stds = torch.tensor(self.config.dataDims['lattice stds'], device=real_data.cell_params.device)  # standardize
-        #
-        # orig_sample = real_data.cell_params.cpu().detach().numpy()
-        # orig_sample_std = (real_data.cell_params - lattice_means) / lattice_stds
-        # real_rdf, rr, real_atom_inds = crystal_rdf(
-        #     real_supercell_data, rrange=[0, 10], bins=100,
-        #     mode='intermolecular', atomwise=True, raw_density=True)
-        #
-        #
-        # distortions_list = []
-        # distorted_samples_std = []
-        # distorted_samples = []
-        # fake_rdfs = []
-        # n_sampling_iters = 40
-        #
-        # atoms_lists = []
-        # for indd in tqdm.tqdm(range(n_sampling_iters)):
-        #     real_data_i = real_data.clone()
-        #     generated_samples_ii = (real_data_i.cell_params - lattice_means) / lattice_stds
-        #     # distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2.5, -0.5, len(generated_samples_ii)).to(
-        #     #    generated_samples_ii.device)[:, None]  # wider range for evaluation mode
-        #
-        #     distortion = torch.zeros_like(generated_samples_ii)
-        #
-        #     #distortion = torch.randn_like(generated_samples_ii)
-        #     # distortion[:, 0].log_normal_() # += torch.rand_like(generated_samples_ii)[:, 0]
-        #     distortion[:,0] += torch.logspace(-3, 1, n_sampling_iters)[indd, None].cuda()
-        #
-        #     generated_samples_i = (generated_samples_ii + distortion).to(self.config.device).float()  # add jitter and return in standardized basis
-        #
-        #     for jj in range(fake_data.num_graphs):
-        #         if fake_data.asym_unit_handedness[jj] == -1:
-        #             fake_data.pos[fake_data.batch == jj] = -fake_data.pos[fake_data.batch == jj]
-        #
-        #     fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-        #         real_data_i, generated_samples_i, self.config.supercell_size,
-        #         self.config.discriminator.graph_convolution_cutoff,
-        #         align_molecules=True, skip_cell_cleaning=True,
-        #         target_handedness=real_data.asym_unit_handedness,
-        #         rescale_asymmetric_unit=False)
-        #
-        #     fake_rdf, rr, atoms_list = crystal_rdf(
-        #         fake_supercell_data, rrange=[0, 10], bins=100,
-        #         mode='intermolecular', atomwise=True, raw_density=True)
-        #
-        #     atoms_lists.append(atoms_list)
-        #     fake_rdfs.append(fake_rdf)
-        #     distorted_samples.append(fake_supercell_data.cell_params.cpu().detach().numpy())
-        #     distortions_list.append(distortion.cpu().detach().numpy())
-        #     distorted_samples_std.append(generated_samples_i.cpu().detach().numpy())
-        #
-        # distortions_list = np.asarray(distortions_list)
-        # distorted_samples_std = np.asarray(distorted_samples_std)
-        # distorted_samples = np.asarray(distorted_samples)
-        # fake_rdfs_concat = [torch.stack([fake_rdfs[j][i] for j in range(n_sampling_iters)]) for i in range(num_molecules)]
-        #
-        # num_molecules = real_data.num_graphs
-        # real_fake_prior_dists = np.zeros((num_molecules, n_sampling_iters))
-        # real_fake_rdf_dists = torch.zeros((num_molecules, n_sampling_iters))
-        # for i in range(num_molecules):
-        #     for j in range(n_sampling_iters):
-        #         real_fake_rdf_dists[i, j] = (earth_movers_distance_torch(real_rdf[i], fake_rdfs_concat[i][j])
-        #                                      / (real_rdf[i].sum()/2 + fake_rdfs_concat[i][j].sum()/2) # norm by respective sums to make a symmetric distance
-        #                                      / (rr[1] - rr[0])  # norm by bin width
-        #                                      ).mean()  # average over atom pairs
-        #         real_fake_prior_dists[i, j] = np.sum(np.abs(orig_sample[i] - distorted_samples[j, i]) / np.abs(orig_sample[i]))
-        #
-        # real_fake_rdf_dists = real_fake_rdf_dists.cpu().detach().numpy()
-        #
-        # from plotly.subplots import make_subplots
-        #
-        # fig = make_subplots(cols=4, rows=3)
-        # for i in range(num_molecules):
-        #     row = i // 4 + 1
-        #     col = i % 4 + 1
-        #     fig.add_trace(go.Scattergl(x=real_fake_prior_dists[i], y=real_fake_rdf_dists[i], mode='markers'),
-        #                   row=row, col=col)
-        #
-        # fig.update_xaxes(type="log")
-        # fig.update_yaxes(type="log")
-        # fig.show()
+        log_mini_csp_scores_distributions(self.config, wandb, sampling_dict, real_samples_dict, real_data)
+        #log_best_mini_csp_samples(self.config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, self.supercell_builder)
 
         return None

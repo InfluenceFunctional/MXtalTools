@@ -83,7 +83,7 @@ class general_MLP(nn.Module):
         else:
             self.output_layer = nn.Identity()
 
-    def forward(self, x, conditions=None, return_latent=False, batch = None):
+    def forward(self, x, conditions=None, return_latent=False, batch=None):
         if 'geometric' in str(type(x)):  # extract conditions from trailing atomic features
             # todo fix above
             # if x.num_graphs == 1:
@@ -108,9 +108,9 @@ class general_MLP(nn.Module):
             else:
                 res = self.residue_adjust[i](x)
             if self.norm_after_linear:
-                x = res + dropout(activation(norm(linear(x),batch=batch)))  # residue
+                x = res + dropout(activation(norm(linear(x), batch=batch)))  # residue
             else:
-                x = res + dropout(activation(linear(norm(x,batch=batch))))  # residue
+                x = res + dropout(activation(linear(norm(x, batch=batch))))  # residue
 
         if return_latent:
             return self.output_layer(x), x
@@ -137,7 +137,7 @@ class Normalization(nn.Module):
             sys.exit()
 
     def forward(self, input, batch=None):
-        if batch is not None and self.norm_type != 'batch':
+        if batch is not None and self.norm_type != 'batch' and self.norm_type is not None:
             return self.norm(input, batch)
 
         return self.norm(input)

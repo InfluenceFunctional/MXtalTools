@@ -290,7 +290,7 @@ def earth_movers_distance_np(d1: np.ndarray, d2: np.ndarray):
     -------
     earth mover's distance (Wasserstein metric) between 1d PDFs (pre-normalized)
     '''
-    return np.sum(np.abs(np.cumsum(d1) - np.cumsum(d2)))
+    return np.sum(np.abs(np.cumsum(d1,axis=-1) - np.cumsum(d2,axis=-1)),axis=-1)
 
 
 def histogram_overlap(d1: np.ndarray, d2: np.ndarray):

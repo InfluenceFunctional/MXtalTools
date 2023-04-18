@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn
 from crystal_building.utils import \
     (update_supercell_data, coor_trans_matrix,
-     ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, asym_unit_dict)
+     ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, asym_unit_dict, unit_cell_analysis)
 
 
 def update_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
@@ -29,12 +29,18 @@ def update_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_
     return supercell_data
 
 
-def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetries_dict):
+def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetries_dict, randomize_sgs=False):
     # identify the SG numbers we want to generate
-    generate_sg_inds = [list(symmetries_dict['space_groups'].values()).index(SG) + 1 for SG in generate_sgs]  # indexing from 0
+    if type(generate_sgs[0]) == str:
+        generate_sg_inds = [list(symmetries_dict['space_groups'].values()).index(SG) + 1 for SG in generate_sgs]  # indexing from 0
+    else:
+        generate_sg_inds = generate_sgs
 
     # randomly assign SGs to samples
-    sample_sg_inds = np.random.choice(generate_sg_inds, size=mol_data.num_graphs, replace=True)
+    if randomize_sgs:
+        sample_sg_inds = np.random.choice(generate_sg_inds, size=mol_data.num_graphs, replace=True)
+    else:
+        sample_sg_inds = generate_sg_inds
 
     # update sym ops
     mol_data.symmetry_operators = [torch.Tensor(symmetries_dict['sym_ops'][sg_ind]).to(mol_data.x.device) for sg_ind in sample_sg_inds]
@@ -66,6 +72,7 @@ class SupercellBuilder:
         # todo confirm these make right crystals
         # todo add support for all 230 space groups
         # todo add extra tools for non-parallelipped asymmetric units
+        self.numpy_asym_unit_dict = asym_unit_dict.copy()
         self.asym_unit_dict = asym_unit_dict.copy()
         for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
@@ -119,6 +126,19 @@ class SupercellBuilder:
             canonical_conformer_coords_list.append(torch.inner(rotation, coords - coords.mean(0)).T + torch.inner(T_fc, new_frac_pos))
 
         unit_cell_coords_list = self.build_unit_cell(supercell_data.clone(), canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
+
+        # get canonical rotation
+        # todo rebuild the below function in torch
+        cell_analysis = [unit_cell_analysis(
+            unit_cell_coords_list[ii].cpu().detach().numpy(),
+            supercell_data.sg_ind[ii].cpu().detach().numpy(),
+            self.numpy_asym_unit_dict,
+            np.linalg.inv(supercell_data.T_fc[ii].cpu().detach().numpy()),
+            enforce_right_handedness=False
+        ) for ii in range(len(unit_cell_coords_list))]
+
+        supercell_data.cell_params[:,9:12] = torch.tensor([cell_analysis[ii][1] for ii in range(supercell_data.num_graphs)])
+        supercell_data.asym_unit_handedness = torch.tensor([cell_analysis[ii][2] for ii in range(supercell_data.num_graphs)])
 
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
@@ -326,6 +346,6 @@ class SupercellBuilder:
             cell_sample = cell_sample.to(self.device)
 
         if target_handedness is not None:
-            target_handedness = target_handedness.to(self.device)
+            target_handedness = torch.tensor(target_handedness,device=self.device,dtype=torch.float32)# target_handedness.to(self.device)
 
         return supercell_data, cell_sample, target_handedness

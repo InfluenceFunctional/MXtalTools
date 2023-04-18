@@ -512,8 +512,9 @@ def f_c_transform(coords, T_fc):
 #             return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness
 
 
-def find_coord_in_box(coords, box):
-    return np.where((coords[:, 0] < box[0]) * (coords[:, 1] < box[1]) * (coords[:, 2] < box[2]))[0]
+def find_coord_in_box(coords, box, epsilon = 0):
+    ## which of the given coords is inside the specified box, with option for a little leeway
+    return np.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
 
 
 def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_right_handedness=False):

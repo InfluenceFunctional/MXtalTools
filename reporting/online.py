@@ -1,14 +1,18 @@
 import numpy as np
 import torch
 from _plotly_utils.colors import n_colors
+from plotly import graph_objects
 from plotly.subplots import make_subplots
 from scipy.stats import gaussian_kde, linregress
 import plotly.graph_objects as go
 import plotly.express as px
 
-from common.utils import update_stats_dict, np_softmax
-from crystal_building.builder import update_sg_to_all_crystals
+from common.geometry_calculations import cell_vol_torch
+from common.utils import update_stats_dict, np_softmax, earth_movers_distance_torch, earth_movers_distance_np
+from crystal_building.builder import update_sg_to_all_crystals, update_crystal_symmetry_elements
+from models.crystal_rdf import crystal_rdf
 from models.utils import softmax_and_score
+from models.vdw_overlap import vdw_overlap
 
 
 def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
@@ -98,19 +102,6 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
         wandb.log(fig_dict)
 
 
-def log_supercell_examples(supercell_examples, i, rand_batch_ind, epoch_stats_dict):
-    if (supercell_examples is not None) and (i == rand_batch_ind):  # for a random batch in the epoch
-        epoch_stats_dict['generated supercell examples'] = supercell_examples.cpu().detach()
-        # if supercell_examples.num_graphs > 100:  # todo find a way to take only the few that we need - maybe using the Collater
-        #     print('WARNING. Saving over 100 supercells for analysis')
-
-    epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'final generated cell parameters',
-                                         supercell_examples.cell_params.cpu().detach().numpy(), mode='extend')
-
-    del supercell_examples
-    return epoch_stats_dict
-
-
 def plotly_setup(config):
     if config.machine == 'local':
         import plotly.io as pio
@@ -165,9 +156,9 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
             fig.show()
 
 
-def all_losses_plot(config, wandb, epoch_stats_dict, generator_losses, layout):
-    num_samples = min(10, epoch_stats_dict['generated supercell examples'].num_graphs)
-    supercell_identifiers = [epoch_stats_dict['generated supercell examples'].csd_identifier[i] for i in
+def all_losses_plot(config, wandb, epoch_stats_dict, generated_supercell_examples, generator_losses, layout):
+    num_samples = min(10, generated_supercell_examples.num_graphs)
+    supercell_identifiers = [generated_supercell_examples.csd_identifier[i] for i in
                              range(num_samples)]
     supercell_inds = [np.argwhere(epoch_stats_dict['identifiers'] == ident)[0, 0] for ident in
                       supercell_identifiers]
@@ -595,7 +586,7 @@ def plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout)
     wandb.log({'Discriminator Score Correlates': fig})
 
 
-def mini_csp_reporting(config, wandb, sampling_dict, real_samples_dict, real_data):
+def log_mini_csp_scores_distributions(config, wandb, sampling_dict, real_samples_dict, real_data):
     """
     report on key metrics from mini-csp
     """
@@ -639,35 +630,6 @@ def mini_csp_reporting(config, wandb, sampling_dict, real_samples_dict, real_dat
         wandb.log({'Mini-CSP Scores': fig})
     if (config.machine == 'local') and False:
         fig.show()
-    '''
-    cluster via RDF
-    '''
-    #
-    # real_fake_dists = np.zeros((num_molecules,n_sampling_iters))
-    # for i in range(num_molecules):
-    #     for j in range(n_sampling_iters):
-    #         real_fake_dists[i,j] = earth_movers_distance_np(real_samples_dict['RDF'][i], sampling_dict['RDF'][i,j]) / RDF_shape[1]
-    #
-    # fake_fake_dists = np.zeros((num_molecules, n_sampling_iters, n_sampling_iters))
-    #
-    # for i in range(num_molecules):
-    #     for j in range(n_sampling_iters):
-    #         for k in range(n_sampling_iters):
-    #             fake_fake_dists[i, j, k] = earth_movers_distance_np(sampling_dict['RDF'][i,j], sampling_dict['RDF'][i, k]) / RDF_shape[1]
-    #
-    # fake_fake_dists /= fake_fake_dists.mean((1,2))[:,None,None]
-    #
-    # clusters = []
-    # classes = []
-    # for i in range(num_molecules):
-    #     model = AgglomerativeClustering(distance_threshold=1, linkage="average", affinity='precomputed', n_clusters=None)
-    #     model = model.fit(fake_fake_dists[i])
-    #     clusters.append(model.n_clusters_)
-    #     classes.append(model.labels_)
-
-    '''
-    did we find the real crystal?
-    '''
 
     return None
 
@@ -750,7 +712,7 @@ def cell_params_tracking_plot(wandb, supercell_builder, layout, config, sampling
     big_single_mol_data = update_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
                                                     supercell_builder.symmetries_dict, sym_ops_list)
     processed_cell_params = torch.cat(supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda(),
-                                              rescale_asymmetric_unit=False, skip_cell_cleaning=True),dim=-1).T
+                                                                            rescale_asymmetric_unit=False, skip_cell_cleaning=True), dim=-1).T
     del big_single_mol_data
 
     processed_cell_params = processed_cell_params.reshape(12, n_runs, num_iters).cpu().detach().numpy()
@@ -783,3 +745,193 @@ def cell_params_tracking_plot(wandb, supercell_builder, layout, config, sampling
         import plotly.io as pio
         pio.renderers.default = 'browser'
         fig.show()
+
+
+def sample_wise_analysis(vdw_radii, config, mol_volume_ind, sym_info, wandb, supercell_examples, layout):
+    num_samples = 10
+    vdw_loss, normed_vdw_loss, vdw_penalties = \
+        vdw_overlap(vdw_radii, crystaldata=supercell_examples, return_atomwise=True, return_normed=True,
+                    graph_sizes=supercell_examples.tracking[:,
+                                config.dataDims['tracking features dict'].index('molecule num atoms')])
+    vdw_loss /= supercell_examples.tracking[:,
+                config.dataDims['tracking features dict'].index('molecule num atoms')]
+
+    # mol_acceptors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num acceptors')]
+    # mol_donors = supercell_examples.tracking[:, self.config.dataDims['tracking features dict'].index('molecule num donors')]
+    # possible_h_bonds = torch.amin(torch.vstack((mol_acceptors, mol_donors)), dim=0)
+    # num_h_bonds = torch.stack([compute_num_h_bonds(supercell_examples, self.config.dataDims, i) for i in range(supercell_examples.num_graphs)])
+
+    volumes_list = []
+    for i in range(supercell_examples.num_graphs):
+        volumes_list.append(
+            cell_vol_torch(supercell_examples.cell_params[i, 0:3], supercell_examples.cell_params[i, 3:6]))
+    volumes = torch.stack(volumes_list)
+    generated_packing_coeffs = (supercell_examples.Z * supercell_examples.tracking[:,
+                                                       mol_volume_ind] / volumes).cpu().detach().numpy()
+    target_packing = (supercell_examples.y * config.dataDims['target std'] + config.dataDims[
+        'target mean']).cpu().detach().numpy()
+
+    fig = go.Figure()
+    for i in range(min(supercell_examples.num_graphs, num_samples)):
+        pens = vdw_penalties[i].cpu().detach()
+        fig.add_trace(go.Violin(x=pens[pens != 0], side='positive', orientation='h',
+                                bandwidth=0.01, width=1, showlegend=False, opacity=1,
+                                name=f'{supercell_examples.csd_identifier[i]} : ' + f'SG={sym_info["space_groups"][int(supercell_examples.sg_ind[i])]} <br /> ' +
+                                     f'c_t={target_packing[i]:.2f} c_p={generated_packing_coeffs[i]:.2f} <br /> ' +
+                                     f'tot_norm_ov={normed_vdw_loss[i]:.2f}'
+                                ),
+                      )
+
+        # Can only run this section with RDKit installed, which doesn't always work
+        # Commented out - not that important anyway.
+        # molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
+        # try:
+        #     rdkit.Chem.AllChem.Compute2DCoords(molecule)
+        #     rdkit.Chem.AllChem.GenerateDepictionMatching2DStructure(molecule, molecule)
+        #     pil_image = rdkit.Chem.Draw.MolToImage(molecule, size=(500, 500))
+        #     pil_image.save('mol_img.png', 'png')
+        #     # Add trace
+        #     img = Image.open("mol_img.png")
+        #     # Add images
+        #     fig.add_layout_image(
+        #         dict(
+        #             source=img,
+        #             xref="x domain", yref="y domain",
+        #             x=.1 + (.15 * (i % 2)), y=i / 10.5 + 0.05,
+        #             sizex=.15, sizey=.15,
+        #             xanchor="center",
+        #             yanchor="middle",
+        #             opacity=0.75
+        #         )
+        #     )
+        # except:  # ValueError("molecule was rejected by rdkit"):
+        #     pass
+
+    # fig.layout.paper_bgcolor = 'rgba(0,0,0,0)'
+    # fig.layout.plot_bgcolor = 'rgba(0,0,0,0)'
+    fig.update_layout(width=800, height=800, font=dict(size=12), xaxis_range=[-1, 4])
+    fig.layout.margin = layout.margin
+    fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
+    fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing prediction')
+
+    # fig.write_image('../paper1_figs/sampling_scores.png')
+    wandb.log({'Generated Sample Analysis': fig})
+    # fig.show()
+
+    return None
+
+
+def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, supercell_builder):
+    """
+    extract the best guesses for each crystal and reconstruct and analyze them
+    compare best samples to the experimental crystal
+    """
+
+    # identify the best samples (later, use clustering to filter down to a diverse set)
+    scores_list = ['score', 'vdw overlap', 'h bond score', 'density']
+    scores_dict = {key: sampling_dict[key] for key in scores_list}
+
+    num_crystals, num_samples = scores_dict['score'].shape
+
+    topk_size = 5
+    #sort_inds = np.stack([np.array((1, 2, 3, 4, 5)) for ii in range(num_crystals)])  #
+    sort_inds = sampling_dict['score'].argsort(axis=-1)[:, -topk_size:] #
+    best_scores_dict = {key: np.asarray([sampling_dict[key][ii,sort_inds[ii]] for ii in range(num_crystals)]) for key in scores_list}
+    best_samples = np.asarray([sampling_dict['cell params'][ii, sort_inds[ii], :] for ii in range(num_crystals)])
+    best_samples_space_groups = np.asarray([sampling_dict['space group'][ii, sort_inds[ii]] for ii in range(num_crystals)])
+    best_samples_handedness = np.asarray([sampling_dict['handedness'][ii, sort_inds[ii]] for ii in range(num_crystals)])
+
+    # topk_size = 100 # works perfectly when not sorted, but noisy when sorted
+    # issue appears to arrive only when taking non-equal indices between crystals
+    # best_scores_dict = scores_dict.copy()
+    # best_samples = sampling_dict['cell params'].copy()
+    # best_samples_space_groups = sampling_dict['space group'].copy()
+    # best_samples_handedness = sampling_dict['handedness'].copy()
+
+    # reconstruct the best samples from the cell params
+    best_supercells_list = []
+    best_supercell_scores = []
+    best_supercell_rdfs = []
+
+    rdf_bins = 100
+    rdf_range = [0, 10]
+
+    discriminator.eval()
+    with torch.no_grad():
+        for n in range(topk_size):
+            real_data_i = real_data.clone()
+
+            real_data_i = update_crystal_symmetry_elements(
+                real_data_i, best_samples_space_groups[:, n],
+                config.dataDims, supercell_builder.symmetries_dict, randomize_sgs=False)
+
+            fake_supercell_data, _, _ = supercell_builder.build_supercells(
+                real_data_i,
+                torch.tensor(best_samples[:, n, :], device=real_data_i.x.device, dtype=torch.float32),
+                config.supercell_size,
+                config.discriminator.graph_convolution_cutoff,
+                align_molecules=True, skip_cell_cleaning=True, standardized_sample=False,
+                target_handedness=best_samples_handedness[:, n],
+                rescale_asymmetric_unit=False)
+
+            # confirm reconstruction for a given crystal
+            # original crystal 1
+            # crystal1_original_coords = sampling_dict['batch supercell coords'][sort_inds[0, n]][sampling_dict['batch supercell inds'][sort_inds[0,n]] == 0,:]
+            # diff = np.mean(np.abs(fake_supercell_data.pos[fake_supercell_data.batch == 0].cpu().detach().numpy() - crystal1_original_coords))
+            # print(f'reconstruction loss is {diff:.3f}')
+
+            output, extra_outputs = discriminator(fake_supercell_data.clone(), return_dists=True)  # reshape output from flat filters to channels * filters per channel
+            best_supercell_scores.append(softmax_and_score(output).cpu().detach().numpy())
+
+            # rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=rdf_range, bins=rdf_bins, raw_density=True, atomwise=True, mode='intermolecular', cpu_detach=True)
+            # best_supercell_rdfs.append(rdf)
+            #
+            # best_supercells_list.append(fake_supercell_data.cpu())
+
+    reconstruction_scores = np.asarray(best_supercell_scores).T
+    #best_rdfs = [np.stack([best_supercell_rdfs[ii][jj] for ii in range(topk_size)]) for jj in range(real_data.num_graphs)]
+
+    fig = go.Figure()
+    colors = n_colors('rgb(250,40,100)', 'rgb(5,250,200)', real_data.num_graphs, colortype='rgb')
+    for ii in range(num_crystals):
+        #fig.add_trace(go.Scatter(x=best_scores_dict['score'][ii], y=reconstruction_scores[ii], mode='markers', line_color=colors[ii]))
+        fig.add_trace(go.Histogram(x=np.abs(best_scores_dict['score'][ii] - reconstruction_scores[ii]),
+                                   nbinsx=10,
+                                   marker_color=colors[ii]))
+    fig.update_layout(title=str(config.discriminator.graph_norm) + ' ' + str(config.discriminator.fc_norm_mode) + ' ' + str(config.discriminator.fc_dropout_probability))
+    fig.show()
+
+    aa = 0
+
+    #
+    # rdf_dists = np.zeros((real_data.num_graphs, topk_size, topk_size))
+    # for i in range(real_data.num_graphs):
+    #     for j in range(topk_size):
+    #         for k in range(j,topk_size):
+    #             rdf_dists[i,j,k] = earth_movers_distance_np(
+    #                 best_rdfs[i][j], best_rdfs[i][k]
+    #             ).mean() * (rr[1] - rr[0])
+    #
+    # rdf_real_dists = np.zeros((real_data.num_graphs, topk_size))
+    # for i in range(real_data.num_graphs):
+    #     for j in range(topk_size):
+    #         rdf_real_dists[i,j] = earth_movers_distance_np(
+    #             real_samples_dict['RDF'][i],
+    #             best_rdfs[i][j],
+    #         ).mean() * (rr[1] - rr[0])
+
+    # fig = go.Figure()
+    # colors = n_colors('rgb(250,40,100)', 'rgb(5,250,200)', real_data.num_graphs, colortype='rgb')
+    #
+    # for ii in range(real_data.num_graphs):
+    #     fig.add_trace(go.Scatter(x=rdf_real_dists[ii], y=reconstruction_scores[ii], mode='markers', line_color=colors[ii]))
+    #     fig.add_trace(go.Scatter(x=np.zeros_like(real_samples_dict['score'][ii]), y=[real_samples_dict['score'][ii]], mode='markers', line_color=colors[ii]))
+    # fig.show()
+
+    # self.save_3d_structure_examples(wandb, generated_superecell_examples)
+    # sample_wise_analysis(self.vdw_radii, self.config, self.mol_volume_ind, self.sym_info, wandb, generated_supercell_samples, layout)
+    # all_losses_plot(self.config, wandb, epoch_stats_dict, generated_supercell_examples, generator_losses, layout)
+
+
+    aa = 1
+    return None

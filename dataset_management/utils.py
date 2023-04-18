@@ -266,7 +266,7 @@ class BuildDataset:
                                           y=target,
                                           smiles=smiles[i],
                                           tracking=tracking_features[i, None, :],
-                                          ref_cell_pos=reference_cells[i][:, :, :3],
+                                          ref_cell_pos=reference_cells[i][:, :, :3], # won't collate properly as a torch tensor
                                           Z=tracking_features[i, z_value_ind].int(),
                                           sg_ind=tracking_features[i, sg_ind_value_ind].int(),
                                           cell_params=torch.Tensor(lattice_features[i, None, :]),
