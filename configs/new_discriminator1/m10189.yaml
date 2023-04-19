@@ -3,7 +3,7 @@ machine: "cluster"
 device: "cuda"
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 10180
+run_num: 10189
 anomaly_detection: False
 mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
 save_checkpoints: True # will do it always on cluster, only locally if True
