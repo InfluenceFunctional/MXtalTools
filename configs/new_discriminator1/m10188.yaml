@@ -85,7 +85,7 @@ exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
 include_sgs: null  # [ "P-1","P21/c","P212121","C2/c"]
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: 'original'' # ["P-1","P21/c","P212121","C2/c"] # null # 'original' # ["P-1","P21/c","P212121","C2/c"]
+generate_sgs: 'original' # ["P-1","P21/c","P212121","C2/c"] # null # 'original' # ["P-1","P21/c","P212121","C2/c"]
 supercell_size: 5 # new method - should be very large, automatically pares down
 
 # discriminator optimizer and model
