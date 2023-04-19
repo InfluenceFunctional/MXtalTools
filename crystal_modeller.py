@@ -68,10 +68,21 @@ class Modeller:
         """
 
         self.atom_weights = {}
-        self.vdw_radii = {}
+        # self.vdw_radii = {}
         for i in range(100):
             self.atom_weights[i] = ase.data.atomic_masses[i]
-            self.vdw_radii[i] = ase.data.vdw_radii[i]
+            # self.vdw_radii[i] = ase.data.vdw_radii[i]
+
+        # hardcoded from rdkit - ase module is missing many radii
+        self.vdw_radii = {0: 0.0, 1: 1.2, 2: 1.4, 3: 2.2, 4: 1.9, 5: 1.8, 6: 1.7, 7: 1.6, 8: 1.55, 9: 1.5, 10: 1.54, 11: 2.4, 12: 2.2, 13: 2.1, 14: 2.1, 15: 1.95, 16: 1.8, 17: 1.8, 18: 1.88, 19: 2.8, 20: 2.4, 21: 2.3, 22: 2.15, 23: 2.05,
+                          24: 2.05, 25: 2.05,
+                          26: 2.05, 27: 2.0, 28: 2.0, 29: 2.0, 30: 2.1, 31: 2.1, 32: 2.1, 33: 2.05, 34: 1.9, 35: 1.9, 36: 2.02, 37: 2.9, 38: 2.55, 39: 2.4, 40: 2.3, 41: 2.15, 42: 2.1, 43: 2.05, 44: 2.05, 45: 2.0, 46: 2.05, 47: 2.1, 48: 2.2,
+                          49: 2.2,
+                          50: 2.25, 51: 2.2, 52: 2.1, 53: 2.1, 54: 2.16, 55: 3.0, 56: 2.7, 57: 2.5, 58: 2.48, 59: 2.47, 60: 2.45, 61: 2.43, 62: 2.42, 63: 2.4, 64: 2.38, 65: 2.37, 66: 2.35, 67: 2.33, 68: 2.32, 69: 2.3, 70: 2.28, 71: 2.27,
+                          72: 2.25, 73: 2.2,
+                          74: 2.1, 75: 2.05, 76: 2.0, 77: 2.0, 78: 2.05, 79: 2.1, 80: 2.05, 81: 2.2, 82: 2.3, 83: 2.3, 84: 2.0, 85: 2.0, 86: 2.0, 87: 2.0, 88: 2.0, 89: 2.0, 90: 2.4, 91: 2.0, 92: 2.3, 93: 2.0, 94: 2.0, 95: 2.0, 96: 2.0,
+                          97: 2.0, 98: 2.0,
+                          99: 2.0}
 
         # generate symmetry info dict if we don't already have it
         if os.path.exists('symmetry_info.npy'):
@@ -1049,8 +1060,8 @@ class Modeller:
             mode = self.config.generator.canonical_conformer_orientation
 
         if mode == 'standardized':
-            data = align_crystaldata_to_principal_axes(data, handedness = data.asym_unit_handedness)
-            #data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
+            data = align_crystaldata_to_principal_axes(data, handedness=data.asym_unit_handedness)
+            # data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
 
         elif mode == 'random':
             data = random_crystaldata_alignment(data)
@@ -1860,7 +1871,7 @@ class Modeller:
 
         return similarity_penalty
 
-    def score_adversarially(self, supercell_data, discriminator, discriminator_noise = None):
+    def score_adversarially(self, supercell_data, discriminator, discriminator_noise=None):
         """
         get an adversarial score for generated samples
 
@@ -2175,7 +2186,7 @@ class Modeller:
                 )
                 fake_supercell_data = fake_supercell_data.cuda()  # todo remove soon
 
-                discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise = 0)
+                discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise=0)
                 h_bond_score = compute_h_bond_score(self.config.feature_richness, self.atom_acceptor_ind, self.atom_donor_ind, self.num_acceptors_ind, self.num_donors_ind, fake_supercell_data)
                 vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data.mol_size)
                 # rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=rdf_range, bins=rdf_bins,
@@ -2197,8 +2208,8 @@ class Modeller:
                 sampling_dict['cell params'][:, ii, :] = fake_supercell_data.cell_params.cpu().detach().numpy()
                 sampling_dict['space group'][:, ii] = fake_supercell_data.sg_ind.cpu().detach().numpy()
                 sampling_dict['handedness'][:, ii] = fake_supercell_data.asym_unit_handedness.cpu().detach().numpy()
-                #sampling_dict['batch supercell coords'].append(fake_supercell_data.pos.cpu().detach().numpy())
-                #sampling_dict['batch supercell inds'].append(fake_supercell_data.batch.cpu().detach().numpy())
+                # sampling_dict['batch supercell coords'].append(fake_supercell_data.pos.cpu().detach().numpy())
+                # sampling_dict['batch supercell inds'].append(fake_supercell_data.batch.cpu().detach().numpy())
                 # sampling_dict['RDF'].append(rdf)
 
         """ what do we want from reporting
@@ -2207,6 +2218,6 @@ class Modeller:
         """
 
         log_mini_csp_scores_distributions(self.config, wandb, sampling_dict, real_samples_dict, real_data)
-        #log_best_mini_csp_samples(self.config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, self.supercell_builder)
+        # log_best_mini_csp_samples(self.config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, self.supercell_builder)
 
         return None
