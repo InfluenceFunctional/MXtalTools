@@ -36,8 +36,8 @@ sample_steps: 10 # now for mini csp
 sample_move_size: 0.001 # currently unused
 
 seeds:
-  model: 0
-  dataset: 0
+  model: 1
+  dataset: 1
 
 # opt - sweep details
 wandb:
