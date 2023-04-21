@@ -1,17 +1,17 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10191
 anomaly_detection: False
 mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
 save_checkpoints: True # will do it always on cluster, only locally if True
 
 # for GAN training
 freeze_generator_conditioner: False
-train_generator_packing: True
-train_generator_vdw: True
+train_generator_packing: False
+train_generator_vdw: False
 vdw_loss_rescaling: null
 packing_loss_rescaling: null
 train_generator_combo: False
@@ -27,7 +27,7 @@ sample_distortion_magnitude: -1 # -1 for wide range test # noise for distorted g
 extra_test_period: 10
 extra_test_evaluation: False
 extra_test_set_paths: null
-discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\best_discriminator_1487'
+discriminator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\best_discriminator_1487'
 generator_path: null
 conditioner_path: null
 regressor_path: null
@@ -43,7 +43,7 @@ seeds:
 wandb:
   mini_csp_frequency: 20
   sample_reporting_frequency: 5
-  experiment_tag: dev
+  experiment_tag: new_discriminator2
   log_figures: True
 
 # batching & convergence
@@ -61,13 +61,13 @@ gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 10000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 100
 min_crystal_temperature: -100
 max_num_atoms: 100
 min_num_atoms: 5 # target XVI has only 9 heavy atoms
-max_molecule_radius: 10 # angstroms
+max_molecule_radius: 100 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -109,7 +109,7 @@ discriminator:
   graph_convolution_layers: 4
   graph_filters: 128
   atom_embedding_size: 256
-  graph_norm: 'graph layer' # layer, graph, batch, graph layernorm
+  graph_norm: 'graph layer' # layer, graph, batch, 'graph layer'
   num_spherical: 5
   num_radial: 32
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom

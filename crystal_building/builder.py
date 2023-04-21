@@ -174,6 +174,18 @@ class SupercellBuilder:
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, supercell_data.ref_cell_pos)
 
+        # confirm we made the right cell
+        # cell_analysis = [unit_cell_analysis(
+        #     supercell_data.ref_cell_pos[ii],
+        #     supercell_data.sg_ind[ii].cpu().detach().numpy(),
+        #     self.numpy_asym_unit_dict,
+        #     np.linalg.inv(supercell_data.T_fc[ii].cpu().detach().numpy()),
+        #     enforce_right_handedness=False
+        # ) for ii in range(len(supercell_data.ref_cell_pos))]
+        #
+        # supercell_data.cell_params[:,9:12] = torch.tensor([cell_analysis[ii][1] for ii in range(supercell_data.num_graphs)])
+        # supercell_data.asym_unit_handedness = torch.tensor([cell_analysis[ii][2] for ii in range(supercell_data.num_graphs)])
+
         # if return_overlaps:  # todo finish this, it's expensive
         #     overlaps_list = compute_lattice_vector_overlap(masses_list, final_coords_list, T_cf_list, self.normed_lattice_vectors=self.self.normed_lattice_vectors)
         #     return supercell_data.to(config.device), overlaps_list

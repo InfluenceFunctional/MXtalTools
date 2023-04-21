@@ -841,13 +841,6 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
     best_samples_space_groups = np.asarray([sampling_dict['space group'][ii, sort_inds[ii]] for ii in range(num_crystals)])
     best_samples_handedness = np.asarray([sampling_dict['handedness'][ii, sort_inds[ii]] for ii in range(num_crystals)])
 
-    # topk_size = 100 # works perfectly when not sorted, but noisy when sorted
-    # issue appears to arrive only when taking non-equal indices between crystals
-    # best_scores_dict = scores_dict.copy()
-    # best_samples = sampling_dict['cell params'].copy()
-    # best_samples_space_groups = sampling_dict['space group'].copy()
-    # best_samples_handedness = sampling_dict['handedness'].copy()
-
     # reconstruct the best samples from the cell params
     best_supercells_list = []
     best_supercell_scores = []
@@ -900,6 +893,8 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
                                    marker_color=colors[ii]))
     fig.update_layout(title=str(config.discriminator.graph_norm) + ' ' + str(config.discriminator.fc_norm_mode) + ' ' + str(config.discriminator.fc_dropout_probability))
     fig.show()
+    print(np.mean(np.abs(best_scores_dict['score'] - reconstruction_scores)))
+
 
     aa = 0
 

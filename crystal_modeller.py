@@ -128,8 +128,6 @@ class Modeller:
             # generate samples in every space group in the asym dict (eventually, all sgs)
             self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-        elif self.config.generate_sgs == 'original':  # leave crystals in their original space groups
-            pass
 
         if self.config.include_sgs is None:
             self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
@@ -1014,7 +1012,7 @@ class Modeller:
             self.config.discriminator.graph_convolution_cutoff,
             align_molecules=(negative_type != 'generated'),
             rescale_asymmetric_unit=(negative_type != 'distorted'),
-            skip_cell_cleaning=(negative_type == 'distorted'),
+            skip_cell_cleaning=False,
             standardized_sample=True,
             target_handedness=real_data.asym_unit_handedness,
         )
@@ -1028,10 +1026,10 @@ class Modeller:
             assert torch.sum(torch.isnan(fake_supercell_data.x)) == 0, "NaN in training input"
 
         if self.config.discriminator.positional_noise > 0:
-            real_supercell_data.pos += torch.randn_like(
-                real_supercell_data.pos) * self.config.discriminator.positional_noise
-            fake_supercell_data.pos += torch.randn_like(
-                fake_supercell_data.pos) * self.config.discriminator.positional_noise
+            real_supercell_data.pos += \
+                torch.randn_like(real_supercell_data.pos) * self.config.discriminator.positional_noise
+            fake_supercell_data.pos += \
+                torch.randn_like(fake_supercell_data.pos) * self.config.discriminator.positional_noise
 
         score_on_real, real_distances_dict = self.adversarial_score(discriminator, real_supercell_data)
         score_on_fake, fake_pairwise_distances_dict = self.adversarial_score(discriminator, fake_supercell_data)
@@ -2218,6 +2216,6 @@ class Modeller:
         """
 
         log_mini_csp_scores_distributions(self.config, wandb, sampling_dict, real_samples_dict, real_data)
-        # log_best_mini_csp_samples(self.config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, self.supercell_builder)
+        #log_best_mini_csp_samples(self.config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, self.supercell_builder)
 
         return None

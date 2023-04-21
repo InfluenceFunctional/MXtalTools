@@ -91,7 +91,6 @@ class MikesGraphNet(torch.nn.Module):
                 norm=norm,
                 dropout=dropout,
             )
-            # FCBlock(hidden_channels, norm, dropout, activation)
             for _ in range(num_blocks)
         ])
 
@@ -174,59 +173,66 @@ class MikesGraphNet(torch.nn.Module):
         return dist, self.rbf(dist), sbf, tbf, idx_kj, idx_ji
 
     def forward(self, z, pos, batch, ptr, ref_mol_inds=None, return_dists=False, n_repeats=None):
-        if self.crystal_mode:
+        # graph model starts here
+        x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector # todo develop a crystal mode (may or may not actually be more efficient)
+
+        if self.crystal_mode:  # assumes input with inside-outside structure, and enforces periodicity after each convolution
             inside_inds = torch.where(ref_mol_inds == 0)[0]
             outside_inds = torch.where(ref_mol_inds == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
             inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
-            n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]
+            n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)] # number of molecules in convolution region
+
             # intramolecular edges
             edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # intramolecular interactions - stack over range 3 convolutions
                                                  max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
                                                  inside_inds=inside_inds, convolve_inds=inside_inds)
+            dist, rbf, sbf, tbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
+
             # intermolecular edges
             edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # extra radius for intermolecular graph convolution
                                                        max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
                                                        inside_inds=inside_inds, convolve_inds=outside_inds)
 
-            if self.crystal_convolution_type == 1:
+            if self.crystal_convolution_type == 1:  # convolve with inter and intramolecular edges
                 edge_index = torch.cat((edge_index, edge_index_inter), dim=1)
 
-        else:
-            edge_index = gnn.radius_graph(pos, r=self.cutoff, batch=batch,
-                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target')  # note - requires batch be monotonically increasing
-
-        dist, rbf, sbf, tbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
-
-        # graph model starts here
-        x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector
-        # if self.positional_embedding: # embed 3d positions
-        #     x = x + self.pos_embedding(pos)
-        for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
-            if self.crystal_mode:
+            for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
                 if n < (self.num_blocks - 1):  # to do this molecule-wise, we need to multiply n_repeats by Z for each crystal
                     x = x + convolution(x, rbf, dist, edge_index, batch, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution
-                    x[inside_inds] = x[inside_inds] + (x[inside_inds])  # feature-wise 1D convolution on only relevant atoms, FC includes residual
+
+                    x[inside_inds] = x[inside_inds] + fc(x[inside_inds], batch=batch[inside_inds])  # feature-wise 1D convolution on only relevant atoms, FC includes residual
+
                     for ii in range(len(ptr) - 1):  # for each crystal
                         x[ptr[ii]:ptr[ii + 1], :] = x[inside_inds[inside_batch == ii]].repeat(n_repeats[ii], 1)  # copy the first unit cell to all periodic images
 
-                else:  # on the final convolutional block, do not broadcast the reference cell, and include intermolecular interactions
+                else:  # on the final convolutional block, do not broadcast the reference cell, and include intermolecular interactions in conv_type 2
                     dist_inter, rbf_inter, sbf_inter, tbf_inter, idx_kj_inter, idx_ji_inter = \
-                        self.get_geom_embedding(torch.cat((edge_index, edge_index_inter), dim=1), pos, num_nodes=len(z))  # compute for tracking
+                        self.get_geom_embedding(torch.cat((edge_index, edge_index_inter), dim=1), pos, num_nodes=len(z))  # compute no matter what for tracking purposes
+
                     if self.crystal_convolution_type == 2:
                         x = convolution(x, rbf_inter, dist_inter, torch.cat((edge_index, edge_index_inter), dim=1), batch,
-                                        sbf=sbf_inter, tbf=tbf_inter, idx_kj=idx_kj_inter, idx_ji=idx_ji_inter)  # return only the results of the intermolecular convolution, omitting intermolecular features
+                                        sbf=sbf_inter, tbf=tbf_inter, idx_kj=idx_kj_inter, idx_ji=idx_ji_inter)  # return only the results of the intermolecular convolution, omitting intramolecular features
+
                     elif self.crystal_convolution_type == 1:
                         x = x + convolution(x, rbf, dist, edge_index, batch, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # standard graph convolution
+
                     x = x[inside_inds] + fc(x[inside_inds], batch=batch[inside_inds])  # feature-wise 1D convolution on only relevant atoms, and return only those atoms, FC includes residual
 
-            else:
+        else:  # isolated molecule
+            for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
+
+                edge_index = gnn.radius_graph(pos, r=self.cutoff, batch=batch,
+                                              max_num_neighbors=self.max_num_neighbors, flow='source_to_target')  # note - requires batch be monotonically increasing
+                dist, rbf, sbf, tbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
+
                 # x = self.inside_norm1[n](x)
                 if self.convolution_mode != 'none':
                     x = x + convolution(x, rbf, dist, edge_index, batch, sbf=sbf, tbf=tbf, idx_kj=idx_kj, idx_ji=idx_ji)  # graph convolution - residual is already inside the conv operator
 
                 x = fc(x, batch=batch)  # feature-wise 1D convolution, FC includes residual and norm
 
-        if return_dists:  # return dists, batch #, and inside/outside identity, and atomic number
+
+        if return_dists:  # return dists, batch #, and inside/outside identifier, and atomic number
             dist_output = {}
             dist_output['intramolecular dist'] = dist
             dist_output['intramolecular dist batch'] = batch[edge_index[0]]
@@ -238,10 +244,10 @@ class MikesGraphNet(torch.nn.Module):
                 dist_output['intermolecular dist atoms'] = [z[edge_index_inter[0], 0].long(), z[edge_index_inter[1], 0].long()]
                 dist_output['intermolecular dist inds'] = edge_index_inter
 
-        out = self.output_layer(x)
-        assert torch.sum(torch.isnan(out)) == 0
+        #out = self.output_layer(x)
+        #assert torch.sum(torch.isnan(out)) == 0
 
-        return out, dist_output if return_dists else None
+        return self.output_layer(x), dist_output if return_dists else None
 
         '''
         import networkx as nx

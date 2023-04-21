@@ -163,7 +163,6 @@ class molecule_graph_model(nn.Module):
 
         x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
 
-
         output = self.output_fc(x)
 
         if return_dists:
