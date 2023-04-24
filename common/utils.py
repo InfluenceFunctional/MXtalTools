@@ -270,6 +270,41 @@ def np_softmax(x: np.ndarray, temperature=1):
     return probabilities
 
 
+def compute_rdf_distance(rdf1, rdf2, rr):
+    """
+    compute a distance metric between two radial distribution functions with shapes
+    [num_sub_rdfs, num_bins] where sub_rdfs are e.g., particular interatomic RDFS within a certain crystal
+    rr is the bin edges used for both rdfs
+    """
+    return_numpy = False
+    if not torch.is_tensor(rdf1):
+        torch_rdf1 = torch.Tensor(rdf1)
+        torch_rdf2 = torch.Tensor(rdf2)
+        return_numpy = True
+    if not torch.is_tensor(rr):
+        torch_range = torch.Tensor(rr)
+    else:
+        torch_rdf1 = rdf1
+        torch_rdf2 = rdf2
+        torch_range = rr
+
+    emd_norm = (torch_rdf1.sum(-1) + torch_rdf2.sum(-1)) / 2  # sub-rdf-wise symmetrical norm sub-rdf-wise
+
+    normed_rdf1 = torch_rdf1 / emd_norm[:, None]
+    normed_rdf2 = torch_rdf2 / emd_norm[:, None]
+
+    emd = earth_movers_distance_torch(normed_rdf1, normed_rdf2)
+
+    range_normed_emd = emd * (torch_range[1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+
+    if return_numpy:
+        dist = range_normed_emd.mean().cpu().detach().numpy()
+    else:
+        dist = range_normed_emd.mean()
+
+    return dist
+
+
 def earth_movers_distance_torch(x: torch.tensor, y: torch.tensor):
     """
     earth mover's distance between two PDFs
@@ -290,7 +325,7 @@ def earth_movers_distance_np(d1: np.ndarray, d2: np.ndarray):
     -------
     earth mover's distance (Wasserstein metric) between 1d PDFs (pre-normalized)
     '''
-    return np.sum(np.abs(np.cumsum(d1,axis=-1) - np.cumsum(d2,axis=-1)),axis=-1)
+    return np.sum(np.abs(np.cumsum(d1, axis=-1) - np.cumsum(d2, axis=-1)), axis=-1)
 
 
 def histogram_overlap(d1: np.ndarray, d2: np.ndarray):

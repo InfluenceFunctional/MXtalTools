@@ -10,7 +10,7 @@ from reporting.nov_22_discriminator import process_discriminator_evaluation_data
 figures which were actually used in the paper
 '''
 
-def nice_scoring_plots(config,wandb):
+def nov_22_paper_discriminator_plots(config, wandb):
     test_epoch_stats_dict = np.load('C:/Users\mikem\crystals\CSP_runs/275_test_epoch_stats_dict.npy', allow_pickle=True).item()
     extra_test_dict = np.load('C:/Users\mikem\crystals\CSP_runs/275_extra_test_dict.npy', allow_pickle=True).item()
 

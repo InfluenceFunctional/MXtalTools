@@ -668,21 +668,23 @@ def delete_from_dataset(dataset, good_inds):
     return dataset
 
 
-def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, lattice_dict=None):
+def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, lattice_dict=None, sym_ops_dict = None):
     datasets = []
     for path in paths:
         miner = Miner(config=config, dataset_path=path, collect_chunks=False)
-        miner.include_sgs = None
+        #miner.include_sgs = None # this will allow all sg's, which we can't do currently due to ongoing asymmetric unit parameterization
         miner.exclude_nonstandard_settings = False
         miner.exclude_crystal_systems = None
         miner.exclude_polymorphs = False
         miner.exclude_missing_r_factor = False
         miner.exclude_blind_test_targets = False
         dataset_i = miner.load_for_modelling(save_dataset=False, return_dataset=True)
-        # if config.test_mode:
-        #     np.random.seed(config.seeds.dataset)
-        #     randinds = np.random.choice(len(dataset_i), min(len(dataset_i), 500), replace=False)
-        #     dataset_i = dataset_i.loc[randinds]
+
+        if config.test_mode:
+            np.random.seed(config.seeds.dataset)
+            randinds = np.random.choice(len(dataset_i), min(len(dataset_i), 500), replace=False)
+            dataset_i = dataset_i.loc[randinds]
+
         datasets.append(dataset_i)
         del miner, dataset_i
 
@@ -691,7 +693,10 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
         dataset = dataset.drop(columns='level_0')
     dataset = dataset.reset_index()
 
-    # dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo delete this after next BT refeaturization
+    print('Fixing BT submission symmetries - fix this in next refeaturization')
+    #dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo fix this after next BT refeaturization - included sym ops are garbage
+    for ii in tqdm.tqdm(range(len(dataset))):  # update them with standard SG definitions - though will be false in some cases, no doubt. This will let the generators run and we don't use the output.
+        dataset['crystal symmetries'][ii] = sym_ops_dict[dataset['crystal spacegroup number'][ii]]
 
     extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
                                           sg_dict=sg_dict,

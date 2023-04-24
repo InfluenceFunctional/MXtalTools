@@ -85,8 +85,63 @@ asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMR
     '73': [0.25, 0.5, 0.5],  # Ibca
     '74': [0.25, 0.25, 1],  # Imma
     '75': [0.5, 0.5, 1],  # P4
+    '76': [0.5, 0.5, 1],  # P41
+    '77': [0.5, 0.5, 1],  # P42
+    '78': [0.5, 0.5, 1],  # P43
+    '79': [0.5, 0.5, 0.5],  # I4
+    '80': [0.5, 1, 0.25],  # I41
+    '81': [0.5, 0.5, 1],  # P-4
+    '82': [0.5, 0.5, 0.5],  # I-4
+    '83': [0.5, 0.5, 0.5],  # P4/m
+    '84': [0.5, 0.5, 0.5],  # P42/m
+    '85': [0.5, 0.5, 0.5],  # P4/n
+    '86': [0.5, 1, 0.25],  # P42/n
+    '87': [0.5, 0.5, 0.25],  # I4/m
+    '88': [0.25, 0.25, 1],  # I41/a
+    '89': [0.5, 0.5, 0.5],  # P422
+    '90': [0.5, 0.5, 0.5],  # P4212
+    '91': [1, 1, 0.125],  # P4122
+    '92': [1, 1, 0.125],  # P41212
+    '93': [0.5, 1, 0.25],  # P4222
+    '94': [0.5, 0.5, 0.5],  # P4212
+    '95': [1, 1, 0.125],  # P4322
+    '96': [1, 1, 0.125],  # P43212
+    '97': [0.5, 0.5, 0.25],  # I422
+    '98': [0.5, 1, 0.125],  # I4122
+    # '99': [0.5, 0.5, 1], x<y  # P4mm
+    '103': [0.5, 0.5, 0.5],  # P4cc
+    '104': [0.5, 0.5, 0.5],  # P4nc
+    '105': [0.5, 0.5, 0.5],  # P42mc
+    '106': [0.5, 0.5, 0.5],  # P42bc
+    # '107'
+    '109': [0.5, 0.5, 0.25],  # I41md
+    '110': [0.5, 0.5, 0.25],  # I41cd
+    # '111':
+    '112': [0.5, 0.5, 0.5],  # P-42c
+    # '113'
+    '114': [0.5, 0.5, 0.5],  # P-421c
+    '115': [0.5, 0.5, 0.5],  # P-4m2
+    '116': [0.5, 1, 0.25],  # P-4c2
+    '117': [0.5, 0.5, 0.5],  # P-4b2
+    '118': [0.5, 1, 0.25],  # P-4n2
+    '119': [0.5, 0.5, 0.25],  # I-4m2
+    '120': [0.5, 0.5, 0.25],  # I-4c2
+    # '121'
+    '122': [0.5, 1, 0.125],  # I-42d
+    # '123'
+    '124': [0.5, 0.5, 0.25],  # P4/mcc
+    # '125'
+    '126': [0.5, 0.5, 0.25],  # P4/nnc
+    # '127'
+    '128': [0.5, 0.5, 0.25],  # P4/mnc
+    # '129'
+    '130': [0.5, 0.5, 0.25],  # P4/ncc
+    '131': [0.5, 0.5, 0.25],  # P42/mmc
+    # '132'
+    '133': [0.5, 0.5, 0.25],  # P42/nbc
+    # '134'
+    '135': [0.5, 0.5, 0.25],  # p42/mbc
 }
-
 
 
 def axis_angle_rotation(axis: str, angle: torch.Tensor) -> torch.Tensor:
@@ -512,7 +567,7 @@ def f_c_transform(coords, T_fc):
 #             return torch.cat((cell_lengths, cell_angles, canonical_frac_centroids, mol_orientations), dim=1), target_handedness
 
 
-def find_coord_in_box(coords, box, epsilon = 0):
+def find_coord_in_box(coords, box, epsilon=0):
     ## which of the given coords is inside the specified box, with option for a little leeway
     return np.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
 
@@ -538,13 +593,16 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
         asym_unit = asym_unit_dict[str(int(sg_ind))].cpu().detach().numpy()
         T_cf = T_cf.cpu().detach().numpy()
 
-    # identify which of the Z asymmetric units is canonical
+    # identify which of the Z asymmetric units is canonical # todo need a better system for when conformers are exactly or nearly exactly on the edge
     centroids_cartesian = unit_cell_coords.mean(-2)
     centroids_fractional = np.inner(T_cf, centroids_cartesian).T
     centroids_fractional -= np.floor(centroids_fractional)
     canonical_conformer_index = find_coord_in_box(centroids_fractional, asym_unit)
 
-    canonical_conformer_coords = unit_cell_coords[canonical_conformer_index[0]] # we enforce in the filtering step that there must be exactly one centroid in the canonical asymmetric unit
+    if len(canonical_conformer_index) == 0:  # if we didn't find one, patch over by just picking the closest # todo delete this when we have the above fixed
+        canonical_conformer_index = [np.argmin(np.linalg.norm(centroids_fractional, axis=1))]
+
+    canonical_conformer_coords = unit_cell_coords[canonical_conformer_index[0]]  # we enforce in the filtering step that there must be exactly one centroid in the canonical asymmetric unit
 
     # next we need to compute the inverse of the rotation required to align the molecule with the cartesian axes
     Ip_axes, _, _ = compute_principal_axes_np(canonical_conformer_coords)

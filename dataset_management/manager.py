@@ -246,7 +246,7 @@ class Miner():
         n_bad_inds = len(bad_inds)
         for ii in range(len(self.dataset['atom coords'])):
             sg_ind = self.dataset['crystal spacegroup number'][ii]
-            if sg_ind <= int(list(asym_unit_dict.keys())[-1]): # only do this check if this sg_ind is already encoded in the asym unit dict
+            if str(sg_ind) in asym_unit_dict.keys(): # only do this check if this sg_ind is already encoded in the asym unit dict
                 unit_cell_coords = self.dataset['crystal reference cell coords'][ii]
                 T_cf = np.linalg.inv(self.dataset['crystal fc transform'][ii])
                 asym_unit = asym_unit_dict[str(int(sg_ind))]  # will only work for units which we have written down the parameterization for
@@ -254,6 +254,8 @@ class Miner():
                 centroids_cartesian = unit_cell_coords.mean(-2)
                 centroids_fractional = np.inner(T_cf, centroids_cartesian).T
                 centroids_fractional -= np.floor(centroids_fractional)
+                if torch.is_tensor(asym_unit):
+                    asym_unit = asym_unit.cpu().detach().numpy()
                 canonical_conformer_index = find_coord_in_box(centroids_fractional, asym_unit)
                 if len(canonical_conformer_index) != 1:
                     bad_inds.append(ii)
@@ -316,8 +318,8 @@ class Miner():
 
         # too hot or too cold
         n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) > self.max_temperature)[:, 0])  # self.config.max_molecule_size))
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) < self.min_temperature)[:, 0])  # self.config.min_molecule_size))
+        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) > self.max_temperature)[:, 0])
+        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) < self.min_temperature)[:, 0])
         print('crystal temperature filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # supported space groups

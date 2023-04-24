@@ -513,6 +513,6 @@ if __name__ == '__main__':
     elif config.mode == 'sampling':
         predictor.model_sampling()
     else:
-        predictor.train()
+        predictor.train_crystal_models()
 
 # todo replace common dicts with data classes

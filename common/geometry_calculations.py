@@ -21,7 +21,7 @@ def compute_principal_axes_np(coords):
     Ipm = Ipm[sort_inds]
     Ip = Ip.T[sort_inds]  # want eigenvectors to be sorted row-wise (rather than column-wise)
 
-    # cardinal direction is vector from CoM to farthest atom
+    # cardinal direction is vector from CoM to the farthest atom
     dists = np.linalg.norm(points, axis=1)
     max_ind = np.argmax(dists)
     max_equivs = np.argwhere(np.round(dists, 8) == np.round(dists[max_ind], 8))[:, 0]  # if there are multiple equidistant atoms - pick the one with the lowest index
@@ -29,8 +29,10 @@ def compute_principal_axes_np(coords):
     direction = points[max_ind]
     direction = np.divide(direction, np.linalg.norm(direction))
     overlaps = Ip.dot(direction)  # check if the principal components point towards or away from the CoG
+    signs = np.sign(overlaps)  # returns zero for zero overlap, but we want it to default to +1 in this case
+    signs[signs==0] = 1
 
-    Ip = (Ip.T * np.sign(overlaps)).T  # if the vectors have negative overlap, flip the direction
+    Ip = (Ip.T * signs).T  # if the vectors have negative overlap, flip the direction
     if np.any(np.abs(overlaps) < 1e-3):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
         # align the 'good' vectors
         fix_ind = np.argmin(np.abs(overlaps))  # vector with vanishing overlap
@@ -124,10 +126,12 @@ def batch_molecule_principal_axes(coords_list):
     max_ind = torch.stack([torch.argmax(dists[batch == i]) + ptrs[i] for i in range(len(ptrs) - 1)])  # find furthest atom in each mol
     direction = all_coords[max_ind]
     overlaps = torch.einsum('nij,nj->ni', (Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
+    signs = torch.sign(overlaps) # we want any exactly zero overlaps to come with positive signs
+    signs[signs==0] = 1
 
     Ip_fin = torch.zeros_like(Ip)
     for ii, Ip_i in enumerate(Ip):
-        Ip_i = (Ip_i.T * torch.sign(overlaps[ii])).T  # if the vectors have negative overlap, flip the direction
+        Ip_i = (Ip_i.T * signs[ii]).T  # if the vectors have negative overlap, flip the direction
         if any(torch.abs(overlaps[ii]) < 1e-3):  # if any overlaps are vanishing (up to 32 bit precision), determine the direction via the RHR (if two overlaps are vanishing, this will not work)
             # enforce right-handedness in the free vector
             fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap

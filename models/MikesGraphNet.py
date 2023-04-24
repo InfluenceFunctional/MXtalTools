@@ -180,7 +180,7 @@ class MikesGraphNet(torch.nn.Module):
             inside_inds = torch.where(ref_mol_inds == 0)[0]
             outside_inds = torch.where(ref_mol_inds == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
             inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
-            n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)] # number of molecules in convolution region
+            n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]  # number of molecules in convolution region
 
             # intramolecular edges
             edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # intramolecular interactions - stack over range 3 convolutions
@@ -231,7 +231,6 @@ class MikesGraphNet(torch.nn.Module):
 
                 x = fc(x, batch=batch)  # feature-wise 1D convolution, FC includes residual and norm
 
-
         if return_dists:  # return dists, batch #, and inside/outside identifier, and atomic number
             dist_output = {}
             dist_output['intramolecular dist'] = dist
@@ -244,8 +243,8 @@ class MikesGraphNet(torch.nn.Module):
                 dist_output['intermolecular dist atoms'] = [z[edge_index_inter[0], 0].long(), z[edge_index_inter[1], 0].long()]
                 dist_output['intermolecular dist inds'] = edge_index_inter
 
-        #out = self.output_layer(x)
-        #assert torch.sum(torch.isnan(out)) == 0
+        # out = self.output_layer(x)
+        # assert torch.sum(torch.isnan(out)) == 0
 
         return self.output_layer(x), dist_output if return_dists else None
 

@@ -5,7 +5,7 @@ from scipy.stats import linregress
 from scipy.stats import gaussian_kde
 
 
-def nice_regression_plots(config):
+def nov_22_paper_regression_plots(config):
     '''
     Calculations
     '''
