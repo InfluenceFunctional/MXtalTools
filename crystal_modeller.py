@@ -687,7 +687,7 @@ class Modeller:
             '''
             if (len(epoch_stats_dict[
                         'generated cell parameters']) < i) and record_stats and not self.config.train_generator_conditioner:  # make some samples for analysis if we have none so far from this step
-                generated_samples = generator(len(data.y), z=None, conditions=data.to(self.config.device))
+                generated_samples = generator(data.num_graphs, z=None, conditions=data.to(self.config.device))
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generated cell parameters',
                                                      generated_samples.cpu().detach().numpy(), mode='extend')
 

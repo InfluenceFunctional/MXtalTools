@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10215
 anomaly_detection: False
 mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
 save_checkpoints: True # will do it always on cluster, only locally if True
@@ -29,8 +29,8 @@ extra_test_evaluation: True
 extra_test_set_paths: null  #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
                        #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_6_dataset',
                        #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_targets']
-discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10201'
-generator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10203'
+discriminator_path: '/scratch/mk8347/csd_runs/models/best_discriminator_10191'
+generator_path: null
 conditioner_path: null
 regressor_path: null
 
@@ -43,9 +43,9 @@ seeds:
 
 # opt - sweep details
 wandb:
-  mini_csp_frequency: 10
-  sample_reporting_frequency: 10
-  experiment_tag: dev
+  mini_csp_frequency: 5
+  sample_reporting_frequency: 5
+  experiment_tag: new_architecture1
   log_figures: True
 
 # batching & convergence
@@ -54,16 +54,16 @@ accumulate_batch_size: 100 # DEPRECATED
 auto_batch_sizing: False # DEPRECATED
 auto_batch_reduction: 0.05 # DEPRECATED # fraction of tested max batch size to actually start with (unequal graph sizes)
 grow_batch_size: True
-min_batch_size: 25
+min_batch_size: 10
 max_batch_size: 10000
-batch_growth_increment: 0.01 # fraction of batch size to grow by each epoch
-max_epochs: 1 # 0 epochs takes us straight to evaluation (only implemented for GAN)
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
+max_epochs: 10000 # 0 epochs takes us straight to evaluation (only implemented for GAN)
 history: 5000
 gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 250
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
@@ -147,7 +147,7 @@ generator:
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   positional_noise: 0 # scaling for the randn noise added to all atom positions
   num_fc_layers: 4
-  fc_depth: 512
+  fc_depth: 1024
   activation: 'gelu'
   fc_dropout_probability: 0
   fc_norm_mode: layer

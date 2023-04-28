@@ -789,10 +789,10 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
     colors = n_colors('rgb(250,40,100)', 'rgb(5,250,200)', real_data.num_graphs, colortype='rgb')
     for ii in range(real_data.num_graphs):
         # guesses
-        fig.add_trace(go.Scatter(x=rdf_real_dists[ii], y=reconstructed_best_scores[ii], mode='markers', line_color=colors[ii], name=f'Crystal {ii}'))
+        fig.add_trace(go.Scatter(x=rdf_real_dists[ii], y=real_samples_dict['score'][ii] - reconstructed_best_scores[ii], mode='markers', line_color=colors[ii], name=f'Crystal {ii}'))
         # real samples
-        fig.add_trace(go.Scatter(x=np.zeros_like(real_samples_dict['score'][ii]), y=[real_samples_dict['score'][ii]], mode='markers', line_color=colors[ii], showlegend=False))
-    fig.update_layout(xaxis_title='RDF Distance From Target', yaxis_title='Model Score', showlegend=False)
+        fig.add_trace(go.Scatter(x=np.zeros_like(real_samples_dict['score'][ii]), y=np.zeros_like(real_samples_dict['score'][ii]), mode='markers', line_color=colors[ii], showlegend=False))
+    fig.update_layout(xaxis_title='RDF Distance From Target', yaxis_title='Sample vs. experimental score difference', showlegend=False)
     wandb.log({"Sample RDF vs. Score": fig})
 
     aa = 1
@@ -875,9 +875,10 @@ def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_s
     num_crystals = best_supercells.num_graphs
     n_rows = int(np.ceil(np.sqrt(num_crystals)))
     n_cols = int(n_rows)
+    num_reporting_samples = min(25, num_crystals)
 
-    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(best_supercells.csd_identifier))
-    for ii in range(min(25, num_crystals)):
+    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(best_supercells.csd_identifier)[:num_reporting_samples])
+    for ii in range(num_reporting_samples):
         row = ii // n_cols + 1
         col = ii % n_cols + 1
         x = sampling_dict['density'][ii]
@@ -893,7 +894,7 @@ def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_s
                       row=row, col=col)
 
     fig.update_layout(xaxis_title='Crystal Packing Coefficient', yaxis_title='Model Score')
-    fig.update_layout(xaxis_range=[0, 1])
+    #fig.update_layout(xaxis_range=[0, 1])
     fig.update_yaxes(autorange="reversed")
 
     if config.wandb.log_figures:
@@ -905,7 +906,7 @@ def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_s
 
 
 def save_3d_structure_examples(wandb, generated_supercell_examples):
-    num_samples = min(10, generated_supercell_examples.num_graphs)
+    num_samples = min(25, generated_supercell_examples.num_graphs)
     identifiers = [generated_supercell_examples.csd_identifier[i] for i in range(num_samples)]
     sgs = [str(int(generated_supercell_examples.sg_ind[i])) for i in range(num_samples)]
 

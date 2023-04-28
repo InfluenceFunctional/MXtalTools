@@ -572,7 +572,7 @@ def find_coord_in_box(coords, box, epsilon=0):
     return np.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
 
 
-def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_right_handedness=False):
+def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_right_handedness=False, return_asym_unit_coords=False):
     """
 
     Parameters
@@ -641,7 +641,11 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
     mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()
     mol_position = centroids_fractional[canonical_conformer_index[0]]
 
-    return mol_position, mol_orientation, handedness
+    if return_asym_unit_coords:
+        return mol_position, mol_orientation, handedness, canonical_conformer_coords
+
+    else:
+        return mol_position, mol_orientation, handedness
 
 
 def flip_I3(coords, Ip):

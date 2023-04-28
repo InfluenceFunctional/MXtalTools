@@ -137,7 +137,7 @@ class SupercellBuilder:
             enforce_right_handedness=False
         ) for ii in range(len(unit_cell_coords_list))]
 
-        supercell_data.cell_params[:,9:12] = torch.tensor([cell_analysis[ii][1] for ii in range(supercell_data.num_graphs)])
+        supercell_data.cell_params[:, 9:12] = torch.tensor([cell_analysis[ii][1] for ii in range(supercell_data.num_graphs)])
         supercell_data.asym_unit_handedness = torch.tensor([cell_analysis[ii][2] for ii in range(supercell_data.num_graphs)])
 
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix

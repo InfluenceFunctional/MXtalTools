@@ -207,8 +207,9 @@ class BuildDataset:
             unit_cell_coords = dataset['crystal reference cell coords'][ii]
             sg_ind = dataset['crystal spacegroup number'][ii]
             T_cf = dataset['crystal cf transform'][ii]
-            position[ii], rotation[ii], handedness[ii] = unit_cell_analysis(
-                unit_cell_coords, sg_ind, asymmetric_unit_dict, T_cf, enforce_right_handedness=False)
+            # overwrite the molecule coords as the asymmetric unit coords, assumes that the symbols are in the same order (appears true)
+            position[ii], rotation[ii], handedness[ii], dataset['atom coords'][ii] = unit_cell_analysis(
+                unit_cell_coords, sg_ind, asymmetric_unit_dict, T_cf, enforce_right_handedness=False, return_asym_unit_coords = True)
 
         dataset['crystal asymmetric unit centroid x'], \
             dataset['crystal asymmetric unit centroid y'], \
@@ -394,7 +395,7 @@ class BuildDataset:
 
         # add symmetry features for generator
         self.crystal_generation_features = []
-        # point_group_features = [column for column in dataset.columns if 'pg is' in column]
+        # point_group_features = [column for column in dataset.columns if '''''''pg is' in column]
         space_group_features = [column for column in dataset.columns if 'sg is' in column]
         crystal_system_features = [column for column in dataset.columns if 'crystal system is' in column]
         # self.crystal_generation_features.extend(point_group_features)
