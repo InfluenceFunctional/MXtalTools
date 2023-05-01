@@ -182,11 +182,11 @@ class MikesGraphNet(torch.nn.Module):
             inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
             n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]  # number of molecules in convolution region
 
+
             # intramolecular edges
             edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # intramolecular interactions - stack over range 3 convolutions
                                                  max_num_neighbors=self.max_num_neighbors, flow='source_to_target',
                                                  inside_inds=inside_inds, convolve_inds=inside_inds)
-            dist, rbf, sbf, tbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
 
             # intermolecular edges
             edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # extra radius for intermolecular graph convolution
@@ -195,6 +195,8 @@ class MikesGraphNet(torch.nn.Module):
 
             if self.crystal_convolution_type == 1:  # convolve with inter and intramolecular edges
                 edge_index = torch.cat((edge_index, edge_index_inter), dim=1)
+
+            dist, rbf, sbf, tbf, idx_kj, idx_ji = self.get_geom_embedding(edge_index, pos, num_nodes=len(z))
 
             for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
                 if n < (self.num_blocks - 1):  # to do this molecule-wise, we need to multiply n_repeats by Z for each crystal

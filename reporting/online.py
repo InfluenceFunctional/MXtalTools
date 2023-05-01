@@ -561,20 +561,29 @@ def log_mini_csp_scores_distributions(config, wandb, sampling_dict, real_samples
         for j in range(min(15, real_data.num_graphs)):
             bandwidth1 = np.ptp(sampling_dict[label][j]) / 50
 
-            fig.add_trace(go.Violin(x=[real_samples_dict[label][j]], name=str(real_data.csd_identifier[j]), line_color=colors[j],
-                                    side='positive', orientation='h', width=4, meanline_visible=True),
+            sample_score = sampling_dict[label][j]
+            real_score = real_samples_dict[label][j]
+            if label == 'score':
+                sample_score = sample_score - real_score
+                real_score = real_score - real_score
+
+            fig.add_trace(go.Violin(x=[real_score], name=str(real_data.csd_identifier[j]), line_color=colors[j],
+                                    side='positive', orientation='h', width=2, meanline_visible=True),
                           row=row, col=col)
 
-            fig.add_trace(go.Violin(x=sampling_dict[label][j], name=str(real_data.csd_identifier[j]),
-                                    side='positive', orientation='h', width=4, line_color=colors[j],
+            fig.add_trace(go.Violin(x=sample_score, name=str(real_data.csd_identifier[j]),
+                                    side='positive', orientation='h', width=2, line_color=colors[j],
                                     meanline_visible=True, bandwidth=bandwidth1),
                           row=row, col=col)
 
-        fig.add_trace(go.Violin(x=sampling_dict[label].flatten(), name='all samples',
-                                side='positive', orientation='h', width=4, line_color=colors[-1],
-                                meanline_visible=True, bandwidth=np.ptp(sampling_dict[label].flatten())/100),
-                      row=row, col=col)
+        all_sample_score = sampling_dict[label].flatten()
+        if label == 'score':
+            all_sample_score = sampling_dict[label].flatten() - real_samples_dict[label].mean()
 
+        fig.add_trace(go.Violin(x=all_sample_score, name='all samples',
+                                side='positive', orientation='h', width=2, line_color=colors[-1],
+                                meanline_visible=True, bandwidth=np.ptp(sampling_dict[label].flatten()) / 100),
+                      row=row, col=col)
 
     layout = go.Layout(
         margin=go.layout.Margin(
@@ -584,13 +593,14 @@ def log_mini_csp_scores_distributions(config, wandb, sampling_dict, real_samples
             t=100,  # top margin
         )
     )
-    fig.update_xaxes(title_text='Score', row=1, col=1)
+    fig.update_xaxes(title_text='Score - CSD Score', row=1, col=1)
     fig.update_xaxes(title_text='vdW overlap', row=1, col=2)
     fig.update_xaxes(title_text='Packing Coeff.', row=2, col=1)
     fig.update_xaxes(title_text='H-bond score', row=2, col=2)
-    fig.update_layout(showlegend=False, yaxis_showgrid=True) #legend_traceorder='reversed',
+    fig.update_layout(showlegend=False, yaxis_showgrid=True)  # legend_traceorder='reversed',
 
     fig.layout.margin = layout.margin
+
     if config.wandb.log_figures:
         wandb.log({'Mini-CSP Scores': fig})
     if (config.machine == 'local') and False:
@@ -768,7 +778,7 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
     reconstructed_best_scores = np.asarray(best_supercell_scores).T
     print(f'cell reconstruction mean score difference = {np.mean(np.abs(best_scores_dict["score"] - reconstructed_best_scores)):.4f}')  # should be ~0
     print(f'cell reconstruction median score difference = {np.median(np.abs(best_scores_dict["score"] - reconstructed_best_scores)):.4f}')  # should be ~0
-    print(f'cell reconstruction 95% quantile score difference = {np.quantile(np.abs(best_scores_dict["score"] - reconstructed_best_scores),.95):.4f}')  # should be ~0
+    print(f'cell reconstruction 95% quantile score difference = {np.quantile(np.abs(best_scores_dict["score"] - reconstructed_best_scores), .95):.4f}')  # should be ~0
 
     best_rdfs = [np.stack([best_supercell_rdfs[ii][jj] for ii in range(topk_size)]) for jj in range(real_data.num_graphs)]
 
@@ -785,28 +795,22 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
         for j in range(topk_size):
             rdf_real_dists[i, j] = compute_rdf_distance(real_samples_dict['RDF'][i], best_rdfs[i][j], rr)
 
+    x = rdf_real_dists.flatten()
+    y = (reconstructed_best_scores - real_samples_dict['score'][:, None]).flatten()
+    xy = np.vstack([x, y])
+    try:
+        z = gaussian_kde(xy)(xy)
+    except:
+        z = np.ones_like(x)
+
     fig = go.Figure()
-    colors = n_colors('rgb(250,40,100)', 'rgb(5,250,200)', real_data.num_graphs, colortype='rgb')
-    for ii in range(real_data.num_graphs):
-        # guesses
-        fig.add_trace(go.Scatter(x=rdf_real_dists[ii], y=real_samples_dict['score'][ii] - reconstructed_best_scores[ii], mode='markers', line_color=colors[ii], name=f'Crystal {ii}'))
-        # real samples
-        fig.add_trace(go.Scatter(x=np.zeros_like(real_samples_dict['score'][ii]), y=np.zeros_like(real_samples_dict['score'][ii]), mode='markers', line_color=colors[ii], showlegend=False))
+    fig.add_trace(go.Scattergl(x=x, y=y, mode='markers', marker=dict(color=z)))
+
     fig.update_layout(xaxis_title='RDF Distance From Target', yaxis_title='Sample vs. experimental score difference', showlegend=False)
     wandb.log({"Sample RDF vs. Score": fig})
 
-    aa = 1
     best_supercells = best_supercells_list[-1]  # last sample was the best
     save_3d_structure_examples(wandb, best_supercells)
-
-    layout = go.Layout(
-        margin=go.layout.Margin(
-            l=0,  # left margin
-            r=0,  # right margin
-            b=0,  # bottom margin
-            t=20,  # top margin
-        )
-    )
 
     """
     Overlaps & Crystal-wise summary plot
@@ -817,6 +821,8 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
     CSP Funnels
     """
     sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict)
+
+    sample_wise_rdf_funnel_plot(config,wandb,best_supercells, reconstructed_best_scores, real_samples_dict['score'], rdf_real_dists)
 
     ## debug check to make sure we are recreating the same cells
     # fig = go.Figure()
@@ -832,8 +838,9 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
 
     return None
 
+
 def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supercells, sym_info, best_scores_dict, vdw_radii, mol_volume_ind):
-    num_samples = min(num_crystals,16)
+    num_samples = min(num_crystals, 25)
     vdw_loss, normed_vdw_loss, vdw_penalties = \
         vdw_overlap(vdw_radii, crystaldata=best_supercells, return_atomwise=True, return_normed=True,
                     graph_sizes=best_supercells.tracking[:,
@@ -859,9 +866,34 @@ def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supe
                                 name=f'{best_supercells.csd_identifier[i]} : ' + f'SG={sym_info["space_groups"][int(best_supercells.sg_ind[i])]} <br /> ' +
                                      f'c_t={target_packing[i]:.2f} c_p={generated_packing_coeffs[i]:.2f} <br /> ' +
                                      f'tot_norm_ov={normed_vdw_loss[i]:.2f} <br />' +
-                                     f'Score={best_scores_dict["score"][i,-1]:.2f}'
+                                     f'Score={best_scores_dict["score"][i, -1]:.2f}'
                                 ),
                       )
+
+    # Can only run this section with RDKit installed, which doesn't always work
+    # Commented out - not that important anyway.
+    # molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
+    # try:
+    #     rdkit.Chem.AllChem.Compute2DCoords(molecule)
+    #     rdkit.Chem.AllChem.GenerateDepictionMatching2DStructure(molecule, molecule)
+    #     pil_image = rdkit.Chem.Draw.MolToImage(molecule, size=(500, 500))
+    #     pil_image.save('mol_img.png', 'png')
+    #     # Add trace
+    #     img = Image.open("mol_img.png")
+    #     # Add images
+    #     fig.add_layout_image(
+    #         dict(
+    #             source=img,
+    #             xref="x domain", yref="y domain",
+    #             x=.1 + (.15 * (i % 2)), y=i / 10.5 + 0.05,
+    #             sizex=.15, sizey=.15,
+    #             xanchor="center",
+    #             yanchor="middle",
+    #             opacity=0.75
+    #         )
+    #     )
+    # except:  # ValueError("molecule was rejected by rdkit"):
+    #     pass
 
     fig.update_layout(width=800, height=800, font=dict(size=12), xaxis_range=[0, 4])
     fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
@@ -871,13 +903,15 @@ def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supe
 
     return None
 
+
 def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict):
     num_crystals = best_supercells.num_graphs
-    n_rows = int(np.ceil(np.sqrt(num_crystals)))
-    n_cols = int(n_rows)
     num_reporting_samples = min(25, num_crystals)
+    n_rows = int(np.ceil(np.sqrt(num_reporting_samples)))
+    n_cols = int(n_rows)
 
-    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(best_supercells.csd_identifier)[:num_reporting_samples])
+    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(best_supercells.csd_identifier)[:num_reporting_samples],
+                        x_title='Packing Coefficient', y_title='Model Score')
     for ii in range(num_reporting_samples):
         row = ii // n_cols + 1
         col = ii % n_cols + 1
@@ -885,20 +919,66 @@ def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_s
         y = sampling_dict['score'][ii]
         z = sampling_dict['vdw overlap'][ii]
         fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                                   mode='markers', marker=dict(color=z, colorbar=dict(title="vdW Overlap"), cmin=0, cmax=4, opacity=0.75, colorscale="Cividis"), opacity=1),
+                                   mode='markers', marker=dict(color=z, colorbar=dict(title="vdW Overlap"), cmin=0, cmax=4, opacity=0.5, colorscale="rainbow"), opacity=1),
                       row=row, col=col)
 
         fig.add_trace(go.Scattergl(x=[real_samples_dict['density'][ii]], y=[real_samples_dict['score'][ii]],
-                                   mode='markers', marker=dict(color=[real_samples_dict['vdw overlap'][ii]], colorscale='Cividis', size=10, colorbar=dict(title="vdW Overlap"), cmin=0, cmax=4),
+                                   mode='markers', marker=dict(color=[real_samples_dict['vdw overlap'][ii]], colorscale='rainbow', size=10,
+                                                               colorbar=dict(title="vdW Overlap"), cmin=0, cmax=4),
                                    showlegend=False),
                       row=row, col=col)
 
-    fig.update_layout(xaxis_title='Crystal Packing Coefficient', yaxis_title='Model Score')
-    #fig.update_layout(xaxis_range=[0, 1])
+    # fig.update_layout(xaxis_range=[0, 1])
     fig.update_yaxes(autorange="reversed")
 
     if config.wandb.log_figures:
         wandb.log({'Density Funnel': fig})
+    if (config.machine == 'local') and False:
+        fig.show()
+
+    return None
+
+
+
+def sample_wise_rdf_funnel_plot(config,wandb,best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists):
+
+    num_crystals = best_supercells.num_graphs
+    num_reporting_samples = min(25, num_crystals)
+    n_rows = int(np.ceil(np.sqrt(num_reporting_samples)))
+    n_cols = int(n_rows)
+
+    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(best_supercells.csd_identifier)[:num_reporting_samples],
+                        x_title='RDF Distance', y_title='Model Score')
+    for ii in range(num_reporting_samples):
+        row = ii // n_cols + 1
+        col = ii % n_cols + 1
+        x = rdf_real_dists[ii]
+        y = reconstructed_best_scores[ii]
+        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
+                                   mode='markers', opacity=1),
+                      row=row, col=col)
+
+        fig.add_trace(go.Scattergl(x=[0], y=[real_samples_dict['score'][ii]],
+                                   mode='markers', marker=dict(size=10),
+                                   showlegend=False),
+                      row=row, col=col)
+
+    #fig.update_layout(xaxis_title='RDF Distance', yaxis_title='Model Score')
+    # fig.update_layout(xaxis_range=[0, 1])
+    fig.update_yaxes(autorange="reversed")
+
+    layout = go.Layout(
+        margin=go.layout.Margin(
+            l=0,  # left margin
+            r=0,  # right margin
+            b=0,  # bottom margin
+            t=20,  # top margin
+        )
+    )
+    fig.layout.margin = layout.margin
+
+    if config.wandb.log_figures:
+        wandb.log({'RDF Funnel': fig})
     if (config.machine == 'local') and False:
         fig.show()
 
@@ -915,8 +995,26 @@ def save_3d_structure_examples(wandb, generated_supercell_examples):
                 for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
 
     for i in range(len(crystals)):
-        ase.io.write(f'supercell_{i}.pdb', crystals[i])
-        wandb.log({'Generated Supercells': wandb.Molecule(open(f"supercell_{i}.pdb"),
+        ase.io.write(f'supercell_{identifiers[i]}.cif', crystals[i])
+        wandb.log({'Generated Clusters': wandb.Molecule(open(f"supercell_{identifiers[i]}.cif"),
+                                                          caption=identifiers[i] + ' ' + sgs[i])})
+
+    unit_cells = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_canonical_conformer=False,
+                                           index=i, exclusion_level='unit cell')
+                  for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
+
+    for i in range(len(crystals)):
+        ase.io.write(f'unit_cell_{identifiers[i]}.cif', unit_cells[i])
+        wandb.log({'Generated Unit Cells': wandb.Molecule(open(f"unit_cell_{identifiers[i]}.cif"),
+                                                          caption=identifiers[i] + ' ' + sgs[i])})
+
+    unit_cells_inside = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_canonical_conformer=False,
+                                                  index=i, exclusion_level='inside cell')
+                         for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
+
+    for i in range(len(crystals)):
+        ase.io.write(f'unit_cell_inside_{identifiers[i]}.cif', unit_cells_inside[i])
+        wandb.log({'Generated Unit Cells 2': wandb.Molecule(open(f"unit_cell_inside_{identifiers[i]}.cif"),
                                                           caption=identifiers[i] + ' ' + sgs[i])})
 
     mols = [ase_mol_from_crystaldata(generated_supercell_examples,
@@ -924,8 +1022,8 @@ def save_3d_structure_examples(wandb, generated_supercell_examples):
             for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
 
     for i in range(len(mols)):
-        ase.io.write(f'conformer_{i}.pdb', mols[i])
-        wandb.log({'Single Conformers': wandb.Molecule(open(f"conformer_{i}.pdb"), caption=identifiers[i])})
+        ase.io.write(f'conformer_{identifiers[i]}.cif', mols[i])
+        wandb.log({'Single Conformers': wandb.Molecule(open(f"conformer_{identifiers[i]}.cif"), caption=identifiers[i])})
 
     return None
 

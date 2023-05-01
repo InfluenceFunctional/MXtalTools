@@ -125,12 +125,34 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
 
     elif exclusion_level == 'unit cell':
         # assume that by construction the first Z molecules are the ones in the unit cell
-        # todo THIS IS NOT ACTUALLY THE CASE - identify centroids and pick the ones inside
-        inside_inds = (torch.arange(data.mol_size[index] * data.Z[index]) + data.ptr[index]).long()
+        mol_size = data.mol_size[index]
+        num_molecules = int((data.ptr[index + 1] - data.ptr[index]) / mol_size)
+
+        molecule_centroids = torch.stack([torch.mean(data.pos[data.ptr[index] + int(mol_size * multiplier):data.ptr[index] + int(mol_size * multiplier + 1)], dim=0)
+                                          for multiplier in range(num_molecules)])
+
+        fractional_centroids = torch.inner(torch.linalg.inv(data.T_fc[index]), molecule_centroids).T
+
+        inside_centroids = torch.prod((fractional_centroids < 1) * (fractional_centroids > 0), dim=-1)
+        #assert inside_centroids.sum() == data.Z[index]  # must be exactly Z molecules in the unit cell
+        inside_centroids_inds = torch.where(inside_centroids)[0]
+
+        inside_inds = torch.cat(
+            [torch.arange(mol_size) + mol_size * inside_centroids_inds[ind]
+             for ind in range(len(inside_centroids_inds))]
+        ).long()
+        inside_inds += data.ptr[index]
         atom_inds = inside_inds
         coords = data.pos[inside_inds].cpu().detach().numpy()
 
-    # todo mode for any atoms inside the unit cell
+
+    elif exclusion_level == 'inside cell':
+        fractional_coords = torch.inner(torch.linalg.inv(data.T_fc[index]), data.pos[data.batch == index]).T
+        inside_coords = torch.prod((fractional_coords < 1) * (fractional_coords > 0), dim=-1)
+        inside_inds = torch.where(inside_coords)[0]
+        inside_inds += data.ptr[index]
+        atom_inds = inside_inds
+        coords = data.pos[inside_inds].cpu().detach().numpy()
 
     elif exclusion_level == 'convolve with':  # atoms potentially in the convolutional field
         inside_inds = torch.where(data.aux_ind < 2)[0]
@@ -318,7 +340,7 @@ def undo_1d_bound(x: torch.tensor, x_span, x_center, mode='soft'):
         raise ValueError("bound must be of type 'soft'")
 
 
-def reload_model(model, optimizer, path, reload_optimizer = False):
+def reload_model(model, optimizer, path, reload_optimizer=False):
     """
     load model and state dict from path
     includes fix for potential dataparallel issue

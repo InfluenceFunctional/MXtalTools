@@ -6,12 +6,12 @@ skip_saving_and_loading: True
 run_num: 0
 anomaly_detection: False
 mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' or 'autoencoder'
-save_checkpoints: True # will do it always on cluster, only locally if True
+save_checkpoints: False # will do it always on cluster, only locally if True
 
 # for GAN training
 freeze_generator_conditioner: False
-train_generator_packing: True
-train_generator_vdw: True
+train_generator_packing: False
+train_generator_vdw: False
 train_generator_adversarially: False
 vdw_loss_rescaling: null
 packing_loss_rescaling: null
@@ -20,8 +20,8 @@ train_generator_h_bond: False # (non-directional)
 generator_similarity_penalty: 0
 
 train_discriminator_adversarially: False
-train_discriminator_on_randn: False
-train_discriminator_on_distorted: False
+train_discriminator_on_randn: True
+train_discriminator_on_distorted: True
 sample_distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
 extra_test_period: 100
@@ -29,13 +29,10 @@ extra_test_evaluation: True
 extra_test_set_paths: null  #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
                        #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_6_dataset',
                        #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_targets']
-discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10201'
-generator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10203'
+discriminator_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10191'
+generator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10216'
 conditioner_path: null
 regressor_path: null
-
-sample_steps: 100 # now for mini csp
-sample_move_size: 0.001 # currently unused
 
 seeds:
   model: 0
@@ -48,22 +45,25 @@ wandb:
   experiment_tag: dev
   log_figures: True
 
+sample_steps: 100 # now for mini csp
+sample_move_size: 0.001 # currently unused
+
 # batching & convergence
 accumulate_gradients: False # DEPRECATED
 accumulate_batch_size: 100 # DEPRECATED
 auto_batch_sizing: False # DEPRECATED
 auto_batch_reduction: 0.05 # DEPRECATED # fraction of tested max batch size to actually start with (unequal graph sizes)
 grow_batch_size: True
-min_batch_size: 25
+min_batch_size: 10
 max_batch_size: 10000
 batch_growth_increment: 0.01 # fraction of batch size to grow by each epoch
-max_epochs: 1 # 0 epochs takes us straight to evaluation (only implemented for GAN)
+max_epochs: 10000 # 0 epochs takes us straight to evaluation (only implemented for GAN)
 history: 5000
 gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 250
+dataset_length: 1000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
@@ -85,9 +85,9 @@ exclude_polymorphs: True
 exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
-include_sgs: null  # [ "P-1","P21/c","P212121","C2/c"]
+include_sgs: null # ["P-1","P21/c","P212121","C2/c"]  # or 'all'
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: ["P-1","P21/c","P212121","C2/c"] # null # ["P-1","P21/c","P212121","C2/c"]
+generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities
 supercell_size: 5 # new method - should be very large, automatically pares down
 
 # discriminator optimizer and model
@@ -107,7 +107,7 @@ discriminator_optimizer:
 
 discriminator:
   positional_noise: 0  # scaling for the randn noise added to all atom positions
-  crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
+  crystal_convolution_type: 1 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
   graph_convolution_layers: 4
   graph_filters: 128
   atom_embedding_size: 256
@@ -132,9 +132,9 @@ discriminator:
 #generator optimizer and model
 generator_optimizer:
   optimizer: adamw
-  init_lr: 1.0E-5
-  max_lr: 1.0E-4
-  min_lr: 1.0E-5
+  init_lr: 1.0E-4
+  max_lr: 1.0E-3
+  min_lr: 1.0E-4
   lr_schedule: True
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

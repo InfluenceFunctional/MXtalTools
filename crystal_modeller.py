@@ -124,14 +124,14 @@ class Modeller:
             np.save('symmetry_info', self.sym_info)
 
         # set space groups to be included and generated
-        if self.config.generate_sgs is None:
+        if self.config.generate_sgs is 'all':
             # generate samples in every space group in the asym dict (eventually, all sgs)
             self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
         if self.config.include_sgs is None:
             self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-            # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
+        # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
         # not currently used as we are not computing the overlaps
         # supercell_scale = self.config.supercell_size  # t
         # n_cells = (2 * supercell_scale + 1) ** 3
@@ -1827,7 +1827,15 @@ class Modeller:
             test_loss, test_loss_record, test_epoch_stats_dict, time_test = \
                 self.run_epoch(data_loader=test_loader, generator=generator, discriminator=discriminator,
                                update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
+
             np.save(f'../{self.config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
+
+            # sometimes test the generator on a mini CSP problem
+            if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
+                    any((self.config.train_generator_packing, self.config.train_generator_adversarially,
+                         self.config.train_generator_vdw, self.config.train_generator_combo,
+                         self.config.train_generator_h_bond)):
+                self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator)
 
             if extra_test_loader is not None:
                 #extra_test_epoch_stats_dict = np.load('C:/Users\mikem\crystals\CSP_runs/1513_extra_test_dict.npy',allow_pickle=True).item()  # we already have it
