@@ -10,8 +10,8 @@ save_checkpoints: True # will do it always on cluster, only locally if True
 
 # for GAN training
 freeze_generator_conditioner: False
-train_generator_packing: False
-train_generator_vdw: True
+train_generator_packing: True
+train_generator_vdw: False
 train_generator_adversarially: True
 vdw_loss_rescaling: null
 packing_loss_rescaling: null

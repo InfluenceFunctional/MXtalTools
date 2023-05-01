@@ -734,7 +734,7 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
 
     num_crystals, num_samples = scores_dict['score'].shape
 
-    topk_size = 10
+    topk_size = min(10,sampling_dict['score'].shape[1])
     sort_inds = sampling_dict['score'].argsort(axis=-1)[:, -topk_size:]  #
     best_scores_dict = {key: np.asarray([sampling_dict[key][ii, sort_inds[ii]] for ii in range(num_crystals)]) for key in scores_list}
     best_samples = np.asarray([sampling_dict['cell params'][ii, sort_inds[ii], :] for ii in range(num_crystals)])
@@ -822,7 +822,7 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
     """
     sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict)
 
-    sample_wise_rdf_funnel_plot(config,wandb,best_supercells, reconstructed_best_scores, real_samples_dict['score'], rdf_real_dists)
+    sample_wise_rdf_funnel_plot(config,wandb,best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists)
 
     ## debug check to make sure we are recreating the same cells
     # fig = go.Figure()
