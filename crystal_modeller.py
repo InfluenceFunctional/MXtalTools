@@ -1933,7 +1933,7 @@ class Modeller:
                              packing_target, np.abs(packing_prediction - packing_target) / packing_target]
 
             if self.config.train_generator_packing:
-                generator_losses_list.append(packing_loss.float())
+                generator_losses_list.append(packing_loss.float() * self.config.generator_packing_multiplier)
 
         if discriminator_raw_output is not None:
             softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax

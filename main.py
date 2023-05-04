@@ -429,6 +429,7 @@ def add_args(parser):
     add_bool_arg(parser, 'freeze_generator_conditioner', default=False)  #
     add_bool_arg(parser, 'train_generator_combo', default=False)  # train on a packing + vdw combined score
     add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
+    parser.add_argument('--generator_packing_multiplier', type=float, default=1)  # factor to multiply the packing coefficient loss
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_vdw', default=False)  #
     parser.add_argument('--vdw_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
@@ -448,6 +449,7 @@ def add_args(parser):
     update_args2config(args2config, 'freeze_generator_conditioner')
     update_args2config(args2config, 'train_generator_combo')
     update_args2config(args2config, 'train_generator_packing')
+    update_args2config(args2config, 'generator_packing_multiplier')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_vdw')
     update_args2config(args2config, 'packing_loss_rescaling')
