@@ -31,39 +31,39 @@ class crystal_generator(nn.Module):
 
         self.conditioner = molecule_graph_model(
             dataDims=dataDims,
-            atom_embedding_dims=config.conditioner.init_atom_embedding_dim,
+            atom_embedding_dims=config.generator.conditioner.init_atom_embedding_dim,
             seed=config.seeds.model,
             num_atom_feats=dataDims['num atom features'] + 3 - self.crystal_features,  # we will add directly the normed coordinates to the node features
             num_mol_feats=dataDims['num mol features'] - self.crystal_features,
-            output_dimension=config.conditioner.output_dim,  # starting size for decoder model
-            activation=config.conditioner.activation,
-            num_fc_layers=config.conditioner.num_fc_layers,
-            fc_depth=config.conditioner.fc_depth,
-            fc_dropout_probability=config.conditioner.fc_dropout_probability,
-            fc_norm_mode=config.conditioner.fc_norm_mode,
-            graph_filters=config.conditioner.graph_filters,
-            graph_convolutional_layers=config.conditioner.graph_convolution_layers,
-            concat_mol_to_atom_features=config.conditioner.concat_mol_features,
-            pooling=config.conditioner.pooling,
-            graph_norm=config.conditioner.graph_norm,
-            num_spherical=config.conditioner.num_spherical,
-            num_radial=config.conditioner.num_radial,
-            graph_convolution=config.conditioner.graph_convolution,
-            num_attention_heads=config.conditioner.num_attention_heads,
-            add_spherical_basis=config.conditioner.add_spherical_basis,
-            add_torsional_basis=config.conditioner.add_torsional_basis,
-            graph_embedding_size=config.conditioner.atom_embedding_size,
-            radial_function=config.conditioner.radial_function,
-            max_num_neighbors=config.conditioner.max_num_neighbors,
-            convolution_cutoff=config.conditioner.graph_convolution_cutoff,
-            positional_embedding=config.conditioner.positional_embedding,
+            output_dimension=config.generator.conditioner.output_dim,  # starting size for decoder model
+            activation=config.generator.conditioner.activation,
+            num_fc_layers=config.generator.conditioner.num_fc_layers,
+            fc_depth=config.generator.conditioner.fc_depth,
+            fc_dropout_probability=config.generator.conditioner.fc_dropout_probability,
+            fc_norm_mode=config.generator.conditioner.fc_norm_mode,
+            graph_filters=config.generator.conditioner.graph_filters,
+            graph_convolutional_layers=config.generator.conditioner.graph_convolution_layers,
+            concat_mol_to_atom_features=config.generator.conditioner.concat_mol_features,
+            pooling=config.generator.conditioner.pooling,
+            graph_norm=config.generator.conditioner.graph_norm,
+            num_spherical=config.generator.conditioner.num_spherical,
+            num_radial=config.generator.conditioner.num_radial,
+            graph_convolution=config.generator.conditioner.graph_convolution,
+            num_attention_heads=config.generator.conditioner.num_attention_heads,
+            add_spherical_basis=config.generator.conditioner.add_spherical_basis,
+            add_torsional_basis=config.generator.conditioner.add_torsional_basis,
+            graph_embedding_size=config.generator.conditioner.atom_embedding_size,
+            radial_function=config.generator.conditioner.radial_function,
+            max_num_neighbors=config.generator.conditioner.max_num_neighbors,
+            convolution_cutoff=config.generator.conditioner.graph_convolution_cutoff,
+            positional_embedding=config.generator.conditioner.positional_embedding,
             max_molecule_size=config.max_molecule_radius,
             crystal_mode=False,
             crystal_convolution_type=None,
             skip_mlp=False
         )
 
-        self.rescale_output_dims = nn.Linear(config.conditioner.output_dim, config.generator.fc_depth)
+        self.rescale_output_dims = nn.Linear(config.generator.conditioner.output_dim, config.generator.fc_depth)
         '''
         generator model
         '''

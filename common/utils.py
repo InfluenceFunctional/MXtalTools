@@ -371,25 +371,22 @@ def update_stats_dict(dict, keys, values, mode='append'):
 
 
 def update_gan_metrics(epoch, metrics_dict,
-                       discriminator_lr, generator_lr, conditioner_lr, regressor_lr,
+                       discriminator_lr, generator_lr, regressor_lr,
                        discriminator_train_loss, discriminator_test_loss,
                        generator_train_loss, generator_test_loss,
-                       conditioner_train_loss, conditioner_test_loss,
                        regressor_train_loss, regressor_test_loss
                        ):
 
     metrics_keys = ['epoch',
                     'discriminator learning rate', 'generator learning rate',
-                    'conditioner learning rate', 'regressor learning rate',
+                    'regressor learning rate',
                     'discriminator train loss', 'discriminator test loss',
                     'generator train loss', 'generator test loss',
-                    'conditioner train loss', 'conditioner test loss',
                     'regressor train loss', 'regressor test loss'
                     ]
-    metrics_vals = [epoch, discriminator_lr, generator_lr, conditioner_lr, regressor_lr,
+    metrics_vals = [epoch, discriminator_lr, generator_lr, regressor_lr,
                     discriminator_train_loss, discriminator_test_loss,
                     generator_train_loss, generator_test_loss,
-                    conditioner_train_loss, conditioner_test_loss,
                     regressor_train_loss, regressor_test_loss
                     ]
 
