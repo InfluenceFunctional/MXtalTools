@@ -387,13 +387,11 @@ def add_args(parser):
     update_args2config(args2config, 'discriminator_fc_norm_mode', ['discriminator', 'fc_norm_mode'])
 
     # cell generator
-    add_bool_arg(parser, 'train_generator_combo', default=False)  # train on a packing + vdw combined score
-    add_bool_arg(parser, 'train_generator_packing', default=False)  # boost packing density
-    parser.add_argument('--generator_packing_multiplier', type=float, default=1)  # factor to multiply the packing coefficient loss
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_vdw', default=False)  #
+    add_bool_arg(parser, 'dynamically_adjust_prior', default=False)  #
+    parser.add_argument('--packing_target_noise', type=float, default=0)  # noise added to density target in standardized basis
     parser.add_argument('--vdw_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
-    parser.add_argument('--packing_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
     add_bool_arg(parser, 'train_generator_h_bond', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
@@ -406,12 +404,10 @@ def add_args(parser):
     parser.add_argument('--sample_steps', type=int, default=1000)  #
     parser.add_argument('--sample_move_size', type=float, default=0.05)  #
 
-    update_args2config(args2config, 'train_generator_combo')
-    update_args2config(args2config, 'train_generator_packing')
-    update_args2config(args2config, 'generator_packing_multiplier')
+    update_args2config(args2config, 'dynamically_adjust_prior')
+    update_args2config(args2config, 'packing_target_noise')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_vdw')
-    update_args2config(args2config, 'packing_loss_rescaling')
     update_args2config(args2config, 'vdw_loss_rescaling')
     update_args2config(args2config, 'train_generator_h_bond')
     update_args2config(args2config, 'train_discriminator_adversarially')

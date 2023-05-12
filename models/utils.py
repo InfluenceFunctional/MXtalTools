@@ -550,6 +550,40 @@ def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
     return packing_loss, generated_packing_coeffs, csd_packing_coeffs
 
 
+
+def generator_density_matching_loss(standardized_target_packing, packing_mean, packing_std, mol_volume_ind, packing_coeff_ind,
+                                    data, raw_sample, precomputed_volumes = None):
+    """
+    compute packing coefficients for generated cells
+    compute losses relating to packing density
+    """
+    if precomputed_volumes is None:
+        volumes_list = []
+        for i in range(len(raw_sample)):
+            volumes_list.append(cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6]))
+        volumes = torch.stack(volumes_list)
+    else:
+        volumes = precomputed_volumes
+
+    generated_packing_coeffs = data.Z * data.tracking[:, mol_volume_ind] / volumes
+    standardized_gen_packing_coeffs = (generated_packing_coeffs - packing_mean) / packing_std
+
+    target_packing_coeffs = standardized_target_packing * packing_std + packing_mean
+
+    csd_packing_coeffs = data.tracking[:, packing_coeff_ind]
+    #standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_mean) / packing_std  # requires that packing coefficnet is set as regression target in main
+
+    # compute loss vs the target
+    # packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_target_packing,
+    #                                 reduction='none')
+    packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
+                                    reduction='none')
+
+    assert torch.sum(torch.isnan(packing_loss)) == 0
+
+    return packing_loss, generated_packing_coeffs, target_packing_coeffs, csd_packing_coeffs
+
+
 def compute_combo_score(packing_prediction, vdw_penalty, discriminator_raw_output):
     # combo
     f1 = 100  # for sharp sigmoid scaling

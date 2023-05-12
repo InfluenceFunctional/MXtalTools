@@ -402,6 +402,7 @@ class BuildDataset:
         self.crystal_generation_features.extend(space_group_features)
         self.crystal_generation_features.extend(crystal_system_features)
         self.crystal_generation_features.append('crystal z value')  # todo norm this
+        self.crystal_generation_features.append('crystal packing coefficient')
 
         molecule_features_array = self.concatenate_molecule_features(
             dataset, extra_keys=self.crystal_generation_features, add_lattice_overlaps=True)
@@ -607,9 +608,6 @@ class BuildDataset:
             'molecule stds': self.mol_stds,
 
             'atom embedding dict sizes': self.atom_dict_size,
-
-            'conditional features': self.molecule_keys + self.crystal_generation_features,
-            'num conditional features': len(self.crystal_generation_features + self.molecule_keys),
 
             'crystal generation features': self.crystal_generation_features,
             'num crystal generation features': len(self.crystal_generation_features),

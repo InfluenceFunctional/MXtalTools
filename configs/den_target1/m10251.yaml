@@ -1,23 +1,23 @@
-test_mode: True
-machine: "local"
+test_mode: False
+machine: "cluster"
 device: "cuda"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10251
 anomaly_detection: False
 mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' WIP
-save_checkpoints: False # will do it always on cluster, only locally if True
+save_checkpoints: True # will do it always on cluster, only locally if True
 
 # for GAN training
 dynamically_adjust_prior: False  # adjust prior distribution in generator to control sample variation
 packing_target_noise: 0.25 # randn noise magnitude in the standardized basis
-train_generator_vdw: False
-train_generator_adversarially: True
+train_generator_vdw: True
+train_generator_adversarially: False
 vdw_loss_rescaling: null
 train_generator_h_bond: False # (non-directional)
 generator_similarity_penalty: 0
 
-train_discriminator_adversarially: True
+train_discriminator_adversarially: False
 train_discriminator_on_randn: False
 train_discriminator_on_distorted: False
 sample_distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
@@ -27,9 +27,9 @@ extra_test_evaluation: True
 extra_test_set_paths: null  #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
                        #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_6_dataset',
                        #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_targets']
-discriminator_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10191'
+discriminator_path: '/scratch/mk8347/csd_runs/models/best_discriminator_10191'
 generator_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\best_generator_1599'
-regressor_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_10213'
+regressor_path: '/scratch/mk8347/csd_runs/models/best_regressor_10213'
 
 seeds:
   model: 0
@@ -42,7 +42,7 @@ wandb:
   experiment_tag: dev
   log_figures: True
 
-sample_steps: 10 # now for mini csp
+sample_steps: 25 # now for mini csp
 sample_move_size: 0.001 # currently unused
 
 # batching & convergence
@@ -60,7 +60,7 @@ gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 10000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
@@ -103,7 +103,7 @@ discriminator_optimizer:
   lr_shrink_lambda: 0.99
 
 discriminator:
-  positional_noise: 0  # scaling for the randn noise added to all atom positions
+  positional_noise: 0.05  # scaling for the randn noise added to all atom positions
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
   graph_convolution_layers: 4
   graph_filters: 128
@@ -130,7 +130,7 @@ discriminator:
 generator_optimizer:
   optimizer: adamw
   init_lr: 1.0E-4
-  max_lr: 5.0E-4
+  max_lr: 1.0E-3
   min_lr: 1.0E-4
   lr_schedule: True
   beta1: 0.9 #0.9
@@ -141,10 +141,10 @@ generator_optimizer:
   lr_shrink_lambda: 0.99
 
 generator:
-  canonical_conformer_orientation: 'standardized' # 'standardized' 'random'
+  canonical_conformer_orientation: 'random' # 'standardized' 'random'
   positional_noise: 0 # scaling for the randn noise added to all atom positions
   num_fc_layers: 4
-  fc_depth: 1024
+  fc_depth: 256
   activation: 'gelu'
   fc_dropout_probability: 0
   fc_norm_mode: layer
@@ -155,7 +155,7 @@ generator:
   conditioner:
     init_atom_embedding_dim: 5
     graph_convolution_layers: 4
-    graph_filters: 64
+    graph_filters: 128
     atom_embedding_size: 256
     output_dim: 256
     graph_norm: 'graph layer'
@@ -172,7 +172,7 @@ generator:
     positional_embedding: 'sph3' # 'sph' or 'pos' or 'combo', for 'geometric' pooling
 
     num_fc_layers: 4
-    fc_depth: 512
+    fc_depth: 256
     activation: 'gelu'
     fc_dropout_probability: 0
     fc_norm_mode: layer

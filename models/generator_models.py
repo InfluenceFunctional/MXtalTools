@@ -26,15 +26,15 @@ class crystal_generator(nn.Module):
         '''
         conditioning model
         '''
-        self.crystal_features = config.dataDims['num crystal generation features']
+        self.num_crystal_features = config.dataDims['num crystal generation features']
         torch.manual_seed(config.seeds.model)
 
         self.conditioner = molecule_graph_model(
             dataDims=dataDims,
             atom_embedding_dims=config.generator.conditioner.init_atom_embedding_dim,
             seed=config.seeds.model,
-            num_atom_feats=dataDims['num atom features'] + 3 - self.crystal_features,  # we will add directly the normed coordinates to the node features
-            num_mol_feats=dataDims['num mol features'] - self.crystal_features,
+            num_atom_feats=dataDims['num atom features'] + 3 - self.num_crystal_features,  # we will add directly the normed coordinates to the node features
+            num_mol_feats=dataDims['num mol features'] - self.num_crystal_features,
             output_dimension=config.generator.conditioner.output_dim,  # starting size for decoder model
             activation=config.generator.conditioner.activation,
             num_fc_layers=config.generator.conditioner.num_fc_layers,
@@ -73,7 +73,7 @@ class crystal_generator(nn.Module):
                                  dropout=config.generator.fc_dropout_probability,
                                  input_dim=self.latent_dim,
                                  output_dim=dataDims['num lattice features'],
-                                 conditioning_dim=config.generator.fc_depth + self.crystal_features,  # include crystal information for the generator
+                                 conditioning_dim=config.generator.fc_depth + self.num_crystal_features,  # include crystal information for the generator
                                  seed=config.seeds.model
                                  )
 
@@ -81,14 +81,16 @@ class crystal_generator(nn.Module):
         # return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
         return self.prior.sample((n_samples,)).to(self.device)
 
-    def forward(self, n_samples, z=None, conditions=None, return_latent=False, return_condition=False, return_prior=False):
+    def forward(self, n_samples, z=None, conditions=None, return_latent=False, return_condition=False, return_prior=False, prior_amplification = None):
         if z is None:  # sample random numbers from prior distribution
             z = self.sample_latent(n_samples)
+            if prior_amplification is not None:
+                z *= prior_amplification
 
         if conditions is not None:  # conditions here is a crystal data object
             normed_coords = conditions.pos / self.conditioner.max_molecule_size  # norm coords by maximum molecule radius
-            crystal_information = conditions.x[:, -self.crystal_features:]
-            conditions.x = torch.cat((conditions.x[:, :-self.crystal_features], normed_coords), dim=-1)  # concatenate to input features, leaving out crystal info from conditioner
+            crystal_information = conditions.x[:, -self.num_crystal_features:]
+            conditions.x = torch.cat((conditions.x[:, :-self.num_crystal_features], normed_coords), dim=-1)  # concatenate to input features, leaving out crystal info from conditioner
             conditions_encoding = self.conditioner(conditions)
             conditions_encoding = self.rescale_output_dims(conditions_encoding)
             conditions_encoding = torch.cat((conditions_encoding, crystal_information[conditions.ptr[:-1]]),dim=-1)

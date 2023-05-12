@@ -964,18 +964,8 @@ def sample_wise_rdf_funnel_plot(config,wandb,best_supercells, reconstructed_best
                       row=row, col=col)
 
     #fig.update_layout(xaxis_title='RDF Distance', yaxis_title='Model Score')
-    # fig.update_layout(xaxis_range=[0, 1])
+    fig.update_layout(xaxis_range=[0, 1]) # todo set for all subplots
     fig.update_yaxes(autorange="reversed")
-
-    layout = go.Layout(
-        margin=go.layout.Margin(
-            l=0,  # left margin
-            r=0,  # right margin
-            b=0,  # bottom margin
-            t=20,  # top margin
-        )
-    )
-    fig.layout.margin = layout.margin
 
     if config.wandb.log_figures:
         wandb.log({'RDF Funnel': fig})
