@@ -39,7 +39,7 @@ seeds:
 wandb:
   mini_csp_frequency: 10
   sample_reporting_frequency: 5
-  experiment_tag: dev
+  experiment_tag: den_target1
   log_figures: True
 
 sample_steps: 25 # now for mini csp
