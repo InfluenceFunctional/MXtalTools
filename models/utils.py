@@ -574,10 +574,10 @@ def generator_density_matching_loss(standardized_target_packing, packing_mean, p
     #standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_mean) / packing_std  # requires that packing coefficnet is set as regression target in main
 
     # compute loss vs the target
-    # packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_target_packing,
-    #                                 reduction='none')
-    packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
+    packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_target_packing,
                                     reduction='none')
+    #packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
+    #                                reduction='none')
 
     assert torch.sum(torch.isnan(packing_loss)) == 0
 
