@@ -579,7 +579,7 @@ def generator_density_matching_loss(standardized_target_packing, packing_mean, p
     #packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
     #                                reduction='none')
 
-    assert torch.sum(torch.isnan(packing_loss)) == 0
+    #assert torch.sum(torch.isnan(packing_loss)) == 0
 
     return packing_loss, generated_packing_coeffs, target_packing_coeffs, csd_packing_coeffs
 

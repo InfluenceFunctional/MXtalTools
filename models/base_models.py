@@ -44,8 +44,8 @@ class molecule_graph_model(nn.Module):
                  crystal_convolution_type=None,
                  positional_embedding='sph',
                  atom_embedding_dims=5,
-                 skip_mlp=False,
                  device='cuda'):
+
         super(molecule_graph_model, self).__init__()
         # initialize constants and layers
         self.device = device
@@ -79,10 +79,6 @@ class molecule_graph_model(nn.Module):
         self.crystal_convolution_type = crystal_convolution_type
         self.max_molecule_size = max_molecule_size
         self.atom_embedding_dims = atom_embedding_dims  # todo clean this up
-        self.skip_mlp = skip_mlp
-
-        if self.num_fc_layers == 0:
-            self.skip_mlp = True
 
         if dataDims is None:
             self.num_atom_types = 101
@@ -128,17 +124,23 @@ class molecule_graph_model(nn.Module):
             self.mol_fc = nn.Linear(self.n_mol_feats, self.n_mol_feats)
 
         # FC model to post-process graph fingerprint
-        self.gnn_mlp = general_MLP(layers=self.num_fc_layers,
-                                   filters=self.fc_depth,
-                                   norm=self.fc_norm_mode,
-                                   dropout=self.fc_dropout_probability,
-                                   input_dim=self.fc_depth,
-                                   output_dim=self.fc_depth,
-                                   conditioning_dim=self.n_mol_feats,
-                                   seed=seed
-                                   )
+        if self.num_fc_layers > 0:
+            self.gnn_mlp = general_MLP(layers=self.num_fc_layers,
+                                       filters=self.fc_depth,
+                                       norm=self.fc_norm_mode,
+                                       dropout=self.fc_dropout_probability,
+                                       input_dim=self.fc_depth,
+                                       output_dim=self.fc_depth,
+                                       conditioning_dim=self.n_mol_feats,
+                                       seed=seed
+                                       )
+        else:
+            self.gnn_mlp = nn.Identity()
 
-        self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
+        if self.fc_depth != self.output_classes:  # only want this if we have to change the dimension
+            self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
+        else:
+            self.output_fc = nn.Identity()
 
     def forward(self, data=None, x=None, pos=None, batch=None, ptr=None, aux_ind=None, num_graphs=None, return_latent=False, return_dists=False):
         if data is not None:
@@ -156,14 +158,17 @@ class molecule_graph_model(nn.Module):
             mol_feats = None
 
         x, dists_dict = self.graph_net(x[:, :self.n_atom_feats], pos, batch, ptr=ptr, ref_mol_inds=aux_ind, return_dists=return_dists)  # get atoms encoding
+
         if self.crystal_mode:  # model only outputs ref mol atoms - many fewer
             x = self.global_pool(x, pos, batch[torch.where(aux_ind == 0)[0]], output_dim=num_graphs)
         else:
             x = self.global_pool(x, pos, batch, output_dim=num_graphs)  # aggregate atoms to molecule
 
-        x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
+        if self.num_fc_layers > 0:
+            x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
 
         output = self.output_fc(x)
+
 
         if return_dists:
             extra_outputs['dists dict'] = dists_dict

@@ -594,7 +594,7 @@ def log_mini_csp_scores_distributions(config, wandb, sampling_dict, real_samples
         )
     )
     fig.update_xaxes(title_text='Score - CSD Score', row=1, col=1)
-    fig.update_xaxes(title_text='vdW overlap', row=1, col=2)
+    fig.update_xaxes(title_text='vdW overlap', range=[0,4], row=1, col=2)
     fig.update_xaxes(title_text='Packing Coeff.', row=2, col=1)
     fig.update_xaxes(title_text='H-bond score', row=2, col=2)
     fig.update_layout(showlegend=False, yaxis_showgrid=True)  # legend_traceorder='reversed',
@@ -964,7 +964,7 @@ def sample_wise_rdf_funnel_plot(config,wandb,best_supercells, reconstructed_best
                       row=row, col=col)
 
     #fig.update_layout(xaxis_title='RDF Distance', yaxis_title='Model Score')
-    fig.update_layout(xaxis_range=[0, 1]) # todo set for all subplots
+    fig.update_xaxes(range=[0, np.amax(rdf_real_dists.flatten()) + 0.1])
     fig.update_yaxes(autorange="reversed")
 
     if config.wandb.log_figures:

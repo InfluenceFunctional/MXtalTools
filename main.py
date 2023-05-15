@@ -192,6 +192,10 @@ def add_args(parser):
     parser.add_argument('--regressor_positional_noise', type=float, default=0)
     parser.add_argument('--discriminator_positional_noise', type=float, default=0)
 
+    update_args2config(args2config, 'regressor_positional_noise')
+    update_args2config(args2config, 'generator_positional_noise')
+    update_args2config(args2config, 'discriminator_positional_noise')
+
     update_args2config(args2config, 'discriminator_optimizer_optimizer', ['discriminator_optimizer', 'optimizer'])
     update_args2config(args2config, 'discriminator_optimizer_init_lr', ['discriminator_optimizer', 'init_lr'])
     update_args2config(args2config, 'discriminator_optimizer_max_lr', ['discriminator_optimizer', 'max_lr'])
@@ -229,9 +233,6 @@ def add_args(parser):
     update_args2config(args2config, 'regressor_optimizer_lr_growth_lambda', ['regressor_optimizer', 'lr_growth_lambda'])
     update_args2config(args2config, 'regressor_optimizer_lr_shrink_lambda', ['regressor_optimizer', 'lr_shrink_lambda'])
 
-    update_args2config(args2config, 'regressor_positional_noise', ['regressor', 'positional_noise'])
-    update_args2config(args2config, 'generator_positional_noise', ['generator', 'positional_noise'])
-    update_args2config(args2config, 'discriminator_positional_noise', ['discriminator', 'positional_noise'])
 
     # generator model settings
     parser.add_argument('--regressor_positional_embedding', type=str, default='sph')  # sph or pos
@@ -256,7 +257,6 @@ def add_args(parser):
     parser.add_argument('--regressor_fc_norm_mode', type=str, default='layer')
 
     parser.add_argument('--generator_conditioner_concat_mol_features', type=bool, default=True)
-    parser.add_argument('--generator_conditioner_init_decoder_size', type=int, default=3)  # int
     parser.add_argument('--generator_conditioner_init_atom_embedding_dim', type=int, default=5)  # int
     parser.add_argument('--generator_conditioner_positional_embedding', type=str, default='sph')  # sph or pos
     parser.add_argument('--generator_conditioner_atom_embedding_size', type=int, default=32)  # embedding dimension for atoms
@@ -310,6 +310,7 @@ def add_args(parser):
     update_args2config(args2config, 'regressor_fc_dropout_probability', ['regressor', 'fc_dropout_probability'])
     update_args2config(args2config, 'regressor_fc_norm_mode', ['regressor', 'fc_norm_mode'])
 
+    update_args2config(args2config, 'generator_conditioner_skinny_atomwise_features', ['generator', 'conditioner', 'skinny_atomwise_features'])
     update_args2config(args2config, 'generator_conditioner_concat_mol_features', ['generator', 'conditioner', 'concat_mol_features'])
     update_args2config(args2config, 'generator_conditioner_init_decoder_size', ['generator', 'conditioner', 'init_decoder_size'])
     update_args2config(args2config, 'generator_conditioner_init_atom_embedding_dim', ['generator', 'conditioner', 'init_atom_embedding_dim'])

@@ -37,6 +37,7 @@ from reporting.online import cell_params_analysis, plotly_setup, cell_density_pl
     plot_generator_loss_correlates, plot_discriminator_score_correlates, log_mini_csp_scores_distributions, sampling_telemetry_plot, cell_params_tracking_plot, log_best_mini_csp_samples, discriminator_BT_reporting
 from sampling.MCMC_Sampling import mcmcSampler
 from sampling.SampleOptimization import gradient_descent_sampling
+from shutil import copy
 from common.utils import *
 from common.utils import update_gan_metrics
 from sampling.utils import de_clean_samples, sample_clustering
@@ -157,9 +158,11 @@ class Modeller:
                 self.workDir = self.config.workdir + '/run%d' % self.config.run_num  # explicitly enumerate the new run directory
                 os.mkdir(self.workDir)
 
-            os.mkdir(self.workDir + '/ckpts')
-            os.mkdir(self.workDir + '/datasets')
+            os.mkdir(self.workDir + '/ckpts') # not used
+            os.mkdir(self.workDir + '/datasets') # not used
+            yaml_path = os.getcwd() + '/' + self.config.yaml_config
             os.chdir(self.workDir)  # move to working dir
+            copy(yaml_path, os.getcwd())  # copy full config for reference
             print('Starting Fresh Run %d' % self.config.run_num)
             t0 = time.time()
             if self.config.skip_saving_and_loading:
@@ -362,7 +365,7 @@ class Modeller:
             discriminator_hit_max_lr, generator_hit_max_lr, regressor_hit_max_lr, \
                 converged, epoch = \
                 False, False, False, self.config.max_epochs == 0, 0
-            self.prior_amplification = 1
+            self.prior_amplification = None
 
             # training loop
             with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
@@ -508,8 +511,8 @@ class Modeller:
         epoch_stats_dict = {}
 
         for i, data in enumerate(tqdm.tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            if self.config.regressor.positional_noise > 0:
-                data.pos += torch.randn_like(data.pos) * self.config.regressor.positional_noise
+            if self.config.regressor_positional_noise > 0:
+                data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
 
             regression_losses_list, predictions, targets = self.regression_loss(regressor, data)
 
@@ -893,11 +896,11 @@ class Modeller:
             assert torch.sum(torch.isnan(real_supercell_data.x)) == 0, "NaN in training input"
             assert torch.sum(torch.isnan(fake_supercell_data.x)) == 0, "NaN in training input"
 
-        if self.config.discriminator.positional_noise > 0:
+        if self.config.discriminator_positional_noise > 0:
             real_supercell_data.pos += \
-                torch.randn_like(real_supercell_data.pos) * self.config.discriminator.positional_noise
+                torch.randn_like(real_supercell_data.pos) * self.config.discriminator_positional_noise
             fake_supercell_data.pos += \
-                torch.randn_like(fake_supercell_data.pos) * self.config.discriminator.positional_noise
+                torch.randn_like(fake_supercell_data.pos) * self.config.discriminator_positional_noise
 
         score_on_real, real_distances_dict = self.adversarial_score(discriminator, real_supercell_data)
         score_on_fake, fake_pairwise_distances_dict = self.adversarial_score(discriminator, fake_supercell_data)
@@ -955,8 +958,8 @@ class Modeller:
         mol_data = self.set_molecule_alignment(mol_data, mode_override=alignment_override)
 
         # noise injection
-        if self.config.generator.positional_noise > 0:
-            mol_data.pos += torch.randn_like(mol_data.pos) * self.config.generator.positional_noise
+        if self.config.generator_positional_noise > 0:
+            mol_data.pos += torch.randn_like(mol_data.pos) * self.config.generator_positional_noise
 
         # update symmetry information
         if self.config.generate_sgs is not None:
@@ -1667,9 +1670,9 @@ class Modeller:
                 supercell_data.pos += torch.randn_like(
                     supercell_data.pos) * discriminator_noise
             else:
-                if self.config.discriminator.positional_noise > 0:
+                if self.config.discriminator_positional_noise > 0:
                     supercell_data.pos += torch.randn_like(
-                        supercell_data.pos) * self.config.discriminator.positional_noise
+                        supercell_data.pos) * self.config.discriminator_positional_noise
 
             if (self.config.device.lower() == 'cuda') and (supercell_data.x.device != 'cuda'):
                 supercell_data = supercell_data.cuda()
@@ -1694,7 +1697,7 @@ class Modeller:
             stats_values += [packing_loss.cpu().detach().numpy(), packing_prediction,
                              packing_target, np.abs(packing_prediction - packing_target) / packing_target]
 
-            if True:  # enforce the target density
+            if True:  # enforce the target density all the time
                 generator_losses_list.append(packing_loss.float())
 
         if discriminator_raw_output is not None:
