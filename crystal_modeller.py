@@ -25,6 +25,7 @@ from crystal_building.builder import SupercellBuilder, update_sg_to_all_crystals
 from dataset_management.manager import Miner
 from dataset_management.utils import BuildDataset, get_dataloaders, update_dataloader_batch_size, \
     get_extra_test_loader
+from distutils.dir_util import copy_tree
 from models.crystal_rdf import crystal_rdf
 from models.discriminator_models import crystal_discriminator
 from models.generator_models import crystal_generator
@@ -160,7 +161,19 @@ class Modeller:
 
             os.mkdir(self.workDir + '/ckpts') # not used
             os.mkdir(self.workDir + '/datasets') # not used
+            os.mkdir(self.workDir + '/source')
             yaml_path = os.getcwd() + '/' + self.config.yaml_config
+
+            copy_tree("common",self.workDir + "/source/common")
+            copy_tree("crystal_building",self.workDir + "/source/crystal_building")
+            copy_tree("dataset_management",self.workDir + "/source/dataset_management")
+            copy_tree("models",self.workDir + "/source/models")
+            copy_tree("reporting",self.workDir + "/source/reporting")
+            copy_tree("sampling",self.workDir + "/source/sampling")
+            copy("crystal_modeller.py", self.workDir + "source")
+            copy("main.py", self.workDir + "source")
+
+
             os.chdir(self.workDir)  # move to working dir
             copy(yaml_path, os.getcwd())  # copy full config for reference
             print('Starting Fresh Run %d' % self.config.run_num)
@@ -324,10 +337,12 @@ class Modeller:
         with wandb.init(config=self.config,
                         project=self.config.wandb.project_name,
                         entity=self.config.wandb.username,
-                        tags=[self.config.wandb.experiment_tag]):
+                        tags=[self.config.wandb.experiment_tag],
+                        settings=wandb.Settings(code_dir=".")):
 
             wandb.run.name = wandb.config.machine + '_' + str(self.config.mode) + '_' + str(wandb.config.run_num)  # overwrite procedurally generated run name with our run name
             wandb.run.save()
+
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
 
             dataset_builder = self.misc_pre_training_items()
