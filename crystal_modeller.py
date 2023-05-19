@@ -159,20 +159,19 @@ class Modeller:
                 self.workDir = self.config.workdir + '/run%d' % self.config.run_num  # explicitly enumerate the new run directory
                 os.mkdir(self.workDir)
 
-            os.mkdir(self.workDir + '/ckpts') # not used
-            os.mkdir(self.workDir + '/datasets') # not used
+            os.mkdir(self.workDir + '/ckpts')  # not used
+            os.mkdir(self.workDir + '/datasets')  # not used
             os.mkdir(self.workDir + '/source')
             yaml_path = os.getcwd() + '/' + self.config.yaml_config
 
-            copy_tree("common",self.workDir + "/source/common")
-            copy_tree("crystal_building",self.workDir + "/source/crystal_building")
-            copy_tree("dataset_management",self.workDir + "/source/dataset_management")
-            copy_tree("models",self.workDir + "/source/models")
-            copy_tree("reporting",self.workDir + "/source/reporting")
-            copy_tree("sampling",self.workDir + "/source/sampling")
-            copy("crystal_modeller.py", self.workDir + "source")
-            copy("main.py", self.workDir + "source")
-
+            copy_tree("common", self.workDir + "/source/common")
+            copy_tree("crystal_building", self.workDir + "/source/crystal_building")
+            copy_tree("dataset_management", self.workDir + "/source/dataset_management")
+            copy_tree("models", self.workDir + "/source/models")
+            copy_tree("reporting", self.workDir + "/source/reporting")
+            copy_tree("sampling", self.workDir + "/source/sampling")
+            copy("crystal_modeller.py", self.workDir + "/source")
+            copy("main.py", self.workDir + "/source")
 
             os.chdir(self.workDir)  # move to working dir
             copy(yaml_path, os.getcwd())  # copy full config for reference
@@ -617,7 +616,7 @@ class Modeller:
             '''
             if (len(epoch_stats_dict[
                         'generated cell parameters']) < i) and record_stats:  # make some samples for analysis if we have none so far from this step
-                generated_samples = generator(data.num_graphs, z=None, conditions=data.to(self.config.device), prior_amplification = self.prior_amplification)
+                generated_samples = generator(data.num_graphs, z=None, conditions=data.to(self.config.device), prior_amplification=self.prior_amplification)
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generated cell parameters',
                                                      generated_samples.cpu().detach().numpy(), mode='extend')
 
@@ -999,7 +998,7 @@ class Modeller:
         # generate the samples
         [[generated_samples, latent], prior, condition] = generator.forward(
             n_samples=mol_data.num_graphs, conditions=mol_data.to(self.config.device).clone(),
-            return_latent=True, return_condition=True, return_prior=True, prior_amplification = self.prior_amplification)
+            return_latent=True, return_condition=True, return_prior=True, prior_amplification=self.prior_amplification)
 
         return generated_samples, prior, standardized_target_packing_coeff
 
