@@ -1,6 +1,7 @@
 import glob
 import os
 import time
+from argparse import Namespace
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
@@ -1043,7 +1044,7 @@ class Modeller:
         '''
         init supercell builder
         '''
-        self.supercell_builder = SupercellBuilder(self.sym_info, self.config.dataDims)
+        self.supercell_builder = SupercellBuilder(self.sym_info, self.config.dataDims, device = self.config.device)
 
         '''
         set tracking feature indices & property dicts we will use later
@@ -1168,7 +1169,7 @@ class Modeller:
                                                        self.supercell_builder.symmetries_dict, sym_ops_list)
 
             smc_sampling_dict = smc_sampler(discriminator, self.supercell_builder,
-                                            single_mol_data.clone().cuda(), None,
+                                            single_mol_data.clone().to(self.config.device), None,
                                             self.config.sample_steps)
 
             '''
@@ -1843,7 +1844,7 @@ class Modeller:
         print('Starting Mini CSP')
         generator.eval()
         discriminator.eval()
-        real_data = next(iter(data_loader)).clone().detach().cuda()
+        real_data = next(iter(data_loader)).clone().detach().to(self.config.device)
         real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config)
 
         num_molecules = real_data.num_graphs
@@ -1896,7 +1897,7 @@ class Modeller:
                     self.config.discriminator.graph_convolution_cutoff,
                     align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
                 )
-                fake_supercell_data = fake_supercell_data.cuda()  # todo remove soon
+                fake_supercell_data = fake_supercell_data.to(self.config.device)
 
                 discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise=0)
                 h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind, self.tracking_num_acceptors_ind, self.tracking_num_donors_ind, fake_supercell_data)
