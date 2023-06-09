@@ -2,6 +2,8 @@
 import tqdm
 import numpy as np
 import torch
+
+import constants.asymmetric_units
 from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 from crystal_building.utils import \
@@ -362,7 +364,7 @@ class mcmcSampler:
             correct_position[jj], correct_rotation[jj], handedness \
                 = unit_cell_analysis(proposed_supercells.ref_cell_pos[jj],
                                      proposed_supercells.sg_ind[jj],
-                                     self.supercell_builder.asym_unit_dict,
+                                     constants.asymmetric_units.asym_unit_dict,
                                      torch.linalg.inv(proposed_supercells.T_fc[jj]),
                                      enforce_right_handedness = False) # todo replace this with the raw cell params
         # renormalize

@@ -182,7 +182,6 @@ class MikesGraphNet(torch.nn.Module):
             inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
             n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]  # number of molecules in convolution region
 
-
             # intramolecular edges
             edge_index = asymmetric_radius_graph(pos, batch=batch, r=self.cutoff,  # intramolecular interactions - stack over range 3 convolutions
                                                  max_num_neighbors=self.max_num_neighbors, flow='source_to_target',

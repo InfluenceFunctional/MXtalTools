@@ -13,12 +13,14 @@ import plotly.graph_objects as go
 # import rdkit.Chem.Draw
 import wandb
 # from PIL import Image
-from pyxtal import symmetry
 from scipy.stats import linregress
 from torch import backends
 from torch_geometric.loader.dataloader import Collater
 import tqdm
 
+from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
+
+from constants.asymmetric_units import asym_unit_dict
 from crystal_building.coordinate_transformations import cell_vol
 from crystal_building.utils import *
 from crystal_building.builder import SupercellBuilder, update_sg_to_all_crystals, update_crystal_symmetry_elements
@@ -68,22 +70,8 @@ class Modeller:
         :return:
         """
 
-        self.atom_weights = {}
-        # self.vdw_radii = {}
-        for i in range(100):
-            self.atom_weights[i] = ase.data.atomic_masses[i]
-            # self.vdw_radii[i] = ase.data.vdw_radii[i]
-
-        # hardcoded from rdkit - ase module is missing many radii
-        self.vdw_radii = {0: 0.0, 1: 1.2, 2: 1.4, 3: 2.2, 4: 1.9, 5: 1.8, 6: 1.7, 7: 1.6, 8: 1.55, 9: 1.5, 10: 1.54, 11: 2.4, 12: 2.2, 13: 2.1, 14: 2.1, 15: 1.95, 16: 1.8, 17: 1.8, 18: 1.88, 19: 2.8, 20: 2.4, 21: 2.3, 22: 2.15, 23: 2.05,
-                          24: 2.05, 25: 2.05,
-                          26: 2.05, 27: 2.0, 28: 2.0, 29: 2.0, 30: 2.1, 31: 2.1, 32: 2.1, 33: 2.05, 34: 1.9, 35: 1.9, 36: 2.02, 37: 2.9, 38: 2.55, 39: 2.4, 40: 2.3, 41: 2.15, 42: 2.1, 43: 2.05, 44: 2.05, 45: 2.0, 46: 2.05, 47: 2.1, 48: 2.2,
-                          49: 2.2,
-                          50: 2.25, 51: 2.2, 52: 2.1, 53: 2.1, 54: 2.16, 55: 3.0, 56: 2.7, 57: 2.5, 58: 2.48, 59: 2.47, 60: 2.45, 61: 2.43, 62: 2.42, 63: 2.4, 64: 2.38, 65: 2.37, 66: 2.35, 67: 2.33, 68: 2.32, 69: 2.3, 70: 2.28, 71: 2.27,
-                          72: 2.25, 73: 2.2,
-                          74: 2.1, 75: 2.05, 76: 2.0, 77: 2.0, 78: 2.05, 79: 2.1, 80: 2.05, 81: 2.2, 82: 2.3, 83: 2.3, 84: 2.0, 85: 2.0, 86: 2.0, 87: 2.0, 88: 2.0, 89: 2.0, 90: 2.4, 91: 2.0, 92: 2.3, 93: 2.0, 94: 2.0, 95: 2.0, 96: 2.0,
-                          97: 2.0, 98: 2.0,
-                          99: 2.0}
+        self.atom_weights = ATOM_WEIGHTS
+        self.vdw_radii = VDW_RADII
 
         # generate symmetry info dict if we don't already have it
         if os.path.exists('symmetry_info.npy'):
@@ -99,6 +87,7 @@ class Modeller:
             self.sym_info['lattice_type'] = self.lattice_type
             self.sym_info['space_groups'] = self.space_groups
         else:
+            from pyxtal import symmetry
             print('Pre-generating spacegroup symmetries')
             self.sym_ops = {}
             self.point_groups = {}
@@ -132,25 +121,11 @@ class Modeller:
         if self.config.include_sgs is None:
             self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-        # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
-        # not currently used as we are not computing the overlaps
-        # supercell_scale = self.config.supercell_size  # t
-        # n_cells = (2 * supercell_scale + 1) ** 3
-        #
-        # fractional_translations = np.zeros((n_cells, 3))  # initialize the translations in fractional coords
-        # i = 0
-        # for xx in range(-supercell_scale, supercell_scale + 1):
-        #     for yy in range(-supercell_scale, supercell_scale + 1):
-        #         for zz in range(-supercell_scale, supercell_scale + 1):
-        #             fractional_translations[i] = np.array((xx, yy, zz))
-        #             i += 1
-        # self.lattice_vectors = torch.Tensor(fractional_translations[np.argsort(np.abs(fractional_translations).sum(1))][1:])  # leave out the 0,0,0 element
-        # self.normed_lattice_vectors = self.lattice_vectors / torch.linalg.norm(self.lattice_vectors, axis=1)[:, None]
-        self.lattice_vectors, self.normed_lattice_vectors = None, None
+        self.lattice_vectors, self.normed_lattice_vectors = None, None  # not currently used
         '''
         prepare to load dataset
         '''
-        miner = Miner(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)
+        miner = Miner(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)  # dataminer for dataset construction
 
         if (self.config.run_num == 0) or (self.config.explicit_run_enumeration == True):  # if making a new workdir
             if self.config.run_num == 0:
@@ -164,6 +139,7 @@ class Modeller:
             os.mkdir(self.workDir + '/source')
             yaml_path = os.getcwd() + '/' + self.config.yaml_config
 
+            # copy source to workdir for record keeping purposes
             copy_tree("common", self.workDir + "/source/common")
             copy_tree("crystal_building", self.workDir + "/source/crystal_building")
             copy_tree("dataset_management", self.workDir + "/source/dataset_management")
@@ -177,7 +153,7 @@ class Modeller:
             copy(yaml_path, os.getcwd())  # copy full config for reference
             print('Starting Fresh Run %d' % self.config.run_num)
             t0 = time.time()
-            if self.config.skip_saving_and_loading:
+            if self.config.skip_saving_and_loading:  # transfer dataset directly from miner rather than saving and reloading
                 dataset = miner.load_for_modelling(return_dataset=True, save_dataset=False)
                 del miner
                 return dataset
@@ -191,7 +167,7 @@ class Modeller:
         """
         make a new working directory
         non-overlapping previous entries
-        or with a preset numter
+        or with a preset number
         :return:
         """
         workdirs = glob.glob(self.config.workdir + '/' + 'run*')  # check for prior working directories

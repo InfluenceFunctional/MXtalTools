@@ -1,6 +1,8 @@
 from common.utils import *
 import matplotlib.pyplot as plt
 import pandas as pd
+
+from constants.asymmetric_units import asym_unit_dict
 from crystal_building.utils import *
 from pyxtal import symmetry
 from crystal_building.coordinate_transformations import coor_trans_matrix
@@ -242,11 +244,11 @@ class Miner():
                     bad_inds.append(j)
             print('Blind test targets caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
-        # filter for when the asymmetric unit definition is nonstandard (returns more than one centroid)
+        # filter for when the asymmetric unit definition is nonstandard (returns more than one centroid) # todo check for edge centroids
         n_bad_inds = len(bad_inds)
         for ii in range(len(self.dataset['atom coords'])):
             sg_ind = self.dataset['crystal spacegroup number'][ii]
-            if str(sg_ind) in asym_unit_dict.keys(): # only do this check if this sg_ind is already encoded in the asym unit dict
+            if str(sg_ind) in asym_unit_dict.keys():  # only do this check if this sg_ind is already encoded in the asym unit dict
                 unit_cell_coords = self.dataset['crystal reference cell coords'][ii]
                 T_cf = np.linalg.inv(self.dataset['crystal fc transform'][ii])
                 asym_unit = asym_unit_dict[str(int(sg_ind))]  # will only work for units which we have written down the parameterization for
@@ -261,7 +263,6 @@ class Miner():
                     bad_inds.append(ii)
         print('Non uniform asymmetric unit caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
-
         # when the molecule is too long
         # cases where the csd has the wrong number of molecules
         n_bad_inds = len(bad_inds)
@@ -275,6 +276,12 @@ class Miner():
         lens = [len(item) for item in self.dataset['crystal reference cell coords']]
         bad_inds.extend(np.argwhere(np.asarray(lens != self.dataset['crystal z value']))[:, 0])
         print('improper CSD Z value filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
+        # # cases where the symmetry ops disagree with the Z value
+        # n_bad_inds = len(bad_inds)
+        # lens = [len(item) for item in self.dataset['crystal symmetries']]
+        # bad_inds.extend(np.argwhere(np.asarray(lens != self.dataset['crystal z value']))[:, 0])
+        # print('improper sym ops multiplicity filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
 
         # exclude samples with atoms on special positions # todo eventually relax this
         n_bad_inds = len(bad_inds)

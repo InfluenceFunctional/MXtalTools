@@ -3,7 +3,7 @@ import numpy as np
 from common.utils import standardize
 from dataset_management.CrystalData import CrystalData
 from crystal_building.utils import unit_cell_analysis
-from crystal_building.utils import asym_unit_dict as asymmetric_unit_dict
+from constants.asymmetric_units import asym_unit_dict as asymmetric_unit_dict
 import sys
 from torch_geometric.loader import DataLoader
 import tqdm
@@ -11,7 +11,6 @@ import pandas as pd
 from pyxtal import symmetry
 from dataset_management.manager import Miner
 import os
-
 
 class BuildDataset:
     """
@@ -35,7 +34,6 @@ class BuildDataset:
         self.include_organometallic = config.include_organometallic
         self.model_mode = config.mode
         self.include_sgs = config.include_sgs
-        self.include_pgs = config.include_pgs  # NO LONGER NECESSARY
         self.replace_dataDims = replace_dataDims
         if override_length is not None:
             self.max_dataset_length = override_length
@@ -52,7 +50,6 @@ class BuildDataset:
         '''
         actually load the dataset
         '''
-
         if premade_dataset is None:
             if dataset_path is None:
                 dataset = pd.read_pickle('datasets/dataset')
@@ -408,6 +405,7 @@ class BuildDataset:
             dataset, extra_keys=self.crystal_generation_features, add_lattice_overlaps=True)
 
         atom_features_list = self.concatenate_atom_features(dataset)
+        #  dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo delete this after next BT refeaturization
 
         if 'crystal symmetries' not in dataset.columns:
             dataset['crystal symmetries'] = [[] for _ in range(len(dataset))]
@@ -696,6 +694,7 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
     #dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo fix this after next BT refeaturization - included sym ops are garbage
     for ii in tqdm.tqdm(range(len(dataset))):  # update them with standard SG definitions - though will be false in some cases, no doubt. This will let the generators run and we don't use the output.
         dataset['crystal symmetries'][ii] = sym_ops_dict[dataset['crystal spacegroup number'][ii]]
+        dataset['crystal z value'][ii] = len(dataset['crystal symmetries'][ii])
 
     extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
                                           sg_dict=sg_dict,

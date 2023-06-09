@@ -4,7 +4,8 @@ import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn
 from crystal_building.utils import \
     (update_supercell_data, coor_trans_matrix,
-     ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, asym_unit_dict, unit_cell_analysis)
+     ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, unit_cell_analysis)
+from constants.asymmetric_units import asym_unit_dict
 
 
 def update_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
@@ -347,7 +348,8 @@ class SupercellBuilder:
         @param supercell_data:
         @return:
         """
-        sym_ops_list = [torch.tensor(supercell_data.symmetry_operators[n], device=supercell_data.x.device, dtype=supercell_data.x.dtype) for n in range(len(supercell_data.symmetry_operators))]
+        sym_ops_list = [torch.tensor(supercell_data.symmetry_operators[n], device=supercell_data.x.device, dtype=supercell_data.x.dtype)
+                        for n in range(len(supercell_data.symmetry_operators))]
 
         return sym_ops_list, supercell_data
 

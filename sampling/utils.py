@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering
 
+import constants.asymmetric_units
 from crystal_building.builder import update_sg_to_all_crystals
 from models.utils import undo_1d_bound, softmax_and_score
 
@@ -19,7 +20,7 @@ def de_clean_samples(supercell_builder, samples, sg_inds):
     # descale asymmetric unit
     descaled_mol_position = mol_position.clone()
     for i, ind in enumerate(sg_inds):
-        descaled_mol_position[i, :] = mol_position[i, :] / supercell_builder.asym_unit_dict[
+        descaled_mol_position[i, :] = mol_position[i, :] / constants.asymmetric_units.asym_unit_dict[
             str(int(ind))].cpu()
 
     # undo cleaning

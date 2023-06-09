@@ -24,12 +24,12 @@ sample_distortion_magnitude: -1 # -1 for wide range test # noise for distorted g
 
 extra_test_period: 100
 extra_test_evaluation: True
-extra_test_set_paths: null  #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
+extra_test_set_paths: null #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
                        #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_6_dataset',
                        #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_targets']
 discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10191'
 generator_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\best_generator_1599'
-regressor_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_10213'
+regressor_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_10213'
 
 discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions
 generator_positional_noise: 0  # scaling for the randn noise added to all atom positions
@@ -64,13 +64,13 @@ gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 10000
+dataset_length: 100
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
 max_num_atoms: 100
 min_num_atoms: 5 # target XVI has only 9 heavy atoms
-max_molecule_radius: 5 # angstroms
+max_molecule_radius: 100 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -86,9 +86,9 @@ exclude_polymorphs: True
 exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
-include_sgs: null # ["P-1","P21/c","P212121","C2/c"]  # or 'all'
+include_sgs: null  # ["P-1","P21/c","P212121","C2/c"]  # or 'all'
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities
+generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities
 supercell_size: 5 # new method - should be very large, automatically pares down
 
 # discriminator optimizer and model

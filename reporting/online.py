@@ -1421,6 +1421,17 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     if config.machine == 'local':
         fig.show()
 
+    fig = go.Figure(data=go.Table(
+        header=dict(values=['CSD Test Quantile(normed)', 'Fraction of Submissions (normed)']),
+        cells=dict(values=[list(normed_submissions_fraction_below_csd_quantile.keys()),
+                           list(normed_submissions_fraction_below_csd_quantile.values()),
+                           ], format=[".3", ".3"])))
+    fig.update_layout(width=200)
+    fig.layout.margin = layout.margin
+    fig.write_image('../paper1_figs_new_architecture/normed_scores_separation_table.png', scale=4)
+    if config.machine == 'local':
+        fig.show()
+
     '''
     8. Functional group analysis
     '''
