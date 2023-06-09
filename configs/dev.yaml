@@ -1,5 +1,5 @@
 test_mode: True
-machine: "local"
+machine: "local"  # or "cluster"
 device: "cuda"
 explicit_run_enumeration: False
 skip_saving_and_loading: True

@@ -472,5 +472,3 @@ if __name__ == '__main__':
         predictor.model_sampling()
     else:
         predictor.train_crystal_models()
-
-# todo replace common dicts with data classes

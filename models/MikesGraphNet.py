@@ -363,7 +363,7 @@ class GCBlock(torch.nn.Module):
         else:  # no angular information
             edge_attr = (self.radial_to_message(rbf))
 
-        # sometimes, the are different numbers edges according to spherical and radial bases, so we force them to align
+        # sometimes, there are different numbers edges according to spherical and radial bases (usually, trailing zeros, I think), so we force them to align
         if len(edge_attr) != edge_index.shape[1]:
             edge_index = edge_index[:, :len(edge_attr)]
 

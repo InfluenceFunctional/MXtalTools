@@ -4,8 +4,8 @@ import time
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
-import ase.io
-import ase.data
+# import ase.io
+# import ase.data
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 # import rdkit.Chem
@@ -363,7 +363,7 @@ class Modeller:
                     self.epoch = epoch
                     # very cool
                     print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
-                    print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
+                    print(':::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.')
                     print("'      `--'      `.-'      `--'      `--'      `--'      `-.'      `--'      `")
                     # very cool
                     print("Starting Epoch {}".format(epoch))  # index from 0
