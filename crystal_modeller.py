@@ -23,7 +23,7 @@ from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
 from constants.asymmetric_units import asym_unit_dict
 from crystal_building.coordinate_transformations import cell_vol
 from crystal_building.utils import *
-from crystal_building.builder import SupercellBuilder, update_sg_to_all_crystals, update_crystal_symmetry_elements
+from crystal_building.builder import SupercellBuilder, write_sg_to_all_crystals, update_crystal_symmetry_elements
 from dataset_management.manager import Miner
 from dataset_management.utils import BuildDataset, get_dataloaders, update_dataloader_batch_size, \
     get_extra_test_loader
@@ -650,7 +650,7 @@ class Modeller:
             evaluate discriminator
             '''
             real_supercell_data = \
-                self.supercell_builder.real_cell_to_supercell(data, self.config)
+                self.supercell_builder.unit_cell_to_supercell(data, self.config)
 
             if self.config.device.lower() == 'cuda':  # redundant
                 real_supercell_data = real_supercell_data.cuda()
@@ -862,7 +862,7 @@ class Modeller:
 
     def get_discriminator_losses(self, discriminator, generator, real_data, i, epoch_stats_dict, regressor):
         # generate fakes & create supercell data
-        real_supercell_data = self.supercell_builder.real_cell_to_supercell(real_data, self.config)
+        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config)
 
         generated_samples_i, epoch_stats_dict, negative_type = \
             self.generate_discriminator_negatives(epoch_stats_dict, real_data, generator, i, regressor)
@@ -1164,8 +1164,8 @@ class Modeller:
             override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
             sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
                 single_mol_data.x.device) for i in range(single_mol_data.num_graphs)]
-            single_mol_data = update_sg_to_all_crystals('P-1', self.supercell_builder.dataDims, single_mol_data,
-                                                        self.supercell_builder.symmetries_dict, sym_ops_list)
+            single_mol_data = write_sg_to_all_crystals('P-1', self.supercell_builder.dataDims, single_mol_data,
+                                                       self.supercell_builder.symmetries_dict, sym_ops_list)
 
             smc_sampling_dict = smc_sampler(discriminator, self.supercell_builder,
                                             single_mol_data.clone().cuda(), None,
@@ -1209,7 +1209,7 @@ class Modeller:
             # todo compare final samples to known minima
 
             extra_test_sample = next(iter(extra_test_loader)).cuda()
-            sample_supercells = self.supercell_builder.real_cell_to_supercell(extra_test_sample, self.config)
+            sample_supercells = self.supercell_builder.unit_cell_to_supercell(extra_test_sample, self.config)
             known_sample_scores = softmax_and_score(discriminator(sample_supercells.clone()))
 
             aa = 1
@@ -1844,7 +1844,7 @@ class Modeller:
         generator.eval()
         discriminator.eval()
         real_data = next(iter(data_loader)).clone().detach().cuda()
-        real_supercell_data = self.supercell_builder.real_cell_to_supercell(real_data, self.config)
+        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config)
 
         num_molecules = real_data.num_graphs
         n_sampling_iters = self.config.sample_steps

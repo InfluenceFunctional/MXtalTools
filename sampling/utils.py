@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.cluster import AgglomerativeClustering
 
 import constants.asymmetric_units
-from crystal_building.builder import update_sg_to_all_crystals
+from crystal_building.builder import write_sg_to_all_crystals
 from models.utils import undo_1d_bound, softmax_and_score
 
 
@@ -110,8 +110,8 @@ def sample_clustering(supercell_builder, config, sampling_dict, collater, extra_
     override_sg_ind = list(supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
     sym_ops_list = [torch.Tensor(supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
         big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
-    big_single_mol_data = update_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
-                                                    supercell_builder.symmetries_dict, sym_ops_list)
+    big_single_mol_data = write_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
+                                                   supercell_builder.symmetries_dict, sym_ops_list)
 
     best_cells, _, _ = supercell_builder.build_supercells(big_single_mol_data,
                                                           torch.tensor(best_samples_to_build, device='cuda',

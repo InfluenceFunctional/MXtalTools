@@ -90,7 +90,7 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
 
 def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords_list, ref_mol_inds_list, reference_cell_list):
     """
-    copy new supercell data back onto original supercell objects
+    copy new supercell data back onto original supercell objects, omitting symmetry information
     """
     device = supercell_data.x.device
     for i in range(supercell_data.num_graphs):
@@ -366,7 +366,7 @@ def compute_principal_axes_list(coords_list):
     return Ip_axes_list
 
 
-def align_crystaldata_to_principal_axes(crystaldata, handedness=None):
+def align_crystaldata_to_principal_axes(crystaldata: object, handedness: object = None) -> object:
     """
     align principal inertial axes of molecules in a crystaldata object to the xyz or xy(-z) axes
     only works for geometric principal axes (all atoms mass = 1)
@@ -404,3 +404,16 @@ def random_crystaldata_alignment(crystaldata):
     crystaldata.pos = torch.cat([torch.einsum('ji, mj->mi', (rotation_matrix_list[i], coords_list_centred[i])) for i in range(crystaldata.num_graphs)])
 
     return crystaldata
+
+
+def set_sym_ops(supercell_data):
+    """
+    enforce known symmetry operations for given space groups
+    sometimes, the samples come with nonstandard space groups, which we do not want to use by accident
+    @param supercell_data:
+    @return:
+    """
+    sym_ops_list = [torch.tensor(supercell_data.symmetry_operators[n], device=supercell_data.x.device, dtype=supercell_data.x.dtype)
+                    for n in range(len(supercell_data.symmetry_operators))]
+
+    return sym_ops_list, supercell_data

@@ -3,12 +3,13 @@ import numpy as np
 
 '''
 useful coordinate transforms
-'''
+thanks Nikos!
+''' # todo cut duplicate functions from this script
 
 
 @nb.jit(nopython=True)
 def coor_trans(opt, pos, v, a):
-    ''' Calculate cos and sin of cell angles '''
+    """ Calculate cos and sin of cell angles """
     cos_a = np.cos(a)  # assume natural units
     sin_a = np.sin(a)
 
@@ -52,7 +53,7 @@ def cell_vol(v, a):
 
 # @nb.jit(nopython=True)
 def coor_trans_matrix(opt, v, a, return_vol=False):
-    ''' Calculate cos and sin of cell angles '''
+    """ Calculate cos and sin of cell angles """
     if max(a) > np.pi:
         print('Warning - large angles! Remember to convert to natural units!')
 

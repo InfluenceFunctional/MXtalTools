@@ -11,7 +11,7 @@ from torch_geometric.loader.dataloader import Collater
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import update_stats_dict, np_softmax, earth_movers_distance_torch, earth_movers_distance_np, compute_rdf_distance
-from crystal_building.builder import update_sg_to_all_crystals, update_crystal_symmetry_elements
+from crystal_building.builder import write_sg_to_all_crystals, update_crystal_symmetry_elements
 from models.crystal_rdf import crystal_rdf
 from models.utils import softmax_and_score, norm_scores, ase_mol_from_crystaldata
 from models.vdw_overlap import vdw_overlap
@@ -684,8 +684,8 @@ def cell_params_tracking_plot(wandb, supercell_builder, layout, config, sampling
     override_sg_ind = list(supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
     sym_ops_list = [torch.Tensor(supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
         big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
-    big_single_mol_data = update_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
-                                                    supercell_builder.symmetries_dict, sym_ops_list)
+    big_single_mol_data = write_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
+                                                   supercell_builder.symmetries_dict, sym_ops_list)
     processed_cell_params = torch.cat(supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda(),
                                                                             rescale_asymmetric_unit=False, skip_cell_cleaning=True), dim=-1).T
     del big_single_mol_data

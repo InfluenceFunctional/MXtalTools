@@ -10,7 +10,7 @@ from crystal_building.utils import \
     (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
      unit_cell_analysis)
 from common.geometry_calculations import batch_molecule_principal_axes_torch, compute_Ip_handedness
-from crystal_building.builder import update_sg_to_all_crystals
+from crystal_building.builder import write_sg_to_all_crystals
 
 '''
 This script uses Markov Chain Monte Carlo, including the STUN algorithm, to optimize a given function
@@ -199,7 +199,7 @@ class mcmcSampler:
         '''
         override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.sg_to_search) + 1
         sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(crystaldata.x.device) for i in range(crystaldata.num_graphs)]
-        crystaldata = update_sg_to_all_crystals(self.sg_to_search, self.supercell_builder.dataDims, crystaldata, self.supercell_builder.symmetries_dict, sym_ops_list)
+        crystaldata = write_sg_to_all_crystals(self.sg_to_search, self.supercell_builder.dataDims, crystaldata, self.supercell_builder.symmetries_dict, sym_ops_list)
 
         score_model = score_model.cuda()
         crystaldata = crystaldata.cuda()
