@@ -3,8 +3,8 @@ import torch
 import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn
 from crystal_building.utils import \
-    (update_supercell_data, coor_trans_matrix,
-     ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, unit_cell_analysis)
+    (update_supercell_data, ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, unit_cell_analysis)
+from common.geometry_calculations import coor_trans_matrix
 from constants.asymmetric_units import asym_unit_dict
 
 

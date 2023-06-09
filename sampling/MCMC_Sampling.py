@@ -9,7 +9,7 @@ from models.vdw_overlap import vdw_overlap
 from crystal_building.utils import \
     (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
      unit_cell_analysis)
-from common.geometry_calculations import batch_molecule_principal_axes, compute_Ip_handedness
+from common.geometry_calculations import batch_molecule_principal_axes_torch, compute_Ip_handedness
 from crystal_building.builder import update_sg_to_all_crystals
 
 '''
@@ -266,7 +266,7 @@ class mcmcSampler:
             if right_handed:
                 coords_list = [crystaldata.pos[crystaldata.ptr[i]:crystaldata.ptr[i + 1]] for i in range(crystaldata.num_graphs)]
                 coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(crystaldata.num_graphs)]
-                principal_axes_list, _, _ = batch_molecule_principal_axes(coords_list_centred)
+                principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)
                 handedness = compute_Ip_handedness(principal_axes_list)
                 for ind, hand in enumerate(handedness):
                     if hand == -1:

@@ -2,9 +2,8 @@ from plotly.colors import n_colors
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import numpy as np
-from common.utils import normalize, earth_movers_distance_np, histogram_overlap
+from common.utils import normalize, earth_movers_distance_np, histogram_overlap_np, compute_rdf_distance_old
 from models.utils import softmax_and_score, norm_scores
-from common.rdf_calculation import compute_rdf_distance_old
 from scipy.stats import linregress
 
 
@@ -440,7 +439,7 @@ def scores_distributions_plot(config, wandb, layout, all_identifiers, scores_dic
         for j, label2 in enumerate(hists.keys()):
             if i > j:
                 emds[f'{label1} <-> {label2} emd'] = earth_movers_distance_np(hists[label1], hists[label2])
-                overlaps[f'{label1} <-> {label2} overlap'] = histogram_overlap(hists[label1], hists[label2])
+                overlaps[f'{label1} <-> {label2} overlap'] = histogram_overlap_np(hists[label1], hists[label2])
 
     wandb.log(emds)
     wandb.log(overlaps)

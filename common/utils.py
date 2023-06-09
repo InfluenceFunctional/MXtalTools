@@ -1,28 +1,19 @@
 """import statement"""
 import numpy as np
-# from rdkit import Chem
-# from rdkit.Chem import Draw
-# from rdkit.Chem import AllChem
-from argparse import Namespace
-import yaml
-from pathlib import Path
+
 import torch
-import torch.nn as nn
-# from ase.calculators import lj
-# from pymatgen.core import (structure, lattice)
-# from ccdc.crystal import PackingSimilarity
-# from ccdc.io import CrystalReader
-# from pymatgen.io import cif
 from scipy.cluster.hierarchy import dendrogram
+import pandas as pd
 
 '''
 general utilities
 '''
 
-
 def plot_dendrogram(model, **kwargs):
+    """
+    make a dendrogram plot from a scipy clustering model
+    """
     # Create linkage matrix and then plot the dendrogram
-
     # create the counts of samples under each node
     counts = np.zeros(model.children_.shape[0])
     n_samples = len(model.labels_)
@@ -43,93 +34,21 @@ def plot_dendrogram(model, **kwargs):
     dendrogram(linkage_matrix, **kwargs)
 
 
-def weight_reset(m):
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.Conv3d) or isinstance(m, nn.ConvTranspose3d):
-        m.reset_parameters()
+def initialize_dict_of_lists(keys: list):
+    return {key: [] for key in keys}
 
 
-def initialize_dict_of_lists(keys):
-    m_dict = {}
-    for metric in keys:
-        m_dict[metric] = []
-
-    return m_dict
-
-
-def add_bool_arg(parser, name, default=False):
-    group = parser.add_mutually_exclusive_group(required=False)
-    group.add_argument('--' + name, dest=name, action='store_true')
-    group.add_argument('--no-' + name, dest=name, action='store_false')
-    parser.set_defaults(**{name: default})
-
-
-def add_arg_list(parser, arg_list):
-    for entry in arg_list:
-        if entry['type'] == 'bool':
-            add_bool_arg(parser, entry['name'], entry['default'])
-        else:
-            parser.add_argument('--' + entry['name'], type=entry['type'], default=entry['default'])
-
-    return parser
-
-
-def get_n_config(model):
+def chunkify(lst: list, n: int):
     """
-    count parameters for a pytorch model
-    :param model:
-    :return:
+    break up a list into n chunks of equal size (up to last chunk)
     """
-    pp = 0
-    for p in list(model.parameters()):
-        nn = 1
-        for s in list(p.size()):
-            nn = nn * s
-        pp += nn
-    return pp
-
-
-def chunkify(lst, n):
     return [lst[i::n] for i in range(n)]
 
 
-def dict2namespace(data_dict):
+def delete_from_dataframe(df: pd.DataFrame, inds):
     """
-    Recursively converts a dictionary and its internal dictionaries into an
-    argparse.Namespace
-
-    Parameters
-    ----------
-    data_dict : dict
-        The input dictionary
-
-    Return
-    ------
-    data_namespace : argparse.Namespace
-        The output namespace
-    """
-    for k, v in data_dict.items():
-        if isinstance(v, dict):
-            data_dict[k] = dict2namespace(v)
-        else:
-            pass
-    data_namespace = Namespace(**data_dict)
-
-    return data_namespace
-
-
-def load_yaml(path, append_config_dir=True):
-    if append_config_dir:
-        path = "configs/" + path
-    yaml_path = Path(path)
-    assert yaml_path.exists()
-    assert yaml_path.suffix in {".yaml", ".yml"}
-    with yaml_path.open("r") as f:
-        target_dict = yaml.safe_load(f)
-
-    return target_dict
-
-
-def delete_from_dataframe(df, inds):
+    hacky way to delete rows "inds" from datafram df
+    """  # todo we're doing something wrong here
     df = df.drop(index=inds)
     if 'level_0' in df.columns:  # delete unwanted samples
         df = df.drop(columns='level_0')
@@ -138,93 +57,16 @@ def delete_from_dataframe(df, inds):
     return df
 
 
-def dict2namespace(data_dict: dict):
-    """
-    Recursively converts a dictionary and its internal dictionaries into an
-    argparse.Namespace
-
-    Parameters
-    ----------
-    data_dict : dict
-        The input dictionary
-
-    Return
-    ------
-    data_namespace : argparse.Namespace
-        The output namespace
-    """
-    for k, v in data_dict.items():
-        if isinstance(v, dict):
-            data_dict[k] = dict2namespace(v)
-        else:
-            pass
-    data_namespace = Namespace(**data_dict)
-
-    return data_namespace
-
-
-def get_config(args, override_args, args2config):
-    """
-    Combines YAML configuration file, command line arguments and default arguments into
-    a single configuration dictionary.
-
-    - Values in YAML file override default values
-    - Command line arguments override values in YAML file
-
-    Returns
-    -------
-        Namespace
-    """
-
-    def _update_config(arg, val, config, override=False):
-        config_aux = config
-        for k in args2config[arg]:
-            if k not in config_aux:
-                if k is args2config[arg][-1]:
-                    config_aux.update({k: val})
-                else:
-                    config_aux.update({k: {}})
-                    config_aux = config_aux[k]
-            else:
-                if k is args2config[arg][-1] and override:
-                    config_aux[k] = val
-                else:
-                    config_aux = config_aux[k]
-
-    # Read YAML config
-    if args.yaml_config:
-        yaml_path = Path(args.yaml_config)
-        assert yaml_path.exists()
-        assert yaml_path.suffix in {".yaml", ".yml"}
-        with yaml_path.open("r") as f:
-            config = yaml.safe_load(f)
-    else:
-        config = {}
-    # Add args to config: add if not provided; override if in command line
-    override_args = [
-        arg.strip("--").split("=")[0] for arg in override_args if "--" in arg
-    ]
-    override_args_extra = []
-    for k1 in override_args:
-        if k1 in args2config:
-            v1 = args2config[k1]
-            for k2, v2 in args2config.items():
-                if v2 == v1 and k2 != k1:
-                    override_args_extra.append(k2)
-    override_args = override_args + override_args_extra
-    for k, v in vars(args).items():
-        if k in override_args:
-            _update_config(k, v, config, override=True)
-        else:
-            _update_config(k, v, config, override=False)
-    return dict2namespace(config)
-
-
-def torch_ptp(tensor):
+def torch_ptp(tensor: torch.tensor):
     return torch.max(tensor) - torch.min(tensor)
 
 
-def standardize(data: np.ndarray, return_std: bool = False, known_mean=None, known_std=None):
+def standardize(data: np.ndarray, return_standardization: bool = False, known_mean: float = None, known_std: float = None):
+    """
+    standardize an input 1D array by subtracting mean and dividing by standard deviation
+    optionally use precomputed mean and standard deviation (useful to compare data between datasets)
+    optionally return standardization parameters
+    """
     data = data.astype('float32')
     if known_mean is not None:
         mean = known_mean
@@ -237,11 +79,11 @@ def standardize(data: np.ndarray, return_std: bool = False, known_mean=None, kno
         std = np.std(data)
 
     if std == 0:
-        std = 0.01  # hard stop to back up all-one-value inputs
+        std = 0.01  # if std == 0, data-mean will be all zeros. Doesn't matter what this value is.
 
     std_data = (data - mean) / std
 
-    if return_std:
+    if return_standardization:
         return std_data, mean, std
     else:
         return std_data
@@ -250,15 +92,13 @@ def standardize(data: np.ndarray, return_std: bool = False, known_mean=None, kno
 def normalize(x: np.ndarray):
     """
     normalize an input by its span
+    subtract min_x so that range is fixed on [0,1]
     """
-    min_x = np.amin(x)
-    max_x = np.amax(x)
-    span = max_x - min_x
-    normed_x = (x - min_x) / span
+    normed_x = (x - np.amin(x)) / np.ptp(x)
     return normed_x
 
 
-def np_softmax(x: np.ndarray, temperature=1):
+def np_softmax(x: np.ndarray, temperature: float = 1):
     """
     softmax function implemented in numpy
     """
@@ -266,46 +106,52 @@ def np_softmax(x: np.ndarray, temperature=1):
         x = x[None, :]
     x = x.astype(float)
     probabilities = np.exp(x / temperature) / np.sum(np.exp(x / temperature), axis=1)[:, None]
-    assert np.sum(np.isnan(probabilities)) == 0
     return probabilities
 
 
 def compute_rdf_distance(rdf1, rdf2, rr):
     """
     compute a distance metric between two radial distribution functions with shapes
-    [num_sub_rdfs, num_bins] where sub_rdfs are e.g., particular interatomic RDFS within a certain crystal
+    [num_sub_rdfs, num_bins] where sub_rdfs are e.g., particular interatomic RDFS within a certain sample
     rr is the bin edges used for both rdfs
+
+    option for input to be torch tensors or numpy arrays, but has to be the same either way
+    computation is done in torch
+    range rr can be independently either np.array or torch.tensor
+    will return same format as given
     """
     return_numpy = False
     if not torch.is_tensor(rdf1):
         torch_rdf1 = torch.Tensor(rdf1)
         torch_rdf2 = torch.Tensor(rdf2)
         return_numpy = True
-    if not torch.is_tensor(rr):
-        torch_range = torch.Tensor(rr)
     else:
         torch_rdf1 = rdf1
         torch_rdf2 = rdf2
+
+    if not torch.is_tensor(rr):
+        torch_range = torch.Tensor(rr)
+    else:
         torch_range = rr
 
-    # norming can cause issues
-    #emd_norm = (torch_rdf1.sum(-1) + torch_rdf2.sum(-1)) / 2  # sub-rdf-wise symmetrical norm sub-rdf-wise
+    # TODO come up with a clever way to norm these
+    # emd_norm = (torch_rdf1.sum(-1) + torch_rdf2.sum(-1)) / 2  # sub-rdf-wise symmetrical norm sub-rdf-wise
 
-    normed_rdf1 = torch_rdf1 #/ emd_norm[:, None]
-    normed_rdf2 = torch_rdf2 #/ emd_norm[:, None]
+    normed_rdf1 = torch_rdf1  # / emd_norm[:, None]
+    normed_rdf2 = torch_rdf2  # / emd_norm[:, None]
 
     emd = earth_movers_distance_torch(normed_rdf1, normed_rdf2)
 
     range_normed_emd = emd * (torch_range[1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
 
     if return_numpy:
-        dist = range_normed_emd.mean().cpu().detach().numpy()
+        distance = range_normed_emd.mean().cpu().detach().numpy()
     else:
-        dist = range_normed_emd.mean()
+        distance = range_normed_emd.mean()
 
-    assert np.sum(np.isnan(dist)) == 0
+    assert np.sum(np.isnan(distance)) == 0
 
-    return dist
+    return distance
 
 
 def earth_movers_distance_torch(x: torch.tensor, y: torch.tensor):
@@ -317,79 +163,66 @@ def earth_movers_distance_torch(x: torch.tensor, y: torch.tensor):
 
 
 def earth_movers_distance_np(d1: np.ndarray, d2: np.ndarray):
-    '''
-
-    Parameters
-    ----------
-    d1
-    d2
-
-    Returns
-    -------
-    earth mover's distance (Wasserstein metric) between 1d PDFs (pre-normalized)
-    '''
+    """
+    earth mover's distance between two PDFs
+    not normalized or aggregated
+    """
     return np.sum(np.abs(np.cumsum(d1, axis=-1) - np.cumsum(d2, axis=-1)), axis=-1)
 
 
-def histogram_overlap(d1: np.ndarray, d2: np.ndarray):
+def histogram_overlap_np(d1: np.ndarray, d2: np.ndarray):
     """
     compute the symmetric overlap of two histograms
     """
     return np.sum(np.minimum(d1, d2)) / np.average((d1.sum(), d2.sum()))
 
 
-def update_stats_dict(dict, keys, values, mode='append'):
+def update_stats_dict(dictionary: dict, keys, values, mode='append'):
     """
-    update our running statistics
+    update dict of running statistics in batches of key:list pairs or one at a time
     """
     if isinstance(keys, list):
         for key, value in zip(keys, values):
             # if isinstance(value, list):
             #     value = np.stack(value)
 
-            if key not in dict.keys():
-                dict[key] = []
+            if key not in dictionary.keys():
+                dictionary[key] = []
 
             if mode == 'append':
-                dict[key].append(value)
+                dictionary[key].append(value)
             elif mode == 'extend':
-                dict[key].extend(value)
+                dictionary[key].extend(value)
     else:
         key, value = keys, values
-        if key not in dict.keys():
-            dict[key] = []
+        if key not in dictionary.keys():
+            dictionary[key] = []
         #
         # if isinstance(value, list):
         #     value = np.stack(value)
 
         if mode == 'append':
-            dict[key].append(value)
+            dictionary[key].append(value)
         elif mode == 'extend':
-            dict[key].extend(value)
+            dictionary[key].extend(value)
 
-    return dict
+    return dictionary
 
 
-def update_gan_metrics(epoch, metrics_dict,
-                       discriminator_lr, generator_lr, regressor_lr,
-                       discriminator_train_loss, discriminator_test_loss,
-                       generator_train_loss, generator_test_loss,
-                       regressor_train_loss, regressor_test_loss
-                       ):
+def compute_rdf_distance_old(target_rdf: np.ndarray, sample_rdf: np.ndarray):
+    '''
+    earth mover's distance
+    assuming dimension [sample, element-pair, radius]
+    normed against target rdf (sample is not strictly a PDF in this case)
+    averaged over nnz elements - only works for single type of molecule per call
+    OLD way of doing this
+    '''
 
-    metrics_keys = ['epoch',
-                    'discriminator learning rate', 'generator learning rate',
-                    'regressor learning rate',
-                    'discriminator train loss', 'discriminator test loss',
-                    'generator train loss', 'generator test loss',
-                    'regressor train loss', 'regressor test loss'
-                    ]
-    metrics_vals = [epoch, discriminator_lr, generator_lr, regressor_lr,
-                    discriminator_train_loss, discriminator_test_loss,
-                    generator_train_loss, generator_test_loss,
-                    regressor_train_loss, regressor_test_loss
-                    ]
-
-    metrics_dict = update_stats_dict(metrics_dict, metrics_keys, metrics_vals)
-
-    return metrics_dict
+    nonzero_element_pairs = np.sum(np.sum(target_rdf, axis=1) > 0)
+    target_CDF = np.cumsum(target_rdf, axis=-1)
+    sample_CDF = np.cumsum(sample_rdf, axis=-1)
+    norm = target_CDF[:, -1]
+    target_CDF = np.nan_to_num(target_CDF / norm[:, None])
+    sample_CDF = np.nan_to_num(sample_CDF / norm[None, :, None])
+    emd = np.sum(np.abs(target_CDF - sample_CDF), axis=(1, 2))
+    return emd / nonzero_element_pairs  # manual normalization elementwise

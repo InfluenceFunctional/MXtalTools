@@ -34,7 +34,7 @@ from models.generator_models import crystal_generator
 from models.utils import *
 from models.regression_models import molecule_regressor
 from models.base_models import independent_gaussian_model
-from models.utils import compute_h_bond_score, get_vdw_penalty, generator_density_matching_loss
+from models.utils import compute_h_bond_score, get_vdw_penalty, generator_density_matching_loss, weight_reset, get_n_config
 from models.vdw_overlap import vdw_overlap
 from reporting.online import cell_params_analysis, plotly_setup, cell_density_plot, process_discriminator_outputs, discriminator_scores_plot, \
     plot_generator_loss_correlates, plot_discriminator_score_correlates, log_mini_csp_scores_distributions, sampling_telemetry_plot, cell_params_tracking_plot, log_best_mini_csp_samples, discriminator_BT_reporting
@@ -42,7 +42,6 @@ from sampling.MCMC_Sampling import mcmcSampler
 from sampling.SampleOptimization import gradient_descent_sampling
 from shutil import copy
 from common.utils import *
-from common.utils import update_gan_metrics
 from sampling.utils import de_clean_samples, sample_clustering
 
 
@@ -927,7 +926,7 @@ class Modeller:
             if right_handed:
                 coords_list = [data.pos[data.ptr[i]:data.ptr[i + 1]] for i in range(data.num_graphs)]
                 coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
-                principal_axes_list, _, _ = batch_molecule_principal_axes(coords_list_centred)
+                principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)
                 handedness = compute_Ip_handedness(principal_axes_list)
                 for ind, hand in enumerate(handedness):
                     if hand == -1:
@@ -1929,3 +1928,28 @@ class Modeller:
         log_best_mini_csp_samples(self.config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, self.supercell_builder, self.tracking_mol_volume_ind, self.sym_info, self.vdw_radii)
 
         return None
+
+
+def update_gan_metrics(epoch, metrics_dict,
+                       discriminator_lr, generator_lr, regressor_lr,
+                       discriminator_train_loss, discriminator_test_loss,
+                       generator_train_loss, generator_test_loss,
+                       regressor_train_loss, regressor_test_loss
+                       ):
+
+    metrics_keys = ['epoch',
+                    'discriminator learning rate', 'generator learning rate',
+                    'regressor learning rate',
+                    'discriminator train loss', 'discriminator test loss',
+                    'generator train loss', 'generator test loss',
+                    'regressor train loss', 'regressor test loss'
+                    ]
+    metrics_vals = [epoch, discriminator_lr, generator_lr, regressor_lr,
+                    discriminator_train_loss, discriminator_test_loss,
+                    generator_train_loss, generator_test_loss,
+                    regressor_train_loss, regressor_test_loss
+                    ]
+
+    metrics_dict = update_stats_dict(metrics_dict, metrics_keys, metrics_vals)
+
+    return metrics_dict

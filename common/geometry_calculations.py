@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
@@ -5,6 +7,10 @@ from torch_scatter import scatter
 
 
 def compute_principal_axes_np(coords):
+    """
+    compute the principal axes for a given set of particle coordinates, ignoring particle mass
+    use our overlap rules to ensure a fixed direction for all axes under almost all circumstances
+    """
     points = coords - coords.mean(0)
 
     x, y, z = points.T
@@ -42,7 +48,10 @@ def compute_principal_axes_np(coords):
     return Ip, Ipm, I
 
 
-def compute_inertial_tensor(x, y, z):
+def compute_inertial_tensor_torch(x: torch.tensor, y: torch.tensor, z: torch.tensor):
+    """
+    compute the inertial tensor for a series of x y z coordinates
+    """
     Ixy = -torch.sum(x * y)
     Iyz = -torch.sum(y * z)
     Ixz = -torch.sum(x * z)
@@ -57,12 +66,16 @@ def compute_inertial_tensor(x, y, z):
     return I, Ip, Ipm
 
 
-def single_molecule_principal_axes(coords, masses=None, return_direction=False):
+def single_molecule_principal_axes_torch(coords: torch.tensor, masses=None, return_direction=False):
+    """
+    compute the principal axes for a given set of particle coordinates, ignoring particle mass
+    use our overlap rules to ensure a fixed direction for all axes under almost all circumstances
+    optionally return the 'canonical direction' which should have positive overlap with all inertial principal axes
+    """
     if masses is not None:
-        print('inertial tensor is purely geometric!')
+        print('Inertial tensor is purely geometric! Calculation will not account for varying masses')
     x, y, z = coords.T
-
-    I, Ip, Ipm = compute_inertial_tensor(x, y, z)
+    I, Ip, Ipm = compute_inertial_tensor_torch(x, y, z)
 
     Ipm, Ip = torch.real(Ipm), torch.real(Ip)
     sort_inds = torch.argsort(Ipm)
@@ -96,7 +109,10 @@ def single_molecule_principal_axes(coords, masses=None, return_direction=False):
         return Ip, Ipm, I
 
 
-def batch_molecule_principal_axes(coords_list):
+def batch_molecule_principal_axes_torch(coords_list: list):
+    """
+    rapidly compute principal axes for a list of coordinates in batch fashion
+    """
     coords_list_centred = [coord - coord.mean(0) for coord in coords_list]
     all_coords = torch.cat(coords_list_centred)
 
@@ -143,7 +159,11 @@ def batch_molecule_principal_axes(coords_list):
     return Ip_fin, Ipm, I
 
 
-def coor_trans_matrix_torch(opt, v, a, return_vol=False):
+def coor_trans_matrix_torch(opt: str, v: torch.tensor, a: torch.tensor, return_vol: bool=False):
+    """
+    Initially borrowed from Nikos
+    Quickly convert from cell lengths and angles to fractional transform matrices fractional->cartesian or cartesian->fractional
+    """
     ''' Calculate cos and sin of cell angles '''
     cos_a = torch.cos(a)
     sin_a = torch.sin(a)
@@ -178,7 +198,45 @@ def coor_trans_matrix_torch(opt, v, a, return_vol=False):
         return m
 
 
-def cell_vol_torch(v, a):
+
+def coor_trans_matrix(cell_lengths, cell_angles):
+    ''' # todo harmonize behaviour with the torch version - currently return different things
+    compute f->c and c->f transforms as well as cell volume in a vectorized, differentiable way
+    '''
+    cos_a = torch.cos(cell_angles)
+    sin_a = torch.sin(cell_angles)
+
+    ''' Calculate volume of the unit cell '''
+    val = 1.0 - cos_a[:, 0] ** 2 - cos_a[:, 1] ** 2 - cos_a[:, 2] ** 2 + 2.0 * cos_a[:, 0] * cos_a[:, 1] * cos_a[:, 2]
+
+    vol = torch.sign(val) * torch.prod(cell_lengths, dim=1) * torch.sqrt(torch.abs(val))  # technically a signed quanitity
+
+    ''' Setting the transformation matrix '''
+    T_fc_list = torch.zeros((len(cell_lengths), 3, 3), device=cell_lengths.device, dtype=cell_lengths.dtype)
+    T_cf_list = torch.zeros((len(cell_lengths), 3, 3), device=cell_lengths.device, dtype=cell_lengths.dtype)
+
+    ''' Converting from cartesian to fractional '''
+    T_cf_list[:, 0, 0] = 1.0 / cell_lengths[:, 0]
+    T_cf_list[:, 0, 1] = -cos_a[:, 2] / cell_lengths[:, 0] / sin_a[:, 2]
+    T_cf_list[:, 0, 2] = cell_lengths[:, 1] * cell_lengths[:, 2] * (cos_a[:, 0] * cos_a[:, 2] - cos_a[:, 1]) / vol / sin_a[:, 2]
+    T_cf_list[:, 1, 1] = 1.0 / cell_lengths[:, 1] / sin_a[:, 2]
+    T_cf_list[:, 1, 2] = cell_lengths[:, 0] * cell_lengths[:, 2] * (cos_a[:, 1] * cos_a[:, 2] - cos_a[:, 0]) / vol / sin_a[:, 2]
+    T_cf_list[:, 2, 2] = cell_lengths[:, 0] * cell_lengths[:, 1] * sin_a[:, 2] / vol
+    ''' Converting from fractional to cartesian '''
+    T_fc_list[:, 0, 0] = cell_lengths[:, 0]
+    T_fc_list[:, 0, 1] = cell_lengths[:, 1] * cos_a[:, 2]
+    T_fc_list[:, 0, 2] = cell_lengths[:, 2] * cos_a[:, 1]
+    T_fc_list[:, 1, 1] = cell_lengths[:, 1] * sin_a[:, 2]
+    T_fc_list[:, 1, 2] = cell_lengths[:, 2] * (cos_a[:, 0] - cos_a[:, 1] * cos_a[:, 2]) / sin_a[:, 2]
+    T_fc_list[:, 2, 2] = vol / cell_lengths[:, 0] / cell_lengths[:, 1] / sin_a[:, 2]
+
+    return T_fc_list, T_cf_list, torch.abs(vol)
+
+
+def cell_vol_torch(v: torch.tensor, a: torch.tensor):
+    """
+    compute the volume of a parallelpiped given basis vector lengths and internal angles [a b c] [alpha beta gamma]
+    """
     ''' Calculate cos and sin of cell angles '''
     cos_a = torch.cos(a)  # in natural units
 
@@ -189,11 +247,18 @@ def cell_vol_torch(v, a):
 
 
 def invert_rotvec_handedness(rotvec):
+    """ # todo delete this if we have no use for it
+    invert the handedness of a rotation vector
+    """
     rot_mat = Rotation.from_rotvec(rotvec).as_matrix()
-    return Rotation.from_matrix(-rot_mat).as_rotvec()  # negative of the rotation matrix gives the accurate rotation for opposite handed object
+    return Rotation.from_matrix(-rot_mat).as_rotvec()  # negative of the rotation matrix gives the accurate rotation for opposite handed object?
 
 
 def compute_Ip_handedness(Ip):
+    """
+    determine the right or left handedness from the cross products of principal inertial axes
+    np.array or torch.tensor input, single or multiple samples
+    """
     if isinstance(Ip, np.ndarray):
         if Ip.ndim == 2:
             return np.sign(np.dot(Ip[0], np.cross(Ip[1], Ip[2])).sum())
@@ -206,10 +271,16 @@ def compute_Ip_handedness(Ip):
         elif Ip.ndim == 3:
             return torch.sign(torch.mul(Ip[:, 0], torch.cross(Ip[:, 1], Ip[:, 2], dim=1)).sum(1))
 
+    else:
+        print("Ip handedness calculation failed! Inputs were neither torch.tensor or numpy.array")
+        sys.exit()
 
-def initialize_fractional_vectors(scale=2):
-    # initialize fractional cell vectors
-    supercell_scale = scale
+
+def initialize_fractional_vectors(supercell_scale: int=2):
+    """
+    initialize set of fractional cell vectors up to supercell size param: scale
+    e.g., -1,0,1, 0,0,2, 0,1,0, 0,1,1, etc.
+    """
     n_cells = (2 * supercell_scale + 1) ** 3
 
     fractional_translations = np.zeros((n_cells, 3))  # initialize the translations in fractional coords
@@ -219,7 +290,9 @@ def initialize_fractional_vectors(scale=2):
             for zz in range(-supercell_scale, supercell_scale + 1):
                 fractional_translations[i] = np.array((xx, yy, zz))
                 i += 1
+
     sorted_fractional_translations = fractional_translations[np.argsort(np.abs(fractional_translations).sum(1))][1:]  # leave out the 0,0,0 element
     normed_fractional_translations = sorted_fractional_translations / np.linalg.norm(sorted_fractional_translations, axis=1)[:, None]
 
     return sorted_fractional_translations, normed_fractional_translations
+
