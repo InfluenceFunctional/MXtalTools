@@ -3,7 +3,7 @@ import sys
 import numpy as np
 import torch
 from ase import Atoms
-from torch import optim
+from torch import optim, nn as nn
 from torch.nn import functional as F, functional
 from torch.optim import lr_scheduler as lr_scheduler
 
@@ -600,3 +600,23 @@ def compute_combo_score(packing_prediction, vdw_penalty, discriminator_raw_outpu
     discriminator_loss = F.softmax(discriminator_raw_output / 5, dim=-1)[:, 0]  # high temperature for more linear gradient
     combo_score = -(vdw_range_loss + packing_range_loss + discriminator_loss)
     return combo_score
+
+
+def weight_reset(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.Conv3d) or isinstance(m, nn.ConvTranspose3d):
+        m.reset_parameters()
+
+
+def get_n_config(model):
+    """
+    count parameters for a pytorch model
+    :param model:
+    :return:
+    """
+    pp = 0
+    for p in list(model.parameters()):
+        nn = 1
+        for s in list(p.size()):
+            nn = nn * s
+        pp += nn
+    return pp

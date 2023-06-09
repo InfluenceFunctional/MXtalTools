@@ -9,8 +9,8 @@ from models.vdw_overlap import vdw_overlap
 from crystal_building.utils import \
     (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
      unit_cell_analysis)
-from common.geometry_calculations import batch_molecule_principal_axes, compute_Ip_handedness
-from crystal_building.builder import update_sg_to_all_crystals
+from common.geometry_calculations import batch_molecule_principal_axes_torch, compute_Ip_handedness
+from crystal_building.builder import write_sg_to_all_crystals
 
 '''
 This script uses Markov Chain Monte Carlo, including the STUN algorithm, to optimize a given function
@@ -199,7 +199,7 @@ class mcmcSampler:
         '''
         override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.sg_to_search) + 1
         sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(crystaldata.x.device) for i in range(crystaldata.num_graphs)]
-        crystaldata = update_sg_to_all_crystals(self.sg_to_search, self.supercell_builder.dataDims, crystaldata, self.supercell_builder.symmetries_dict, sym_ops_list)
+        crystaldata = write_sg_to_all_crystals(self.sg_to_search, self.supercell_builder.dataDims, crystaldata, self.supercell_builder.symmetries_dict, sym_ops_list)
 
         score_model = score_model.cuda()
         crystaldata = crystaldata.cuda()
@@ -266,7 +266,7 @@ class mcmcSampler:
             if right_handed:
                 coords_list = [crystaldata.pos[crystaldata.ptr[i]:crystaldata.ptr[i + 1]] for i in range(crystaldata.num_graphs)]
                 coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(crystaldata.num_graphs)]
-                principal_axes_list, _, _ = batch_molecule_principal_axes(coords_list_centred)
+                principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)
                 handedness = compute_Ip_handedness(principal_axes_list)
                 for ind, hand in enumerate(handedness):
                     if hand == -1:

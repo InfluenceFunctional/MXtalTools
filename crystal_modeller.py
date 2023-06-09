@@ -1,6 +1,7 @@
 import glob
 import os
 import time
+from argparse import Namespace
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
@@ -23,7 +24,7 @@ from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
 from constants.asymmetric_units import asym_unit_dict
 from crystal_building.coordinate_transformations import cell_vol
 from crystal_building.utils import *
-from crystal_building.builder import SupercellBuilder, update_sg_to_all_crystals, update_crystal_symmetry_elements
+from crystal_building.builder import SupercellBuilder, write_sg_to_all_crystals, update_crystal_symmetry_elements
 from dataset_management.manager import Miner
 from dataset_management.utils import BuildDataset, get_dataloaders, update_dataloader_batch_size, \
     get_extra_test_loader
@@ -34,7 +35,7 @@ from models.generator_models import crystal_generator
 from models.utils import *
 from models.regression_models import molecule_regressor
 from models.base_models import independent_gaussian_model
-from models.utils import compute_h_bond_score, get_vdw_penalty, generator_density_matching_loss
+from models.utils import compute_h_bond_score, get_vdw_penalty, generator_density_matching_loss, weight_reset, get_n_config
 from models.vdw_overlap import vdw_overlap
 from reporting.online import cell_params_analysis, plotly_setup, cell_density_plot, process_discriminator_outputs, discriminator_scores_plot, \
     plot_generator_loss_correlates, plot_discriminator_score_correlates, log_mini_csp_scores_distributions, sampling_telemetry_plot, cell_params_tracking_plot, log_best_mini_csp_samples, discriminator_BT_reporting
@@ -42,7 +43,6 @@ from sampling.MCMC_Sampling import mcmcSampler
 from sampling.SampleOptimization import gradient_descent_sampling
 from shutil import copy
 from common.utils import *
-from common.utils import update_gan_metrics
 from sampling.utils import de_clean_samples, sample_clustering
 
 
@@ -651,7 +651,7 @@ class Modeller:
             evaluate discriminator
             '''
             real_supercell_data = \
-                self.supercell_builder.real_cell_to_supercell(data, self.config)
+                self.supercell_builder.unit_cell_to_supercell(data, self.config)
 
             if self.config.device.lower() == 'cuda':  # redundant
                 real_supercell_data = real_supercell_data.cuda()
@@ -863,7 +863,7 @@ class Modeller:
 
     def get_discriminator_losses(self, discriminator, generator, real_data, i, epoch_stats_dict, regressor):
         # generate fakes & create supercell data
-        real_supercell_data = self.supercell_builder.real_cell_to_supercell(real_data, self.config)
+        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config)
 
         generated_samples_i, epoch_stats_dict, negative_type = \
             self.generate_discriminator_negatives(epoch_stats_dict, real_data, generator, i, regressor)
@@ -927,7 +927,7 @@ class Modeller:
             if right_handed:
                 coords_list = [data.pos[data.ptr[i]:data.ptr[i + 1]] for i in range(data.num_graphs)]
                 coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
-                principal_axes_list, _, _ = batch_molecule_principal_axes(coords_list_centred)
+                principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)
                 handedness = compute_Ip_handedness(principal_axes_list)
                 for ind, hand in enumerate(handedness):
                     if hand == -1:
@@ -1044,7 +1044,7 @@ class Modeller:
         '''
         init supercell builder
         '''
-        self.supercell_builder = SupercellBuilder(self.sym_info, self.config.dataDims)
+        self.supercell_builder = SupercellBuilder(self.sym_info, self.config.dataDims, device = self.config.device)
 
         '''
         set tracking feature indices & property dicts we will use later
@@ -1165,11 +1165,11 @@ class Modeller:
             override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
             sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
                 single_mol_data.x.device) for i in range(single_mol_data.num_graphs)]
-            single_mol_data = update_sg_to_all_crystals('P-1', self.supercell_builder.dataDims, single_mol_data,
-                                                        self.supercell_builder.symmetries_dict, sym_ops_list)
+            single_mol_data = write_sg_to_all_crystals('P-1', self.supercell_builder.dataDims, single_mol_data,
+                                                       self.supercell_builder.symmetries_dict, sym_ops_list)
 
             smc_sampling_dict = smc_sampler(discriminator, self.supercell_builder,
-                                            single_mol_data.clone().cuda(), None,
+                                            single_mol_data.clone().to(self.config.device), None,
                                             self.config.sample_steps)
 
             '''
@@ -1210,7 +1210,7 @@ class Modeller:
             # todo compare final samples to known minima
 
             extra_test_sample = next(iter(extra_test_loader)).cuda()
-            sample_supercells = self.supercell_builder.real_cell_to_supercell(extra_test_sample, self.config)
+            sample_supercells = self.supercell_builder.unit_cell_to_supercell(extra_test_sample, self.config)
             known_sample_scores = softmax_and_score(discriminator(sample_supercells.clone()))
 
             aa = 1
@@ -1844,8 +1844,8 @@ class Modeller:
         print('Starting Mini CSP')
         generator.eval()
         discriminator.eval()
-        real_data = next(iter(data_loader)).clone().detach().cuda()
-        real_supercell_data = self.supercell_builder.real_cell_to_supercell(real_data, self.config)
+        real_data = next(iter(data_loader)).clone().detach().to(self.config.device)
+        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config)
 
         num_molecules = real_data.num_graphs
         n_sampling_iters = self.config.sample_steps
@@ -1897,7 +1897,7 @@ class Modeller:
                     self.config.discriminator.graph_convolution_cutoff,
                     align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
                 )
-                fake_supercell_data = fake_supercell_data.cuda()  # todo remove soon
+                fake_supercell_data = fake_supercell_data.to(self.config.device)
 
                 discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise=0)
                 h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind, self.tracking_num_acceptors_ind, self.tracking_num_donors_ind, fake_supercell_data)
@@ -1929,3 +1929,28 @@ class Modeller:
         log_best_mini_csp_samples(self.config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, self.supercell_builder, self.tracking_mol_volume_ind, self.sym_info, self.vdw_radii)
 
         return None
+
+
+def update_gan_metrics(epoch, metrics_dict,
+                       discriminator_lr, generator_lr, regressor_lr,
+                       discriminator_train_loss, discriminator_test_loss,
+                       generator_train_loss, generator_test_loss,
+                       regressor_train_loss, regressor_test_loss
+                       ):
+
+    metrics_keys = ['epoch',
+                    'discriminator learning rate', 'generator learning rate',
+                    'regressor learning rate',
+                    'discriminator train loss', 'discriminator test loss',
+                    'generator train loss', 'generator test loss',
+                    'regressor train loss', 'regressor test loss'
+                    ]
+    metrics_vals = [epoch, discriminator_lr, generator_lr, regressor_lr,
+                    discriminator_train_loss, discriminator_test_loss,
+                    generator_train_loss, generator_test_loss,
+                    regressor_train_loss, regressor_test_loss
+                    ]
+
+    metrics_dict = update_stats_dict(metrics_dict, metrics_keys, metrics_vals)
+
+    return metrics_dict
