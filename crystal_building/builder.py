@@ -67,7 +67,7 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
 
 
 class SupercellBuilder:
-    def __init__(self, symmetries_dict, dataDims, supercell_scale=5, device='cuda'):
+    def __init__(self, symmetries_dict, dataDims, supercell_size=5, device='cuda'):
         """
         class for converting single molecules -> unit cells -> supercells/clusters
         """  # todo write tests to confirm correct reconstruction from cell params
@@ -82,21 +82,21 @@ class SupercellBuilder:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 
         # initialize fractional translations for supercell construction
-        n_cells = (2 * supercell_scale + 1) ** 3
+        n_cells = (2 * supercell_size + 1) ** 3
         fractional_translations = torch.zeros((n_cells, 3))  # initialize the translations in fractional coords
         i = 0
-        for xx in range(-supercell_scale, supercell_scale + 1):
-            for yy in range(-supercell_scale, supercell_scale + 1):
-                for zz in range(-supercell_scale, supercell_scale + 1):
+        for xx in range(-supercell_size, supercell_size + 1):
+            for yy in range(-supercell_size, supercell_size + 1):
+                for zz in range(-supercell_size, supercell_size + 1):
                     fractional_translations[i] = torch.tensor((xx, yy, zz))
                     i += 1
 
         # sort fractional vectors from closest to furthest from central unit cell
         self.sorted_fractional_translations = fractional_translations[torch.argsort(fractional_translations.abs().sum(1))].to(device)
 
-    def build_supercells(self, data, cell_sample: torch.tensor, supercell_size, graph_convolution_cutoff, target_handedness=None,
+    def build_supercells(self, data, cell_sample: torch.tensor, supercell_size: int=5, graph_convolution_cutoff: float=6, target_handedness=None,
                          skip_cell_cleaning=False, standardized_sample=True, align_molecules=True,
-                         rescale_asymmetric_unit=True):
+                         rescale_asymmetric_unit=True, pare_to_convolution_cluster=True):
         """
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to "supercell" (in fact, it's truncated to an appropriate cluster size)
@@ -158,20 +158,23 @@ class SupercellBuilder:
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix  # TODO confirm we want to transpose T_fc to get the cell vectors in the correct basis
 
         # get minimal supercell cluster for convolving about a given canonical conformer
-        supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = ref_to_supercell(
-            unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.Z,
-            supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
-            sorted_fractional_translations=self.sorted_fractional_translations)
+        supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
+            ref_to_supercell(
+                unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.Z,
+                supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
+                sorted_fractional_translations=self.sorted_fractional_translations,
+                pare_to_convolution_cluster=pare_to_convolution_cluster)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, unit_cell_coords_list)
 
         return supercell_data, generated_cell_volumes, None
 
-    def unit_cell_to_supercell(self, supercell_data, config):
+    def unit_cell_to_supercell(self, supercell_data, supercell_size=5, graph_convolution_cutoff=6, pare_to_convolution_cluster=True):
         """
         build a supercell cluster using a pre-built unit cell
         will not check for physicality or apply any symmetry options - merely pattern the unit cell
         and keep molecules within convolution radius of the canonical conformer
+        automatically pare NxNxN supercell to minimal set of molecules in the convolution radius of the canonical conformer
         """
         supercell_data = supercell_data.clone().to(self.device)
 
@@ -185,14 +188,15 @@ class SupercellBuilder:
 
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # todo as above, confirm this transposal
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list, T_fc_list,
-                             atoms_list, supercell_data.Z, supercell_scale=config.supercell_size,
-                             cutoff=config.discriminator.graph_convolution_cutoff,
-                             sorted_fractional_translations=self.sorted_fractional_translations)
+            ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list,
+                             T_fc_list, atoms_list, supercell_data.Z,
+                             supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
+                             sorted_fractional_translations=self.sorted_fractional_translations,
+                             pare_to_convolution_cluster=pare_to_convolution_cluster)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, supercell_data.ref_cell_pos)
 
-        return supercell_data.to(config.device)
+        return supercell_data.to(self.device)
 
     def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True, rescale_asymmetric_unit=True):
         if skip_cell_cleaning:  # don't clean up

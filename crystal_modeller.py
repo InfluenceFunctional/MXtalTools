@@ -118,8 +118,8 @@ class Modeller:
             # generate samples in every space group in the asym dict (eventually, all sgs)
             self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-        if self.config.include_sgs is None:
-            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
+        if self.config.include_sgs is None: # draw from all space groups we can parameterize
+            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()] #list(self.space_groups.values())
 
         self.lattice_vectors, self.normed_lattice_vectors = None, None  # not currently used
         '''
@@ -651,7 +651,7 @@ class Modeller:
             evaluate discriminator
             '''
             real_supercell_data = \
-                self.supercell_builder.unit_cell_to_supercell(data, self.config)
+                self.supercell_builder.unit_cell_to_supercell(data, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
 
             if self.config.device.lower() == 'cuda':  # redundant
                 real_supercell_data = real_supercell_data.cuda()
@@ -863,7 +863,7 @@ class Modeller:
 
     def get_discriminator_losses(self, discriminator, generator, real_data, i, epoch_stats_dict, regressor):
         # generate fakes & create supercell data
-        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config)
+        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
 
         generated_samples_i, epoch_stats_dict, negative_type = \
             self.generate_discriminator_negatives(epoch_stats_dict, real_data, generator, i, regressor)
@@ -1210,7 +1210,7 @@ class Modeller:
             # todo compare final samples to known minima
 
             extra_test_sample = next(iter(extra_test_loader)).cuda()
-            sample_supercells = self.supercell_builder.unit_cell_to_supercell(extra_test_sample, self.config)
+            sample_supercells = self.supercell_builder.unit_cell_to_supercell(extra_test_sample, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
             known_sample_scores = softmax_and_score(discriminator(sample_supercells.clone()))
 
             aa = 1
@@ -1845,7 +1845,7 @@ class Modeller:
         generator.eval()
         discriminator.eval()
         real_data = next(iter(data_loader)).clone().detach().to(self.config.device)
-        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config)
+        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
 
         num_molecules = real_data.num_graphs
         n_sampling_iters = self.config.sample_steps

@@ -1,4 +1,4 @@
-test_mode: True
+test_mode: False
 machine: "local"  # or "cluster"
 device: "cpu"
 explicit_run_enumeration: False
@@ -64,13 +64,13 @@ gradient_norm_clip: 1
 
 # dataset curation
 target: packing # 'density' or 'packing' or 'volume'
-dataset_length: 500
+dataset_length: 10000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
 max_num_atoms: 100
 min_num_atoms: 5 # target XVI has only 9 heavy atoms
-max_molecule_radius: 5 # angstroms
+max_molecule_radius: 100 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -82,11 +82,11 @@ include_organometallic: True
 max_atomic_number: 100
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
-exclude_polymorphs: True
+exclude_polymorphs: False
 exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
-include_sgs: null  # ["P-1","P21/c","P212121","C2/c"]  # or 'all'
+include_sgs: null  # ["P-1","P21/c","P212121","C2/c"]  # null for all
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
 generate_sgs: ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities
 supercell_size: 5 # new method - should be very large, automatically pares down

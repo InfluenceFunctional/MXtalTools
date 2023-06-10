@@ -9,7 +9,7 @@ import sys
 
 def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_list: list,
                      atoms_list: list, z_values, supercell_scale=5, cutoff=5,
-                     sorted_fractional_translations=None):
+                     sorted_fractional_translations=None, pare_to_convolution_cluster=True):
     """
     1) generate fractional translations for full supercell
     for each sample
@@ -17,8 +17,8 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
     3) identify canonical conformer, inside inds, outside inds
     4) kick out molecules which are outside
     """
+    n_cells = (2 * supercell_scale + 1) ** 3
     if sorted_fractional_translations is None:
-        n_cells = (2 * supercell_scale + 1) ** 3
         fractional_translations = torch.zeros((n_cells, 3), device=T_fc_list.device)  # initialize the translations in fractional coords
         i = 0
         for xx in range(-supercell_scale, supercell_scale + 1):
@@ -48,35 +48,49 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
 
         full_supercell_coords = supercell_coords + torch.repeat_interleave(cart_translations, ref_cell.shape[1] * ref_cell.shape[0], dim=0)  # add translations throughout
 
-        # index atoms within the 'canonical' conformer, which is always indexed first
-        # TODO canonical conformer is not indexed first in real cells - shouldn't actually impact morphology but would be nice to clean up
-        in_mol_inds = torch.arange(mol_n_atoms)
-        molwise_supercell_coords = full_supercell_coords.reshape(n_cells * z_value, mol_n_atoms, 3)
-        ref_mol_centroid = molwise_supercell_coords[0].mean(0)  # first is always the canonical conformer
-        all_mol_centroids = torch.mean(molwise_supercell_coords, dim=1)  # centroids for all molecules in the supercell
-        mol_centroid_dists = torch.cdist(ref_mol_centroid[None, :], all_mol_centroids, p=2)[0]
-        ref_mol_radius = torch.max(torch.cdist(ref_mol_centroid[None, :], full_supercell_coords[in_mol_inds]))
+        in_mol_inds = torch.arange(mol_n_atoms)  # assume canonical conformer is indexed first
+        if pare_to_convolution_cluster:
+            # TODO canonical conformer is not indexed first in prebuilt reference cells - shouldn't actually impact morphology but would be nice to clean up
+            molwise_supercell_coords = full_supercell_coords.reshape(n_cells * z_value, mol_n_atoms, 3)
 
-        successful_gconv = False
-        extra_cutoff = 0
-        while successful_gconv == False:
-            # ignore atoms which are more than mol_radius + conv_cutoff + buffer
-            convolve_mol_inds = torch.where((mol_centroid_dists <= (2 * ref_mol_radius + cutoff + extra_cutoff + 0.1)))[0]
+            ref_mol_centroid = molwise_supercell_coords[0].mean(0)  # first is always the canonical conformer
+            all_mol_centroids = torch.mean(molwise_supercell_coords, dim=1)  # centroids for all molecules in the supercell
 
-            if len(convolve_mol_inds) <= mol_n_atoms:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
-                extra_cutoff += 0.5
-            else:
-                successful_gconv = True
+            mol_centroid_dists = torch.cdist(ref_mol_centroid[None, :], all_mol_centroids, p=2)[0]  # distances between canonical conformer and all other molecules
+            ref_mol_radius = torch.max(torch.cdist(ref_mol_centroid[None, :], full_supercell_coords[in_mol_inds]))  # molecule radius of canonical conformer
 
-        ref_mol_inds = torch.ones(len(convolve_mol_inds) * mol_n_atoms, dtype=int, device=device)  # only index molecules which will be kept
-        ref_mol_inds[in_mol_inds] = 0
+            '''
+            include atoms with molecules within the convolution window
+            if there are no such molecules, boost the window so we have something to convolve with
+            otherwise discriminator errors out with zero edges
+            '''
+            successful_gconv = False
+            extra_cutoff = 0
+            while successful_gconv == False:
+                # ignore atoms which are more than mol_radius + conv_cutoff + buffer
+                convolve_mol_inds = torch.where((mol_centroid_dists <= (2 * ref_mol_radius + cutoff + extra_cutoff + 0.1)))[0]
 
-        assert len(convolve_mol_inds) > mol_n_atoms
+                if len(convolve_mol_inds) <= mol_n_atoms:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
+                    extra_cutoff += 0.5
+                else:
+                    successful_gconv = True
 
-        convolve_atom_inds = (torch.arange(mol_n_atoms, device=device)[:, None] + convolve_mol_inds * mol_n_atoms).T.reshape(len(convolve_mol_inds) * mol_n_atoms)  # looks complicated but it's fast
+            assert len(convolve_mol_inds) > mol_n_atoms  # must be more than one molecule in convolution
 
-        supercell_coords_list.append(full_supercell_coords[convolve_atom_inds])  # only the relevant molecules are now kept
-        supercell_atoms = atoms.repeat(len(convolve_mol_inds), 1)  # take the number of kept molecules only
+            '''add final indexing of atoms which are canonical conformer: 0, kept symmetry images: 1, and otherwise tossed'''
+            ref_mol_inds = torch.ones(len(convolve_mol_inds) * mol_n_atoms, dtype=int, device=device)  # only index molecules which will be kept
+            ref_mol_inds[in_mol_inds] = 0
+
+            convolve_atom_inds = (torch.arange(mol_n_atoms, device=device)[:, None] + convolve_mol_inds * mol_n_atoms).T.reshape(len(convolve_mol_inds) * mol_n_atoms)  # looks complicated but it's fast
+
+            supercell_coords_list.append(full_supercell_coords[convolve_atom_inds])  # only the relevant molecules are now kept
+            supercell_atoms = atoms.repeat(len(convolve_mol_inds), 1)  # take the number of kept molecules only
+        else:  # keep the whole NxNxN supercell
+            supercell_coords_list.append(full_supercell_coords)
+            supercell_atoms = atoms.repeat(len(full_supercell_coords) // mol_n_atoms, 1)
+            ref_mol_inds = torch.ones(len(supercell_atoms), dtype=int, device=device)  # only index molecules which will be kept
+            ref_mol_inds[in_mol_inds] = 0
+            convolve_mol_inds = torch.arange(1, ref_mol_inds.sum() / mol_n_atoms)  # index every molecule
 
         supercell_atoms_list.append(supercell_atoms)
         ref_mol_inds_list.append(ref_mol_inds)
@@ -115,7 +129,7 @@ def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords
 
 def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol_position: torch.tensor, mol_rotation: torch.tensor,
                       lattices, dataDims,
-                      enforce_crystal_system=False, rotation_type='cartesian rotvec', return_transforms=False, standardized_sample: bool=True):
+                      enforce_crystal_system=False, rotation_type='cartesian rotvec', return_transforms=False, standardized_sample: bool = True):
     """
     constrain cell parameters to physically meaningful values
     :param cell_lengths:
@@ -414,6 +428,6 @@ def set_sym_ops(supercell_data):
     @return:
     """
     sym_ops_list = [torch.tensor(supercell_data.symmetry_operators[n], device=supercell_data.x.device, dtype=supercell_data.x.dtype)
-                    for n in range(len(supercell_data.symmetry_operators))]
+                    for n in range(len(supercell_data.symmetry_operators))]  # todo refeaturize symmetry_operators as lists
 
     return sym_ops_list, supercell_data
