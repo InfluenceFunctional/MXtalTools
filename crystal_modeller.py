@@ -1902,7 +1902,7 @@ class Modeller:
                 discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise=0)
                 h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind, self.tracking_num_acceptors_ind, self.tracking_num_donors_ind, fake_supercell_data)
                 vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data.mol_size)
-                # rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=rdf_range, bins=rdf_bins,
+                # rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=rdf_range, bins=rdf_bins,  # expensive to evaluate
                 #                                 raw_density=True, atomwise=True, mode='intermolecular', cpu_detach=True)
 
                 volumes_list = []
@@ -1911,7 +1911,7 @@ class Modeller:
                         cell_vol_torch(fake_supercell_data.cell_params[i, 0:3], fake_supercell_data.cell_params[i, 3:6]))
                 volumes = torch.stack(volumes_list)
 
-                # todo issue here with division by two - make sure Z assignment is consistent throughout
+                # todo possible issue here with division by two - make sure Z assignment is consistent throughout
                 fake_packing_coeffs = fake_supercell_data.Z * fake_supercell_data.tracking[:, self.tracking_mol_volume_ind] / volumes
 
                 sampling_dict['score'][:, ii] = softmax_and_score(discriminator_score).cpu().detach().numpy()

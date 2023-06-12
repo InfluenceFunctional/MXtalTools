@@ -10,7 +10,7 @@ def compute_principal_axes_np(coords):
     """
     compute the principal axes for a given set of particle coordinates, ignoring particle mass
     use our overlap rules to ensure a fixed direction for all axes under almost all circumstances
-    """
+    """ # todo harmonize with torch version - currently disagrees ~0.5% of the time
     points = coords - coords.mean(0)
 
     x, y, z = points.T
@@ -197,7 +197,77 @@ def coor_trans_matrix_torch(opt: str, v: torch.tensor, a: torch.tensor, return_v
     else:
         return m
 
+def sph2rotvec(angles):
+    """
+    transform from axis-angle in polar coordinates to rotvec
+    theta, phi, r -> xyz
+    """
+    if isinstance(angles, np.ndarray):
+        if angles.ndim > 1:
+            theta, phi, r = angles.T
+            rotvec = r[:, None] * np.stack((np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta))).T
+        else:
+            theta, phi, r = angles
+            rotvec = r * np.asarray((np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)))
 
+        return rotvec
+
+    elif torch.is_tensor(angles):
+        if angles.ndim > 1:
+            theta, phi, r = angles.T
+            rotvec = r[:, None] * torch.stack((theta.sin() * phi.cos(), theta.sin() * phi.sin(), theta.cos())).T
+        else:
+            theta, phi, r = angles
+            rotvec = r * torch.Tensor(theta.sin() * phi.cos(), theta.sin() * phi.sin(), theta.cos())
+
+        return rotvec
+
+    else:
+        print("Array type not supported! Must be np.ndarray or torch.tensor")
+        return None
+
+
+def rotvec2sph(rotvec):
+    """
+    transform rotation vector with axis (rotvec)/norm(rotvec) and angle ||rotvec||
+    to spherical coordinates theta, phi and r ||rotvec||
+    """
+    if isinstance(rotvec, np.ndarray):
+        r = np.linalg.norm(rotvec, axis=-1)
+        if rotvec.ndim == 1:
+            rotvec = rotvec[None, :]
+            r = np.asarray(r)[None]
+
+        unit_vector = rotvec / r[:, None]
+
+        # convert unit vector to angles
+        theta = np.arctan2(np.sqrt(unit_vector[:,0]**2+unit_vector[:,1]**2), unit_vector[:,2])
+        phi = np.arctan2(unit_vector[:,1], unit_vector[:,0])
+        if rotvec.ndim == 1:
+            return np.concatenate((theta, phi, r), axis=-1)  # polar, azimuthal, applied rotation
+        else:
+            return np.concatenate((theta[:,None], phi[:,None], r[:,None]), axis=-1)  # polar, azimuthal, applied rotation
+
+
+    elif torch.is_tensor(rotvec):
+        r = torch.linalg.norm(rotvec, axis=-1)
+        if rotvec.ndim == 1:
+            rotvec = rotvec[None, :]
+            r = torch.Tensor(r)[None]
+
+        unit_vector = rotvec / r[:, None]
+
+        # convert unit vector to angles
+        theta = torch.arctan2(np.sqrt(unit_vector[:,0]**2+unit_vector[:,1]**2), unit_vector[:,2])
+        phi = torch.arctan2(unit_vector[:,1], unit_vector[:,0])
+        if rotvec.ndim == 1:
+            return torch.cat((theta, phi, r), dim=-1)  # polar, azimuthal, applied rotation
+        else:
+            return torch.cat((theta[:,None], phi[:,None], r[:,None]), dim=-1)  # polar, azimuthal, applied rotation
+
+    else:
+        print("Array type not supported! Must be np.ndarray or torch.tensor")
+        return None
 
 def coor_trans_matrix(cell_lengths, cell_angles):
     ''' # todo harmonize behaviour with the torch version - currently return different things
@@ -263,7 +333,7 @@ def compute_Ip_handedness(Ip):
         if Ip.ndim == 2:
             return np.sign(np.dot(Ip[0], np.cross(Ip[1], Ip[2])).sum())
         elif Ip.ndim == 3:
-            return np.sign(np.dot(Ip[:, 0], np.cross(Ip[:, 1], Ip[:, 2])).sum())
+            return np.sign(np.dot(Ip[:, 0], np.cross(Ip[:, 1], Ip[:, 2], axis=1).T).sum(1))
 
     elif torch.is_tensor(Ip):
         if Ip.ndim == 2:

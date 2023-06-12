@@ -1,6 +1,6 @@
 import numpy as np
 from models.utils import enforce_1d_bound
-from common.geometry_calculations import compute_principal_axes_np, single_molecule_principal_axes_torch, batch_molecule_principal_axes_torch, compute_Ip_handedness
+from common.geometry_calculations import compute_principal_axes_np, single_molecule_principal_axes_torch, batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph
 from scipy.spatial.transform import Rotation
 import torch
 import torch.nn.functional as F
@@ -268,14 +268,17 @@ def f_c_transform(coords, T_fc):
             return torch.einsum('nmj,ij->nmi', (coords, T_fc))
 
 
-def find_coord_in_box(coords, box, epsilon=0):
+def find_coord_in_box_np(coords, box, epsilon=0):
     # which of the given coords is inside the specified box, with option for a little leeway
     return np.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
 
+def find_coord_in_box_torch(coords, box, epsilon=0):
+    # which of the given coords is inside the specified box, with option for a little leeway
+    return torch.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
 
-def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_right_handedness=False, return_asym_unit_coords=False):
+
+def asymmetric_unit_pose_analysis_np(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_right_handedness=False, return_asym_unit_coords=False, rotation_basis='cartesian'):
     """
-
     Parameters
     ----------
     unit_cell_coords: coordinates for the full unit cell. Each list entry [Z, n_atoms, 3]
@@ -283,7 +286,7 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
     asym_unit_dict: dict which defines the asymmetric unit for each space group
     T_cf : list of cartesian-to-fractional matrix transforms
     enforce_right_handedness : DEPRECATED doesn't make sense given nature of our transform
-    Returns : standardized cell parameters and canonical conformer handedness
+    Returns : standardized pose parameters and canonical conformer handedness
     -------
 
     """
@@ -298,7 +301,7 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
     centroids_cartesian = unit_cell_coords.mean(-2)
     centroids_fractional = np.inner(T_cf, centroids_cartesian).T
     centroids_fractional -= np.floor(centroids_fractional)
-    canonical_conformer_index = find_coord_in_box(centroids_fractional, asym_unit)
+    canonical_conformer_index = find_coord_in_box_np(centroids_fractional, asym_unit)
 
     if len(canonical_conformer_index) == 0:  # if we didn't find one, patch over by just picking the closest # todo delete this when we have the above fixed
         canonical_conformer_index = [np.argmin(np.linalg.norm(centroids_fractional, axis=1))]
@@ -313,9 +316,7 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
     we want the matrix which rotates from the standard to the native orientation
     native_orientation = rotation_matrix @ standard_orientation
     rotation_matrix = native_orientation @ inv(standard_orientation)
-
     standard_orientation = inv(rotation_matrix) @ native_orientation
-
     '''
     alignment = np.eye(3)
     if not enforce_right_handedness:
@@ -323,23 +324,25 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
 
     rotation_matrix = Ip_axes.T @ np.linalg.inv(alignment.T)
 
-    ''' debugging 
-    # check original transform on the Ip axes
-    print(np.sum(np.abs(np.einsum('ij,nj->ni', rotation_matrix, alignment) - Ip_axes)) < 1e-5)
-    
-    # check the inverse transform
-    centered_conformer = (canonical_conformer_coords - canonical_conformer_coords.mean(0))
-    transformed_canonical_coords = np.einsum('ij,nj->ni', np.linalg.inv(rotation_matrix), centered_conformer)
-    Ip_axes_transformed, _, _ = compute_principal_axes_np(transformed_canonical_coords)
-
-    assert np.sum(np.abs(Ip_axes_transformed - alignment)) < 1e-5
-    '''
-
-    # test if we got it right
     if not enforce_right_handedness:
         assert np.linalg.det(rotation_matrix) > 0  # negative determinant is an improper rotation, which will not work
 
-    mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()
+    unit_vector = np.asarray([
+        rotation_matrix[2, 1] - rotation_matrix[1, 2],
+        rotation_matrix[0, 2] - rotation_matrix[2, 0],
+        rotation_matrix[1, 0] - rotation_matrix[0, 1]])
+    theta = np.arccos((np.trace(rotation_matrix) - 1) / 2)
+    rotvec = unit_vector / np.linalg.norm(unit_vector) * theta
+
+    if rotation_basis == 'cartesian':
+        mol_orientation = rotvec
+        #mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()  # old way using scipy
+    elif rotation_basis == 'spherical':
+        mol_orientation = rotvec2sph(rotvec)
+    else:
+        print(f'{rotation_basis} is not a valid orientation parameterization!')
+        sys.exit()
+
     mol_position = centroids_fractional[canonical_conformer_index[0]]
 
     if return_asym_unit_coords:
@@ -348,6 +351,88 @@ def unit_cell_analysis(unit_cell_coords, sg_ind, asym_unit_dict, T_cf, enforce_r
     else:
         return mol_position, mol_orientation, handedness
 
+    ''' debugging 
+    # check original transform on the Ip axes
+    print(np.sum(np.abs(np.einsum('ij,nj->ni', rotation_matrix, alignment) - Ip_axes)) < 1e-5)
+
+    # check the inverse transform
+    centered_conformer = (canonical_conformer_coords - canonical_conformer_coords.mean(0))
+    transformed_canonical_coords = np.einsum('ij,nj->ni', np.linalg.inv(rotation_matrix), centered_conformer)
+    Ip_axes_transformed, _, _ = compute_principal_axes_np(transformed_canonical_coords)
+
+    assert np.sum(np.abs(Ip_axes_transformed - alignment)) < 1e-5
+    '''
+
+
+def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list, asym_unit_dict, T_fc_list, enforce_right_handedness=False,
+                                              rotation_basis='cartesian', return_asym_unit_coords=False):
+    """
+    Parameters
+    ----------
+    unit_cell_coords: coordinates for the full unit cell. Each list entry [Z, n_atoms, 3]
+    sg_ind: space group index
+    asym_unit_dict: dict which defines the asymmetric unit for each space group
+    T_cf : list of cartesian-to-fractional matrix transforms
+    enforce_right_handedness : DEPRECATED doesn't make sense given nature of our transform
+    rotation_basis : 'cartesian' or 'spherical' whether mol orientation rotvec should be paramterized in cartesian or spherical coordinates
+    Returns : standardized pose parameters and canonical conformer handedness
+    -------
+    """
+
+    T_cf_list = torch.linalg.inv(T_fc_list)
+    num_samples = len(unit_cell_coords_list)
+    canonical_conformer_coords_list = []
+    mol_position_list = []
+    for i, unit_cell_coords in enumerate(unit_cell_coords_list):
+        # identify which of the Z asymmetric units is canonical # todo need a better system for when conformers are exactly or nearly exactly on the edge
+        centroids_cartesian = unit_cell_coords.mean(-2)
+        centroids_fractional = torch.inner(T_cf_list[i], centroids_cartesian).T
+        centroids_fractional -= torch.floor(centroids_fractional)
+        asym_unit = asym_unit_dict[str(int(sg_ind_list[i]))]
+        canonical_conformer_index = find_coord_in_box_torch(centroids_fractional, asym_unit)
+
+        if len(canonical_conformer_index) == 0:  # if we didn't find one, patch over by just picking the closest # todo delete this when we have the above fixed
+            canonical_conformer_index = [torch.argmin(torch.linalg.norm(centroids_fractional, axis=1))]
+
+        canonical_conformer_coords_list.append(unit_cell_coords[canonical_conformer_index[0]])
+        mol_position_list.append(centroids_fractional[canonical_conformer_index[0]])
+
+    mol_position_list = torch.stack(mol_position_list)
+
+    # next we need to compute the inverse of the rotation required to align the molecule with the cartesian axes
+    Ip_axes_list, _, _ = batch_molecule_principal_axes_torch(canonical_conformer_coords_list)
+    handedness_list = compute_Ip_handedness(Ip_axes_list)
+
+    alignment_list = torch.eye(3).tile(num_samples,1,1)
+    if not enforce_right_handedness:
+        alignment_list[:, 0, 0] = handedness_list
+
+    rotvec_list = []
+    for Ip_axes, alignment in zip(Ip_axes_list,alignment_list):
+        rotation_matrix = Ip_axes.T @ torch.linalg.inv(alignment.T)
+        if not enforce_right_handedness:
+            assert torch.linalg.det(rotation_matrix) > 0  # negative determinant is an improper rotation, which will not work
+
+        unit_vector = torch.Tensor([
+            rotation_matrix[2, 1] - rotation_matrix[1, 2],
+            rotation_matrix[0, 2] - rotation_matrix[2, 0],
+            rotation_matrix[1, 0] - rotation_matrix[0, 1]])
+        theta = torch.arccos((torch.trace(rotation_matrix) - 1) / 2)
+        rotvec_list.append(unit_vector / torch.linalg.norm(unit_vector) * theta)
+
+    if rotation_basis == 'cartesian':
+        mol_orientation = torch.stack(rotvec_list)
+        #mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()  # old way using scipy
+    elif rotation_basis == 'spherical':
+        mol_orientation = rotvec2sph(torch.stack(rotvec_list))
+    else:
+        print(f'{rotation_basis} is not a valid orientation parameterization!')
+        sys.exit()
+
+    if return_asym_unit_coords:
+        return mol_position_list, mol_orientation, handedness_list, canonical_conformer_coords_list
+    else:
+        return mol_position_list, mol_orientation, handedness_list
 
 def flip_I3(coords: torch.tensor, Ip: torch.tensor):
     """

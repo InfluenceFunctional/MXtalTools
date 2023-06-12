@@ -1,8 +1,9 @@
 from typing import Optional
 
 import torch
+import torch_cluster
 
-#@torch.jit.script
+# @torch.jit.script  # todo see if we can JIT these again
 def radius(x: torch.Tensor, y: torch.Tensor, r: float,
            batch_x: Optional[torch.Tensor] = None,
            batch_y: Optional[torch.Tensor] = None,
@@ -73,10 +74,11 @@ def radius(x: torch.Tensor, y: torch.Tensor, r: float,
         torch.cumsum(deg, 0, out=ptr_y[1:])
 
     return torch.ops.torch_cluster.radius(x, y, ptr_x, ptr_y, r,
-                                          max_num_neighbors, num_workers)
+                                         max_num_neighbors, num_workers)
 
 
-#@torch.jit.script
+
+# @torch.jit.script
 def asymmetric_radius_graph(x: torch.Tensor, r: float,
                             inside_inds: torch.Tensor, convolve_inds: torch.Tensor,
                             batch: torch.Tensor,
@@ -119,7 +121,7 @@ def asymmetric_radius_graph(x: torch.Tensor, r: float,
         batch = torch.tensor([0, 0, 0, 0])
         edge_index = radius_graph(x, r=1.5, batch=batch, loop=False)
     """
-    if convolve_inds is None: # indexes of items within x to convolve against y
+    if convolve_inds is None:  # indexes of items within x to convolve against y
         convolve_inds = torch.arange(len(x))
 
     assert flow in ['source_to_target', 'target_to_source']
@@ -134,8 +136,8 @@ def asymmetric_radius_graph(x: torch.Tensor, r: float,
 
     target, source = edge_index[0], edge_index[1]
 
-    #edge_index[1] = inside_inds[edge_index[1, :]] # reindex
-    target = inside_inds[target] # contains correct indexes
+    # edge_index[1] = inside_inds[edge_index[1, :]] # reindex
+    target = inside_inds[target]  # contains correct indexes
     source = convolve_inds[source]
 
     if flow == 'source_to_target':
@@ -143,7 +145,7 @@ def asymmetric_radius_graph(x: torch.Tensor, r: float,
     else:
         row, col = target, source
 
-    if not loop: # now properly deletes self-loops
+    if not loop:  # now properly deletes self-loops
         mask = row != col
         row, col = row[mask], col[mask]
 

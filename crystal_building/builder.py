@@ -3,9 +3,10 @@ import torch
 import torch.nn.functional as F
 import torch.nn.utils.rnn as rnn
 from crystal_building.utils import \
-    (update_supercell_data, ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, unit_cell_analysis, set_sym_ops)
+    (update_supercell_data, ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, asymmetric_unit_pose_analysis_np, batch_asymmetric_unit_pose_analysis_torch, set_sym_ops)
 from common.geometry_calculations import coor_trans_matrix
 from constants.asymmetric_units import asym_unit_dict
+import sys
 
 
 def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
@@ -94,7 +95,7 @@ class SupercellBuilder:
         # sort fractional vectors from closest to furthest from central unit cell
         self.sorted_fractional_translations = fractional_translations[torch.argsort(fractional_translations.abs().sum(1))].to(device)
 
-    def build_supercells(self, data, cell_sample: torch.tensor, supercell_size: int=5, graph_convolution_cutoff: float=6, target_handedness=None,
+    def build_supercells(self, data, cell_sample: torch.tensor, supercell_size: int = 5, graph_convolution_cutoff: float = 6, target_handedness=None,
                          skip_cell_cleaning=False, standardized_sample=True, align_molecules=True,
                          rescale_asymmetric_unit=True, pare_to_convolution_cluster=True):
         """
@@ -143,17 +144,16 @@ class SupercellBuilder:
         unit_cell_coords_list = self.build_unit_cell(supercell_data.clone(), canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
 
         # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction
-        # todo rebuild the below function in torch with new parameterization
-        cell_analysis = [unit_cell_analysis(
-            unit_cell_coords_list[ii].cpu().detach().numpy(),
-            supercell_data.sg_ind[ii].cpu().detach().numpy(),
-            self.numpy_asym_unit_dict,
-            np.linalg.inv(supercell_data.T_fc[ii].cpu().detach().numpy()),
-            enforce_right_handedness=False
-        ) for ii in range(len(unit_cell_coords_list))]
+        mol_positions, mol_orientations, mol_handedness = \
+            batch_asymmetric_unit_pose_analysis_torch(
+                unit_cell_coords_list,
+                supercell_data.sg_ind,
+                self.asym_unit_dict,
+                supercell_data.T_fc,
+                enforce_right_handedness=False)
 
-        supercell_data.cell_params[:, 9:12] = torch.tensor([cell_analysis[ii][1] for ii in range(supercell_data.num_graphs)])  # overwrite to canonical parameters
-        supercell_data.asym_unit_handedness = torch.tensor([cell_analysis[ii][2] for ii in range(supercell_data.num_graphs)])
+        supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
+        supercell_data.asym_unit_handedness = mol_handedness
 
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix  # TODO confirm we want to transpose T_fc to get the cell vectors in the correct basis
 
@@ -250,21 +250,48 @@ class SupercellBuilder:
 
         return canonical_fractional_centroids_list
 
-    def rotvec_to_rmat(self, mol_rotation):
+    def rotvec_to_rmat(self, mol_rotation, basis='cartesian'):
         """  # todo replace by axis-angle rotation in spherical units
-        get applied rotation
-        rotvec -> quat -> rotation matrix
+        get applied rotation matrix
+        rotvec -> rotation matrix directly (see https://en.wikipedia.org/wiki/Rodrigues%27_rotation_formula)
+        rotvec -> quat -> rotation matrix (old way)
         """
-        theta = torch.linalg.norm(mol_rotation, dim=1)
-        unit_vector = mol_rotation / theta[:, None]
-        q = torch.cat([torch.cos(theta / 2)[:, None], unit_vector * torch.sin(theta / 2)[:, None]], dim=1)
+        if basis == 'cartesian':
+            theta = torch.linalg.norm(mol_rotation, dim=1)
+            unit_vector = mol_rotation / theta[:, None]
+        elif basis == 'spherical':  # psi, phi, (spherical unit vector) theta (rotaiton vector)
+            unit_vector = sph2rotvec(mol_rotation)
+        else:
+            print(f'{basis} is not a valid orientation parameterization!')
+            sys.exit()
 
-        applied_rotation_list = torch.stack((torch.stack((1 - 2 * q[:, 2] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 1] * q[:, 2] - 2 * q[:, 0] * q[:, 3], 2 * q[:, 1] * q[:, 3] + 2 * q[:, 0] * q[:, 2]), dim=1),
-                                             torch.stack((2 * q[:, 1] * q[:, 2] + 2 * q[:, 0] * q[:, 3], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 2] * q[:, 3] - 2 * q[:, 0] * q[:, 1]), dim=1),
-                                             torch.stack((2 * q[:, 1] * q[:, 3] - 2 * q[:, 0] * q[:, 2], 2 * q[:, 2] * q[:, 3] + 2 * q[:, 0] * q[:, 1], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 2] ** 2), dim=1)),
-                                            dim=1)
+        K = torch.stack((  # matrix representing rotation axis
+            torch.stack((torch.zeros_like(unit_vector[:, 0]), -unit_vector[:, 2], unit_vector[:, 1]), dim=1),
+            torch.stack((unit_vector[:, 2], torch.zeros_like(unit_vector[:, 0]), -unit_vector[:, 0]), dim=1),
+            torch.stack((-unit_vector[:, 1], unit_vector[:, 0], torch.zeros_like(unit_vector[:, 0])), dim=1)
+        ), dim=1)
+
+        applied_rotation_list = torch.eye(3)[None, :, :].tile(len(theta), 1, 1) + torch.sin(theta[:, None, None]) * K + (1 - torch.cos(theta[:, None, None])) * (K @ K)
+
+        # old way via quaternion
+        # q = torch.cat([torch.cos(theta / 2)[:, None], unit_vector * torch.sin(theta / 2)[:, None]], dim=1)
+        #
+        # applied_rotation_list = torch.stack((torch.stack((1 - 2 * q[:, 2] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 1] * q[:, 2] - 2 * q[:, 0] * q[:, 3], 2 * q[:, 1] * q[:, 3] + 2 * q[:, 0] * q[:, 2]), dim=1),
+        #                                      torch.stack((2 * q[:, 1] * q[:, 2] + 2 * q[:, 0] * q[:, 3], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 2] * q[:, 3] - 2 * q[:, 0] * q[:, 1]), dim=1),
+        #                                      torch.stack((2 * q[:, 1] * q[:, 3] - 2 * q[:, 0] * q[:, 2], 2 * q[:, 2] * q[:, 3] + 2 * q[:, 0] * q[:, 1], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 2] ** 2), dim=1)),
+        #                                     dim=1)
 
         return applied_rotation_list
+
+    '''
+    K = torch.stack((
+                torch.stack((torch.zeros_like(unit_vector[:,0]),-unit_vector[:,2], unit_vector[:,1]),dim=1),
+                  torch.stack((unit_vector[:,2], torch.zeros_like(unit_vector[:,0]), -unit_vector[:,0]),dim=1),
+                  torch.stack((-unit_vector[:,1],unit_vector[:,0],torch.zeros_like(unit_vector[:,0])),dim=1)
+                  ),dim=1)
+      
+    R = torch.eye(3)[None,:,:].tile(34,1,1) +torch.sin(theta[:,None,None])*K + (1-torch.cos(theta[:,None,None])) * (K@K)
+    '''
 
     def build_unit_cell(self, supercell_data, final_coords_list, T_fc_list, T_cf_list, sym_ops_list):
         """

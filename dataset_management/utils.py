@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from common.utils import standardize
 from dataset_management.CrystalData import CrystalData
-from crystal_building.utils import unit_cell_analysis
+from crystal_building.utils import asymmetric_unit_pose_analysis_np, batch_asymmetric_unit_pose_analysis_torch
 from constants.asymmetric_units import asym_unit_dict as asymmetric_unit_dict
 import sys
 from torch_geometric.loader import DataLoader
@@ -48,7 +48,7 @@ class BuildDataset:
         self.get_syms(pg_dict, sg_dict, lattice_dict)
 
         '''flag for test dataset construction'''
-        self.build_dataset_for_tests = True
+        self.build_dataset_for_tests = False
         if self.build_dataset_for_tests:
             self.set_testing_values()
 
@@ -66,13 +66,13 @@ class BuildDataset:
         if self.build_dataset_for_tests:
             '''filter down to one of every space group'''
             sg_representatives = {}
-            for i in range(1,231):
+            for i in range(1, 231):
                 print(f'Searching for example of spacegroup {i}')
                 examples = np.where(dataset['crystal spacegroup number'] == i)
                 if len(examples[0]) > 0:
                     sg_representatives[i] = examples[0][0]
 
-            dataset = dataset.loc[sg_representatives.values()] # reduce to minimal examples
+            dataset = dataset.loc[sg_representatives.values()]  # reduce to minimal examples
             if 'level_0' in dataset.columns:  # housekeeping
                 dataset = dataset.drop(columns='level_0')
             dataset = dataset.reset_index()
@@ -119,6 +119,7 @@ class BuildDataset:
         self.feature_richness = 'full'
 
         return None
+
     def set_keys(self):
         # define relevant features for analysis
         if self.feature_richness == 'full':
@@ -249,8 +250,18 @@ class BuildDataset:
             sg_ind = dataset['crystal spacegroup number'][ii]
             T_cf = dataset['crystal cf transform'][ii]
             # overwrite the molecule coords as the asymmetric unit coords, assumes that the symbols are in the same order (appears true)
-            position[ii], rotation[ii], handedness[ii], dataset['atom coords'][ii] = unit_cell_analysis(
+            position[ii], rotation[ii], handedness[ii], dataset['atom coords'][ii] = asymmetric_unit_pose_analysis_np(
                 unit_cell_coords, sg_ind, asymmetric_unit_dict, T_cf, enforce_right_handedness=False, return_asym_unit_coords=True)
+
+        mol_positions, mol_orientations, mol_handedness, canonical_coords_list = \
+            batch_asymmetric_unit_pose_analysis_torch(
+                [torch.Tensor(dataset['crystal reference cell coords'][ii]) for ii in range(len(dataset))],
+                torch.Tensor(dataset['crystal spacegroup number']),
+                asymmetric_unit_dict,
+                torch.Tensor(dataset['crystal fc transform']),
+                enforce_right_handedness=False,
+                return_asym_unit_coords=True)
+
 
         dataset['crystal asymmetric unit centroid x'], \
             dataset['crystal asymmetric unit centroid y'], \
