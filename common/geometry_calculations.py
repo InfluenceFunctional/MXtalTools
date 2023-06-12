@@ -10,7 +10,7 @@ def compute_principal_axes_np(coords):
     """
     compute the principal axes for a given set of particle coordinates, ignoring particle mass
     use our overlap rules to ensure a fixed direction for all axes under almost all circumstances
-    """ # todo harmonize with torch version - currently disagrees ~0.5% of the time
+    """  # todo harmonize with torch version - currently disagrees ~0.5% of the time
     points = coords - coords.mean(0)
 
     x, y, z = points.T
@@ -36,7 +36,7 @@ def compute_principal_axes_np(coords):
     direction = np.divide(direction, np.linalg.norm(direction))
     overlaps = Ip.dot(direction)  # check if the principal components point towards or away from the CoG
     signs = np.sign(overlaps)  # returns zero for zero overlap, but we want it to default to +1 in this case
-    signs[signs==0] = 1
+    signs[signs == 0] = 1
 
     Ip = (Ip.T * signs).T  # if the vectors have negative overlap, flip the direction
     if np.any(np.abs(overlaps) < 1e-3):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
@@ -142,8 +142,8 @@ def batch_molecule_principal_axes_torch(coords_list: list):
     max_ind = torch.stack([torch.argmax(dists[batch == i]) + ptrs[i] for i in range(len(ptrs) - 1)])  # find furthest atom in each mol
     direction = all_coords[max_ind]
     overlaps = torch.einsum('nij,nj->ni', (Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
-    signs = torch.sign(overlaps) # we want any exactly zero overlaps to come with positive signs
-    signs[signs==0] = 1
+    signs = torch.sign(overlaps)  # we want any exactly zero overlaps to come with positive signs
+    signs[signs == 0] = 1
 
     Ip_fin = torch.zeros_like(Ip)
     for ii, Ip_i in enumerate(Ip):
@@ -159,7 +159,7 @@ def batch_molecule_principal_axes_torch(coords_list: list):
     return Ip_fin, Ipm, I
 
 
-def coor_trans_matrix_torch(opt: str, v: torch.tensor, a: torch.tensor, return_vol: bool=False):
+def coor_trans_matrix_torch(opt: str, v: torch.tensor, a: torch.tensor, return_vol: bool = False):
     """
     Initially borrowed from Nikos
     Quickly convert from cell lengths and angles to fractional transform matrices fractional->cartesian or cartesian->fractional
@@ -196,6 +196,7 @@ def coor_trans_matrix_torch(opt: str, v: torch.tensor, a: torch.tensor, return_v
         return m, torch.abs(vol)
     else:
         return m
+
 
 def sph2rotvec(angles):
     """
@@ -241,12 +242,12 @@ def rotvec2sph(rotvec):
         unit_vector = rotvec / r[:, None]
 
         # convert unit vector to angles
-        theta = np.arctan2(np.sqrt(unit_vector[:,0]**2+unit_vector[:,1]**2), unit_vector[:,2])
-        phi = np.arctan2(unit_vector[:,1], unit_vector[:,0])
+        theta = np.arctan2(np.sqrt(unit_vector[:, 0] ** 2 + unit_vector[:, 1] ** 2), unit_vector[:, 2])
+        phi = np.arctan2(unit_vector[:, 1], unit_vector[:, 0])
         if rotvec.ndim == 1:
             return np.concatenate((theta, phi, r), axis=-1)  # polar, azimuthal, applied rotation
         else:
-            return np.concatenate((theta[:,None], phi[:,None], r[:,None]), axis=-1)  # polar, azimuthal, applied rotation
+            return np.concatenate((theta[:, None], phi[:, None], r[:, None]), axis=-1)  # polar, azimuthal, applied rotation
 
 
     elif torch.is_tensor(rotvec):
@@ -258,16 +259,17 @@ def rotvec2sph(rotvec):
         unit_vector = rotvec / r[:, None]
 
         # convert unit vector to angles
-        theta = torch.arctan2(np.sqrt(unit_vector[:,0]**2+unit_vector[:,1]**2), unit_vector[:,2])
-        phi = torch.arctan2(unit_vector[:,1], unit_vector[:,0])
+        theta = torch.arctan2(np.sqrt(unit_vector[:, 0] ** 2 + unit_vector[:, 1] ** 2), unit_vector[:, 2])
+        phi = torch.arctan2(unit_vector[:, 1], unit_vector[:, 0])
         if rotvec.ndim == 1:
             return torch.cat((theta, phi, r), dim=-1)  # polar, azimuthal, applied rotation
         else:
-            return torch.cat((theta[:,None], phi[:,None], r[:,None]), dim=-1)  # polar, azimuthal, applied rotation
+            return torch.cat((theta[:, None], phi[:, None], r[:, None]), dim=-1)  # polar, azimuthal, applied rotation
 
     else:
         print("Array type not supported! Must be np.ndarray or torch.tensor")
         return None
+
 
 def coor_trans_matrix(cell_lengths, cell_angles):
     ''' # todo harmonize behaviour with the torch version - currently return different things
@@ -346,7 +348,7 @@ def compute_Ip_handedness(Ip):
         sys.exit()
 
 
-def initialize_fractional_vectors(supercell_scale: int=2):
+def initialize_fractional_vectors(supercell_scale: int = 2):
     """
     initialize set of fractional cell vectors up to supercell size param: scale
     e.g., -1,0,1, 0,0,2, 0,1,0, 0,1,1, etc.
@@ -365,4 +367,3 @@ def initialize_fractional_vectors(supercell_scale: int=2):
     normed_fractional_translations = sorted_fractional_translations / np.linalg.norm(sorted_fractional_translations, axis=1)[:, None]
 
     return sorted_fractional_translations, normed_fractional_translations
-

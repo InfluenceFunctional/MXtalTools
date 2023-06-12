@@ -240,20 +240,11 @@ class BuildDataset:
 
         '''
         update cell parameterization to new method
-        '''  # todo delete this and re-featurize the full dataset
+        '''  # todo update featurization in dataset construction
         for key in asymmetric_unit_dict:
             asymmetric_unit_dict[key] = torch.Tensor(asymmetric_unit_dict[key])
 
-        position, rotation, handedness = np.zeros((len(dataset), 3)), np.zeros((len(dataset), 3)), np.zeros(len(dataset))
-        for ii in tqdm.tqdm(range(len(dataset))):
-            unit_cell_coords = dataset['crystal reference cell coords'][ii]
-            sg_ind = dataset['crystal spacegroup number'][ii]
-            T_cf = dataset['crystal cf transform'][ii]
-            # overwrite the molecule coords as the asymmetric unit coords, assumes that the symbols are in the same order (appears true)
-            position[ii], rotation[ii], handedness[ii], dataset['atom coords'][ii] = asymmetric_unit_pose_analysis_np(
-                unit_cell_coords, sg_ind, asymmetric_unit_dict, T_cf, enforce_right_handedness=False, return_asym_unit_coords=True)
-
-        mol_positions, mol_orientations, mol_handedness, canonical_coords_list = \
+        position, rotation, handedness, canonical_coords_list = \
             batch_asymmetric_unit_pose_analysis_torch(
                 [torch.Tensor(dataset['crystal reference cell coords'][ii]) for ii in range(len(dataset))],
                 torch.Tensor(dataset['crystal spacegroup number']),
@@ -262,7 +253,7 @@ class BuildDataset:
                 enforce_right_handedness=False,
                 return_asym_unit_coords=True)
 
-
+        dataset['atom coords'] = canonical_coords_list  # for simplicity, make CC the one which we work with
         dataset['crystal asymmetric unit centroid x'], \
             dataset['crystal asymmetric unit centroid y'], \
             dataset['crystal asymmetric unit centroid z'] = position.T
