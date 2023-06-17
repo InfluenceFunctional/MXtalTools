@@ -10,10 +10,10 @@ import plotly.express as px
 from torch_geometric.loader.dataloader import Collater
 
 from common.geometry_calculations import cell_vol_torch
-from common.utils import update_stats_dict, np_softmax, earth_movers_distance_torch, earth_movers_distance_np, compute_rdf_distance
+from common.utils import update_stats_dict, np_softmax, earth_movers_distance_torch, earth_movers_distance_np, compute_rdf_distance, ase_mol_from_crystaldata
 from crystal_building.builder import write_sg_to_all_crystals, update_crystal_symmetry_elements
 from models.crystal_rdf import crystal_rdf
-from models.utils import softmax_and_score, norm_scores, ase_mol_from_crystaldata
+from models.utils import softmax_and_score, norm_scores
 from models.vdw_overlap import vdw_overlap
 from reporting.nov_22_discriminator import process_discriminator_evaluation_data
 
