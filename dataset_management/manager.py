@@ -259,7 +259,7 @@ class Miner():
                 centroids_fractional -= np.floor(centroids_fractional)
                 if torch.is_tensor(asym_unit):
                     asym_unit = asym_unit.cpu().detach().numpy()
-                canonical_conformer_index = find_coord_in_box(centroids_fractional, asym_unit)
+                canonical_conformer_index = find_coord_in_box_np(centroids_fractional, asym_unit)
                 if len(canonical_conformer_index) != 1:
                     bad_inds.append(ii)
         print('Non uniform asymmetric unit caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))

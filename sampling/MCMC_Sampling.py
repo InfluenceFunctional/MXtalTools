@@ -8,7 +8,7 @@ from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 from crystal_building.utils import \
     (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
-     unit_cell_analysis)
+     asymmetric_unit_pose_analysis_np)
 from common.geometry_calculations import batch_molecule_principal_axes_torch, compute_Ip_handedness
 from crystal_building.builder import write_sg_to_all_crystals
 
@@ -362,11 +362,11 @@ class mcmcSampler:
         correct_rotation = np.zeros((proposed_supercells.num_graphs, 3))
         for jj in range(proposed_supercells.num_graphs):  # all assuming fully right handed
             correct_position[jj], correct_rotation[jj], handedness \
-                = unit_cell_analysis(proposed_supercells.ref_cell_pos[jj],
-                                     proposed_supercells.sg_ind[jj],
-                                     constants.asymmetric_units.asym_unit_dict,
-                                     torch.linalg.inv(proposed_supercells.T_fc[jj]),
-                                     enforce_right_handedness = False) # todo replace this with the raw cell params
+                = asymmetric_unit_pose_analysis_np(proposed_supercells.ref_cell_pos[jj],
+                                                   proposed_supercells.sg_ind[jj],
+                                                   constants.asymmetric_units.asym_unit_dict,
+                                                   torch.linalg.inv(proposed_supercells.T_fc[jj]),
+                                                   enforce_right_handedness = False) # todo replace this with the raw cell params
         # renormalize
         nonstandardized_state = proposed_supercells.cell_params.cpu().detach().numpy()
         nonstandardized_state[:, -3:] = correct_rotation

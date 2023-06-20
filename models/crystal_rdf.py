@@ -72,7 +72,7 @@ def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=
             canonical_conformer_coords = crystal_data.pos[crystal_data.ptr[i]:crystal_data.ptr[i] + int(crystal_data.mol_size[i])]
             centroid = canonical_conformer_coords.mean(0)
             mol_dists = torch.linalg.norm(canonical_conformer_coords - centroid[None, :], dim=-1)
-            # TODO if any dists are within 32 bit uncertainty, we have to break the symmetry somehow
+            # todo if any dists are within 32 bit uncertainty, we have to break the symmetry somehow - can lead to errors in RDF comparisons
             inds = torch.argsort(mol_dists)
             all_atom_inds.append(inds.tile(int((crystal_data.batch == i).sum() // crystal_data.mol_size[i])))
             # abs_atom_inds.append(all_atom_inds[-1] + crystal_data.ptr[i])

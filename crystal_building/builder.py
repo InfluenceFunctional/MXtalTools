@@ -1,9 +1,8 @@
 import numpy as np
 import torch
-import torch.nn.functional as F
-import torch.nn.utils.rnn as rnn
 from crystal_building.utils import \
-    (update_supercell_data, ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes, unit_cell_analysis, set_sym_ops)
+    (update_supercell_data, ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes,
+     batch_asymmetric_unit_pose_analysis_torch, set_sym_ops, rotvec2rotmat, build_unit_cell, scale_asymmetric_unit)
 from common.geometry_calculations import coor_trans_matrix
 from constants.asymmetric_units import asym_unit_dict
 
@@ -67,7 +66,7 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
 
 
 class SupercellBuilder:
-    def __init__(self, symmetries_dict, dataDims, supercell_scale=5, device='cuda'):
+    def __init__(self, symmetries_dict, dataDims, supercell_size=5, device='cuda'):
         """
         class for converting single molecules -> unit cells -> supercells/clusters
         """  # todo write tests to confirm correct reconstruction from cell params
@@ -82,21 +81,21 @@ class SupercellBuilder:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 
         # initialize fractional translations for supercell construction
-        n_cells = (2 * supercell_scale + 1) ** 3
+        n_cells = (2 * supercell_size + 1) ** 3
         fractional_translations = torch.zeros((n_cells, 3))  # initialize the translations in fractional coords
         i = 0
-        for xx in range(-supercell_scale, supercell_scale + 1):
-            for yy in range(-supercell_scale, supercell_scale + 1):
-                for zz in range(-supercell_scale, supercell_scale + 1):
+        for xx in range(-supercell_size, supercell_size + 1):
+            for yy in range(-supercell_size, supercell_size + 1):
+                for zz in range(-supercell_size, supercell_size + 1):
                     fractional_translations[i] = torch.tensor((xx, yy, zz))
                     i += 1
 
         # sort fractional vectors from closest to furthest from central unit cell
         self.sorted_fractional_translations = fractional_translations[torch.argsort(fractional_translations.abs().sum(1))].to(device)
 
-    def build_supercells(self, data, cell_sample: torch.tensor, supercell_size, graph_convolution_cutoff, target_handedness=None,
+    def build_supercells(self, data, cell_sample: torch.tensor, supercell_size: int = 5, graph_convolution_cutoff: float = 6, target_handedness=None,
                          skip_cell_cleaning=False, standardized_sample=True, align_molecules=True,
-                         rescale_asymmetric_unit=True):
+                         rescale_asymmetric_unit=True, pare_to_convolution_cluster=True):
         """
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to "supercell" (in fact, it's truncated to an appropriate cluster size)
@@ -129,7 +128,7 @@ class SupercellBuilder:
             coords_list.append(supercell_data.pos[supercell_data.batch == i])
 
         # convert rotvecs to rotation matrices
-        rotations_list = self.rotvec_to_rmat(mol_rotation)
+        rotations_list = rotvec2rotmat(mol_rotation)
 
         # center, apply rotation, apply translation (to canonical conformer)
         canonical_conformer_coords_list = []
@@ -140,38 +139,40 @@ class SupercellBuilder:
             )
 
         # apply symmetry ops to build unit cell
-        unit_cell_coords_list = self.build_unit_cell(supercell_data.clone(), canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
+        unit_cell_coords_list = build_unit_cell(supercell_data.Z, canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
 
         # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction
-        # todo rebuild the below function in torch with new parameterization
-        cell_analysis = [unit_cell_analysis(
-            unit_cell_coords_list[ii].cpu().detach().numpy(),
-            supercell_data.sg_ind[ii].cpu().detach().numpy(),
-            self.numpy_asym_unit_dict,
-            np.linalg.inv(supercell_data.T_fc[ii].cpu().detach().numpy()),
-            enforce_right_handedness=False
-        ) for ii in range(len(unit_cell_coords_list))]
+        mol_positions, mol_orientations, mol_handedness = \
+            batch_asymmetric_unit_pose_analysis_torch(
+                unit_cell_coords_list,
+                supercell_data.sg_ind,
+                self.asym_unit_dict,
+                supercell_data.T_fc,
+                enforce_right_handedness=False)
 
-        supercell_data.cell_params[:, 9:12] = torch.tensor([cell_analysis[ii][1] for ii in range(supercell_data.num_graphs)])  # overwrite to canonical parameters
-        supercell_data.asym_unit_handedness = torch.tensor([cell_analysis[ii][2] for ii in range(supercell_data.num_graphs)])
+        supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
+        supercell_data.asym_unit_handedness = mol_handedness
 
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix  # TODO confirm we want to transpose T_fc to get the cell vectors in the correct basis
 
         # get minimal supercell cluster for convolving about a given canonical conformer
-        supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = ref_to_supercell(
-            unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.Z,
-            supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
-            sorted_fractional_translations=self.sorted_fractional_translations)
+        supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
+            ref_to_supercell(
+                unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.Z,
+                supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
+                sorted_fractional_translations=self.sorted_fractional_translations,
+                pare_to_convolution_cluster=pare_to_convolution_cluster)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, unit_cell_coords_list)
 
         return supercell_data, generated_cell_volumes, None
 
-    def unit_cell_to_supercell(self, supercell_data, config):
+    def unit_cell_to_supercell(self, supercell_data, supercell_size=5, graph_convolution_cutoff=6, pare_to_convolution_cluster=True):
         """
         build a supercell cluster using a pre-built unit cell
         will not check for physicality or apply any symmetry options - merely pattern the unit cell
         and keep molecules within convolution radius of the canonical conformer
+        automatically pare NxNxN supercell to minimal set of molecules in the convolution radius of the canonical conformer
         """
         supercell_data = supercell_data.clone().to(self.device)
 
@@ -185,14 +186,15 @@ class SupercellBuilder:
 
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # todo as above, confirm this transposal
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list, T_fc_list,
-                             atoms_list, supercell_data.Z, supercell_scale=config.supercell_size,
-                             cutoff=config.discriminator.graph_convolution_cutoff,
-                             sorted_fractional_translations=self.sorted_fractional_translations)
+            ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list,
+                             T_fc_list, atoms_list, supercell_data.Z,
+                             supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
+                             sorted_fractional_translations=self.sorted_fractional_translations,
+                             pare_to_convolution_cluster=pare_to_convolution_cluster)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, supercell_data.ref_cell_pos)
 
-        return supercell_data.to(config.device)
+        return supercell_data.to(self.device)
 
     def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True, rescale_asymmetric_unit=True):
         if skip_cell_cleaning:  # don't clean up
@@ -210,127 +212,19 @@ class SupercellBuilder:
                 enforce_crystal_system=True, return_transforms=True, standardized_sample=standardized_sample)
 
         if rescale_asymmetric_unit:  # todo assert only our prepared sgs will be allowed
-            mol_position = self.scale_asymmetric_unit(mol_position, supercell_data.sg_ind)
+            mol_position = scale_asymmetric_unit(self.asym_unit_dict, mol_position, supercell_data.sg_ind)
 
         return cell_lengths, cell_angles, mol_position, mol_rotation
 
-    def get_canonical_conformer(self, supercell_data, mol_position, sym_ops_list, debug=False):
-        """
-        identify canonical conformer
-        """
-        # do it in batches of same z-values to allow some parallelization
-        unique_z_values = torch.unique(supercell_data.Z)
-        z_inds = [torch.where(supercell_data.Z == z)[0] for z in unique_z_values]
-
-        # initialize final list
-        canonical_fractional_centroids_list = torch.zeros((len(mol_position), 3)).to(mol_position.device)
-        # split it into z values and do each in parallel for speed
-        for i, (inds, z_value) in enumerate(zip(z_inds, unique_z_values)):
-            centroids_i = torch.zeros((z_value, len(inds), 3)).to(mol_position.device)  # initialize
-            for zv in range(z_value):
-                centroids_i[zv, :, :] = \
-                    torch.einsum('nhb,nb->nh', (torch.stack([sym_ops_list[j] for j in inds])[:, zv],  # was an index error here
-                                                torch.cat((mol_position[inds],
-                                                           torch.ones(mol_position[inds].shape[:-1] + (1,)).to(mol_position.device)), dim=-1)
-                                                )
-                                 )[:, :-1]
-            centroids = centroids_i - torch.floor(centroids_i)
-
-            canonical_fractional_centroids_list[inds] = centroids[torch.argmin(torch.linalg.norm(centroids, dim=2), dim=0), torch.arange(len(inds))]
-
-            if debug:  # todo rewrite these debug statements as tests
-                assert F.l1_loss(canonical_fractional_centroids_list[inds], mol_position[inds], reduction='mean') < 0.001
-
-        if debug:
-            assert F.l1_loss(canonical_fractional_centroids_list, mol_position, reduction='mean') < 0.001
-
-        return canonical_fractional_centroids_list
-
-    def rotvec_to_rmat(self, mol_rotation):
-        """  # todo replace by axis-angle rotation in spherical units
-        get applied rotation
-        rotvec -> quat -> rotation matrix
-        """
-        theta = torch.linalg.norm(mol_rotation, dim=1)
-        unit_vector = mol_rotation / theta[:, None]
-        q = torch.cat([torch.cos(theta / 2)[:, None], unit_vector * torch.sin(theta / 2)[:, None]], dim=1)
-
-        applied_rotation_list = torch.stack((torch.stack((1 - 2 * q[:, 2] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 1] * q[:, 2] - 2 * q[:, 0] * q[:, 3], 2 * q[:, 1] * q[:, 3] + 2 * q[:, 0] * q[:, 2]), dim=1),
-                                             torch.stack((2 * q[:, 1] * q[:, 2] + 2 * q[:, 0] * q[:, 3], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 2] * q[:, 3] - 2 * q[:, 0] * q[:, 1]), dim=1),
-                                             torch.stack((2 * q[:, 1] * q[:, 3] - 2 * q[:, 0] * q[:, 2], 2 * q[:, 2] * q[:, 3] + 2 * q[:, 0] * q[:, 1], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 2] ** 2), dim=1)),
-                                            dim=1)
-
-        return applied_rotation_list
-
-    def build_unit_cell(self, supercell_data, final_coords_list, T_fc_list, T_cf_list, sym_ops_list):
-        """
-        use cell symmetry to pattern canonical conformer into full unit cell
-        batch crystals with same Z value together for added speed in large batches
-        """
-        reference_cell_list_i = []
-
-        unique_z_values = torch.unique(supercell_data.Z)
-        z_inds = [torch.where(supercell_data.Z == z)[0] for z in unique_z_values]
-
-        for i, (inds, z_value) in enumerate(zip(z_inds, unique_z_values)):
-            # padding allows for parallel transforms below
-            lens = torch.tensor([len(final_coords_list[ii]) for ii in inds])
-            padded_coords_c = rnn.pad_sequence(final_coords_list, batch_first=True)[inds]
-            centroids_c = torch.stack([final_coords_list[inds[ii]].mean(0) for ii in range(len(inds))])
-            centroids_f = torch.einsum('nij,nj->ni', (T_cf_list[inds], centroids_c))
-
-            # initialize empty
-            ref_cells = torch.zeros((z_value, len(inds), padded_coords_c.shape[1], 3)).to(final_coords_list[0].device)
-            # get symmetry ops for this batch
-            z_sym_ops = torch.stack([sym_ops_list[j] for j in inds])
-            # add 4th dimension as a dummy for affine transforms
-            affine_centroids_f = torch.cat((centroids_f, torch.ones(centroids_f.shape[:-1] + (1,)).to(padded_coords_c.device)), dim=-1)
-
-            for zv in range(z_value):
-                # get molecule centroids via symmetry ops
-                centroids_f_z = torch.einsum('nij,nj->ni', (z_sym_ops[:, zv], affine_centroids_f))[..., :-1]
-
-                # force centroids within unit cell
-                centroids_f_z_in_cell = centroids_f_z - torch.floor(centroids_f_z)
-
-                # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame  # todo reconfirm this is the right way to do this
-                rot_coords_f = torch.einsum('nmj,nij->nmi',
-                                            (torch.einsum('mij,mnj->mni',
-                                                          (T_cf_list[inds],
-                                                           padded_coords_c - centroids_c[:, None, :])),
-                                             z_sym_ops[:, zv, :3, :3]))
-                # add final centroid
-                ref_cells[zv, :, :, :] = torch.einsum('mij,mnj->mni',
-                                                      (T_fc_list[inds],
-                                                       rot_coords_f + centroids_f_z_in_cell[:, None, :]))
-
-            reference_cell_list_i.extend([ref_cells[:, jj, :lens[jj], :] for jj in range(len(inds))])
-
-        sorted_z_inds = torch.argsort(torch.cat(z_inds))
-
-        reference_cell_list = [reference_cell_list_i[ind] for ind in sorted_z_inds]
-
-        return reference_cell_list
-
-    def scale_asymmetric_unit(self, mol_position, sg_ind):
-        """
-        input fractional coordinates are scaled on 0-1
-        rescale these for the specific ranges according to each space group
-        only space groups in asym_unit_dict will work - not all have been manually encoded
-        this approach will not work for asymmetric units which are not parallelpipeds
-        Parameters
-        ----------
-        mol_position
-        sg_ind
-
-        Returns
-        -------
-        """  # todo vectorize
-        scaled_mol_position = mol_position.clone()
-        for i, ind in enumerate(sg_ind):
-            scaled_mol_position[i, :] = mol_position[i, :] * self.asym_unit_dict[str(int(ind))]
-
-        return scaled_mol_position
+    '''
+    K = torch.stack((
+                torch.stack((torch.zeros_like(unit_vector[:,0]),-unit_vector[:,2], unit_vector[:,1]),dim=1),
+                  torch.stack((unit_vector[:,2], torch.zeros_like(unit_vector[:,0]), -unit_vector[:,0]),dim=1),
+                  torch.stack((-unit_vector[:,1],unit_vector[:,0],torch.zeros_like(unit_vector[:,0])),dim=1)
+                  ),dim=1)
+      
+    R = torch.eye(3)[None,:,:].tile(34,1,1) +torch.sin(theta[:,None,None])*K + (1-torch.cos(theta[:,None,None])) * (K@K)
+    '''
 
     def move_cell_data_to_device(self, supercell_data, cell_sample, target_handedness):
         supercell_data = supercell_data.to(self.device)

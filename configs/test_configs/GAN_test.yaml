@@ -1,11 +1,11 @@
 test_mode: True
 machine: "local"  # or "cluster"
-device: "cuda"
+device: "cpu"
 explicit_run_enumeration: False
 skip_saving_and_loading: True
 run_num: 0
-anomaly_detection: False
-mode: regression  # 'gan' or 'regression' or 'figures' or 'sampling' WIP
+anomaly_detection: True
+mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 # for GAN training
@@ -14,7 +14,7 @@ train_generator_vdw: True
 train_generator_adversarially: True
 vdw_loss_rescaling: null
 train_generator_h_bond: True # (non-directional)
-generator_similarity_penalty: 0
+generator_similarity_penalty: 1
 
 train_discriminator_adversarially: True
 train_discriminator_on_randn: True
@@ -22,17 +22,15 @@ train_discriminator_on_distorted: True
 sample_distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
 extra_test_period: 100
-extra_test_evaluation: True
-extra_test_set_paths: null #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
-                       #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_6_dataset',
-                       #'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_targets']
-discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10191'
-generator_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\best_generator_1599'
-regressor_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_10213'
+extra_test_evaluation: False
+extra_test_set_paths: null
+discriminator_path: null
+generator_path: null
+regressor_path: null
 
-discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions
-generator_positional_noise: 0  # scaling for the randn noise added to all atom positions
-regressor_positional_noise: 0  # scaling for the randn noise added to all atom positions
+discriminator_positional_noise: 0.1  # scaling for the randn noise added to all atom positions
+generator_positional_noise: 0.1  # scaling for the randn noise added to all atom positions
+regressor_positional_noise: 0.1  # scaling for the randn noise added to all atom positions
 
 seeds:
   model: 0
@@ -40,23 +38,20 @@ seeds:
 
 # opt - sweep details
 wandb:
-  username: mkilgour
-  project_name: MCryGAN
   mini_csp_frequency: 10
   sample_reporting_frequency: 5
-  experiment_tag: dev
+  experiment_tag: GAN_test
   log_figures: True
 
 sample_steps: 10 # now for mini csp
-sample_move_size: 0.001 # currently unused
 
 # batching & convergence
 grow_batch_size: True
 min_batch_size: 10
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 10000 # 0 epochs takes us straight to evaluation (only implemented for GAN)
-history: 5000
+max_epochs: 2 # 0 epochs takes us straight to evaluation (only implemented for GAN)
+history: 1
 gradient_norm_clip: 1
 
 # dataset curation
@@ -67,7 +62,7 @@ max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
 max_num_atoms: 100
 min_num_atoms: 5 # target XVI has only 9 heavy atoms
-max_molecule_radius: 5 # angstroms
+max_molecule_radius: 100 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -84,7 +79,6 @@ exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
 include_sgs: null  # ["P-1","P21/c","P212121","C2/c"]  # null for all
-include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
 generate_sgs: ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities
 supercell_size: 5 # new method - should be very large, automatically pares down
 
@@ -105,9 +99,9 @@ discriminator_optimizer:
 
 discriminator:
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
-  graph_convolution_layers: 4
-  graph_filters: 128
-  atom_embedding_size: 256
+  graph_convolution_layers: 2
+  graph_filters: 32
+  atom_embedding_size: 32
   graph_norm: 'graph layer' # layer, graph, batch, graph layer
   num_spherical: 5
   num_radial: 32
@@ -120,8 +114,8 @@ discriminator:
   add_torsional_basis: False #
   pooling: combo
 
-  num_fc_layers: 4
-  fc_depth: 256
+  num_fc_layers: 2
+  fc_depth: 32
   activation: gelu
   fc_dropout_probability: 0
   fc_norm_mode: layer # batch, layer
@@ -142,8 +136,8 @@ generator_optimizer:
 
 generator:
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
-  num_fc_layers: 4
-  fc_depth: 256
+  num_fc_layers: 2
+  fc_depth: 32
   activation: 'gelu'
   fc_dropout_probability: 0
   fc_norm_mode: layer
@@ -155,10 +149,10 @@ generator:
     skinny_atomwise_features: False  # cut atom features down to bare minimum for conditioner input
     concat_mol_features: True  # exclusive with skinny features
     init_atom_embedding_dim: 5
-    graph_convolution_layers: 4
-    graph_filters: 64
-    atom_embedding_size: 512
-    output_dim: 512
+    graph_convolution_layers: 1
+    graph_filters: 32
+    atom_embedding_size: 32
+    output_dim: 32
     graph_norm: 'graph layer'
     num_spherical: 6
     num_radial: 32
@@ -170,14 +164,13 @@ generator:
     add_spherical_basis: False # mikenet only
     add_torsional_basis: False
     pooling: max # combo, geometric max mean sum attention
-    positional_embedding: 'sph3' # 'sph' or 'pos' or 'combo', for 'geometric' pooling
+    positional_embedding: 'sph3' # 'sph' or 'pos' or 'combo', for 'geometric' pooling  # todo deprecate
 
     num_fc_layers: 0
-    fc_depth: 128
+    fc_depth: 32
     activation: 'gelu'
     fc_dropout_probability: 0
     fc_norm_mode: layer
-
 
 regressor_optimizer:
   optimizer: adamw
@@ -193,9 +186,9 @@ regressor_optimizer:
   lr_shrink_lambda: 0.975
 
 regressor:
-  graph_convolution_layers: 4
-  graph_filters: 128
-  atom_embedding_size: 256
+  graph_convolution_layers: 2
+  graph_filters: 32
+  atom_embedding_size: 32
   graph_norm: 'graph layer'
   num_spherical: 6
   num_radial: 32
@@ -209,8 +202,8 @@ regressor:
   pooling: combo # combo, geometric max mean sum attention
   positional_embedding: 'sph3' # 'sph' or 'pos' or 'combo', for 'geometric' pooling
 
-  num_fc_layers: 4
-  fc_depth: 256
+  num_fc_layers: 2
+  fc_depth: 32
   activation: 'gelu'
   fc_dropout_probability: 0
   fc_norm_mode: layer

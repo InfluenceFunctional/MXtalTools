@@ -73,7 +73,7 @@ def add_args(parser):
 
     # dataset composition
     parser.add_argument('--include_sgs', type=list, default=None)  # ['P21/c'] spacegroups to explicitly include in modelling - new!
-    parser.add_argument('--include_pgs', type=str, default=None)  # ['222', '-1'] point groups to pull from dataset
+    parser.add_argument('--include_pgs', type=str, default=None)  # ['222', '-1'] point groups to pull from dataset  # todo deprecate
     parser.add_argument('--generate_sgs', type=list, default=None)  # ['222', '-1'] space groups to generate
     parser.add_argument('--supercell_size', type=int, default=1)  # point groups to generate
     parser.add_argument('--max_crystal_temperature', type=float, default=int(1e3))
@@ -122,26 +122,20 @@ def add_args(parser):
     parser.add_argument('--min_batch_size', type=int, default=50)
     parser.add_argument('--max_batch_size', type=int, default=10000)
     parser.add_argument('--batch_growth_increment', type=int, default=0.05)
-    add_bool_arg(parser, 'auto_batch_sizing', default=True)  # whether to densely connect dimenet outputs
     add_bool_arg(parser, 'grow_batch_size', default=True)  # whether to densely connect dimenet outputs
-    parser.add_argument('--auto_batch_reduction', type=float, default=0.2)  # leeway factor to reduce batch size at end of auto-sizing run
     parser.add_argument('--gradient_norm_clip', type=float, default=1)
     add_bool_arg(parser, 'anomaly_detection', default=False)
-    add_bool_arg(parser, 'accumulate_gradients', default=False)  # whether to densely connect dimenet outputs
-    parser.add_argument('--accumulate_batch_size', type=int, default=100)
+
 
     update_args2config(args2config, 'max_epochs')
     update_args2config(args2config, 'history')
     update_args2config(args2config, 'min_batch_size')
     update_args2config(args2config, 'max_batch_size')
     update_args2config(args2config, 'batch_growth_increment')
-    update_args2config(args2config, 'auto_batch_sizing')
     update_args2config(args2config, 'grow_batch_size')
-    update_args2config(args2config, 'auto_batch_reduction')
     update_args2config(args2config, 'gradient_norm_clip')
     update_args2config(args2config, 'anomaly_detection')
-    update_args2config(args2config, 'accumulate_gradients')
-    update_args2config(args2config, 'accumulate_batch_size')
+
 
     # optimizer settings
     parser.add_argument('--discriminator_optimizer_optimizer', type=str, default='adamw')  # adam, adamw, sgd
@@ -383,7 +377,6 @@ def add_args(parser):
     # cell generator
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_vdw', default=False)  #
-    add_bool_arg(parser, 'dynamically_adjust_prior', default=False)  #
     parser.add_argument('--packing_target_noise', type=float, default=0)  # noise added to density target in standardized basis
     parser.add_argument('--vdw_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
     add_bool_arg(parser, 'train_generator_h_bond', default=False)  # train generator on adversarially
@@ -396,9 +389,7 @@ def add_args(parser):
     add_bool_arg(parser, 'sample_after_training', default=False)  # run sampler after model converges
     parser.add_argument('--sample_ind', type=int, default=0)  # which sample from test dataset to sample
     parser.add_argument('--sample_steps', type=int, default=1000)  #
-    parser.add_argument('--sample_move_size', type=float, default=0.05)  #
 
-    update_args2config(args2config, 'dynamically_adjust_prior')
     update_args2config(args2config, 'packing_target_noise')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_vdw')
@@ -413,7 +404,6 @@ def add_args(parser):
     update_args2config(args2config, 'sample_after_training')
     update_args2config(args2config, 'sample_ind')
     update_args2config(args2config, 'sample_steps')
-    update_args2config(args2config, 'sample_move_size')
 
     return parser, args2config
 
