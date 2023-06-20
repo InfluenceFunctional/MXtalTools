@@ -14,14 +14,16 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy e
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-
 # ====================================
-if __name__ == '__main__':
-    '''
-    parse arguments from config and command line and generate config namespace
-    '''
+'''
+parse arguments from config and command line and generate config namespace
+'''
+
+
+def GAN():
     import os
-    os.chdir('../')
+    #print(os.getcwd())
+    #os.chdir('../')
     parser = argparse.ArgumentParser()
     _, override_args = parser.parse_known_args()
     parser, args2config = add_args(parser)
@@ -40,3 +42,4 @@ if __name__ == '__main__':
     '''
     predictor = Modeller(config)
     predictor.train_crystal_models()
+

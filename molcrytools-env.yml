@@ -3,19 +3,20 @@ channels:
   - conda-forge
   - pytorch
   - defaults
+  - nvidia
   - pyg
 dependencies:
   - python>=3.9
   - pyg
-  - torch
-  - torchvision
-  - torchaudio
+  - pytorch
   - pytorch-cuda=11.8  # update with your CUDA version
-  - plotly
-  - wandb
-  - ase
-  - pytest
-  - pip:
-    - torch_scatter
-    - torch_cluster
-    - e3nn
+#  - plotly
+#  - wandb
+#  - ase
+#  - pytest
+#  - pip:
+#    - torch_scatter
+#    - torch_cluster
+#    - e3nn
+
+# also need numpy scipy numba pyxtal pandas

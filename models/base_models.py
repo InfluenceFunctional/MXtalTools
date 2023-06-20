@@ -169,7 +169,6 @@ class molecule_graph_model(nn.Module):
 
         output = self.output_fc(x)
 
-
         if return_dists:
             extra_outputs['dists dict'] = dists_dict
         if return_latent:

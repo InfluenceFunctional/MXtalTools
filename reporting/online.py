@@ -125,10 +125,8 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
     if epoch_stats_dict['generator packing prediction'] is not None and \
             epoch_stats_dict['generator packing target'] is not None:
 
-        x = np.concatenate(
-            epoch_stats_dict['generator packing target'])  # generator_losses['generator per mol vdw loss']
-        y = np.concatenate(
-            epoch_stats_dict['generator packing prediction'])  # generator_losses['generator packing loss']
+        x = epoch_stats_dict['generator packing target']  # generator_losses['generator per mol vdw loss']
+        y = epoch_stats_dict['generator packing prediction']  # generator_losses['generator packing loss']
 
         xy = np.vstack([x, y])
         try:
@@ -157,146 +155,6 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
             wandb.log({'Cell Packing': fig})
         if (config.machine == 'local') and False:
             fig.show()
-
-
-def report_conditioner_training(config, wandb, epoch_stats_dict):
-    reconstruction_losses = np.concatenate(epoch_stats_dict['reconstruction loss']).flatten()
-    pack_true = np.concatenate(epoch_stats_dict['conditioner packing target']).flatten() * config.dataDims[
-        'target std'] + config.dataDims['target mean']
-    pack_pred = np.concatenate(epoch_stats_dict['conditioner packing prediction']).flatten() * config.dataDims[
-        'target std'] + config.dataDims['target mean']
-    packing_mae = np.abs(pack_true - pack_pred) / pack_true
-
-    wandb.log({
-        'reconstruction loss': reconstruction_losses.mean(),
-        'packing MAE': packing_mae.mean(),
-    })
-    layout = plotly_setup(config)
-    x = packing_mae
-    y = reconstruction_losses
-    xy = np.vstack([x, y])
-    #
-    # try:
-    #     z = gaussian_kde(xy)(xy)
-    # except:
-    #     z = np.ones_like(x)
-    #
-    # fig = go.Figure()
-    # fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-    #                            mode='markers', marker=dict(color=z), opacity=0.5))
-    # fig.layout.margin = layout.margin
-    # fig.update_layout(xaxis_title='Packing Loss', yaxis_title='Reconstruction Loss')
-    #
-    # # fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
-    # if self.config.wandb.log_figures:
-    #     wandb.log({'Conditioner Loss Balance': fig})
-    # if (self.config.machine == 'local') and False:
-    #     fig.show()
-
-    fig = make_subplots(
-        rows=1, cols=2,
-        specs=[[{'type': 'scene'}, {'type': 'scene'}]])
-
-    for img_i in range(2):
-        sample_guess = epoch_stats_dict['prediction_sample'][0, img_i].argmax(0)
-        sample_density = np_softmax(epoch_stats_dict['prediction_sample'][0, img_i][None, ...])[0, 1:].sum(0)
-        sample_true = epoch_stats_dict['target_sample'][0, img_i]
-
-        X, Y, Z = (sample_guess + 1).nonzero()
-        fig.add_trace(go.Volume(
-            x=X.flatten(),
-            y=Y.flatten(),
-            z=Z.flatten(),
-            value=sample_density.flatten(),
-            isomin=0.00001,
-            isomax=1,
-            opacity=0.05,  # needs to be small to see through all surfaces
-            surface_count=50,  # needs to be a large number for good volume rendering
-            colorscale='Jet',
-            cmin=0,
-            showlegend=True,
-            # caps=dict(x_show=False, y_show=False, z_show=False),
-        ), row=1, col=img_i + 1)
-
-        x, y, z = sample_true.nonzero()
-        fig.add_trace(go.Scatter3d(
-            x=x, y=y, z=z,
-            mode='markers',
-            showlegend=True,
-            marker=dict(
-                size=10,
-                color=sample_true[x, y, z],
-                colorscale='Jet',
-                cmin=0, cmax=6,
-                opacity=0.5
-            )), row=1, col=img_i + 1)
-        fig.update_layout(showlegend=True)
-
-    if config.wandb.log_figures:
-        wandb.log({'Conditioner Reconstruction Samples': fig})
-    if (config.machine == 'local') and False:
-        fig.show()
-
-    class_names = ['empty'] + [str(key) for key in config.conditioner_classes.keys()]
-    fig = go.Figure()
-    fig.add_trace(go.Bar(name='True', x=class_names, y=epoch_stats_dict['conditioner particle true'].mean(0)))
-    fig.add_trace(
-        go.Bar(name='Predictions', x=class_names, y=epoch_stats_dict['conditioner particle prediction'].mean(0)))
-    fig.update_layout(barmode='group')
-    fig.update_yaxes(type='log')
-    fig.layout.margin = layout.margin
-
-    if config.wandb.log_figures:
-        wandb.log({'Conditioner Classwise Density': fig})
-    if (config.machine == 'local') and False:
-        fig.show()
-
-    x = pack_true  # generator_losses['generator per mol vdw loss']
-    y = pack_pred  # generator_losses['generator packing loss']
-
-    xy = np.vstack([x, y])
-    try:
-        z = gaussian_kde(xy)(xy)
-    except:
-        z = np.ones_like(x)
-
-    xline = np.asarray([np.amin(x), np.amax(x)])
-    linreg_result = linregress(x, y)
-    yline = xline * linreg_result.slope + linreg_result.intercept
-
-    fig = go.Figure()
-    fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                               mode='markers', marker=dict(color=z), opacity=1))
-
-    fig.add_trace(
-        go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}, m={linreg_result.slope:.3f}'))
-
-    fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)', showlegend=False))
-
-    fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='packing target', yaxis_title='packing prediction')
-
-    # fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
-    if config.wandb.log_figures:
-        wandb.log({'Cell Packing': fig})
-    if (config.machine == 'local') and False:
-        fig.show()
-
-    '''
-    classwise bce loss
-    '''
-    classwise_losses = np.mean(epoch_stats_dict['conditioner classwise bce'], axis=0)
-    class_names = ['empty'] + [str(key) for key in config.conditioner_classes.keys()]
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=class_names, y=classwise_losses))
-    fig.layout.margin = layout.margin
-
-    if config.wandb.log_figures:
-        wandb.log({'Conditioner Classwise Losses': fig})
-    if (config.machine == 'local') and False:
-        fig.show()
-
-    return None
 
 
 def process_discriminator_outputs(config, epoch_stats_dict):

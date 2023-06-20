@@ -510,7 +510,7 @@ class BuildDataset:
         compute full covariance matrix, in normalized basis
         '''
         # normalize the cell lengths against molecule volume & z value
-        normed_cell_lengths = feature_array[:, :3] / (dataset['crystal z value'][:, None] ** (1 / 3)) / (dataset['molecule volume'][:, None] ** (1 / 3))
+        normed_cell_lengths = feature_array[:, :3] / (dataset['crystal z value'].to_numpy()[:, None] ** (1 / 3)) / (dataset['molecule volume'].to_numpy()[:, None] ** (1 / 3))
         feature_array_with_normed_lengths = feature_array.copy()
         feature_array_with_normed_lengths[:, :3] = normed_cell_lengths
 
@@ -588,7 +588,7 @@ class BuildDataset:
         for column, key in enumerate(keys_to_add):
             if key == 'crystal r factor':
                 feature_vector_i = np.asarray(dataset[key])
-                feature_vector = np.zeros_like(feature_vector_i, dtype=np.float)
+                feature_vector = np.zeros_like(feature_vector_i, dtype=np.float64)
                 for jj in range(len(feature_vector)):
                     if feature_vector_i[jj] != None:
                         if feature_vector_i[jj].lower() != 'none':

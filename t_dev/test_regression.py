@@ -28,7 +28,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    args.yaml_config = r'configs/test_configs/GAN_test.yaml'
+    args.yaml_config = r'configs/test_configs/regressor_test.yaml'
 
     config = get_config(args, override_args, args2config)
     config = process_config(config)

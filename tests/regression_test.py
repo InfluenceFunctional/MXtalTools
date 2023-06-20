@@ -14,12 +14,13 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy e
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-
 # ====================================
-if __name__ == '__main__':
-    '''
-    parse arguments from config and command line and generate config namespace
-    '''
+'''
+parse arguments from config and command line and generate config namespace
+'''
+
+
+def regressor():
     import os
     os.chdir('../')
     parser = argparse.ArgumentParser()
@@ -28,7 +29,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    args.yaml_config = r'configs/test_configs/GAN_test.yaml'
+    args.yaml_config = r'configs/test_configs/regressor_test.yaml'
 
     config = get_config(args, override_args, args2config)
     config = process_config(config)

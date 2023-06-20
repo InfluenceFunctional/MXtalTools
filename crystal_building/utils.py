@@ -275,6 +275,7 @@ def find_coord_in_box_np(coords, box, epsilon=0):
     # which of the given coords is inside the specified box, with option for a little leeway
     return np.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
 
+
 def find_coord_in_box_torch(coords, box, epsilon=0):
     # which of the given coords is inside the specified box, with option for a little leeway
     return torch.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
@@ -339,7 +340,7 @@ def asymmetric_unit_pose_analysis_np(unit_cell_coords, sg_ind, asym_unit_dict, T
 
     if rotation_basis == 'cartesian':
         mol_orientation = rotvec
-        #mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()  # old way using scipy
+        # mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()  # old way using scipy
     elif rotation_basis == 'spherical':
         mol_orientation = rotvec2sph(rotvec)
     else:
@@ -407,26 +408,26 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
     Ip_axes_list, _, _ = batch_molecule_principal_axes_torch(canonical_conformer_coords_list)
     handedness_list = compute_Ip_handedness(Ip_axes_list)
 
-    alignment_list = torch.eye(3).tile(num_samples,1,1)
+    alignment_list = torch.eye(3, device=mol_position_list.device).tile(num_samples, 1, 1)
     if not enforce_right_handedness:
         alignment_list[:, 0, 0] = handedness_list
 
     rotvec_list = []
-    for Ip_axes, alignment in zip(Ip_axes_list,alignment_list):
+    for Ip_axes, alignment in zip(Ip_axes_list, alignment_list):
         rotation_matrix = Ip_axes.T @ torch.linalg.inv(alignment.T)
         if not enforce_right_handedness:
             assert torch.linalg.det(rotation_matrix) > 0  # negative determinant is an improper rotation, which will not work
 
-        unit_vector = torch.Tensor([
+        unit_vector = torch.tensor([
             rotation_matrix[2, 1] - rotation_matrix[1, 2],
             rotation_matrix[0, 2] - rotation_matrix[2, 0],
-            rotation_matrix[1, 0] - rotation_matrix[0, 1]])
+            rotation_matrix[1, 0] - rotation_matrix[0, 1]], device=rotation_matrix.device, dtype=torch.float32)
         theta = torch.arccos((torch.trace(rotation_matrix) - 1) / 2)
         rotvec_list.append(unit_vector / torch.linalg.norm(unit_vector) * theta)
 
     if rotation_basis == 'cartesian':
         mol_orientation = torch.stack(rotvec_list)
-        #mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()  # old way using scipy
+        # mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()  # old way using scipy
     elif rotation_basis == 'spherical':
         mol_orientation = rotvec2sph(torch.stack(rotvec_list))
     else:
@@ -437,6 +438,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         return mol_position_list, mol_orientation, handedness_list, canonical_conformer_coords_list
     else:
         return mol_position_list, mol_orientation, handedness_list
+
 
 def flip_I3(coords: torch.tensor, Ip: torch.tensor):
     """
@@ -546,7 +548,7 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
         torch.stack((-unit_vector[:, 1], unit_vector[:, 0], torch.zeros_like(unit_vector[:, 0])), dim=1)
     ), dim=1)
 
-    applied_rotation_list = torch.eye(3)[None, :, :].tile(len(theta), 1, 1) + torch.sin(theta[:, None, None]) * K + (1 - torch.cos(theta[:, None, None])) * (K @ K)
+    applied_rotation_list = torch.eye(3, device=theta.device)[None, :, :].tile(len(theta), 1, 1) + torch.sin(theta[:, None, None]) * K + (1 - torch.cos(theta[:, None, None])) * (K @ K)
 
     # old way via quaternion
     # q = torch.cat([torch.cos(theta / 2)[:, None], unit_vector * torch.sin(theta / 2)[:, None]], dim=1)
