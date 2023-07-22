@@ -1,14 +1,16 @@
 import numpy as np
 import torch
 from crystal_building.utils import \
-    (update_supercell_data, ref_to_supercell, clean_cell_output, align_crystaldata_to_principal_axes,
-     batch_asymmetric_unit_pose_analysis_torch, set_sym_ops, rotvec2rotmat, build_unit_cell, scale_asymmetric_unit)
-from common.geometry_calculations import coor_trans_matrix
+    (update_supercell_data, ref_to_supercell, clean_cell_output,
+     align_crystaldata_to_principal_axes,
+     batch_asymmetric_unit_pose_analysis_torch, set_sym_ops,
+     rotvec2rotmat, build_unit_cell, scale_asymmetric_unit)
+from common.geometry_calculations import compute_fractional_transform
 from constants.asymmetric_units import asym_unit_dict
 
 
 def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
-    # overrite point group one-hot
+    # overwrite point group one-hot
     # overwrite space group one-hot
     # overwrite crystal system one-hot
     # overwrite z value
@@ -66,10 +68,10 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
 
 
 class SupercellBuilder:
-    def __init__(self, symmetries_dict, dataDims, supercell_size=5, device='cuda'):
+    def __init__(self, symmetries_dict, dataDims, supercell_size=5, device='cuda', rotation_basis='spherical'):
         """
         class for converting single molecules -> unit cells -> supercells/clusters
-        """  # todo write tests to confirm correct reconstruction from cell params
+        """
 
         self.sym_ops = symmetries_dict['sym_ops']  # list of symmetry operations
         self.symmetries_dict = symmetries_dict  # other symmetry information
@@ -77,6 +79,7 @@ class SupercellBuilder:
         self.device = device
         self.numpy_asym_unit_dict = asym_unit_dict.copy()
         self.asym_unit_dict = asym_unit_dict.copy()
+        self.rotation_basis = rotation_basis
         for key in self.asym_unit_dict:  # todo make sure we aren't distorting this for other classes
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 
@@ -93,14 +96,15 @@ class SupercellBuilder:
         # sort fractional vectors from closest to furthest from central unit cell
         self.sorted_fractional_translations = fractional_translations[torch.argsort(fractional_translations.abs().sum(1))].to(device)
 
-    def build_supercells(self, data, cell_sample: torch.tensor, supercell_size: int = 5, graph_convolution_cutoff: float = 6, target_handedness=None,
+    def build_supercells(self, molecule_data, cell_sample: torch.tensor, supercell_size: int = 5,
+                         graph_convolution_cutoff: float = 6, target_handedness=None,
                          skip_cell_cleaning=False, standardized_sample=True, align_molecules=True,
                          rescale_asymmetric_unit=True, pare_to_convolution_cluster=True):
         """
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to "supercell" (in fact, it's truncated to an appropriate cluster size)
         """
-        supercell_data = data.clone()
+        supercell_data = molecule_data.clone()
 
         supercell_data, cell_sample, target_handedness = \
             self.move_cell_data_to_device(supercell_data, cell_sample, target_handedness)
@@ -108,11 +112,14 @@ class SupercellBuilder:
         sym_ops_list, supercell_data = set_sym_ops(supercell_data)  # assign correct symmetry options
 
         # destandardize and constrain cell params to physical values
-        cell_lengths, cell_angles, mol_position, mol_rotation = self.process_cell_params(
-            supercell_data, cell_sample, skip_cell_cleaning, standardized_sample, rescale_asymmetric_unit=rescale_asymmetric_unit)
+        cell_lengths, cell_angles, mol_position, mol_rotation = \
+            self.process_cell_params(
+                supercell_data, cell_sample,
+                skip_cell_cleaning, standardized_sample,
+                rescale_asymmetric_unit=rescale_asymmetric_unit)
 
         # get transformation matrices
-        T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(cell_lengths, cell_angles)
+        T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform(cell_lengths, cell_angles)
 
         supercell_data.T_fc = T_fc_list
         supercell_data.cell_params = torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation), dim=1)  # note: destandardized
@@ -148,6 +155,7 @@ class SupercellBuilder:
                 supercell_data.sg_ind,
                 self.asym_unit_dict,
                 supercell_data.T_fc,
+                rotation_basis=self.rotation_basis,
                 enforce_right_handedness=False)
 
         supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
@@ -176,7 +184,7 @@ class SupercellBuilder:
         """
         supercell_data = supercell_data.clone().to(self.device)
 
-        T_fc_list, T_cf_list, generated_cell_volumes = coor_trans_matrix(
+        T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform(
             cell_lengths=supercell_data.cell_params[:, 0:3], cell_angles=supercell_data.cell_params[:, 3:6])
 
         atoms_list = []
@@ -196,7 +204,7 @@ class SupercellBuilder:
 
         return supercell_data.to(self.device)
 
-    def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True, rescale_asymmetric_unit=True):
+    def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True, rescale_asymmetric_unit=True, ):
         if skip_cell_cleaning:  # don't clean up
             if standardized_sample:
                 destandardized_cell_sample = (cell_sample * torch.tensor(self.dataDims['lattice stds'], device=self.device, dtype=cell_sample.dtype)) + torch.tensor(
@@ -207,9 +215,11 @@ class SupercellBuilder:
         else:
             cell_lengths, cell_angles, mol_position, mol_rotation = cell_sample.split(3, 1)
             lattices = [self.symmetries_dict['lattice_type'][int(supercell_data.sg_ind[n])] for n in range(supercell_data.num_graphs)]
-            cell_lengths, cell_angles, mol_position, mol_rotation, _, _, _ = clean_cell_output(
-                cell_lengths, cell_angles, mol_position, mol_rotation, lattices, self.dataDims,
-                enforce_crystal_system=True, return_transforms=True, standardized_sample=standardized_sample)
+            cell_lengths, cell_angles, mol_position, mol_rotation, _, _, _ = \
+                clean_cell_output(
+                    cell_lengths, cell_angles, mol_position, mol_rotation, lattices, self.dataDims,
+                    enforce_crystal_system=True, return_transforms=True,
+                    standardized_sample=standardized_sample, rotation_basis=self.rotation_basis)
 
         if rescale_asymmetric_unit:  # todo assert only our prepared sgs will be allowed
             mol_position = scale_asymmetric_unit(self.asym_unit_dict, mol_position, supercell_data.sg_ind)

@@ -1,4 +1,4 @@
-from common.geometry_calculations import coor_trans_matrix
+from common.geometry_calculations import compute_fractional_transform
 from common.utils import *
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -674,8 +674,8 @@ class Miner():
                 cell_angles = np.asarray(self.dataset['crystal cell angles'][i])
 
                 # get all the transforms
-                T_fc = coor_trans_matrix('f_to_c', cell_lengths, cell_angles)
-                T_cf = coor_trans_matrix('c_to_f', cell_lengths, cell_angles)  # np.linalg.inv(T_fc)#
+                T_fc = compute_fractional_transform('f_to_c', cell_lengths, cell_angles)
+                T_cf = compute_fractional_transform('c_to_f', cell_lengths, cell_angles)  # np.linalg.inv(T_fc)#
 
                 atomic_numbers = np.asarray(self.dataset['atom Z'][i])
                 heavy_atom_inds = np.argwhere(atomic_numbers > 1)[:, 0]

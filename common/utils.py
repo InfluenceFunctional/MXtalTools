@@ -113,7 +113,7 @@ def np_softmax(x: np.ndarray, temperature: float = 1):
 def compute_rdf_distance(rdf1, rdf2, rr):
     """
     compute a distance metric between two radial distribution functions with shapes
-    [num_sub_rdfs, num_bins] where sub_rdfs are e.g., particular interatomic RDFS within a certain sample
+    [num_sub_rdfs, num_bins] where sub_rdfs are e.g., particular interatomic RDFS within a certain sample (elementwise or atomwise modes)
     rr is the bin edges used for both rdfs
 
     option for input to be torch tensors or numpy arrays, but has to be the same either way

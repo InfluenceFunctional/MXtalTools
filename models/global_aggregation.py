@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from models.components import general_MLP
+from models.components import MLP
 from e3nn import o3
 from models.basis_functions import BesselBasisLayer, GaussianEmbedding
 from torch_geometric import nn as gnn
@@ -31,15 +31,15 @@ class global_aggregation(nn.Module):
             #self.agg_list3 = [gnn.global_sort_pool]
             # self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))])  # aggregation functions requiring parameters
             self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(
-                general_MLP(input_dim=filters,
-                            output_dim=1,
-                            layers=4,
-                            filters=filters,
-                            activation='leaky relu',
-                            norm=None),
+                MLP(input_dim=filters,
+                    output_dim=1,
+                    layers=4,
+                    filters=filters,
+                    activation='leaky relu',
+                    norm=None),
                 # nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1))
             )])  # aggregation functions requiring parameters
-            self.agg_fc = general_MLP(
+            self.agg_fc = MLP(
                 layers=1,
                 filters=filters,
                 input_dim=filters * (len(self.agg_list1) + 1),
@@ -91,13 +91,13 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
                 input_dim = in_channels + num_radial * self.num_spherical
             elif self.embedding == 'sph3':
                 input_dim = in_channels * 2
-                self.mlp2 = general_MLP(layers=4,filters=in_channels,
-                                        input_dim = num_radial+self.num_spherical,
-                                        output_dim = in_channels,
-                                        activation = activation,
-                                        norm = norm,
-                                        dropout = dropout,
-                                        bias=True)
+                self.mlp2 = MLP(layers=4, filters=in_channels,
+                                input_dim = num_radial+self.num_spherical,
+                                output_dim = in_channels,
+                                activation = activation,
+                                norm = norm,
+                                dropout = dropout,
+                                bias=True)
 
         elif self.embedding == 'pos':
             # fourier basis
@@ -119,22 +119,22 @@ class SphGeoPooling(nn.Module):  # a global aggregation function using spherical
 
             input_dim = int(in_channels + encoding_channels * 3)
 
-            self.mlp2 = general_MLP(layers=4, filters=in_channels,
-                                    input_dim= in_channels + num_radial + self.num_spherical,
-                                    output_dim=in_channels,
-                                    activation=activation,
-                                    norm=norm,
-                                    dropout=dropout,
-                                    bias=False)
+            self.mlp2 = MLP(layers=4, filters=in_channels,
+                            input_dim= in_channels + num_radial + self.num_spherical,
+                            output_dim=in_channels,
+                            activation=activation,
+                            norm=norm,
+                            dropout=dropout,
+                            bias=False)
 
         # message generation
-        self.mlp = general_MLP(layers=4, filters=in_channels,
-                               input_dim=input_dim,
-                               output_dim=in_channels,
-                               activation=activation,
-                               norm=norm,
-                               dropout=dropout,
-                               bias=False)
+        self.mlp = MLP(layers=4, filters=in_channels,
+                       input_dim=input_dim,
+                       output_dim=in_channels,
+                       activation=activation,
+                       norm=norm,
+                       dropout=dropout,
+                       bias=False)
 
         # message aggregation
         self.global_pool = global_aggregation('combo', in_channels)

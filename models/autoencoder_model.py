@@ -1,7 +1,7 @@
 import torch
 from torch import nn as nn
 from torch_geometric.nn import global_max_pool
-from models.components import general_MLP
+from models.components import MLP
 from models.base_models import molecule_graph_model, PointCloudDecoder
 from models.utils import get_strides
 
@@ -71,13 +71,13 @@ class molecule_autoencoder(nn.Module):
                                          strides=strides,
                                          init_image_size = config.conditioner.init_decoder_size)
 
-        self.mlp = general_MLP(input_dim=config.conditioner.decoder_embedding_dim * config.conditioner.init_decoder_size**3,
-                               layers=2,
-                               output_dim=1,
-                               filters=256,
-                               norm='layer',
-                               dropout=0.1,
-                               activation='gelu')
+        self.mlp = MLP(input_dim=config.conditioner.decoder_embedding_dim * config.conditioner.init_decoder_size ** 3,
+                       layers=2,
+                       output_dim=1,
+                       filters=256,
+                       norm='layer',
+                       dropout=0.1,
+                       activation='gelu')
 
     def forward(self, data):
         #normed_coords = data.pos / self.conditioner.max_molecule_size  # norm coords by maximum molecule radius

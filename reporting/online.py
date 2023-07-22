@@ -452,7 +452,7 @@ def log_mini_csp_scores_distributions(config, wandb, sampling_dict, real_samples
         )
     )
     fig.update_xaxes(title_text='Score - CSD Score', row=1, col=1)
-    fig.update_xaxes(title_text='vdW overlap', range=[0,4], row=1, col=2)
+    fig.update_xaxes(title_text='vdW overlap', range=[0, 4], row=1, col=2)
     fig.update_xaxes(title_text='Packing Coeff.', row=2, col=1)
     fig.update_xaxes(title_text='H-bond score', row=2, col=2)
     fig.update_layout(showlegend=False, yaxis_showgrid=True)  # legend_traceorder='reversed',
@@ -592,7 +592,7 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
 
     num_crystals, num_samples = scores_dict['score'].shape
 
-    topk_size = min(10,sampling_dict['score'].shape[1])
+    topk_size = min(10, sampling_dict['score'].shape[1])
     sort_inds = sampling_dict['score'].argsort(axis=-1)[:, -topk_size:]  #
     best_scores_dict = {key: np.asarray([sampling_dict[key][ii, sort_inds[ii]] for ii in range(num_crystals)]) for key in scores_list}
     best_samples = np.asarray([sampling_dict['cell params'][ii, sort_inds[ii], :] for ii in range(num_crystals)])
@@ -680,7 +680,7 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
     """
     sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict)
 
-    sample_wise_rdf_funnel_plot(config,wandb,best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists)
+    sample_wise_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists)
 
     ## debug check to make sure we are recreating the same cells
     # fig = go.Figure()
@@ -797,8 +797,7 @@ def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_s
     return None
 
 
-
-def sample_wise_rdf_funnel_plot(config,wandb,best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists):
+def sample_wise_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists):
 
     num_crystals = best_supercells.num_graphs
     num_reporting_samples = min(25, num_crystals)
@@ -821,7 +820,7 @@ def sample_wise_rdf_funnel_plot(config,wandb,best_supercells, reconstructed_best
                                    showlegend=False),
                       row=row, col=col)
 
-    #fig.update_layout(xaxis_title='RDF Distance', yaxis_title='Model Score')
+    # fig.update_layout(xaxis_title='RDF Distance', yaxis_title='Model Score')
     fig.update_xaxes(range=[0, np.amax(rdf_real_dists.flatten()) + 0.1])
     fig.update_yaxes(autorange="reversed")
 
@@ -845,7 +844,7 @@ def save_3d_structure_examples(wandb, generated_supercell_examples):
     for i in range(len(crystals)):
         ase.io.write(f'supercell_{identifiers[i]}.cif', crystals[i])
         wandb.log({'Generated Clusters': wandb.Molecule(open(f"supercell_{identifiers[i]}.cif"),
-                                                          caption=identifiers[i] + ' ' + sgs[i])})
+                                                        caption=identifiers[i] + ' ' + sgs[i])})
 
     unit_cells = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_canonical_conformer=False,
                                            index=i, exclusion_level='unit cell')
@@ -863,7 +862,7 @@ def save_3d_structure_examples(wandb, generated_supercell_examples):
     for i in range(len(crystals)):
         ase.io.write(f'unit_cell_inside_{identifiers[i]}.cif', unit_cells_inside[i])
         wandb.log({'Generated Unit Cells 2': wandb.Molecule(open(f"unit_cell_inside_{identifiers[i]}.cif"),
-                                                          caption=identifiers[i] + ' ' + sgs[i])})
+                                                            caption=identifiers[i] + ' ' + sgs[i])})
 
     mols = [ase_mol_from_crystaldata(generated_supercell_examples,
                                      index=i, exclusion_level='conformer')
@@ -1074,7 +1073,8 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     4. true-false model scores distribution
     '''
     lens = [len(val) for val in all_identifiers.values()]
-    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
+    targets_list = list(target_identifiers_inds.values())
+    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), sum([1 for ll in targets_list if ll != []])), colortype='rgb')
 
     plot_color_dict = {}
     plot_color_dict['Test Real'] = ('rgb(250,150,50)')  # test
@@ -1154,7 +1154,8 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     '''
 
     lens = [len(val) for val in all_identifiers.values()]
-    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), np.count_nonzero(list(target_identifiers_inds.values()))), colortype='rgb')
+    targets_list = list(target_identifiers_inds.values())
+    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), sum([1 for ll in targets_list if ll != []])), colortype='rgb')
 
     plot_color_dict = {}
     plot_color_dict['Train Real'] = ('rgb(250,50,50)')  # train
@@ -1278,6 +1279,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.write_image('../paper1_figs_new_architecture/scores_separation_table.png', scale=4)
     if config.machine == 'local':
         fig.show()
+    wandb.log({"Nice Scores Separation Table": fig})
 
     fig = go.Figure(data=go.Table(
         header=dict(values=['CSD Test Quantile(normed)', 'Fraction of Submissions (normed)']),
@@ -1289,6 +1291,10 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.write_image('../paper1_figs_new_architecture/normed_scores_separation_table.png', scale=4)
     if config.machine == 'local':
         fig.show()
+    wandb.log({"Nice Normed Scores Separation Table": fig})
+
+    wandb.log({"Scores Separation": submissions_fraction_below_csd_quantile})
+    wandb.log({"Normed Scores Separation": normed_submissions_fraction_below_csd_quantile})
 
     '''
     8. Functional group analysis
@@ -1441,47 +1447,47 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     '''
     S1. All group-wise analysis
     '''
-
-    for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
-        names = np.unique(list(group[label]))
-        uniques = len(names)
-        rows = int(np.floor(np.sqrt(uniques)))
-        cols = int(np.ceil(np.sqrt(uniques)) + 1)
-        fig = make_subplots(rows=rows, cols=cols,
-                            subplot_titles=(names), x_title='Group Ranking', y_title='Model Score', vertical_spacing=0.1)
-
-        for j, group_name in enumerate(np.unique(group[label])):
-            good_inds = np.where(np.asarray(group[label]) == group_name)[0]
-            submissions_list_num = np.asarray(list_num[label])[good_inds]
-            list1_inds = np.where(submissions_list_num == 1)[0]
-            list2_inds = np.where(submissions_list_num == 2)[0]
-
-            xline = np.asarray([0, max(np.asarray(rankings[label])[good_inds[list1_inds]])])
-            linreg_result = linregress(np.asarray(rankings[label])[good_inds[list1_inds]], np.asarray(scores_dict[label])[good_inds[list1_inds]])
-            yline = xline * linreg_result.slope + linreg_result.intercept
-
-            fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
-                                       mode='markers', opacity=0.5, marker=dict(size=6, color=submissions_list_num, colorscale='portland', cmax=2, cmin=1, showscale=False)),
-                          row=j // cols + 1, col=j % cols + 1)
-
-            fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{group_name} R={linreg_result.rvalue:.3f}', line=dict(color='#0c4dae')), row=j // cols + 1, col=j % cols + 1)
-
-            if len(list2_inds) > 0:
-                xline = np.asarray([0, max(np.asarray(rankings[label])[good_inds[list2_inds]])])
-                linreg_result2 = linregress(np.asarray(rankings[label])[good_inds[list2_inds]], np.asarray(scores_dict[label])[good_inds[list2_inds]])
-                yline2 = xline * linreg_result2.slope + linreg_result2.intercept
-                fig.add_trace(go.Scattergl(x=xline, y=yline2, name=f'{group_name} R={linreg_result2.rvalue:.3f}', line=dict(color='#d60000')), row=j // cols + 1, col=j % cols + 1)
-
-        fig.update_layout(title=label)
-
-        fig.update_layout(width=1200, height=600)
-        fig.layout.margin = layout.margin
-        fig.layout.margin.t = 50
-        fig.layout.margin.b = 55
-        fig.layout.margin.l = 60
-        fig.write_image(f'../paper1_figs_new_architecture/groupwise_analysis_{i}.png', scale=4)
-        if config.machine == 'local':
-            fig.show()
+    #
+    # for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
+    #     names = np.unique(list(group[label]))
+    #     uniques = len(names)
+    #     rows = int(np.floor(np.sqrt(uniques)))
+    #     cols = int(np.ceil(np.sqrt(uniques)) + 1)
+    #     fig = make_subplots(rows=rows, cols=cols,
+    #                         subplot_titles=(names), x_title='Group Ranking', y_title='Model Score', vertical_spacing=0.1)
+    #
+    #     for j, group_name in enumerate(np.unique(group[label])):
+    #         good_inds = np.where(np.asarray(group[label]) == group_name)[0]
+    #         submissions_list_num = np.asarray(list_num[label])[good_inds]
+    #         list1_inds = np.where(submissions_list_num == 1)[0]
+    #         list2_inds = np.where(submissions_list_num == 2)[0]
+    #
+    #         xline = np.asarray([0, max(np.asarray(rankings[label])[good_inds[list1_inds]])])
+    #         linreg_result = linregress(np.asarray(rankings[label])[good_inds[list1_inds]], np.asarray(scores_dict[label])[good_inds[list1_inds]])
+    #         yline = xline * linreg_result.slope + linreg_result.intercept
+    #
+    #         fig.add_trace(go.Scattergl(x=np.asarray(rankings[label])[good_inds], y=np.asarray(scores_dict[label])[good_inds], showlegend=False,
+    #                                    mode='markers', opacity=0.5, marker=dict(size=6, color=submissions_list_num, colorscale='portland', cmax=2, cmin=1, showscale=False)),
+    #                       row=j // cols + 1, col=j % cols + 1)
+    #
+    #         fig.add_trace(go.Scattergl(x=xline, y=yline, name=f'{group_name} R={linreg_result.rvalue:.3f}', line=dict(color='#0c4dae')), row=j // cols + 1, col=j % cols + 1)
+    #
+    #         if len(list2_inds) > 0:
+    #             xline = np.asarray([0, max(np.asarray(rankings[label])[good_inds[list2_inds]])])
+    #             linreg_result2 = linregress(np.asarray(rankings[label])[good_inds[list2_inds]], np.asarray(scores_dict[label])[good_inds[list2_inds]])
+    #             yline2 = xline * linreg_result2.slope + linreg_result2.intercept
+    #             fig.add_trace(go.Scattergl(x=xline, y=yline2, name=f'{group_name} R={linreg_result2.rvalue:.3f}', line=dict(color='#d60000')), row=j // cols + 1, col=j % cols + 1)
+    #
+    #     fig.update_layout(title=label)
+    #
+    #     fig.update_layout(width=1200, height=600)
+    #     fig.layout.margin = layout.margin
+    #     fig.layout.margin.t = 50
+    #     fig.layout.margin.b = 55
+    #     fig.layout.margin.l = 60
+    #     fig.write_image(f'../paper1_figs_new_architecture/groupwise_analysis_{i}.png', scale=4)
+    #     if config.machine == 'local':
+    #         fig.show()
 
     '''
     S2.  score correlates

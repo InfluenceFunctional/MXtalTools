@@ -10,7 +10,7 @@ from torch_scatter import scatter
 from torch_sparse import SparseTensor
 import torch_geometric.nn as gnn
 from models.asymmetric_radius_graph import asymmetric_radius_graph
-from models.components import general_MLP
+from models.components import MLP
 from old.positional_encodings import PosEncoding3D
 
 
@@ -82,7 +82,7 @@ class MikesGraphNet(torch.nn.Module):
         self.convolution_mode = graph_convolution
 
         self.fc_blocks = torch.nn.ModuleList([
-            general_MLP(
+            MLP(
                 layers=1,
                 filters=hidden_channels,
                 input_dim=hidden_channels,
@@ -427,14 +427,14 @@ class MPConv(torch.nn.Module):
     def __init__(self, in_channels, out_channels, edge_dim, dropout=0, norm=None, activation='leaky relu'):
         super(MPConv, self).__init__()
 
-        self.MLP = general_MLP(layers=4,
-                               filters=out_channels,
-                               input_dim=in_channels * 2 + edge_dim,
-                               dropout=dropout,
-                               norm=norm,
-                               output_dim=out_channels,
-                               activation=activation,
-                               )
+        self.MLP = MLP(layers=4,
+                       filters=out_channels,
+                       input_dim=in_channels * 2 + edge_dim,
+                       dropout=dropout,
+                       norm=norm,
+                       output_dim=out_channels,
+                       activation=activation,
+                       )
 
     def forward(self, x, edge_index, edge_attr):
         m = self.MLP(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1))

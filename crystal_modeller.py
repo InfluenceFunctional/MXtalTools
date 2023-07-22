@@ -118,8 +118,8 @@ class Modeller:
             # generate samples in every space group in the asym dict (eventually, all sgs)
             self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-        if self.config.include_sgs is None: # draw from all space groups we can parameterize
-            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()] #list(self.space_groups.values())
+        if self.config.include_sgs is None:  # draw from all space groups we can parameterize
+            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]  # list(self.space_groups.values())
 
         self.lattice_vectors, self.normed_lattice_vectors = None, None  # not currently used
         '''
@@ -255,6 +255,7 @@ class Modeller:
             wandb.run.save()
 
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
+            # this means we also can't do wandb sweeps properly, for now
 
             dataset_builder = self.misc_pre_training_items()
             generator, discriminator, regressor, \
@@ -307,13 +308,14 @@ class Modeller:
                     extra_test_epoch_stats_dict = None
                     try:  # try this batch size
                         # train & compute loss
-                        train_loss, train_loss_record, train_epoch_stats_dict, time_train = \
+                        train_epoch_stats_dict = None  # save time and space in the epoch
+                        train_loss, train_loss_record, time_train = \
                             self.run_epoch(data_loader=train_loader,
                                            generator=generator, discriminator=discriminator, regressor=regressor,
                                            generator_optimizer=generator_optimizer,
                                            discriminator_optimizer=discriminator_optimizer,
                                            regressor_optimizer=regressor_optimizer,
-                                           update_gradients=True, record_stats=True, epoch=epoch)
+                                           update_gradients=True, record_stats=False, epoch=epoch)
 
                         with torch.no_grad():
                             # compute test loss
@@ -324,6 +326,12 @@ class Modeller:
                                                discriminator_optimizer=discriminator_optimizer,
                                                regressor_optimizer=regressor_optimizer,
                                                update_gradients=False, record_stats=True, epoch=epoch)
+
+                            if extra_test_loader is not None and epoch % self.config.extra_test_period == 0:
+                                _, _, extra_test_epoch_stats_dict, extra_time_test = \
+                                    self.run_epoch(data_loader=extra_test_loader, generator=generator, discriminator=discriminator,
+                                                   update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
+                                np.save(f'../{self.config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)
 
                         print('epoch={}; time_tr={:.1f}s; time_te={:.1f}s'.format(epoch, time_train, time_test))
 
@@ -391,11 +399,11 @@ class Modeller:
                             break
 
                         train_loader, test_loader, extra_test_loader = \
-                            self.update_batch_size(train_loader, test_loader, extra_test_loader)
+                            self.increment_batch_size(train_loader, test_loader, extra_test_loader)
 
                     except RuntimeError as e:  # if we do hit OOM, slash the batch size
                         if "CUDA out of memory" in str(e):
-                            train_loader, test_loader = self.slash_batch(train_loader, test_loader, 0.05) # shrink batch size
+                            train_loader, test_loader = self.slash_batch(train_loader, test_loader, 0.05)  # shrink batch size
                             self.config.grow_batch_size = False  # stop growing the batch
                         else:
                             raise e
@@ -556,11 +564,10 @@ class Modeller:
                         epoch_stats_dict[key] = None
                     else:
                         if isinstance(feature, list):
-                            if isinstance(feature[0],list):
+                            if isinstance(feature[0], list):
                                 epoch_stats_dict[key] = np.concatenate(feature)
                             else:
                                 epoch_stats_dict[key] = np.asarray(feature)
-
 
             epoch_stats_dict['data dims'] = self.config.dataDims.copy()  # record explicitly all the tracking features
 
@@ -980,7 +987,7 @@ class Modeller:
         '''
         init supercell builder
         '''
-        self.supercell_builder = SupercellBuilder(self.sym_info, self.config.dataDims, device = self.config.device)
+        self.supercell_builder = SupercellBuilder(self.sym_info, self.config.dataDims, device=self.config.device, rotation_basis=self.config.rotation_basis)
 
         '''
         set tracking feature indices & property dicts we will use later
@@ -1396,7 +1403,7 @@ class Modeller:
 
         return train_loader, test_loader
 
-    def update_batch_size(self, train_loader, test_loader, extra_test_loader):
+    def increment_batch_size(self, train_loader, test_loader, extra_test_loader):
         if self.config.grow_batch_size:
             if (train_loader.batch_size < len(train_loader.dataset)) and (
                     train_loader.batch_size < self.config.max_batch_size):  # if the batch is smaller than the dataset
@@ -1828,11 +1835,12 @@ class Modeller:
                 fake_data = real_data.clone()
                 samples, prior, standardized_target_packing_coeff = self.get_generator_samples(fake_data, generator, regressor)  # todo make sure density is consistent in reconstruction
 
-                fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-                    fake_data, samples, self.config.supercell_size,
-                    self.config.discriminator.graph_convolution_cutoff,
-                    align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
-                )
+                fake_supercell_data, generated_cell_volumes, _ = \
+                    self.supercell_builder.build_supercells(
+                        fake_data, samples, self.config.supercell_size,
+                        self.config.discriminator.graph_convolution_cutoff,
+                        align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
+                    )
                 fake_supercell_data = fake_supercell_data.to(self.config.device)
 
                 discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise=0)

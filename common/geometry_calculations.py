@@ -230,7 +230,7 @@ def sph2rotvec(angles):
 
 def rotvec2sph(rotvec):
     """
-    transform rotation vector with axis (rotvec)/norm(rotvec) and angle ||rotvec||
+    transform rotation vector with axis rotvec/norm(rotvec) and angle ||rotvec||
     to spherical coordinates theta, phi and r ||rotvec||
     """
     if isinstance(rotvec, np.ndarray):
@@ -249,7 +249,6 @@ def rotvec2sph(rotvec):
         else:
             return np.concatenate((theta[:, None], phi[:, None], r[:, None]), axis=-1)  # polar, azimuthal, applied rotation
 
-
     elif torch.is_tensor(rotvec):
         r = torch.linalg.norm(rotvec, axis=-1)
         if rotvec.ndim == 1:
@@ -259,7 +258,7 @@ def rotvec2sph(rotvec):
         unit_vector = rotvec / r[:, None]
 
         # convert unit vector to angles
-        theta = torch.arctan2(np.sqrt(unit_vector[:, 0] ** 2 + unit_vector[:, 1] ** 2), unit_vector[:, 2])
+        theta = torch.arctan2(torch.sqrt(unit_vector[:, 0] ** 2 + unit_vector[:, 1] ** 2), unit_vector[:, 2])
         phi = torch.arctan2(unit_vector[:, 1], unit_vector[:, 0])
         if rotvec.ndim == 1:
             return torch.cat((theta, phi, r), dim=-1)  # polar, azimuthal, applied rotation
@@ -271,10 +270,10 @@ def rotvec2sph(rotvec):
         return None
 
 
-def coor_trans_matrix(cell_lengths, cell_angles):
-    ''' # todo harmonize behaviour with the torch version - currently return different things
+def compute_fractional_transform(cell_lengths, cell_angles):
+    """ # todo harmonize behaviour with the torch version - currently return different things
     compute f->c and c->f transforms as well as cell volume in a vectorized, differentiable way
-    '''
+    """
     cos_a = torch.cos(cell_angles)
     sin_a = torch.sin(cell_angles)
 

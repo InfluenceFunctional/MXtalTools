@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.global_aggregation import global_aggregation
-from models.components import general_MLP
+from models.components import MLP
 from torch.distributions import MultivariateNormal
 import numpy as np
 from ase import Atoms
@@ -125,15 +125,15 @@ class molecule_graph_model(nn.Module):
 
         # FC model to post-process graph fingerprint
         if self.num_fc_layers > 0:
-            self.gnn_mlp = general_MLP(layers=self.num_fc_layers,
-                                       filters=self.fc_depth,
-                                       norm=self.fc_norm_mode,
-                                       dropout=self.fc_dropout_probability,
-                                       input_dim=self.fc_depth,
-                                       output_dim=self.fc_depth,
-                                       conditioning_dim=self.n_mol_feats,
-                                       seed=seed
-                                       )
+            self.gnn_mlp = MLP(layers=self.num_fc_layers,
+                               filters=self.fc_depth,
+                               norm=self.fc_norm_mode,
+                               dropout=self.fc_dropout_probability,
+                               input_dim=self.fc_depth,
+                               output_dim=self.fc_depth,
+                               conditioning_dim=self.n_mol_feats,
+                               seed=seed
+                               )
         else:
             self.gnn_mlp = nn.Identity()
 

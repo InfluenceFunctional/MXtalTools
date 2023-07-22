@@ -132,7 +132,8 @@ def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords
 
 def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol_position: torch.tensor, mol_rotation: torch.tensor,
                       lattices, dataDims,
-                      enforce_crystal_system=False, rotation_type='cartesian rotvec', return_transforms=False, standardized_sample: bool = True):
+                      enforce_crystal_system=False, rotation_basis='spherical',
+                      return_transforms=False, standardized_sample: bool = True):
     """
     constrain cell parameters to physically meaningful values
     :param cell_lengths:
@@ -153,16 +154,33 @@ def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol
         mol_position = mol_position * stds[6:9] + means[6:9]
         mol_rotation = mol_rotation * stds[9:12] + means[9:12]
 
-    # TODO find a way to bound arbitrary shapes beyond parallelpipeds
-
+    '''
+    enforce bounds on the cell parameters
+    a,b,c: positive nonzero
+    alpha,beta,gamma: 0,pi
+    fractional centroid: 0,1
+    mol orientation: 
+        -> cartesian mode: vector norm < 2pi
+        -> spherical mode: theta < pi/2, phi in -pi,pi, r < 2pi
+    '''
     cell_lengths = F.softplus(cell_lengths - 0.1) + 0.1  # enforces positive nonzero
 
     cell_angles = enforce_1d_bound(cell_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='soft')  # prevent too-skinny cells
+
     mol_position = enforce_1d_bound(mol_position, 0.5, 0.5, mode='soft')
 
-    norms = torch.linalg.norm(mol_rotation, dim=1)
-    normed_norms = enforce_1d_bound(norms, torch.pi, torch.pi, mode='soft')
-    mol_rotation = mol_rotation / norms[:, None] * normed_norms[:, None]  # renormalize
+    if rotation_basis == 'cartesian':
+        norms = torch.linalg.norm(mol_rotation, dim=1)
+        normed_norms = enforce_1d_bound(norms, torch.pi, torch.pi, mode='soft')
+        mol_rotation = mol_rotation / norms[:, None] * normed_norms[:, None]  # renormalize
+    elif rotation_basis == 'spherical':
+        theta = enforce_1d_bound(mol_rotation[:, 0], torch.pi / 4, torch.pi / 4, mode='soft')
+        phi = enforce_1d_bound(mol_rotation[:, 1], torch.pi, 0, mode='soft')
+        r = enforce_1d_bound(mol_rotation[:, 2], torch.pi, torch.pi, mode='soft')
+        mol_rotation = torch.cat((theta[:, None], phi[:, None], r[:, None]), dim=-1)
+    else:
+        print(f"{rotation_basis} is not an implemented rotation basis!")
+        sys.exit()
 
     for i in range(len(cell_lengths)):
         if enforce_crystal_system:  # enforce properties of crystal system
@@ -425,14 +443,38 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         theta = torch.arccos((torch.trace(rotation_matrix) - 1) / 2)
         rotvec_list.append(unit_vector / torch.linalg.norm(unit_vector) * theta)
 
+    rotvec_list = torch.stack(rotvec_list)
+
+    '''
+    since the direction of the axis is arbitrary, (x,y,z) is the same rotation as (-x,-y,-z),
+    we can improve specificity of the model by constraining the axis to a half-sphere.
+    Here we will take the +z direction as 'canonical' (equivalent to theta <pi/2).
+    
+    Swap the direction and take 2pi-norm to recapture the identical rotation. 
+    '''
+    flip_inds = torch.where(rotvec_list[:, -1] < 0)[0]
+    flip_vecs = rotvec_list[flip_inds]
+    flip_norms = torch.linalg.norm(flip_vecs, dim=-1)
+    new_norms = 2 * torch.pi - flip_norms
+    new_vecs = -flip_vecs / flip_norms[:, None] * new_norms[:, None]
+    rotvec_list[flip_inds] = new_vecs
+
+    '''
+    # test for the above condition
+    m1 = Rotation.from_rotvec(rotvec_list.detach().numpy()).as_matrix()
+    m2 = Rotation.from_rotvec(rotvec_list0.detach().numpy()).as_matrix() # pre-inversion rotvec list
+    print((m1 - m2).sum())
+    '''
+
     if rotation_basis == 'cartesian':
-        mol_orientation = torch.stack(rotvec_list)
-        # mol_orientation = Rotation.from_matrix(rotation_matrix).as_rotvec()  # old way using scipy
-    elif rotation_basis == 'spherical':
-        mol_orientation = rotvec2sph(torch.stack(rotvec_list))
+        mol_orientation = rotvec_list
+    elif rotation_basis == 'spherical':  # convert from cartesian to spherical coordinates
+        mol_orientation = rotvec2sph(rotvec_list)
     else:
         print(f'{rotation_basis} is not a valid orientation parameterization!')
         sys.exit()
+
+    assert torch.sum(torch.isnan(torch.cat((mol_position_list, mol_orientation),dim=-1))) == 0
 
     if return_asym_unit_coords:
         return mol_position_list, mol_orientation, handedness_list, canonical_conformer_coords_list

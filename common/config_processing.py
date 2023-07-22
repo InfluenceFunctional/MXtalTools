@@ -72,6 +72,7 @@ def add_args(parser):
     parser.add_argument('--feature_richness', type=str, default="minimal")  # atom & molecule feature richness
 
     # dataset composition
+    parser.add_argument('--rotation_basis', type=str, default="spherical") # spherical or cartesian
     parser.add_argument('--include_sgs', type=list, default=None)  # ['P21/c'] spacegroups to explicitly include in modelling - new!
     parser.add_argument('--include_pgs', type=str, default=None)  # ['222', '-1'] point groups to pull from dataset  # todo deprecate
     parser.add_argument('--generate_sgs', type=list, default=None)  # ['222', '-1'] space groups to generate
@@ -92,6 +93,7 @@ def add_args(parser):
     parser.add_argument('--exclude_crystal_systems', type=list, default=None)  # ['hexagonal']
     add_bool_arg(parser, 'exclude_blind_test_targets', default=True)
 
+    update_args2config(args2config, 'rotation_basis')
     update_args2config(args2config, 'target')
     update_args2config(args2config, 'dataset_path')
     update_args2config(args2config, 'dataset_length')

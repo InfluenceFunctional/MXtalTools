@@ -248,6 +248,22 @@ def nov_22_paper_discriminator_plots(config, wandb):
     if config.machine == 'local':
         fig.show()
 
+    fig = go.Figure(data=go.Table(
+        header=dict(values=['CSD Test Quantile', 'Fraction of Submissions']),
+        cells=dict(values=[list(normed_submissions_fraction_below_csd_quantile.keys()),
+                           list(normed_submissions_fraction_below_csd_quantile.values()),
+                           ], format=[".3", ".3"])))
+    fig.update_layout(width=200)
+    fig.layout.margin = layout.margin
+    fig.write_image('../paper1_figs/normed_scores_separation_table.png')
+    fig.update_layout(title=dict(text="Normed Scores Fractions"))
+    if config.machine == 'local':
+        fig.show()
+    wandb.log({"Nice Normed Scores Separation Table": fig})
+
+    wandb.log({"Scores Separation": submissions_fraction_below_csd_quantile})
+    wandb.log({"Normed Scores Separation": normed_submissions_fraction_below_csd_quantile})
+
     '''
     8. Functional group analysis
     '''

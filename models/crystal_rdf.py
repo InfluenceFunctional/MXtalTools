@@ -8,6 +8,15 @@ from common.rdf_calculation import parallel_compute_rdf_torch
 def crystal_rdf(crystal_data, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False, cpu_detach=False):
     """
     compute the RDF for all the supercells in a CrystalData object
+
+    crystal_data: crystaldata object containing a batch of molecular crystals relevant information
+    rrange: range over which to compute radial distribution function
+    bins: number of bins for RDF histogramming
+    mode: 'intramolecular' consider only intramolecular edges, 'intermolecular' consider only intermolecular edges, 'all' consider both
+    elementwise: compute a separate RDF for all pairs of all elements in each crystal (exclusive with atomwise)
+    raw_dentiy: False estimate the crystal density. True use raw RDF outputs (same as setting density always to 1)
+    atomwise: compute a separate RDF for all pairs of unique atom indexes per molecule in each crystal (exclusive with elementwise)
+    cpu_detach: True return outputs as numpy array on cpu. False return outputs as torch tensor on the same device as the input crystaldata
     """
     device = crystal_data.pos.device
     #  whether to include intramolecular edges

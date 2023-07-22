@@ -19,8 +19,7 @@ test_crystals, dataDims, symmetry_info = load_test_dataset(test_dataset_path)
 supercell_size = 5
 
 '''initialize supercell builder'''
-supercell_builder = SupercellBuilder(symmetry_info, dataDims, supercell_size=supercell_size, device='cpu')
-
+supercell_builder = SupercellBuilder(symmetry_info, dataDims, supercell_size=supercell_size, device='cpu', rotation_basis='cartesian')
 
 class Group:
     def __init__(self):

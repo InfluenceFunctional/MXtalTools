@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.distributions import MultivariateNormal, Uniform
 
-from models.components import general_MLP
+from models.components import MLP
 from models.base_models import molecule_graph_model
 
 
@@ -74,15 +74,15 @@ class crystal_generator(nn.Module):
         '''
         generator model
         '''
-        self.model = general_MLP(layers=config.generator.num_fc_layers,
-                                 filters=config.generator.fc_depth,
-                                 norm=config.generator.fc_norm_mode,
-                                 dropout=config.generator.fc_dropout_probability,
-                                 input_dim=self.latent_dim,
-                                 output_dim=dataDims['num lattice features'],
-                                 conditioning_dim=config.generator.conditioner.output_dim + self.num_crystal_features,  # include crystal information for the generator
-                                 seed=config.seeds.model
-                                 )
+        self.model = MLP(layers=config.generator.num_fc_layers,
+                         filters=config.generator.fc_depth,
+                         norm=config.generator.fc_norm_mode,
+                         dropout=config.generator.fc_dropout_probability,
+                         input_dim=self.latent_dim,
+                         output_dim=dataDims['num lattice features'],
+                         conditioning_dim=config.generator.conditioner.output_dim + self.num_crystal_features,  # include crystal information for the generator
+                         seed=config.seeds.model
+                         )
 
     def sample_latent(self, n_samples):
         # return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)

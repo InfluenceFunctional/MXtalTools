@@ -38,6 +38,7 @@ class BuildDataset:
         self.include_sgs = config.include_sgs
         self.generate_sgs = config.generate_sgs
         self.replace_dataDims = replace_dataDims
+        self.rotation_basis = config.rotation_basis
         if override_length is not None:
             self.max_dataset_length = override_length
         else:
@@ -88,6 +89,13 @@ class BuildDataset:
         lattice_features = self.get_cell_features(dataset)
         targets = self.get_targets(dataset)
         self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets)
+
+        if True:  # make dataset a bunch of the same molecule
+            identifiers = [item.csd_identifier for item in self.datapoints]
+            index = identifiers.index('NICOAM03')  # PIQTOY # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
+            new_datapoints = [self.datapoints[index] for i in range(self.final_dataset_length)]
+            self.datapoints = new_datapoints
+
         self.shuffle_datapoints()
 
         if self.build_dataset_for_tests:
@@ -251,7 +259,8 @@ class BuildDataset:
                 asymmetric_unit_dict,
                 torch.Tensor(dataset['crystal fc transform']),
                 enforce_right_handedness=False,
-                return_asym_unit_coords=True)
+                return_asym_unit_coords=True,
+                rotation_basis=self.rotation_basis)
 
         dataset['atom coords'] = canonical_coords_list  # for simplicity, make CC the one which we work with
         dataset['crystal asymmetric unit centroid x'], \
@@ -532,13 +541,13 @@ class BuildDataset:
     def get_targets(self, dataset):
         if self.target == 'packing':
             targets = dataset['crystal packing coefficient']
-        elif self.target == 'density':
-            conversion = 1660  # 1 amu / cubic angstrom is 1.660 kg / m^3
-            targets = dataset['molecule mass'] * dataset['crystal packing coefficient'] / dataset['molecule volume'] * conversion  # this is per-molecule, divide by Z to get the full crystal
-        elif self.target == 'volume':
-            targets = dataset['molecule volume'] / dataset['crystal packing coefficient']  # this is per-molecule, multiply by Z to get the full crystal value
-        elif self.target == 'lattice vector':
-            targets = dataset['crystal inertial overlap 2 to 0']
+        # elif self.target == 'density':  # MK these all deprecated for nwo
+        #     conversion = 1660  # 1 amu / cubic angstrom is 1.660 kg / m^3
+        #     targets = dataset['molecule mass'] * dataset['crystal packing coefficient'] / dataset['molecule volume'] * conversion  # this is per-molecule, divide by Z to get the full crystal
+        # elif self.target == 'volume':
+        #     targets = dataset['molecule volume'] / dataset['crystal packing coefficient']  # this is per-molecule, multiply by Z to get the full crystal value
+        # elif self.target == 'lattice vector':
+        #     targets = dataset['crystal inertial overlap 2 to 0']
         else:
             print(f'{self.target} is not an implemented regression target!')
             sys.exit()
