@@ -18,6 +18,7 @@ dependencies:
   - numba
   - scipy
   - pandas
+  - pymatgen
   - pip
   - pip:
 #    - torch_scatter
