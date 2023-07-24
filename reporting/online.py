@@ -150,7 +150,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
         fig.layout.margin = layout.margin
         fig.update_layout(xaxis_title='packing target', yaxis_title='packing prediction')
 
-        # fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
+        # #fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
         if config.wandb.log_figures:
             wandb.log({'Cell Packing': fig})
         if (config.machine == 'local') and False:
@@ -523,7 +523,7 @@ def sampling_telemetry_plot(config, wandb, sampling_dict):
     fig.update_layout(showlegend=True)
     # fig.update_yaxes(range=[0, 1], row=1, col=2)
     fig.layout.margin = layout.margin
-    # fig.write_image('../paper1_figs_new_architecture/sampling_telemetry.png')
+    # #fig.write_image('../paper1_figs_new_architecture/sampling_telemetry.png')
     # wandb.log({'Sampling Telemetry': fig})
     if config.machine == 'local':
         import plotly.io as pio
@@ -572,7 +572,7 @@ def cell_params_tracking_plot(wandb, supercell_builder, layout, config, sampling
 
     fig.update_layout(showlegend=False)
     fig.layout.margin = layout.margin
-    # fig.write_image('../paper1_figs_new_architecture/sampling_telemetry.png')
+    # #fig.write_image('../paper1_figs_new_architecture/sampling_telemetry.png')
     # wandb.log({'Sampling Telemetry': fig})
     if config.machine == 'local':
         import plotly.io as pio
@@ -1145,9 +1145,11 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.layout.annotations[1].update(x=0.575)
 
     fig.layout.margin = layout.margin
-    fig.write_image('../paper1_figs_new_architecture/real_vs_fake_scores.png', scale=4)
+    #fig.write_image('../paper1_figs_new_architecture/real_vs_fake_scores.png', scale=4)
     if config.machine == 'local':
         fig.show()
+    wandb.log({"Real vs Fake Scores": fig})
+
 
     '''
     5. BT scores distributions w aggregate inset
@@ -1252,9 +1254,11 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.update_xaxes(title_text='Model Score / molecule # atoms', row=2, col=2)
 
     fig.layout.margin = layout.margin
-    fig.write_image('../paper1_figs_new_architecture/bt_submissions_distribution.png', scale=4)
+    ##fig.write_image('../paper1_figs_new_architecture/bt_submissions_distribution.png', scale=4)
     if config.machine == 'local':
         fig.show()
+    wandb.log({"BT Submissions Distribution": fig})
+
 
     '''
     7. Table of BT separation statistics
@@ -1276,7 +1280,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
                            ], format=[".3", ".3"])))
     fig.update_layout(width=200)
     fig.layout.margin = layout.margin
-    fig.write_image('../paper1_figs_new_architecture/scores_separation_table.png', scale=4)
+    #fig.write_image('../paper1_figs_new_architecture/scores_separation_table.png', scale=4)
     if config.machine == 'local':
         fig.show()
     wandb.log({"Nice Scores Separation Table": fig})
@@ -1288,7 +1292,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
                            ], format=[".3", ".3"])))
     fig.update_layout(width=200)
     fig.layout.margin = layout.margin
-    fig.write_image('../paper1_figs_new_architecture/normed_scores_separation_table.png', scale=4)
+    #fig.write_image('../paper1_figs_new_architecture/normed_scores_separation_table.png', scale=4)
     if config.machine == 'local':
         fig.show()
     wandb.log({"Nice Normed Scores Separation Table": fig})
@@ -1340,7 +1344,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     # fig.update_layout(showlegend=False)
     #
     # fig.layout.margin = layout.margin
-    # fig.write_image('../paper1_figs_new_architecture/scores_separation_table.png')
+    # #fig.write_image('../paper1_figs_new_architecture/scores_separation_table.png')
     # if config.machine == 'local':
     #     fig.show()
 
@@ -1358,9 +1362,10 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.update_layout(width=1600, height=600)
     fig.update_layout(font=dict(size=12))
     fig.layout.margin = layout.margin
-    fig.write_image('../paper1_figs_new_architecture/functional_group_scores.png', scale=2)
+    #fig.write_image('../paper1_figs_new_architecture/functional_group_scores.png', scale=2)
     if config.machine == 'local':
         fig.show()
+    wandb.log({"Functional Group Scores": fig})
 
     '''
     10. Interesting Group-wise analysis
@@ -1440,9 +1445,11 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.update_layout(width=1000, height=300)
     fig.layout.margin = layout.margin
     fig.layout.margin.b = 50
-    fig.write_image('../paper1_figs_new_architecture/interesting_groups.png', scale=4)
+    #fig.write_image('../paper1_figs_new_architecture/interesting_groups.png', scale=4)
     if config.machine == 'local':
         fig.show()
+    wandb.log({"Interesting Groups": fig})
+
 
     '''
     S1. All group-wise analysis
@@ -1485,7 +1492,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     #     fig.layout.margin.t = 50
     #     fig.layout.margin.b = 55
     #     fig.layout.margin.l = 60
-    #     fig.write_image(f'../paper1_figs_new_architecture/groupwise_analysis_{i}.png', scale=4)
+    #     #fig.write_image(f'../paper1_figs_new_architecture/groupwise_analysis_{i}.png', scale=4)
     #     if config.machine == 'local':
     #         fig.show()
 
@@ -1582,9 +1589,10 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.update_xaxes(range=[np.amin(list(g_loss_dict.values())), np.amax(list(g_loss_dict.values()))])
     fig.update_layout(width=1200, height=400)
     fig.update_layout(showlegend=False)
-    fig.write_image('../paper1_figs_new_architecture/scores_correlates.png', scale=4)
+    #fig.write_image('../paper1_figs_new_architecture/scores_correlates.png', scale=4)
     if config.machine == 'local':
         fig.show()
+    wandb.log({"Score Correlates": fig})
 
     fig = go.Figure()
     label = 'Test Real'
@@ -1610,9 +1618,11 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.layout.margin = layout.margin
     fig.layout.margin.b = 60
 
-    fig.write_image('../paper1_figs_new_architecture/ToC_discriminator.png', scale=4)
+    #fig.write_image('../paper1_figs_new_architecture/ToC_discriminator.png', scale=4)
     if config.machine == 'local':
         fig.show()
+    #wandb.log({"Functional Group Scores": fig})
+
 
     aa = 0
     return None
