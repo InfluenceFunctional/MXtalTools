@@ -218,9 +218,9 @@ class independent_gaussian_model(nn.Module):
         """
         # conditions are unused - dummy
         # denormalize sample before standardizing
-        samples = self.prior.sample((num_samples,)).to(data.x.device)
-        samples[:, :3] = samples[:, :3] * (data.Z[:, None] ** (1 / 3)) * (data.mol_volume[:, None] ** (1 / 3))
-        return (samples - self.means.to(samples.device)) / self.stds.to(samples.device)  # we want samples in standardized basis
+        samples = self.prior.sample((num_samples,)).to(data.x.device)  # samples in the destandardied basis
+        samples[:, :3] = samples[:, :3] * (data.Z[:, None] ** (1 / 3)) * (data.mol_volume[:, None] ** (1 / 3))  # denorm lattice vectors
+        return (samples - self.means.to(samples.device)) / self.stds.to(samples.device)  # we want samples in the denormed standardized basis
 
     def backward(self, samples):
         return samples * self.stds + self.means

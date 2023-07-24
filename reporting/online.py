@@ -1639,3 +1639,238 @@ def log_cubic_defect(samples):
     wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
     hist = np.histogram(cubic_distortion, bins=256, range=(0, 1))
     wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})
+
+
+def process_generator_losses(config, epoch_stats_dict):
+    generator_loss_keys = ['generator packing prediction', 'generator packing target', 'generator per mol vdw loss',
+                           'generator adversarial loss', 'generator h bond loss']
+    generator_losses = {}
+    for key in generator_loss_keys:
+        if key in epoch_stats_dict.keys():
+            if epoch_stats_dict[key] is not None:
+                if key == 'generator adversarial loss':
+                    if config.train_generator_adversarially:
+                        generator_losses[key[10:]] = epoch_stats_dict[key]
+                    else:
+                        pass
+                else:
+                    generator_losses[key[10:]] = epoch_stats_dict[key]
+
+                if key == 'generator packing target':
+                    generator_losses['packing normed mae'] = np.abs(
+                        generator_losses['packing prediction'] - generator_losses['packing target']) / \
+                                                             generator_losses['packing target']
+                    del generator_losses['packing prediction'], generator_losses['packing target']
+            else:
+                generator_losses[key[10:]] = None
+
+    return generator_losses, {key: np.average(value) for i, (key, value) in enumerate(generator_losses.items()) if
+                              value is not None}
+
+
+def cell_generation_analysis(config, epoch_stats_dict):
+    """
+    do analysis and plotting for cell generator
+    """
+    layout = plotly_setup(config)
+    log_cubic_defect(epoch_stats_dict['final generated cell parameters'])
+    wandb.log({"Generated cell parameter variation": epoch_stats_dict['generated cell parameters'].std(0).mean()})
+    generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
+    wandb.log(average_losses_dict)
+
+    cell_density_plot(config, wandb, epoch_stats_dict, layout)
+    plot_generator_loss_correlates(config, wandb, epoch_stats_dict, generator_losses, layout)
+
+    return None
+
+
+def log_regression_accuracy(dataDims, train_epoch_stats_dict, test_epoch_stats_dict):
+    target_mean = dataDims['target mean']
+    target_std = dataDims['target std']
+
+    target = np.asarray(test_epoch_stats_dict['regressor packing target'])
+    prediction = np.asarray(test_epoch_stats_dict['regressor packing prediction'])
+    orig_target = target * target_std + target_mean
+    orig_prediction = prediction * target_std + target_mean
+
+    volume_ind = dataDims['tracking features dict'].index('molecule volume')
+    mass_ind = dataDims['tracking features dict'].index('molecule mass')
+    molwise_density = test_epoch_stats_dict['tracking features'][:, mass_ind] / test_epoch_stats_dict[
+                                                                                    'tracking features'][:,
+                                                                                volume_ind]
+    target_density = molwise_density * orig_target * 1.66  # conversion from amu/A^3 to g/mL
+    predicted_density = molwise_density * orig_prediction * 1.66
+
+    if train_epoch_stats_dict is not None:
+        train_target = np.asarray(train_epoch_stats_dict['regressor packing target'])
+        train_prediction = np.asarray(train_epoch_stats_dict['regressor packing prediction'])
+        train_orig_target = train_target * target_std + target_mean
+        train_orig_prediction = train_prediction * target_std + target_mean
+
+    losses = ['normed error', 'abs normed error', 'squared error']
+    loss_dict = {}
+    losses_dict = {}
+    for loss in losses:
+        if loss == 'normed error':
+            loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
+        elif loss == 'abs normed error':
+            loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
+        elif loss == 'squared error':
+            loss_i = (orig_target - orig_prediction) ** 2
+        losses_dict[loss] = loss_i  # huge unnecessary upload
+        loss_dict[loss + ' mean'] = np.mean(loss_i)
+        loss_dict[loss + ' std'] = np.std(loss_i)
+        print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
+
+    linreg_result = linregress(orig_target, orig_prediction)
+    loss_dict['Regression R'] = linreg_result.rvalue
+    loss_dict['Regression slope'] = linreg_result.slope
+    wandb.log(loss_dict)
+
+    losses = ['density normed error', 'density abs normed error', 'density squared error']
+    loss_dict = {}
+    losses_dict = {}
+    for loss in losses:
+        if loss == 'density normed error':
+            loss_i = (target_density - predicted_density) / np.abs(target_density)
+        elif loss == 'density abs normed error':
+            loss_i = np.abs((target_density - predicted_density) / np.abs(target_density))
+        elif loss == 'density squared error':
+            loss_i = (target_density - predicted_density) ** 2
+        losses_dict[loss] = loss_i  # huge unnecessary upload
+        loss_dict[loss + ' mean'] = np.mean(loss_i)
+        loss_dict[loss + ' std'] = np.std(loss_i)
+        print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
+
+    linreg_result = linregress(target_density, predicted_density)
+    loss_dict['Density Regression R'] = linreg_result.rvalue
+    loss_dict['Density Regression slope'] = linreg_result.slope
+    wandb.log(loss_dict)
+
+    # log loss distribution
+    if True:
+        # predictions vs target trace
+        xline = np.linspace(max(min(orig_target), min(orig_prediction)),
+                            min(max(orig_target), max(orig_prediction)), 10)
+        fig = go.Figure()
+        fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40,
+                                            showlegend=True))
+        fig.update_traces(contours_coloring="fill")
+        fig.update_traces(contours_showlines=False)
+        fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
+        fig.add_trace(go.Scattergl(x=xline, y=xline))
+        fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+        fig.update_layout(showlegend=True)
+        wandb.log({'Test Packing Coefficient': fig})
+
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(x=orig_prediction - orig_target,
+                                   histnorm='probability density',
+                                   nbinsx=100,
+                                   name="Error Distribution",
+                                   showlegend=False))
+        wandb.log({'Packing Coefficient Error Distribution': fig})
+
+        xline = np.linspace(max(min(target_density), min(predicted_density)),
+                            min(max(target_density), max(predicted_density)), 10)
+        fig = go.Figure()
+        fig.add_trace(
+            go.Histogram2dContour(x=target_density, y=predicted_density, ncontours=50, nbinsx=40, nbinsy=40,
+                                  showlegend=True))
+        fig.update_traces(contours_coloring="fill")
+        fig.update_traces(contours_showlines=False)
+        fig.add_trace(
+            go.Scattergl(x=target_density, y=predicted_density, mode='markers', showlegend=True, opacity=0.5))
+        fig.add_trace(go.Scattergl(x=xline, y=xline))
+        fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+        fig.update_layout(showlegend=True)
+        wandb.log({'Test Density': fig})
+
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(x=predicted_density - target_density,
+                                   histnorm='probability density',
+                                   nbinsx=100,
+                                   name="Error Distribution",
+                                   showlegend=False))
+        wandb.log({'Density Error Distribution': fig})
+
+        if train_epoch_stats_dict is not None:
+            xline = np.linspace(max(min(train_orig_target), min(train_orig_prediction)),
+                                min(max(train_orig_target), max(train_orig_prediction)), 10)
+            fig = go.Figure()
+            fig.add_trace(
+                go.Histogram2dContour(x=train_orig_target, y=train_orig_prediction, ncontours=50, nbinsx=40,
+                                      nbinsy=40, showlegend=True))
+            fig.update_traces(contours_coloring="fill")
+            fig.update_traces(contours_showlines=False)
+            fig.add_trace(
+                go.Scattergl(x=train_orig_target, y=train_orig_prediction, mode='markers', showlegend=True,
+                             opacity=0.5))
+            fig.add_trace(go.Scattergl(x=xline, y=xline))
+            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+            fig.update_layout(showlegend=True)
+            wandb.log({'Train Packing Coefficient': fig})
+
+        # correlate losses with molecular features
+        tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
+        generator_loss_correlations = np.zeros(dataDims['num tracking features'])
+        features = []
+        for i in range(dataDims['num tracking features']):  # not that interesting
+            features.append(dataDims['tracking features dict'][i])
+            generator_loss_correlations[i] = \
+                np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i],
+                            rowvar=False)[0, 1]
+
+        generator_sort_inds = np.argsort(generator_loss_correlations)
+        generator_loss_correlations = generator_loss_correlations[generator_sort_inds]
+
+        fig = go.Figure(go.Bar(
+            y=[dataDims['tracking features dict'][i] for i in
+               range(dataDims['num tracking features'])],
+            x=[generator_loss_correlations[i] for i in range(dataDims['num tracking features'])],
+            orientation='h',
+        ))
+        wandb.log({'Regressor Loss Correlates': fig})
+
+    return None
+
+
+def detailed_reporting(config, epoch, train_loader, train_epoch_stats_dict, test_epoch_stats_dict,
+                       extra_test_dict=None):
+    """
+    Do analysis and upload results to w&b
+    """
+    if (test_epoch_stats_dict is not None) and config.mode == 'gan':
+        if test_epoch_stats_dict['generated cell parameters'] is not None:
+            cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict)
+
+        if config.train_generator_vdw or config.train_generator_adversarially:
+            cell_generation_analysis(config, test_epoch_stats_dict)
+
+        if config.train_discriminator_on_distorted or config.train_discriminator_on_randn or config.train_discriminator_adversarially:
+            discriminator_analysis(config, test_epoch_stats_dict)
+
+    elif config.mode == 'regression':
+        log_regression_accuracy(config.dataDims, train_epoch_stats_dict, test_epoch_stats_dict)
+
+    if extra_test_dict is not None:
+        discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_dict)
+
+    return None
+
+
+def discriminator_analysis(config, epoch_stats_dict):
+    '''
+    do analysis and plotting for cell discriminator
+
+    -: scores distribution and vdw penalty by sample source
+    -: loss correlates
+    '''
+    layout = plotly_setup(config)
+
+    scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict \
+        = process_discriminator_outputs(config, epoch_stats_dict)
+    discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
+    plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout)
+
+    return None

@@ -20,16 +20,30 @@
 
 
 ## 1. Installation
-1. Download the code from this repository via git clone #TODO (API key instructions)
-2. Locate `macos_installation.sh` in the downloaded MCryGAN codebase directory. Edit lines XX to accurately 
-represent your system's CUDA version (if any). 
-Then at the codebase directory, run `$ source macos_installation.sh` in command line to create a conda 
-virtual environment named `mcrygan` and install required dependencies. 
-The `mcrygan` environment should be activated when the installation script finishes, 
+1. Download the code from this repository via 
+
+    `git clone git@github.com:InfluenceFunctional/MCryGan.git mcrygan`
+
+2. Locate `molcrytools-env.yml` in the downloaded MCryGAN codebase directory. Edit to correspond to your CUDA version.
+Then at the codebase directory, run 
+
+    `conda env create -f molcrytools-env.yml` 
+
+    on command line to create a conda virutal environment with most of the required packages.
+3. Next, do
+
+   `pip install torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.0.1+cu118.htm`
+    
+    with your pytorch and cuda versions substituted in the pyg link. It is important that your cuda version, pytorch cuda version, and torch_geometric cuda version all match see 
+[this link](https://pytorch-geometric.readthedocs.io/en/latest/notes/installation.html) for more details.
+
+
+The `molcrytools_env` environment should be activated when the installation script finishes, 
 which means a string '(mcrygan)' should show up at the beginning of the command line prompt.
+
 3. Login to your weights and biases account (necessary for run monitoring and reporting) with `wandb login` in the 
 linux terminal
-4. Edit the default paths and wandb details in `main.py` to correspond to your preferences.
+4. Edit the default paths and wandb details in `dev.yaml` to correspond to your preferences.
 #TODO greene specific instructions
 
 ## 2. Dataset Management

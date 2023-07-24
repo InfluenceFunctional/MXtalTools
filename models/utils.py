@@ -246,7 +246,7 @@ def undo_1d_bound(x: torch.tensor, x_span, x_center, mode='soft'):
     if mode == 'soft':
         return x_span * torch.atanh((x - x_center) / x_span) + x_center
     elif mode == 'hard':  # linear scaling to hard stop at [center-span, center+span]
-        raise ValueError("'hard' bound undong not yet implemented")
+        raise ValueError("'hard' bound not yet implemented")
     else:
         raise ValueError("bound must be of type 'soft'")
 

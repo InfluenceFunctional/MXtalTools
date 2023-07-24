@@ -1,4 +1,4 @@
-name: molcrytools_test_env
+name: molcrytools_env
 channels:
   - pytorch
   - nvidia

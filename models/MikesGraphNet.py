@@ -174,7 +174,7 @@ class MikesGraphNet(torch.nn.Module):
 
     def forward(self, z, pos, batch, ptr, ref_mol_inds=None, return_dists=False, n_repeats=None):
         # graph model starts here
-        x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector # todo develop a crystal mode (may or may not actually be more efficient)
+        x = self.atom_embeddings(z)  # embed atomic numbers & compute initial atom-wise feature vector #
 
         if self.crystal_mode:  # assumes input with inside-outside structure, and enforces periodicity after each convolution
             inside_inds = torch.where(ref_mol_inds == 0)[0]

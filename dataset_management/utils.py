@@ -680,7 +680,7 @@ class BuildDataset:
         return len(self.datapoints)
 
 
-def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.8):
+def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2):
     batch_size = batch_size
     train_size = int((1 - test_fraction) * len(dataset_builder))  # split data into training and test sets
     test_size = len(dataset_builder) - train_size

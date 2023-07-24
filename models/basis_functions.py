@@ -26,12 +26,12 @@ def real_sph_harm(k, zero_m_only=True, spherical_coordinates=True):
                     P_l_m[i][j] = P_l_m[i][j].subs(z, sym.cos(theta))
         if not zero_m_only:
             phi = sym.symbols('phi')
-            for i in range(1, len(S_m)):  # todo mk range from 1
+            for i in range(1, len(S_m)):
                 S_m[i] = S_m[i].subs(x,
                                      sym.sin(theta) * sym.cos(phi)).subs(
                     y,
                     sym.sin(theta) * sym.sin(phi))
-            for i in range(1, len(C_m)):  # todo mk range from 1
+            for i in range(1, len(C_m)):
                 C_m[i] = C_m[i].subs(x,
                                      sym.sin(theta) * sym.cos(phi)).subs(
                     y,

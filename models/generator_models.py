@@ -15,6 +15,10 @@ class crystal_generator(nn.Module):
 
         self.device = config.device
 
+        self.lattice_means = dataDims['lattice means']
+        self.lattice_stds = dataDims['lattice stds']
+        self.norm_lattice_lengths = False
+
         '''set random prior'''
         self.latent_dim = config.generator.prior_dimension
         if config.generator.prior == 'multivariate normal':
@@ -104,13 +108,25 @@ class crystal_generator(nn.Module):
 
         conditions_encoding = torch.cat((conditions_encoding, crystal_information[conditions.ptr[:-1]]), dim=-1)
 
+        out = self.model(z, conditions=conditions_encoding, return_latent=return_latent)
+
+        if self.norm_lattice_lengths:
+            '''we want generator to work in the normed lattice vector basis - so denorm outputs here before going forward with evaluation'''
+            lattice_lengths = out[:, :3]
+            destandardized_lattice_lengths = lattice_lengths + self.lattice_stds[:3] + self.lattice_means[:3]
+            denormed_lattice_lengths = destandardized_lattice_lengths * (conditions.Z[:, None] ** (1 / 3)) * (conditions.mol_volume[:, None] ** (1 / 3))  # denorm lattice vectors
+            restandardized_lattice_lengths = (denormed_lattice_lengths - self.lattice_means[:3]) / self.lattice_stds[:3]
+
+        model_samples = torch.cat((restandardized_lattice_lengths, out[:, 3:]), dim=-1)
+
         # into generator model
         if any((return_condition, return_prior, return_latent)):
-            output = [self.model(z, conditions=conditions_encoding, return_latent=return_latent)]
+            output = []
+            output.append(model_samples)
             if return_prior:
                 output.append(z)
             if return_condition:
                 output.append(conditions_encoding)
             return output
         else:
-            return self.model(z, conditions=conditions_encoding, return_latent=return_latent)
+            return model_samples

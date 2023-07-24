@@ -6,10 +6,8 @@ from argparse import Namespace
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 import sys
-import plotly.graph_objects as go
 import torch.random
 import wandb
-from scipy.stats import linregress
 from torch import backends
 import torch.nn as nn
 import torch.nn.functional as F
@@ -39,9 +37,7 @@ from crystal_building.utils import update_crystal_symmetry_elements
 from dataset_management.manager import DataManager
 from dataset_management.utils import (BuildDataset, get_dataloaders, update_dataloader_batch_size, get_extra_test_loader)
 
-from reporting.online import (cell_params_analysis, plotly_setup, cell_density_plot, process_discriminator_outputs,
-                              discriminator_scores_plot, plot_generator_loss_correlates, plot_discriminator_score_correlates,
-                              log_mini_csp_scores_distributions, log_best_mini_csp_samples, discriminator_BT_reporting, log_cubic_defect)
+from reporting.online import (log_mini_csp_scores_distributions, log_best_mini_csp_samples, detailed_reporting)
 from common.utils import (update_stats_dict, np_softmax)
 
 
@@ -65,7 +61,7 @@ class Modeller:
             # generate samples in every space group in the asym dict (eventually, all sgs)
             self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-        if self.config.include_sgs is None:  # draw from all space groups we can parameterize  # todo update this with SG tolerance
+        if self.config.include_sgs is None:  # draw from all space groups we can parameterize
             self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]  # list(self.space_groups.values())
 
         '''prep workdir'''
@@ -366,8 +362,8 @@ class Modeller:
 
                         '''sometimes to detailed reporting'''
                         if (epoch % self.config.wandb.sample_reporting_frequency) == 0:
-                            self.detailed_reporting(epoch, train_loader, train_epoch_stats_dict, test_epoch_stats_dict,
-                                                    extra_test_dict=extra_test_epoch_stats_dict)
+                            detailed_reporting(self.config, epoch, train_loader, train_epoch_stats_dict, test_epoch_stats_dict,
+                                               extra_test_dict=extra_test_epoch_stats_dict)
 
                         '''sometimes test the generator on a mini CSP problem'''
                         if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
@@ -468,9 +464,10 @@ class Modeller:
                     break  # stop training early - for debugging purposes
 
         total_time = time.time() - t0
-        epoch_stats_dict['tracking features'] = np.stack(epoch_stats_dict['tracking features'])
 
         if record_stats:
+            epoch_stats_dict['tracking features'] = np.stack(epoch_stats_dict['tracking features'])
+
             for key in epoch_stats_dict.keys():
                 feature = epoch_stats_dict[key]
                 if (feature == []) or (feature is None):
@@ -512,7 +509,7 @@ class Modeller:
             '''
             train discriminator
             '''
-            skip_discriminator_step=False
+            skip_discriminator_step = False
             if i > 0 and self.config.train_discriminator_adversarially:
                 avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
                 if avg_generator_score < 0.5:
@@ -570,7 +567,7 @@ class Modeller:
         else:
             return [np.mean(discriminator_err), np.mean(generator_err)], [discriminator_loss_record, generator_loss_record], total_time
 
-    def discriminator_evaluation(self, data_loader=None, discriminator=None, iteration_override=None):  # todo revise to include generator
+    def discriminator_evaluation(self, data_loader=None, discriminator=None, iteration_override=None):  # todo write generator evaluation
         t0 = time.time()
         discriminator.eval()
 
@@ -697,29 +694,6 @@ class Modeller:
                     special_losses['Test ' + key] = np.average(score)
 
         wandb.log(special_losses)
-
-    def detailed_reporting(self, epoch, train_loader, train_epoch_stats_dict, test_epoch_stats_dict,
-                           extra_test_dict=None):
-        """
-        Do analysis and upload results to w&b
-        """
-        if (test_epoch_stats_dict is not None) and self.config.mode == 'gan':
-            if test_epoch_stats_dict['generated cell parameters'] is not None:
-                cell_params_analysis(self.config, wandb, train_loader, test_epoch_stats_dict)
-
-            if self.config.train_generator_vdw or self.config.train_generator_adversarially:
-                self.cell_generation_analysis(test_epoch_stats_dict)
-
-            if self.config.train_discriminator_on_distorted or self.config.train_discriminator_on_randn or self.config.train_discriminator_adversarially:
-                self.discriminator_analysis(test_epoch_stats_dict)
-
-        elif self.config.mode == 'regression':
-            self.log_regression_accuracy(train_epoch_stats_dict, test_epoch_stats_dict)
-
-        if extra_test_dict is not None:
-            discriminator_BT_reporting(self.config, wandb, test_epoch_stats_dict, extra_test_dict)
-
-        return None
 
     def discriminator_step(self, discriminator, generator, epoch_stats_dict, data, discriminator_optimizer, i,
                            update_gradients, discriminator_err, discriminator_loss_record, skip_step, regressor):
@@ -1090,156 +1064,6 @@ class Modeller:
 
         return generated_samples_i.float(), epoch_stats_dict, negative_type
 
-    def log_regression_accuracy(self, train_epoch_stats_dict, test_epoch_stats_dict):
-        target_mean = self.config.dataDims['target mean']
-        target_std = self.config.dataDims['target std']
-
-        target = np.asarray(test_epoch_stats_dict['regressor packing target'])
-        prediction = np.asarray(test_epoch_stats_dict['regressor packing prediction'])
-        orig_target = target * target_std + target_mean
-        orig_prediction = prediction * target_std + target_mean
-
-        volume_ind = self.config.dataDims['tracking features dict'].index('molecule volume')
-        mass_ind = self.config.dataDims['tracking features dict'].index('molecule mass')
-        molwise_density = test_epoch_stats_dict['tracking features'][:, mass_ind] / test_epoch_stats_dict[
-                                                                                        'tracking features'][:,
-                                                                                    volume_ind]
-        target_density = molwise_density * orig_target * 1.66  # conversion from amu/A^3 to g/mL
-        predicted_density = molwise_density * orig_prediction * 1.66
-
-        if train_epoch_stats_dict is not None:
-            train_target = np.asarray(train_epoch_stats_dict['regressor packing target'])
-            train_prediction = np.asarray(train_epoch_stats_dict['regressor packing prediction'])
-            train_orig_target = train_target * target_std + target_mean
-            train_orig_prediction = train_prediction * target_std + target_mean
-
-        losses = ['normed error', 'abs normed error', 'squared error']
-        loss_dict = {}
-        losses_dict = {}
-        for loss in losses:
-            if loss == 'normed error':
-                loss_i = (orig_target - orig_prediction) / np.abs(orig_target)
-            elif loss == 'abs normed error':
-                loss_i = np.abs((orig_target - orig_prediction) / np.abs(orig_target))
-            elif loss == 'squared error':
-                loss_i = (orig_target - orig_prediction) ** 2
-            losses_dict[loss] = loss_i  # huge unnecessary upload
-            loss_dict[loss + ' mean'] = np.mean(loss_i)
-            loss_dict[loss + ' std'] = np.std(loss_i)
-            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
-
-        linreg_result = linregress(orig_target, orig_prediction)
-        loss_dict['Regression R'] = linreg_result.rvalue
-        loss_dict['Regression slope'] = linreg_result.slope
-        wandb.log(loss_dict)
-
-        losses = ['density normed error', 'density abs normed error', 'density squared error']
-        loss_dict = {}
-        losses_dict = {}
-        for loss in losses:
-            if loss == 'density normed error':
-                loss_i = (target_density - predicted_density) / np.abs(target_density)
-            elif loss == 'density abs normed error':
-                loss_i = np.abs((target_density - predicted_density) / np.abs(target_density))
-            elif loss == 'density squared error':
-                loss_i = (target_density - predicted_density) ** 2
-            losses_dict[loss] = loss_i  # huge unnecessary upload
-            loss_dict[loss + ' mean'] = np.mean(loss_i)
-            loss_dict[loss + ' std'] = np.std(loss_i)
-            print(loss + ' mean: {:.3f} std: {:.3f}'.format(loss_dict[loss + ' mean'], loss_dict[loss + ' std']))
-
-        linreg_result = linregress(target_density, predicted_density)
-        loss_dict['Density Regression R'] = linreg_result.rvalue
-        loss_dict['Density Regression slope'] = linreg_result.slope
-        wandb.log(loss_dict)
-
-        # log loss distribution
-        if self.config.wandb.log_figures:
-            # predictions vs target trace
-            xline = np.linspace(max(min(orig_target), min(orig_prediction)),
-                                min(max(orig_target), max(orig_prediction)), 10)
-            fig = go.Figure()
-            fig.add_trace(go.Histogram2dContour(x=orig_target, y=orig_prediction, ncontours=50, nbinsx=40, nbinsy=40,
-                                                showlegend=True))
-            fig.update_traces(contours_coloring="fill")
-            fig.update_traces(contours_showlines=False)
-            fig.add_trace(go.Scattergl(x=orig_target, y=orig_prediction, mode='markers', showlegend=True, opacity=0.5))
-            fig.add_trace(go.Scattergl(x=xline, y=xline))
-            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-            fig.update_layout(showlegend=True)
-            wandb.log({'Test Packing Coefficient': fig})
-
-            fig = go.Figure()
-            fig.add_trace(go.Histogram(x=orig_prediction - orig_target,
-                                       histnorm='probability density',
-                                       nbinsx=100,
-                                       name="Error Distribution",
-                                       showlegend=False))
-            wandb.log({'Packing Coefficient Error Distribution': fig})
-
-            xline = np.linspace(max(min(target_density), min(predicted_density)),
-                                min(max(target_density), max(predicted_density)), 10)
-            fig = go.Figure()
-            fig.add_trace(
-                go.Histogram2dContour(x=target_density, y=predicted_density, ncontours=50, nbinsx=40, nbinsy=40,
-                                      showlegend=True))
-            fig.update_traces(contours_coloring="fill")
-            fig.update_traces(contours_showlines=False)
-            fig.add_trace(
-                go.Scattergl(x=target_density, y=predicted_density, mode='markers', showlegend=True, opacity=0.5))
-            fig.add_trace(go.Scattergl(x=xline, y=xline))
-            fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-            fig.update_layout(showlegend=True)
-            wandb.log({'Test Density': fig})
-
-            fig = go.Figure()
-            fig.add_trace(go.Histogram(x=predicted_density - target_density,
-                                       histnorm='probability density',
-                                       nbinsx=100,
-                                       name="Error Distribution",
-                                       showlegend=False))
-            wandb.log({'Density Error Distribution': fig})
-
-            if train_epoch_stats_dict is not None:
-                xline = np.linspace(max(min(train_orig_target), min(train_orig_prediction)),
-                                    min(max(train_orig_target), max(train_orig_prediction)), 10)
-                fig = go.Figure()
-                fig.add_trace(
-                    go.Histogram2dContour(x=train_orig_target, y=train_orig_prediction, ncontours=50, nbinsx=40,
-                                          nbinsy=40, showlegend=True))
-                fig.update_traces(contours_coloring="fill")
-                fig.update_traces(contours_showlines=False)
-                fig.add_trace(
-                    go.Scattergl(x=train_orig_target, y=train_orig_prediction, mode='markers', showlegend=True,
-                                 opacity=0.5))
-                fig.add_trace(go.Scattergl(x=xline, y=xline))
-                fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-                fig.update_layout(showlegend=True)
-                wandb.log({'Train Packing Coefficient': fig})
-
-            # correlate losses with molecular features
-            tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
-            generator_loss_correlations = np.zeros(self.config.dataDims['num tracking features'])
-            features = []
-            for i in range(self.config.dataDims['num tracking features']):  # not that interesting
-                features.append(self.config.dataDims['tracking features dict'][i])
-                generator_loss_correlations[i] = \
-                    np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i],
-                                rowvar=False)[0, 1]
-
-            generator_sort_inds = np.argsort(generator_loss_correlations)
-            generator_loss_correlations = generator_loss_correlations[generator_sort_inds]
-
-            fig = go.Figure(go.Bar(
-                y=[self.config.dataDims['tracking features dict'][i] for i in
-                   range(self.config.dataDims['num tracking features'])],
-                x=[generator_loss_correlations[i] for i in range(self.config.dataDims['num tracking features'])],
-                orientation='h',
-            ))
-            wandb.log({'Regressor Loss Correlates': fig})
-
-        return None
-
     def nov_22_figures(self):
         """
         make beautiful figures for the first paper
@@ -1384,12 +1208,13 @@ class Modeller:
                 discriminator.load_state_dict(discriminator_checkpoint['model_state_dict'])
 
         return generator, discriminator
+
     def gan_evaluation(self, epoch, generator, discriminator, discriminator_optimizer, generator_optimizer,
                        metrics_dict, train_loader, test_loader, extra_test_loader, regressor):
         """
         run post-training evaluation
         """
-        generator, discriminator = self.reload_best_test_checkpoint(epoch, generator,discriminator)
+        generator, discriminator = self.reload_best_test_checkpoint(epoch, generator, discriminator)
 
         # rerun test inference
         generator.eval()
@@ -1418,7 +1243,7 @@ class Modeller:
             else:
                 extra_test_epoch_stats_dict = None
 
-        self.detailed_reporting(epoch, train_loader, None, test_epoch_stats_dict, extra_test_dict=extra_test_epoch_stats_dict)
+        detailed_reporting(self.config, epoch, train_loader, None, test_epoch_stats_dict, extra_test_dict=extra_test_epoch_stats_dict)
 
     @staticmethod
     def compute_similarity_penalty(generated_samples, prior):
@@ -1440,7 +1265,8 @@ class Modeller:
             similarity_penalty = F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(
                 1)  # align distances to all other samples
 
-            # todo set the standardization for each space group individually (different stats and distances)
+            # todo this metric isn't very good e.g., doesn't set the standardization for each space group individually (different stats and distances)
+            # also the distance between the different cell params are not at all equally meaningful
 
         else:
             similarity_penalty = None
@@ -1545,63 +1371,6 @@ class Modeller:
         epoch_stats_dict = update_stats_dict(epoch_stats_dict, stats_keys, stats_values, mode='extend')
 
         return generator_losses, epoch_stats_dict
-
-    def cell_generation_analysis(self, epoch_stats_dict):
-        """
-        do analysis and plotting for cell generator
-        """
-        layout = plotly_setup(self.config)
-        log_cubic_defect(epoch_stats_dict['final generated cell parameters'])
-        wandb.log({"Generated cell parameter variation": epoch_stats_dict['generated cell parameters'].std(0).mean()})
-        generator_losses, average_losses_dict = self.process_generator_losses(epoch_stats_dict)
-        wandb.log(average_losses_dict)
-
-        cell_density_plot(self.config, wandb, epoch_stats_dict, layout)
-        plot_generator_loss_correlates(self.config, wandb, epoch_stats_dict, generator_losses, layout)
-
-        return None
-
-    def process_generator_losses(self, epoch_stats_dict):
-        generator_loss_keys = ['generator packing prediction', 'generator packing target', 'generator per mol vdw loss',
-                               'generator adversarial loss', 'generator h bond loss']
-        generator_losses = {}
-        for key in generator_loss_keys:
-            if key in epoch_stats_dict.keys():
-                if epoch_stats_dict[key] is not None:
-                    if key == 'generator adversarial loss':
-                        if self.config.train_generator_adversarially:
-                            generator_losses[key[10:]] = epoch_stats_dict[key]
-                        else:
-                            pass
-                    else:
-                        generator_losses[key[10:]] = epoch_stats_dict[key]
-
-                    if key == 'generator packing target':
-                        generator_losses['packing normed mae'] = np.abs(
-                            generator_losses['packing prediction'] - generator_losses['packing target']) / \
-                                                                 generator_losses['packing target']
-                        del generator_losses['packing prediction'], generator_losses['packing target']
-                else:
-                    generator_losses[key[10:]] = None
-
-        return generator_losses, {key: np.average(value) for i, (key, value) in enumerate(generator_losses.items()) if
-                                  value is not None}
-
-    def discriminator_analysis(self, epoch_stats_dict):
-        '''
-        do analysis and plotting for cell discriminator
-
-        -: scores distribution and vdw penalty by sample source
-        -: loss correlates
-        '''
-        layout = plotly_setup(self.config)
-
-        scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict \
-            = process_discriminator_outputs(self.config, epoch_stats_dict)
-        discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
-        plot_discriminator_score_correlates(self.config, wandb, epoch_stats_dict, layout)
-
-        return None
 
     def reinitialize_models(self, generator, discriminator, regressor):
         """

@@ -131,7 +131,7 @@ def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords
 
 
 def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol_position: torch.tensor, mol_rotation: torch.tensor,
-                      lattices, dataDims,
+                      lattices, means, stds,
                       enforce_crystal_system=False, rotation_basis='spherical',
                       return_transforms=False, standardized_sample: bool = True):
     """
@@ -142,11 +142,10 @@ def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol
     :param mol_rotation:
     :return:
     """
-    # todo sub datadims for raw means and stds
     if standardized_sample:
         # de-standardize everything
-        means = torch.Tensor(dataDims['lattice means']).to(cell_lengths.device)
-        stds = torch.Tensor(dataDims['lattice stds']).to(cell_lengths.device)
+        means = torch.Tensor(means).to(cell_lengths.device)
+        stds = torch.Tensor(stds).to(cell_lengths.device)
 
         # soft clipping to ensure correct range with finite gradients
         cell_lengths = cell_lengths * stds[0:3] + means[0:3]
@@ -531,38 +530,6 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
     return applied_rotation_list
 
 
-def get_canonical_conformer(supercell_data, mol_position, sym_ops_list, debug=False):
-    """ # todo officially deprecate - unusedc
-    identify canonical conformer
-    """
-    # do it in batches of same z-values to allow some parallelization
-    unique_z_values = torch.unique(supercell_data.Z)
-    z_inds = [torch.where(supercell_data.Z == z)[0] for z in unique_z_values]
-
-    # initialize final list
-    canonical_fractional_centroids_list = torch.zeros((len(mol_position), 3)).to(mol_position.device)
-    # split it into z values and do each in parallel for speed
-    for i, (inds, z_value) in enumerate(zip(z_inds, unique_z_values)):
-        centroids_i = torch.zeros((z_value, len(inds), 3)).to(mol_position.device)  # initialize
-        for zv in range(z_value):
-            centroids_i[zv, :, :] = \
-                torch.einsum('nhb,nb->nh', (torch.stack([sym_ops_list[j] for j in inds])[:, zv],  # was an index error here
-                                            torch.cat((mol_position[inds],
-                                                       torch.ones(mol_position[inds].shape[:-1] + (1,)).to(mol_position.device)), dim=-1)
-                                            )
-                             )[:, :-1]
-        centroids = centroids_i - torch.floor(centroids_i)
-
-        canonical_fractional_centroids_list[inds] = centroids[torch.argmin(torch.linalg.norm(centroids, dim=2), dim=0), torch.arange(len(inds))]
-
-        if debug:  # todo rewrite these debug statements as tests
-            assert F.l1_loss(canonical_fractional_centroids_list[inds], mol_position[inds], reduction='mean') < 0.001
-
-    if debug:
-        assert F.l1_loss(canonical_fractional_centroids_list, mol_position, reduction='mean') < 0.001
-
-    return canonical_fractional_centroids_list
-
 
 def build_unit_cell(z_values, final_coords_list, T_fc_list, T_cf_list, sym_ops_list):
     """
@@ -595,7 +562,7 @@ def build_unit_cell(z_values, final_coords_list, T_fc_list, T_cf_list, sym_ops_l
             # force centroids within unit cell
             centroids_f_z_in_cell = centroids_f_z - torch.floor(centroids_f_z)
 
-            # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame  # todo reconfirm this is the right way to do this
+            # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame
             rot_coords_f = torch.einsum('nmj,nij->nmi',
                                         (torch.einsum('mij,mnj->mni',
                                                       (T_cf_list[inds],
@@ -623,15 +590,20 @@ def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_ind):
     this approach will not work for asymmetric units which are not parallelpipeds
     Parameters
     ----------
+    asym_unit_dict
     mol_position
     sg_ind
 
     Returns
     -------
-    """  # todo vectorize
-    scaled_mol_position = mol_position.clone()
-    for i, ind in enumerate(sg_ind):
-        scaled_mol_position[i, :] = mol_position[i, :] * asym_unit_dict[str(int(ind))]
+    """
+    # scaled_mol_position = mol_position.clone()
+    # for i, ind in enumerate(sg_ind):
+    #     scaled_mol_position[i, :] = mol_position[i, :] * asym_unit_dict[str(int(ind))]
+
+    # vectorized for speed
+    asym_units = torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_ind])
+    scaled_mol_position = mol_position * asym_units
 
     return scaled_mol_position
 

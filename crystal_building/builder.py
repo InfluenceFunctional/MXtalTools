@@ -102,7 +102,7 @@ class SupercellBuilder:
         supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
         supercell_data.asym_unit_handedness = mol_handedness
 
-        cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # I think this just IS the T_fc matrix  # TODO confirm we want to transpose T_fc to get the cell vectors in the correct basis
+        cell_vector_list = T_fc_list.permute(0, 2, 1)
 
         # get minimal supercell cluster for convolving about a given canonical conformer
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
@@ -133,7 +133,7 @@ class SupercellBuilder:
             atoms_i = supercell_data.x[supercell_data.batch == i]
             atoms_list.append(atoms_i)
 
-        cell_vector_list = T_fc_list.permute(0, 2, 1)  # cell_vectors(T_fc_list)  # todo as above, confirm this transposal
+        cell_vector_list = T_fc_list.permute(0, 2, 1)  # confirmed this is the right way to do this
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list,
                              T_fc_list, atoms_list, supercell_data.Z,
@@ -158,11 +158,12 @@ class SupercellBuilder:
             lattices = [self.symmetries_dict['lattice_type'][int(supercell_data.sg_ind[n])] for n in range(supercell_data.num_graphs)]
             cell_lengths, cell_angles, mol_position, mol_rotation, _, _, _ = \
                 clean_cell_output(
-                    cell_lengths, cell_angles, mol_position, mol_rotation, lattices, self.dataDims,
+                    cell_lengths, cell_angles, mol_position, mol_rotation, lattices,
+                    self.dataDims['lattice means'], self.dataDims['lattice stds'],
                     enforce_crystal_system=True, return_transforms=True,
                     standardized_sample=standardized_sample, rotation_basis=self.rotation_basis)
 
-        if rescale_asymmetric_unit:  # todo assert only our prepared sgs will be allowed
+        if rescale_asymmetric_unit:
             mol_position = scale_asymmetric_unit(self.asym_unit_dict, mol_position, supercell_data.sg_ind)
 
         return cell_lengths, cell_angles, mol_position, mol_rotation

@@ -1,4 +1,4 @@
-asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
+raw_asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
     '1': [1, 1, 1],  # P1
     '2': [0.5, 1, 1],  # P-1
     '3': [1, 1, 0.5],  # P2
@@ -131,3 +131,13 @@ asym_unit_dict = {  # https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMR
     # '134'
     '135': [0.5, 0.5, 0.25],  # p42/mbc
 }
+
+'''
+if we do not have a parameterization for a particular space group's asymmetric unit
+set it for now as unrestricted, so that we can at least use it without crashing the code
+effectively, all unparameterized SGs are treated as P1
+'''
+asym_unit_dict = raw_asym_unit_dict.copy()
+for i in range(1, 231):
+    if str(i) not in raw_asym_unit_dict.keys():
+        asym_unit_dict[str(i)] = [1, 1, 1]

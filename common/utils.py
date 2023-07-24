@@ -239,6 +239,9 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
     generate an ASE Atoms object from a crystaldata object, up to certain exclusions
     optionally highlight atoms in the asymmetric unit
 
+    view with
+    from ase.visualize import view
+    view(output_of_this_function)
     """
     data = data.clone().cpu().detach()
     if data.batch is not None:  # more than one crystal in the datafile
