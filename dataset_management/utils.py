@@ -9,7 +9,7 @@ from torch_geometric.loader import DataLoader
 import tqdm
 import pandas as pd
 from pyxtal import symmetry
-from dataset_management.manager import Miner
+from dataset_management.manager import DataManager
 import os
 from torch_geometric.loader.dataloader import Collater
 
@@ -188,6 +188,8 @@ class BuildDataset:
         """
         add or update a few features
         # todo incorporate these in next dataset build
+        note we are surpressing a performancewarning from Pandas here.
+        It's easier to do it this way and doesn't seem that slow.
         """
 
         '''
@@ -678,12 +680,9 @@ class BuildDataset:
         return len(self.datapoints)
 
 
-def get_dataloaders(dataset_builder, config, override_batch_size=None):
-    if override_batch_size is not None:
-        batch_size = override_batch_size
-    else:
-        batch_size = config.min_batch_size
-    train_size = int(0.8 * len(dataset_builder))  # split data into training and test sets
+def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.8):
+    batch_size = batch_size
+    train_size = int((1 - test_fraction) * len(dataset_builder))  # split data into training and test sets
     test_size = len(dataset_builder) - train_size
 
     train_dataset = []
@@ -694,7 +693,7 @@ def get_dataloaders(dataset_builder, config, override_batch_size=None):
     for i in range(test_size):
         test_dataset.append(dataset_builder[i])
 
-    if config.machine == 'cluster':
+    if machine == 'cluster':  # faster dataloading on cluster with more workers
         tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=min(os.cpu_count(), 8), pin_memory=True)
         te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=min(os.cpu_count(), 8), pin_memory=True)
     else:
@@ -723,7 +722,7 @@ def delete_from_dataset(dataset, good_inds):
 def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, lattice_dict=None, sym_ops_dict=None):
     datasets = []
     for path in paths:
-        miner = Miner(config=config, dataset_path=path, collect_chunks=False)
+        miner = DataManager(config=config, dataset_path=path, collect_chunks=False)
         # miner.include_sgs = None # this will allow all sg's, which we can't do currently due to ongoing asymmetric unit parameterization
         miner.exclude_nonstandard_settings = False
         miner.exclude_crystal_systems = None
@@ -747,9 +746,12 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
 
     print('Fixing BT submission symmetries - fix this in next refeaturization')
     # dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo fix this after next BT refeaturization - included sym ops are garbage
-    for ii in tqdm.tqdm(range(len(dataset))):  # update them with standard SG definitions - though will be false in some cases, no doubt. This will let the generators run and we don't use the output.
-        dataset['crystal symmetries'][ii] = sym_ops_dict[dataset['crystal spacegroup number'][ii]]
-        dataset['crystal z value'][ii] = len(dataset['crystal symmetries'][ii])
+    dataset['crystal symmetries'] = [
+        sym_ops_dict[dataset['crystal spacegroup number'][ii]] for ii in range(len(dataset))
+    ]
+    dataset['crystal z value'] = np.array(
+        [len(dataset['crystal symmetries'][ii]) for ii in range(len(dataset))
+         ])
 
     extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
                                           sg_dict=sg_dict,

@@ -1,10 +1,10 @@
-test_mode: False
+test_mode: True
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 explicit_run_enumeration: False
 skip_saving_and_loading: True
 run_num: 0
-anomaly_detection: True  # slows down the code
+anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
 
@@ -21,11 +21,16 @@ train_discriminator_on_randn: True
 train_discriminator_on_distorted: True
 sample_distortion_magnitude: 0.1 # -1 for wide range test # noise for distorted generation
 
-extra_test_period: 5
-extra_test_evaluation: True
-extra_test_set_paths: #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
-                      # 'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_6_dataset',
-                      # 'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_targets']
+local_dataset_dir_path: "C:/Users/mikem/crystals/CSP_runs/datasets/"
+cluster_dataset_dir_path: '/scratch/mk8347/csd_runs/datasets/'
+local_workdir_path: 'C:/Users/mikem/crystals/CSP_runs/'
+cluster_workdir_path: '/scratch/mk8347/csd_runs/'
+extra_test_set_paths: ['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
+                       'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_6_dataset',
+                       'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_targets']
+extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+
+# for reloading pretrained models
 discriminator_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10191'
 generator_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\best_generator_1599'
 regressor_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_10213'
@@ -52,7 +57,7 @@ sample_move_size: 0.001 # currently unused
 
 # batching & convergence
 grow_batch_size: True
-min_batch_size: 10
+min_batch_size: 20
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 10000 # 0 epochs takes us straight to evaluation (only implemented for GAN)
@@ -62,13 +67,13 @@ gradient_norm_clip: 1
 # dataset curation
 rotation_basis: "spherical" # "spherical" for rotvec in spherical coordinates, "cartesian" for rotvec in cartesian coordinates
 target: packing # "packing" only supported
-dataset_length: 1000
+dataset_length: 100
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
 max_num_atoms: 100
 min_num_atoms: 5 # target XVI has only 9 heavy atoms
-max_molecule_radius: 5 # angstroms
+max_molecule_radius: 100 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -82,9 +87,9 @@ exclude_missing_r_factor: False
 exclude_disordered_crystals: True
 exclude_polymorphs: False
 exclude_nonstandard_settings: True #False
-exclude_crystal_systems: null #['hexagonal','trigonal','rhombohedral']
+exclude_crystal_systems: null # ['monoclinic','triclinic','orthorhombic']  #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
-include_sgs: null  # ["P-1","P21/c","P212121","C2/c"]  # null for all
+include_sgs: null # ["P-1","P21/c","P212121","C2/c"]  # space groups to be included in the dataset. null for all
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
 generate_sgs: null #["P-1"]#,"P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5 # should be very large, then automatically pares down

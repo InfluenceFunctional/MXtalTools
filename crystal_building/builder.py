@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 from crystal_building.utils import \
     (update_supercell_data, ref_to_supercell, clean_cell_output,
@@ -7,64 +6,6 @@ from crystal_building.utils import \
      rotvec2rotmat, build_unit_cell, scale_asymmetric_unit)
 from common.geometry_calculations import compute_fractional_transform
 from constants.asymmetric_units import asym_unit_dict
-
-
-def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
-    # overwrite point group one-hot
-    # overwrite space group one-hot
-    # overwrite crystal system one-hot
-    # overwrite z value
-
-    sg_num = list(symmetries_dict['space_groups'].values()).index(override_sg) + 1  # indexing from 0
-    sg_ind = symmetries_dict['sg_feature_ind_dict'][symmetries_dict['space_groups'][sg_num]]
-    crysys_ind = symmetries_dict['crysys_ind_dict'][symmetries_dict['lattice_type'][sg_num]]
-    z_value_ind = max(list(symmetries_dict['crysys_ind_dict'].values())) + 1  # todo hardcode
-
-    # todo replace datadims call by crystal generation features
-    supercell_data.x[:, -dataDims['num crystal generation features']] = 0  # set all crystal features to 0
-    supercell_data.x[:, sg_ind] = 1  # set all molecules to the given space group
-    supercell_data.x[:, crysys_ind] = 1  # set all molecules to the given crystal system
-    # todo replace sym_ops_list arg by Z value
-    supercell_data.Z = len(sym_ops_list[0]) * torch.ones_like(supercell_data.Z)
-    supercell_data.x[:, z_value_ind] = supercell_data.Z[0] * torch.ones_like(supercell_data.x[:, 0])
-    supercell_data.sg_ind = sg_num * torch.ones_like(supercell_data.sg_ind)
-
-    return supercell_data
-
-
-def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetries_dict, randomize_sgs=False):
-    """
-    update the symmetry information in molecule-wise crystaldata objects
-    """
-    # identify the SG numbers we want to generate
-    if type(generate_sgs[0]) == str:
-        generate_sg_inds = [list(symmetries_dict['space_groups'].values()).index(SG) + 1 for SG in generate_sgs]  # indexing from 0
-    else:
-        generate_sg_inds = generate_sgs
-
-    # randomly assign SGs to samples
-    if randomize_sgs:
-        sample_sg_inds = np.random.choice(generate_sg_inds, size=mol_data.num_graphs, replace=True)
-    else:
-        sample_sg_inds = generate_sg_inds
-
-    # update sym ops
-    mol_data.symmetry_operators = [torch.Tensor(symmetries_dict['sym_ops'][sg_ind]).to(mol_data.x.device) for sg_ind in sample_sg_inds]
-
-    # compute and update Z values
-    sample_Z_values = [len(mol_data.symmetry_operators[ii]) for ii in range(mol_data.num_graphs)]
-    mol_data.Z = torch.tensor(sample_Z_values, dtype=mol_data.Z.dtype, device=mol_data.Z.device)  # * torch.ones_like(mol_data.Z)
-    mol_data.sg_ind = torch.tensor(sample_sg_inds, dtype=mol_data.sg_ind.dtype, device=mol_data.sg_ind.device)
-
-    mol_data.x[:, -dataDims['num crystal generation features']] = 0  # set all crystal features to 0
-    # update sym ops, sg ind, sg one_hot, crystal system one_hot, Z value
-    for ii, sg_ind in enumerate(sample_sg_inds):
-        mol_inds = torch.arange(mol_data.ptr[ii], mol_data.ptr[ii + 1])
-        mol_data.x[mol_inds, symmetries_dict['crysys_ind_dict'][symmetries_dict['lattice_type'][sg_ind]]] = 1  # one-hot for crystal system
-        mol_data.x[mol_inds, symmetries_dict['sg_feature_ind_dict'][symmetries_dict['space_groups'][sg_ind]]] = 1  # one-hot for space group
-        mol_data.x[mol_inds, symmetries_dict['crystal_z_value_ind']] = mol_data.Z[ii].float()  # set Z-value
-
-    return mol_data
 
 
 class SupercellBuilder:
@@ -80,7 +21,7 @@ class SupercellBuilder:
         self.numpy_asym_unit_dict = asym_unit_dict.copy()
         self.asym_unit_dict = asym_unit_dict.copy()
         self.rotation_basis = rotation_basis
-        for key in self.asym_unit_dict:  # todo make sure we aren't distorting this for other classes
+        for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 
         # initialize fractional translations for supercell construction

@@ -2,11 +2,13 @@
 import argparse, warnings
 from common.config_processing import add_args, process_config, get_config
 from crystal_modeller import Modeller
+import pandas as pd
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
 
 # ====================================
@@ -27,11 +29,6 @@ if __name__ == '__main__':
 
     '''
     run the code in selected mode
-    '''
+    '''  # NOTE sampling mode currently under development
     predictor = Modeller(config)
-    if config.mode == 'figures':
-        predictor.nov_22_figures()  # figures like those from the Nov/2022 paper
-    elif config.mode == 'sampling':
-        predictor.model_sampling()
-    else:
-        predictor.train_crystal_models()
+    predictor.train_crystal_models()

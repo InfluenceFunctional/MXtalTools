@@ -14,6 +14,8 @@ class crystal_generator(nn.Module):
         super(crystal_generator, self).__init__()
 
         self.device = config.device
+
+        '''set random prior'''
         self.latent_dim = config.generator.prior_dimension
         if config.generator.prior == 'multivariate normal':
             self.prior = MultivariateNormal(torch.zeros(self.latent_dim), torch.eye(self.latent_dim))
@@ -23,9 +25,7 @@ class crystal_generator(nn.Module):
             print(config.generator.prior + ' is not an implemented prior!!')
             sys.exit()
 
-        '''
-        conditioning model
-        '''
+        '''conditioning model'''
         self.num_crystal_features = config.dataDims['num crystal generation features']
         torch.manual_seed(config.seeds.model)
 
@@ -88,11 +88,9 @@ class crystal_generator(nn.Module):
         # return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
         return self.prior.sample((n_samples,)).to(self.device)
 
-    def forward(self, n_samples, z=None, conditions=None, return_latent=False, return_condition=False, return_prior=False, prior_amplification=None):
+    def forward(self, n_samples, z=None, conditions=None, return_latent=False, return_condition=False, return_prior=False):
         if z is None:  # sample random numbers from prior distribution
             z = self.sample_latent(n_samples)
-            if prior_amplification is not None:
-                z *= prior_amplification
 
         normed_coords = conditions.pos / self.conditioner.max_molecule_size  # norm coords by maximum molecule radius
         crystal_information = conditions.x[:, -self.num_crystal_features:]

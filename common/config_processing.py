@@ -29,6 +29,11 @@ def add_args(parser):
     parser.add_argument("--regressor_path", default=None, type=str)
     add_bool_arg(parser, 'extra_test_evaluation', default=False)
     parser.add_argument("--extra_test_set_paths", default=None, type=list)
+    parser.add_argument("--local_dataset_dir_path", default='', type=str)
+    parser.add_argument("--local_workdir_path", default='', type=str)
+    parser.add_argument("--cluster_dataset_dir_path", default='', type=str)
+    parser.add_argument("--cluster_workdir_path", default='', type=str)
+
     add_bool_arg(parser, "save_checkpoints", default=False)  # will revert to True on cluster machine
 
     update_args2config(args2config, 'yaml_config')
@@ -46,6 +51,10 @@ def add_args(parser):
     update_args2config(args2config, 'regressor_path')
     update_args2config(args2config, 'extra_test_evaluation')
     update_args2config(args2config, 'extra_test_set_paths')
+    update_args2config(args2config, 'local_dataset_dir_path')
+    update_args2config(args2config, 'local_workdir_path')
+    update_args2config(args2config, 'cluster_dataset_dir_path')
+    update_args2config(args2config, 'cluster_workdir_path')
     update_args2config(args2config, 'save_checkpoints')
 
     # wandb
@@ -64,17 +73,15 @@ def add_args(parser):
     update_args2config(args2config, 'wandb_log_figures', ['wandb', 'log_figures'])
 
     # dataset settings
-    # todo update target - mostly not used
     parser.add_argument('--target', type=str,
-                        default='molecule spherical defect')  # 'rings', 'groups', 'screw', 'inversion','rotoinversion','mirror','rotation','glide', 'crystal system', 'lattice centering', 'spherical', 'planar'(not in Jan17 dataset)
-    parser.add_argument("--dataset_path", type=str, default="C:/Users\mikem\crystals\CSP_runs\datasets/full_dataset")
+                        default='packing')  # 'packing' only # todo deprecate
     parser.add_argument('--dataset_length', type=int, default=int(1e3))  # maximum number of items in the dataset before filtration
     parser.add_argument('--feature_richness', type=str, default="minimal")  # atom & molecule feature richness
 
     # dataset composition
-    parser.add_argument('--rotation_basis', type=str, default="spherical") # spherical or cartesian
+    parser.add_argument('--rotation_basis', type=str, default="spherical")  # spherical or cartesian
     parser.add_argument('--include_sgs', type=list, default=None)  # ['P21/c'] spacegroups to explicitly include in modelling - new!
-    parser.add_argument('--include_pgs', type=str, default=None)  # ['222', '-1'] point groups to pull from dataset  # todo deprecate
+    parser.add_argument('--include_pgs', type=str, default=None)  # ['222', '-1'] point groups to pull from dataset  # todo deprecate this
     parser.add_argument('--generate_sgs', type=list, default=None)  # ['222', '-1'] space groups to generate
     parser.add_argument('--supercell_size', type=int, default=1)  # point groups to generate
     parser.add_argument('--max_crystal_temperature', type=float, default=int(1e3))
@@ -95,7 +102,6 @@ def add_args(parser):
 
     update_args2config(args2config, 'rotation_basis')
     update_args2config(args2config, 'target')
-    update_args2config(args2config, 'dataset_path')
     update_args2config(args2config, 'dataset_length')
     update_args2config(args2config, 'feature_richness')
     update_args2config(args2config, 'include_sgs')
@@ -128,7 +134,6 @@ def add_args(parser):
     parser.add_argument('--gradient_norm_clip', type=float, default=1)
     add_bool_arg(parser, 'anomaly_detection', default=False)
 
-
     update_args2config(args2config, 'max_epochs')
     update_args2config(args2config, 'history')
     update_args2config(args2config, 'min_batch_size')
@@ -137,7 +142,6 @@ def add_args(parser):
     update_args2config(args2config, 'grow_batch_size')
     update_args2config(args2config, 'gradient_norm_clip')
     update_args2config(args2config, 'anomaly_detection')
-
 
     # optimizer settings
     parser.add_argument('--discriminator_optimizer_optimizer', type=str, default='adamw')  # adam, adamw, sgd
@@ -221,7 +225,6 @@ def add_args(parser):
     update_args2config(args2config, 'regressor_optimizer_lr_schedule', ['regressor_optimizer', 'lr_schedule'])
     update_args2config(args2config, 'regressor_optimizer_lr_growth_lambda', ['regressor_optimizer', 'lr_growth_lambda'])
     update_args2config(args2config, 'regressor_optimizer_lr_shrink_lambda', ['regressor_optimizer', 'lr_shrink_lambda'])
-
 
     # generator model settings
     parser.add_argument('--regressor_positional_embedding', type=str, default='sph')  # sph or pos
@@ -412,23 +415,19 @@ def add_args(parser):
 
 def process_config(config):
     if config.machine == 'local':
-        config.workdir = 'C:/Users\mikem\crystals\CSP_runs'
+        config.workdir = config.local_workdir_path
+        config.dataset_path = config.local_dataset_dir_path + 'full_dataset'
+
     elif config.machine == 'cluster':
-        config.workdir = '/scratch/mk8347/csd_runs/'
-        config.dataset_path = '/scratch/mk8347/csd_runs/datasets/full_dataset'
+        config.workdir = config.cluster_workdir_path
+        config.dataset_path = config.cluster_dataset_dir_path + 'full_dataset'
         config.save_checkpoints = True
 
-    config.seeds.model = config.seeds.model % 10
-    config.seeds.dataset = config.seeds.dataset % 10
-
     if config.test_mode:
-        # config.max_batch_size = min((config.max_batch_size, 50))
-        # config.auto_batch_sizing = False
-        # config.anomaly_detection = True
         if config.machine == 'cluster':
-            config.dataset_path = '/scratch/mk8347/csd_runs/datasets/test_dataset'
+            config.dataset_path = config.cluster_dataset_dir_path + 'test_dataset'
         else:
-            config.dataset_path = 'C:/Users\mikem\crystals\CSP_runs\datasets/test_dataset'
+            config.dataset_path = config.local_dataset_dir_path + 'test_dataset'
 
     return config
 

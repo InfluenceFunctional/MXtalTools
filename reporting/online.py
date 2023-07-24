@@ -1,6 +1,8 @@
 import ase.io
+import numpy
 import numpy as np
 import torch
+import wandb
 from _plotly_utils.colors import n_colors
 from plotly import graph_objects
 from plotly.subplots import make_subplots
@@ -11,7 +13,8 @@ from torch_geometric.loader.dataloader import Collater
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import update_stats_dict, np_softmax, earth_movers_distance_torch, earth_movers_distance_np, compute_rdf_distance, ase_mol_from_crystaldata
-from crystal_building.builder import write_sg_to_all_crystals, update_crystal_symmetry_elements
+from crystal_building.utils import write_sg_to_all_crystals, update_crystal_symmetry_elements
+from crystal_building.coordinate_transformations import cell_vol
 from models.crystal_rdf import crystal_rdf
 from models.utils import softmax_and_score, norm_scores
 from models.vdw_overlap import vdw_overlap
@@ -1626,3 +1629,13 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
 
     aa = 0
     return None
+
+
+def log_cubic_defect(samples):
+    cleaned_samples = samples
+    cubic_distortion = np.abs(1 - np.nan_to_num(np.stack(
+        [cell_vol(cleaned_samples[i, 0:3], cleaned_samples[i, 3:6]) / np.prod(cleaned_samples[i, 0:3], axis=-1) for
+         i in range(len(cleaned_samples))])))
+    wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
+    hist = np.histogram(cubic_distortion, bins=256, range=(0, 1))
+    wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})

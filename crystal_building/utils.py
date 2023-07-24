@@ -195,13 +195,13 @@ def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol
                 cell_angles[i] = torch.ones(3) * torch.pi / 2
             elif lattice.lower() == 'tetragonal':  # fix all angles and a & b vectors
                 cell_angles[i] = torch.ones(3) * torch.pi / 2
-                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2).to(cell_lengths.device)
+                cell_lengths[i, 0:2] = cell_lengths[i,0]
             elif (lattice.lower() == 'hexagonal') or (lattice.lower() == 'trigonal') or (lattice.lower() == 'rhombohedral'):
-                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2).to(cell_lengths.device)
+                cell_lengths[i, 0:2] = cell_lengths[i, 0]
                 cell_angles[i, 0:2] = torch.pi / 2
                 cell_angles[i, 2] = torch.pi * 2 / 3
             elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
-                cell_lengths[i] = cell_lengths[i].mean() * torch.ones(3).to(cell_lengths.device)
+                cell_lengths[i] = cell_lengths[i, 0]
                 cell_angles[i] = torch.pi * torch.ones(3) / 2
             else:
                 print(lattice + ' is not a valid crystal lattice!')
@@ -634,3 +634,61 @@ def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_ind):
         scaled_mol_position[i, :] = mol_position[i, :] * asym_unit_dict[str(int(ind))]
 
     return scaled_mol_position
+
+
+def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
+    # overwrite point group one-hot
+    # overwrite space group one-hot
+    # overwrite crystal system one-hot
+    # overwrite z value
+
+    sg_num = list(symmetries_dict['space_groups'].values()).index(override_sg) + 1  # indexing from 0
+    sg_ind = symmetries_dict['sg_feature_ind_dict'][symmetries_dict['space_groups'][sg_num]]
+    crysys_ind = symmetries_dict['crysys_ind_dict'][symmetries_dict['lattice_type'][sg_num]]
+    z_value_ind = max(list(symmetries_dict['crysys_ind_dict'].values())) + 1  # todo hardcode
+
+    # todo replace datadims call by crystal generation features
+    supercell_data.x[:, -dataDims['num crystal generation features']] = 0  # set all crystal features to 0
+    supercell_data.x[:, sg_ind] = 1  # set all molecules to the given space group
+    supercell_data.x[:, crysys_ind] = 1  # set all molecules to the given crystal system
+    # todo replace sym_ops_list arg by Z value
+    supercell_data.Z = len(sym_ops_list[0]) * torch.ones_like(supercell_data.Z)
+    supercell_data.x[:, z_value_ind] = supercell_data.Z[0] * torch.ones_like(supercell_data.x[:, 0])
+    supercell_data.sg_ind = sg_num * torch.ones_like(supercell_data.sg_ind)
+
+    return supercell_data
+
+
+def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetries_dict, randomize_sgs=False):
+    """
+    update the symmetry information in molecule-wise crystaldata objects
+    """
+    # identify the SG numbers we want to generate
+    if type(generate_sgs[0]) == str:
+        generate_sg_inds = [list(symmetries_dict['space_groups'].values()).index(SG) + 1 for SG in generate_sgs]  # indexing from 0
+    else:
+        generate_sg_inds = generate_sgs
+
+    # randomly assign SGs to samples
+    if randomize_sgs:
+        sample_sg_inds = np.random.choice(generate_sg_inds, size=mol_data.num_graphs, replace=True)
+    else:
+        sample_sg_inds = generate_sg_inds
+
+    # update sym ops
+    mol_data.symmetry_operators = [torch.Tensor(symmetries_dict['sym_ops'][sg_ind]).to(mol_data.x.device) for sg_ind in sample_sg_inds]
+
+    # compute and update Z values
+    sample_Z_values = [len(mol_data.symmetry_operators[ii]) for ii in range(mol_data.num_graphs)]
+    mol_data.Z = torch.tensor(sample_Z_values, dtype=mol_data.Z.dtype, device=mol_data.Z.device)  # * torch.ones_like(mol_data.Z)
+    mol_data.sg_ind = torch.tensor(sample_sg_inds, dtype=mol_data.sg_ind.dtype, device=mol_data.sg_ind.device)
+
+    mol_data.x[:, -dataDims['num crystal generation features']] = 0  # set all crystal features to 0
+    # update sym ops, sg ind, sg one_hot, crystal system one_hot, Z value
+    for ii, sg_ind in enumerate(sample_sg_inds):
+        mol_inds = torch.arange(mol_data.ptr[ii], mol_data.ptr[ii + 1])
+        mol_data.x[mol_inds, symmetries_dict['crysys_ind_dict'][symmetries_dict['lattice_type'][sg_ind]]] = 1  # one-hot for crystal system
+        mol_data.x[mol_inds, symmetries_dict['sg_feature_ind_dict'][symmetries_dict['space_groups'][sg_ind]]] = 1  # one-hot for space group
+        mol_data.x[mol_inds, symmetries_dict['crystal_z_value_ind']] = mol_data.Z[ii].float()  # set Z-value
+
+    return mol_data

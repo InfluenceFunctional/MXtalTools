@@ -180,6 +180,8 @@ class molecule_graph_model(nn.Module):
             return output
 
 
+# todo separate molecule and crystal graph models
+
 class independent_gaussian_model(nn.Module):
     def __init__(self, input_dim, means, stds, normed_length_means, normed_length_stds, cov_mat=None):
         super(independent_gaussian_model, self).__init__()
@@ -202,15 +204,18 @@ class independent_gaussian_model(nn.Module):
 
         fixed_means = means.copy()
         fixed_means[:3] = normed_length_means
-        self.prior = MultivariateNormal(fixed_norms, torch.Tensor(cov_mat))  # apply standardization
+        try:
+            self.prior = MultivariateNormal(fixed_norms, torch.Tensor(cov_mat))  # apply standardization
+        except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
+            self.prior = MultivariateNormal(loc=fixed_norms, covariance_matrix=torch.eye(12) * cov_mat.diagonal())
         self.dummy_params = nn.Parameter(torch.ones(100))
 
     def forward(self, num_samples, data):
-        '''
+        """
         sample comes out in non-standardized basis, but with normalized cell lengths
         so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
         then standardize
-        '''
+        """
         # conditions are unused - dummy
         # denormalize sample before standardizing
         samples = self.prior.sample((num_samples,)).to(data.x.device)

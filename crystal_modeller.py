@@ -2,43 +2,52 @@ import glob
 import os
 import time
 from argparse import Namespace
+#
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
-
-# import ase.io
-# import ase.data
+import sys
 import plotly.graph_objects as go
+import torch.random
 import wandb
 from scipy.stats import linregress
 from torch import backends
-from torch_geometric.loader.dataloader import Collater
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
 import tqdm
+from shutil import copy
+from distutils.dir_util import copy_tree
 
 from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
-
 from constants.asymmetric_units import asym_unit_dict
-from crystal_building.coordinate_transformations import cell_vol
-from crystal_building.utils import *
-from crystal_building.builder import SupercellBuilder, write_sg_to_all_crystals, update_crystal_symmetry_elements
-from dataset_management.manager import Miner
-from dataset_management.utils import BuildDataset, get_dataloaders, update_dataloader_batch_size, \
-    get_extra_test_loader
-from distutils.dir_util import copy_tree
-from models.crystal_rdf import crystal_rdf
+
 from models.discriminator_models import crystal_discriminator
 from models.generator_models import crystal_generator
-from models.utils import *
 from models.regression_models import molecule_regressor
+from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
+                          check_convergence, save_checkpoint, set_lr, cell_vol_torch, init_optimizer)
 from models.base_models import independent_gaussian_model
-from models.utils import compute_h_bond_score, get_vdw_penalty, generator_density_matching_loss, weight_reset, get_n_config
+from models.utils import (compute_h_bond_score, get_vdw_penalty, generator_density_matching_loss, weight_reset, get_n_config)
 from models.vdw_overlap import vdw_overlap
-from reporting.online import cell_params_analysis, plotly_setup, cell_density_plot, process_discriminator_outputs, discriminator_scores_plot, \
-    plot_generator_loss_correlates, plot_discriminator_score_correlates, log_mini_csp_scores_distributions, sampling_telemetry_plot, cell_params_tracking_plot, log_best_mini_csp_samples, discriminator_BT_reporting
-from shutil import copy
-from common.utils import *
+from models.crystal_rdf import crystal_rdf
+
+from crystal_building.utils import (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
+                                    batch_molecule_principal_axes_torch, compute_Ip_handedness)
+from crystal_building.builder import SupercellBuilder
+from crystal_building.utils import update_crystal_symmetry_elements
+
+from dataset_management.manager import DataManager
+from dataset_management.utils import (BuildDataset, get_dataloaders, update_dataloader_batch_size, get_extra_test_loader)
+
+from reporting.online import (cell_params_analysis, plotly_setup, cell_density_plot, process_discriminator_outputs,
+                              discriminator_scores_plot, plot_generator_loss_correlates, plot_discriminator_score_correlates,
+                              log_mini_csp_scores_distributions, log_best_mini_csp_samples, discriminator_BT_reporting, log_cubic_defect)
+from common.utils import (update_stats_dict, np_softmax)
+
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
 # https://dictionary.iucr.org/Sohncke_groups#:~:text=Sohncke%20groups%20are%20the%20three,in%20the%20chiral%20space%20groups.
+
 
 class Modeller:
     def __init__(self, config):
@@ -46,24 +55,40 @@ class Modeller:
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
 
-        setup_outputs = self.setup()
-        if self.config.skip_saving_and_loading:
-            self.prep_dataset = setup_outputs
-        else:
-            self.prep_dataset = None
-
-    def setup(self):
-        """
-        load some physical data
-        setup working directory
-        move to it
-        :return:
-        """
-
+        '''get some physical constants'''
         self.atom_weights = ATOM_WEIGHTS
         self.vdw_radii = VDW_RADII
+        self.prep_symmetry_info()
 
-        # generate symmetry info dict if we don't already have it
+        '''set space groups to be included and generated'''
+        if self.config.generate_sgs is 'all':
+            # generate samples in every space group in the asym dict (eventually, all sgs)
+            self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
+
+        if self.config.include_sgs is None:  # draw from all space groups we can parameterize  # todo update this with SG tolerance
+            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]  # list(self.space_groups.values())
+
+        '''prep workdir'''
+        if (self.config.run_num == 0) or (self.config.explicit_run_enumeration == True):  # if making a new workdir
+            self.prep_new_working_directory()
+        else:
+            print("Must provide a run_num if not creating a new workdir!")
+            sys.exit()
+
+        '''load dataset'''
+        data_manager = DataManager(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)  # dataminer for dataset construction
+
+        if self.config.skip_saving_and_loading:  # transfer dataset directly from miner rather than saving and reloading
+            self.prep_dataset = data_manager.load_for_modelling(return_dataset=True, save_dataset=False)
+            del data_manager
+        else:
+            data_manager.load_for_modelling(return_dataset=False, save_dataset=True)
+            self.prep_dataset = None
+
+    def prep_symmetry_info(self):
+        '''
+        if we don't have the symmetry dict prepared already, generate it
+        '''
         if os.path.exists('symmetry_info.npy'):
             sym_info = np.load('symmetry_info.npy', allow_pickle=True).item()
             self.sym_ops = sym_info['sym_ops']
@@ -103,57 +128,35 @@ class Modeller:
             self.sym_info['space_group_indices'] = self.space_group_indices
             np.save('symmetry_info', self.sym_info)
 
-        # set space groups to be included and generated
-        if self.config.generate_sgs is 'all':
-            # generate samples in every space group in the asym dict (eventually, all sgs)
-            self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
-
-        if self.config.include_sgs is None:  # draw from all space groups we can parameterize
-            self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]  # list(self.space_groups.values())
-
-        self.lattice_vectors, self.normed_lattice_vectors = None, None  # not currently used
-        '''
-        prepare to load dataset
-        '''
-        miner = Miner(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)  # dataminer for dataset construction
-
-        if (self.config.run_num == 0) or (self.config.explicit_run_enumeration == True):  # if making a new workdir
-            if self.config.run_num == 0:
-                self.make_new_working_directory()
-            else:
-                self.workDir = self.config.workdir + '/run%d' % self.config.run_num  # explicitly enumerate the new run directory
-                os.mkdir(self.workDir)
-
-            os.mkdir(self.workDir + '/ckpts')  # not used
-            os.mkdir(self.workDir + '/datasets')  # not used
-            os.mkdir(self.workDir + '/source')
-            yaml_path = os.getcwd() + '/' + self.config.yaml_config
-
-            # copy source to workdir for record keeping purposes
-            copy_tree("common", self.workDir + "/source/common")
-            copy_tree("crystal_building", self.workDir + "/source/crystal_building")
-            copy_tree("dataset_management", self.workDir + "/source/dataset_management")
-            copy_tree("models", self.workDir + "/source/models")
-            copy_tree("reporting", self.workDir + "/source/reporting")
-            copy_tree("sampling", self.workDir + "/source/sampling")
-            copy("crystal_modeller.py", self.workDir + "/source")
-            copy("main.py", self.workDir + "/source")
-
-            os.chdir(self.workDir)  # move to working dir
-            copy(yaml_path, os.getcwd())  # copy full config for reference
-            print('Starting Fresh Run %d' % self.config.run_num)
-            t0 = time.time()
-            if self.config.skip_saving_and_loading:  # transfer dataset directly from miner rather than saving and reloading
-                dataset = miner.load_for_modelling(return_dataset=True, save_dataset=False)
-                del miner
-                return dataset
-            else:
-                miner.load_for_modelling(return_dataset=False, save_dataset=True)
-            print('Initializing dataset took {} seconds'.format(int(time.time() - t0)))
+    def prep_new_working_directory(self):
+        if self.config.run_num == 0:
+            self.make_sequential_directory()
         else:
-            print("Must provide a run_num if not creating a new workdir!")
+            self.workDir = self.config.workdir + '/run%d' % self.config.run_num  # explicitly enumerate the new run directory
+            os.mkdir(self.workDir)
 
-    def make_new_working_directory(self):  # make working directory
+        os.mkdir(self.workDir + '/ckpts')  # not used
+        os.mkdir(self.workDir + '/datasets')  # not used
+        os.mkdir(self.workDir + '/source')
+        yaml_path = os.getcwd() + '/' + self.config.yaml_config
+
+        # copy source to workdir for record keeping purposes
+        copy_tree("common", self.workDir + "/source/common")
+        copy_tree("crystal_building", self.workDir + "/source/crystal_building")
+        copy_tree("dataset_management", self.workDir + "/source/dataset_management")
+        copy_tree("models", self.workDir + "/source/models")
+        copy_tree("reporting", self.workDir + "/source/reporting")
+        copy_tree("sampling", self.workDir + "/source/sampling")
+        copy("crystal_modeller.py", self.workDir + "/source")
+        copy("main.py", self.workDir + "/source")
+
+        os.chdir(self.workDir)  # move to working dir
+        copy(yaml_path, os.getcwd())  # copy full config for reference
+        print('Starting Fresh Run %d' % self.config.run_num)
+        t0 = time.time()
+        print('Initializing dataset took {} seconds'.format(int(time.time() - t0)))
+
+    def make_sequential_directory(self):  # make working directory
         """
         make a new working directory
         non-overlapping previous entries
@@ -223,11 +226,33 @@ class Modeller:
         print('Discriminator model has {:.3f} million or {} parameters'.format(num_params[1] / 1e6, int(num_params[1])))
         print('Regressor model has {:.3f} million or {} parameters'.format(num_params[2] / 1e6, int(num_params[2])))
 
+        wandb.watch((generator, discriminator, regressor), log_graph=True, log_freq=100)
+        wandb.log({"Model Num Parameters": np.sum(np.asarray(num_params)),
+                   "Initial Batch Size": self.config.current_batch_size})
+
         return generator, discriminator, regressor, \
             generator_optimizer, generator_schedulers, \
             discriminator_optimizer, discriminator_schedulers, \
             regressor_optimizer, regressor_schedulers, \
             num_params
+
+    def prep_dataloaders(self, dataset_builder):
+        train_loader, test_loader = get_dataloaders(dataset_builder, machine=self.config.machine, batch_size=self.config.min_batch_size)
+        self.config.current_batch_size = self.config.min_batch_size
+        print("Training batch size set to {}".format(self.config.current_batch_size))
+        del dataset_builder
+
+        extra_test_loader = None  # data_loader for a secondary test set - analysis is hardcoded for CSD Blind Tests 5 & 6
+        if self.config.extra_test_set_paths is not None:
+            extra_test_loader = get_extra_test_loader(self.config,
+                                                      self.config.extra_test_set_paths,
+                                                      dataDims=self.config.dataDims,
+                                                      pg_dict=self.point_groups,
+                                                      sg_dict=self.space_groups,
+                                                      lattice_dict=self.lattice_type,
+                                                      sym_ops_dict=self.sym_ops)
+
+        return train_loader, test_loader, extra_test_loader
 
     def train_crystal_models(self):
         """
@@ -242,38 +267,23 @@ class Modeller:
                         settings=wandb.Settings(code_dir=".")):
 
             wandb.run.name = wandb.config.machine + '_' + str(self.config.mode) + '_' + str(wandb.config.run_num)  # overwrite procedurally generated run name with our run name
-            wandb.run.save()
-
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
             # this means we also can't do wandb sweeps properly, for now
 
+            '''miscellaneous setup'''
             dataset_builder = self.misc_pre_training_items()
+
+            '''prep dataloaders'''
+            train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder)
+
+            '''instantiate models'''
             generator, discriminator, regressor, \
                 generator_optimizer, generator_schedulers, \
                 discriminator_optimizer, discriminator_schedulers, \
                 regressor_optimizer, regressor_schedulers, \
                 num_params = self.init_models()
 
-            train_loader, test_loader = get_dataloaders(dataset_builder, self.config)
-            self.config.current_batch_size = self.config.min_batch_size
-            print("Training batch size set to {}".format(self.config.current_batch_size))
-            del dataset_builder
-
-            extra_test_loader = None  # data_loader for a secondary test set - currently unused
-            if (self.config.extra_test_set_paths is not None) and self.config.extra_test_evaluation:
-                extra_test_loader = get_extra_test_loader(self.config, self.config.extra_test_set_paths,
-                                                          dataDims=self.config.dataDims,
-                                                          pg_dict=self.point_groups, sg_dict=self.space_groups,
-                                                          lattice_dict=self.lattice_type,
-                                                          sym_ops_dict=self.sym_ops)
-
-            generator, discriminator, regressor = self.reinitialize_models(
-                generator, discriminator, regressor)
-            wandb.watch((generator, discriminator, regressor), log_graph=True, log_freq=100)
-            wandb.log({"Model Num Parameters": np.sum(np.asarray(num_params)),
-                       "Initial Batch Size": self.config.current_batch_size})
-
-            # initialize some metrics
+            '''initialize some training metrics'''
             metrics_dict = {}
             generator_err_tr, discriminator_err_tr, regressor_err_tr = 0, 0, 0
             generator_err_te, discriminator_err_te, regressor_err_te = 0, 0, 0
@@ -282,23 +292,19 @@ class Modeller:
             discriminator_hit_max_lr, generator_hit_max_lr, regressor_hit_max_lr, converged, epoch = \
                 False, False, False, self.config.max_epochs == 0, 0
 
-            self.prior_amplification = None
-
             # training loop
             with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
                 while (epoch < self.config.max_epochs) and not converged:
-                    self.epoch = epoch
                     # very cool
                     print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
-                    print(':::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.')
+                    print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
                     print("'      `--'      `.-'      `--'      `--'      `--'      `-.'      `--'      `")
                     # very cool
                     print("Starting Epoch {}".format(epoch))  # index from 0
-
-                    extra_test_epoch_stats_dict = None
-                    try:  # try this batch size
+                    train_epoch_stats_dict, test_epoch_stats_dict, extra_test_epoch_stats_dict = None, None, None
+                    try:  # try this batch size - if it fits, increase on next epoch
                         # train & compute loss
-                        train_epoch_stats_dict = None  # save time and space in the epoch
+                        # save space by skipping evaluation of train epoch stats
                         train_loss, train_loss_record, time_train = \
                             self.run_epoch(data_loader=train_loader,
                                            generator=generator, discriminator=discriminator, regressor=regressor,
@@ -308,24 +314,22 @@ class Modeller:
                                            update_gradients=True, record_stats=False, epoch=epoch)
 
                         with torch.no_grad():
-                            # compute test loss
+                            # compute test loss & save evaluation statistics on test samples
                             test_loss, test_loss_record, test_epoch_stats_dict, time_test = \
                                 self.run_epoch(data_loader=test_loader,
                                                generator=generator, discriminator=discriminator, regressor=regressor,
-                                               generator_optimizer=generator_optimizer,
-                                               discriminator_optimizer=discriminator_optimizer,
-                                               regressor_optimizer=regressor_optimizer,
                                                update_gradients=False, record_stats=True, epoch=epoch)
 
-                            if extra_test_loader is not None and epoch % self.config.extra_test_period == 0:
+                            if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0):
                                 _, _, extra_test_epoch_stats_dict, extra_time_test = \
-                                    self.run_epoch(data_loader=extra_test_loader, generator=generator, discriminator=discriminator,
+                                    self.run_epoch(data_loader=extra_test_loader,
+                                                   generator=generator, discriminator=discriminator,
                                                    update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
                                 np.save(f'../{self.config.run_num}_extra_test_dict', extra_test_epoch_stats_dict)
 
                         print('epoch={}; time_tr={:.1f}s; time_te={:.1f}s'.format(epoch, time_train, time_test))
 
-                        # save losses
+                        '''save losses'''
                         if self.config.mode == 'gan':
                             discriminator_err_tr, generator_err_tr = train_loss[0], train_loss[1]
                             discriminator_err_te, generator_err_te = test_loss[0], test_loss[1]
@@ -335,7 +339,7 @@ class Modeller:
                             regressor_err_tr, regressor_err_te = train_loss, test_loss
                             regressor_tr_record, regressor_te_record = train_loss_record, test_loss_record
 
-                        # update learning rates
+                        '''update learning rates'''
                         discriminator_optimizer, discriminator_learning_rate, discriminator_hit_max_lr, \
                             generator_optimizer, generator_learning_rate, generator_hit_max_lr, \
                             regressor_optimizer, regressor_learning_rate, regressor_hit_max_lr = \
@@ -346,7 +350,7 @@ class Modeller:
                                            regressor_schedulers, regressor_optimizer, regressor_err_tr,
                                            regressor_hit_max_lr)
 
-                        # save key metrics
+                        '''save key metrics'''
                         metrics_dict = update_gan_metrics(epoch, metrics_dict,
                                                           discriminator_learning_rate, generator_learning_rate,
                                                           regressor_learning_rate,
@@ -354,32 +358,32 @@ class Modeller:
                                                           generator_err_tr, generator_err_te,
                                                           regressor_err_tr, regressor_err_te)
 
-                        # log losses to wandb
+                        '''log losses to wandb'''
                         self.log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
                                           generator_tr_record, generator_te_record, discriminator_tr_record,
                                           discriminator_te_record,
                                           regressor_tr_record, regressor_te_record)
 
-                        # sometimes to detailed reporting
+                        '''sometimes to detailed reporting'''
                         if (epoch % self.config.wandb.sample_reporting_frequency) == 0:
                             self.detailed_reporting(epoch, train_loader, train_epoch_stats_dict, test_epoch_stats_dict,
                                                     extra_test_dict=extra_test_epoch_stats_dict)
 
-                        # sometimes test the generator on a mini CSP problem
+                        '''sometimes test the generator on a mini CSP problem'''
                         if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
                                 any((self.config.train_generator_adversarially,
                                      self.config.train_generator_vdw,
                                      self.config.train_generator_h_bond)):
                             self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator, regressor if self.config.regressor_path else None)
 
-                        # save checkpoints
+                        '''save checkpoints'''
                         self.model_checkpointing(epoch, self.config, discriminator, generator, regressor,
                                                  discriminator_optimizer, generator_optimizer,
                                                  regressor_optimizer,
                                                  generator_err_te, discriminator_err_te,
                                                  regressor_err_te, metrics_dict)
 
-                        # check convergence status
+                        '''check convergence status'''
                         generator_converged, discriminator_converged, regressor_converged = \
                             self.check_model_convergence(metrics_dict)
 
@@ -388,19 +392,20 @@ class Modeller:
                             print('Training has converged!')
                             break
 
+                        '''increment batch size'''
                         train_loader, test_loader, extra_test_loader = \
                             self.increment_batch_size(train_loader, test_loader, extra_test_loader)
 
                     except RuntimeError as e:  # if we do hit OOM, slash the batch size
                         if "CUDA out of memory" in str(e):
                             train_loader, test_loader = self.slash_batch(train_loader, test_loader, 0.05)  # shrink batch size
-                            self.config.grow_batch_size = False  # stop growing the batch
+                            self.config.grow_batch_size = False  # stop growing the batch for the rest of the run
                         else:
                             raise e
                     epoch += 1
 
                     if self.config.device.lower() == 'cuda':
-                        torch.cuda.empty_cache()  # clear GPU, probably unnecessary
+                        torch.cuda.empty_cache()  # clear GPU, not clear this does anything
 
                 if self.config.mode == 'gan':  # evaluation on test metrics
                     self.gan_evaluation(epoch, generator, discriminator, discriminator_optimizer, generator_optimizer,
@@ -412,7 +417,7 @@ class Modeller:
 
         if self.config.mode == 'gan':
             if self.config.regressor_path is not None:
-                regressor.eval()  # just using this to suggest densities
+                regressor.eval()  # just using this to suggest densities to the generator
 
             return self.gan_epoch(data_loader, generator, discriminator, generator_optimizer, discriminator_optimizer,
                                   update_gradients,
@@ -422,7 +427,7 @@ class Modeller:
             return self.regression_epoch(data_loader, regressor, regressor_optimizer, update_gradients,
                                          iteration_override, record_stats)
 
-    def regression_epoch(self, data_loader, regressor, regressor_optimizer, update_gradients=True,
+    def regression_epoch(self, data_loader, regressor, regressor_optimizer=None, update_gradients=True,
                          iteration_override=None, record_stats=False):
 
         t0 = time.time()
@@ -507,7 +512,7 @@ class Modeller:
             '''
             train discriminator
             '''
-            skip_discriminator_step = False  # (i % self.config.discriminator_optimizer.training_period) != 0  # only train the discriminator every XX steps, assuming n_steps per epoch is much larger than training period
+            skip_discriminator_step=False
             if i > 0 and self.config.train_discriminator_adversarially:
                 avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
                 if avg_generator_score < 0.5:
@@ -530,7 +535,7 @@ class Modeller:
             '''
             if (len(epoch_stats_dict[
                         'generated cell parameters']) < i) and record_stats:  # make some samples for analysis if we have none so far from this step
-                generated_samples = generator(data.num_graphs, z=None, conditions=data.to(self.config.device), prior_amplification=self.prior_amplification)
+                generated_samples = generator(data.num_graphs, z=None, conditions=data.to(self.config.device))
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generated cell parameters',
                                                      generated_samples.cpu().detach().numpy(), mode='extend')
 
@@ -958,6 +963,15 @@ class Modeller:
         return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions, targets
 
     def misc_pre_training_items(self):
+        """
+        dataset_builder: for going from database to trainable dataset
+        dataDims: contains key information about the dataset
+        number of generators for discriminator training
+        supercell_builder
+        tracking indices for certain properties
+        symmetry element indexing
+        multivariate gaussian generator
+        """
         dataset_builder = BuildDataset(self.config, pg_dict=self.point_groups,
                                        sg_dict=self.space_groups,
                                        lattice_dict=self.lattice_type,
@@ -1000,7 +1014,7 @@ class Modeller:
         '''
         add symmetry element indices to symmetry dict
         '''
-        # todo build separate
+        # todo build separately
         self.sym_info['packing_coefficient_ind'] = self.crystal_packing_ind
         self.sym_info['sg_feature_ind_dict'] = self.sg_feature_ind_dict  # SG indices in input features
         self.sym_info['crysys_ind_dict'] = self.crysys_ind_dict  # crysys indices in input features
@@ -1019,139 +1033,7 @@ class Modeller:
                                                               'lattice normed length stds'],
                                                           cov_mat=self.config.dataDims['lattice cov mat'])
 
-        self.epoch = 0
-
         return dataset_builder
-
-    def sampling_prep(self):
-        dataset_builder = self.misc_pre_training_items()
-        del dataset_builder
-        generator, discriminator, generator_optimizer, generator_schedulers, \
-            discriminator_optimizer, discriminator_schedulers, params1, params2 \
-            = self.init_models()
-
-        self.config.current_batch_size = self.config.min_batch_size
-
-        extra_test_set_path = self.config.extra_test_set_paths
-        extra_test_loader = get_extra_test_loader(self.config, extra_test_set_path, dataDims=self.config.dataDims,
-                                                  pg_dict=self.point_groups, sg_dict=self.space_groups,
-                                                  lattice_dict=self.lattice_type, sym_ops_dict=self.sym_ops)
-
-        self.randn_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice features'],
-                                                          means=self.config.dataDims['lattice means'],
-                                                          stds=self.config.dataDims['lattice stds'],
-                                                          normed_length_means=self.config.dataDims[
-                                                              'lattice normed length means'],
-                                                          normed_length_stds=self.config.dataDims[
-                                                              'lattice normed length stds'],
-                                                          cov_mat=self.config.dataDims['lattice cov mat'])
-
-        # blind_test_identifiers = [
-        #     'OBEQUJ', 'OBEQOD','NACJAF'] # targets XVI, XVII, XXII
-        #
-        # single_mol_data = extra_test_loader.dataset[extra_test_loader.csd_identifier.index(blind_test_identifiers[-1])]
-
-        return extra_test_loader, generator, discriminator, \
-            generator_optimizer, generator_schedulers, discriminator_optimizer, discriminator_schedulers, \
-            params1, params2
-
-    # def model_sampling(self):  # todo combine with mini-CSP module
-    #     """ DEPRECATED
-    #     Stun MC annealing on a pretrained discriminator / generator
-    #     """
-    #     with wandb.init(config=self.config, project=self.config.wandb.project_name, entity=self.config.wandb.username,
-    #                     tags=[self.config.wandb.experiment_tag]):
-    #         extra_test_loader, generator, discriminator, \
-    #             generator_optimizer, generator_schedulers, discriminator_optimizer, discriminator_schedulers, \
-    #             params1, params2 = self.sampling_prep()  # todo rebuild this with new model_init
-    #
-    #         generator.eval()
-    #         discriminator.eval()
-    #
-    #         smc_sampler = mcmcSampler(
-    #             gammas=np.logspace(-4, 0, self.config.current_batch_size),
-    #             seedInd=0,
-    #             STUN_mode=False,
-    #             debug=False,
-    #             init_adaptive_step_size=self.config.sample_move_size,
-    #             global_temperature=0.00001,  # essentially only allow downward moves
-    #             generator=generator,
-    #             supercell_size=self.config.supercell_size,
-    #             graph_convolution_cutoff=self.config.discriminator.graph_convolution_cutoff,
-    #             vdw_radii=self.vdw_radii,
-    #             preset_minimum=None,
-    #             spacegroup_to_search='P-1',  # self.config.generate_sgs,
-    #             new_minimum_patience=25,
-    #             reset_patience=50,
-    #             conformer_orientation=self.config.generator.canonical_conformer_orientation,
-    #         )
-    #
-    #         '''
-    #         run sampling
-    #         '''
-    #         # prep the conformers
-    #         single_mol_data_0 = extra_test_loader.dataset[0]
-    #         collater = Collater(None, None)
-    #         single_mol_data = collater([single_mol_data_0 for n in range(self.config.current_batch_size)])
-    #         single_mol_data = self.set_molecule_alignment(single_mol_data,
-    #                                                       mode_override='random')  # take all the same conformers for one run
-    #         override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
-    #         sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
-    #             single_mol_data.x.device) for i in range(single_mol_data.num_graphs)]
-    #         single_mol_data = write_sg_to_all_crystals('P-1', self.supercell_builder.dataDims, single_mol_data,
-    #                                                    self.supercell_builder.symmetries_dict, sym_ops_list)
-    #
-    #         smc_sampling_dict = smc_sampler(discriminator, self.supercell_builder,
-    #                                         single_mol_data.clone().to(self.config.device), None,
-    #                                         self.config.sample_steps)
-    #
-    #         '''
-    #         reporting
-    #         '''
-    #
-    #         sampling_telemetry_plot(self.config, wandb, smc_sampling_dict)
-    #         cell_params_tracking_plot(wandb, self.supercell_builder, self.layout, self.config, smc_sampling_dict, collater, extra_test_loader)
-    #         best_smc_samples, best_smc_samples_scores, best_smc_cells = sample_clustering(self.supercell_builder, self.config, smc_sampling_dict,
-    #                                                                                       collater,
-    #                                                                                       extra_test_loader,
-    #                                                                                       discriminator)
-    #         # destandardize samples
-    #         unclean_best_samples = de_clean_samples(self.supercell_builder, best_smc_samples, best_smc_cells.sg_ind)
-    #         single_mol_data = collater([single_mol_data_0 for n in range(len(best_smc_samples))])
-    #         gd_sampling_dict = gradient_descent_sampling(
-    #             discriminator, unclean_best_samples, single_mol_data.clone(), self.supercell_builder,
-    #             n_iter=500, lr=1e-3,
-    #             optimizer_func=optim.Rprop,
-    #             return_vdw=True, vdw_radii=self.vdw_radii,
-    #             supercell_size=self.config.supercell_size,
-    #             cutoff=self.config.discriminator.graph_convolution_cutoff,
-    #             generate_sgs='P-1',  # self.config.generate_sgs
-    #             align_molecules=True,  # always true here
-    #         )
-    #         gd_sampling_dict['canonical samples'] = gd_sampling_dict['samples']
-    #         gd_sampling_dict['resampled state record'] = [[0] for _ in range(len(unclean_best_samples))]
-    #         gd_sampling_dict['scores'] = gd_sampling_dict['scores'].T
-    #         gd_sampling_dict['vdw penalties'] = gd_sampling_dict['vdw'].T
-    #         gd_sampling_dict['canonical samples'] = np.swapaxes(gd_sampling_dict['canonical samples'], 0, 2)
-    #         sampling_telemetry_plot(self.config, wandb, gd_sampling_dict)
-    #         cell_params_tracking_plot(wandb, self.supercell_builder, self.layout, self.config, gd_sampling_dict, collater, extra_test_loader)
-    #         best_gd_samples, best_gd_samples_scores, best_gd_cells = sample_clustering(self.supercell_builder, self.config, gd_sampling_dict, collater,
-    #                                                                                    extra_test_loader,
-    #                                                                                    discriminator)
-    #
-    #         # todo process refined samples
-    #         # todo compare final samples to known minima
-    #
-    #         extra_test_sample = next(iter(extra_test_loader)).cuda()
-    #         sample_supercells = self.supercell_builder.unit_cell_to_supercell(extra_test_sample, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
-    #         known_sample_scores = softmax_and_score(discriminator(sample_supercells.clone()))
-    #
-    #         aa = 1
-    #         plt.clf()
-    #         plt.plot(gd_sampling_dict['scores'])
-    #
-    #         # np.save(f'../sampling_output_run_{self.config.run_num}', sampling_dict)
-    #         # self.report_sampling(sampling_dict)
 
     def generate_discriminator_negatives(self, epoch_stats_dict, real_data, generator, i, regressor):
         """
@@ -1482,31 +1364,32 @@ class Modeller:
             generator_optimizer, generator_learning_rate, generator_hit_max_lr, \
             regressor_optimizer, regressor_learning_rate, regressor_hit_max_lr
 
-    def gan_evaluation(self, epoch, generator, discriminator, discriminator_optimizer, generator_optimizer,
-                       metrics_dict, train_loader, test_loader, extra_test_loader, regressor):
-        """
-        run post-training evaluation
-        """
+    def reload_best_test_checkpoint(self, epoch, generator, discriminator):
         # reload best test
         if epoch != 0:  # if we have trained at all, reload the best model
             generator_path = f'../models/generator_{self.config.run_num}'
             discriminator_path = f'../models/discriminator_{self.config.run_num}'
             if os.path.exists(generator_path):
                 generator_checkpoint = torch.load(generator_path)
-                if list(generator_checkpoint['model_state_dict'])[0][
-                   0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+                if list(generator_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
                     for i in list(generator_checkpoint['model_state_dict']):
                         generator_checkpoint['model_state_dict'][i[7:]] = generator_checkpoint['model_state_dict'].pop(i)
                 generator.load_state_dict(generator_checkpoint['model_state_dict'])
 
             if os.path.exists(discriminator_path):
                 discriminator_checkpoint = torch.load(discriminator_path)
-                if list(discriminator_checkpoint['model_state_dict'])[0][
-                   0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+                if list(discriminator_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
                     for i in list(discriminator_checkpoint['model_state_dict']):
-                        discriminator_checkpoint['model_state_dict'][i[7:]] = discriminator_checkpoint[
-                            'model_state_dict'].pop(i)
+                        discriminator_checkpoint['model_state_dict'][i[7:]] = discriminator_checkpoint['model_state_dict'].pop(i)
                 discriminator.load_state_dict(discriminator_checkpoint['model_state_dict'])
+
+        return generator, discriminator
+    def gan_evaluation(self, epoch, generator, discriminator, discriminator_optimizer, generator_optimizer,
+                       metrics_dict, train_loader, test_loader, extra_test_loader, regressor):
+        """
+        run post-training evaluation
+        """
+        generator, discriminator = self.reload_best_test_checkpoint(epoch, generator,discriminator)
 
         # rerun test inference
         generator.eval()
@@ -1535,18 +1418,7 @@ class Modeller:
             else:
                 extra_test_epoch_stats_dict = None
 
-        # # save results
-        # metrics_dict = update_gan_metrics(
-        #     epoch, metrics_dict,
-        #     np.zeros(10), discriminator_err_te,
-        #     np.zeros(10), generator_err_te,
-        #     discriminator_optimizer.defaults['lr'], generator_optimizer.defaults['lr'])
-        #
-        # self.log_gan_loss(metrics_dict, None, test_epoch_stats_dict,
-        #                   None, discriminator_te_record, None, generator_te_record)
-
-        self.detailed_reporting(epoch, train_loader, None, test_epoch_stats_dict,
-                                extra_test_dict=extra_test_epoch_stats_dict)
+        self.detailed_reporting(epoch, train_loader, None, test_epoch_stats_dict, extra_test_dict=extra_test_epoch_stats_dict)
 
     @staticmethod
     def compute_similarity_penalty(generated_samples, prior):
@@ -1679,7 +1551,7 @@ class Modeller:
         do analysis and plotting for cell generator
         """
         layout = plotly_setup(self.config)
-        self.log_cubic_defect(epoch_stats_dict)
+        log_cubic_defect(epoch_stats_dict['final generated cell parameters'])
         wandb.log({"Generated cell parameter variation": epoch_stats_dict['generated cell parameters'].std(0).mean()})
         generator_losses, average_losses_dict = self.process_generator_losses(epoch_stats_dict)
         wandb.log(average_losses_dict)
@@ -1688,15 +1560,6 @@ class Modeller:
         plot_generator_loss_correlates(self.config, wandb, epoch_stats_dict, generator_losses, layout)
 
         return None
-
-    def log_cubic_defect(self, epoch_stats_dict):
-        cleaned_samples = epoch_stats_dict['final generated cell parameters']
-        cubic_distortion = np.abs(1 - np.nan_to_num(np.stack(
-            [cell_vol(cleaned_samples[i, 0:3], cleaned_samples[i, 3:6]) / np.prod(cleaned_samples[i, 0:3], axis=-1) for
-             i in range(len(cleaned_samples))])))
-        wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
-        hist = np.histogram(cubic_distortion, bins=256, range=(0, 1))
-        wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})
 
     def process_generator_losses(self, epoch_stats_dict):
         generator_loss_keys = ['generator packing prediction', 'generator packing target', 'generator per mol vdw loss',
@@ -1748,6 +1611,7 @@ class Modeller:
         @param regressor:
         @return:
         """
+        torch.manual_seed(self.config.seeds.model)
         print('Reinitializing models and optimizer')
         if self.config.generator_path is None:
             generator.apply(weight_reset)

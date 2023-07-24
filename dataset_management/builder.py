@@ -13,7 +13,7 @@ import os
 import pandas as pd
 import sys
 from dataset_management.molecule_featurizer import CustomGraphFeaturizer
-from dataset_management.manager import Miner
+from dataset_management.manager import DataManager
 
 
 class CCDC_helper():
@@ -517,5 +517,5 @@ if __name__ == '__main__':
     #featurizer.add_single_feature(molecule_chunks_path=chunk_path + '/molecule_features', chunk_inds = [0,1000], feature='molecule freeSASA')
     featurizer.featurize(chunk_inds=[0, 1])
 
-    miner = Miner(chunk_path, collect_chunks=True, database=mode)
+    miner = DataManager(chunk_path, collect_chunks=True, database=mode)
     miner.process_new_dataset(dataset_name = 'csd_coumarins')

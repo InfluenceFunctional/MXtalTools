@@ -13,7 +13,7 @@ import os
 import pandas as pd
 import sys
 from dataset_management.molecule_featurizer import CustomGraphFeaturizer
-from dataset_management.manager import Miner
+from dataset_management.manager import DataManager
 
 #
 # class CrystalDatabaseBuilder():

@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.cluster import AgglomerativeClustering
 
 import constants.asymmetric_units
-from crystal_building.builder import write_sg_to_all_crystals
+from crystal_building.utils import write_sg_to_all_crystals
 from models.utils import undo_1d_bound, softmax_and_score
 
 
