@@ -3,17 +3,12 @@ import os
 import time
 from argparse import Namespace
 
-# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 # import ase.io
 # import ase.data
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
-# import rdkit.Chem
-# import rdkit.Chem.AllChem
-# import rdkit.Chem.Draw
 import wandb
-# from PIL import Image
 from scipy.stats import linregress
 from torch import backends
 from torch_geometric.loader.dataloader import Collater
@@ -39,16 +34,11 @@ from models.utils import compute_h_bond_score, get_vdw_penalty, generator_densit
 from models.vdw_overlap import vdw_overlap
 from reporting.online import cell_params_analysis, plotly_setup, cell_density_plot, process_discriminator_outputs, discriminator_scores_plot, \
     plot_generator_loss_correlates, plot_discriminator_score_correlates, log_mini_csp_scores_distributions, sampling_telemetry_plot, cell_params_tracking_plot, log_best_mini_csp_samples, discriminator_BT_reporting
-from sampling.MCMC_Sampling import mcmcSampler
-from sampling.SampleOptimization import gradient_descent_sampling
 from shutil import copy
 from common.utils import *
-from sampling.utils import de_clean_samples, sample_clustering
-
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
 # https://dictionary.iucr.org/Sohncke_groups#:~:text=Sohncke%20groups%20are%20the%20three,in%20the%20chiral%20space%20groups.
-
 
 class Modeller:
     def __init__(self, config):
@@ -289,9 +279,9 @@ class Modeller:
             generator_err_te, discriminator_err_te, regressor_err_te = 0, 0, 0
             generator_tr_record, discriminator_tr_record, regressor_tr_record = [0], [0], [0]
             generator_te_record, discriminator_te_record, regressor_te_record = [0], [0], [0]
-            discriminator_hit_max_lr, generator_hit_max_lr, regressor_hit_max_lr, \
-                converged, epoch = \
+            discriminator_hit_max_lr, generator_hit_max_lr, regressor_hit_max_lr, converged, epoch = \
                 False, False, False, self.config.max_epochs == 0, 0
+
             self.prior_amplification = None
 
             # training loop

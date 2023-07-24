@@ -8,7 +8,7 @@ from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 from crystal_building.utils import \
     (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
-     asymmetric_unit_pose_analysis_np)
+     batch_asymmetric_unit_pose_analysis_torch)
 from common.geometry_calculations import batch_molecule_principal_axes_torch, compute_Ip_handedness
 from crystal_building.builder import write_sg_to_all_crystals
 

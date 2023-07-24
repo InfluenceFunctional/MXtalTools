@@ -62,7 +62,7 @@ gradient_norm_clip: 1
 # dataset curation
 rotation_basis: "spherical" # "spherical" for rotvec in spherical coordinates, "cartesian" for rotvec in cartesian coordinates
 target: packing # "packing" only supported
-dataset_length: 1000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps

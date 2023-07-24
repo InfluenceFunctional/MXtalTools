@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from common.utils import standardize
 from dataset_management.CrystalData import CrystalData
-from crystal_building.utils import asymmetric_unit_pose_analysis_np, batch_asymmetric_unit_pose_analysis_torch
+from crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch
 from constants.asymmetric_units import asym_unit_dict as asymmetric_unit_dict
 import sys
 from torch_geometric.loader import DataLoader
