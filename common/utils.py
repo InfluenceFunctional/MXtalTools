@@ -5,10 +5,12 @@ import torch
 from ase import Atoms
 from scipy.cluster.hierarchy import dendrogram
 import pandas as pd
+from torch.nn.functional import softmax
 
 '''
 general utilities
 '''
+
 
 def plot_dendrogram(model, **kwargs):
     """
@@ -266,7 +268,7 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
         fractional_centroids = torch.inner(torch.linalg.inv(data.T_fc[index]), molecule_centroids).T
 
         inside_centroids = torch.prod((fractional_centroids < 1) * (fractional_centroids > 0), dim=-1)
-        #assert inside_centroids.sum() == data.Z[index]  # must be exactly Z molecules in the unit cell
+        # assert inside_centroids.sum() == data.Z[index]  # must be exactly Z molecules in the unit cell
         inside_centroids_inds = torch.where(inside_centroids)[0]
 
         inside_inds = torch.cat(
@@ -318,3 +320,18 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
     mol = Atoms(symbols=numbers, positions=coords, cell=cell)
 
     return mol
+
+
+def components2angle(components):
+    """
+    take two non-normalized components[n_samples, 2] representing
+    sin(angle) and cos(angle), compute the resulting angle, following
+    https://ai.stackexchange.com/questions/38045/how-can-i-encode-angle-data-to-train-neural-networks
+
+    norm the sum of squares via softmax to enforce prediction on the unit circle
+    """
+
+    '''use softmax to norm the sum of squares, and multiply by the signs to keep all 4 quadrants'''
+    normed_components = torch.sign(components) * softmax(components ** 2)
+    angle = torch.atan2(normed_components[:,0], normed_components[:,1])
+    return angle

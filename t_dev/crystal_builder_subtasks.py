@@ -26,13 +26,17 @@ class Group:
         self.aa = 0
         return None
 
-    def test_rotvec2rotmat(self):
+    def rotvec2rotmat(self):
         """
         confirm transformation from rotvec to rotation matrix in cartesian and spherical bases
         """
         '''check cartesian mode'''
         rotations = [Rotation.random() for _ in range(5)]
         rvecs = torch.stack([torch.Tensor(rotation.as_rotvec()) for rotation in rotations])
+
+        rvecs2 = sph2rotvec(rotvec2sph(rvecs))
+        assert (rvecs - rvecs2).abs().mean() < 1e-4
+
         rotmats = rotvec2rotmat(rvecs, basis='cartesian')
         check_rotmats = torch.stack([torch.Tensor(rotation.as_matrix()) for rotation in rotations])
         assert (rotmats - check_rotmats).abs().mean() < 1e-4
@@ -107,7 +111,7 @@ class Group:
 
 
 group = Group()
-group.test_rotvec2rotmat()
+group.rotvec2rotmat()
 # group.test_build_unit_cell()
 # group.test_scale_asymmetric_unit()
 # group.test_align_crystaldata_to_principal_axes()

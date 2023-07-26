@@ -174,7 +174,7 @@ def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol
         mol_rotation = mol_rotation / norms[:, None] * normed_norms[:, None]
     elif rotation_basis == 'spherical':
         theta = enforce_1d_bound(mol_rotation[:, 0], torch.pi / 4, torch.pi / 4, mode='soft')
-        phi = enforce_1d_bound(mol_rotation[:, 1], torch.pi, 0, mode='soft')
+        phi = enforce_1d_bound(mol_rotation[:, 1], torch.pi, torch.pi, mode='soft')
         r = enforce_1d_bound(mol_rotation[:, 2], torch.pi, torch.pi, mode='soft')
         mol_rotation = torch.cat((theta[:, None], phi[:, None], r[:, None]), dim=-1)
     else:

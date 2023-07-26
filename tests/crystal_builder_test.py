@@ -32,8 +32,6 @@ def test_cell_parameterization_and_reconstruction():
         test_crystals, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
-    # todo put explicit reparameterization here
-
     rebuilt_supercells, _, _ = supercell_builder.build_supercells(
         test_crystals, test_crystals.cell_params,
         skip_cell_cleaning=True, standardized_sample=False,

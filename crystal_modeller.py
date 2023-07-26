@@ -57,7 +57,7 @@ class Modeller:
         self.prep_symmetry_info()
 
         '''set space groups to be included and generated'''
-        if self.config.generate_sgs is 'all':
+        if self.config.generate_sgs == 'all':
             # generate samples in every space group in the asym dict (eventually, all sgs)
             self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
@@ -785,18 +785,10 @@ class Modeller:
             self.config.discriminator.graph_convolution_cutoff,
             align_molecules=(negative_type != 'generated'),
             rescale_asymmetric_unit=(negative_type != 'distorted'),
-            skip_cell_cleaning=False,
-            standardized_sample=True,
+            skip_cell_cleaning=(negative_type != 'generated'),  # samples from the generator are pre-cleaned
+            standardized_sample=(negative_type != 'generated'),
             target_handedness=real_data.asym_unit_handedness,
         )
-
-        if self.config.device.lower() == 'cuda':  # redundant
-            real_supercell_data = real_supercell_data.cuda()
-            fake_supercell_data = fake_supercell_data.cuda()
-
-        if self.config.test_mode or self.config.anomaly_detection:
-            assert torch.sum(torch.isnan(real_supercell_data.x)) == 0, "NaN in training input"
-            assert torch.sum(torch.isnan(fake_supercell_data.x)) == 0, "NaN in training input"
 
         if self.config.discriminator_positional_noise > 0:
             real_supercell_data.pos += \
@@ -884,7 +876,7 @@ class Modeller:
             mol_data.x[mol_inds, int(self.sym_info['packing_coefficient_ind'])] = standardized_target_packing_coeff[ii]  # assign target packing coefficient
 
         # generate the samples
-        [[generated_samples, latent], prior, condition] = generator.forward(
+        [generated_samples, latent, prior, condition] = generator.forward(
             n_samples=mol_data.num_graphs, conditions=mol_data.to(self.config.device).clone(),
             return_latent=True, return_condition=True, return_prior=True)
 
@@ -908,6 +900,8 @@ class Modeller:
                 data, generated_samples, self.config.supercell_size,
                 self.config.discriminator.graph_convolution_cutoff,
                 align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
+                skip_cell_cleaning=True,  # cleaned inside the generator
+                standardized_sample=False  # destandardized inside the generator
             )
 
             similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
@@ -1044,7 +1038,7 @@ class Modeller:
 
                 generated_samples_ii = (real_data.cell_params - lattice_means) / lattice_stds
 
-                if i % 2 == 0:  # alternate between random distortions and specifically diffuse cells
+                if True: #i % 2 == 0:  # alternate between random distortions and specifically diffuse cells
                     if self.config.sample_distortion_magnitude == -1:
                         distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-.5, 0.5, len(generated_samples_ii)).to(
                             generated_samples_ii.device)[:, None]  # wider range
@@ -1053,7 +1047,7 @@ class Modeller:
                 else:
                     # add a random fraction of the original cell length - make the cell larger
                     distortion = torch.zeros_like(generated_samples_ii)
-                    distortion[:, 0:3] = torch.randn_like(distortion[:, 0:3]).abs()
+                    distortion[:, 0:3] = torch.randn_like(distortion[:, 0:3]).abs() * self.config.sample_distortion_magnitude
 
                 generated_samples_i = (generated_samples_ii + distortion).to(self.config.device)  # add jitter and return in standardized basis
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
@@ -1463,6 +1457,8 @@ class Modeller:
                         fake_data, samples, self.config.supercell_size,
                         self.config.discriminator.graph_convolution_cutoff,
                         align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
+                        skip_cell_cleaning=True,  # cleaned inside the generator
+                        standardized_sample=False  # destandardized inside the generator
                     )
                 fake_supercell_data = fake_supercell_data.to(self.config.device)
 

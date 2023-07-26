@@ -5,8 +5,10 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.distributions import MultivariateNormal, Uniform
 
+from common.utils import components2angle
 from models.components import MLP
 from models.base_models import molecule_graph_model
+from models.utils import enforce_1d_bound
 
 
 class crystal_generator(nn.Module):
@@ -15,8 +17,8 @@ class crystal_generator(nn.Module):
 
         self.device = config.device
 
-        self.lattice_means = dataDims['lattice means']
-        self.lattice_stds = dataDims['lattice stds']
+        self.lattice_means = torch.tensor(dataDims['lattice means'], dtype=torch.float32, device=config.device)
+        self.lattice_stds = torch.tensor(dataDims['lattice stds'], dtype=torch.float32, device=config.device)
         self.norm_lattice_lengths = False
 
         '''set random prior'''
@@ -83,7 +85,7 @@ class crystal_generator(nn.Module):
                          norm=config.generator.fc_norm_mode,
                          dropout=config.generator.fc_dropout_probability,
                          input_dim=self.latent_dim,
-                         output_dim=dataDims['num lattice features'],
+                         output_dim=dataDims['num lattice features'] + 3,  # 3 extra dimensions for angle decoder
                          conditioning_dim=config.generator.conditioner.output_dim + self.num_crystal_features,  # include crystal information for the generator
                          seed=config.seeds.model
                          )
@@ -105,24 +107,51 @@ class crystal_generator(nn.Module):
             conditions.x = torch.cat((conditions.x[:, :-self.num_crystal_features], normed_coords), dim=-1)  # concatenate to input features, leaving out crystal info from conditioner
 
         conditions_encoding = self.conditioner(conditions)
-
         conditions_encoding = torch.cat((conditions_encoding, crystal_information[conditions.ptr[:-1]]), dim=-1)
+        if return_latent:
+            samples, latent = self.model(z, conditions=conditions_encoding, return_latent=return_latent)
+        else:
+            samples = self.model(z, conditions=conditions_encoding, return_latent=return_latent)
 
-        out = self.model(z, conditions=conditions_encoding, return_latent=return_latent)
+        '''separate components'''
+        lattice_lengths = samples[:, :3]
+        lattice_angles = samples[:, 3:6]
+        mol_positions = samples[:, 6:9]
+        mol_orientations = samples[:, 9:]
 
-        if self.norm_lattice_lengths:
-            '''we want generator to work in the normed lattice vector basis - so denorm outputs here before going forward with evaluation'''
-            lattice_lengths = out[:, :3]
-            destandardized_lattice_lengths = lattice_lengths + self.lattice_stds[:3] + self.lattice_means[:3]
-            denormed_lattice_lengths = destandardized_lattice_lengths * (conditions.Z[:, None] ** (1 / 3)) * (conditions.mol_volume[:, None] ** (1 / 3))  # denorm lattice vectors
-            restandardized_lattice_lengths = (denormed_lattice_lengths - self.lattice_means[:3]) / self.lattice_stds[:3]
+        '''destandardize & decode angles - initial prediction was done in standardized basis'''
+        real_lattice_lengths = lattice_lengths * self.lattice_stds[:3] + self.lattice_means[:3]
+        real_lattice_angles = lattice_angles * self.lattice_stds[3:6] + self.lattice_means[3:6]  # not bothering to encode as an angle
+        real_mol_positions = mol_positions * self.lattice_stds[6:9] + self.lattice_means[6:9]
 
-        model_samples = torch.cat((restandardized_lattice_lengths, out[:, 3:]), dim=-1)
+        theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
+        real_orientation_theta = components2angle(theta_encoding)
+        # phi_encoding = torch.cat((mol_orientations[:, 2, None], F.sigmoid(mol_orientations[:, 3, None])),dim=-1) # restrict to positive angles
+        real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted
+        real_orientation_r = components2angle(mol_orientations[:, 4:6])  # unrestricted
+
+        '''enforce physical bounds on cell parameters'''
+        clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.1) + 0.1  # enforces positive nonzero
+        clean_lattice_angles = enforce_1d_bound(real_lattice_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='soft')  # range from (0,pi) with 20% limit to prevent too-skinny cells
+        clean_mol_positions = enforce_1d_bound(real_mol_positions, 0.5, 0.5, mode='soft')  # enforce fractional centroids between 0 and 1
+        clean_mol_orientations = torch.cat((  # this one is already bounded
+            real_orientation_theta[:,None],
+            real_orientation_phi[:,None],
+            real_orientation_r[:,None]
+        ), dim=-1)
+
+        model_samples = torch.cat((
+            clean_lattice_lengths,
+            clean_lattice_angles,
+            clean_mol_positions,
+            clean_mol_orientations,
+        ), dim=-1)
 
         # into generator model
         if any((return_condition, return_prior, return_latent)):
-            output = []
-            output.append(model_samples)
+            output = [model_samples]
+            if return_latent:
+                output.append(latent)
             if return_prior:
                 output.append(z)
             if return_condition:

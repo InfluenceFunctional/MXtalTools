@@ -4,7 +4,7 @@ from crystal_building.utils import \
      align_crystaldata_to_principal_axes,
      batch_asymmetric_unit_pose_analysis_torch, set_sym_ops,
      rotvec2rotmat, build_unit_cell, scale_asymmetric_unit)
-from common.geometry_calculations import compute_fractional_transform
+from common.geometry_calculations import compute_fractional_transform, sph2rotvec, rotvec2sph
 from constants.asymmetric_units import asym_unit_dict
 
 
@@ -145,14 +145,19 @@ class SupercellBuilder:
 
         return supercell_data.to(self.device)
 
-    def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True, rescale_asymmetric_unit=True, ):
+    def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True, rescale_asymmetric_unit=True):
         if skip_cell_cleaning:  # don't clean up
             if standardized_sample:
                 destandardized_cell_sample = (cell_sample * torch.tensor(self.dataDims['lattice stds'], device=self.device, dtype=cell_sample.dtype)) + torch.tensor(
                     self.dataDims['lattice means'], device=self.device, dtype=cell_sample.dtype)  # destandardize
-                cell_lengths, cell_angles, mol_position, mol_rotation = destandardized_cell_sample.split(3, 1)
+                cell_lengths, cell_angles, mol_position, mol_rotation_i = destandardized_cell_sample.split(3, 1)
             else:
-                cell_lengths, cell_angles, mol_position, mol_rotation = cell_sample.split(3, 1)
+                cell_lengths, cell_angles, mol_position, mol_rotation_i = cell_sample.split(3, 1)
+
+            if self.rotation_basis == 'spherical':
+                mol_rotation = sph2rotvec(mol_rotation_i)
+            else:
+                mol_rotation = mol_rotation_i
         else:
             cell_lengths, cell_angles, mol_position, mol_rotation = cell_sample.split(3, 1)
             lattices = [self.symmetries_dict['lattice_type'][int(supercell_data.sg_ind[n])] for n in range(supercell_data.num_graphs)]

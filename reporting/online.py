@@ -33,10 +33,10 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
     dataset_cell_distribution = np.asarray(
         [train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
 
-    # raw outputs
-    renormalized_samples = np.zeros_like(generated_samples)
-    for i in range(generated_samples.shape[1]):
-        renormalized_samples[:, i] = generated_samples[:, i] * stds[i] + means[i]
+    # # raw outputs
+    # renormalized_samples = np.zeros_like(generated_samples)
+    # for i in range(generated_samples.shape[1]):
+    #     renormalized_samples[:, i] = generated_samples[:, i] * stds[i] + means[i]
 
     cleaned_samples = test_epoch_stats_dict['final generated cell parameters']
 
@@ -85,14 +85,14 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
                 name="Dataset samples",
                 showlegend=True,
             ))
-
-            fig.add_trace(go.Histogram(
-                x=renormalized_samples[:, i],
-                histnorm='probability density',
-                nbinsx=100,
-                name="Samples",
-                showlegend=True,
-            ))
+            #
+            # fig.add_trace(go.Histogram(
+            #     x=renormalized_samples[:, i],
+            #     histnorm='probability density',
+            #     nbinsx=100,
+            #     name="Samples",
+            #     showlegend=True,
+            # ))
             fig.add_trace(go.Histogram(
                 x=cleaned_samples[:, i],
                 histnorm='probability density',
