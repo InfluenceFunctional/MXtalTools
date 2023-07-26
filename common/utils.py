@@ -147,10 +147,10 @@ def compute_rdf_distance(rdf1, rdf2, rr):
 
     if return_numpy:
         distance = range_normed_emd.mean().cpu().detach().numpy()
+        assert np.sum(np.isnan(distance)) == 0
     else:
         distance = range_normed_emd.mean()
-
-    assert np.sum(np.isnan(distance)) == 0
+        assert torch.sum(torch.isnan(distance)) == 0
 
     return distance
 
