@@ -185,7 +185,7 @@ class Modeller:
         generator, discriminator, regressor = nn.Linear(1, 1), nn.Linear(1, 1), nn.Linear(
             1, 1)  # init dummy models
         print("Initializing model(s) for " + self.config.mode)
-        if self.config.mode == 'gan' or self.config.mode == 'sampling':
+        if self.config.mode == 'gan' or self.config.mode == 'sampling' or self.config.mode == 'embedding':
             generator = crystal_generator(self.config, self.config.dataDims, self.sym_info)
             discriminator = crystal_discriminator(self.config, self.config.dataDims)
         if self.config.mode == 'regression' or self.config.regressor_path is not None:
@@ -203,10 +203,10 @@ class Modeller:
         discriminator_optimizer = init_optimizer(self.config.discriminator_optimizer, discriminator)
         regressor_optimizer = init_optimizer(self.config.regressor_optimizer, regressor)
 
-        if self.config.generator_path is not None and self.config.mode == 'gan':
+        if self.config.generator_path is not None and (self.config.mode == 'gan' or self.config.mode == 'embedding'):
             generator, generator_optimizer = reload_model(generator, generator_optimizer,
                                                           self.config.generator_path)
-        if self.config.discriminator_path is not None and self.config.mode == 'gan':
+        if self.config.discriminator_path is not None and (self.config.mode == 'gan' or self.config.mode == 'embedding'):
             discriminator, discriminator_optimizer = reload_model(discriminator, discriminator_optimizer,
                                                                   self.config.discriminator_path)
         if self.config.regressor_path is not None:
@@ -232,8 +232,8 @@ class Modeller:
             regressor_optimizer, regressor_schedulers, \
             num_params
 
-    def prep_dataloaders(self, dataset_builder):
-        train_loader, test_loader = get_dataloaders(dataset_builder, machine=self.config.machine, batch_size=self.config.min_batch_size)
+    def prep_dataloaders(self, dataset_builder, test_fraction=0.2):
+        train_loader, test_loader = get_dataloaders(dataset_builder, machine=self.config.machine, batch_size=self.config.min_batch_size, test_fraction=test_fraction)
         self.config.current_batch_size = self.config.min_batch_size
         print("Training batch size set to {}".format(self.config.current_batch_size))
         del dataset_builder
@@ -249,6 +249,183 @@ class Modeller:
                                                       sym_ops_dict=self.sym_ops)
 
         return train_loader, test_loader, extra_test_loader
+
+    def crystal_embedding_analysis(self):
+        """
+        analyze the embeddings of a given crystal dataset
+        embeddings provided by pretrained model
+        """
+        """
+                train and/or evaluate one or more models
+                regressor
+                GAN (generator and/or discriminator)
+                """
+        with wandb.init(config=self.config,
+                        project=self.config.wandb.project_name,
+                        entity=self.config.wandb.username,
+                        tags=[self.config.wandb.experiment_tag],
+                        settings=wandb.Settings(code_dir=".")):
+
+            wandb.run.name = wandb.config.machine + '_' + str(self.config.mode) + '_' + str(wandb.config.run_num)  # overwrite procedurally generated run name with our run name
+
+            '''miscellaneous setup'''
+            dataset_builder = self.misc_pre_training_items()
+
+            '''prep dataloaders'''
+            from torch_geometric.loader import DataLoader
+            test_dataset = []
+            for i in range(len(dataset_builder)):
+                test_dataset.append(dataset_builder[i])
+
+            self.config.current_batch_size = self.config.min_batch_size
+            print("Training batch size set to {}".format(self.config.current_batch_size))
+            del dataset_builder
+            test_loader = DataLoader(test_dataset, batch_size=self.config.current_batch_size, shuffle=True, num_workers=0, pin_memory=True)
+
+            '''instantiate models'''
+            generator, discriminator, regressor, \
+                generator_optimizer, generator_schedulers, \
+                discriminator_optimizer, discriminator_schedulers, \
+                regressor_optimizer, regressor_schedulers, \
+                num_params = self.init_models()
+
+            '''initialize some training metrics'''
+            with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
+                # very cool
+                print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
+                print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
+                print("'      `--'      `.-'      `--'      `--'      `--'      `-.'      `--'      `")
+                # very cool
+                print("Starting Embedding Analysis")
+
+                with torch.no_grad():
+                    # compute test loss & save evaluation statistics on test samples
+                    embedding_dict = self.embed_dataset(
+                        data_loader=test_loader, generator=generator, discriminator=discriminator, regressor=regressor)
+
+                    np.save('embedding_dict', embedding_dict)
+
+    def embed_dataset(self, data_loader, discriminator, generator=None, regressor=None):
+        t0 = time.time()
+        discriminator.eval()
+
+        embedding_dict = {
+            'tracking features': [],
+            'identifiers': [],
+            'scores': [],
+            'source': [],
+            'latent': [],
+        }
+        epoch_stats_dict = {}  # unused but necessary for some functions
+
+        for i, data in enumerate(tqdm.tqdm(data_loader)):
+            '''
+            get discriminator embeddings
+            '''
+
+            '''real data'''
+            real_supercell_data = \
+                self.supercell_builder.unit_cell_to_supercell(
+                    data, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
+
+            score_on_real, real_distances_dict, latent = \
+                self.adversarial_score(
+                    discriminator, real_supercell_data, return_latent=True)
+
+            embedding_dict['tracking features'].extend(data.tracking.cpu().detach().numpy())
+            embedding_dict['identifiers'].extend(data.csd_identifier)
+            embedding_dict['scores'].extend(score_on_real.cpu().detach().numpy())
+            embedding_dict['latent'].extend(latent)
+            embedding_dict['source'].extend(['real' for _ in range(len(latent))])
+
+            '''fake data'''
+            for j in tqdm.tqdm(range(100)):
+                real_data = data.clone()
+                generated_samples_i, epoch_stats_dict, negative_type = \
+                    self.generate_discriminator_negatives(epoch_stats_dict, real_data, generator, i, regressor,
+                                                          override_randn=True, override_distorted=True)
+
+                fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+                    real_data, generated_samples_i, self.config.supercell_size,
+                    self.config.discriminator.graph_convolution_cutoff,
+                    align_molecules=(negative_type != 'generated'),
+                    rescale_asymmetric_unit=(negative_type != 'distorted'),
+                    skip_cell_cleaning=(negative_type != 'generated'),  # samples from the generator are pre-cleaned
+                    standardized_sample=(negative_type != 'generated'),
+                    target_handedness=real_data.asym_unit_handedness,
+                )
+
+                score_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(discriminator, fake_supercell_data, return_latent=True)
+
+                embedding_dict['tracking features'].extend(real_data.tracking.cpu().detach().numpy())
+                embedding_dict['identifiers'].extend(real_data.csd_identifier)
+                embedding_dict['scores'].extend(score_on_fake.cpu().detach().numpy())
+                embedding_dict['latent'].extend(fake_latent)
+                embedding_dict['source'].extend([negative_type for _ in range(len(latent))])
+
+        embedding_dict['scores'] = np.stack(embedding_dict['scores'])
+        embedding_dict['tracking features'] = np.stack(embedding_dict['tracking features'])
+        embedding_dict['latent'] = np.stack(embedding_dict['latent'])
+
+        total_time = time.time() - t0
+        print(f"Embedding took {total_time:.1f} Seconds")
+
+        '''distance matrix'''
+        scores = softmax_and_score(embedding_dict['scores'])
+        latents = torch.Tensor(embedding_dict['latent'])
+        overlaps = torch.inner(latents, latents) / torch.outer(torch.linalg.norm(latents,dim=-1),torch.linalg.norm(latents,dim=-1))
+        distmat = torch.cdist(latents, latents)
+
+        sample_types = list(set(embedding_dict['source']))
+        inds_dict = {}
+        for source in sample_types:
+            inds_dict[source] = np.argwhere(np.asarray(embedding_dict['source']) == source)[:, 0]
+
+        mean_overlap_to_real = {}
+        mean_dist_to_real = {}
+        mean_score = {}
+        for source in sample_types:
+            sample_dists = distmat[inds_dict[source]]
+            sample_scores = scores[inds_dict[source]]
+            sample_overlaps = overlaps[inds_dict[source]]
+
+            mean_dist_to_real[source] = sample_dists[:, inds_dict['real']].mean()
+            mean_overlap_to_real[source] = sample_overlaps[:, inds_dict['real']].mean()
+            mean_score[source] = sample_scores.mean()
+
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        from plotly.colors import n_colors
+
+        # '''distances'''
+        # fig = make_subplots(rows=1, cols=2, subplot_titles=('distances', 'dot overlaps'))
+        # fig.add_trace(go.Heatmap(z=distmat), row=1, col=1)
+        # fig.add_trace(go.Heatmap(z=overlaps), row=1, col=2)
+        # fig.show()
+
+        '''distance to real vs score'''
+        colors = n_colors('rgb(250,0,5)', 'rgb(5,150,250)', len(inds_dict.keys()), colortype='rgb')
+
+        fig = make_subplots(rows=1, cols=2)
+        for ii, source in enumerate(sample_types):
+            fig.add_trace(go.Scattergl(
+                x=distmat[inds_dict[source]][:, inds_dict['real']].mean(-1), y=scores[inds_dict[source]],
+                mode='markers', marker=dict(color=colors[ii]), name=source), row=1, col=1
+            )
+
+            fig.add_trace(go.Scattergl(
+                x=overlaps[inds_dict[source]][:, inds_dict['real']].mean(-1), y=scores[inds_dict[source]],
+                mode='markers', marker=dict(color=colors[ii]), showlegend=False), row=1, col=2
+            )
+
+        fig.update_xaxes(title_text='mean distance to real',row=1,col=1)
+        fig.update_yaxes(title_text='discriminator score',row=1,col=1)
+
+        fig.update_xaxes(title_text='mean overlap to real',row=1,col=2)
+        fig.update_yaxes(title_text='discriminator score',row=1,col=2)
+        fig.show()
+
+        return embedding_dict
 
     def train_crystal_models(self):
         """
@@ -618,9 +795,12 @@ class Modeller:
         return epoch_stats_dict, total_time
 
     @staticmethod
-    def adversarial_score(discriminator, data):
-        output, extra_outputs = discriminator(data.clone(), return_dists=True)  # reshape output from flat filters to channels * filters per channel
-        return output, extra_outputs['dists dict']
+    def adversarial_score(discriminator, data, return_latent=False):
+        output, extra_outputs = discriminator(data.clone(), return_dists=True, return_latent=return_latent)  # reshape output from flat filters to channels * filters per channel
+        if return_latent:
+            return output, extra_outputs['dists dict'], extra_outputs['latent']
+        else:
+            return output, extra_outputs['dists dict']
 
     @staticmethod
     def log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
@@ -796,8 +976,8 @@ class Modeller:
             fake_supercell_data.pos += \
                 torch.randn_like(fake_supercell_data.pos) * self.config.discriminator_positional_noise
 
-        score_on_real, real_distances_dict = self.adversarial_score(discriminator, real_supercell_data)
-        score_on_fake, fake_pairwise_distances_dict = self.adversarial_score(discriminator, fake_supercell_data)
+        score_on_real, real_distances_dict, real_latent = self.adversarial_score(discriminator, real_supercell_data, return_latent=True)
+        score_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(discriminator, fake_supercell_data, return_latent=True)
 
         # todo assign z values properly in cell construction
         real_packing_coeffs = compute_packing_coefficient(cell_params=real_supercell_data.cell_params,
@@ -820,7 +1000,7 @@ class Modeller:
         if mode_override is not None:
             mode = mode_override
         else:
-            mode = self.config.generator.canonical_conformer_orientation
+            mode = self.config.canonical_conformer_orientation
 
         if mode == 'standardized':
             data = align_crystaldata_to_principal_axes(data, handedness=data.asym_unit_handedness)
@@ -948,14 +1128,6 @@ class Modeller:
         del self.prep_dataset  # we don't actually want this huge thing floating around
         self.config.dataDims = dataset_builder.get_dimension()
 
-        self.n_generators = sum((self.config.train_discriminator_on_randn, self.config.train_discriminator_on_distorted, self.config.train_discriminator_adversarially))
-        self.generator_ind_list = []
-        if self.config.train_discriminator_adversarially:
-            self.generator_ind_list.append(1)
-        if self.config.train_discriminator_on_randn:
-            self.generator_ind_list.append(2)
-        if self.config.train_discriminator_on_distorted:
-            self.generator_ind_list.append(3)
         '''
         init supercell builder
         '''
@@ -1003,7 +1175,7 @@ class Modeller:
 
         return dataset_builder
 
-    def generate_discriminator_negatives(self, epoch_stats_dict, real_data, generator, i, regressor):
+    def generate_discriminator_negatives(self, epoch_stats_dict, real_data, generator, i, regressor, override_adversarial=False, override_randn=False, override_distorted=False):
         """
         use one of the available cell generation tools to sample cell parameters, to be fed to the discriminator
         @param epoch_stats_dict:
@@ -1013,24 +1185,37 @@ class Modeller:
         @return:
         """
 
+        self.n_generators = sum((self.config.train_discriminator_on_randn or override_randn,
+                                 self.config.train_discriminator_on_distorted or override_distorted,
+                                 self.config.train_discriminator_adversarially or override_adversarial))
+
         gen_randint = np.random.randint(0, self.n_generators, 1)
+
+        self.generator_ind_list = []
+        if self.config.train_discriminator_adversarially or override_adversarial:
+            self.generator_ind_list.append(1)
+        if self.config.train_discriminator_on_randn or override_randn:
+            self.generator_ind_list.append(2)
+        if self.config.train_discriminator_on_distorted or override_distorted:
+            self.generator_ind_list.append(3)
+
         generator_ind = self.generator_ind_list[int(gen_randint)]  # randomly select which generator to use from the available set
 
-        if self.config.train_discriminator_adversarially:
+        if self.config.train_discriminator_adversarially or override_adversarial:
             if generator_ind == 1:  # randomly sample which generator to use at each iteration
                 negative_type = 'generator'
                 generated_samples_i, _, _ = self.get_generator_samples(real_data, generator, regressor)
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.zeros(len(generated_samples_i)), mode='extend')
 
-        if self.config.train_discriminator_on_randn:
+        if self.config.train_discriminator_on_randn or override_randn:
             if generator_ind == 2:
                 negative_type = 'randn'
                 generated_samples_i = self.randn_generator.forward(real_data.num_graphs, real_data).to(self.config.device)
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.ones(len(generated_samples_i)), mode='extend')
 
-        if self.config.train_discriminator_on_distorted:
+        if self.config.train_discriminator_on_distorted or override_distorted:
             if generator_ind == 3:
                 negative_type = 'distorted'
                 lattice_means = torch.tensor(self.config.dataDims['lattice means'], device=real_data.cell_params.device)
@@ -1038,7 +1223,7 @@ class Modeller:
 
                 generated_samples_ii = (real_data.cell_params - lattice_means) / lattice_stds
 
-                if True: #i % 2 == 0:  # alternate between random distortions and specifically diffuse cells
+                if True:  # i % 2 == 0:  # alternate between random distortions and specifically diffuse cells
                     if self.config.sample_distortion_magnitude == -1:
                         distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-.5, 0.5, len(generated_samples_ii)).to(
                             generated_samples_ii.device)[:, None]  # wider range

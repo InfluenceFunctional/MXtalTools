@@ -31,4 +31,7 @@ if __name__ == '__main__':
     run the code in selected mode
     '''  # NOTE sampling mode currently under development
     predictor = Modeller(config)
-    predictor.train_crystal_models()
+    if config.mode == 'gan' or config.mode == 'regression':
+        predictor.train_crystal_models()
+    elif config.mode == 'embedding':
+        predictor.crystal_embedding_analysis()

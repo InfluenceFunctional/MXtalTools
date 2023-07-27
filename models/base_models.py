@@ -172,7 +172,7 @@ class molecule_graph_model(nn.Module):
         if return_dists:
             extra_outputs['dists dict'] = dists_dict
         if return_latent:
-            extra_outputs['latent'] = output.cpu().detach().numpy()
+            extra_outputs['latent'] = x.cpu().detach().numpy()
 
         if len(extra_outputs) > 0:
             return output, extra_outputs
@@ -207,7 +207,7 @@ class independent_gaussian_model(nn.Module):
         try:
             self.prior = MultivariateNormal(fixed_norms, torch.Tensor(cov_mat))  # apply standardization
         except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
-            self.prior = MultivariateNormal(loc=fixed_norms, covariance_matrix=torch.eye(12) * cov_mat.diagonal())
+            self.prior = MultivariateNormal(loc=fixed_norms, covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(cov_mat).diagonal())
         self.dummy_params = nn.Parameter(torch.ones(100))
 
     def forward(self, num_samples, data):

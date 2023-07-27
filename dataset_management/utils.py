@@ -78,9 +78,16 @@ class BuildDataset:
                 dataset = dataset.drop(columns='level_0')
             dataset = dataset.reset_index()
 
+
+        if config.mode == 'embedding':  # make dataset of polymorphs of Nicotinamide
+            inds = [index for index, item in enumerate(dataset['identifier']) if "NICOAM" in item]
+            dataset = dataset.iloc[inds]
+            if 'level_0' in dataset.columns:  # housekeeping
+                dataset = dataset.drop(columns='level_0')
+            dataset = dataset.reset_index()
+
         self.dataset_length = len(dataset)
         self.final_dataset_length = min(self.dataset_length, self.max_dataset_length)
-
         dataset = self.add_last_minute_features_quickly(dataset, config)  # add a few odds & ends
 
         '''
@@ -89,13 +96,6 @@ class BuildDataset:
         lattice_features = self.get_cell_features(dataset)
         targets = self.get_targets(dataset)
         self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets)
-
-        if False:  # make dataset a bunch of the same molecule
-            identifiers = [item.csd_identifier for item in self.datapoints]
-            index = identifiers.index('NICOAM03')  # PIQTOY # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
-            new_datapoints = [self.datapoints[index] for i in range(self.final_dataset_length)]
-            self.datapoints = new_datapoints
-
         self.shuffle_datapoints()
 
         if self.build_dataset_for_tests:
@@ -396,11 +396,6 @@ class BuildDataset:
 
         if extra_keys is not None:
             keys_to_add.extend(extra_keys)
-
-        if False:  # add_lattice_overlaps: # todo not ready yet - also make sure only the discriminator sees this, and it gets properly updated when new cells are built
-            lattice_overlap_keys = [key for key in dataset.columns if 'inertial overlap' in key]
-            keys_to_add.extend(lattice_overlap_keys)
-            # overlaps = np.asarray([dataset[key] for key in lattice_overlap_keys]).T
 
         if self.target in keys_to_add:  # don't add molecule target if we are going to model it
             keys_to_add.remove(self.target)

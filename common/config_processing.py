@@ -272,7 +272,6 @@ def add_args(parser):
     parser.add_argument('--generator_conditioner_fc_dropout_probability', type=float, default=0)  # dropout probability, [0,1)
     parser.add_argument('--generator_conditioner_fc_norm_mode', type=str, default='layer')  # None, 'batch', 'instance', 'layer'
 
-    parser.add_argument('--generator_canonical_conformer_orientation', type=str, default='standardized')  # standardized or random
     parser.add_argument('--generator_num_fc_layers', type=int, default=1)  # number of layers in NN models
     parser.add_argument('--generator_fc_depth', type=int, default=27)  # number of neurons per NN layer
     parser.add_argument('--generator_activation', type=str, default='gelu')
@@ -328,7 +327,6 @@ def add_args(parser):
     update_args2config(args2config, 'generator_conditioner_fc_dropout_probability', ['generator', 'conditioner', 'fc_dropout_probability'])
     update_args2config(args2config, 'generator_conditioner_fc_norm_mode', ['generator', 'conditioner', 'fc_norm_mode'])
 
-    update_args2config(args2config, 'generator_canonical_conformer_orientation', ['generator', 'canonical_conformer_orientation'])
     update_args2config(args2config, 'generator_num_fc_layers', ['generator', 'num_fc_layers'])
     update_args2config(args2config, 'generator_fc_depth', ['generator', 'fc_depth'])
     update_args2config(args2config, 'generator_activation', ['generator', 'activation'])
@@ -380,6 +378,7 @@ def add_args(parser):
     update_args2config(args2config, 'discriminator_fc_norm_mode', ['discriminator', 'fc_norm_mode'])
 
     # cell generator
+    parser.add_argument('--canonical_conformer_orientation', type=str, default='standardized')  # standardized or random
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_vdw', default=False)  #
     parser.add_argument('--packing_target_noise', type=float, default=0)  # noise added to density target in standardized basis
@@ -395,6 +394,7 @@ def add_args(parser):
     parser.add_argument('--sample_ind', type=int, default=0)  # which sample from test dataset to sample
     parser.add_argument('--sample_steps', type=int, default=1000)  #
 
+    update_args2config(args2config, 'canonical_conformer_orientation')
     update_args2config(args2config, 'packing_target_noise')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_vdw')

@@ -127,8 +127,8 @@ class crystal_generator(nn.Module):
         theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
         real_orientation_theta = components2angle(theta_encoding)
         # phi_encoding = torch.cat((mol_orientations[:, 2, None], F.sigmoid(mol_orientations[:, 3, None])),dim=-1) # restrict to positive angles
-        real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted
-        real_orientation_r = components2angle(mol_orientations[:, 4:6])  # unrestricted
+        real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted [-pi,pi
+        real_orientation_r = components2angle(mol_orientations[:, 4:6]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
 
         clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.1) + 0.1  # enforces positive nonzero
         clean_lattice_angles = enforce_1d_bound(real_lattice_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='soft')  # range from (0,pi) with 20% limit to prevent too-skinny cells
