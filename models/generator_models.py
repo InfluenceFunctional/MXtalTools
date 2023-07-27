@@ -12,11 +12,11 @@ from models.utils import enforce_1d_bound
 
 
 class crystal_generator(nn.Module):
-    def __init__(self, config, dataDims):
+    def __init__(self, config, dataDims, sym_info):
         super(crystal_generator, self).__init__()
 
         self.device = config.device
-
+        self.symmetries_dict = sym_info
         self.lattice_means = torch.tensor(dataDims['lattice means'], dtype=torch.float32, device=config.device)
         self.lattice_stds = torch.tensor(dataDims['lattice stds'], dtype=torch.float32, device=config.device)
         self.norm_lattice_lengths = False
@@ -130,7 +130,6 @@ class crystal_generator(nn.Module):
         real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted
         real_orientation_r = components2angle(mol_orientations[:, 4:6])  # unrestricted
 
-        '''enforce physical bounds on cell parameters'''
         clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.1) + 0.1  # enforces positive nonzero
         clean_lattice_angles = enforce_1d_bound(real_lattice_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='soft')  # range from (0,pi) with 20% limit to prevent too-skinny cells
         clean_mol_positions = enforce_1d_bound(real_mol_positions, 0.5, 0.5, mode='soft')  # enforce fractional centroids between 0 and 1
@@ -140,6 +139,33 @@ class crystal_generator(nn.Module):
             real_orientation_r[:,None]
         ), dim=-1)
 
+        '''enforce physical bounds on cell parameters'''
+        lattices = [self.symmetries_dict['lattice_type'][int(conditions.sg_ind[n])] for n in range(conditions.num_graphs)]
+        '''enforce physical bounds on crystal systems'''
+        for i in range(len(clean_lattice_lengths)):
+            lattice = lattices[i]
+            # enforce agreement with crystal system
+            if lattice.lower() == 'triclinic':
+                pass
+            elif lattice.lower() == 'monoclinic':  # fix alpha and gamma
+                clean_lattice_angles[i, 0], clean_lattice_angles[i, 2] = torch.pi / 2, torch.pi / 2
+            elif lattice.lower() == 'orthorhombic':  # fix all angles
+                clean_lattice_angles[i] = torch.ones(3) * torch.pi / 2
+            elif lattice.lower() == 'tetragonal':  # fix all angles and a & b vectors
+                clean_lattice_angles[i] = torch.ones(3) * torch.pi / 2
+                clean_lattice_lengths[i, 0:2] = clean_lattice_lengths[i, 0]
+            elif (lattice.lower() == 'hexagonal') or (lattice.lower() == 'trigonal') or (lattice.lower() == 'rhombohedral'):
+                clean_lattice_lengths[i, 0:2] = clean_lattice_lengths[i, 0]
+                clean_lattice_angles[i, 0:2] = torch.pi / 2
+                clean_lattice_angles[i, 2] = torch.pi * 2 / 3
+            elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
+                clean_lattice_lengths[i] = clean_lattice_lengths[i, 0]
+                clean_lattice_angles[i] = torch.pi * torch.ones(3) / 2
+            else:
+                print(lattice + ' is not a valid crystal lattice!')
+                sys.exit()
+
+        '''collect'''
         model_samples = torch.cat((
             clean_lattice_lengths,
             clean_lattice_angles,

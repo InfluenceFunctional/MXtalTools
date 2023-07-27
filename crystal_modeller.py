@@ -186,7 +186,7 @@ class Modeller:
             1, 1)  # init dummy models
         print("Initializing model(s) for " + self.config.mode)
         if self.config.mode == 'gan' or self.config.mode == 'sampling':
-            generator = crystal_generator(self.config, self.config.dataDims)
+            generator = crystal_generator(self.config, self.config.dataDims, self.sym_info)
             discriminator = crystal_discriminator(self.config, self.config.dataDims)
         if self.config.mode == 'regression' or self.config.regressor_path is not None:
             regressor = molecule_regressor(self.config, self.config.dataDims)
