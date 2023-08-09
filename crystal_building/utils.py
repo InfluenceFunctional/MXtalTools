@@ -350,25 +350,26 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         if not enforce_right_handedness:
             assert torch.linalg.det(rotation_matrix) > 0  # negative determinant is an improper rotation, which we do not want - inverts the molecule
 
-        unit_vector = torch.tensor([
+        direction_vector = torch.tensor([
             rotation_matrix[2, 1] - rotation_matrix[1, 2],
             rotation_matrix[0, 2] - rotation_matrix[2, 0],
             rotation_matrix[1, 0] - rotation_matrix[0, 1]],
             device=rotation_matrix.device, dtype=torch.float32)  # 32 precision is limiting here in some cases
 
-        theta_arg = (torch.trace(rotation_matrix) - 1) / 2
+        r_arg = (torch.trace(rotation_matrix) - 1) / 2
 
-        if torch.abs(theta_arg) >= 1:  # if we are close enough to one, the arccos will NaN
-            # situation corresponds to a rotation by ~pi (identity operation), so the axis is arbitrary
-            # some ill conditioned rotations may also throw |args| greater than 1 - for safety must set these
-            # as something - may as well be identity
-            theta = torch.pi
-            unit_vector = torch.ones(3, device=rotation_matrix.device,
+        if torch.abs(r_arg) >= 1:  # if we are close enough to one, the arccos will NaN
+            # situation corresponds to a rotation by ~pi, with an unknown direction
+            # fortunately, either direction results in the same transformation (C2)
+            # some ill conditioned rotations may also throw |args| greater than 1 -
+            # for safety must set these as something, may as well be this  # todo look at such ill-conditioned cases
+            r = torch.pi
+            direction_vector = torch.ones(3, device=rotation_matrix.device,
                                      dtype=torch.float32)
         else:  # calculate as normal
-            theta = torch.arccos(theta_arg)
+            r = torch.arccos(r_arg)
 
-        rotvec_list.append(unit_vector / torch.linalg.norm(unit_vector) * theta)
+        rotvec_list.append(direction_vector / torch.linalg.norm(direction_vector) * r)
 
     rotvec_list = torch.stack(rotvec_list)
 
@@ -501,12 +502,12 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
     rotvec -> quat -> rotation matrix (old way)
     """
     if basis == 'cartesian':
-        theta = torch.linalg.norm(mol_rotation, dim=1)
-        unit_vector = mol_rotation / theta[:, None]
-    elif basis == 'spherical':  # psi, phi, (spherical unit vector) theta (rotaiton vector)
+        r = torch.linalg.norm(mol_rotation, dim=1)
+        unit_vector = mol_rotation / r[:, None]
+    elif basis == 'spherical':  # psi, phi, (spherical unit vector) theta (rotation vector)
+        r = mol_rotation[:, -1]  # third dimension in spherical basis is the norm #torch.linalg.norm(mol_rotation, dim=1)
         mol_rotation = sph2rotvec(mol_rotation)
-        theta = torch.linalg.norm(mol_rotation, dim=1)
-        unit_vector = mol_rotation / theta[:, None]
+        unit_vector = mol_rotation / r[:, None]
     else:
         print(f'{basis} is not a valid orientation parameterization!')
         sys.exit()
@@ -517,15 +518,7 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
         torch.stack((-unit_vector[:, 1], unit_vector[:, 0], torch.zeros_like(unit_vector[:, 0])), dim=1)
     ), dim=1)
 
-    applied_rotation_list = torch.eye(3, device=theta.device)[None, :, :].tile(len(theta), 1, 1) + torch.sin(theta[:, None, None]) * K + (1 - torch.cos(theta[:, None, None])) * (K @ K)
-
-    # old way via quaternion
-    # q = torch.cat([torch.cos(theta / 2)[:, None], unit_vector * torch.sin(theta / 2)[:, None]], dim=1)
-    #
-    # applied_rotation_list = torch.stack((torch.stack((1 - 2 * q[:, 2] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 1] * q[:, 2] - 2 * q[:, 0] * q[:, 3], 2 * q[:, 1] * q[:, 3] + 2 * q[:, 0] * q[:, 2]), dim=1),
-    #                                      torch.stack((2 * q[:, 1] * q[:, 2] + 2 * q[:, 0] * q[:, 3], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 2] * q[:, 3] - 2 * q[:, 0] * q[:, 1]), dim=1),
-    #                                      torch.stack((2 * q[:, 1] * q[:, 3] - 2 * q[:, 0] * q[:, 2], 2 * q[:, 2] * q[:, 3] + 2 * q[:, 0] * q[:, 1], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 2] ** 2), dim=1)),
-    #                                     dim=1)
+    applied_rotation_list = torch.eye(3, device=r.device)[None, :, :].tile(len(r), 1, 1) + torch.sin(r[:, None, None]) * K + (1 - torch.cos(r[:, None, None])) * (K @ K)
 
     return applied_rotation_list
 
@@ -581,7 +574,8 @@ def build_unit_cell(z_values, final_coords_list, T_fc_list, T_cf_list, sym_ops_l
     return reference_cell_list
 
 
-def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_dict, asym_unit_dict, destandardize=False, mode='soft'):
+def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_dict, asym_unit_dict,
+                      rescale_asymmetric_unit=True, destandardize=False, mode='soft'):
 
     lattice_lengths, lattice_angles, mol_positions, mol_orientations \
         = clean_generator_output(samples, lattice_means, lattice_stds, destandardize=destandardize, mode=mode)
@@ -589,7 +583,10 @@ def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_
     fixed_lengths, fixed_angles = (
         enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_dict))
 
-    fixed_positions = scale_asymmetric_unit(asym_unit_dict, mol_positions, sg_inds)
+    if rescale_asymmetric_unit:
+        fixed_positions = scale_asymmetric_unit(asym_unit_dict, mol_positions, sg_inds)
+    else:
+        fixed_positions = mol_positions * 1
 
     '''collect'''
     final_samples = torch.cat((

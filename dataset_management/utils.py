@@ -223,7 +223,6 @@ class BuildDataset:
             dataset['crystal beta'] = dataset['crystal beta'] * np.pi / 180
             dataset['crystal gamma'] = dataset['crystal gamma'] * np.pi / 180
 
-        aa = 1
         '''
         recalculate crystal density
         '''

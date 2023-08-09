@@ -542,7 +542,7 @@ class Modeller:
                         if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
                                 any((self.config.train_generator_adversarially,
                                      self.config.train_generator_vdw,
-                                     self.config.train_generator_h_bond)):
+                                     self.config.train_generator_h_bond)) and (epoch > 0):
                             self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator, regressor if self.config.regressor_path else None)
 
                         '''save checkpoints'''
@@ -682,6 +682,8 @@ class Modeller:
             '''
             train discriminator
             '''
+            data = data.to(self.config.device)
+
             skip_discriminator_step = False
             if i > 0 and self.config.train_discriminator_adversarially:
                 avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
@@ -1215,21 +1217,20 @@ class Modeller:
         if self.config.train_discriminator_on_distorted or override_distorted:
             if generator_ind == 3:
                 negative_type = 'distorted'
-                lattice_means = torch.tensor(self.config.dataDims['lattice means'], device=real_data.cell_params.device)
-                lattice_stds = torch.tensor(self.config.dataDims['lattice stds'], device=real_data.cell_params.device)  # standardize
 
-                generated_samples_ii = (real_data.cell_params - lattice_means) / lattice_stds
+                generated_samples_ii = (real_data.cell_params - self.lattice_means) / self.lattice_stds
 
                 if self.config.sample_distortion_magnitude == -1:
                     distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-.5, 0.5, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range
                 else:
                     distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
 
-                generated_samples_i = (generated_samples_ii + distortion).to(self.config.device)  # add jitter and return in standardized basis
+                generated_samples_i_d = (generated_samples_ii + distortion).to(self.config.device)  # add jitter and return in standardized basis
                 generated_samples_i = clean_cell_params(
-                    generated_samples_i, real_data.sg_ind,
+                    generated_samples_i_d, real_data.sg_ind,
                     self.lattice_means, self.lattice_stds,
-                    self.sym_info, self.supercell_builder.asym_unit_dict, destandardize=True, mode='hard')
+                    self.sym_info, self.supercell_builder.asym_unit_dict,
+                    rescale_asymmetric_unit=False, destandardize=True, mode='hard')
 
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.ones(len(generated_samples_i)) * 2, mode='extend')
@@ -1405,7 +1406,7 @@ class Modeller:
             if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
                     any((self.config.train_generator_adversarially,
                          self.config.train_generator_vdw,
-                         self.config.train_generator_h_bond)):
+                         self.config.train_generator_h_bond)) and (epoch > 0):  # don't do it on first epoch
                 self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator)
 
             if extra_test_loader is not None:

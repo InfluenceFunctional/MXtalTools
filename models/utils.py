@@ -549,19 +549,24 @@ def clean_generator_output(samples, lattice_means, lattice_stds, destandardize=T
         real_lattice_lengths = lattice_lengths * lattice_stds[:3] + lattice_means[:3]
         real_lattice_angles = lattice_angles * lattice_stds[3:6] + lattice_means[3:6]  # not bothering to encode as an angle
         real_mol_positions = mol_positions * lattice_stds[6:9] + lattice_means[6:9]
+        if samples.shape[-1] == 12:
+            real_mol_orientations = mol_orientations * lattice_stds[9:] + lattice_means[9:]
+        else:
+            real_mol_orientations = mol_orientations * 1
     else:  # optionally, skip destandardization if we are already in the real basis
         real_lattice_lengths = lattice_lengths * 1
         real_lattice_angles = lattice_angles * 1
         real_mol_positions = mol_positions * 1
+        real_mol_orientations = mol_orientations * 1
 
     if samples.shape[-1] == 15:
-        clean_mol_orientations = decode_angles(mol_orientations)
+        clean_mol_orientations = decode_to_sph_rotvec(real_mol_orientations)
     elif samples.shape[-1] == 12:  # already have angles, no need to decode
-        theta = enforce_1d_bound(mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4)[:, None]
-        phi = enforce_1d_bound(mol_orientations[:, 1], x_span=torch.pi, x_center=0)[:, None]
-        r = enforce_1d_bound(mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi)[:, None]
-        clean_mol_orientations = torch.cat((
-            theta, phi, r), dim=-1)
+        theta = enforce_1d_bound(real_mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4, mode=mode)[:, None]
+        phi = enforce_1d_bound(real_mol_orientations[:, 1], x_span=torch.pi, x_center=0, mode=mode)[:, None]
+        r_i = enforce_1d_bound(real_mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi, mode=mode)[:, None]
+        r = torch.maximum(r_i, torch.ones_like(r_i)*0.01)  # must be nonzero
+        clean_mol_orientations = torch.cat((theta, phi, r), dim=-1)
 
     '''enforce physical bounds'''
     if mode == 'soft':
@@ -662,7 +667,7 @@ def enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_
     return fixed_lengths, fixed_angles
 
 
-def decode_angles(mol_orientations):
+def decode_to_sph_rotvec(mol_orientations):
     '''
     each angle is predicted with 2 params
     we bound the encodings for theta on 0-1 to restrict the range of theta to [0,pi/2]

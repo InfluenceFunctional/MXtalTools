@@ -51,8 +51,13 @@ class SupercellBuilder:
 
         sym_ops_list, supercell_data = set_sym_ops(supercell_data)  # assign correct symmetry options
 
-        cell_lengths, cell_angles, mol_position, mol_rotation = (
+        cell_lengths, cell_angles, mol_position, mol_rotation_i = (
             cell_sample[:, :3], cell_sample[:, 3:6], cell_sample[:, 6:9], cell_sample[:, 9:])
+
+        if self.rotation_basis == 'spherical':
+            mol_rotation = sph2rotvec(mol_rotation_i)
+        else:
+            mol_rotation = mol_rotation_i
 
         # get transformation matrices
         T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform(cell_lengths, cell_angles)
