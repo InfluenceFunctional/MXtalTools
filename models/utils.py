@@ -558,7 +558,7 @@ def clean_generator_output(samples, lattice_means, lattice_stds, destandardize=T
         clean_mol_orientations = decode_angles(mol_orientations)
     elif samples.shape[-1] == 12:  # already have angles, no need to decode
         theta = enforce_1d_bound(mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4)[:, None]
-        phi = enforce_1d_bound(mol_orientations[:, 1], x_span=2 * torch.pi, x_center=0)[:, None]
+        phi = enforce_1d_bound(mol_orientations[:, 1], x_span=torch.pi, x_center=0)[:, None]
         r = enforce_1d_bound(mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi)[:, None]
         clean_mol_orientations = torch.cat((
             theta, phi, r), dim=-1)
