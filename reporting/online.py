@@ -23,20 +23,9 @@ from reporting.nov_22_discriminator import process_discriminator_evaluation_data
 
 def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
     n_crystal_features = config.dataDims['num lattice features']
-    generated_samples = test_epoch_stats_dict['generated cell parameters']
-    if generated_samples.ndim == 3:
-        generated_samples = generated_samples[0]
-    means = config.dataDims['lattice means']
-    stds = config.dataDims['lattice stds']
-
     # slightly expensive to do this every time
     dataset_cell_distribution = np.asarray(
         [train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
-
-    # # raw outputs
-    # renormalized_samples = np.zeros_like(generated_samples)
-    # for i in range(generated_samples.shape[1]):
-    #     renormalized_samples[:, i] = generated_samples[:, i] * stds[i] + means[i]
 
     cleaned_samples = test_epoch_stats_dict['final generated cell parameters']
 
@@ -328,7 +317,7 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
         x=-np.log10(all_vdws + 1e-3),
         y=np.clip(all_coeffs, a_min=0, a_max=1),
         mode='markers',
-        marker=dict(color=all_scores_i, opacity=.75,
+        marker=dict(color=all_scores_i, opacity=.25,
                     colorbar=dict(title="Score"),
                     colorscale="inferno",
                     )
@@ -624,9 +613,8 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
                 torch.tensor(best_samples[:, n, :], device=real_data_i.x.device, dtype=torch.float32),
                 config.supercell_size,
                 config.discriminator.graph_convolution_cutoff,
-                align_molecules=True, skip_cell_cleaning=True, standardized_sample=False,
-                target_handedness=best_samples_handedness[:, n],
-                rescale_asymmetric_unit=False)
+                align_molecules=True,
+                target_handedness=best_samples_handedness[:, n])
 
             output, extra_outputs = discriminator(fake_supercell_data.clone(), return_dists=True)  # reshape output from flat filters to channels * filters per channel
             best_supercell_scores.append(softmax_and_score(output).cpu().detach().numpy())
@@ -1835,14 +1823,14 @@ def log_regression_accuracy(dataDims, train_epoch_stats_dict, test_epoch_stats_d
     return None
 
 
-def detailed_reporting(config, epoch, train_loader, train_epoch_stats_dict, test_epoch_stats_dict,
+def detailed_reporting(config, epoch, test_loader, train_epoch_stats_dict, test_epoch_stats_dict,
                        extra_test_dict=None):
     """
     Do analysis and upload results to w&b
     """
     if (test_epoch_stats_dict is not None) and config.mode == 'gan':
         if test_epoch_stats_dict['generated cell parameters'] is not None:
-            cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict)
+            cell_params_analysis(config, wandb, test_loader, test_epoch_stats_dict)
 
         if config.train_generator_vdw or config.train_generator_adversarially:
             cell_generation_analysis(config, test_epoch_stats_dict)

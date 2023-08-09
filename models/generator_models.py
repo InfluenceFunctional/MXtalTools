@@ -3,12 +3,15 @@ import sys
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+from torch import nn as nn
 from torch.distributions import MultivariateNormal, Uniform
 
 from common.utils import components2angle
+from crystal_building.utils import scale_asymmetric_unit, clean_cell_params
 from models.components import MLP
 from models.base_models import molecule_graph_model
-from models.utils import enforce_1d_bound
+from models.utils import enforce_1d_bound, decode_angles, clean_generator_output, enforce_crystal_system
+from constants.asymmetric_units import asym_unit_dict
 
 
 class crystal_generator(nn.Module):
@@ -20,6 +23,11 @@ class crystal_generator(nn.Module):
         self.lattice_means = torch.tensor(dataDims['lattice means'], dtype=torch.float32, device=config.device)
         self.lattice_stds = torch.tensor(dataDims['lattice stds'], dtype=torch.float32, device=config.device)
         self.norm_lattice_lengths = False
+
+        # initialize asymmetric unit dict
+        self.asym_unit_dict = asym_unit_dict.copy()
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(self.device)
 
         '''set random prior'''
         self.latent_dim = config.generator.prior_dimension
@@ -113,69 +121,11 @@ class crystal_generator(nn.Module):
         else:
             samples = self.model(z, conditions=conditions_encoding, return_latent=return_latent)
 
-        '''separate components'''
-        lattice_lengths = samples[:, :3]
-        lattice_angles = samples[:, 3:6]
-        mol_positions = samples[:, 6:9]
-        mol_orientations = samples[:, 9:]
+        clean_samples = clean_cell_params(samples, conditions.sg_ind, self.lattice_means, self.lattice_stds,
+                                          self.symmetries_dict, self.asym_unit_dict, destandardize=True, mode='soft')
 
-        '''destandardize & decode angles - initial prediction was done in standardized basis'''
-        real_lattice_lengths = lattice_lengths * self.lattice_stds[:3] + self.lattice_means[:3]
-        real_lattice_angles = lattice_angles * self.lattice_stds[3:6] + self.lattice_means[3:6]  # not bothering to encode as an angle
-        real_mol_positions = mol_positions * self.lattice_stds[6:9] + self.lattice_means[6:9]
-
-        theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
-        real_orientation_theta = components2angle(theta_encoding)
-        # phi_encoding = torch.cat((mol_orientations[:, 2, None], F.sigmoid(mol_orientations[:, 3, None])),dim=-1) # restrict to positive angles
-        real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted [-pi,pi
-        real_orientation_r = components2angle(mol_orientations[:, 4:6]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
-
-        clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.1) + 0.1  # enforces positive nonzero
-        clean_lattice_angles = enforce_1d_bound(real_lattice_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='soft')  # range from (0,pi) with 20% limit to prevent too-skinny cells
-        clean_mol_positions = enforce_1d_bound(real_mol_positions, 0.5, 0.5, mode='soft')  # enforce fractional centroids between 0 and 1
-        clean_mol_orientations = torch.cat((  # this one is already bounded
-            real_orientation_theta[:,None],
-            real_orientation_phi[:,None],
-            real_orientation_r[:,None]
-        ), dim=-1)
-
-        '''enforce physical bounds on cell parameters'''
-        lattices = [self.symmetries_dict['lattice_type'][int(conditions.sg_ind[n])] for n in range(conditions.num_graphs)]
-        '''enforce physical bounds on crystal systems'''
-        for i in range(len(clean_lattice_lengths)):
-            lattice = lattices[i]
-            # enforce agreement with crystal system
-            if lattice.lower() == 'triclinic':
-                pass
-            elif lattice.lower() == 'monoclinic':  # fix alpha and gamma
-                clean_lattice_angles[i, 0], clean_lattice_angles[i, 2] = torch.pi / 2, torch.pi / 2
-            elif lattice.lower() == 'orthorhombic':  # fix all angles
-                clean_lattice_angles[i] = torch.ones(3) * torch.pi / 2
-            elif lattice.lower() == 'tetragonal':  # fix all angles and a & b vectors
-                clean_lattice_angles[i] = torch.ones(3) * torch.pi / 2
-                clean_lattice_lengths[i, 0:2] = clean_lattice_lengths[i, 0]
-            elif (lattice.lower() == 'hexagonal') or (lattice.lower() == 'trigonal') or (lattice.lower() == 'rhombohedral'):
-                clean_lattice_lengths[i, 0:2] = clean_lattice_lengths[i, 0]
-                clean_lattice_angles[i, 0:2] = torch.pi / 2
-                clean_lattice_angles[i, 2] = torch.pi * 2 / 3
-            elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
-                clean_lattice_lengths[i] = clean_lattice_lengths[i, 0]
-                clean_lattice_angles[i] = torch.pi * torch.ones(3) / 2
-            else:
-                print(lattice + ' is not a valid crystal lattice!')
-                sys.exit()
-
-        '''collect'''
-        model_samples = torch.cat((
-            clean_lattice_lengths,
-            clean_lattice_angles,
-            clean_mol_positions,
-            clean_mol_orientations,
-        ), dim=-1)
-
-        # into generator model
         if any((return_condition, return_prior, return_latent)):
-            output = [model_samples]
+            output = [clean_samples]
             if return_latent:
                 output.append(latent)
             if return_prior:
@@ -184,4 +134,62 @@ class crystal_generator(nn.Module):
                 output.append(conditions_encoding)
             return output
         else:
-            return model_samples
+            return clean_samples
+
+
+class independent_gaussian_model(nn.Module):
+    def __init__(self, input_dim, means, stds, normed_length_means, normed_length_stds, sym_info, device, cov_mat=None):
+        super(independent_gaussian_model, self).__init__()
+
+        self.device = device
+        self.input_dim = input_dim
+        fixed_norms = torch.Tensor(means)
+        fixed_norms[:3] = torch.Tensor(normed_length_means)
+        fixed_stds = torch.Tensor(stds)
+        fixed_stds[:3] = torch.Tensor(normed_length_stds)
+
+        self.register_buffer('means', torch.Tensor(means))
+        self.register_buffer('stds', torch.Tensor(stds))
+        self.register_buffer('fixed_norms', torch.Tensor(fixed_norms))
+        self.register_buffer('fixed_stds', torch.Tensor(fixed_stds))
+
+        self.symmetries_dict = sym_info
+        # initialize asymmetric unit dict
+        self.asym_unit_dict = asym_unit_dict.copy()
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])#.to(self.device)
+
+        if cov_mat is not None:
+            pass
+        else:
+            cov_mat = torch.diag(torch.Tensor(fixed_stds).pow(2))
+
+        fixed_means = means.copy()
+        fixed_means[:3] = normed_length_means
+        try:
+            self.prior = MultivariateNormal(fixed_norms, torch.Tensor(cov_mat))  # apply standardization
+        except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
+            self.prior = MultivariateNormal(loc=fixed_norms, covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(cov_mat).diagonal())
+        self.dummy_params = nn.Parameter(torch.ones(100))
+
+    def forward(self, num_samples, data):
+        """
+        sample comes out in non-standardized basis, but with normalized cell lengths
+        so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
+        then standardize
+        """
+        # unconditional sampling from the raw data distribution
+        sg_inds = data.sg_ind
+
+        samples = self.prior.sample((num_samples,)).to(data.x.device)  # samples in the destandardied 'real' basis
+        samples[:, :3] = samples[:, :3] * (data.Z[:, None] ** (1 / 3)) * (data.mol_volume[:, None] ** (1 / 3))  # denorm lattice vectors
+
+        final_samples = clean_cell_params(samples, sg_inds, self.means, self.stds, self.symmetries_dict, self.asym_unit_dict, destandardize=False, mode='hard')
+
+        return final_samples
+
+    def backward(self, samples):
+        return samples * self.stds + self.means
+
+    def score(self, samples):
+        return self.prior.log_prob(samples)

@@ -39,8 +39,7 @@ class SupercellBuilder:
 
     def build_supercells(self, molecule_data, cell_sample: torch.tensor, supercell_size: int = 5,
                          graph_convolution_cutoff: float = 6, target_handedness=None,
-                         skip_cell_cleaning=False, standardized_sample=True, align_molecules=True,
-                         rescale_asymmetric_unit=True, pare_to_convolution_cluster=True):
+                         align_molecules=True, pare_to_convolution_cluster=True):
         """
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to "supercell" (in fact, it's truncated to an appropriate cluster size)
@@ -52,12 +51,8 @@ class SupercellBuilder:
 
         sym_ops_list, supercell_data = set_sym_ops(supercell_data)  # assign correct symmetry options
 
-        # destandardize and constrain cell params to physical values
-        cell_lengths, cell_angles, mol_position, mol_rotation = \
-            self.process_cell_params(
-                supercell_data, cell_sample,
-                skip_cell_cleaning, standardized_sample,
-                rescale_asymmetric_unit=rescale_asymmetric_unit)
+        cell_lengths, cell_angles, mol_position, mol_rotation = (
+            cell_sample[:, :3], cell_sample[:, 3:6], cell_sample[:, 6:9], cell_sample[:, 9:])
 
         # get transformation matrices
         T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform(cell_lengths, cell_angles)

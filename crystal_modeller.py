@@ -20,17 +20,16 @@ from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
 from constants.asymmetric_units import asym_unit_dict
 
 from models.discriminator_models import crystal_discriminator
-from models.generator_models import crystal_generator
+from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
                           check_convergence, save_checkpoint, set_lr, cell_vol_torch, init_optimizer)
-from models.base_models import independent_gaussian_model
 from models.utils import (compute_h_bond_score, get_vdw_penalty, generator_density_matching_loss, weight_reset, get_n_config)
 from models.vdw_overlap import vdw_overlap
 from models.crystal_rdf import crystal_rdf
 
 from crystal_building.utils import (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
-                                    batch_molecule_principal_axes_torch, compute_Ip_handedness)
+                                    batch_molecule_principal_axes_torch, compute_Ip_handedness, clean_cell_params)
 from crystal_building.builder import SupercellBuilder
 from crystal_building.utils import update_crystal_symmetry_elements
 
@@ -349,9 +348,6 @@ class Modeller:
                     real_data, generated_samples_i, self.config.supercell_size,
                     self.config.discriminator.graph_convolution_cutoff,
                     align_molecules=(negative_type != 'generated'),
-                    rescale_asymmetric_unit=(negative_type != 'distorted'),
-                    skip_cell_cleaning=(negative_type != 'generated'),  # samples from the generator are pre-cleaned
-                    standardized_sample=(negative_type != 'generated'),
                     target_handedness=real_data.asym_unit_handedness,
                 )
 
@@ -373,7 +369,7 @@ class Modeller:
         '''distance matrix'''
         scores = softmax_and_score(embedding_dict['scores'])
         latents = torch.Tensor(embedding_dict['latent'])
-        overlaps = torch.inner(latents, latents) / torch.outer(torch.linalg.norm(latents,dim=-1),torch.linalg.norm(latents,dim=-1))
+        overlaps = torch.inner(latents, latents) / torch.outer(torch.linalg.norm(latents, dim=-1), torch.linalg.norm(latents, dim=-1))
         distmat = torch.cdist(latents, latents)
 
         sample_types = list(set(embedding_dict['source']))
@@ -418,11 +414,11 @@ class Modeller:
                 mode='markers', marker=dict(color=colors[ii]), showlegend=False), row=1, col=2
             )
 
-        fig.update_xaxes(title_text='mean distance to real',row=1,col=1)
-        fig.update_yaxes(title_text='discriminator score',row=1,col=1)
+        fig.update_xaxes(title_text='mean distance to real', row=1, col=1)
+        fig.update_yaxes(title_text='discriminator score', row=1, col=1)
 
-        fig.update_xaxes(title_text='mean overlap to real',row=1,col=2)
-        fig.update_yaxes(title_text='discriminator score',row=1,col=2)
+        fig.update_xaxes(title_text='mean overlap to real', row=1, col=2)
+        fig.update_yaxes(title_text='discriminator score', row=1, col=2)
         fig.show()
 
         return embedding_dict
@@ -539,7 +535,7 @@ class Modeller:
 
                         '''sometimes to detailed reporting'''
                         if (epoch % self.config.wandb.sample_reporting_frequency) == 0:
-                            detailed_reporting(self.config, epoch, train_loader, train_epoch_stats_dict, test_epoch_stats_dict,
+                            detailed_reporting(self.config, epoch, test_loader, train_epoch_stats_dict, test_epoch_stats_dict,
                                                extra_test_dict=extra_test_epoch_stats_dict)
 
                         '''sometimes test the generator on a mini CSP problem'''
@@ -964,9 +960,6 @@ class Modeller:
             real_data, generated_samples_i, self.config.supercell_size,
             self.config.discriminator.graph_convolution_cutoff,
             align_molecules=(negative_type != 'generated'),
-            rescale_asymmetric_unit=(negative_type != 'distorted'),
-            skip_cell_cleaning=(negative_type != 'generated'),  # samples from the generator are pre-cleaned
-            standardized_sample=(negative_type != 'generated'),
             target_handedness=real_data.asym_unit_handedness,
         )
 
@@ -1079,9 +1072,6 @@ class Modeller:
             supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
                 data, generated_samples, self.config.supercell_size,
                 self.config.discriminator.graph_convolution_cutoff,
-                align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
-                skip_cell_cleaning=True,  # cleaned inside the generator
-                standardized_sample=False  # destandardized inside the generator
             )
 
             similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
@@ -1128,6 +1118,10 @@ class Modeller:
         del self.prep_dataset  # we don't actually want this huge thing floating around
         self.config.dataDims = dataset_builder.get_dimension()
 
+        '''init lattice mean & std'''
+        self.lattice_means = torch.tensor(self.config.dataDims['lattice means'], dtype=torch.float32, device=self.config.device)
+        self.lattice_stds = torch.tensor(self.config.dataDims['lattice stds'], dtype=torch.float32, device=self.config.device)
+
         '''
         init supercell builder
         '''
@@ -1164,14 +1158,16 @@ class Modeller:
         init gaussian generator for cell parameter sampling
         we don't always use it but it's very cheap so just do it every time
         '''
-        self.randn_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice features'],
-                                                          means=self.config.dataDims['lattice means'],
-                                                          stds=self.config.dataDims['lattice stds'],
-                                                          normed_length_means=self.config.dataDims[
-                                                              'lattice normed length means'],
-                                                          normed_length_stds=self.config.dataDims[
-                                                              'lattice normed length stds'],
-                                                          cov_mat=self.config.dataDims['lattice cov mat'])
+        self.gaussian_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice features'],
+                                                             means=self.config.dataDims['lattice means'],
+                                                             stds=self.config.dataDims['lattice stds'],
+                                                             normed_length_means=self.config.dataDims[
+                                                                 'lattice normed length means'],
+                                                             normed_length_stds=self.config.dataDims[
+                                                                 'lattice normed length stds'],
+                                                             sym_info=self.sym_info,
+                                                             device = self.config.device,
+                                                             cov_mat=self.config.dataDims['lattice cov mat'])
 
         return dataset_builder
 
@@ -1204,14 +1200,15 @@ class Modeller:
         if self.config.train_discriminator_adversarially or override_adversarial:
             if generator_ind == 1:  # randomly sample which generator to use at each iteration
                 negative_type = 'generator'
-                generated_samples_i, _, _ = self.get_generator_samples(real_data, generator, regressor)
-                epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
-                                                     np.zeros(len(generated_samples_i)), mode='extend')
+                with torch.no_grad():
+                    generated_samples_i, _, _ = self.get_generator_samples(real_data, generator, regressor)
+                    epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
+                                                         np.zeros(len(generated_samples_i)), mode='extend')
 
         if self.config.train_discriminator_on_randn or override_randn:
             if generator_ind == 2:
                 negative_type = 'randn'
-                generated_samples_i = self.randn_generator.forward(real_data.num_graphs, real_data).to(self.config.device)
+                generated_samples_i = self.gaussian_generator.forward(real_data.num_graphs, real_data).to(self.config.device)
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.ones(len(generated_samples_i)), mode='extend')
 
@@ -1223,25 +1220,24 @@ class Modeller:
 
                 generated_samples_ii = (real_data.cell_params - lattice_means) / lattice_stds
 
-                if True:  # i % 2 == 0:  # alternate between random distortions and specifically diffuse cells
-                    if self.config.sample_distortion_magnitude == -1:
-                        distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-.5, 0.5, len(generated_samples_ii)).to(
-                            generated_samples_ii.device)[:, None]  # wider range
-                    else:
-                        distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
+                if self.config.sample_distortion_magnitude == -1:
+                    distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-.5, 0.5, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range
                 else:
-                    # add a random fraction of the original cell length - make the cell larger
-                    distortion = torch.zeros_like(generated_samples_ii)
-                    distortion[:, 0:3] = torch.randn_like(distortion[:, 0:3]).abs() * self.config.sample_distortion_magnitude
+                    distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
 
                 generated_samples_i = (generated_samples_ii + distortion).to(self.config.device)  # add jitter and return in standardized basis
+                generated_samples_i = clean_cell_params(
+                    generated_samples_i, real_data.sg_ind,
+                    self.lattice_means, self.lattice_stds,
+                    self.sym_info, self.supercell_builder.asym_unit_dict, destandardize=True, mode='hard')
+
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                      np.ones(len(generated_samples_i)) * 2, mode='extend')
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'distortion level',
                                                      torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy(),
                                                      mode='extend')
 
-        return generated_samples_i.float(), epoch_stats_dict, negative_type
+        return generated_samples_i.float().detach(), epoch_stats_dict, negative_type
 
     def nov_22_figures(self):
         """
@@ -1422,7 +1418,7 @@ class Modeller:
             else:
                 extra_test_epoch_stats_dict = None
 
-        detailed_reporting(self.config, epoch, train_loader, None, test_epoch_stats_dict, extra_test_dict=extra_test_epoch_stats_dict)
+        detailed_reporting(self.config, epoch, test_loader, None, test_epoch_stats_dict, extra_test_dict=extra_test_epoch_stats_dict)
 
     @staticmethod
     def compute_similarity_penalty(generated_samples, prior):
@@ -1641,9 +1637,6 @@ class Modeller:
                     self.supercell_builder.build_supercells(
                         fake_data, samples, self.config.supercell_size,
                         self.config.discriminator.graph_convolution_cutoff,
-                        align_molecules=False,  # molecules are either random on purpose, or pre-aligned with set handedness
-                        skip_cell_cleaning=True,  # cleaned inside the generator
-                        standardized_sample=False  # destandardized inside the generator
                     )
                 fake_supercell_data = fake_supercell_data.to(self.config.device)
 

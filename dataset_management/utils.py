@@ -78,7 +78,6 @@ class BuildDataset:
                 dataset = dataset.drop(columns='level_0')
             dataset = dataset.reset_index()
 
-
         if config.mode == 'embedding':  # make dataset of polymorphs of Nicotinamide
             inds = [index for index, item in enumerate(dataset['identifier']) if "NICOAM" in item]
             dataset = dataset.iloc[inds]
@@ -106,8 +105,6 @@ class BuildDataset:
 
             dataDims = self.get_dimension()
             torch.save(dataDims, r'C:\Users\mikem\OneDrive\NYU\CSD\MCryGAN\tests/dataset_for_tests_dataDims')
-
-            aa = 1
 
     def set_testing_values(self):
         self.max_atomic_number = 100

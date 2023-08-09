@@ -1,16 +1,11 @@
 '''Import statements'''
 from models.MikesGraphNet import MikesGraphNet
-import sys
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.global_aggregation import global_aggregation
 from models.components import MLP
-from torch.distributions import MultivariateNormal
-import numpy as np
-from ase import Atoms
-from models.asymmetric_radius_graph import asymmetric_radius_graph
 
 
 class molecule_graph_model(nn.Module):
@@ -181,52 +176,6 @@ class molecule_graph_model(nn.Module):
 
 
 # todo separate molecule and crystal graph models
-
-class independent_gaussian_model(nn.Module):
-    def __init__(self, input_dim, means, stds, normed_length_means, normed_length_stds, cov_mat=None):
-        super(independent_gaussian_model, self).__init__()
-
-        self.input_dim = input_dim
-        fixed_norms = torch.Tensor(means)
-        fixed_norms[:3] = torch.Tensor(normed_length_means)
-        fixed_stds = torch.Tensor(stds)
-        fixed_stds[:3] = torch.Tensor(normed_length_stds)
-
-        self.register_buffer('means', torch.Tensor(means))
-        self.register_buffer('stds', torch.Tensor(stds))
-        self.register_buffer('fixed_norms', torch.Tensor(fixed_norms))
-        self.register_buffer('fixed_stds', torch.Tensor(fixed_stds))
-
-        if cov_mat is not None:
-            pass
-        else:
-            cov_mat = torch.diag(torch.Tensor(fixed_stds).pow(2))
-
-        fixed_means = means.copy()
-        fixed_means[:3] = normed_length_means
-        try:
-            self.prior = MultivariateNormal(fixed_norms, torch.Tensor(cov_mat))  # apply standardization
-        except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
-            self.prior = MultivariateNormal(loc=fixed_norms, covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(cov_mat).diagonal())
-        self.dummy_params = nn.Parameter(torch.ones(100))
-
-    def forward(self, num_samples, data):
-        """
-        sample comes out in non-standardized basis, but with normalized cell lengths
-        so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
-        then standardize
-        """
-        # conditions are unused - dummy
-        # denormalize sample before standardizing
-        samples = self.prior.sample((num_samples,)).to(data.x.device)  # samples in the destandardied basis
-        samples[:, :3] = samples[:, :3] * (data.Z[:, None] ** (1 / 3)) * (data.mol_volume[:, None] ** (1 / 3))  # denorm lattice vectors
-        return (samples - self.means.to(samples.device)) / self.stds.to(samples.device)  # we want samples in the denormed standardized basis
-
-    def backward(self, samples):
-        return samples * self.stds + self.means
-
-    def score(self, samples):
-        return self.prior.log_prob(samples)
 
 
 class PointCloudDecoder(nn.Module):

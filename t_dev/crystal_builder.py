@@ -22,8 +22,6 @@ supercell_size = 5
 rotation_basis = 'spherical'
 
 
-
-
 def cell_parameterization_and_reconstruction():
     """
     Build reference supercell from unit cell sample,
@@ -57,9 +55,8 @@ def cell_parameterization_and_reconstruction():
 
     rebuilt_supercells, _, _ = supercell_builder.build_supercells(
         test_crystals, updated_params,
-        skip_cell_cleaning=True, standardized_sample=False,
         align_molecules=True, target_handedness=reference_supercells.asym_unit_handedness,
-        rescale_asymmetric_unit=False, graph_convolution_cutoff=6,
+        graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
     '''high symmetry molecules may 'veer' different ways, so this assertion may fail'''
@@ -98,6 +95,9 @@ def distorted_cell_reconstruction():
     then analyze and rebuilt it from scratch, with some distortion
     one crystal per space group in test dataset
     """
+    supercell_builder = SupercellBuilder(symmetry_info, dataDims, supercell_size=supercell_size,
+                                         device='cpu', rotation_basis=rotation_basis)
+
     reference_supercells = supercell_builder.unit_cell_to_supercell(
         test_crystals, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
@@ -105,9 +105,8 @@ def distorted_cell_reconstruction():
     distorted_params = test_crystals.cell_params + 0.1
     rebuilt_supercells, _, _ = supercell_builder.build_supercells(
         test_crystals, distorted_params,
-        skip_cell_cleaning=False, standardized_sample=False,
         align_molecules=True, target_handedness=reference_supercells.asym_unit_handedness,
-        rescale_asymmetric_unit=True, graph_convolution_cutoff=6,
+        graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
     '''

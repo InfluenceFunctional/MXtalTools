@@ -2,7 +2,7 @@ import numpy as np
 from torch.nn import functional as F
 from torch.nn.utils import rnn as rnn
 
-from models.utils import enforce_1d_bound
+from models.utils import enforce_1d_bound, clean_generator_output, enforce_crystal_system
 from common.geometry_calculations import compute_principal_axes_np, single_molecule_principal_axes_torch, batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, sph2rotvec
 from scipy.spatial.transform import Rotation
 import torch
@@ -194,7 +194,7 @@ def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol
                 cell_angles[i] = torch.ones(3) * torch.pi / 2
             elif lattice.lower() == 'tetragonal':  # fix all angles and a & b vectors
                 cell_angles[i] = torch.ones(3) * torch.pi / 2
-                cell_lengths[i, 0:2] = cell_lengths[i,0]
+                cell_lengths[i, 0:2] = cell_lengths[i, 0]
             elif (lattice.lower() == 'hexagonal') or (lattice.lower() == 'trigonal') or (lattice.lower() == 'rhombohedral'):
                 cell_lengths[i, 0:2] = cell_lengths[i, 0]
                 cell_angles[i, 0:2] = torch.pi / 2
@@ -530,7 +530,6 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
     return applied_rotation_list
 
 
-
 def build_unit_cell(z_values, final_coords_list, T_fc_list, T_cf_list, sym_ops_list):
     """
     use cell symmetry to pattern canonical conformer into full unit cell
@@ -582,7 +581,28 @@ def build_unit_cell(z_values, final_coords_list, T_fc_list, T_cf_list, sym_ops_l
     return reference_cell_list
 
 
-def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_ind):
+def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_dict, asym_unit_dict, destandardize=False, mode='soft'):
+
+    lattice_lengths, lattice_angles, mol_positions, mol_orientations \
+        = clean_generator_output(samples, lattice_means, lattice_stds, destandardize=destandardize, mode=mode)
+
+    fixed_lengths, fixed_angles = (
+        enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_dict))
+
+    fixed_positions = scale_asymmetric_unit(asym_unit_dict, mol_positions, sg_inds)
+
+    '''collect'''
+    final_samples = torch.cat((
+        fixed_lengths,
+        fixed_angles,
+        fixed_positions,
+        mol_orientations,
+    ), dim=-1)
+
+    return final_samples
+
+
+def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     """
     input fractional coordinates are scaled on 0-1
     rescale these for the specific ranges according to each space group
@@ -592,7 +612,7 @@ def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_ind):
     ----------
     asym_unit_dict
     mol_position
-    sg_ind
+    sg_inds
 
     Returns
     -------
@@ -602,10 +622,10 @@ def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_ind):
     #     scaled_mol_position[i, :] = mol_position[i, :] * asym_unit_dict[str(int(ind))]
 
     # vectorized for speed
-    asym_units = torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_ind])
-    scaled_mol_position = mol_position * asym_units
+    # asym_units = torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_ind])
+    # scaled_mol_position = mol_position * asym_units
 
-    return scaled_mol_position
+    return mol_position * torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
 
 
 def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):

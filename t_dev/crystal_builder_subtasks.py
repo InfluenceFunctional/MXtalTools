@@ -68,7 +68,7 @@ class Group:
     def test_scale_asymmetric_unit(self):
         space_groups = torch.tensor(np.asarray(list(supercell_builder.asym_unit_dict.keys())).astype(int))
         centroid_coords = torch.Tensor(np.random.uniform(0, 1, size=(len(space_groups), 3)))
-        scaled_centroids = scale_asymmetric_unit(supercell_builder.asym_unit_dict, mol_position=centroid_coords, sg_ind=space_groups)
+        scaled_centroids = scale_asymmetric_unit(supercell_builder.asym_unit_dict, mol_position=centroid_coords, sg_inds=space_groups)
         return None
 
     # todo this check may fail for high symmetry molecules - need either to get rid of them or find a way to deal with them

@@ -7,7 +7,7 @@ from torch.nn import functional as F
 from torch.optim import lr_scheduler as lr_scheduler
 
 from common.geometry_calculations import cell_vol_torch
-from common.utils import np_softmax
+from common.utils import np_softmax, components2angle
 from models.vdw_overlap import raw_vdw_overlap
 
 
@@ -461,9 +461,8 @@ def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
     return packing_loss, generated_packing_coeffs, csd_packing_coeffs
 
 
-
 def generator_density_matching_loss(standardized_target_packing, packing_mean, packing_std, mol_volume_ind, packing_coeff_ind,
-                                    data, raw_sample, precomputed_volumes = None):
+                                    data, raw_sample, precomputed_volumes=None):
     """
     compute packing coefficients for generated cells
     compute losses relating to packing density
@@ -482,15 +481,15 @@ def generator_density_matching_loss(standardized_target_packing, packing_mean, p
     target_packing_coeffs = standardized_target_packing * packing_std + packing_mean
 
     csd_packing_coeffs = data.tracking[:, packing_coeff_ind]
-    #standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_mean) / packing_std  # requires that packing coefficnet is set as regression target in main
+    # standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_mean) / packing_std  # requires that packing coefficnet is set as regression target in main
 
     # compute loss vs the target
     packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_target_packing,
                                     reduction='none')
-    #packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
+    # packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
     #                                reduction='none')
 
-    #assert torch.sum(torch.isnan(packing_loss)) == 0
+    # assert torch.sum(torch.isnan(packing_loss)) == 0
 
     return packing_loss, generated_packing_coeffs, target_packing_coeffs, csd_packing_coeffs
 
@@ -531,3 +530,152 @@ def get_n_config(model):
             nn = nn * s
         pp += nn
     return pp
+
+
+def clean_generator_output(samples, lattice_means, lattice_stds, destandardize=True, mode='soft'):
+    """
+    convert from raw model output to the actual cell parameters with appropriate bounds
+    considering raw outputs to be in the standardized basis, we destandardize, then enforce bounds
+    """
+
+    '''separate components'''
+    lattice_lengths = samples[:, :3]
+    lattice_angles = samples[:, 3:6]
+    mol_positions = samples[:, 6:9]
+    mol_orientations = samples[:, 9:]
+
+    '''destandardize & decode angles'''
+    if destandardize:
+        real_lattice_lengths = lattice_lengths * lattice_stds[:3] + lattice_means[:3]
+        real_lattice_angles = lattice_angles * lattice_stds[3:6] + lattice_means[3:6]  # not bothering to encode as an angle
+        real_mol_positions = mol_positions * lattice_stds[6:9] + lattice_means[6:9]
+    else:  # optionally, skip destandardization if we are already in the real basis
+        real_lattice_lengths = lattice_lengths * 1
+        real_lattice_angles = lattice_angles * 1
+        real_mol_positions = mol_positions * 1
+
+    if samples.shape[-1] == 15:
+        clean_mol_orientations = decode_angles(mol_orientations)
+    elif samples.shape[-1] == 12:  # already have angles, no need to decode
+        theta = enforce_1d_bound(mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4)[:, None]
+        phi = enforce_1d_bound(mol_orientations[:, 1], x_span=2 * torch.pi, x_center=0)[:, None]
+        r = enforce_1d_bound(mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi)[:, None]
+        clean_mol_orientations = torch.cat((
+            theta, phi, r), dim=-1)
+
+    '''enforce physical bounds'''
+    if mode == 'soft':
+        clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.1) + 0.1  # smoothly enforces positive nonzero
+    else:
+        clean_lattice_lengths = torch.maximum(F.relu(real_lattice_lengths), torch.ones_like(real_lattice_lengths))  # harshly enforces positive nonzero
+
+    clean_lattice_angles = enforce_1d_bound(real_lattice_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode=mode)  # range from (0,pi) with 20% limit to prevent too-skinny cells
+    clean_mol_positions = enforce_1d_bound(real_mol_positions, 0.5, 0.5, mode=mode)  # enforce fractional centroids between 0 and 1
+
+    return clean_lattice_lengths, clean_lattice_angles, clean_mol_positions, clean_mol_orientations
+
+
+def enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_dict):
+    """
+    enforce physical bounds on cell parameters
+    https://en.wikipedia.org/wiki/Crystal_system
+    """  # todo double check these limits
+
+    lattices = [symmetries_dict['lattice_type'][int(sg_inds[n])] for n in range(len(sg_inds))]
+
+    pi_tensor = torch.tensor(torch.ones_like(lattice_lengths[0, 0]) * torch.pi)
+
+    fixed_lengths = torch.zeros_like(lattice_lengths)
+    fixed_angles = torch.zeros_like(lattice_angles)
+
+    for i in range(len(lattice_lengths)):
+        lengths = lattice_lengths[i]
+        angles = lattice_angles[i]
+        lattice = lattices[i]
+        # enforce agreement with crystal system
+        if lattice.lower() == 'triclinic':  # anything goes
+            fixed_lengths[i] = lengths * 1
+            fixed_angles[i] = angles * 1
+
+        elif lattice.lower() == 'monoclinic':  # fix alpha and gamma to pi/2
+            fixed_lengths[i] = lengths * 1
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, angles[1], pi_tensor.clone() / 2,
+            ), dim=- 1)
+        elif lattice.lower() == 'orthorhombic':  # fix all angles at pi/2
+            fixed_lengths[i] = lengths * 1
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() / 2,
+            ), dim=- 1)
+        elif lattice.lower() == 'tetragonal':  # fix all angles pi/2 and take the mean of a & b vectors
+            mean_tensor = torch.mean(lengths[0:2])
+            fixed_lengths[i] = torch.stack((
+                mean_tensor, mean_tensor, lengths[2] * 1,
+            ), dim=- 1)
+
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() / 2,
+            ), dim=- 1)
+
+        elif lattice.lower() == 'hexagonal':
+            # mean of ab, c is free
+            # alpha beta are pi/2, gamma is 2pi/3
+
+            mean_tensor = torch.mean(lengths[0:2])
+            fixed_lengths[i] = torch.stack((
+                mean_tensor, mean_tensor, lengths[2] * 1,
+            ), dim=- 1)
+
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() * 3 / 2,
+            ), dim=- 1)
+
+        # elif lattice.lower()  == 'trigonal':
+
+        elif lattice.lower() == 'rhombohedral':
+            # mean of abc vector lengths
+            # mean of all angles
+
+            mean_tensor = torch.mean(lengths)
+            fixed_lengths[i] = torch.stack((
+                mean_tensor, mean_tensor, mean_tensor,
+            ), dim=- 1)
+
+            mean_angle = torch.mean(angles)
+            fixed_angles[i] = torch.stack((
+                mean_angle, mean_angle, mean_angle,
+            ), dim=- 1)
+
+        elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
+            mean_tensor = torch.mean(lengths)
+            fixed_lengths[i] = torch.stack((
+                mean_tensor, mean_tensor, mean_tensor,
+            ), dim=- 1)
+
+            fixed_angles[i] = torch.stack((
+                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() / 2,
+            ), dim=- 1)
+        else:
+            print(lattice + ' is not a valid crystal lattice!')
+            sys.exit()
+
+    return fixed_lengths, fixed_angles
+
+
+def decode_angles(mol_orientations):
+    '''
+    each angle is predicted with 2 params
+    we bound the encodings for theta on 0-1 to restrict the range of theta to [0,pi/2]
+    '''
+    theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
+    real_orientation_theta = components2angle(theta_encoding)
+    real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted [-pi,pi
+    real_orientation_r = components2angle(mol_orientations[:, 4:6]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
+
+    clean_mol_orientations = torch.cat((
+        real_orientation_theta[:, None],
+        real_orientation_phi[:, None],
+        real_orientation_r[:, None]
+    ), dim=-1)
+
+    return clean_mol_orientations
