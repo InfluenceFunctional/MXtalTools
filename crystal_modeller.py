@@ -684,6 +684,7 @@ class Modeller:
             '''
             data = data.to(self.config.device)
 
+            # hold discriminator training when it's beating the generator
             skip_discriminator_step = False
             if i > 0 and self.config.train_discriminator_adversarially:
                 avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
@@ -1071,10 +1072,12 @@ class Modeller:
 
             generated_samples, prior, standardized_target_packing = self.get_generator_samples(data, generator, regressor)
 
-            supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-                data, generated_samples, self.config.supercell_size,
-                self.config.discriminator.graph_convolution_cutoff,
-            )
+            supercell_data, generated_cell_volumes, _ = (
+                self.supercell_builder.build_supercells(
+                    data, generated_samples, self.config.supercell_size,
+                    self.config.discriminator.graph_convolution_cutoff,
+                    align_molecules=False
+                ))
 
             similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
             discriminator_raw_output, dist_dict = self.score_adversarially(supercell_data, discriminator)
@@ -1168,7 +1171,7 @@ class Modeller:
                                                              normed_length_stds=self.config.dataDims[
                                                                  'lattice normed length stds'],
                                                              sym_info=self.sym_info,
-                                                             device = self.config.device,
+                                                             device=self.config.device,
                                                              cov_mat=self.config.dataDims['lattice cov mat'])
 
         return dataset_builder
@@ -1498,7 +1501,7 @@ class Modeller:
                 generator_losses_list.append(packing_loss.float())
 
         if discriminator_raw_output is not None:
-            softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax
+            # softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax
             # adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
             # adversarial_loss = 10 - softmax_and_score(discriminator_raw_output)  # linearized score
             # adversarial_loss = 1-softmax_adversarial_score  # simply maximize P(real) (small gradients near 0 and 1)
