@@ -686,7 +686,7 @@ class Modeller:
 
             # hold discriminator training when it's beating the generator
             skip_discriminator_step = False
-            if i > 0 and self.config.train_discriminator_adversarially:
+            if self.config.train_discriminator_adversarially:
                 avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
                 if avg_generator_score < 0.5:
                     skip_discriminator_step = True

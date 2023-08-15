@@ -323,7 +323,7 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
                     )
     ))
     fig.layout.margin = layout.margin
-
+    fig.update_layout(xaxis_range=[0, 3], yaxis_range=[0,1])
     fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
     wandb.log({'Discriminator Scores Analysis': fig})
 
