@@ -578,8 +578,8 @@ class Modeller:
                         torch.cuda.empty_cache()  # clear GPU, not clear this does anything
 
                 if self.config.mode == 'gan':  # evaluation on test metrics
-                    self.gan_evaluation(epoch, generator, discriminator, discriminator_optimizer, generator_optimizer,
-                                        metrics_dict, train_loader, test_loader, extra_test_loader, regressor)
+                    self.gan_evaluation(epoch, generator, discriminator,
+                                         test_loader, extra_test_loader, regressor)
 
     def run_epoch(self, data_loader=None, generator=None, discriminator=None, regressor=None,
                   generator_optimizer=None, discriminator_optimizer=None, regressor_optimizer=None,
@@ -687,7 +687,7 @@ class Modeller:
 
             # hold discriminator training when it's beating the generator
             skip_discriminator_step = False
-            if self.config.train_discriminator_adversarially:
+            if i > 0 and self.config.train_discriminator_adversarially:
                 avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
                 if avg_generator_score < 0.5:
                     skip_discriminator_step = True
@@ -1384,8 +1384,7 @@ class Modeller:
 
         return generator, discriminator
 
-    def gan_evaluation(self, epoch, generator, discriminator, discriminator_optimizer, generator_optimizer,
-                       metrics_dict, train_loader, test_loader, extra_test_loader, regressor):
+    def gan_evaluation(self, epoch, generator, discriminator, test_loader, extra_test_loader, regressor):
         """
         run post-training evaluation
         """
@@ -1402,8 +1401,7 @@ class Modeller:
             np.save(f'../{self.config.run_num}_test_epoch_stats_dict', test_epoch_stats_dict)
 
             # sometimes test the generator on a mini CSP problem
-            if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
-                    self.train_generator and (epoch > 0):  # don't do it on first epoch
+            if (self.config.mode == 'gan') and self.train_generator:
                 self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator)
 
             if extra_test_loader is not None:
