@@ -11,7 +11,7 @@ save_checkpoints: False # will do it always on cluster, only locally if True
 # for GAN training
 canonical_conformer_orientation: 'random' # 'standardized' 'random'
 packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
-train_generator_vdw: False
+train_generator_vdw: True
 train_generator_adversarially: False
 vdw_loss_func: mse  # null mse or log
 density_loss_func: mse  # l1 or mse
