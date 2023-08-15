@@ -2,7 +2,8 @@ import torch
 import torch.nn.functional as F
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 
-def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, num_graphs=None, crystaldata=None, graph_sizes = None, return_atomwise=False, return_normed = False):
+
+def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, num_graphs=None, crystaldata=None, graph_sizes=None, return_atomwise=False, return_normed=False):
     if crystaldata is not None:  # extract distances from the crystal
         if crystaldata.aux_ind is not None:
             in_inds = torch.where(crystaldata.aux_ind == 0)[0]
@@ -63,7 +64,7 @@ def vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, 
             [torch.max(penalties[crystal_number == ii]) if (len(penalties[crystal_number == ii]) > 0) else torch.zeros(1)[0].to(penalties.device) for ii in range(num_graphs)]
         ))
 
-    scores = (scores_i + top_scores)/2
+    scores = (scores_i + top_scores) / 2
 
     assert len(scores) == num_graphs
 
@@ -118,7 +119,6 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=No
 
     else:
         assert False  # must do one or the other
-
 
     '''
     compute vdw radii respectfulness

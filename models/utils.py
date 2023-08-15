@@ -398,7 +398,7 @@ def compute_h_bond_score(feature_richness, atom_acceptor_ind, atom_donor_ind, nu
     return h_bond_loss_f
 
 
-def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, mol_sizes=None):
+def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, mol_sizes=None, loss_func = None):
     if dist_dict is not None:  # supercell_data is not None: # do vdw computation even if we don't need it
         vdw_overlap_sum, normed_vdw_overlap_sum, penalties = \
             raw_vdw_overlap(vdw_radii, dists=dist_dict['intermolecular dist'],
@@ -406,18 +406,24 @@ def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, mol_sizes=None):
                             batch_numbers=dist_dict['intermolecular dist batch'],
                             num_graphs=num_graphs)
 
-        scores = torch.nan_to_num(
-            torch.stack(
-                [torch.sum(penalties[ii]) for ii in range(num_graphs)]
-            )) / mol_sizes
-        #
-        # top_scores = torch.nan_to_num(
-        #     torch.stack(
-        #         # [torch.mean(torch.topk(penalties[crystal_number == ii], 5)[0]) for ii in range(num_graphs)]
-        #         [torch.max(penalties[ii]) if (len(penalties[ii]) > 0) else torch.zeros(1)[0].to(vdw_overlap_sum.device) for ii in range(num_graphs)]
-        #     ))
-        #
-        # scores = (scores_i + top_scores) / 2
+        if loss_func is None:  # treat all errors equally
+            scores = torch.nan_to_num(
+                torch.stack(
+                    [torch.sum(penalties[ii]) for ii in range(num_graphs)]
+                )) / mol_sizes
+        elif loss_func == 'mse':  # go hard on big errors
+            scores = torch.nan_to_num(
+                torch.stack(
+                    [torch.sum(penalties[ii] ** 2) for ii in range(num_graphs)]
+                )) / mol_sizes
+        elif loss_func == 'log':  # go easy on big errors
+            scores = torch.nan_to_num(
+                torch.stack(
+                    [torch.sum(torch.log(1+penalties[ii])) for ii in range(num_graphs)]
+                )) / mol_sizes
+        else:
+            print(f'{loss_func} is not a valid loss function for vdw penalty')
+            sys.exit()
 
         return scores, normed_vdw_overlap_sum / mol_sizes
 
@@ -462,7 +468,7 @@ def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
 
 
 def generator_density_matching_loss(standardized_target_packing, packing_mean, packing_std, mol_volume_ind, packing_coeff_ind,
-                                    data, raw_sample, precomputed_volumes=None):
+                                    data, raw_sample, precomputed_volumes=None, loss_func='mse'):
     """
     compute packing coefficients for generated cells
     compute losses relating to packing density
@@ -484,12 +490,12 @@ def generator_density_matching_loss(standardized_target_packing, packing_mean, p
     # standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_mean) / packing_std  # requires that packing coefficient is set as regression target in main
 
     # compute loss vs the target
-    #packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_target_packing,
-    #                                reduction='none')
-    packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
-                                    reduction='none')  # allow for more error around the minimum
-
-    # assert torch.sum(torch.isnan(packing_loss)) == 0
+    if loss_func == 'mse':
+        packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
+                                  reduction='none')  # allow for more error around the minimum
+    elif loss_func == 'l1':
+        packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_target_packing,
+                                        reduction='none')
 
     return packing_loss, generated_packing_coeffs, target_packing_coeffs, csd_packing_coeffs
 
@@ -565,7 +571,7 @@ def clean_generator_output(samples, lattice_means, lattice_stds, destandardize=T
         theta = enforce_1d_bound(real_mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4, mode=mode)[:, None]
         phi = enforce_1d_bound(real_mol_orientations[:, 1], x_span=torch.pi, x_center=0, mode=mode)[:, None]
         r_i = enforce_1d_bound(real_mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi, mode=mode)[:, None]
-        r = torch.maximum(r_i, torch.ones_like(r_i)*0.01)  # must be nonzero
+        r = torch.maximum(r_i, torch.ones_like(r_i) * 0.01)  # must be nonzero
         clean_mol_orientations = torch.cat((theta, phi, r), dim=-1)
 
     '''enforce physical bounds'''

@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"  # or "cluster"
+test_mode: False
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10404
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
@@ -12,10 +12,10 @@ save_checkpoints: False # will do it always on cluster, only locally if True
 canonical_conformer_orientation: 'random' # 'standardized' 'random'
 packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
 train_generator_vdw: False
-train_generator_adversarially: False
+train_generator_adversarially: True
 vdw_loss_func: mse  # null mse or log
 density_loss_func: mse  # l1 or mse
-generator_adversarial_loss_func: 'score'  # 'hot softmax' or 'softmax' or 'score' or 'minimax'
+generator_adversarial_loss_func: 'score'  # l1 or mse
 train_generator_h_bond: False # (non-directional)
 generator_similarity_penalty: 0
 
@@ -34,9 +34,9 @@ extra_test_set_paths: #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_
 extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 # for reloading pretrained models
-discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10351'
-generator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10382'
-regressor_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_10360'
+discriminator_path: null # '/scratch/mk8347/csd_runs/models/best_discriminator_10351'
+generator_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\best_generator_1599'
+regressor_path: '/scratch/mk8347/csd_runs/models/best_regressor_10360'
 
 discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions
 generator_positional_noise: 0  # scaling for the randn noise added to all atom positions
@@ -50,7 +50,7 @@ seeds:
 wandb:
   username: mkilgour
   project_name: MCryGAN
-  mini_csp_frequency: 10
+  mini_csp_frequency: 5
   sample_reporting_frequency: 1
   experiment_tag: dev
   log_figures: True
@@ -70,7 +70,7 @@ gradient_norm_clip: 1
 # dataset curation
 rotation_basis: "spherical" # "spherical" for rotvec in spherical coordinates, "cartesian" for rotvec in cartesian coordinates DEPRECATED
 target: packing # "packing" only supported
-dataset_length: 1000
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
@@ -100,9 +100,9 @@ supercell_size: 5 # should be very large, then automatically pares down
 # discriminator optimizer and model
 discriminator_optimizer:
   optimizer: adamw
-  init_lr: 1.0E-4
-  max_lr: 2.0E-4
-  min_lr: 1.0E-4
+  init_lr: 0.5E-4
+  max_lr: 0.5E-3
+  min_lr: 0.5E-4
   lr_schedule: True
   beta1: 0.9
   beta2: 0.999
@@ -114,23 +114,23 @@ discriminator_optimizer:
 
 discriminator:
   crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
-  graph_convolution_layers: 2
-  graph_filters: 32
-  atom_embedding_size: 64
+  graph_convolution_layers: 4
+  graph_filters: 128
+  atom_embedding_size: 256
   graph_norm: 'graph layer' # layer, graph, batch, graph layer
-  num_spherical: 5
-  num_radial: 32
+  num_spherical: 6
+  num_radial: 36
   graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
   max_num_neighbors: 100
   radial_function: 'bessel' # 'gaussian' or 'bessel'
-  num_attention_heads: 4 # mikenet GATv2 or TransformerConv mode only - must evenly divide graph filters
+  num_attention_heads: 1 # mikenet GATv2 or TransformerConv mode only - must evenly divide graph filters
   graph_convolution: 'TransformerConv' # 'full message passing' or schnet or 'GATv2' or 'TransformerConv'
   add_spherical_basis: False # mikenet only
   add_torsional_basis: False #
   pooling: combo
 
   num_fc_layers: 4
-  fc_depth: 64
+  fc_depth: 256
   activation: gelu
   fc_dropout_probability: 0
   fc_norm_mode: layer # batch, layer
@@ -138,9 +138,9 @@ discriminator:
 #generator optimizer and model
 generator_optimizer:
   optimizer: adamw
-  init_lr: 5.0E-4
-  max_lr: 1.0E-3
-  min_lr: 1.0E-4
+  init_lr: 0.5E-4
+  max_lr: 0.5E-3
+  min_lr: 0.5E-4
   lr_schedule: True
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
@@ -150,10 +150,10 @@ generator_optimizer:
   lr_shrink_lambda: 0.99
 
 generator:
-  num_fc_layers: 2
-  fc_depth: 512
+  num_fc_layers: 4
+  fc_depth: 256
   activation: 'gelu'
-  fc_dropout_probability: 0.25
+  fc_dropout_probability: 0
   fc_norm_mode: layer
 
   prior: multivariate normal
@@ -164,13 +164,13 @@ generator:
     concat_mol_features: True  # exclusive with skinny features
     init_atom_embedding_dim: 5
     graph_convolution_layers: 4
-    graph_filters: 64
+    graph_filters: 128
     atom_embedding_size: 256
     output_dim: 256
     graph_norm: 'graph layer'
     num_spherical: 6
     num_radial: 36
-    graph_convolution_cutoff: 3
+    graph_convolution_cutoff: 6
     max_num_neighbors: 100
     radial_function: 'gaussian' # bessel or gaussian
     num_attention_heads: 1 # mikenet GATv2 mode only - must evenly divide graph filters

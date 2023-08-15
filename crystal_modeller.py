@@ -582,7 +582,7 @@ class Modeller:
 
                 if self.config.mode == 'gan':  # evaluation on test metrics
                     self.gan_evaluation(epoch, generator, discriminator,
-                                         test_loader, extra_test_loader, regressor)
+                                        test_loader, extra_test_loader, regressor)
 
     def run_epoch(self, data_loader=None, generator=None, discriminator=None, regressor=None,
                   generator_optimizer=None, discriminator_optimizer=None, regressor_optimizer=None,
@@ -690,7 +690,8 @@ class Modeller:
 
             # hold discriminator training when it's beating the generator
             skip_discriminator_step = False
-            if (i == 0) and self.config.train_generator_adversarially: skip_discriminator_step = True  # do not train except by express permission of the below condition
+            if (i == 0) and self.config.train_generator_adversarially:
+                skip_discriminator_step = True  # do not train except by express permission of the below condition
             if i > 0 and self.config.train_discriminator_adversarially:  # must skip first step since there will be no fake score to compare against
                 avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
                 if avg_generator_score < 0.5:
@@ -1085,14 +1086,16 @@ class Modeller:
             vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii,
                                                               dist_dict=dist_dict,
                                                               num_graphs=data.num_graphs,
-                                                              mol_sizes=data.mol_size)
+                                                              mol_sizes=data.mol_size,
+                                                              loss_func=self.config.vdw_loss_func)
 
             packing_loss, packing_prediction, packing_target, packing_csd = \
                 generator_density_matching_loss(
                     standardized_target_packing, self.config.dataDims['target mean'], self.config.dataDims['target std'],
                     self.tracking_mol_volume_ind,
                     self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
-                    supercell_data, generated_samples, precomputed_volumes=generated_cell_volumes)
+                    supercell_data, generated_samples,
+                    precomputed_volumes=generated_cell_volumes, loss_func=self.config.density_loss_func)
 
             return discriminator_raw_output, generated_samples.cpu().detach().numpy(), \
                 packing_loss, packing_prediction.cpu().detach().numpy(), \
@@ -1497,11 +1500,18 @@ class Modeller:
                 generator_losses_list.append(packing_loss.float())
 
         if discriminator_raw_output is not None:
-            # softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax
-            # adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
-            # adversarial_loss = 10 - softmax_and_score(discriminator_raw_output)  # linearized score
-            # adversarial_loss = 1-softmax_adversarial_score  # simply maximize P(real) (small gradients near 0 and 1)
-            adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:, 1]  # high temp smears out the function over a wider range
+            if self.config.generator_adversarial_loss_func == 'hot softmax':
+                adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:, 1]  # high temp smears out the function over a wider range
+            elif self.config.generator_adversarial_loss_func == 'minimax':
+                softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax
+                adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
+            elif self.config.generator_adversarial_loss_func == 'score':
+                adversarial_loss = -softmax_and_score(discriminator_raw_output)  # linearized score
+            elif self.config.generator_adversarial_loss_func == 'softmax':
+                adversarial_loss = 1 - F.softmax(discriminator_raw_output, dim=1)[:, 1]
+            else:
+                print(f'{self.config.generator_adversarial_loss_func} is not an implemented adversarial loss')
+                sys.exit()
 
             stats_keys += ['generator adversarial loss']
             stats_values += [adversarial_loss.cpu().detach().numpy()]
@@ -1516,14 +1526,14 @@ class Modeller:
             stats_values += [vdw_loss.cpu().detach().numpy()]
 
             if self.config.train_generator_vdw:
-                if self.config.vdw_loss_rescaling == 'log':
-                    vdw_loss_f = torch.log(1 + vdw_loss)  # soft rescaling to be gentler on outliers
-                elif self.config.vdw_loss_rescaling is None:
-                    vdw_loss_f = vdw_loss
-                elif self.config.vdw_loss_rescaling == 'mse':
-                    vdw_loss_f = vdw_loss ** 2
+                # if self.config.vdw_loss_func == 'log':
+                #     vdw_loss_f = torch.log(1 + vdw_loss)  # soft rescaling to be gentler on outliers
+                # elif self.config.vdw_loss_func is None:
+                #     vdw_loss_f = vdw_loss
+                # elif self.config.vdw_loss_func == 'mse':
+                #     vdw_loss_f = vdw_loss ** 2
 
-                generator_losses_list.append(vdw_loss_f)
+                generator_losses_list.append(vdw_loss)
 
         if h_bond_score is not None:
             if self.config.train_generator_h_bond:
@@ -1601,11 +1611,10 @@ class Modeller:
     def analyze_real_crystals(self, real_data, discriminator, rdf_bins, rdf_range):
         real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
 
-
-
         discriminator_score, dist_dict = self.score_adversarially(real_supercell_data.clone(), discriminator)
         h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind, self.tracking_num_acceptors_ind, self.tracking_num_donors_ind, real_supercell_data)
-        vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data.mol_size)
+        vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data.mol_size,
+                                                          loss_func=None)
         real_rdf, rr, atom_inds = crystal_rdf(real_supercell_data, rrange=rdf_range,
                                               bins=rdf_bins, mode='intermolecular',
                                               raw_density=True, atomwise=True, cpu_detach=True)
@@ -1679,7 +1688,8 @@ class Modeller:
                 discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise=0)
                 h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind,
                                                     self.tracking_num_acceptors_ind, self.tracking_num_donors_ind, fake_supercell_data)
-                vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data.mol_size)
+                vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data.mol_size,
+                                                                  loss_func=None)
 
                 volumes_list = []
                 for i in range(fake_data.num_graphs):
@@ -1699,6 +1709,7 @@ class Modeller:
                 sampling_dict['handedness'][:, ii] = fake_supercell_data.asym_unit_handedness.cpu().detach().numpy()
 
         return sampling_dict
+
 
 def update_gan_metrics(epoch, metrics_dict,
                        discriminator_lr, generator_lr, regressor_lr,
@@ -1723,5 +1734,3 @@ def update_gan_metrics(epoch, metrics_dict,
     metrics_dict = update_stats_dict(metrics_dict, metrics_keys, metrics_vals)
 
     return metrics_dict
-
-

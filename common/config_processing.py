@@ -382,7 +382,9 @@ def add_args(parser):
     add_bool_arg(parser, 'train_generator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_generator_vdw', default=False)  #
     parser.add_argument('--packing_target_noise', type=float, default=0)  # noise added to density target in standardized basis
-    parser.add_argument('--vdw_loss_rescaling', type=str, default=None)  # None, 'log', 'mse'
+    parser.add_argument('--vdw_loss_func', type=str, default=None)  # None, 'log', 'mse'
+    parser.add_argument('--density_loss_func', type=str, default='l1')  # 'l1' 'mse'
+    parser.add_argument('--generator_adversarial_loss_func', type=str, default='l1')  # 'softmax' 'hot softmax' 'minimax' 'score'
     add_bool_arg(parser, 'train_generator_h_bond', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_adversarially', default=False)  # train generator on adversarially
     add_bool_arg(parser, 'train_discriminator_on_randn', default=False)  # train generator on cells generated from appropriately fit multivariate gaussians
@@ -398,7 +400,9 @@ def add_args(parser):
     update_args2config(args2config, 'packing_target_noise')
     update_args2config(args2config, 'train_generator_adversarially')
     update_args2config(args2config, 'train_generator_vdw')
-    update_args2config(args2config, 'vdw_loss_rescaling')
+    update_args2config(args2config, 'vdw_loss_func')
+    update_args2config(args2config, 'density_loss_func')
+    update_args2config(args2config, 'generator_adversarial_loss_func')
     update_args2config(args2config, 'train_generator_h_bond')
     update_args2config(args2config, 'train_discriminator_adversarially')
     update_args2config(args2config, 'train_discriminator_on_randn')
