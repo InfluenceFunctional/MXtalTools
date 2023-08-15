@@ -83,7 +83,7 @@ class Modeller:
             self.prep_dataset = None
 
         self.train_discriminator = any((config.train_discriminator_adversarially, config.train_discriminator_on_distorted, config.train_discriminator_on_randn))
-        self.train_generator = any((config.train_discriminator_adversarially, config.train_discriminator_on_distorted, config.train_discriminator_on_randn))
+        self.train_generator = any((config.train_generator_vdw, config.train_generator_adversarially, config.train_generator_h_bond))
 
     def prep_symmetry_info(self):
         '''
