@@ -80,6 +80,9 @@ class Modeller:
             data_manager.load_for_modelling(return_dataset=False, save_dataset=True)
             self.prep_dataset = None
 
+        self.train_discriminator = any((config.train_discriminator_adversarially, config.train_discriminator_on_distorted, config.train_discriminator_on_randn))
+        self.train_generator = any((config.train_discriminator_adversarially, config.train_discriminator_on_distorted, config.train_discriminator_on_randn))
+
     def prep_symmetry_info(self):
         '''
         if we don't have the symmetry dict prepared already, generate it
@@ -540,9 +543,7 @@ class Modeller:
 
                         '''sometimes test the generator on a mini CSP problem'''
                         if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
-                                any((self.config.train_generator_adversarially,
-                                     self.config.train_generator_vdw,
-                                     self.config.train_generator_h_bond)) and (epoch > 0):
+                                self.train_generator and (epoch > 0):
                             self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator, regressor if self.config.regressor_path else None)
 
                         '''save checkpoints'''
@@ -877,7 +878,7 @@ class Modeller:
     def discriminator_step(self, discriminator, generator, epoch_stats_dict, data, discriminator_optimizer, i,
                            update_gradients, discriminator_err, discriminator_loss_record, skip_step, regressor):
 
-        if any((self.config.train_discriminator_adversarially, self.config.train_discriminator_on_distorted, self.config.train_discriminator_on_randn)):
+        if self.train_discriminator:
             score_on_real, score_on_fake, generated_samples, \
                 real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score, \
                 real_packing_coeffs, fake_packing_coeffs, generated_samples_i \
@@ -916,10 +917,7 @@ class Modeller:
 
     def generator_step(self, discriminator, generator, epoch_stats_dict, data, generator_optimizer, i, update_gradients,
                        generator_err, generator_loss_record, rand_batch_ind, last_batch, regressor):
-        if any((self.config.train_generator_adversarially,
-                self.config.train_generator_vdw,
-                self.config.train_generator_h_bond)):
-
+        if self.train_generator:
             discriminator_raw_output, generated_samples, packing_loss, packing_prediction, packing_target, \
                 vdw_loss, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score = \
                 self.get_generator_losses(generator, discriminator, data, i, regressor)
@@ -1063,9 +1061,7 @@ class Modeller:
         train the generator
         """
 
-        if any((self.config.train_generator_vdw,
-                self.config.train_generator_adversarially,
-                self.config.train_generator_h_bond)):
+        if self.train_generator:
             '''
             build supercells
             '''
@@ -1407,9 +1403,7 @@ class Modeller:
 
             # sometimes test the generator on a mini CSP problem
             if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
-                    any((self.config.train_generator_adversarially,
-                         self.config.train_generator_vdw,
-                         self.config.train_generator_h_bond)) and (epoch > 0):  # don't do it on first epoch
+                    self.train_generator and (epoch > 0):  # don't do it on first epoch
                 self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator)
 
             if extra_test_loader is not None:
