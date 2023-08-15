@@ -39,7 +39,7 @@ class SupercellBuilder:
 
     def build_supercells(self, molecule_data, cell_sample: torch.tensor, supercell_size: int = 5,
                          graph_convolution_cutoff: float = 6, target_handedness=None,
-                         align_molecules=True, pare_to_convolution_cluster=True):
+                         align_molecules=False, pare_to_convolution_cluster=True):
         """
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to "supercell" (in fact, it's truncated to an appropriate cluster size)

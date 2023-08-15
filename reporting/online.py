@@ -1,24 +1,20 @@
 import ase.io
-import numpy
 import numpy as np
 import torch
 import wandb
 from _plotly_utils.colors import n_colors
-from plotly import graph_objects
 from plotly.subplots import make_subplots
 from scipy.stats import gaussian_kde, linregress
 import plotly.graph_objects as go
 import plotly.express as px
-from torch_geometric.loader.dataloader import Collater
 
 from common.geometry_calculations import cell_vol_torch
-from common.utils import update_stats_dict, np_softmax, earth_movers_distance_torch, earth_movers_distance_np, compute_rdf_distance, ase_mol_from_crystaldata
+from common.utils import ase_mol_from_crystaldata, compute_rdf_distance
 from crystal_building.utils import write_sg_to_all_crystals, update_crystal_symmetry_elements
 from crystal_building.coordinate_transformations import cell_vol
 from models.crystal_rdf import crystal_rdf
 from models.utils import softmax_and_score, norm_scores
 from models.vdw_overlap import vdw_overlap
-from reporting.nov_22_discriminator import process_discriminator_evaluation_data
 
 
 def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
@@ -399,15 +395,15 @@ def log_mini_csp_scores_distributions(config, wandb, sampling_dict, real_samples
     """
     report on key metrics from mini-csp
     """
-    scores_labels = ['score', 'vdw overlap', 'density', 'h bond score']
-    fig = make_subplots(rows=2, cols=2, vertical_spacing=0.075,
+    scores_labels = ['score', 'vdw overlap', 'density']#, 'h bond score']
+    fig = make_subplots(rows=1, cols=len(scores_labels), vertical_spacing=0.075,
                         horizontal_spacing=0.075)
 
     colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', min(15, real_data.num_graphs) + 1, colortype='rgb')
 
     for i, label in enumerate(scores_labels):
-        row = i // 2 + 1
-        col = i % 2 + 1
+        row = 1 #i // 2 + 1
+        col = i+1 #i % 2 + 1
         for j in range(min(15, real_data.num_graphs)):
             bandwidth1 = np.ptp(sampling_dict[label][j]) / 50
 
@@ -425,6 +421,7 @@ def log_mini_csp_scores_distributions(config, wandb, sampling_dict, real_samples
                                     side='positive', orientation='h', width=2, line_color=colors[j],
                                     meanline_visible=True, bandwidth=bandwidth1),
                           row=row, col=col)
+            fig.update_xaxes(title_text=label, row=1, col=col)
 
         all_sample_score = sampling_dict[label].flatten()
         if label == 'score':
@@ -443,10 +440,7 @@ def log_mini_csp_scores_distributions(config, wandb, sampling_dict, real_samples
             t=100,  # top margin
         )
     )
-    fig.update_xaxes(title_text='Score - CSD Score', row=1, col=1)
-    fig.update_xaxes(title_text='vdW overlap', range=[0, 4], row=1, col=2)
-    fig.update_xaxes(title_text='Packing Coeff.', row=2, col=1)
-    fig.update_xaxes(title_text='H-bond score', row=2, col=2)
+
     fig.update_layout(showlegend=False, yaxis_showgrid=True)  # legend_traceorder='reversed',
 
     fig.layout.margin = layout.margin
@@ -572,78 +566,7 @@ def cell_params_tracking_plot(wandb, supercell_builder, layout, config, sampling
         fig.show()
 
 
-def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, supercell_builder, mol_volume_ind, sym_info, vdw_radii):
-    """
-    extract the best guesses for each crystal and reconstruct and analyze them
-    compare best samples to the experimental crystal
-    """
-
-    # identify the best samples (later, use clustering to filter down to a diverse set)
-    scores_list = ['score', 'vdw overlap', 'h bond score', 'density']
-    scores_dict = {key: sampling_dict[key] for key in scores_list}
-
-    num_crystals, num_samples = scores_dict['score'].shape
-
-    topk_size = min(10, sampling_dict['score'].shape[1])
-    sort_inds = sampling_dict['score'].argsort(axis=-1)[:, -topk_size:]  #
-    best_scores_dict = {key: np.asarray([sampling_dict[key][ii, sort_inds[ii]] for ii in range(num_crystals)]) for key in scores_list}
-    best_samples = np.asarray([sampling_dict['cell params'][ii, sort_inds[ii], :] for ii in range(num_crystals)])
-    best_samples_space_groups = np.asarray([sampling_dict['space group'][ii, sort_inds[ii]] for ii in range(num_crystals)])
-    best_samples_handedness = np.asarray([sampling_dict['handedness'][ii, sort_inds[ii]] for ii in range(num_crystals)])
-
-    # reconstruct the best samples from the cell params
-    best_supercells_list = []
-    best_supercell_scores = []
-    best_supercell_rdfs = []
-
-    rdf_bins = 100
-    rdf_range = [0, 10]
-
-    discriminator.eval()
-    with torch.no_grad():
-        for n in range(topk_size):
-            real_data_i = real_data.clone()
-
-            real_data_i = update_crystal_symmetry_elements(
-                real_data_i, best_samples_space_groups[:, n],
-                config.dataDims, supercell_builder.symmetries_dict, randomize_sgs=False)
-
-            fake_supercell_data, _, _ = supercell_builder.build_supercells(
-                real_data_i,
-                torch.tensor(best_samples[:, n, :], device=real_data_i.x.device, dtype=torch.float32),
-                config.supercell_size,
-                config.discriminator.graph_convolution_cutoff,
-                align_molecules=True,
-                target_handedness=best_samples_handedness[:, n])
-
-            output, extra_outputs = discriminator(fake_supercell_data.clone(), return_dists=True)  # reshape output from flat filters to channels * filters per channel
-            best_supercell_scores.append(softmax_and_score(output).cpu().detach().numpy())
-
-            rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=rdf_range, bins=rdf_bins, raw_density=True, atomwise=True, mode='intermolecular', cpu_detach=True)
-            best_supercell_rdfs.append(rdf)
-
-            best_supercells_list.append(fake_supercell_data.cpu().detach())
-
-    reconstructed_best_scores = np.asarray(best_supercell_scores).T
-    print(f'cell reconstruction mean score difference = {np.mean(np.abs(best_scores_dict["score"] - reconstructed_best_scores)):.4f}')  # should be ~0
-    print(f'cell reconstruction median score difference = {np.median(np.abs(best_scores_dict["score"] - reconstructed_best_scores)):.4f}')  # should be ~0
-    print(f'cell reconstruction 95% quantile score difference = {np.quantile(np.abs(best_scores_dict["score"] - reconstructed_best_scores), .95):.4f}')  # should be ~0
-
-    best_rdfs = [np.stack([best_supercell_rdfs[ii][jj] for ii in range(topk_size)]) for jj in range(real_data.num_graphs)]
-
-    rdf_dists = np.zeros((real_data.num_graphs, topk_size, topk_size))
-    for i in range(real_data.num_graphs):
-        for j in range(topk_size):
-            for k in range(j, topk_size):
-                rdf_dists[i, j, k] = compute_rdf_distance(best_rdfs[i][j], best_rdfs[i][k], rr)
-
-    rdf_dists = rdf_dists + np.moveaxis(rdf_dists, (1, 2), (2, 1))  # add lower diagonal (distance matrix is symmetric)
-
-    rdf_real_dists = np.zeros((real_data.num_graphs, topk_size))
-    for i in range(real_data.num_graphs):
-        for j in range(topk_size):
-            rdf_real_dists[i, j] = compute_rdf_distance(real_samples_dict['RDF'][i], best_rdfs[i][j], rr)
-
+def plot_mini_csp_dist_vs_score(rdf_real_dists, reconstructed_best_scores, real_samples_dict, wandb):
     x = rdf_real_dists.flatten()
     y = (reconstructed_best_scores - real_samples_dict['score'][:, None]).flatten()
     xy = np.vstack([x, y])
@@ -654,10 +577,25 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
 
     fig = go.Figure()
     fig.add_trace(go.Scattergl(x=x, y=y, mode='markers', marker=dict(color=z)))
-
     fig.update_layout(xaxis_title='RDF Distance From Target', yaxis_title='Sample vs. experimental score difference', showlegend=False)
     wandb.log({"Sample RDF vs. Score": fig})
 
+def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, supercell_builder, mol_volume_ind, sym_info, vdw_radii):
+    """
+    extract the best guesses for each crystal and reconstruct and analyze them
+    compare best samples to the experimental crystal
+    """
+    scores_list = ['score', 'vdw overlap', 'h bond score', 'density']
+    scores_dict = {key: sampling_dict[key] for key in scores_list}
+    num_crystals, num_samples = scores_dict['score'].shape
+
+    sample_rdf_dists, rdf_real_dists, reconstructed_best_scores, best_supercells_list, best_rdfs, best_scores_dict = \
+        topk_mini_csp_analysis(scores_list, scores_dict, real_samples_dict, sampling_dict, real_data, discriminator, config, supercell_builder)
+
+    '''dist vs score plot'''
+    plot_mini_csp_dist_vs_score(rdf_real_dists, reconstructed_best_scores, real_samples_dict, wandb)
+
+    '''visualize best samples'''
     best_supercells = best_supercells_list[-1]  # last sample was the best
     save_3d_structure_examples(wandb, best_supercells)
 
@@ -672,18 +610,6 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
     sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict)
 
     sample_wise_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists)
-
-    ## debug check to make sure we are recreating the same cells
-    # fig = go.Figure()
-    # colors = n_colors('rgb(250,40,100)', 'rgb(5,250,200)', real_data.num_graphs, colortype='rgb')
-    # for ii in range(num_crystals):
-    #     # fig.add_trace(go.Scatter(x=best_scores_dict['score'][ii], y=reconstructed_best_scores[ii], mode='markers', line_color=colors[ii]))
-    #     fig.add_trace(go.Histogram(x=np.abs(best_scores_dict['score'][ii] - reconstructed_best_scores[ii]),
-    #                                nbinsx=10,
-    #                                marker_color=colors[ii]))
-    # fig.update_layout(title=str(config.discriminator.graph_norm) + ' ' + str(config.discriminator.fc_norm_mode) + ' ' + str(config.discriminator.fc_dropout_probability))
-    # fig.show()
-    # print(np.mean(np.abs(best_scores_dict['score'] - reconstructed_best_scores))) # should be ~0
 
     return None
 
@@ -812,7 +738,7 @@ def sample_wise_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_be
                       row=row, col=col)
 
     # fig.update_layout(xaxis_title='RDF Distance', yaxis_title='Model Score')
-    fig.update_xaxes(range=[0, np.amax(rdf_real_dists.flatten()) + 0.1])
+    fig.update_xaxes(range=[-0.1, np.amax(rdf_real_dists[:num_reporting_samples]) + 0.1])
     fig.update_yaxes(autorange="reversed")
 
     if config.wandb.log_figures:
@@ -1862,3 +1788,72 @@ def discriminator_analysis(config, epoch_stats_dict):
     plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout)
 
     return None
+
+
+def topk_mini_csp_analysis(scores_list, scores_dict, real_samples_dict, sampling_dict, real_data, discriminator, config, supercell_builder):
+    # identify the best samples (later, use clustering to filter down to a diverse set)
+
+    num_crystals, num_samples = scores_dict['score'].shape
+
+    topk_size = min(10, sampling_dict['score'].shape[1])
+    sort_inds = sampling_dict['score'].argsort(axis=-1)[:, -topk_size:]  #
+    best_scores_dict = {key: np.asarray([sampling_dict[key][ii, sort_inds[ii]] for ii in range(num_crystals)]) for key in scores_list}
+    best_samples = np.asarray([sampling_dict['cell params'][ii, sort_inds[ii], :] for ii in range(num_crystals)])
+    best_samples_space_groups = np.asarray([sampling_dict['space group'][ii, sort_inds[ii]] for ii in range(num_crystals)])
+    best_samples_handedness = np.asarray([sampling_dict['handedness'][ii, sort_inds[ii]] for ii in range(num_crystals)])
+
+    # reconstruct the best samples from the cell params
+    best_supercells_list = []
+    best_supercell_scores = []
+    best_supercell_rdfs = []
+
+    rdf_bins = 100
+    rdf_range = [0, 10]
+
+    discriminator.eval()
+    with torch.no_grad():
+        for n in range(topk_size):
+            real_data_i = real_data.clone()
+
+            real_data_i = update_crystal_symmetry_elements(
+                real_data_i, best_samples_space_groups[:, n],
+                config.dataDims, supercell_builder.symmetries_dict, randomize_sgs=False)
+
+            fake_supercell_data, _, _ = supercell_builder.build_supercells(
+                real_data_i,
+                torch.tensor(best_samples[:, n, :], device=real_data_i.x.device, dtype=torch.float32),
+                config.supercell_size,
+                config.discriminator.graph_convolution_cutoff,
+                align_molecules=True,  # recorded cell params in standardized basis
+                target_handedness=best_samples_handedness[:, n])
+
+            output, extra_outputs = discriminator(fake_supercell_data.clone(), return_dists=True)  # reshape output from flat filters to channels * filters per channel
+            best_supercell_scores.append(softmax_and_score(output).cpu().detach().numpy())
+
+            rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=rdf_range, bins=rdf_bins, raw_density=True, atomwise=True, mode='intermolecular', cpu_detach=True)
+            best_supercell_rdfs.append(rdf)
+
+            best_supercells_list.append(fake_supercell_data.cpu().detach())
+
+    reconstructed_best_scores = np.asarray(best_supercell_scores).T
+    # todo add even more robustness around these
+    print(f'cell reconstruction mean score difference = {np.mean(np.abs(best_scores_dict["score"] - reconstructed_best_scores)):.4f}')  # should be ~0
+    print(f'cell reconstruction median score difference = {np.median(np.abs(best_scores_dict["score"] - reconstructed_best_scores)):.4f}')  # should be ~0
+    print(f'cell reconstruction 95% quantile score difference = {np.quantile(np.abs(best_scores_dict["score"] - reconstructed_best_scores), .95):.4f}')  # should be ~0
+
+    best_rdfs = [np.stack([best_supercell_rdfs[ii][jj] for ii in range(topk_size)]) for jj in range(real_data.num_graphs)]
+
+    rdf_dists = np.zeros((real_data.num_graphs, topk_size, topk_size))
+    for i in range(real_data.num_graphs):
+        for j in range(topk_size):
+            for k in range(j, topk_size):
+                rdf_dists[i, j, k] = compute_rdf_distance(best_rdfs[i][j], best_rdfs[i][k], rr)
+
+    rdf_dists = rdf_dists + np.moveaxis(rdf_dists, (1, 2), (2, 1))  # add lower diagonal (distance matrix is symmetric)
+
+    rdf_real_dists = np.zeros((real_data.num_graphs, topk_size))
+    for i in range(real_data.num_graphs):
+        for j in range(topk_size):
+            rdf_real_dists[i, j] = compute_rdf_distance(real_samples_dict['RDF'][i], best_rdfs[i][j], rr)
+
+    return rdf_dists, rdf_real_dists, reconstructed_best_scores, best_supercells_list, best_rdfs, best_scores_dict
