@@ -3,7 +3,7 @@ machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 10400
+run_num: 10408
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
