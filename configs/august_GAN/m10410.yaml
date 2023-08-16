@@ -3,7 +3,7 @@ machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 10409
+run_num: 10410
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
@@ -94,7 +94,7 @@ exclude_crystal_systems: null # ['monoclinic','triclinic','orthorhombic']  #['he
 exclude_blind_test_targets: False
 include_sgs: null # ["P-1","P21/c","P212121","C2/c"]  # space groups to be included in the dataset. null for all
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: ["P21/c"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: ["P21/c", "P-1"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5 # should be very large, then automatically pares down
 
 # discriminator optimizer and model
