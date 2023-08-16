@@ -14,7 +14,7 @@ import os
 from torch_geometric.loader.dataloader import Collater
 
 
-class BuildDataset:
+class DatasetBuilder:
     """
     build dataset object
     """
@@ -340,6 +340,8 @@ class BuildDataset:
 
         keys_to_add = self.atom_keys
         if self.replace_dataDims is not None:
+            assert self.replace_dataDims['atom features'] == keys_to_add
+
             stds = self.replace_dataDims['atom stds']
             means = self.replace_dataDims['atom means']
         else:
@@ -381,7 +383,7 @@ class BuildDataset:
         self.atom_stds = stds
         return atom_features_list
 
-    def concatenate_molecule_features(self, dataset, mol_keys=True, extra_keys=None, add_lattice_overlaps=False):
+    def concatenate_molecule_features(self, dataset, mol_keys=True, extra_keys=None):
         """
         collect features of 'molecules' and append to atom-level data
         """
@@ -397,6 +399,8 @@ class BuildDataset:
             keys_to_add.remove(self.target)
 
         if self.replace_dataDims is not None:
+            assert self.replace_dataDims['molecule features'] == keys_to_add
+
             stds = self.replace_dataDims['molecule stds']
             means = self.replace_dataDims['molecule means']
         else:
@@ -417,7 +421,7 @@ class BuildDataset:
             if feature_vector.dtype == bool:
                 pass
             elif key == 'crystal z value':
-                pass  # don't normalize Z value, for now
+                pass  # don't normalize Z value, for now # todo decide how to manage this
             elif (feature_vector.dtype == float) or (np.issubdtype(feature_vector.dtype, np.floating)):
                 feature_vector = standardize(feature_vector, known_mean=means[key], known_std=stds[key])
             elif (feature_vector.dtype == int) or (np.issubdtype(feature_vector.dtype, np.integer)):
@@ -450,7 +454,7 @@ class BuildDataset:
         self.crystal_generation_features.append('crystal packing coefficient')
 
         molecule_features_array = self.concatenate_molecule_features(
-            dataset, extra_keys=self.crystal_generation_features, add_lattice_overlaps=True)
+            dataset, extra_keys=self.crystal_generation_features)
 
         atom_features_list = self.concatenate_atom_features(dataset)
         #  dataset = dataset.drop('crystal symmetries', axis=1)  # can't mix nicely # todo delete this after next BT refeaturization
@@ -545,8 +549,14 @@ class BuildDataset:
             print(f'{self.target} is not an implemented regression target!')
             sys.exit()
 
-        self.target_std = targets.std()
-        self.target_mean = targets.mean()
+        if self.replace_dataDims is not None:
+            assert self.replace_dataDims['target features'] == self.target
+
+            self.target_mean = self.replace_dataDims['target mean']
+            self.target_std = self.replace_dataDims['target std']
+        else:
+            self.target_std = targets.std()
+            self.target_mean = targets.mean()
 
         return (targets - self.target_mean) / self.target_std
 
@@ -636,6 +646,7 @@ class BuildDataset:
             'lattice normed length stds': self.normed_lengths_stds,
             'lattice dtypes': self.lattice_dtypes,
 
+            'target': self.target,
             'target mean': self.target_mean,
             'target std': self.target_std,
 
@@ -744,12 +755,12 @@ def get_extra_test_loader(config, paths, dataDims, pg_dict=None, sg_dict=None, l
         [len(dataset['crystal symmetries'][ii]) for ii in range(len(dataset))
          ])
 
-    extra_test_set_builder = BuildDataset(config, pg_dict=pg_dict,
-                                          sg_dict=sg_dict,
-                                          lattice_dict=lattice_dict,
-                                          replace_dataDims=dataDims,
-                                          override_length=len(dataset),
-                                          premade_dataset=dataset)
+    extra_test_set_builder = DatasetBuilder(config, pg_dict=pg_dict,
+                                            sg_dict=sg_dict,
+                                            lattice_dict=lattice_dict,
+                                            replace_dataDims=dataDims,
+                                            override_length=len(dataset),
+                                            premade_dataset=dataset)
 
     extra_test_loader = DataLoader(extra_test_set_builder.datapoints, batch_size=config.current_batch_size, shuffle=False, num_workers=0, pin_memory=False)
     del dataset, extra_test_set_builder

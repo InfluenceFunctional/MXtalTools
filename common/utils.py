@@ -64,7 +64,7 @@ def torch_ptp(tensor: torch.tensor):
     return torch.max(tensor) - torch.min(tensor)
 
 
-def standardize(data: np.ndarray, return_standardization: bool = False, known_mean: float = None, known_std: float = None):
+def standardize(data: np.ndarray, return_standardization: bool = False, known_mean=None, known_std=None):
     """
     standardize an input 1D array by subtracting mean and dividing by standard deviation
     optionally use precomputed mean and standard deviation (useful to compare data between datasets)
@@ -333,5 +333,5 @@ def components2angle(components):
 
     '''use softmax to norm the sum of squares, and multiply by the signs to keep all 4 quadrants'''
     normed_components = torch.sign(components) * softmax(components ** 2)
-    angle = torch.atan2(normed_components[:,0], normed_components[:,1])
+    angle = torch.atan2(normed_components[:, 0], normed_components[:, 1])
     return angle

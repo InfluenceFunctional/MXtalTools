@@ -672,7 +672,8 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
     mol_data.Z = torch.tensor(sample_Z_values, dtype=mol_data.Z.dtype, device=mol_data.Z.device)  # * torch.ones_like(mol_data.Z)
     mol_data.sg_ind = torch.tensor(sample_sg_inds, dtype=mol_data.sg_ind.dtype, device=mol_data.sg_ind.device)
 
-    mol_data.x[:, -dataDims['num crystal generation features']] = 0  # set all crystal features to 0
+    #sum([1 for entry in dataDims['crystal generation features'] if 'coefficient' not in entry]) below should include all these
+    mol_data.x[:, -dataDims['num crystal generation features']:-1] = 0  # set all crystal features to 0 (last index is packing coeff)  # todo manage this in a non ad-hoc way
     # update sym ops, sg ind, sg one_hot, crystal system one_hot, Z value
     for ii, sg_ind in enumerate(sample_sg_inds):
         mol_inds = torch.arange(mol_data.ptr[ii], mol_data.ptr[ii + 1])

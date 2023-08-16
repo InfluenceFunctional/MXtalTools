@@ -20,6 +20,7 @@ from distutils.dir_util import copy_tree
 
 from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
 from constants.asymmetric_units import asym_unit_dict
+from constants.space_group_info import (POINT_GROUPS, LATTICE_TYPE, SPACE_GROUPS, SYM_OPS)
 
 from models.discriminator_models import crystal_discriminator
 from models.generator_models import crystal_generator, independent_gaussian_model
@@ -36,9 +37,11 @@ from crystal_building.builder import SupercellBuilder
 from crystal_building.utils import update_crystal_symmetry_elements
 
 from dataset_management.manager import DataManager
-from dataset_management.utils import (BuildDataset, get_dataloaders, update_dataloader_batch_size, get_extra_test_loader)
+from dataset_management.utils import (DatasetBuilder, get_dataloaders, update_dataloader_batch_size, get_extra_test_loader)
 
-from reporting.online import (log_mini_csp_scores_distributions, log_best_mini_csp_samples, detailed_reporting)
+from reporting.online import (detailed_reporting)
+from csp.utils import log_best_mini_csp_samples
+from reporting.csp.utils import log_mini_csp_scores_distributions
 from common.utils import (update_stats_dict, np_softmax)
 
 
@@ -65,7 +68,9 @@ class Modeller:
         if self.config.include_sgs is None:  # draw from all space groups we can parameterize
             self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]  # list(self.space_groups.values())
 
+
         '''prep workdir'''
+        self.source_directory = os.getcwd()
         if (self.config.run_num == 0) or (self.config.explicit_run_enumeration == True):  # if making a new workdir
             self.prep_new_working_directory()
         else:
@@ -89,45 +94,45 @@ class Modeller:
         '''
         if we don't have the symmetry dict prepared already, generate it
         '''
-        if os.path.exists('symmetry_info.npy'):
-            sym_info: dict = np.load('symmetry_info.npy', allow_pickle=True).item()
-            self.sym_ops = sym_info['sym_ops']
-            self.point_groups = sym_info['point_groups']
-            self.lattice_type = sym_info['lattice_type']
-            self.space_groups = sym_info['space_groups']
+        # if True: #os.path.exists('symmetry_info.npy'):
+        # sym_info: dict = np.load('symmetry_info.npy', allow_pickle=True).item()
+        self.sym_ops = SYM_OPS  # sym_info['sym_ops']
+        self.point_groups = POINT_GROUPS
+        self.lattice_type = LATTICE_TYPE
+        self.space_groups = SPACE_GROUPS
 
-            self.sym_info = {
-                'sym_ops': self.sym_ops,
-                'point_groups': self.point_groups,
-                'lattice_type': self.lattice_type,
-                'space_groups': self.space_groups}
-        else:
-            from pyxtal import symmetry
-            print('Pre-generating spacegroup symmetries')
-            self.sym_ops = {}
-            self.point_groups = {}
-            self.lattice_type = {}
-            self.space_groups = {}
-            self.space_group_indices = {}
-            for i in tqdm.tqdm(range(1, 231)):
-                sym_group = symmetry.Group(i)
-                general_position_syms = sym_group.wyckoffs_organized[0][0]
-                self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
-                    len(general_position_syms))]  # first 0 index is for general position, second index is
-                # superfluous, third index is the symmetry operation
-                self.point_groups[i] = sym_group.point_group
-                self.lattice_type[i] = sym_group.lattice_type
-                self.space_groups[i] = sym_group.symbol
-                self.space_group_indices[sym_group.symbol] = i
-
-            self.sym_info = {
-                'sym_ops': self.sym_ops,
-                'point_groups': self.point_groups,
-                'lattice_type': self.lattice_type,
-                'space_groups': self.space_groups,
-                'space_group_indices': self.space_group_indices}
-
-            np.save('symmetry_info', self.sym_info)
+        self.sym_info = {
+            'sym_ops': self.sym_ops,
+            'point_groups': self.point_groups,
+            'lattice_type': self.lattice_type,
+            'space_groups': self.space_groups}
+        # else: # generate spacegroup information dict - should no longer be necessary
+        #     from pyxtal import symmetry
+        #     print('Pre-generating spacegroup symmetries')
+        #     self.sym_ops = {}
+        #     self.point_groups = {}
+        #     self.lattice_type = {}
+        #     self.space_groups = {}
+        #     self.space_group_indices = {}
+        #     for i in tqdm.tqdm(range(1, 231)):
+        #         sym_group = symmetry.Group(i)
+        #         general_position_syms = sym_group.wyckoffs_organized[0][0]
+        #         self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
+        #             len(general_position_syms))]  # first 0 index is for general position, second index is
+        #         # superfluous, third index is the symmetry operation
+        #         self.point_groups[i] = sym_group.point_group
+        #         self.lattice_type[i] = sym_group.lattice_type
+        #         self.space_groups[i] = sym_group.symbol
+        #         self.space_group_indices[sym_group.symbol] = i
+        #
+        #     self.sym_info = {
+        #         'sym_ops': self.sym_ops,
+        #         'point_groups': self.point_groups,
+        #         'lattice_type': self.lattice_type,
+        #         'space_groups': self.space_groups,
+        #         'space_group_indices': self.space_group_indices}
+        #
+        #     np.save('symmetry_info', self.sym_info)
 
     def prep_new_working_directory(self):
         if self.config.run_num == 0:
@@ -346,7 +351,7 @@ class Modeller:
             '''fake data'''
             for j in tqdm.tqdm(range(100)):
                 real_data = data.clone()
-                generated_samples_i, epoch_stats_dict, negative_type = \
+                generated_samples_i, epoch_stats_dict, negative_type, real_data = \
                     self.generate_discriminator_negatives(epoch_stats_dict, real_data, generator, i, regressor,
                                                           override_randn=True, override_distorted=True)
 
@@ -959,7 +964,7 @@ class Modeller:
         # generate fakes & create supercell data
         real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
 
-        generated_samples_i, epoch_stats_dict, negative_type = \
+        generated_samples_i, epoch_stats_dict, negative_type, real_data = \
             self.generate_discriminator_negatives(epoch_stats_dict, real_data, generator, i, regressor)
 
         fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
@@ -1020,13 +1025,14 @@ class Modeller:
 
         return data
 
-    def get_generator_samples(self, mol_data, generator, regressor, alignment_override=None):
+    def get_generator_samples(self, data, generator, regressor, alignment_override=None):
         """
         @param mol_data: CrystalData object containing information on the starting conformer
         @param generator:
         @param target_packing: standardized target packing coefficient
         @return:
         """
+        mol_data = data.clone()
         # conformer orientation setting
         mol_data = self.set_molecule_alignment(mol_data, mode_override=alignment_override)
 
@@ -1059,7 +1065,7 @@ class Modeller:
             n_samples=mol_data.num_graphs, conditions=mol_data.to(self.config.device).clone(),
             return_latent=True, return_condition=True, return_prior=True)
 
-        return generated_samples, prior, standardized_target_packing_coeff
+        return generated_samples, prior, standardized_target_packing_coeff, mol_data
 
     def get_generator_losses(self, generator, discriminator, data, i, regressor):
         """
@@ -1071,7 +1077,8 @@ class Modeller:
             build supercells
             '''
 
-            generated_samples, prior, standardized_target_packing = self.get_generator_samples(data, generator, regressor)
+            generated_samples, prior, standardized_target_packing, sample_data = (
+                self.get_generator_samples(data, generator, regressor))
 
             supercell_data, generated_cell_volumes, _ = (
                 self.supercell_builder.build_supercells(
@@ -1118,13 +1125,25 @@ class Modeller:
         symmetry element indexing
         multivariate gaussian generator
         """
-        dataset_builder = BuildDataset(self.config, pg_dict=self.point_groups,
-                                       sg_dict=self.space_groups,
-                                       lattice_dict=self.lattice_type,
-                                       premade_dataset=self.prep_dataset)
+        std_dataDims_path = self.source_directory + r'/dataset_management/standard_dataDims.npy'
+        if os.path.exists(std_dataDims_path):
+            standard_dataDims = np.load(std_dataDims_path,allow_pickle=True).item()  # maintain constant standardizations between runs
+        else:
+            print("Premade Standardization Missing!")
+            standard_dataDims = None
+
+        '''note this standard datadims construction will only work between runs with
+        identical choice of features - there is a flag for this in the datasetbuilder'''
+        dataset_builder = DatasetBuilder(self.config, pg_dict=self.point_groups,
+                                         sg_dict=self.space_groups,
+                                         lattice_dict=self.lattice_type,
+                                         premade_dataset=self.prep_dataset,
+                                         replace_dataDims=standard_dataDims)
 
         del self.prep_dataset  # we don't actually want this huge thing floating around
         self.config.dataDims = dataset_builder.get_dimension()
+        if False:  #standard_dataDims is None:  # set a standard if we don't have one
+            np.save(self.source_directory + r'/dataset_management/standard_dataDims', self.config.dataDims)
 
         '''init lattice mean & std'''
         self.lattice_means = torch.tensor(self.config.dataDims['lattice means'], dtype=torch.float32, device=self.config.device)
@@ -1209,7 +1228,7 @@ class Modeller:
             if generator_ind == 1:  # randomly sample which generator to use at each iteration
                 negative_type = 'generator'
                 with torch.no_grad():
-                    generated_samples_i, _, _ = self.get_generator_samples(real_data, generator, regressor)
+                    generated_samples_i, _, _, real_data = self.get_generator_samples(real_data, generator, regressor)
                     epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
                                                          np.zeros(len(generated_samples_i)), mode='extend')
 
@@ -1244,7 +1263,7 @@ class Modeller:
                                                      torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy(),
                                                      mode='extend')
 
-        return generated_samples_i.float().detach(), epoch_stats_dict, negative_type
+        return generated_samples_i.float().detach(), epoch_stats_dict, negative_type, real_data
 
     def nov_22_figures(self):
         """
@@ -1635,7 +1654,7 @@ class Modeller:
                              }
         return real_samples_dict
 
-    def generate_mini_csp_samples(self, real_data, generator, discriminator, regressor):
+    def generate_mini_csp_samples(self, real_data, generator, discriminator, regressor, sample_source='generator'):
         num_molecules = real_data.num_graphs
         n_sampling_iters = self.config.sample_steps
         sampling_dict = {'score': np.zeros((num_molecules, n_sampling_iters)),
@@ -1645,45 +1664,51 @@ class Modeller:
                          'cell params': np.zeros((num_molecules, n_sampling_iters, 12)),
                          'space group': np.zeros((num_molecules, n_sampling_iters)),
                          'handedness': np.zeros((num_molecules, n_sampling_iters)),
+                         'distortion_size': np.zeros((num_molecules, n_sampling_iters)),
                          }
 
         with torch.no_grad():
             for ii in tqdm.tqdm(range(n_sampling_iters)):
                 fake_data = real_data.clone().to(self.config.device)
 
-                # use generator to make samples
-                samples, prior, standardized_target_packing_coeff = \
-                    self.get_generator_samples(fake_data, generator, regressor)
+                if sample_source == 'generator':
+                    # use generator to make samples
+                    samples, prior, standardized_target_packing_coeff, fake_data = \
+                        self.get_generator_samples(fake_data, generator, regressor)
 
-                fake_supercell_data, generated_cell_volumes, _ = \
-                    self.supercell_builder.build_supercells(
-                        fake_data, samples, self.config.supercell_size,
+                    fake_supercell_data, generated_cell_volumes, _ = \
+                        self.supercell_builder.build_supercells(
+                            fake_data, samples, self.config.supercell_size,
+                            self.config.discriminator.graph_convolution_cutoff,
+                            align_molecules=False,
+                        )
+
+                elif sample_source == 'distorted':
+                    # test - do slight distortions on existing crystals
+                    generated_samples_ii = (real_data.cell_params - self.lattice_means) / self.lattice_stds
+
+                    if True:  # self.config.sample_distortion_magnitude == -1:
+                        distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-4, 1, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range
+                        distortion = distortion[torch.randperm(len(distortion))]
+                    else:
+                        distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
+
+                    generated_samples_i_d = (generated_samples_ii + distortion).to(self.config.device)  # add jitter and return in standardized basis
+
+                    generated_samples_i = clean_cell_params(
+                        generated_samples_i_d, real_data.sg_ind,
+                        self.lattice_means, self.lattice_stds,
+                        self.sym_info, self.supercell_builder.asym_unit_dict,
+                        rescale_asymmetric_unit=False, destandardize=True, mode='hard')
+
+                    fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+                        fake_data, generated_samples_i, self.config.supercell_size,
                         self.config.discriminator.graph_convolution_cutoff,
-                        align_molecules=False,
+                        align_molecules=True,
+                        target_handedness=real_data.asym_unit_handedness,
                     )
-
-                # # test - do slight distortions on existing crystals
-                # generated_samples_ii = (real_data.cell_params - self.lattice_means) / self.lattice_stds
-                #
-                # if True: #self.config.sample_distortion_magnitude == -1:
-                #     distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-2, -1, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range
-                # else:
-                #     distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
-                #
-                # generated_samples_i_d = (generated_samples_ii + distortion).to(self.config.device)  # add jitter and return in standardized basis
-                #
-                # generated_samples_i = clean_cell_params(
-                #     generated_samples_i_d, real_data.sg_ind,
-                #     self.lattice_means, self.lattice_stds,
-                #     self.sym_info, self.supercell_builder.asym_unit_dict,
-                #     rescale_asymmetric_unit=False, destandardize=True, mode='hard')
-                #
-                # fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-                #     fake_data, generated_samples_i, self.config.supercell_size,
-                #     self.config.discriminator.graph_convolution_cutoff,
-                #     align_molecules=True,
-                #     target_handedness=real_data.asym_unit_handedness,
-                # )
+                    sampling_dict['distortion_size'][:, ii] = torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy()
+                    # end test
 
                 discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise=0)
                 h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind,

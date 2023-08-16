@@ -566,13 +566,14 @@ def clean_generator_output(samples, lattice_means, lattice_stds, destandardize=T
         real_mol_orientations = mol_orientations * 1
 
     if samples.shape[-1] == 15:
-        clean_mol_orientations = decode_to_sph_rotvec(real_mol_orientations)
+        theta, phi, r_i = decode_to_sph_rotvec(real_mol_orientations)
     elif samples.shape[-1] == 12:  # already have angles, no need to decode
         theta = enforce_1d_bound(real_mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4, mode=mode)[:, None]
         phi = enforce_1d_bound(real_mol_orientations[:, 1], x_span=torch.pi, x_center=0, mode=mode)[:, None]
         r_i = enforce_1d_bound(real_mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi, mode=mode)[:, None]
-        r = torch.maximum(r_i, torch.ones_like(r_i) * 0.01)  # must be nonzero
-        clean_mol_orientations = torch.cat((theta, phi, r), dim=-1)
+
+    r = torch.maximum(r_i, torch.ones_like(r_i) * 0.01)  # MUST be nonzero
+    clean_mol_orientations = torch.cat((theta, phi, r), dim=-1)
 
     '''enforce physical bounds'''
     if mode == 'soft':
@@ -683,10 +684,10 @@ def decode_to_sph_rotvec(mol_orientations):
     real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted [-pi,pi
     real_orientation_r = components2angle(mol_orientations[:, 4:6]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
 
-    clean_mol_orientations = torch.cat((
-        real_orientation_theta[:, None],
-        real_orientation_phi[:, None],
-        real_orientation_r[:, None]
-    ), dim=-1)
+    # clean_mol_orientations = torch.cat((
+    #     real_orientation_theta[:, None],
+    #     real_orientation_phi[:, None],
+    #     real_orientation_r[:, None]
+    # ), dim=-1)
 
-    return clean_mol_orientations
+    return real_orientation_theta[:,None], real_orientation_phi[:,None], real_orientation_r[:,None]
