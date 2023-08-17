@@ -35,10 +35,10 @@ class molecule_regressor(nn.Module):
             max_num_neighbors=config.regressor.max_num_neighbors,
             convolution_cutoff=config.regressor.graph_convolution_cutoff,
             device=config.device,
-            max_molecule_size = config.max_molecule_radius,
+            max_molecule_size=config.max_molecule_radius,
         )
         self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
 
     def forward(self, data, return_dists=False, return_latent=False):
-        data.x = data.x[:, :-self.crystal_features_to_ignore]  # leave out the trailing N features, which give information on the crystal lattice
+        data.x = data.x[:, :-self.crystal_features_to_ignore]  # leave out the trailing N features, which give information on the crystal lattice and packing coefficient
         return self.model(data, return_dists=return_dists, return_latent=return_latent)

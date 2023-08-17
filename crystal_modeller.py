@@ -26,7 +26,7 @@ from models.discriminator_models import crystal_discriminator
 from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
-                          check_convergence, save_checkpoint, set_lr, cell_vol_torch, init_optimizer)
+                          check_convergence, save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss)
 from models.utils import (compute_h_bond_score, get_vdw_penalty, generator_density_matching_loss, weight_reset, get_n_config)
 from models.vdw_overlap import vdw_overlap
 from models.crystal_rdf import crystal_rdf
@@ -58,7 +58,16 @@ class Modeller:
         '''get some physical constants'''
         self.atom_weights = ATOM_WEIGHTS
         self.vdw_radii = VDW_RADII
-        self.prep_symmetry_info()
+        self.sym_ops = SYM_OPS
+        self.point_groups = POINT_GROUPS
+        self.lattice_type = LATTICE_TYPE
+        self.space_groups = SPACE_GROUPS
+
+        self.sym_info = {  # collect space group info into single dict
+            'sym_ops': self.sym_ops,
+            'point_groups': self.point_groups,
+            'lattice_type': self.lattice_type,
+            'space_groups': self.space_groups}
 
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
@@ -67,7 +76,6 @@ class Modeller:
 
         if self.config.include_sgs is None:  # draw from all space groups we can parameterize
             self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]  # list(self.space_groups.values())
-
 
         '''prep workdir'''
         self.source_directory = os.getcwd()
@@ -91,48 +99,37 @@ class Modeller:
         self.train_generator = any((config.train_generator_vdw, config.train_generator_adversarially, config.train_generator_h_bond))
 
     def prep_symmetry_info(self):
-        '''
+        """
         if we don't have the symmetry dict prepared already, generate it
-        '''
-        # if True: #os.path.exists('symmetry_info.npy'):
-        # sym_info: dict = np.load('symmetry_info.npy', allow_pickle=True).item()
-        self.sym_ops = SYM_OPS  # sym_info['sym_ops']
-        self.point_groups = POINT_GROUPS
-        self.lattice_type = LATTICE_TYPE
-        self.space_groups = SPACE_GROUPS
+        DEPRECATED USAGE - LEFT IN TO DEMONSTRATE HOW TO GENERATE THESE DATA
+        """
+
+        from pyxtal import symmetry
+        print('Pre-generating spacegroup symmetries')
+        self.sym_ops = {}
+        self.point_groups = {}
+        self.lattice_type = {}
+        self.space_groups = {}
+        self.space_group_indices = {}
+        for i in tqdm.tqdm(range(1, 231)):
+            sym_group = symmetry.Group(i)
+            general_position_syms = sym_group.wyckoffs_organized[0][0]
+            self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
+                len(general_position_syms))]  # first 0 index is for general position, second index is
+            # superfluous, third index is the symmetry operation
+            self.point_groups[i] = sym_group.point_group
+            self.lattice_type[i] = sym_group.lattice_type
+            self.space_groups[i] = sym_group.symbol
+            self.space_group_indices[sym_group.symbol] = i
 
         self.sym_info = {
             'sym_ops': self.sym_ops,
             'point_groups': self.point_groups,
             'lattice_type': self.lattice_type,
-            'space_groups': self.space_groups}
-        # else: # generate spacegroup information dict - should no longer be necessary
-        #     from pyxtal import symmetry
-        #     print('Pre-generating spacegroup symmetries')
-        #     self.sym_ops = {}
-        #     self.point_groups = {}
-        #     self.lattice_type = {}
-        #     self.space_groups = {}
-        #     self.space_group_indices = {}
-        #     for i in tqdm.tqdm(range(1, 231)):
-        #         sym_group = symmetry.Group(i)
-        #         general_position_syms = sym_group.wyckoffs_organized[0][0]
-        #         self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
-        #             len(general_position_syms))]  # first 0 index is for general position, second index is
-        #         # superfluous, third index is the symmetry operation
-        #         self.point_groups[i] = sym_group.point_group
-        #         self.lattice_type[i] = sym_group.lattice_type
-        #         self.space_groups[i] = sym_group.symbol
-        #         self.space_group_indices[sym_group.symbol] = i
-        #
-        #     self.sym_info = {
-        #         'sym_ops': self.sym_ops,
-        #         'point_groups': self.point_groups,
-        #         'lattice_type': self.lattice_type,
-        #         'space_groups': self.space_groups,
-        #         'space_group_indices': self.space_group_indices}
-        #
-        #     np.save('symmetry_info', self.sym_info)
+            'space_groups': self.space_groups,
+            'space_group_indices': self.space_group_indices}
+
+        np.save('symmetry_info', self.sym_info)
 
     def prep_new_working_directory(self):
         if self.config.run_num == 0:
@@ -622,7 +619,7 @@ class Modeller:
             if self.config.regressor_positional_noise > 0:
                 data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
 
-            regression_losses_list, predictions, targets = self.regression_loss(regressor, data)
+            regression_losses_list, predictions, targets = get_regression_loss(regressor, data)
 
             stats_keys = ['regressor packing prediction', 'regressor packing target']
             stats_values = [predictions.cpu().detach().numpy(), targets.cpu().detach().numpy()]
@@ -1120,11 +1117,6 @@ class Modeller:
                 packing_target.cpu().detach().numpy(), \
                 vdw_penalty, dist_dict, \
                 supercell_data, similarity_penalty, h_bond_score
-
-    def regression_loss(self, regressor, data):
-        predictions = regressor(data.to(regressor.model.device))[:, 0]
-        targets = data.y
-        return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions, targets
 
     def misc_pre_training_items(self):
         """

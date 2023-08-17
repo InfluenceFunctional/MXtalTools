@@ -691,3 +691,9 @@ def decode_to_sph_rotvec(mol_orientations):
     # ), dim=-1)
 
     return real_orientation_theta[:,None], real_orientation_phi[:,None], real_orientation_r[:,None]
+
+
+def get_regression_loss(regressor, data):
+    predictions = regressor(data.to(regressor.model.device))[:, 0]
+    targets = data.y
+    return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions, targets
