@@ -3,7 +3,7 @@ machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 10411
+run_num: 10419
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
@@ -13,8 +13,8 @@ canonical_conformer_orientation: 'random' # 'standardized' 'random'
 packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
 train_generator_vdw: True
 train_generator_adversarially: False
-vdw_loss_func: mse  # null mse or log
-density_loss_func: mse  # l1 or mse
+vdw_loss_func: null  # null mse or log
+density_loss_func: l1  # l1 or mse
 generator_adversarial_loss_func: 'score'  # l1 or mse
 train_generator_h_bond: False # (non-directional)
 generator_similarity_penalty: 0

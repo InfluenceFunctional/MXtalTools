@@ -13,8 +13,8 @@ canonical_conformer_orientation: 'random' # 'standardized' 'random'
 packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
 train_generator_vdw: True
 train_generator_adversarially: False
-vdw_loss_func: mse  # null mse or log
-density_loss_func: mse  # l1 or mse
+vdw_loss_func: mse  # null 'mse' or 'log'
+density_loss_func: mse  # 'l1' or 'mse'
 generator_adversarial_loss_func: 'score'  # l1 or mse
 train_generator_h_bond: False # (non-directional)
 generator_similarity_penalty: 0
@@ -34,9 +34,9 @@ extra_test_set_paths: #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_
 extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 # for reloading pretrained models
-discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10351'
-generator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10382'
-regressor_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_10360'
+discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
+generator_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10382'
+regressor_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_10412'
 
 discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions
 generator_positional_noise: 0  # scaling for the randn noise added to all atom positions
@@ -63,20 +63,20 @@ grow_batch_size: True
 min_batch_size: 10
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 0 # 0 epochs takes us straight to evaluation (only implemented for GAN)
+max_epochs: 10000 # 0 epochs takes us straight to evaluation (only implemented for GAN)
 history: 5000
 gradient_norm_clip: 1
 
 # dataset curation
 rotation_basis: "spherical" # "spherical" for rotvec in spherical coordinates, "cartesian" for rotvec in cartesian coordinates DEPRECATED
 target: packing # "packing" only supported
-dataset_length: 100
+dataset_length: 1000000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
 max_num_atoms: 100
-min_num_atoms: 4 # target XVI has only 9 heavy atoms
-max_molecule_radius: 10 # angstroms
+min_num_atoms: 5 # target XVI has only 9 heavy atoms
+max_molecule_radius: 5 # angstroms
 max_z_value: 18
 min_z_value: 0
 max_z_prime: 1
@@ -88,11 +88,11 @@ include_organometallic: True
 max_atomic_number: 100
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
-exclude_polymorphs: True
+exclude_polymorphs: False
 exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null # ['monoclinic','triclinic','orthorhombic']  #['hexagonal','trigonal','rhombohedral']
-exclude_blind_test_targets: True
-include_sgs: ["P-1"] # ["P-1","P21/c","P212121","C2/c"]  # space groups to be included in the dataset. null for all
+exclude_blind_test_targets: False
+include_sgs: null # ["P-1","P21/c","P212121","C2/c"]  # space groups to be included in the dataset. null for all
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
 generate_sgs: ["P21/c"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5 # should be very large, then automatically pares down

@@ -688,19 +688,12 @@ class Modeller:
         rand_batch_ind = np.random.randint(0, len(data_loader))
 
         for i, data in enumerate(tqdm.tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+            data = data.to(self.config.device)
+
             '''
             train discriminator
             '''
-            data = data.to(self.config.device)
-
-            # hold discriminator training when it's beating the generator
-            skip_discriminator_step = False
-            if (i == 0) and self.config.train_generator_adversarially:
-                skip_discriminator_step = True  # do not train except by express permission of the below condition
-            if i > 0 and self.config.train_discriminator_adversarially:  # must skip first step since there will be no fake score to compare against
-                avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
-                if avg_generator_score < 0.5:
-                    skip_discriminator_step = True
+            skip_discriminator_step = self.decide_whether_to_skip_discriminator(i, epoch_stats_dict)
 
             discriminator_err, discriminator_loss_record, epoch_stats_dict = \
                 self.discriminator_step(discriminator, generator, epoch_stats_dict, data,
@@ -753,6 +746,18 @@ class Modeller:
             return [np.mean(discriminator_err), np.mean(generator_err)], [discriminator_loss_record, generator_loss_record], epoch_stats_dict, total_time
         else:
             return [np.mean(discriminator_err), np.mean(generator_err)], [discriminator_loss_record, generator_loss_record], total_time
+
+    def decide_whether_to_skip_discriminator(self, i, epoch_stats_dict):
+        # hold discriminator training when it's beating the generator
+
+        skip_discriminator_step = False
+        if (i == 0) and self.config.train_generator_adversarially:
+            skip_discriminator_step = True  # do not train except by express permission of the below condition
+        if i > 0 and self.config.train_discriminator_adversarially:  # must skip first step since there will be no fake score to compare against
+            avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
+            if avg_generator_score < 0.5:
+                skip_discriminator_step = True
+        return skip_discriminator_step
 
     def discriminator_evaluation(self, data_loader=None, discriminator=None, iteration_override=None):  # todo write generator evaluation
         t0 = time.time()
@@ -960,38 +965,44 @@ class Modeller:
 
         return generator_err, generator_loss_record, epoch_stats_dict
 
-    def get_discriminator_losses(self, discriminator, generator, real_data, i, epoch_stats_dict, regressor):
-        # generate fakes & create supercell data
-        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
+    def get_discriminator_losses(self, discriminator, generator, data, i, epoch_stats_dict, regressor):
+        """
+        generate real and fake crystals
+        and score them
+        """
 
-        generated_samples_i, epoch_stats_dict, negative_type, real_data = \
-            self.generate_discriminator_negatives(epoch_stats_dict, real_data, generator, i, regressor)
+        '''get real supercells'''
+        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(data, self.config.supercell_size, self.config.discriminator.graph_convolution_cutoff)
+
+        '''get fake supercells'''
+        generated_samples_i, epoch_stats_dict, negative_type, generator_data = \
+            self.generate_discriminator_negatives(epoch_stats_dict, data, generator, i, regressor)
 
         fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
-            real_data, generated_samples_i, self.config.supercell_size,
+            generator_data, generated_samples_i, self.config.supercell_size,
             self.config.discriminator.graph_convolution_cutoff,
             align_molecules=(negative_type != 'generated'),
-            target_handedness=real_data.asym_unit_handedness,
+            target_handedness=generator_data.asym_unit_handedness,
         )
 
+        '''apply noise'''
         if self.config.discriminator_positional_noise > 0:
             real_supercell_data.pos += \
                 torch.randn_like(real_supercell_data.pos) * self.config.discriminator_positional_noise
             fake_supercell_data.pos += \
                 torch.randn_like(fake_supercell_data.pos) * self.config.discriminator_positional_noise
 
+        '''score'''
         score_on_real, real_distances_dict, real_latent = self.adversarial_score(discriminator, real_supercell_data, return_latent=True)
         score_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(discriminator, fake_supercell_data, return_latent=True)
 
-        # todo assign z values properly in cell construction
+        '''recompute packing coeffs'''
         real_packing_coeffs = compute_packing_coefficient(cell_params=real_supercell_data.cell_params,
                                                           mol_volumes=real_supercell_data.tracking[:, self.tracking_mol_volume_ind],
-                                                          z_values=torch.tensor([len(real_supercell_data.ref_cell_pos[ii]) for ii in range(real_supercell_data.num_graphs)],
-                                                                                dtype=torch.float64, device=real_supercell_data.x.device))
+                                                          z_values=real_supercell_data.Z)
         fake_packing_coeffs = compute_packing_coefficient(cell_params=fake_supercell_data.cell_params,
                                                           mol_volumes=fake_supercell_data.tracking[:, self.tracking_mol_volume_ind],
-                                                          z_values=torch.tensor([len(fake_supercell_data.ref_cell_pos[ii]) for ii in range(fake_supercell_data.num_graphs)],
-                                                                                dtype=torch.float64, device=fake_supercell_data.x.device))
+                                                          z_values=fake_supercell_data.Z)
 
         return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), \
             real_distances_dict, fake_pairwise_distances_dict, \
@@ -1077,12 +1088,12 @@ class Modeller:
             build supercells
             '''
 
-            generated_samples, prior, standardized_target_packing, sample_data = (
+            generated_samples, prior, standardized_target_packing, generator_data = (
                 self.get_generator_samples(data, generator, regressor))
 
             supercell_data, generated_cell_volumes, _ = (
                 self.supercell_builder.build_supercells(
-                    data, generated_samples, self.config.supercell_size,
+                    generator_data, generated_samples, self.config.supercell_size,
                     self.config.discriminator.graph_convolution_cutoff,
                     align_molecules=False
                 ))
@@ -1092,8 +1103,8 @@ class Modeller:
             h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind, self.tracking_num_acceptors_ind, self.tracking_num_donors_ind, supercell_data)
             vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii,
                                                               dist_dict=dist_dict,
-                                                              num_graphs=data.num_graphs,
-                                                              mol_sizes=data.mol_size,
+                                                              num_graphs=generator_data.num_graphs,
+                                                              mol_sizes=generator_data.mol_size,
                                                               loss_func=self.config.vdw_loss_func)
 
             packing_loss, packing_prediction, packing_target, packing_csd = \
@@ -1198,72 +1209,99 @@ class Modeller:
 
         return dataset_builder
 
-    def generate_discriminator_negatives(self, epoch_stats_dict, real_data, generator, i, regressor, override_adversarial=False, override_randn=False, override_distorted=False):
+    def what_generators_to_use(self, override_randn, override_distorted, override_adversarial):
+        n_generators = sum((self.config.train_discriminator_on_randn or override_randn,
+                                 self.config.train_discriminator_on_distorted or override_distorted,
+                                 self.config.train_discriminator_adversarially or override_adversarial))
+
+        gen_randint = np.random.randint(0, n_generators, 1)
+
+        generator_ind_list = []
+        if self.config.train_discriminator_adversarially or override_adversarial:
+            generator_ind_list.append(1)
+        if self.config.train_discriminator_on_randn or override_randn:
+            generator_ind_list.append(2)
+        if self.config.train_discriminator_on_distorted or override_distorted:
+            generator_ind_list.append(3)
+
+        generator_ind = generator_ind_list[int(gen_randint)]  # randomly select which generator to use from the available set
+
+        return n_generators, generator_ind
+
+    def generate_discriminator_negatives(self, epoch_stats_dict, real_data, generator, i, regressor,
+                                         override_adversarial=False, override_randn=False, override_distorted=False):
         """
         use one of the available cell generation tools to sample cell parameters, to be fed to the discriminator
         @param epoch_stats_dict:
         @param real_data:
         @param generator:
+        @param regressor:
         @param i:
         @return:
         """
+        n_generators, generator_ind = self.what_generators_to_use(override_randn, override_distorted, override_adversarial)
 
-        self.n_generators = sum((self.config.train_discriminator_on_randn or override_randn,
-                                 self.config.train_discriminator_on_distorted or override_distorted,
-                                 self.config.train_discriminator_adversarially or override_adversarial))
-
-        gen_randint = np.random.randint(0, self.n_generators, 1)
-
-        self.generator_ind_list = []
-        if self.config.train_discriminator_adversarially or override_adversarial:
-            self.generator_ind_list.append(1)
-        if self.config.train_discriminator_on_randn or override_randn:
-            self.generator_ind_list.append(2)
-        if self.config.train_discriminator_on_distorted or override_distorted:
-            self.generator_ind_list.append(3)
-
-        generator_ind = self.generator_ind_list[int(gen_randint)]  # randomly select which generator to use from the available set
-
-        if self.config.train_discriminator_adversarially or override_adversarial:
-            if generator_ind == 1:  # randomly sample which generator to use at each iteration
-                negative_type = 'generator'
-                with torch.no_grad():
-                    generated_samples_i, _, _, real_data = self.get_generator_samples(real_data, generator, regressor)
-                    epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
-                                                         np.zeros(len(generated_samples_i)), mode='extend')
-
-        if self.config.train_discriminator_on_randn or override_randn:
-            if generator_ind == 2:
-                negative_type = 'randn'
-                generated_samples_i = self.gaussian_generator.forward(real_data.num_graphs, real_data).to(self.config.device)
-                epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
-                                                     np.ones(len(generated_samples_i)), mode='extend')
-
-        if self.config.train_discriminator_on_distorted or override_distorted:
-            if generator_ind == 3:
-                negative_type = 'distorted'
-
-                generated_samples_ii = (real_data.cell_params - self.lattice_means) / self.lattice_stds
-
-                if self.config.sample_distortion_magnitude == -1:
-                    distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-.5, 0.5, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range
-                else:
-                    distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
-
-                generated_samples_i_d = (generated_samples_ii + distortion).to(self.config.device)  # add jitter and return in standardized basis
-                generated_samples_i = clean_cell_params(
-                    generated_samples_i_d, real_data.sg_ind,
-                    self.lattice_means, self.lattice_stds,
-                    self.sym_info, self.supercell_builder.asym_unit_dict,
-                    rescale_asymmetric_unit=False, destandardize=True, mode='hard')
+        if (self.config.train_discriminator_adversarially or override_adversarial) and (generator_ind == 1):
+            negative_type = 'generator'
+            with torch.no_grad():
+                generated_samples, _, _, generator_data = self.get_generator_samples(real_data, generator, regressor)
 
                 epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
-                                                     np.ones(len(generated_samples_i)) * 2, mode='extend')
-                epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'distortion level',
-                                                     torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy(),
-                                                     mode='extend')
+                                                     np.zeros(len(generated_samples)), mode='extend')
 
-        return generated_samples_i.float().detach(), epoch_stats_dict, negative_type, real_data
+        elif (self.config.train_discriminator_on_randn or override_randn) and (generator_ind == 2):
+            generator_data = real_data  # no change to original
+            negative_type = 'randn'
+
+            generated_samples = self.gaussian_generator.forward(real_data.num_graphs, real_data).to(self.config.device)
+
+            epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
+                                                 np.ones(len(generated_samples)), mode='extend')
+
+        elif (self.config.train_discriminator_on_distorted or override_distorted) and (generator_ind == 3):
+            generator_data = real_data  # no change to original
+            negative_type = 'distorted'
+
+            generated_samples, distortion = self.make_distorted_samples(real_data)
+
+            epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'generator sample source',
+                                                 np.ones(len(generated_samples)) * 2, mode='extend')
+            epoch_stats_dict = update_stats_dict(epoch_stats_dict, 'distortion level',
+                                                 torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy(),
+                                                 mode='extend')
+        else:
+            print("No Generators set to make discriminator negatives!")
+            assert False
+
+        return generated_samples.float().detach(), epoch_stats_dict, negative_type, generator_data
+
+    def make_distorted_samples(self, real_data, distortion_override = None):
+        """
+        given some cell params
+        standardize them
+        add noise in the standarized basis
+        destandardize
+        make sure samples are appropriately cleaned
+        """
+        generated_samples_std = (real_data.cell_params - self.lattice_means) / self.lattice_stds
+
+        if distortion_override is not None:
+            distortion = torch.randn_like(generated_samples_std) * distortion_override
+        else:
+            if self.config.sample_distortion_magnitude == -1:
+                distortion = torch.randn_like(generated_samples_std) * torch.logspace(-.5, 0.5, len(generated_samples_std)).to(generated_samples_std.device)[:, None]  # wider range
+            else:
+                distortion = torch.randn_like(generated_samples_std) * self.config.sample_distortion_magnitude
+
+        distorted_samples_std = (generated_samples_std + distortion).to(self.config.device)  # add jitter and return in standardized basis
+
+        distorted_samples_clean = clean_cell_params(
+            distorted_samples_std, real_data.sg_ind,
+            self.lattice_means, self.lattice_stds,
+            self.sym_info, self.supercell_builder.asym_unit_dict,
+            rescale_asymmetric_unit=False, destandardize=True, mode='hard')
+
+        return distorted_samples_clean, distortion
 
     def nov_22_figures(self):
         """
@@ -1722,7 +1760,6 @@ class Modeller:
                         cell_vol_torch(fake_supercell_data.cell_params[i, 0:3], fake_supercell_data.cell_params[i, 3:6]))
                 volumes = torch.stack(volumes_list)
 
-                # todo possible issue here with division by two - make sure Z assignment is consistent throughout
                 fake_packing_coeffs = fake_supercell_data.Z * fake_supercell_data.tracking[:, self.tracking_mol_volume_ind] / volumes
 
                 sampling_dict['score'][:, ii] = softmax_and_score(discriminator_score).cpu().detach().numpy()

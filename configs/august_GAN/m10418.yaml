@@ -3,7 +3,7 @@ machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 10411
+run_num: 10418
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
@@ -13,8 +13,8 @@ canonical_conformer_orientation: 'random' # 'standardized' 'random'
 packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
 train_generator_vdw: True
 train_generator_adversarially: False
-vdw_loss_func: mse  # null mse or log
-density_loss_func: mse  # l1 or mse
+vdw_loss_func: null  # null mse or log
+density_loss_func: l1  # l1 or mse
 generator_adversarial_loss_func: 'score'  # l1 or mse
 train_generator_h_bond: False # (non-directional)
 generator_similarity_penalty: 0
@@ -94,7 +94,7 @@ exclude_crystal_systems: null # ['monoclinic','triclinic','orthorhombic']  #['he
 exclude_blind_test_targets: False
 include_sgs: null # ["P-1","P21/c","P212121","C2/c"]  # space groups to be included in the dataset. null for all
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: ["P21/c", "P-1", "P212121", "C2/c"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: ["P21/c", "P-1"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5 # should be very large, then automatically pares down
 
 # discriminator optimizer and model
