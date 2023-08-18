@@ -27,7 +27,7 @@ from models.generator_models import crystal_generator, independent_gaussian_mode
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
                           check_convergence, save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss)
-from models.utils import (compute_h_bond_score, get_vdw_penalty, generator_density_matching_loss, weight_reset, get_n_config)
+from models.utils import (compute_h_bond_score, generator_density_matching_loss, weight_reset, get_n_config)
 from models.vdw_overlap import vdw_overlap
 from models.crystal_rdf import crystal_rdf
 
@@ -40,9 +40,10 @@ from dataset_management.manager import DataManager
 from dataset_management.utils import (DatasetBuilder, get_dataloaders, update_dataloader_batch_size, get_extra_test_loader)
 
 from reporting.online import (detailed_reporting)
-from csp.utils import log_best_mini_csp_samples
+from csp.utils import log_best_mini_csp_samples, log_csp_summary_stats
 from reporting.csp.utils import log_mini_csp_scores_distributions
 from common.utils import (update_stats_dict, np_softmax)
+from torch_geometric.loader.dataloader import Collater
 
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
@@ -520,7 +521,7 @@ class Modeller:
                         '''sometimes test the generator on a mini CSP problem'''
                         if (self.config.mode == 'gan') and (epoch % self.config.wandb.mini_csp_frequency == 0) and \
                                 self.train_generator and (epoch > 0):
-                            self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator, regressor if self.config.regressor_path else None)
+                            self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator, regressor if self.config.regressor_path else None)
 
                         '''save checkpoints'''
                         self.model_checkpointing(epoch, self.config, discriminator, generator, regressor,
@@ -761,7 +762,10 @@ class Modeller:
             epoch_stats_dict['scores'].extend(score_on_real.cpu().detach().numpy())
 
             epoch_stats_dict['vdw penalty'].extend(
-                vdw_overlap(real_supercell_data, self.vdw_radii).cpu().detach().numpy())
+                -vdw_overlap(self.vdw_radii,
+                             crystaldata=real_supercell_data,
+                             return_score_only=True
+                             ).cpu().detach().numpy())
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -789,7 +793,7 @@ class Modeller:
     def log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
                      discriminator_tr_record, discriminator_te_record, generator_tr_record, generator_te_record,
                      regressor_tr_record, regressor_te_record):
-
+        # todo clean up this function
         current_metrics = {}
         for key in metrics_dict.keys():
             current_metrics[key] = float(metrics_dict[key][-1])
@@ -802,8 +806,7 @@ class Modeller:
                 current_metrics['best ' + key] = np.amax(metrics_dict[key])
 
         for key in current_metrics.keys():
-            current_metrics[key] = np.amax(
-                current_metrics[key])  # just a formatting thing - nothing to do with the max of anything
+            current_metrics[key] = np.amax(current_metrics[key])  # just a formatting thing - nothing to do with the max of anything
         wandb.log(current_metrics)
 
         # log discriminator losses
@@ -845,16 +848,22 @@ class Modeller:
                 if ('loss' in key) and (train_epoch_stats_dict[key] is not None):
                     special_losses['Train ' + key] = np.average(train_epoch_stats_dict[key])
                 if ('score' in key) and (train_epoch_stats_dict[key] is not None):
-                    score = softmax_and_score(train_epoch_stats_dict[key])
-                    special_losses['Train ' + key] = np.average(score)
+                    if 'vdw' not in key:
+                        score = softmax_and_score(test_epoch_stats_dict[key])
+                        special_losses['Test ' + key] = np.average(score)
+                    else:
+                        special_losses['Test ' + key] = np.average(train_epoch_stats_dict[key])
 
         if test_epoch_stats_dict is not None:
             for key in test_epoch_stats_dict.keys():
                 if ('loss' in key) and (test_epoch_stats_dict[key] is not None):
                     special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
                 if ('score' in key) and (test_epoch_stats_dict[key] is not None):
-                    score = softmax_and_score(test_epoch_stats_dict[key])
-                    special_losses['Test ' + key] = np.average(score)
+                    if 'vdw' not in key:
+                        score = softmax_and_score(test_epoch_stats_dict[key])
+                        special_losses['Test ' + key] = np.average(score)
+                    else:
+                        special_losses['Test ' + key] = np.average(test_epoch_stats_dict[key])
 
         wandb.log(special_losses)
 
@@ -886,7 +895,7 @@ class Modeller:
                           'generated cell parameters', 'final generated cell parameters',
                           'real packing coefficients', 'generated packing coefficients']
             stats_values = [score_on_real.cpu().detach().numpy(), score_on_fake.cpu().detach().numpy(),
-                            real_vdw_score.cpu().detach().numpy(), fake_vdw_score.cpu().detach().numpy(),
+                            -real_vdw_score.cpu().detach().numpy(), -fake_vdw_score.cpu().detach().numpy(),
                             generated_samples_i.cpu().detach().numpy(), generated_samples,
                             real_packing_coeffs.cpu().detach().numpy(), fake_packing_coeffs.cpu().detach().numpy()]
             epoch_stats_dict = update_stats_dict(epoch_stats_dict, stats_keys, stats_values, mode='extend')
@@ -902,12 +911,13 @@ class Modeller:
                        generator_err, generator_loss_record, rand_batch_ind, last_batch, regressor):
         if self.train_generator:
             discriminator_raw_output, generated_samples, packing_loss, packing_prediction, packing_target, \
-                vdw_loss, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score = \
+                vdw_loss, vdw_score, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score = \
                 self.get_generator_losses(generator, discriminator, data, i, regressor)
 
             generator_losses, epoch_stats_dict = self.aggregate_generator_losses(
                 epoch_stats_dict, packing_loss, discriminator_raw_output,
-                vdw_loss, similarity_penalty, packing_prediction, packing_target, h_bond_score)
+                vdw_loss, vdw_score,
+                similarity_penalty, packing_prediction, packing_target, h_bond_score)
 
             generator_loss = generator_losses.mean()
             generator_err.append(generator_loss.data.cpu().detach().numpy())  # average loss
@@ -974,8 +984,8 @@ class Modeller:
 
         return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), \
             real_distances_dict, fake_pairwise_distances_dict, \
-            vdw_overlap(self.vdw_radii, crystaldata=real_supercell_data), \
-            vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data), \
+            vdw_overlap(self.vdw_radii, crystaldata=real_supercell_data, return_score_only=True), \
+            vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data, return_score_only=True), \
             real_packing_coeffs, fake_packing_coeffs, \
             generated_samples_i
 
@@ -1051,43 +1061,44 @@ class Modeller:
         train the generator
         """
 
-        if self.train_generator:
-            '''
-            build supercells
-            '''
+        '''
+        build supercells
+        '''
 
-            generated_samples, prior, standardized_target_packing, generator_data = (
-                self.get_generator_samples(data, generator, regressor))
+        generated_samples, prior, standardized_target_packing, generator_data = (
+            self.get_generator_samples(data, generator, regressor))
 
-            supercell_data, generated_cell_volumes, _ = (
-                self.supercell_builder.build_supercells(
-                    generator_data, generated_samples, self.config.supercell_size,
-                    self.config.discriminator.graph_convolution_cutoff,
-                    align_molecules=False
-                ))
+        supercell_data, generated_cell_volumes, _ = (
+            self.supercell_builder.build_supercells(
+                generator_data, generated_samples, self.config.supercell_size,
+                self.config.discriminator.graph_convolution_cutoff,
+                align_molecules=False
+            ))
 
-            similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
-            discriminator_raw_output, dist_dict = self.score_adversarially(supercell_data, discriminator)
-            h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind, self.tracking_num_acceptors_ind, self.tracking_num_donors_ind, supercell_data)
-            vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii,
-                                                              dist_dict=dist_dict,
-                                                              num_graphs=generator_data.num_graphs,
-                                                              mol_sizes=generator_data.mol_size,
-                                                              loss_func=self.config.vdw_loss_func)
+        similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
+        discriminator_raw_output, dist_dict = self.score_adversarially(supercell_data, discriminator)
+        h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind,
+                                            self.tracking_atom_donor_ind, self.tracking_num_acceptors_ind,
+                                            self.tracking_num_donors_ind, supercell_data)
+        vdw_loss, vdw_score, _, _ = vdw_overlap(self.vdw_radii,
+                                                dist_dict=dist_dict,
+                                                num_graphs=generator_data.num_graphs,
+                                                graph_sizes=generator_data.mol_size,
+                                                loss_func=self.config.vdw_loss_func)
 
-            packing_loss, packing_prediction, packing_target, packing_csd = \
-                generator_density_matching_loss(
-                    standardized_target_packing, self.config.dataDims['target mean'], self.config.dataDims['target std'],
-                    self.tracking_mol_volume_ind,
-                    self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
-                    supercell_data, generated_samples,
-                    precomputed_volumes=generated_cell_volumes, loss_func=self.config.density_loss_func)
+        packing_loss, packing_prediction, packing_target, packing_csd = \
+            generator_density_matching_loss(
+                standardized_target_packing, self.config.dataDims['target mean'], self.config.dataDims['target std'],
+                self.tracking_mol_volume_ind,
+                self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
+                supercell_data, generated_samples,
+                precomputed_volumes=generated_cell_volumes, loss_func=self.config.density_loss_func)
 
-            return discriminator_raw_output, generated_samples.cpu().detach().numpy(), \
-                packing_loss, packing_prediction.cpu().detach().numpy(), \
-                packing_target.cpu().detach().numpy(), \
-                vdw_penalty, dist_dict, \
-                supercell_data, similarity_penalty, h_bond_score
+        return discriminator_raw_output, generated_samples.cpu().detach().numpy(), \
+            packing_loss, packing_prediction.cpu().detach().numpy(), \
+            packing_target.cpu().detach().numpy(), \
+            vdw_loss, vdw_score, dist_dict, \
+            supercell_data, similarity_penalty, h_bond_score
 
     def misc_pre_training_items(self):
         """
@@ -1101,7 +1112,7 @@ class Modeller:
         """
         std_dataDims_path = self.source_directory + r'/dataset_management/standard_dataDims.npy'
         if os.path.exists(std_dataDims_path):
-            standard_dataDims = np.load(std_dataDims_path,allow_pickle=True).item()  # maintain constant standardizations between runs
+            standard_dataDims = np.load(std_dataDims_path, allow_pickle=True).item()  # maintain constant standardizations between runs
             print("Loading premade standardization")
         else:
             print("Premade Standardization Missing!")
@@ -1117,7 +1128,8 @@ class Modeller:
 
         del self.prep_dataset  # we don't actually want this huge thing floating around
         self.config.dataDims = dataset_builder.get_dimension()
-        if False:  #standard_dataDims is None:  # set a standard if we don't have one
+
+        if False:  # set a standard if we don't have one
             np.save(self.source_directory + r'/dataset_management/standard_dataDims', self.config.dataDims)
 
         '''init lattice mean & std'''
@@ -1175,8 +1187,8 @@ class Modeller:
 
     def what_generators_to_use(self, override_randn, override_distorted, override_adversarial):
         n_generators = sum((self.config.train_discriminator_on_randn or override_randn,
-                                 self.config.train_discriminator_on_distorted or override_distorted,
-                                 self.config.train_discriminator_adversarially or override_adversarial))
+                            self.config.train_discriminator_on_distorted or override_distorted,
+                            self.config.train_discriminator_adversarially or override_adversarial))
 
         gen_randint = np.random.randint(0, n_generators, 1)
 
@@ -1239,7 +1251,7 @@ class Modeller:
 
         return generated_samples.float().detach(), epoch_stats_dict, negative_type, generator_data
 
-    def make_distorted_samples(self, real_data, distortion_override = None):
+    def make_distorted_samples(self, real_data, distortion_override=None):
         """
         given some cell params
         standardize them
@@ -1430,7 +1442,7 @@ class Modeller:
 
             # sometimes test the generator on a mini CSP problem
             if (self.config.mode == 'gan') and self.train_generator:
-                self.mini_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator)
+                self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader, generator, discriminator)
 
             if extra_test_loader is not None:
                 # extra_test_epoch_stats_dict = np.load('C:/Users\mikem\crystals\CSP_runs/1513_extra_test_dict.npy',allow_pickle=True).item()  # we already have it
@@ -1507,7 +1519,7 @@ class Modeller:
 
         return discriminator_score, dist_dict
 
-    def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, discriminator_raw_output, vdw_loss,
+    def aggregate_generator_losses(self, epoch_stats_dict, packing_loss, discriminator_raw_output, vdw_loss, vdw_score,
                                    similarity_penalty, packing_prediction, packing_target, h_bond_score):
         generator_losses_list = []
         stats_keys, stats_values = [], []
@@ -1543,17 +1555,11 @@ class Modeller:
                 generator_losses_list.append(adversarial_loss)
 
         if vdw_loss is not None:
-            stats_keys += ['generator per mol vdw loss']
+            stats_keys += ['generator per mol vdw loss', 'generator per mol vdw score']
             stats_values += [vdw_loss.cpu().detach().numpy()]
+            stats_values += [vdw_score.cpu().detach().numpy()]
 
             if self.config.train_generator_vdw:
-                # if self.config.vdw_loss_func == 'log':
-                #     vdw_loss_f = torch.log(1 + vdw_loss)  # soft rescaling to be gentler on outliers
-                # elif self.config.vdw_loss_func is None:
-                #     vdw_loss_f = vdw_loss
-                # elif self.config.vdw_loss_func == 'mse':
-                #     vdw_loss_f = vdw_loss ** 2
-
                 generator_losses_list.append(vdw_loss)
 
         if h_bond_score is not None:
@@ -1612,19 +1618,22 @@ class Modeller:
 
         return config
 
-    def mini_csp(self, data_loader, generator, discriminator, regressor=None):
+    def batch_csp(self, data_loader, generator, discriminator, regressor=None):
         print('Starting Mini CSP')
         generator.eval()
         discriminator.eval()
-        real_data = next(iter(data_loader)).clone().detach().to(self.config.device)
+        # real_data = next(iter(data_loader)).clone().detach().to(self.config.device)  # large batches are slow with no added benefit
 
-        rdf_bins = 100
-        rdf_range = [0, 10]
+        collater = Collater(None, None)
+        real_data = collater(data_loader.dataset[0:min(50, len(data_loader.dataset))]).to(self.config.device)  # take a fixed number of samples
+
+        rdf_bins, rdf_range = 100, [0, 10]
 
         real_samples_dict = self.analyze_real_crystals(real_data, discriminator, rdf_bins, rdf_range)
         generated_samples_dict = self.generate_mini_csp_samples(real_data, generator, discriminator, regressor)
 
-        log_mini_csp_scores_distributions(self.config, wandb, generated_samples_dict, real_samples_dict, real_data)
+        log_mini_csp_scores_distributions(self.config, wandb, generated_samples_dict, real_samples_dict, real_data, self.sym_info)
+        log_csp_summary_stats(wandb, generated_samples_dict, real_samples_dict, self.sym_info)
         log_best_mini_csp_samples(self.config, wandb, discriminator, generated_samples_dict, real_samples_dict, real_data,
                                   self.supercell_builder, self.tracking_mol_volume_ind, self.sym_info, self.vdw_radii)
 
@@ -1635,8 +1644,11 @@ class Modeller:
 
         discriminator_score, dist_dict = self.score_adversarially(real_supercell_data.clone(), discriminator)
         h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind, self.tracking_num_acceptors_ind, self.tracking_num_donors_ind, real_supercell_data)
-        vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, real_data.num_graphs, real_data.mol_size,
-                                                          loss_func=None)
+        _, vdw_score, _, _ = vdw_overlap(self.vdw_radii,
+                                         dist_dict=dist_dict,
+                                         num_graphs=real_data.num_graphs,
+                                         graph_sizes=real_data.mol_size)
+
         real_rdf, rr, atom_inds = crystal_rdf(real_supercell_data, rrange=rdf_range,
                                               bins=rdf_bins, mode='intermolecular',
                                               raw_density=True, atomwise=True, cpu_detach=True)
@@ -1648,7 +1660,7 @@ class Modeller:
         real_packing_coeffs = real_data.Z * real_data.tracking[:, self.tracking_mol_volume_ind] / volumes
 
         real_samples_dict = {'score': softmax_and_score(discriminator_score).cpu().detach().numpy(),
-                             'vdw overlap': vdw_penalty.cpu().detach().numpy(),
+                             'vdw overlap': -vdw_score.cpu().detach().numpy(),
                              'density': real_packing_coeffs.cpu().detach().numpy(),
                              'h bond score': h_bond_score.cpu().detach().numpy(),
                              'cell params': real_data.cell_params.cpu().detach().numpy(),
@@ -1716,8 +1728,11 @@ class Modeller:
                 discriminator_score, dist_dict = self.score_adversarially(fake_supercell_data.clone(), discriminator, discriminator_noise=0)
                 h_bond_score = compute_h_bond_score(self.config.feature_richness, self.tracking_atom_acceptor_ind, self.tracking_atom_donor_ind,
                                                     self.tracking_num_acceptors_ind, self.tracking_num_donors_ind, fake_supercell_data)
-                vdw_penalty, normed_vdw_penalty = get_vdw_penalty(self.vdw_radii, dist_dict, fake_data.num_graphs, fake_data.mol_size,
-                                                                  loss_func=None)
+                vdw_score = vdw_overlap(self.vdw_radii,
+                                        dist_dict=dist_dict,
+                                        num_graphs=fake_data.num_graphs,
+                                        graph_sizes=fake_data.mol_size,
+                                        return_score_only=True)
 
                 volumes_list = []
                 for i in range(fake_data.num_graphs):
@@ -1728,7 +1743,7 @@ class Modeller:
                 fake_packing_coeffs = fake_supercell_data.Z * fake_supercell_data.tracking[:, self.tracking_mol_volume_ind] / volumes
 
                 sampling_dict['score'][:, ii] = softmax_and_score(discriminator_score).cpu().detach().numpy()
-                sampling_dict['vdw overlap'][:, ii] = vdw_penalty.cpu().detach().numpy()
+                sampling_dict['vdw overlap'][:, ii] = -vdw_score.cpu().detach().numpy()
                 sampling_dict['density'][:, ii] = fake_packing_coeffs.cpu().detach().numpy()
                 sampling_dict['h bond score'][:, ii] = h_bond_score.cpu().detach().numpy()
                 sampling_dict['cell params'][:, ii, :] = fake_supercell_data.cell_params.cpu().detach().numpy()

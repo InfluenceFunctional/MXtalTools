@@ -181,16 +181,21 @@ def process_discriminator_outputs(config, epoch_stats_dict):
 
 
 def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout):
-    plot_color_dict = {}
-    plot_color_dict['CSD'] = ('rgb(250,150,50)')  # test
-    plot_color_dict['Generator'] = ('rgb(100,50,0)')  # test
-    plot_color_dict['Gaussian'] = ('rgb(0,50,0)')  # fake csd
-    plot_color_dict['Distorted'] = ('rgb(0,100,100)')  # fake distortion
+    plot_color_dict = {'CSD': ('rgb(250,150,50)'),
+                       'Generator': ('rgb(100,50,0)'),
+                       'Gaussian': ('rgb(0,50,0)'),
+                       'Distorted': ('rgb(0,100,100)')}
 
-    scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
+    all_vdws = np.concatenate((vdw_penalty_dict['CSD'], vdw_penalty_dict['Gaussian'], vdw_penalty_dict['Distorted'],
+                               vdw_penalty_dict['Generator']))
+    all_scores_i = np.concatenate(
+        (scores_dict['CSD'], scores_dict['Gaussian'], scores_dict['Distorted'], scores_dict['Generator']))
+
+    scores_range = np.ptp(all_scores_i)
     bandwidth1 = scores_range / 200
 
-    bandwidth2 = 15 / 200
+    vdw_cutoff = np.quantile(all_vdws, 0.975)
+    bandwidth2 = vdw_cutoff / 200
     viridis = px.colors.sequential.Viridis
 
     scores_labels = ['CSD', 'Gaussian', 'Distorted', 'Generator']
@@ -203,23 +208,21 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
                                 side='positive', orientation='h', width=4,
                                 meanline_visible=True, bandwidth=bandwidth1, points=False),
                       row=1, col=1)
-        fig.add_trace(go.Violin(x=-np.log10(vdw_penalty_dict[label] + 1e-3), name=legend_label,
+        fig.add_trace(go.Violin(x=-np.minimum(vdw_penalty_dict[label], vdw_cutoff), name=legend_label,
                                 line_color=plot_color_dict[label],
                                 side='positive', orientation='h', width=4, meanline_visible=True,
                                 bandwidth=bandwidth2, points=False),
                       row=1, col=2)
 
-    all_vdws = np.concatenate((vdw_penalty_dict['CSD'], vdw_penalty_dict['Gaussian'], vdw_penalty_dict['Distorted'],
-                               vdw_penalty_dict['Generator']))
-    all_scores_i = np.concatenate(
-        (scores_dict['CSD'], scores_dict['Gaussian'], scores_dict['Distorted'], scores_dict['Generator']))
+    #fig.update_xaxes(col=2, row=1, range=[-3, 0])
+
 
     rrange = np.logspace(3, 0, len(viridis))
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
 
     fig.add_trace(go.Histogram2d(x=all_scores_i,
-                                 y=-np.log10(all_vdws + 1e-3),
+                                 y=-np.minimum(all_vdws,vdw_cutoff),
                                  showscale=False,
                                  nbinsy=50, nbinsx=200,
                                  colorscale=cscale,
@@ -232,9 +235,9 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
 
     fig.update_layout(showlegend=False, yaxis_showgrid=True)
     fig.update_xaxes(title_text='Model Score', row=1, col=1)
-    fig.update_xaxes(title_text='vdw Score', row=1, col=2)
+    fig.update_xaxes(title_text='vdW Score', row=1, col=2)
     fig.update_xaxes(title_text='Model Score', row=2, col=1)
-    fig.update_yaxes(title_text='vdw Score', row=2, col=1)
+    fig.update_yaxes(title_text='vdW Score', row=2, col=1)
 
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
@@ -305,16 +308,16 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
     '''
     fig = go.Figure()
     fig.add_trace(go.Scattergl(
-        x=-np.log10(all_vdws + 1e-3),
+        x=-np.minimum(vdw_cutoff,all_vdws),
         y=np.clip(all_coeffs, a_min=0, a_max=1),
         mode='markers',
-        marker=dict(color=all_scores_i, opacity=.25,
+        marker=dict(color=all_scores_i, opacity=1,
                     colorbar=dict(title="Score"),
-                    colorscale="inferno",
+                    colorscale="inferno", size=5
                     )
     ))
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_range=[0, 3], yaxis_range=[0, 1])
+    fig.update_layout(xaxis_range=[-vdw_cutoff, 0], yaxis_range=[0, 1])
     fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
     wandb.log({'Discriminator Scores Analysis': fig})
 
@@ -545,7 +548,7 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
     record all the stats for the CSD data
     '''
     scores_dict = {}
-    vdw_penalty_dict = {}
+    vdw_penalty_dict = {}  # todo harmonize 'penalties' and 'scores' (negatives)
     tracking_features_dict = {}
     # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
     randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)[0]
@@ -1487,9 +1490,8 @@ def discriminator_analysis(config, epoch_stats_dict):
 
     scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict \
         = process_discriminator_outputs(config, epoch_stats_dict)
+
     discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
     plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout)
 
     return None
-
-

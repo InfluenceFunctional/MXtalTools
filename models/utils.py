@@ -8,7 +8,6 @@ from torch.optim import lr_scheduler as lr_scheduler
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import np_softmax, components2angle
-from models.vdw_overlap import raw_vdw_overlap
 
 
 def get_grad_norm(model):
@@ -397,40 +396,6 @@ def compute_h_bond_score(feature_richness, atom_acceptor_ind, atom_donor_ind, nu
 
     return h_bond_loss_f
 
-
-def get_vdw_penalty(vdw_radii, dist_dict=None, num_graphs=None, mol_sizes=None, loss_func = None):
-    if dist_dict is not None:  # supercell_data is not None: # do vdw computation even if we don't need it
-        vdw_overlap_sum, normed_vdw_overlap_sum, penalties = \
-            raw_vdw_overlap(vdw_radii, dists=dist_dict['intermolecular dist'],
-                            atomic_numbers=dist_dict['intermolecular dist atoms'],
-                            batch_numbers=dist_dict['intermolecular dist batch'],
-                            num_graphs=num_graphs)
-
-        if loss_func is None:  # treat all errors equally
-            scores = torch.nan_to_num(
-                torch.stack(
-                    [torch.sum(penalties[ii]) for ii in range(num_graphs)]
-                )) / mol_sizes
-        elif loss_func == 'mse':  # go hard on big errors
-            scores = torch.nan_to_num(
-                torch.stack(
-                    [torch.sum(penalties[ii] ** 2) for ii in range(num_graphs)]
-                )) / mol_sizes
-        elif loss_func == 'log':  # go easy on big errors
-            scores = torch.nan_to_num(
-                torch.stack(
-                    [torch.sum(torch.log(1+penalties[ii])) for ii in range(num_graphs)]
-                )) / mol_sizes
-        else:
-            print(f'{loss_func} is not a valid loss function for vdw penalty')
-            sys.exit()
-
-        return scores, normed_vdw_overlap_sum / mol_sizes
-
-    else:
-        return None, None
-
-
 def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
                       packing_mean, packing_std, data, raw_sample, precomputed_volumes=None):
     """
@@ -690,7 +655,7 @@ def decode_to_sph_rotvec(mol_orientations):
     #     real_orientation_r[:, None]
     # ), dim=-1)
 
-    return real_orientation_theta[:,None], real_orientation_phi[:,None], real_orientation_r[:,None]
+    return real_orientation_theta[:, None], real_orientation_phi[:, None], real_orientation_r[:, None]
 
 
 def get_regression_loss(regressor, data):

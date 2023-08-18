@@ -30,7 +30,7 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
                                sampling_dict, real_data, discriminator, config, supercell_builder, min_k=10)
 
     '''dist vs score plot'''
-    plot_mini_csp_dist_vs_score(rdf_real_dists, reconstructed_best_scores, real_samples_dict, wandb)
+    plot_mini_csp_dist_vs_score(rdf_real_dists, reconstructed_best_scores, real_samples_dict, best_scores_dict, wandb)
 
     '''visualize best samples'''
     best_supercells = best_supercells_list[-1]  # last sample was the best
@@ -44,20 +44,70 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
     """
     CSP Funnels
     """
-    sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict)
-    sample_wise_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists)
+    sample_density_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict)
+    sample_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists)
+
+    return None
+
+
+def log_csp_summary_stats(wandb, generated_samples_dict, real_samples_dict, sym_info):
+    unique_space_group_inds = np.unique(generated_samples_dict['space group'].flatten())
+    n_space_groups = len(unique_space_group_inds)
+    space_groups = np.asarray([sym_info['space_groups'][sg] for sg in generated_samples_dict['space group'].flatten()])
+    unique_space_groups = np.asarray([sym_info['space_groups'][sg] for sg in unique_space_group_inds])
+
+    '''
+    overall and SG-wise mean scores
+    fraction below certain cutoffs
+    '''
+    score_dict = {}
+    for label in ['score', 'vdw overlap', 'density']:
+        if label == 'score':  # adjust for difference to target
+            score_diff = real_samples_dict['score'][:, None] - generated_samples_dict['score']
+        all_scores = generated_samples_dict[label]
+
+        for k in range(n_space_groups):
+            sg_wise_score = all_scores.flatten()[space_groups == unique_space_groups[k]]
+            score_dict[f"Mini-CSP {unique_space_groups[k]} average {label}"] = np.average(sg_wise_score)
+
+            if label == 'vdw overlap':
+                good_fraction = np.average(sg_wise_score < 0.1)
+                decent_fraction = np.average(sg_wise_score < 0.2)
+                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} fraction below 0.1"] = good_fraction
+                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} fraction below 0.2"] = decent_fraction
+            elif label == 'score':
+                good_fraction = np.average(score_diff < 3)
+                decent_fraction = np.average(score_diff < 5)
+                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} difference fraction below 3"] = good_fraction
+                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} difference fraction below 5"] = decent_fraction
+
+        if label == 'score':  # adjust for difference to target
+            score_diff = real_samples_dict['score'][:, None] - generated_samples_dict['score']
+
+        all_scores = generated_samples_dict[label]
+        score_dict[f"Mini-CSP overall average {label}"] = np.average(all_scores)
+        if label == 'vdw overlap':
+            good_fraction = np.average(all_scores < 0.1)
+            decent_fraction = np.average(all_scores < 0.2)
+            score_dict[f"Mini-CSP {label} fraction below 0.1"] = good_fraction
+            score_dict[f"Mini-CSP {label} fraction below 0.2"] = decent_fraction
+        elif label == 'score':
+            good_fraction = np.average(score_diff < 1)
+            decent_fraction = np.average(score_diff < 3)
+            score_dict[f"Mini-CSP {label} difference fraction below 1"] = good_fraction
+            score_dict[f"Mini-CSP {label} difference fraction below 3"] = decent_fraction
+
+    wandb.log(score_dict)
 
     return None
 
 
 def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supercells, sym_info, best_scores_dict, vdw_radii, mol_volume_ind):
     num_samples = min(num_crystals, 25)
-    vdw_loss, normed_vdw_loss, vdw_penalties = \
-        vdw_overlap(vdw_radii, crystaldata=best_supercells, return_atomwise=True, return_normed=True,
-                    graph_sizes=best_supercells.tracking[:,
-                                config.dataDims['tracking features dict'].index('molecule num atoms')])
-    vdw_loss /= best_supercells.tracking[:,
-                config.dataDims['tracking features dict'].index('molecule num atoms')]
+    _, vdw_score, _, normed_vdw_overlaps = \
+        vdw_overlap(vdw_radii,
+                    crystaldata=best_supercells,
+                    loss_func=None)
 
     volumes_list = []
     for i in range(best_supercells.num_graphs):
@@ -71,42 +121,17 @@ def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supe
 
     fig = go.Figure()
     for i in range(min(best_supercells.num_graphs, num_samples)):
-        pens = vdw_penalties[i].cpu().detach()
+        pens = normed_vdw_overlaps[i].cpu().detach()
         fig.add_trace(go.Violin(x=pens[pens != 0], side='positive', orientation='h',
                                 bandwidth=0.01, width=1, showlegend=False, opacity=1,
                                 name=f'{best_supercells.csd_identifier[i]} : ' + f'SG={sym_info["space_groups"][int(best_supercells.sg_ind[i])]} <br /> ' +
                                      f'c_t={target_packing[i]:.2f} c_p={generated_packing_coeffs[i]:.2f} <br /> ' +
-                                     f'tot_norm_ov={normed_vdw_loss[i]:.2f} <br />' +
+                                     f'tot_norm_ov={-vdw_score[i]:.2f} <br />' +
                                      f'Score={best_scores_dict["score"][i, -1]:.2f}'
                                 ),
                       )
 
-    # Can only run this section with RDKit installed, which doesn't always work
-    # Commented out - not that important anyway.
-    # molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
-    # try:
-    #     rdkit.Chem.AllChem.Compute2DCoords(molecule)
-    #     rdkit.Chem.AllChem.GenerateDepictionMatching2DStructure(molecule, molecule)
-    #     pil_image = rdkit.Chem.Draw.MolToImage(molecule, size=(500, 500))
-    #     pil_image.save('mol_img.png', 'png')
-    #     # Add trace
-    #     img = Image.open("mol_img.png")
-    #     # Add images
-    #     fig.add_layout_image(
-    #         dict(
-    #             source=img,
-    #             xref="x domain", yref="y domain",
-    #             x=.1 + (.15 * (i % 2)), y=i / 10.5 + 0.05,
-    #             sizex=.15, sizey=.15,
-    #             xanchor="center",
-    #             yanchor="middle",
-    #             opacity=0.75
-    #         )
-    #     )
-    # except:  # ValueError("molecule was rejected by rdkit"):
-    #     pass
-
-    fig.update_layout(width=800, height=800, font=dict(size=12), xaxis_range=[0, 4])
+    fig.update_layout(width=800, height=800, font=dict(size=12), xaxis_range=[0, 2])
     fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
     fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing prediction')
 
@@ -115,7 +140,7 @@ def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supe
     return None
 
 
-def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict):
+def sample_density_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict):
     num_crystals = best_supercells.num_graphs
     num_reporting_samples = min(25, num_crystals)
     n_rows = int(np.ceil(np.sqrt(num_reporting_samples)))
@@ -130,16 +155,19 @@ def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_s
         y = sampling_dict['score'][ii]
         z = sampling_dict['vdw overlap'][ii]
         fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                                   mode='markers', marker=dict(color=z, colorbar=dict(title="vdW Overlap"), cmin=0, cmax=4, opacity=0.5, colorscale="rainbow"), opacity=1),
+                                   mode='markers', marker=dict(color=z, colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(sampling_dict['vdw overlap']), opacity=0.5, colorscale="viridis"), opacity=1),
                       row=row, col=col)
 
         fig.add_trace(go.Scattergl(x=[real_samples_dict['density'][ii]], y=[real_samples_dict['score'][ii]],
-                                   mode='markers', marker=dict(color=[real_samples_dict['vdw overlap'][ii]], colorscale='rainbow', size=10,
-                                                               colorbar=dict(title="vdW Overlap"), cmin=0, cmax=4),
+                                   mode='markers', marker=dict(color=[real_samples_dict['vdw overlap'][ii]], colorscale='viridis', size=20,
+                                                               colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(sampling_dict['vdw overlap'])),
                                    showlegend=False),
                       row=row, col=col)
 
-    fig.update_xaxes(range=[np.amin(sampling_dict['density']), min(1, np.amax(sampling_dict['density']))])
+        fig.update_xaxes(range=[min(real_samples_dict['density'][ii],np.amin(sampling_dict['density'][ii])),
+                                min(1,max(real_samples_dict['density'][ii], np.amax(sampling_dict['density'][ii])))],
+                         row=row, col=col)
+
     fig.update_yaxes(autorange="reversed")
 
     if config.wandb.log_figures:
@@ -150,8 +178,7 @@ def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_s
     return None
 
 
-def sample_wise_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists):
-
+def sample_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists):
     num_crystals = best_supercells.num_graphs
     num_reporting_samples = min(25, num_crystals)
     n_rows = int(np.ceil(np.sqrt(num_reporting_samples)))
@@ -168,10 +195,9 @@ def sample_wise_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_be
                                    mode='markers', opacity=1),
                       row=row, col=col)
 
-
     # fig.update_layout(xaxis_title='RDF Distance', yaxis_title='Model Score')
-    #fig.update_xaxes(range=[-0.1, np.amax(rdf_real_dists[:num_reporting_samples]) + 0.1])
-    fig.update_yaxes(autorange="reversed")
+    fig.update_xaxes(range=[-2, np.log10(np.amax(rdf_real_dists[:num_reporting_samples]) + 0.1)])
+    #fig.update_yaxes(autorange="reversed")
 
     if config.wandb.log_figures:
         wandb.log({'RDF Funnel': fig})
@@ -293,16 +319,14 @@ def topk_mini_csp_analysis(scores_list, scores_dict, real_samples_dict, sampling
     return rdf_dists, rdf_real_dists, reconstructed_best_scores, best_supercells_list, best_rdfs, best_scores_dict
 
 
-def plot_mini_csp_dist_vs_score(rdf_real_dists, reconstructed_best_scores, real_samples_dict, wandb):
+def plot_mini_csp_dist_vs_score(rdf_real_dists, reconstructed_best_scores, real_samples_dict, best_scores_dict, wandb):
     x = rdf_real_dists.flatten()
     y = (reconstructed_best_scores - real_samples_dict['score'][:, None]).flatten()
-    xy = np.vstack([x, y])
-    try:
-        z = gaussian_kde(xy)(xy)
-    except:
-        z = np.ones_like(x)
+    z = best_scores_dict['vdw overlap'].flatten()
 
     fig = go.Figure()
-    fig.add_trace(go.Scattergl(x=x, y=y, mode='markers', marker=dict(color=z)))
-    fig.update_layout(xaxis_title='RDF Distance From Target', yaxis_title='Sample vs. experimental score difference', showlegend=False)
+    fig.add_trace(go.Scattergl(x=np.log10(x), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
+                                                               colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(z))))
+
+    fig.update_layout(xaxis_title='log10 RDF Distance From Target', yaxis_title='Sample vs. experimental score difference', showlegend=False)
     wandb.log({"Sample RDF vs. Score": fig})
