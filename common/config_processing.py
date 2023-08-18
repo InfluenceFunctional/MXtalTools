@@ -99,6 +99,7 @@ def add_args(parser):
     add_bool_arg(parser, 'exclude_missing_r_factor', default=True)
     parser.add_argument('--exclude_crystal_systems', type=list, default=None)  # ['hexagonal']
     add_bool_arg(parser, 'exclude_blind_test_targets', default=True)
+    parser.add_argument('--target_identifiers', type=list, default=None)  # list of identifier strings e.g., ["ABEBUF", "NICOAM01"]
 
     update_args2config(args2config, 'rotation_basis')
     update_args2config(args2config, 'target')
@@ -123,6 +124,7 @@ def add_args(parser):
     update_args2config(args2config, 'exclude_missing_r_factor')
     update_args2config(args2config, 'exclude_crystal_systems')
     update_args2config(args2config, 'exclude_blind_test_targets')
+    update_args2config(args2config, 'target_identifiers')
 
     #  training settings
     parser.add_argument('--max_epochs', type=int, default=100)

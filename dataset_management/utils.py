@@ -524,6 +524,7 @@ class DatasetBuilder:
         self.normed_lengths_stds = np.std(normed_cell_lengths, axis=0)
         covariance_matrix = np.cov(feature_array_with_normed_lengths, rowvar=False)  # we want the randn model to generate samples with normed lengths
 
+        # TODO error handling for if there is only one entry in the dataset, e.g., during CSP
         for i in range(len(covariance_matrix)):  # ensure it's well-conditioned
             covariance_matrix[i, i] = max((0.01, covariance_matrix[i, i]))
 

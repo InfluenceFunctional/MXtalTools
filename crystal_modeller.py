@@ -451,7 +451,11 @@ class Modeller:
             dataset_builder = self.misc_pre_training_items()
 
             '''prep dataloaders'''
-            train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder)
+            if self.config.target_identifiers is not None:
+                test_fraction = 1
+            else:
+                test_fraction = 0.2
+            train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder, test_fraction=test_fraction)
 
             '''instantiate models'''
             generator, discriminator, regressor, \
@@ -1653,7 +1657,8 @@ class Modeller:
         generated_samples_dict = self.generate_mini_csp_samples(real_data, generator, discriminator, regressor)
 
         log_mini_csp_scores_distributions(self.config, wandb, generated_samples_dict, real_samples_dict, real_data)
-        log_best_mini_csp_samples(self.config, wandb, discriminator, generated_samples_dict, real_samples_dict, real_data, self.supercell_builder, self.tracking_mol_volume_ind, self.sym_info, self.vdw_radii)
+        log_best_mini_csp_samples(self.config, wandb, discriminator, generated_samples_dict, real_samples_dict, real_data,
+                                  self.supercell_builder, self.tracking_mol_volume_ind, self.sym_info, self.vdw_radii)
 
         return None
 

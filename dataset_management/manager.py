@@ -71,6 +71,8 @@ class DataManager():
     def load_for_modelling(self, return_dataset=False, save_dataset=True):
         self.dataset = pd.read_pickle(self.dataset_path)
         self.dataset_keys = list(self.dataset.columns)
+        if self.config.target_identifiers is not None:
+            self.find_targets()
         self.filter_dataset()
         if self.exclude_polymorphs:
             self.filter_polymorphs()
@@ -135,20 +137,6 @@ class DataManager():
         :return:
         '''
 
-        # main_symbol = {}
-        # for i in tqdm.tqdm(range(self.dataset_length)):
-        #     element = self.dataset['crystal spacegroup number'][i], self.dataset['crystal spacegroup setting'][i],
-        #     if element[1] == 1:  # extract only the main or primary setting - if there are entries for which we are missing the primary setting, ignore them for now (assume marginal)
-        #         if str(element[0]) not in main_symbol.keys():
-        #             main_symbol[str(element[0])] = [self.dataset['crystal spacegroup symbol'][i]]
-        #         else:
-        #             main_symbol[str(element[0])].append(self.dataset['crystal spacegroup symbol'][i])
-        #
-        # # confirm they're all unique
-        # sg_dict = {}
-        # for key in main_symbol.keys():
-        #     # if len(np.unique(main_symbol[key])) > 1: # the only groups where this doesn't work are with or without minus signs (chiral groups?)
-        #     sg_dict[key] = np.unique(main_symbol[key])[0]
         print('Pre-generating spacegroup symmetries')
 
         self.space_groups = {}
@@ -165,31 +153,40 @@ class DataManager():
             else:  # in which case, try reverse assigning the number, given the space group
                 self.dataset['crystal spacegroup number'][i] = self.sg_numbers[self.dataset['crystal spacegroup symbol'][i]]
 
-        #
-        # self.sg_probabilities = {}
-        # key = 'crystal spacegroup symbol'
-        # self.dataset[key] = np.asarray(self.dataset[key])  # convert molecule and crystal features to numpy arrays for easy processing
-        # unique_entries = np.unique(self.dataset[key])
-        # print("One-hotting " + key + " with unique entries {}".format(unique_entries))
-        # for entry in unique_entries:
-        #     self.dataset[key + ' is ' + entry] = self.dataset[key] == entry
-        #     self.sg_probabilities[entry] = np.average(self.dataset[key + ' is ' + entry])
-        #     self.modellable_keys.append(key + ' is ' + entry)
-        #
-        # # identify majority and minority SGs
-        # self.majority_sgs = []
-        # self.minority_sgs = []
-        # for key in self.sg_probabilities:
-        #     if self.sg_probabilities[key] >= 0.01:
-        #         self.majority_sgs.append(key)
-        #     elif self.sg_probabilities[key] < 0.01:
-        #         self.minority_sgs.append(key)
-        #
-        # self.dataset['crystal spacegroup is minority'] = np.asarray([spacegroup not in self.majority_sgs for spacegroup in self.dataset['crystal spacegroup symbol']])
+    def find_targets(self):
+        """
+        filter out samples with unwanted features
+        """
+        print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
+
+        bad_inds = []
+        # filter out identifiers we are not explicitly searching for
+        n_bad_inds = len(bad_inds)
+        for j in range(len(self.dataset)):
+            item = self.dataset['identifier'][j]  # do it this way to remove the target, including any of its polymorphs
+            if item[-1].isdigit():
+                item = item[:-2]  # cut off trailing digits, if any
+            if item not in self.config.target_identifiers:
+                bad_inds.append(j)
+
+        print('Target search filtered {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+
+        # collate bad indices
+        bad_inds = np.unique(bad_inds)
+
+        # apply filtering
+        self.dataset = delete_from_dataframe(self.dataset, bad_inds)
+        print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
+        if len(self.dataset) == 0:
+            print(f"{self.config.target_identifiers} not found in dataset")
+            sys.exit()
 
     def filter_dataset(self):
+        """
+        filter out samples with unwanted features
+        """
         print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
-        ## filtering out unwanted characteristics
+
         bad_inds = []
 
         #
