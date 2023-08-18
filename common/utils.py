@@ -1,8 +1,11 @@
 """import statement"""
+import numpy
 import numpy as np
 
 import torch
+import tqdm
 from ase import Atoms
+from pyxtal import symmetry
 from scipy.cluster.hierarchy import dendrogram
 import pandas as pd
 from torch.nn.functional import softmax
@@ -335,3 +338,37 @@ def components2angle(components):
     normed_components = torch.sign(components) * softmax(components ** 2)
     angle = torch.atan2(normed_components[:, 0], normed_components[:, 1])
     return angle
+
+
+def prep_symmetry_info():
+    """
+    if we don't have the symmetry dict prepared already, generate it
+    DEPRECATED USAGE - LEFT IN TO DEMONSTRATE HOW TO GENERATE THESE DATA
+    """
+
+    from pyxtal import symmetry
+    print('Pre-generating spacegroup symmetries')
+    sym_ops = {}
+    point_groups = {}
+    lattice_type = {}
+    space_groups = {}
+    space_group_indices = {}
+    for i in tqdm.tqdm(range(1, 231)):
+        sym_group = symmetry.Group(i)
+        general_position_syms = sym_group.wyckoffs_organized[0][0]
+        sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
+            len(general_position_syms))]  # first 0 index is for general position, second index is
+        # superfluous, third index is the symmetry operation
+        point_groups[i] = sym_group.point_group
+        lattice_type[i] = sym_group.lattice_type
+        space_groups[i] = sym_group.symbol
+        space_group_indices[sym_group.symbol] = i
+
+    sym_info = {
+        'sym_ops': sym_ops,
+        'point_groups': point_groups,
+        'lattice_type': lattice_type,
+        'space_groups': space_groups,
+        'space_group_indices': space_group_indices}
+
+    np.save('symmetry_info', sym_info)

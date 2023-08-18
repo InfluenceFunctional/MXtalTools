@@ -98,39 +98,6 @@ class Modeller:
         self.train_discriminator = any((config.train_discriminator_adversarially, config.train_discriminator_on_distorted, config.train_discriminator_on_randn))
         self.train_generator = any((config.train_generator_vdw, config.train_generator_adversarially, config.train_generator_h_bond))
 
-    def prep_symmetry_info(self):
-        """
-        if we don't have the symmetry dict prepared already, generate it
-        DEPRECATED USAGE - LEFT IN TO DEMONSTRATE HOW TO GENERATE THESE DATA
-        """
-
-        from pyxtal import symmetry
-        print('Pre-generating spacegroup symmetries')
-        self.sym_ops = {}
-        self.point_groups = {}
-        self.lattice_type = {}
-        self.space_groups = {}
-        self.space_group_indices = {}
-        for i in tqdm.tqdm(range(1, 231)):
-            sym_group = symmetry.Group(i)
-            general_position_syms = sym_group.wyckoffs_organized[0][0]
-            self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
-                len(general_position_syms))]  # first 0 index is for general position, second index is
-            # superfluous, third index is the symmetry operation
-            self.point_groups[i] = sym_group.point_group
-            self.lattice_type[i] = sym_group.lattice_type
-            self.space_groups[i] = sym_group.symbol
-            self.space_group_indices[sym_group.symbol] = i
-
-        self.sym_info = {
-            'sym_ops': self.sym_ops,
-            'point_groups': self.point_groups,
-            'lattice_type': self.lattice_type,
-            'space_groups': self.space_groups,
-            'space_group_indices': self.space_group_indices}
-
-        np.save('symmetry_info', self.sym_info)
-
     def prep_new_working_directory(self):
         if self.config.run_num == 0:
             self.make_sequential_directory()
@@ -1135,6 +1102,7 @@ class Modeller:
         std_dataDims_path = self.source_directory + r'/dataset_management/standard_dataDims.npy'
         if os.path.exists(std_dataDims_path):
             standard_dataDims = np.load(std_dataDims_path,allow_pickle=True).item()  # maintain constant standardizations between runs
+            print("Loading premade standardization")
         else:
             print("Premade Standardization Missing!")
             standard_dataDims = None
