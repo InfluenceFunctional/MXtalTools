@@ -1556,11 +1556,11 @@ class Modeller:
 
         if vdw_loss is not None:
             stats_keys += ['generator per mol vdw loss', 'generator per mol vdw score']
-            stats_values += [2*vdw_loss.cpu().detach().numpy()]
-            stats_values += [2*vdw_score.cpu().detach().numpy()]
+            stats_values += [4*vdw_loss.cpu().detach().numpy()]
+            stats_values += [4*vdw_score.cpu().detach().numpy()]
 
             if self.config.train_generator_vdw:
-                generator_losses_list.append(vdw_loss * 2)
+                generator_losses_list.append(vdw_loss * 4)
 
         if h_bond_score is not None:
             if self.config.train_generator_h_bond:
