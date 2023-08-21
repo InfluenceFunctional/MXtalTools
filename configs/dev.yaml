@@ -13,7 +13,7 @@ canonical_conformer_orientation: 'random' # 'standardized' 'random'
 packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
 train_generator_vdw: True
 train_generator_adversarially: False
-vdw_loss_func: null  # null 'mse' or 'log'
+vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
 density_loss_func: l1  # 'l1' or 'mse'
 generator_adversarial_loss_func: 'score'  # l1 or mse
 train_generator_h_bond: False # (non-directional)
@@ -34,9 +34,9 @@ extra_test_set_paths: #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_
 extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 # for reloading pretrained models
-discriminator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
-generator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10419'
-regressor_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_10431'
+discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
+generator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
+regressor_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
 
 discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions
 generator_positional_noise: 0  # scaling for the randn noise added to all atom positions
@@ -63,7 +63,7 @@ grow_batch_size: True
 min_batch_size: 50
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 0 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 10 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000
 gradient_norm_clip: 1
 

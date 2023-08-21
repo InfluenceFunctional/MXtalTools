@@ -48,6 +48,13 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
             torch.stack(
                 [torch.sum(torch.log(1 + normed_overlaps[ii])) for ii in range(num_graphs)]
             )) / mol_sizes
+    elif loss_func == 'inv':  # hard asymtote at 1, but we can't touch it
+        vdw_loss = torch.nan_to_num(
+            torch.stack(
+                [torch.sum(
+                    1/(-torch.minimum(0.99 * torch.ones_like(normed_overlaps[ii]),normed_overlaps[ii]) + 1) - 1
+                              ) for ii in range(num_graphs)]
+            )) / mol_sizes
     else:
         print(f'{loss_func} is not a valid loss function for vdw penalty')
         sys.exit()

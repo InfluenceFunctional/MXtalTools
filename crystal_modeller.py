@@ -52,6 +52,7 @@ from torch_geometric.loader.dataloader import Collater
 
 class Modeller:
     def __init__(self, config):
+        self.packing_loss_coefficient = 1
         self.config = config
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
@@ -789,8 +790,7 @@ class Modeller:
         else:
             return output, extra_outputs['dists dict']
 
-    @staticmethod
-    def log_gan_loss(metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
+    def log_gan_loss(self, metrics_dict, train_epoch_stats_dict, test_epoch_stats_dict,
                      discriminator_tr_record, discriminator_te_record, generator_tr_record, generator_te_record,
                      regressor_tr_record, regressor_te_record):
         # todo clean up this function
@@ -807,6 +807,7 @@ class Modeller:
 
         for key in current_metrics.keys():
             current_metrics[key] = np.amax(current_metrics[key])  # just a formatting thing - nothing to do with the max of anything
+        current_metrics['packing loss coefficient'] = self.packing_loss_coefficient
         wandb.log(current_metrics)
 
         # log discriminator losses
@@ -1524,13 +1525,19 @@ class Modeller:
         generator_losses_list = []
         stats_keys, stats_values = [], []
         if packing_loss is not None:
+            packing_mae = np.abs(packing_prediction - packing_target) / packing_target
             stats_keys += ['generator packing loss', 'generator packing prediction',
                            'generator packing target', 'generator packing mae']
             stats_values += [packing_loss.cpu().detach().numpy(), packing_prediction,
-                             packing_target, np.abs(packing_prediction - packing_target) / packing_target]
+                             packing_target, packing_mae]
+
+            if packing_mae.mean() < 0.05:  # dynamically soften the packing loss when the model is doing well
+                self.packing_loss_coefficient *= 0.99
+            if packing_mae.mean() > 0.05:
+                self.packing_loss_coefficient *= 1.01
 
             if True:  # enforce the target density all the time
-                generator_losses_list.append(packing_loss.float())
+                generator_losses_list.append(packing_loss.float() * self.packing_loss_coefficient)
 
         if discriminator_raw_output is not None:
             if self.config.generator_adversarial_loss_func == 'hot softmax':
@@ -1556,11 +1563,11 @@ class Modeller:
 
         if vdw_loss is not None:
             stats_keys += ['generator per mol vdw loss', 'generator per mol vdw score']
-            stats_values += [8*vdw_loss.cpu().detach().numpy()]
-            stats_values += [8*vdw_score.cpu().detach().numpy()]
+            stats_values += [vdw_loss.cpu().detach().numpy()]
+            stats_values += [vdw_score.cpu().detach().numpy()]
 
             if self.config.train_generator_vdw:
-                generator_losses_list.append(vdw_loss * 8)
+                generator_losses_list.append(vdw_loss)
 
         if h_bond_score is not None:
             if self.config.train_generator_h_bond:
