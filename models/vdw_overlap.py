@@ -52,8 +52,8 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
         vdw_loss = torch.nan_to_num(
             torch.stack(
                 [torch.sum(
-                    1/(-torch.minimum(0.99 * torch.ones_like(normed_overlaps[ii]),normed_overlaps[ii]) + 1) - 1
-                              ) for ii in range(num_graphs)]
+                    1 / (-torch.minimum(0.99 * torch.ones_like(normed_overlaps[ii]), normed_overlaps[ii]) + 1) - 1
+                ) for ii in range(num_graphs)]
             )) / mol_sizes
     else:
         print(f'{loss_func} is not a valid loss function for vdw penalty')
@@ -70,6 +70,7 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
         return vdw_score
     else:  # return everything
         return vdw_loss, vdw_score, abs_overlaps, normed_overlaps
+
 
 def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, num_graphs=None, crystaldata=None):
     if crystaldata is not None:  # extract distances from the crystal
@@ -112,7 +113,7 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=No
     atom_radii = [vdw_radii_vector[elements[0]], vdw_radii_vector[elements[1]]]
     radii_sums = atom_radii[0] + atom_radii[1]
 
-    penalties = F.relu(-(dists - radii_sums))  # only punish negatives (meaning overlaps)
-    normed_penalties = F.relu(-(dists - radii_sums) / radii_sums)  # norm overlaps against internuclear distances
+    penalties = F.relu(radii_sums - dists)  # only punish positives (meaning overlaps)
+    normed_penalties = F.relu((radii_sums - dists) / radii_sums)  # norm overlaps against internuclear distances
 
     return [penalties[crystal_number == ii] for ii in range(num_graphs)], [normed_penalties[crystal_number == ii] for ii in range(num_graphs)]

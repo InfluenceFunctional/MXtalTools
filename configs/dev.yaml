@@ -1,4 +1,4 @@
-test_mode: True
+test_mode: False
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 explicit_run_enumeration: False
@@ -55,15 +55,15 @@ wandb:
   experiment_tag: dev
   log_figures: True
 
-sample_steps: 300 # now for mini csp
+sample_steps: 25 # now for mini csp
 sample_move_size: 0.001 # currently unused
 
 # batching & convergence
 grow_batch_size: True
-min_batch_size: 50
+min_batch_size: 100
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 10 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 0 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000
 gradient_norm_clip: 1
 
@@ -88,14 +88,14 @@ include_organometallic: True
 max_atomic_number: 100
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
-exclude_polymorphs: True  # should almost always be true during training for regression or generator models
+exclude_polymorphs: False  # should almost always be true during training for regression or generator models
 exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null # ['monoclinic','triclinic','orthorhombic']  #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
-target_identifiers: null  #["NICOAM","NICOAM01","NICOAM02","NICOAM03","NICOAM04","NICOAM05", "NICOAM06","NICOAM07","NICOAM08","NICOAM09","NICOAM10","NICOAM11","NICOAM12","NICOAM13","NICOAM14","NICOAM15","NICOAM16","NICOAM17","NICOAM18"]
-include_sgs: null # ["P-1","P21/c","P212121","C2/c"]  # space groups to be included in the dataset. null for all
+target_identifiers: ["NICOAM13","NICOAM17"]#["NICOAM","NICOAM01","NICOAM02","NICOAM03","NICOAM04","NICOAM05", "NICOAM06","NICOAM07","NICOAM08","NICOAM09","NICOAM10","NICOAM11","NICOAM12","NICOAM13","NICOAM14","NICOAM15","NICOAM16","NICOAM17","NICOAM18"]
+include_sgs: ["P21/c"] #["P-1","P21/c","P212121","C2/c"]  # space groups to be included in the dataset. null for all
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: ["P-1","P21/c","P212121"] #["P21/c"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: ["P21/c"] #["P-1","P21/c","P212121", "C2/c"] #["P21/c"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5 # should be very large, then automatically pares down
 
 # discriminator optimizer and model

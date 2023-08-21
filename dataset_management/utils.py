@@ -522,9 +522,10 @@ class DatasetBuilder:
 
         self.normed_lengths_means = np.mean(normed_cell_lengths, axis=0)
         self.normed_lengths_stds = np.std(normed_cell_lengths, axis=0)
+        if len(feature_array_with_normed_lengths) == 1: #  error handling for if there is only one entry in the dataset, e.g., during CSP
+            feature_array_with_normed_lengths = np.stack([feature_array_with_normed_lengths for _ in range(10)])[:,0,:]
         covariance_matrix = np.cov(feature_array_with_normed_lengths, rowvar=False)  # we want the randn model to generate samples with normed lengths
 
-        # TODO error handling for if there is only one entry in the dataset, e.g., during CSP
         for i in range(len(covariance_matrix)):  # ensure it's well-conditioned
             covariance_matrix[i, i] = max((0.01, covariance_matrix[i, i]))
 
@@ -697,10 +698,16 @@ def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2):
         test_dataset.append(dataset_builder[i])
 
     if machine == 'cluster':  # faster dataloading on cluster with more workers
-        tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=min(os.cpu_count(), 8), pin_memory=True)
+        if len(train_dataset) > 0:
+            tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=min(os.cpu_count(), 8), pin_memory=True)
+        else:
+            tr = None
         te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=min(os.cpu_count(), 8), pin_memory=True)
     else:
-        tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
+        if len(train_dataset) > 0:
+            tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
+        else:
+            tr = None
         te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
 
     return tr, te

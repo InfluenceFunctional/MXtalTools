@@ -164,8 +164,8 @@ class DataManager():
         n_bad_inds = len(bad_inds)
         for j in range(len(self.dataset)):
             item = self.dataset['identifier'][j]  # do it this way to remove the target, including any of its polymorphs
-            if item[-1].isdigit():
-                item = item[:-2]  # cut off trailing digits, if any
+            # if item[-1].isdigit():
+            #     item = item[:-2]  # cut off trailing digits, if any
             if item not in self.config.target_identifiers:
                 bad_inds.append(j)
 
@@ -179,7 +179,8 @@ class DataManager():
         print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
         if len(self.dataset) == 0:
             print(f"{self.config.target_identifiers} not found in dataset")
-            sys.exit()
+            assert False
+
 
     def filter_dataset(self):
         """

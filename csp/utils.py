@@ -5,6 +5,7 @@ import tqdm
 from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.stats import gaussian_kde
+from torch_geometric.loader.dataloader import Collater
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import ase_mol_from_crystaldata, compute_rdf_distance
@@ -14,23 +15,74 @@ from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 
 
-def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, supercell_builder, mol_volume_ind, sym_info, vdw_radii):
+def compute_csp_sample_distances(reconstructed_best_scores, real_data, best_rdfs, rr, real_samples_dict, config, sampling_dict, num_samples):
+
+    """compute various distances"""
+    """rdf distances"""
+    topk_size = reconstructed_best_scores.shape[1]
+    intra_sample_rdf_distance = np.zeros((real_data.num_graphs, topk_size, topk_size))
+    for i in range(real_data.num_graphs):
+        for j in range(topk_size):
+            for k in range(j, topk_size):
+                intra_sample_rdf_distance[i, j, k] = compute_rdf_distance(best_rdfs[i][j], best_rdfs[i][k], rr)
+
+    intra_sample_rdf_distance = intra_sample_rdf_distance + np.moveaxis(intra_sample_rdf_distance, (1, 2), (2, 1))  # add lower diagonal (distance matrix is symmetric)
+
+    real_sample_rdf_distance = np.zeros((real_data.num_graphs, topk_size))
+    for i in range(real_data.num_graphs):
+        for j in range(topk_size):
+            real_sample_rdf_distance[i, j] = compute_rdf_distance(real_samples_dict['RDF'][i], best_rdfs[i][j], rr)
+
+    """cell parameter and discriminator latent distances"""
+    intra_sample_cell_distance = np.zeros((real_data.num_graphs, num_samples, num_samples))
+    intra_sample_latent_distance = np.zeros((real_data.num_graphs, num_samples, num_samples))
+    std_sample_cell_params = (sampling_dict['cell params'] - config.dataDims['lattice means']) / config.dataDims['lattice stds']
+
+    for i in range(real_data.num_graphs):  # dot product - it's normed
+        x1 = torch.Tensor(std_sample_cell_params[i])
+        x2 = torch.Tensor(sampling_dict['discriminator latent'][i])
+        intra_sample_cell_distance[i] = (torch.cdist(x1, x1) / torch.outer(torch.linalg.norm(x1, dim=-1), torch.linalg.norm(x1, dim=-1))).numpy()
+        intra_sample_latent_distance[i] = (torch.cdist(x2, x2) / torch.outer(torch.linalg.norm(x2, dim=-1), torch.linalg.norm(x2, dim=-1))).numpy()
+
+    real_sample_cell_distance = np.zeros((real_data.num_graphs, num_samples))
+    real_sample_latent_distance = np.zeros((real_data.num_graphs, num_samples))
+    std_real_cell_params = (real_data.cell_params.cpu().detach().numpy() - config.dataDims['lattice means']) / config.dataDims['lattice stds']
+    for i in range(real_data.num_graphs):
+        x1 = torch.Tensor(std_sample_cell_params[i])
+        x2 = torch.Tensor(sampling_dict['discriminator latent'][i])
+        y1 = torch.Tensor(std_real_cell_params[i])[None, :]
+        y2 = torch.Tensor(real_samples_dict['discriminator latent'][i])[None, :]
+        real_sample_cell_distance[i] = (torch.cdist(y1, x1) / torch.outer(torch.linalg.norm(y1, dim=-1), torch.linalg.norm(x1, dim=-1))).numpy()
+        real_sample_latent_distance[i] = (torch.cdist(y2, x2) / torch.outer(torch.linalg.norm(y2, dim=-1), torch.linalg.norm(x2, dim=-1))).numpy()
+
+    return real_sample_rdf_distance, intra_sample_rdf_distance, \
+        real_sample_cell_distance, intra_sample_cell_distance, \
+        real_sample_latent_distance, intra_sample_latent_distance
+
+
+def mini_csp_rdf_and_distance_analysis(scores_dict, real_data, sampling_dict, real_samples_dict, discriminator, config, supercell_builder, min_k=10):
+    reconstructed_best_scores, best_supercells_list, best_rdfs, best_scores_dict, best_samples_latents, rr, topk_inds = \
+        rebuild_topk_crystals(list(scores_dict.keys()), scores_dict, real_samples_dict,
+                              sampling_dict, real_data, discriminator, config, supercell_builder, min_k=min_k)
+
+    return reconstructed_best_scores, best_scores_dict, best_supercells_list, topk_inds, best_rdfs, rr
+
+
+def log_best_mini_csp_samples(num_crystals, num_samples,
+                              reconstructed_best_scores, best_rdfs, best_scores_dict, best_supercells_list, rr,
+                              config, wandb, generated_samples_dict, real_samples_dict, real_data, mol_volume_ind, sym_info, vdw_radii):
     """
     extract the best guesses for each crystal and reconstruct and analyze them
     compare best samples to the experimental crystal
     """
-    scores_list = ['score', 'vdw overlap', 'h bond score', 'density']
-    if 'distortion_size' in sampling_dict.keys():
-        scores_list += ['distortion_size']
-    scores_dict = {key: sampling_dict[key] for key in scores_list}
-    num_crystals, num_samples = scores_dict['score'].shape
 
-    sample_rdf_dists, rdf_real_dists, reconstructed_best_scores, best_supercells_list, best_rdfs, best_scores_dict = \
-        topk_mini_csp_analysis(scores_list, scores_dict, real_samples_dict,
-                               sampling_dict, real_data, discriminator, config, supercell_builder, min_k=10)
+    real_sample_rdf_distance, intra_sample_rdf_distance, \
+        real_sample_cell_distance, intra_sample_cell_distance, \
+        real_sample_latent_distance, intra_sample_latent_distance = (
+        compute_csp_sample_distances(reconstructed_best_scores, real_data, best_rdfs, rr, real_samples_dict, config, generated_samples_dict, num_samples))
 
     '''dist vs score plot'''
-    plot_mini_csp_dist_vs_score(rdf_real_dists, reconstructed_best_scores, real_samples_dict, best_scores_dict, wandb)
+    plot_mini_csp_dist_vs_score(real_sample_rdf_distance, real_sample_cell_distance, real_sample_latent_distance, reconstructed_best_scores, real_samples_dict, best_scores_dict, generated_samples_dict, wandb)
 
     '''visualize best samples'''
     best_supercells = best_supercells_list[-1]  # last sample was the best
@@ -44,13 +96,14 @@ def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_
     """
     CSP Funnels
     """
-    sample_density_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict)
-    sample_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists)
+    sample_density_funnel_plot(config, wandb, best_supercells, generated_samples_dict, real_samples_dict)
+    sample_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, real_sample_rdf_distance)
 
-    return None
+    return (real_sample_rdf_distance, intra_sample_rdf_distance, real_sample_cell_distance, intra_sample_cell_distance,
+            real_sample_latent_distance, intra_sample_latent_distance, reconstructed_best_scores, best_scores_dict, best_supercells_list, best_rdfs, rr)
 
 
-def log_csp_summary_stats(wandb, generated_samples_dict, real_samples_dict, sym_info):
+def log_csp_summary_stats(wandb, generated_samples_dict, sym_info):
     unique_space_group_inds = np.unique(generated_samples_dict['space group'].flatten())
     n_space_groups = len(unique_space_group_inds)
     space_groups = np.asarray([sym_info['space_groups'][sg] for sg in generated_samples_dict['space group'].flatten()])
@@ -62,8 +115,6 @@ def log_csp_summary_stats(wandb, generated_samples_dict, real_samples_dict, sym_
     '''
     score_dict = {}
     for label in ['score', 'vdw overlap', 'density']:
-        if label == 'score':  # adjust for difference to target
-            score_diff = real_samples_dict['score'][:, None] - generated_samples_dict['score']
         all_scores = generated_samples_dict[label]
 
         for k in range(n_space_groups):
@@ -71,31 +122,24 @@ def log_csp_summary_stats(wandb, generated_samples_dict, real_samples_dict, sym_
             score_dict[f"Mini-CSP {unique_space_groups[k]} average {label}"] = np.average(sg_wise_score)
 
             if label == 'vdw overlap':
-                good_fraction = np.average(sg_wise_score < 0.1)
-                decent_fraction = np.average(sg_wise_score < 0.2)
-                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} fraction below 0.1"] = good_fraction
-                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} fraction below 0.2"] = decent_fraction
+                good_fraction = np.average(sg_wise_score < 0.05)
+                decent_fraction = np.average(sg_wise_score < 0.1)
+                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} fraction below 0.05"] = good_fraction
+                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} fraction below 0.1"] = decent_fraction
             elif label == 'score':
-                good_fraction = np.average(score_diff < 3)
-                decent_fraction = np.average(score_diff < 5)
-                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} difference fraction below 3"] = good_fraction
-                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} difference fraction below 5"] = decent_fraction
-
-        if label == 'score':  # adjust for difference to target
-            score_diff = real_samples_dict['score'][:, None] - generated_samples_dict['score']
+                good_fraction = np.average(sg_wise_score > 0)
+                score_dict[f"Mini-CSP {unique_space_groups[k]} {label} fraction above 50%"] = good_fraction
 
         all_scores = generated_samples_dict[label]
         score_dict[f"Mini-CSP overall average {label}"] = np.average(all_scores)
         if label == 'vdw overlap':
-            good_fraction = np.average(all_scores < 0.1)
-            decent_fraction = np.average(all_scores < 0.2)
-            score_dict[f"Mini-CSP {label} fraction below 0.1"] = good_fraction
-            score_dict[f"Mini-CSP {label} fraction below 0.2"] = decent_fraction
+            good_fraction = np.average(all_scores < 0.05)
+            decent_fraction = np.average(all_scores < 0.1)
+            score_dict[f"Mini-CSP {label} fraction below 0.05"] = good_fraction
+            score_dict[f"Mini-CSP {label} fraction below 0.1"] = decent_fraction
         elif label == 'score':
-            good_fraction = np.average(score_diff < 1)
-            decent_fraction = np.average(score_diff < 3)
-            score_dict[f"Mini-CSP {label} difference fraction below 1"] = good_fraction
-            score_dict[f"Mini-CSP {label} difference fraction below 3"] = decent_fraction
+            good_fraction = np.average(all_scores > 0)  # score function 'middle' is at 0
+            score_dict[f"Mini-CSP  {label} fraction above 50%"] = good_fraction
 
     wandb.log(score_dict)
 
@@ -164,8 +208,8 @@ def sample_density_funnel_plot(config, wandb, best_supercells, sampling_dict, re
                                    showlegend=False),
                       row=row, col=col)
 
-        fig.update_xaxes(range=[min(real_samples_dict['density'][ii],np.amin(sampling_dict['density'][ii])),
-                                min(1,max(real_samples_dict['density'][ii], np.amax(sampling_dict['density'][ii])))],
+        fig.update_xaxes(range=[min(real_samples_dict['density'][ii], np.amin(sampling_dict['density'][ii])),
+                                min(1, max(real_samples_dict['density'][ii], np.amax(sampling_dict['density'][ii])))],
                          row=row, col=col)
 
     fig.update_yaxes(autorange="reversed")
@@ -197,7 +241,7 @@ def sample_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_sc
 
     # fig.update_layout(xaxis_title='RDF Distance', yaxis_title='Model Score')
     fig.update_xaxes(range=[-2, np.log10(np.amax(rdf_real_dists[:num_reporting_samples]) + 0.1)])
-    #fig.update_yaxes(autorange="reversed")
+    # fig.update_yaxes(autorange="reversed")
 
     if config.wandb.log_figures:
         wandb.log({'RDF Funnel': fig})
@@ -250,7 +294,7 @@ def save_3d_structure_examples(wandb, generated_supercell_examples):
     return None
 
 
-def topk_mini_csp_analysis(scores_list, scores_dict, real_samples_dict, sampling_dict, real_data, discriminator, config, supercell_builder, min_k=10):
+def rebuild_topk_crystals(scores_list, scores_dict, real_samples_dict, sampling_dict, real_data, discriminator, config, supercell_builder, min_k=10):
     # identify the best samples (later, use clustering to filter down to a diverse set)
 
     num_crystals, num_samples = scores_dict['score'].shape
@@ -261,6 +305,7 @@ def topk_mini_csp_analysis(scores_list, scores_dict, real_samples_dict, sampling
     best_samples = np.asarray([sampling_dict['cell params'][ii, sort_inds[ii], :] for ii in range(num_crystals)])
     best_samples_space_groups = np.asarray([sampling_dict['space group'][ii, sort_inds[ii]] for ii in range(num_crystals)])
     best_samples_handedness = np.asarray([sampling_dict['handedness'][ii, sort_inds[ii]] for ii in range(num_crystals)])
+    best_samples_latents = np.zeros_like(np.asarray([sampling_dict['discriminator latent'][ii, sort_inds[ii]] for ii in range(num_crystals)]))
 
     # reconstruct the best samples from the cell params
     best_supercells_list = []
@@ -287,13 +332,15 @@ def topk_mini_csp_analysis(scores_list, scores_dict, real_samples_dict, sampling
                 align_molecules=True,  # recorded cell params in standardized basis
                 target_handedness=best_samples_handedness[:, n])
 
-            output, extra_outputs = discriminator(fake_supercell_data.clone(), return_dists=True)  # reshape output from flat filters to channels * filters per channel
+            output, extra_outputs = discriminator(fake_supercell_data.clone(), return_dists=True, return_latent=True)  # reshape output from flat filters to channels * filters per channel
             best_supercell_scores.append(softmax_and_score(output).cpu().detach().numpy())
 
             rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=rdf_range, bins=rdf_bins, raw_density=True, atomwise=True, mode='intermolecular', cpu_detach=True)
             best_supercell_rdfs.append(rdf)
 
             best_supercells_list.append(fake_supercell_data.cpu().detach())
+
+            best_samples_latents[:, n, :] = extra_outputs['latent']
 
     reconstructed_best_scores = np.asarray(best_supercell_scores).T
     # todo add even more robustness around these
@@ -303,30 +350,32 @@ def topk_mini_csp_analysis(scores_list, scores_dict, real_samples_dict, sampling
 
     best_rdfs = [np.stack([best_supercell_rdfs[ii][jj] for ii in range(topk_size)]) for jj in range(real_data.num_graphs)]
 
-    rdf_dists = np.zeros((real_data.num_graphs, topk_size, topk_size))
-    for i in range(real_data.num_graphs):
-        for j in range(topk_size):
-            for k in range(j, topk_size):
-                rdf_dists[i, j, k] = compute_rdf_distance(best_rdfs[i][j], best_rdfs[i][k], rr)
-
-    rdf_dists = rdf_dists + np.moveaxis(rdf_dists, (1, 2), (2, 1))  # add lower diagonal (distance matrix is symmetric)
-
-    rdf_real_dists = np.zeros((real_data.num_graphs, topk_size))
-    for i in range(real_data.num_graphs):
-        for j in range(topk_size):
-            rdf_real_dists[i, j] = compute_rdf_distance(real_samples_dict['RDF'][i], best_rdfs[i][j], rr)
-
-    return rdf_dists, rdf_real_dists, reconstructed_best_scores, best_supercells_list, best_rdfs, best_scores_dict
+    return reconstructed_best_scores, best_supercells_list, best_rdfs, best_scores_dict, best_samples_latents, rr, sort_inds
 
 
-def plot_mini_csp_dist_vs_score(rdf_real_dists, reconstructed_best_scores, real_samples_dict, best_scores_dict, wandb):
-    x = rdf_real_dists.flatten()
+def plot_mini_csp_dist_vs_score(real_sample_rdf_distance, real_sample_cell_distance, real_sample_latent_distance, reconstructed_best_scores, real_samples_dict, best_scores_dict, sampling_dict, wandb):
+    fig = make_subplots(rows=1, cols=3)
+
     y = (reconstructed_best_scores - real_samples_dict['score'][:, None]).flatten()
     z = best_scores_dict['vdw overlap'].flatten()
+    fig.add_trace(go.Scattergl(x=(real_sample_rdf_distance.flatten()), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
+                                                                                                                      colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(sampling_dict['vdw overlap'].flatten()))),
+                  row=1, col=1)
 
-    fig = go.Figure()
-    fig.add_trace(go.Scattergl(x=np.log10(x), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
-                                                               colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(z))))
+    y = (sampling_dict['score'] - real_samples_dict['score'][:, None]).flatten()
+    z = sampling_dict['vdw overlap'].flatten()
 
-    fig.update_layout(xaxis_title='log10 RDF Distance From Target', yaxis_title='Sample vs. experimental score difference', showlegend=False)
+    fig.add_trace(go.Scattergl(x=(real_sample_cell_distance.flatten()), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
+                                                                                                                       colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(z))),
+                  row=1, col=2)
+
+    fig.add_trace(go.Scattergl(x=(real_sample_latent_distance.flatten()), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
+                                                                                                                         colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(z))),
+                  row=1, col=3)
+
+    fig.update_layout(yaxis_title='Sample vs. exp score diff', showlegend=False)
+    fig.update_xaxes(title_text='rdf distance to exp', row=1, col=1)
+    fig.update_xaxes(title_text='cell params distance to exp', row=1, col=2)
+    fig.update_xaxes(title_text='latent distance to exp', row=1, col=3)
+
     wandb.log({"Sample RDF vs. Score": fig})
