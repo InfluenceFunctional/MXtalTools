@@ -1532,15 +1532,16 @@ class Modeller:
         stats_keys, stats_values = [], []
         if packing_loss is not None:
             packing_mae = np.abs(packing_prediction - packing_target) / packing_target
-            stats_keys += ['generator packing loss', 'generator packing prediction',
-                           'generator packing target', 'generator packing mae']
-            stats_values += [packing_loss.cpu().detach().numpy(), packing_prediction,
-                             packing_target, packing_mae]
 
             if packing_mae.mean() < 0.025:  # dynamically soften the packing loss when the model is doing well
                 self.packing_loss_coefficient *= 0.99
-            if packing_mae.mean() > 0.025:
+            if (packing_mae.mean() > 0.025) and (self.packing_loss_coefficient < 100):
                 self.packing_loss_coefficient *= 1.01
+
+            stats_keys += ['generator packing loss', 'generator packing prediction',
+                           'generator packing target', 'generator packing mae']
+            stats_values += [packing_loss.cpu().detach().numpy() * self.packing_loss_coefficient, packing_prediction,
+                             packing_target, packing_mae]
 
             if True:  # enforce the target density all the time
                 generator_losses_list.append(packing_loss.float() * self.packing_loss_coefficient)
