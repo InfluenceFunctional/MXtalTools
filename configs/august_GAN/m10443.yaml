@@ -4,7 +4,7 @@ machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 10442
+run_num: 10443
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
@@ -155,7 +155,7 @@ generator:
   fc_depth: 256
   activation: 'gelu'
   fc_dropout_probability: 0
-  fc_norm_mode: layer
+  fc_norm_mode: null
 
   prior: multivariate normal
   prior_dimension: 12

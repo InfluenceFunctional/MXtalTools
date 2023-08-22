@@ -4,8 +4,6 @@ import torch
 import tqdm
 from plotly import graph_objects as go
 from plotly.subplots import make_subplots
-from scipy.stats import gaussian_kde
-from torch_geometric.loader.dataloader import Collater
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import ase_mol_from_crystaldata, compute_rdf_distance
@@ -15,49 +13,61 @@ from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 
 
-def compute_csp_sample_distances(reconstructed_best_scores, real_data, best_rdfs, rr, real_samples_dict, config, sampling_dict, num_samples):
-
+def compute_csp_sample_distances(config, real_samples_dict, generated_samples_dict, num_crystals, num_samples, rr):
     """compute various distances"""
     """rdf distances"""
-    topk_size = reconstructed_best_scores.shape[1]
-    intra_sample_rdf_distance = np.zeros((real_data.num_graphs, topk_size, topk_size))
-    for i in range(real_data.num_graphs):
-        for j in range(topk_size):
-            for k in range(j, topk_size):
-                intra_sample_rdf_distance[i, j, k] = compute_rdf_distance(best_rdfs[i][j], best_rdfs[i][k], rr)
+    # for i in range(num_crystals):
+    #     for j in tqdm.tqdm(range(num_samples)):
+    #         for k in range(j, num_samples):
+    #             intra_sample_rdf_distance[i, j, k] = compute_rdf_distance(generated_samples_dict['RDF'][i][j], generated_samples_dict['RDF'][i][k], rr)
+    # intra_sample_rdf_distance = intra_sample_rdf_distance + np.moveaxis(intra_sample_rdf_distance, (1, 2), (2, 1))  # add lower diagonal (distance matrix is symmetric)
 
-    intra_sample_rdf_distance = intra_sample_rdf_distance + np.moveaxis(intra_sample_rdf_distance, (1, 2), (2, 1))  # add lower diagonal (distance matrix is symmetric)
+    intra_sample_rdf_distance = np.zeros((num_crystals, num_samples, num_samples))
+    rdfs = torch.Tensor(generated_samples_dict['RDF'][0]).to(config.device)
+    rrc = torch.Tensor(rr).to(config.device)
+    for i in range(num_crystals):  # much faster in parallel and on cuda
+        for j in tqdm.tqdm(range(num_samples)):
+            intra_sample_rdf_distance[i, j] = compute_rdf_distance(rdfs[j], rdfs, rrc, num_samples).cpu().detach().numpy()
 
-    real_sample_rdf_distance = np.zeros((real_data.num_graphs, topk_size))
-    for i in range(real_data.num_graphs):
-        for j in range(topk_size):
-            real_sample_rdf_distance[i, j] = compute_rdf_distance(real_samples_dict['RDF'][i], best_rdfs[i][j], rr)
+    real_sample_rdf_distance = np.zeros((num_crystals, num_samples))
+    for i in range(num_crystals):
+        for j in range(num_samples):
+            real_sample_rdf_distance[i, j] = compute_rdf_distance(real_samples_dict['RDF'][i], generated_samples_dict['RDF'][i][j], rr)
 
     """cell parameter and discriminator latent distances"""
-    intra_sample_cell_distance = np.zeros((real_data.num_graphs, num_samples, num_samples))
-    intra_sample_latent_distance = np.zeros((real_data.num_graphs, num_samples, num_samples))
-    std_sample_cell_params = (sampling_dict['cell params'] - config.dataDims['lattice means']) / config.dataDims['lattice stds']
+    intra_sample_cell_distance = np.zeros((num_crystals, num_samples, num_samples))
+    intra_sample_latent_distance = np.zeros((num_crystals, num_samples, num_samples))
+    std_sample_cell_params = (generated_samples_dict['cell params'] - config.dataDims['lattice means']) / config.dataDims['lattice stds']
 
-    for i in range(real_data.num_graphs):  # dot product - it's normed
+    for i in range(num_crystals):  # dot product - it's normed
         x1 = torch.Tensor(std_sample_cell_params[i])
-        x2 = torch.Tensor(sampling_dict['discriminator latent'][i])
+        x2 = torch.Tensor(generated_samples_dict['discriminator latent'][i])
         intra_sample_cell_distance[i] = (torch.cdist(x1, x1) / torch.outer(torch.linalg.norm(x1, dim=-1), torch.linalg.norm(x1, dim=-1))).numpy()
         intra_sample_latent_distance[i] = (torch.cdist(x2, x2) / torch.outer(torch.linalg.norm(x2, dim=-1), torch.linalg.norm(x2, dim=-1))).numpy()
 
-    real_sample_cell_distance = np.zeros((real_data.num_graphs, num_samples))
-    real_sample_latent_distance = np.zeros((real_data.num_graphs, num_samples))
-    std_real_cell_params = (real_data.cell_params.cpu().detach().numpy() - config.dataDims['lattice means']) / config.dataDims['lattice stds']
-    for i in range(real_data.num_graphs):
+    real_sample_cell_distance = np.zeros((num_crystals, num_samples))
+    real_sample_latent_distance = np.zeros((num_crystals, num_samples))
+    std_real_cell_params = (real_samples_dict['cell params'] - config.dataDims['lattice means']) / config.dataDims['lattice stds']
+    for i in range(num_crystals):
         x1 = torch.Tensor(std_sample_cell_params[i])
-        x2 = torch.Tensor(sampling_dict['discriminator latent'][i])
+        x2 = torch.Tensor(generated_samples_dict['discriminator latent'][i])
         y1 = torch.Tensor(std_real_cell_params[i])[None, :]
         y2 = torch.Tensor(real_samples_dict['discriminator latent'][i])[None, :]
         real_sample_cell_distance[i] = (torch.cdist(y1, x1) / torch.outer(torch.linalg.norm(y1, dim=-1), torch.linalg.norm(x1, dim=-1))).numpy()
         real_sample_latent_distance[i] = (torch.cdist(y2, x2) / torch.outer(torch.linalg.norm(y2, dim=-1), torch.linalg.norm(x2, dim=-1))).numpy()
 
-    return real_sample_rdf_distance, intra_sample_rdf_distance, \
-        real_sample_cell_distance, intra_sample_cell_distance, \
-        real_sample_latent_distance, intra_sample_latent_distance
+    real_dists_dict = {
+        'real_sample_rdf_distance': real_sample_rdf_distance,
+        'real_sample_cell_distance': real_sample_cell_distance,
+        'real_sample_latent_distance': real_sample_latent_distance
+    }
+    intra_dists_dict = {
+        'intra_sample_rdf_distance': intra_sample_rdf_distance,
+        'intra_sample_cell_distance': intra_sample_cell_distance,
+        'intra_sample_latent_distance': intra_sample_latent_distance
+    }
+
+    return real_dists_dict, intra_dists_dict
 
 
 def mini_csp_rdf_and_distance_analysis(scores_dict, real_data, sampling_dict, real_samples_dict, discriminator, config, supercell_builder, min_k=10):
@@ -184,13 +194,12 @@ def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supe
     return None
 
 
-def sample_density_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict):
-    num_crystals = best_supercells.num_graphs
+def sample_density_funnel_plot(config, wandb, num_crystals, identifiers, sampling_dict, real_samples_dict):
     num_reporting_samples = min(25, num_crystals)
     n_rows = int(np.ceil(np.sqrt(num_reporting_samples)))
     n_cols = int(n_rows)
 
-    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(best_supercells.csd_identifier)[:num_reporting_samples],
+    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(identifiers)[:num_reporting_samples],
                         x_title='Packing Coefficient', y_title='Model Score')
     for ii in range(num_reporting_samples):
         row = ii // n_cols + 1
@@ -222,13 +231,12 @@ def sample_density_funnel_plot(config, wandb, best_supercells, sampling_dict, re
     return None
 
 
-def sample_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists):
-    num_crystals = best_supercells.num_graphs
+def sample_rdf_funnel_plot(config, wandb, num_crystals, identifiers, reconstructed_best_scores, real_samples_dict, rdf_real_dists):
     num_reporting_samples = min(25, num_crystals)
     n_rows = int(np.ceil(np.sqrt(num_reporting_samples)))
     n_cols = int(n_rows)
 
-    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(best_supercells.csd_identifier)[:num_reporting_samples],
+    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(identifiers)[:num_reporting_samples],
                         x_title='log10 RDF Distance', y_title='Diff from Exp. Score')
     for ii in range(num_reporting_samples):
         row = ii // n_cols + 1
@@ -353,29 +361,29 @@ def rebuild_topk_crystals(scores_list, scores_dict, real_samples_dict, sampling_
     return reconstructed_best_scores, best_supercells_list, best_rdfs, best_scores_dict, best_samples_latents, rr, sort_inds
 
 
-def plot_mini_csp_dist_vs_score(real_sample_rdf_distance, real_sample_cell_distance, real_sample_latent_distance, reconstructed_best_scores, real_samples_dict, best_scores_dict, sampling_dict, wandb):
+def plot_mini_csp_dist_vs_score(real_sample_rdf_distance, real_sample_cell_distance, real_sample_latent_distance, generated_samples_dict, real_samples_dict, wandb):
     fig = make_subplots(rows=1, cols=3)
 
-    y = (reconstructed_best_scores - real_samples_dict['score'][:, None]).flatten()
-    z = best_scores_dict['vdw overlap'].flatten()
-    fig.add_trace(go.Scattergl(x=(real_sample_rdf_distance.flatten()), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
-                                                                                                                      colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(sampling_dict['vdw overlap'].flatten()))),
+    y = (generated_samples_dict['score'] - real_samples_dict['score'][:, None]).flatten()
+    z = generated_samples_dict['vdw overlap'].flatten()
+    fig.add_trace(go.Scattergl(x=np.log10(real_sample_rdf_distance.flatten()), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
+                                                                                                                      colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(generated_samples_dict['vdw overlap'].flatten()))),
                   row=1, col=1)
 
-    y = (sampling_dict['score'] - real_samples_dict['score'][:, None]).flatten()
-    z = sampling_dict['vdw overlap'].flatten()
+    y = (generated_samples_dict['score'] - real_samples_dict['score'][:, None]).flatten()
+    z = generated_samples_dict['vdw overlap'].flatten()
 
-    fig.add_trace(go.Scattergl(x=(real_sample_cell_distance.flatten()), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
+    fig.add_trace(go.Scattergl(x=np.log10(real_sample_cell_distance.flatten()), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
                                                                                                                        colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(z))),
                   row=1, col=2)
 
-    fig.add_trace(go.Scattergl(x=(real_sample_latent_distance.flatten()), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
+    fig.add_trace(go.Scattergl(x=np.log10(real_sample_latent_distance.flatten()), y=y, opacity=0.75, mode='markers', marker=dict(color=z, colorscale='viridis',
                                                                                                                          colorbar=dict(title="vdW Overlap"), cmin=0, cmax=np.amax(z))),
                   row=1, col=3)
 
     fig.update_layout(yaxis_title='Sample vs. exp score diff', showlegend=False)
-    fig.update_xaxes(title_text='rdf distance to exp', row=1, col=1)
-    fig.update_xaxes(title_text='cell params distance to exp', row=1, col=2)
-    fig.update_xaxes(title_text='latent distance to exp', row=1, col=3)
+    fig.update_xaxes(title_text='log10 rdf distance to exp', row=1, col=1)
+    fig.update_xaxes(title_text='log10 cell params distance to exp', row=1, col=2)
+    fig.update_xaxes(title_text='log10 latent distance to exp', row=1, col=3)
 
     wandb.log({"Sample RDF vs. Score": fig})

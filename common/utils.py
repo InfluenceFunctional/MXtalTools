@@ -115,7 +115,7 @@ def np_softmax(x: np.ndarray, temperature: float = 1):
     return probabilities
 
 
-def compute_rdf_distance(rdf1, rdf2, rr):
+def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
     """
     compute a distance metric between two radial distribution functions with shapes
     [num_sub_rdfs, num_bins] where sub_rdfs are e.g., particular interatomic RDFS within a certain sample (elementwise or atomwise modes)
@@ -143,18 +143,23 @@ def compute_rdf_distance(rdf1, rdf2, rr):
     # TODO come up with a clever way to norm these
     # emd_norm = (torch_rdf1.sum(-1) + torch_rdf2.sum(-1)) / 2  # sub-rdf-wise symmetrical norm sub-rdf-wise
 
-    normed_rdf1 = torch_rdf1  # / emd_norm[:, None]
+    if n_parallel_rdf2 is not None:  # we can in parallel compare many rdf2's to a single rdf1
+        torch_rdf1_f = torch_rdf1.tile(n_parallel_rdf2, 1, 1)
+    else:
+        torch_rdf1_f = torch_rdf1
+
+    normed_rdf1 = torch_rdf1_f  # / emd_norm[:, None]
     normed_rdf2 = torch_rdf2  # / emd_norm[:, None]
 
     emd = earth_movers_distance_torch(normed_rdf1, normed_rdf2)
 
-    range_normed_emd = emd * (torch_range[1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+    range_normed_emd = emd * (torch_range[1] - torch_range[0]) ** 2  # rescale the distance from units of bins to the real physical range - hit twice for the two rdfs
 
     if return_numpy:
-        distance = range_normed_emd.mean().cpu().detach().numpy()
+        distance = range_normed_emd.mean(-1).cpu().detach().numpy()
         assert np.sum(np.isnan(distance)) == 0
     else:
-        distance = range_normed_emd.mean()
+        distance = range_normed_emd.mean(-1)
         assert torch.sum(torch.isnan(distance)) == 0
 
     return distance

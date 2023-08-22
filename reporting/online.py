@@ -65,14 +65,7 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
                 name="Dataset samples",
                 showlegend=True,
             ))
-            #
-            # fig.add_trace(go.Histogram(
-            #     x=renormalized_samples[:, i],
-            #     histnorm='probability density',
-            #     nbinsx=100,
-            #     name="Samples",
-            #     showlegend=True,
-            # ))
+
             fig.add_trace(go.Histogram(
                 x=cleaned_samples[:, i],
                 histnorm='probability density',

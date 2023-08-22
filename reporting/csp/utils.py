@@ -81,3 +81,41 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
         fig.show()
 
     return None
+
+
+def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict, crystal_name, crystal_ind):
+    fig = make_subplots(rows=4, cols=3, subplot_titles=config.dataDims['lattice features'])
+    for i in range(12):
+        bandwidth = np.ptp(generated_samples_dict['cell params'][crystal_ind, :, i]) / 100
+        col = i % 3 + 1
+        row = i // 3 + 1
+        fig.add_trace(go.Violin(
+            x=[real_samples_dict['cell params'][crystal_ind, i]],
+            bandwidth=bandwidth,
+            name="Samples",
+            showlegend=False,
+            line_color='darkorchid',
+            side='positive',
+            orientation='h',
+            width=2,
+        ), row=row, col=col)
+        for cc, cutoff in enumerate([0, 0.5, 0.95]):
+            colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', 3, colortype='rgb')
+            good_inds = np.argwhere(generated_samples_dict['score'][crystal_ind] > np.quantile(generated_samples_dict['score'][crystal_ind], cutoff))[:, 0]
+            fig.add_trace(go.Violin(
+                x=generated_samples_dict['cell params'][crystal_ind, :, i][good_inds],
+                bandwidth=bandwidth,
+                name="Samples",
+                showlegend=False,
+                line_color=colors[cc],
+                side='positive',
+                orientation='h',
+                width=2,
+            ), row=row, col=col)
+
+    fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_traces(opacity=0.5)
+    fig.update_layout(title=crystal_name)
+
+    wandb.log({"Mini-CSP Cell Parameters": fig})
+    return None
