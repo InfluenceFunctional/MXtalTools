@@ -409,14 +409,10 @@ class Modeller:
         """
         to pass tools to another training pipeline
         """
-        '''miscellaneous setup'''
-        std_dataDims_path = self.source_directory + r'/dataset_management/standard_dataDims.npy'
-        if os.path.exists(std_dataDims_path):
-            standard_dataDims = np.load(std_dataDims_path, allow_pickle=True).item()  # maintain constant standardizations between runs
-            print("Loading premade standardization")
-        else:
-            print("Premade Standardization Missing!")
-            standard_dataDims = None
+        '''miscellaneous setup''' # todo undo hardoced path here
+        std_dataDims_path = '/home/mkilgour/mcrygan/dataset_management/standard_dataDims.npy'
+        standard_dataDims = np.load(std_dataDims_path, allow_pickle=True).item()  # maintain constant standardizations between runs
+        print("Loading premade standardization")
 
         '''note this standard datadims construction will only work between runs with
         identical choice of features - there is a flag for this in the datasetbuilder'''
