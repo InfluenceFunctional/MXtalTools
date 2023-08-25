@@ -209,8 +209,12 @@ class Modeller:
             regressor_optimizer, regressor_schedulers, \
             num_params
 
-    def prep_dataloaders(self, dataset_builder, test_fraction=0.2):
-        train_loader, test_loader = get_dataloaders(dataset_builder, machine=self.config.machine, batch_size=self.config.min_batch_size, test_fraction=test_fraction)
+    def prep_dataloaders(self, dataset_builder, test_fraction=0.2, override_batch_size: int = None):
+        if override_batch_size is None:
+            loader_batch_size = self.config.min_batch_size
+        else:
+            loader_batch_size = override_batch_size
+        train_loader, test_loader = get_dataloaders(dataset_builder, machine=self.config.machine, batch_size=loader_batch_size, test_fraction=test_fraction)
         self.config.current_batch_size = self.config.min_batch_size
         print("Training batch size set to {}".format(self.config.current_batch_size))
         del dataset_builder
@@ -401,7 +405,7 @@ class Modeller:
 
         return embedding_dict
 
-    def prep_standalone_modelling_tools(self):
+    def prep_standalone_modelling_tools(self, batch_size):
         """
         to pass tools to another training pipeline
         """
@@ -429,7 +433,8 @@ class Modeller:
             test_fraction = 1
         else:
             test_fraction = 0.2
-        train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder, test_fraction=test_fraction)
+
+        train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder, test_fraction=test_fraction, batch_size=batch_size)
 
         return train_loader, test_loader
 
