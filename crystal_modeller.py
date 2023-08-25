@@ -181,13 +181,13 @@ class Modeller:
 
         if self.config.generator_path is not None and (self.config.mode == 'gan' or self.config.mode == 'embedding'):
             generator, generator_optimizer = reload_model(generator, generator_optimizer,
-                                                          self.config.generator_path)
+                                                               self.config.generator_path)
         if self.config.discriminator_path is not None and (self.config.mode == 'gan' or self.config.mode == 'embedding'):
             discriminator, discriminator_optimizer = reload_model(discriminator, discriminator_optimizer,
-                                                                  self.config.discriminator_path)
+                                                                       self.config.discriminator_path)
         if self.config.regressor_path is not None:
             regressor, regressor_optimizer = reload_model(regressor, regressor_optimizer,
-                                                          self.config.regressor_path)
+                                                               self.config.regressor_path)
 
         generator_schedulers = init_schedulers(self.config.generator_optimizer, generator_optimizer)
         discriminator_schedulers = init_schedulers(self.config.discriminator_optimizer, discriminator_optimizer)
@@ -399,6 +399,31 @@ class Modeller:
         fig.show()
 
         return embedding_dict
+
+
+    def prep_standalone_crystal_modelling_tools(self):
+        """
+        to pass tools to another training pipeline
+        """
+
+        '''miscellaneous setup'''
+        dataset_builder = self.misc_pre_training_items()
+
+        '''prep dataloaders'''
+        if self.config.target_identifiers is not None:
+            test_fraction = 1
+        else:
+            test_fraction = 0.2
+        train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder, test_fraction=test_fraction)
+
+        '''instantiate models'''
+        generator, discriminator, regressor, \
+            generator_optimizer, generator_schedulers, \
+            discriminator_optimizer, discriminator_schedulers, \
+            regressor_optimizer, regressor_schedulers, \
+            num_params = self.init_models()
+
+        return discriminator, self.supercell_builder, train_loader, test_loader, self.config, self.config.dataDims, self.sym_info
 
     def train_crystal_models(self):
         """
