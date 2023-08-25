@@ -10,7 +10,7 @@ import numpy as np
 from argparse import Namespace
 
 
-class MCryNetD():
+class StandaloneDiscriminator():
     """
     standalone score model for molecular crystals
     """
