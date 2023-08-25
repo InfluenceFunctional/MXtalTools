@@ -400,15 +400,29 @@ class Modeller:
 
         return embedding_dict
 
-    def prep_standalone5_crystal_modelling_tools(self):
+    def prep_standalone_modelling_tools(self):
         """
         to pass tools to another training pipeline
         """
-
-        self.config = np.load('configs/standalone.npy',allow_pickle=True)
         '''miscellaneous setup'''
-        dataset_builder = self.misc_pre_training_items()
+        std_dataDims_path = self.source_directory + r'/dataset_management/standard_dataDims.npy'
+        if os.path.exists(std_dataDims_path):
+            standard_dataDims = np.load(std_dataDims_path, allow_pickle=True).item()  # maintain constant standardizations between runs
+            print("Loading premade standardization")
+        else:
+            print("Premade Standardization Missing!")
+            standard_dataDims = None
 
+        '''note this standard datadims construction will only work between runs with
+        identical choice of features - there is a flag for this in the datasetbuilder'''
+        dataset_builder = DatasetBuilder(self.config, pg_dict=self.point_groups,
+                                         sg_dict=self.space_groups,
+                                         lattice_dict=self.lattice_type,
+                                         premade_dataset=self.prep_dataset,
+                                         replace_dataDims=standard_dataDims)
+
+        del self.prep_dataset  # we don't actually want this huge thing floating around
+        self.config.dataDims = dataset_builder.get_dimension()
         '''prep dataloaders'''
         if self.config.target_identifiers is not None:
             test_fraction = 1
