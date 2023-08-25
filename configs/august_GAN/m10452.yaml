@@ -156,6 +156,7 @@ generator:
   fc_dropout_probability: 0
   fc_norm_mode: layer
 
+
   prior: multivariate normal
   prior_dimension: 12
 

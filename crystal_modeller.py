@@ -162,10 +162,10 @@ class Modeller:
             1, 1)  # init dummy models
         print("Initializing model(s) for " + self.config.mode)
         if self.config.mode == 'gan' or self.config.mode == 'sampling' or self.config.mode == 'embedding':
-            generator = crystal_generator(self.config, self.config.dataDims, self.sym_info)
-            discriminator = crystal_discriminator(self.config, self.config.dataDims)
+            generator = crystal_generator(self.config, self.config.generator.conditioner, self.config.generator, self.config.dataDims, self.sym_info)
+            discriminator = crystal_discriminator(self.config, self.config.discriminator, self.config.dataDims)
         if self.config.mode == 'regression' or self.config.regressor_path is not None:
-            regressor = molecule_regressor(self.config, self.config.dataDims)
+            regressor = molecule_regressor(self.config, self.config.regressor, self.config.dataDims)
 
         if self.config.device.lower() == 'cuda':
             print('Putting models on CUDA')
@@ -400,11 +400,12 @@ class Modeller:
 
         return embedding_dict
 
-    def prep_standalone_crystal_modelling_tools(self):
+    def prep_standalone5_crystal_modelling_tools(self):
         """
         to pass tools to another training pipeline
         """
 
+        self.config = np.load('configs/standalone.npy',allow_pickle=True)
         '''miscellaneous setup'''
         dataset_builder = self.misc_pre_training_items()
 
@@ -415,14 +416,7 @@ class Modeller:
             test_fraction = 0.2
         train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder, test_fraction=test_fraction)
 
-        '''instantiate models'''
-        generator, discriminator, regressor, \
-            generator_optimizer, generator_schedulers, \
-            discriminator_optimizer, discriminator_schedulers, \
-            regressor_optimizer, regressor_schedulers, \
-            num_params = self.init_models()
-
-        return discriminator, self.supercell_builder, train_loader, test_loader, self.config, self.config.dataDims, self.sym_info
+        return train_loader, test_loader
 
     def train_crystal_models(self):
         """

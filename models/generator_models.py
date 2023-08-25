@@ -15,7 +15,7 @@ from constants.asymmetric_units import asym_unit_dict
 
 
 class crystal_generator(nn.Module):
-    def __init__(self, config, dataDims, sym_info):
+    def __init__(self, config, conditioner_config, generator_config, dataDims, sym_info):
         super(crystal_generator, self).__init__()
 
         self.device = config.device
@@ -30,20 +30,20 @@ class crystal_generator(nn.Module):
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(self.device)
 
         '''set random prior'''
-        self.latent_dim = config.generator.prior_dimension
-        if config.generator.prior == 'multivariate normal':
+        self.latent_dim = generator_config.prior_dimension
+        if generator_config.prior == 'multivariate normal':
             self.prior = MultivariateNormal(torch.zeros(self.latent_dim), torch.eye(self.latent_dim))
-        elif config.generator.prior.lower() == 'uniform':
+        elif generator_config.prior.lower() == 'uniform':
             self.prior = Uniform(low=0, high=1)
         else:
-            print(config.generator.prior + ' is not an implemented prior!!')
+            print(generator_config.prior + ' is not an implemented prior!!')
             sys.exit()
 
         '''conditioning model'''
         self.num_crystal_features = config.dataDims['num crystal generation features']
         torch.manual_seed(config.seeds.model)
 
-        if config.generator.conditioner.skinny_atomwise_features:
+        if conditioner_config.skinny_atomwise_features:
             self.skinny_inputs = True
             self.atom_input_feats = 1 + 3  # take first dim (atomic number) and three for coordinates
             self.num_mol_feats = 0
@@ -54,32 +54,32 @@ class crystal_generator(nn.Module):
 
         self.conditioner = molecule_graph_model(
             dataDims=dataDims,
-            atom_embedding_dims=config.generator.conditioner.init_atom_embedding_dim,
+            atom_embedding_dims=conditioner_config.init_atom_embedding_dim,
             seed=config.seeds.model,
             num_atom_feats=self.atom_input_feats,  # we will add directly the normed coordinates to the node features
             num_mol_feats=self.num_mol_feats,
-            output_dimension=config.generator.conditioner.output_dim,  # starting size for decoder model
-            activation=config.generator.conditioner.activation,
-            num_fc_layers=config.generator.conditioner.num_fc_layers,
-            fc_depth=config.generator.conditioner.fc_depth,
-            fc_dropout_probability=config.generator.conditioner.fc_dropout_probability,
-            fc_norm_mode=config.generator.conditioner.fc_norm_mode,
-            graph_filters=config.generator.conditioner.graph_filters,
-            graph_convolutional_layers=config.generator.conditioner.graph_convolution_layers,
-            concat_mol_to_atom_features=config.generator.conditioner.concat_mol_features,
-            pooling=config.generator.conditioner.pooling,
-            graph_norm=config.generator.conditioner.graph_norm,
-            num_spherical=config.generator.conditioner.num_spherical,
-            num_radial=config.generator.conditioner.num_radial,
-            graph_convolution=config.generator.conditioner.graph_convolution,
-            num_attention_heads=config.generator.conditioner.num_attention_heads,
-            add_spherical_basis=config.generator.conditioner.add_spherical_basis,
-            add_torsional_basis=config.generator.conditioner.add_torsional_basis,
-            graph_embedding_size=config.generator.conditioner.atom_embedding_size,
-            radial_function=config.generator.conditioner.radial_function,
-            max_num_neighbors=config.generator.conditioner.max_num_neighbors,
-            convolution_cutoff=config.generator.conditioner.graph_convolution_cutoff,
-            positional_embedding=config.generator.conditioner.positional_embedding,
+            output_dimension=conditioner_config.output_dim,  # starting size for decoder model
+            activation=conditioner_config.activation,
+            num_fc_layers=conditioner_config.num_fc_layers,
+            fc_depth=conditioner_config.fc_depth,
+            fc_dropout_probability=conditioner_config.fc_dropout_probability,
+            fc_norm_mode=conditioner_config.fc_norm_mode,
+            graph_filters=conditioner_config.graph_filters,
+            graph_convolutional_layers=conditioner_config.graph_convolution_layers,
+            concat_mol_to_atom_features=conditioner_config.concat_mol_features,
+            pooling=conditioner_config.pooling,
+            graph_norm=conditioner_config.graph_norm,
+            num_spherical=conditioner_config.num_spherical,
+            num_radial=conditioner_config.num_radial,
+            graph_convolution=conditioner_config.graph_convolution,
+            num_attention_heads=conditioner_config.num_attention_heads,
+            add_spherical_basis=conditioner_config.add_spherical_basis,
+            add_torsional_basis=conditioner_config.add_torsional_basis,
+            graph_embedding_size=conditioner_config.atom_embedding_size,
+            radial_function=conditioner_config.radial_function,
+            max_num_neighbors=conditioner_config.max_num_neighbors,
+            convolution_cutoff=conditioner_config.graph_convolution_cutoff,
+            positional_embedding=conditioner_config.positional_embedding,
             max_molecule_size=config.max_molecule_radius,
             crystal_mode=False,
             crystal_convolution_type=None,
@@ -88,13 +88,13 @@ class crystal_generator(nn.Module):
         '''
         generator model
         '''
-        self.model = MLP(layers=config.generator.num_fc_layers,
-                         filters=config.generator.fc_depth,
-                         norm=config.generator.fc_norm_mode,
-                         dropout=config.generator.fc_dropout_probability,
+        self.model = MLP(layers=generator_config.num_fc_layers,
+                         filters=generator_config.fc_depth,
+                         norm=generator_config.fc_norm_mode,
+                         dropout=generator_config.fc_dropout_probability,
                          input_dim=self.latent_dim,
                          output_dim=dataDims['num lattice features'] + 3,  # 3 extra dimensions for angle decoder
-                         conditioning_dim=config.generator.conditioner.output_dim + self.num_crystal_features,  # include crystal information for the generator
+                         conditioning_dim=conditioner_config.output_dim + self.num_crystal_features,  # include crystal information for the generator
                          seed=config.seeds.model
                          )
 

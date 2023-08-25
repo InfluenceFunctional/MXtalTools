@@ -4,7 +4,7 @@ import torch
 
 
 class crystal_discriminator(nn.Module):
-    def __init__(self, config, dataDims):
+    def __init__(self, config, discrim_config, dataDims):
         '''
         wrapper for molecule model, with appropriate I/O
         '''
@@ -17,29 +17,29 @@ class crystal_discriminator(nn.Module):
             num_atom_feats=dataDims['num atom features'] - dataDims['num crystal generation features'],
             num_mol_feats=dataDims['num mol features'] - dataDims['num crystal generation features'],
             output_dimension=2,  # 'yes' and 'no'
-            activation=config.discriminator.activation,
-            num_fc_layers=config.discriminator.num_fc_layers,
-            fc_depth=config.discriminator.fc_depth,
-            fc_dropout_probability=config.discriminator.fc_dropout_probability,
-            fc_norm_mode=config.discriminator.fc_norm_mode,
-            graph_filters=config.discriminator.graph_filters,
-            graph_convolutional_layers=config.discriminator.graph_convolution_layers,
+            activation=discrim_config.activation,
+            num_fc_layers=discrim_config.num_fc_layers,
+            fc_depth=discrim_config.fc_depth,
+            fc_dropout_probability=discrim_config.fc_dropout_probability,
+            fc_norm_mode=discrim_config.fc_norm_mode,
+            graph_filters=discrim_config.graph_filters,
+            graph_convolutional_layers=discrim_config.graph_convolution_layers,
             concat_mol_to_atom_features=True,
-            pooling=config.discriminator.pooling,
-            graph_norm=config.discriminator.graph_norm,
-            num_spherical=config.discriminator.num_spherical,
-            num_radial=config.discriminator.num_radial,
-            graph_convolution=config.discriminator.graph_convolution,
-            num_attention_heads=config.discriminator.num_attention_heads,
-            add_spherical_basis=config.discriminator.add_spherical_basis,
-            add_torsional_basis=config.discriminator.add_torsional_basis,
-            graph_embedding_size=config.discriminator.atom_embedding_size,
-            radial_function=config.discriminator.radial_function,
-            max_num_neighbors=config.discriminator.max_num_neighbors,
-            convolution_cutoff=config.discriminator.graph_convolution_cutoff,
+            pooling=discrim_config.pooling,
+            graph_norm=discrim_config.graph_norm,
+            num_spherical=discrim_config.num_spherical,
+            num_radial=discrim_config.num_radial,
+            graph_convolution=discrim_config.graph_convolution,
+            num_attention_heads=discrim_config.num_attention_heads,
+            add_spherical_basis=discrim_config.add_spherical_basis,
+            add_torsional_basis=discrim_config.add_torsional_basis,
+            graph_embedding_size=discrim_config.atom_embedding_size,
+            radial_function=discrim_config.radial_function,
+            max_num_neighbors=discrim_config.max_num_neighbors,
+            convolution_cutoff=discrim_config.graph_convolution_cutoff,
             crystal_mode=True,
             device=config.device,
-            crystal_convolution_type=config.discriminator.crystal_convolution_type,
+            crystal_convolution_type=discrim_config.crystal_convolution_type,
             max_molecule_size=config.max_molecule_radius,
         )
         self.crystal_features_to_ignore = config.dataDims['num crystal generation features']

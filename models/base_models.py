@@ -51,7 +51,7 @@ class molecule_graph_model(nn.Module):
         self.fc_dropout_probability = fc_dropout_probability
         self.fc_norm_mode = fc_norm_mode
         self.graph_convolution = graph_convolution
-        self.output_classes = output_dimension
+        self.output_dimension = output_dimension
         self.graph_convolution_layers = graph_convolutional_layers
         self.graph_filters = graph_filters
         self.graph_norm = graph_norm
@@ -132,8 +132,8 @@ class molecule_graph_model(nn.Module):
         else:
             self.gnn_mlp = nn.Identity()
 
-        if self.fc_depth != self.output_classes:  # only want this if we have to change the dimension
-            self.output_fc = nn.Linear(self.fc_depth, self.output_classes, bias=False)
+        if self.fc_depth != self.output_dimension:  # only want this if we have to change the dimension
+            self.output_fc = nn.Linear(self.fc_depth, self.output_dimension, bias=False)
         else:
             self.output_fc = nn.Identity()
 
@@ -178,7 +178,7 @@ class molecule_graph_model(nn.Module):
 # todo separate molecule and crystal graph models
 
 
-class PointCloudDecoder(nn.Module):
+class PointCloudDecoder(nn.Module):  # todo DEPRECATE
     def __init__(self, input_filters, n_classes, strides, init_image_size):
         super(PointCloudDecoder, self).__init__()
         '''
