@@ -400,7 +400,6 @@ class Modeller:
 
         return embedding_dict
 
-
     def prep_standalone_crystal_modelling_tools(self):
         """
         to pass tools to another training pipeline
