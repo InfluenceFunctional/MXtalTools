@@ -261,8 +261,9 @@ def reload_model(model, optimizer, path, reload_optimizer=False):
             checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
 
     model.load_state_dict(checkpoint['model_state_dict'])
-    if reload_optimizer:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    if optimizer is not None:
+        if reload_optimizer:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     return model, optimizer
 
