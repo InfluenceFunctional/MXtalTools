@@ -51,7 +51,7 @@ from torch_geometric.loader.dataloader import Collater
 
 
 class Modeller:
-    def __init__(self, config):
+    def __init__(self, config, skip_new_workdir=False):
         self.packing_loss_coefficient = 1
         self.config = config
         if self.config.device == 'cuda':
@@ -79,13 +79,14 @@ class Modeller:
         if self.config.include_sgs is None:  # draw from all space groups we can parameterize
             self.config.include_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]  # list(self.space_groups.values())
 
-        '''prep workdir'''
-        self.source_directory = os.getcwd()
-        if (self.config.run_num == 0) or (self.config.explicit_run_enumeration == True):  # if making a new workdir
-            self.prep_new_working_directory()
-        else:
-            print("Must provide a run_num if not creating a new workdir!")
-            sys.exit()
+        if not skip_new_workdir:
+            '''prep workdir'''
+            self.source_directory = os.getcwd()
+            if (self.config.run_num == 0) or (self.config.explicit_run_enumeration == True):  # if making a new workdir
+                self.prep_new_working_directory()
+            else:
+                print("Must provide a run_num if not creating a new workdir!")
+                sys.exit()
 
         '''load dataset'''
         data_manager = DataManager(config=self.config, dataset_path=self.config.dataset_path, collect_chunks=False)  # dataminer for dataset construction
