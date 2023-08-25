@@ -25,7 +25,7 @@ class StandaloneDiscriminator():
         self.supercell_size = 5
         self.graph_convolution_cutoff = 6
 
-        std_dataDims_path = str(Path(__file__).parent.resolve()) + r'../dataset_management/standard_dataDims.npy'
+        std_dataDims_path = str(Path(__file__).parent.parent.resolve()) + r'/dataset_management/standard_dataDims.npy'
         self.dataDims = np.load(std_dataDims_path, allow_pickle=True).item()
 
         self.tracking_mol_volume_ind = self.dataDims['tracking features dict'].index('molecule volume')
@@ -52,13 +52,13 @@ class StandaloneDiscriminator():
         #                                                       path=discriminator_path,
         #                                                       reload_optimizer=False)
 
-        self.supercell_builder = SupercellBuilder(self.sym_info, self.dataDims, device=device, rotation_basis="spherical")
+        # if rescaling_func == 'score':
+        #     self.rescaling_func = softmax_and_score
+        # else:
+        #     print(f"{self.rescaling_func} not implemented in standalone discriminator")
+        #     sys.exit()
 
-        if rescaling_func == 'score':
-            self.rescaling_func = softmax_and_score
-        else:
-            print(f"{self.rescaling_func} not implemented in standalone discriminator")
-            sys.exit()
+        self.supercell_builder = SupercellBuilder(self.sym_info, self.dataDims, device=device, rotation_basis="spherical")
 
     def forward(self, cell_params, mol_data):
         """
