@@ -422,15 +422,7 @@ class Modeller:
                                          premade_dataset=self.prep_dataset,
                                          replace_dataDims=standard_dataDims)
 
-        del self.prep_dataset  # we don't actually want this huge thing floating around
-        self.config.dataDims = dataset_builder.get_dimension()
-        '''prep dataloaders'''
-        if self.config.target_identifiers is not None:
-            test_fraction = 1
-        else:
-            test_fraction = 0.2
-
-        train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder, test_fraction=test_fraction, override_batch_size=batch_size)
+        train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder, test_fraction=0.2, override_batch_size=batch_size)
 
         return train_loader, test_loader
 
