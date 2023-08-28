@@ -422,7 +422,7 @@ class Modeller:
                                          premade_dataset=self.prep_dataset,
                                          replace_dataDims=standard_dataDims)
 
-        del self.prep_dataset  # we don't actually want this huge thing floating around
+        #del self.prep_dataset  # we don't actually want this huge thing floating around
         self.config.dataDims = dataset_builder.get_dimension()
         '''prep dataloaders'''
         if self.config.target_identifiers is not None:
