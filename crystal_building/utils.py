@@ -655,6 +655,8 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
     # identify the SG numbers we want to generate
     if type(generate_sgs[0]) == str:
         generate_sg_inds = [list(symmetries_dict['space_groups'].values()).index(SG) + 1 for SG in generate_sgs]  # indexing from 0
+    elif torch.is_tensor(generate_sgs):
+        generate_sg_inds = generate_sgs.cpu().detach().numpy()
     else:
         generate_sg_inds = generate_sgs
 

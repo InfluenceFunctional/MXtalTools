@@ -20,6 +20,7 @@ class StandaloneDiscriminator():
     """
 
     def __init__(self, device, rescaling_func='score'):
+
         self.device = device
         self.supercell_size = 5
         self.graph_convolution_cutoff = 6
@@ -76,11 +77,11 @@ class StandaloneDiscriminator():
         cell_params_i = cell_params[:, 1:]
 
         # convert angles from degrees to radians
-        cell_params_i[:, 3:6] = cell_params[:, 3:6] / 180 * torch.pi
-        cell_params_i[:, 9:12] = cell_params[:, 9:12] / 180 * torch.pi
+        cell_params_i[:,3:6] = cell_params[:, 3:6] / 180 * torch.pi
+        cell_params_i[:,9:12] = cell_params[:, 9:12] / 180 * torch.pi
 
         # denormalize the cell lengths against the molecule size and Z value
-        cell_params_i[:, 0:3] = cell_params_i[:, 0:3] * (mol_data.Z ** (1 / 3))[:, None] * (mol_data.mol_volume ** (1 / 3))[:, None]
+        cell_params_i[:, 0:3] = cell_params_i[:, 0:3] * (mol_data.Z ** (1/3))[:, None] * (mol_data.mol_volume ** (1/3))[:, None]
 
         # overwrite the appropriate symmetry operations in the mol data for the new space groups
         mol_data = update_crystal_symmetry_elements(
@@ -105,7 +106,7 @@ class StandaloneDiscriminator():
         # return self.rescaling_func(output)
 
         # for now, train on heuristic losses (simpler)
-        vdw_loss, vdw_score, _, _ = vdw_overlap(self.vdw_radii, crystaldata=supercell_data, loss_func='inv')
+        vdw_loss, vdw_score, _, _ = vdw_overlap(supercell_data, loss_func='inv')
 
         packing_loss, packing_prediction, packing_target, packing_csd = \
             generator_density_matching_loss(
@@ -115,4 +116,4 @@ class StandaloneDiscriminator():
                 supercell_data, cell_params_i,
                 precomputed_volumes=generated_cell_volumes, loss_func='mse')
 
-        return (vdw_loss + packing_loss).float()
+        return vdw_score - packing_loss
