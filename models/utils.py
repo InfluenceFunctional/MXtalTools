@@ -433,9 +433,11 @@ def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
     return packing_loss, generated_packing_coeffs, csd_packing_coeffs
 
 
-def generator_density_matching_loss(standardized_target_packing, packing_mean, packing_std, mol_volume_ind, packing_coeff_ind,
-                                    data, raw_sample, precomputed_volumes=None, loss_func='mse'):
-    """
+def generator_density_matching_loss(standardized_target_packing, packing_mean, packing_std,
+                                    mol_volume_ind, packing_coeff_ind,
+                                    data, raw_sample,
+                                    precomputed_volumes=None, loss_func='mse'):
+    """ # todo deprecate mol_volume_ind
     compute packing coefficients for generated cells
     compute losses relating to packing density
     """
@@ -447,13 +449,12 @@ def generator_density_matching_loss(standardized_target_packing, packing_mean, p
     else:
         volumes = precomputed_volumes
 
-    generated_packing_coeffs = data.Z * data.tracking[:, mol_volume_ind] / volumes
+    generated_packing_coeffs = data.Z * data.mol_volume / volumes
     standardized_gen_packing_coeffs = (generated_packing_coeffs - packing_mean) / packing_std
 
     target_packing_coeffs = standardized_target_packing * packing_std + packing_mean
 
     csd_packing_coeffs = data.tracking[:, packing_coeff_ind]
-    # standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_mean) / packing_std  # requires that packing coefficient is set as regression target in main
 
     # compute loss vs the target
     if loss_func == 'mse':
