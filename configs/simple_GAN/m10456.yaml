@@ -1,7 +1,7 @@
 test_mode: False
 machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
 run_num: 10456
 anomaly_detection: False  # slows down the code
