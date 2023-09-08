@@ -1,5 +1,5 @@
 test_mode: True
-machine: "local"  # or "cluster"
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 explicit_run_enumeration: False
 skip_saving_and_loading: True
@@ -34,8 +34,8 @@ extra_test_set_paths: #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_
 extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 # for reloading pretrained models
-discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
-generator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
+discriminator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
+generator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
 
 discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions

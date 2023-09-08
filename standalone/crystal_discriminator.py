@@ -67,18 +67,18 @@ class StandaloneDiscriminator():
         self.supercell_builder = SupercellBuilder(self.sym_info, self.dataDims, device=device, rotation_basis="spherical")
 
     @torch.no_grad()
-    def __call__(self, cell_params, mol_data):
+    def __call__(self, cell_params, mol_data, return_analysis=False):
         """
         build crystal given cell params and molecule
         """
-        mol_data = mol_data.to(cell_params.device)
+        mol_data = mol_data.clone().to(cell_params.device)
 
-        space_groups = cell_params[:, 0]
-        cell_params_i = cell_params[:, 1:]
+        space_groups = cell_params[:, 0].clone()
+        cell_params_i = cell_params[:, 1:].clone()
 
         # convert angles from degrees to radians
-        cell_params_i[:,3:6] = cell_params[:, 3:6] / 180 * torch.pi
-        cell_params_i[:,9:12] = cell_params[:, 9:12] / 180 * torch.pi
+        cell_params_i[:,3:6] = cell_params_i[:, 3:6] / 180 * torch.pi
+        cell_params_i[:,9:12] = cell_params_i[:, 9:12] / 180 * torch.pi
 
         # denormalize the cell lengths against the molecule size and Z value
         cell_params_i[:, 0:3] = cell_params_i[:, 0:3] * (mol_data.Z ** (1/3))[:, None] * (mol_data.mol_volume ** (1/3))[:, None]
@@ -106,7 +106,7 @@ class StandaloneDiscriminator():
         # return self.rescaling_func(output)
 
         # for now, train on heuristic losses (simpler)
-        vdw_loss, vdw_score, _, _ = vdw_overlap(supercell_data, loss_func='inv')
+        vdw_loss, vdw_score, _, _ = vdw_overlap(self.vdw_radii, crystaldata=supercell_data, loss_func=None)
 
         packing_loss, packing_prediction, packing_target, packing_csd = \
             generator_density_matching_loss(
@@ -114,6 +114,29 @@ class StandaloneDiscriminator():
                 self.dataDims['target mean'], self.dataDims['target std'],
                 self.tracking_mol_volume_ind, self.dataDims['tracking features dict'].index('crystal packing coefficient'),
                 supercell_data, cell_params_i,
-                precomputed_volumes=generated_cell_volumes, loss_func='mse')
+                precomputed_volumes=generated_cell_volumes, loss_func='l1')
 
-        return vdw_score - packing_loss
+        loss = packing_loss.clip(max=50) + vdw_loss.clip(max=50)
+        score = 100 - loss
+
+        if return_analysis:
+            analysis_dict = {
+                'reward': score,
+                'packing_loss':packing_loss,
+                'vdw_loss':vdw_loss,
+                'vdw_score':vdw_score,
+                'canonical_cell_params':supercell_data.cell_params,
+                'generated_cell_params':cell_params_i,
+                'space_groups':space_groups,
+                'packing_prediction':packing_prediction,
+                'packing_target':packing_target,
+                'csd_packing_target':packing_csd,
+            }
+
+            for key in analysis_dict.keys():
+                if torch.is_tensor(analysis_dict[key]):
+                    analysis_dict[key] = analysis_dict[key].cpu().detach().numpy()
+
+            return score.float(), analysis_dict
+        else:
+            return score.float()
