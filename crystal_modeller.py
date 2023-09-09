@@ -1500,8 +1500,13 @@ class Modeller:
             prior_dists = torch.cdist(prior, prior, p=2)
             std_samples = (generated_samples - self.lattice_means) / self.lattice_stds
             sample_dists = torch.cdist(std_samples, std_samples, p=2)
-            similarity_penalty = F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(1)  # align distances to all other samples
+            prior_distance_penalty = F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(1)  # align distances to all other samples
 
+            prior_variance = prior.var(dim=0)
+            sample_variance = std_samples.var(dim=0)
+            variance_penalty = F.smooth_l1_loss(input=sample_variance, target=prior_variance, reduction='none').mean().tile(len(prior))
+
+            similarity_penalty = prior_distance_penalty + variance_penalty
             # TODO improve the distance between the different cell params are not at all equally meaningful
             # also in some SGs, lattice parameters are fixed, giving the model an escape from the similarity penalty
 
