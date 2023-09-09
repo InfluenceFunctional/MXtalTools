@@ -117,8 +117,11 @@ class StandaloneDiscriminator():
                 supercell_data, cell_params_i,
                 precomputed_volumes=generated_cell_volumes, loss_func='l1')
 
-        loss = packing_loss.clip(max=50) + vdw_loss.clip(max=50)
-        score = 100 - loss
+        # loss = packing_loss.clip(max=5) + vdw_loss.clip(max=5)
+        # score = 10 - loss
+
+        loss = packing_loss
+        score = torch.exp(-loss)
 
         if return_analysis:
             analysis_dict = {
