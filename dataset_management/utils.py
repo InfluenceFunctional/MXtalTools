@@ -39,6 +39,7 @@ class DatasetBuilder:
         self.generate_sgs = config.generate_sgs
         self.replace_dataDims = replace_dataDims
         self.rotation_basis = config.rotation_basis
+        self.single_molecule_dataset_identifier = config.single_molecule_dataset_identifier
         if override_length is not None:
             self.max_dataset_length = override_length
         else:
@@ -95,6 +96,13 @@ class DatasetBuilder:
         lattice_features = self.get_cell_features(dataset)
         targets = self.get_targets(dataset)
         self.datapoints = self.generate_training_datapoints(dataset, lattice_features, targets)
+
+        if self.single_molecule_dataset_identifier is not None:  # make dataset a bunch of the same molecule
+            identifiers = [item.csd_identifier for item in self.datapoints]
+            index = identifiers.index(self.single_molecule_dataset_identifier)  # PIQTOY # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
+            new_datapoints = [self.datapoints[index] for i in range(self.final_dataset_length)]
+            self.datapoints = new_datapoints
+
         self.shuffle_datapoints()
 
         if self.build_dataset_for_tests:
@@ -522,8 +530,8 @@ class DatasetBuilder:
 
         self.normed_lengths_means = np.mean(normed_cell_lengths, axis=0)
         self.normed_lengths_stds = np.std(normed_cell_lengths, axis=0)
-        if len(feature_array_with_normed_lengths) == 1: #  error handling for if there is only one entry in the dataset, e.g., during CSP
-            feature_array_with_normed_lengths = np.stack([feature_array_with_normed_lengths for _ in range(10)])[:,0,:]
+        if len(feature_array_with_normed_lengths) == 1:  # error handling for if there is only one entry in the dataset, e.g., during CSP
+            feature_array_with_normed_lengths = np.stack([feature_array_with_normed_lengths for _ in range(10)])[:, 0, :]
         covariance_matrix = np.cov(feature_array_with_normed_lengths, rowvar=False)  # we want the randn model to generate samples with normed lengths
 
         for i in range(len(covariance_matrix)):  # ensure it's well-conditioned

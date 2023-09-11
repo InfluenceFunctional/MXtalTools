@@ -41,7 +41,6 @@ class StandaloneDiscriminator():
         self.crysys_ind_dict = {thing[18:]: ind + self.dataDims['num atomwise features'] for ind, thing in
                                 enumerate(self.dataDims['molecule features']) if 'crystal system is' in thing}
 
-
         self.sym_info = {'sym_ops': self.sym_ops,
                          'point_groups': self.point_groups,
                          'lattice_type': self.lattice_type,

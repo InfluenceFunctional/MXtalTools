@@ -426,15 +426,7 @@ class Modeller:
                                          premade_dataset=self.prep_dataset,
                                          replace_dataDims=standard_dataDims)
 
-        #del self.prep_dataset  # we don't actually want this huge thing floating around
-        self.config.dataDims = dataset_builder.get_dimension()
-        '''prep dataloaders'''
-        if self.config.target_identifiers is not None:
-            test_fraction = 1
-        else:
-            test_fraction = 0.2
-
-        train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder, test_fraction=test_fraction, override_batch_size=batch_size)
+        train_loader, test_loader, extra_test_loader = self.prep_dataloaders(dataset_builder, test_fraction=0.2, override_batch_size=batch_size)
 
         return train_loader, test_loader
 
@@ -1495,8 +1487,7 @@ class Modeller:
 
         detailed_reporting(self.config, epoch, test_loader, None, test_epoch_stats_dict, extra_test_dict=extra_test_epoch_stats_dict)
 
-    @staticmethod
-    def compute_similarity_penalty(generated_samples, prior):
+    def compute_similarity_penalty(self, generated_samples, prior):
         """
         punish batches in which the samples are too self-similar
 
@@ -1511,12 +1502,17 @@ class Modeller:
         if len(generated_samples) >= 3:
             # enforce that the distance between samples is similar to the distance between priors
             prior_dists = torch.cdist(prior, prior, p=2)
-            sample_dists = torch.cdist(generated_samples, generated_samples, p=2)
-            similarity_penalty = F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(
-                1)  # align distances to all other samples
+            std_samples = (generated_samples - self.lattice_means) / self.lattice_stds
+            sample_dists = torch.cdist(std_samples, std_samples, p=2)
+            prior_distance_penalty = F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(1)  # align distances to all other samples
 
-            # todo this metric isn't very good e.g., doesn't set the standardization for each space group individually (different stats and distances)
-            # also the distance between the different cell params are not at all equally meaningful
+            prior_variance = prior.var(dim=0)
+            sample_variance = std_samples.var(dim=0)
+            variance_penalty = F.smooth_l1_loss(input=sample_variance, target=prior_variance, reduction='none').mean().tile(len(prior))
+
+            similarity_penalty = prior_distance_penalty + variance_penalty
+            # TODO improve the distance between the different cell params are not at all equally meaningful
+            # also in some SGs, lattice parameters are fixed, giving the model an escape from the similarity penalty
 
         else:
             similarity_penalty = None

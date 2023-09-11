@@ -1,9 +1,9 @@
-test_mode: True
-machine: "local"  # or "cluster"
+test_mode: False
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 10453
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
@@ -34,8 +34,8 @@ extra_test_set_paths: #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_
 extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 # for reloading pretrained models
-discriminator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
-generator_path: 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
+discriminator_path: '/scratch/mk8347/csd_runs/models/best_discriminator_10413'
+generator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
 
 discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions
@@ -70,7 +70,7 @@ gradient_norm_clip: 1
 # dataset curation
 rotation_basis: "spherical" # "spherical" for rotvec in spherical coordinates, "cartesian" for rotvec in cartesian coordinates DEPRECATED
 target: packing # "packing" only supported
-dataset_length: 1000
+dataset_length: 100000
 feature_richness: full # full or minimal
 max_crystal_temperature: 1000 # set very high to include full dataset
 min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
@@ -169,7 +169,7 @@ generator:
     graph_filters: 64
     atom_embedding_size: 256
     output_dim: 256
-    graph_norm: 'graph layer'
+    graph_norm: null
     num_spherical: 6
     num_radial: 36
     graph_convolution_cutoff: 3
