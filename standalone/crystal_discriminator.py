@@ -24,7 +24,8 @@ class StandaloneDiscriminator():
         self.device = device
         self.supercell_size = 5
         self.graph_convolution_cutoff = 6
-        self.temperature = 0.1
+        self.temperature = 0.1  # smaller means higher focus on best sample
+        self.inv_loss_fraction = 0.001 # smaller means worse samples get punished more
 
         std_dataDims_path = str(Path(__file__).parent.parent.resolve()) + r'/dataset_management/standard_dataDims.npy'
         self.dataDims = np.load(std_dataDims_path, allow_pickle=True).item()
@@ -121,7 +122,7 @@ class StandaloneDiscriminator():
         # score = 10 - loss
 
         loss = packing_loss
-        score = torch.exp(-loss / self.temperature)
+        score = torch.exp(-loss / self.temperature)*(1-self.inv_loss_fraction) + self.inv_loss_fraction/(loss + 1)  # combined function decays slower than -exp
 
         if return_analysis:
             analysis_dict = {
