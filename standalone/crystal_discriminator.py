@@ -118,8 +118,6 @@ class StandaloneDiscriminator():
                 supercell_data, cell_params_i,
                 precomputed_volumes=generated_cell_volumes, loss_func='l1')
 
-
-
         loss = packing_loss
         score = torch.exp(-loss / self.temperature)*(1-self.inv_loss_fraction) + self.inv_loss_fraction/(loss + 1)  # combined function decays slower than -exp
 
