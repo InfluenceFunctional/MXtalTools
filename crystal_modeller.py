@@ -405,12 +405,16 @@ class Modeller:
 
         return embedding_dict
 
-    def prep_standalone_modelling_tools(self, batch_size):
+    def prep_standalone_modelling_tools(self, batch_size, machine='local'):
         """
         to pass tools to another training pipeline
         """
         '''miscellaneous setup''' # todo undo hardoced path here
-        std_dataDims_path = '/home/mkilgour/mcrygan/dataset_management/standard_dataDims.npy'
+        if machine == 'local':
+            std_dataDims_path = '/home/mkilgour/mcrygan/dataset_management/standard_dataDims.npy'
+        elif machine == 'cluster':
+            std_dataDims_path = '/scratch/mk8347/mcrygan/dataset_management/standard_dataDims.npy'
+
         standard_dataDims = np.load(std_dataDims_path, allow_pickle=True).item()  # maintain constant standardizations between runs
         print("Loading premade standardization")
 
