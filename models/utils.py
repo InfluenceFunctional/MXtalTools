@@ -78,7 +78,9 @@ def check_convergence(record, history, convergence_eps):
 
     converged = False
     if type(record) == list:
-        record = np.asarray(record)
+        record = np.concatenate(record)
+    elif isinstance(record, np.ndarray):
+        record = record.copy()
 
     if len(record) > (history + 2):
         if all(record[-history:] >= np.amin(record)):
@@ -660,7 +662,7 @@ def decode_to_sph_rotvec(mol_orientations):
     return real_orientation_theta[:, None], real_orientation_phi[:, None], real_orientation_r[:, None]
 
 
-def get_regression_loss(regressor, data):
+def get_regression_loss(regressor, data, mean, std):
     predictions = regressor(data.to(regressor.model.device))[:, 0]
     targets = data.y
-    return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions, targets
+    return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions.cpu().detach().numpy() * std + mean, targets.cpu().detach().numpy() * std + mean

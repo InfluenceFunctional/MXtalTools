@@ -223,7 +223,7 @@ def sample_density_funnel_plot(config, wandb, num_crystals, identifiers, samplin
 
     fig.update_yaxes(autorange="reversed")
 
-    if config.wandb.log_figures:
+    if config.logger.log_figures:
         wandb.log({'Density Funnel': fig})
     if (config.machine == 'local') and False:
         fig.show()
@@ -251,7 +251,7 @@ def sample_rdf_funnel_plot(config, wandb, num_crystals, identifiers, reconstruct
     fig.update_xaxes(range=[-2, np.log10(np.amax(rdf_real_dists[:num_reporting_samples]) + 0.1)])
     # fig.update_yaxes(autorange="reversed")
 
-    if config.wandb.log_figures:
+    if config.logger.log_figures:
         wandb.log({'RDF Funnel': fig})
     if (config.machine == 'local') and False:
         fig.show()

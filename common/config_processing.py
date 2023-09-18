@@ -497,8 +497,8 @@ def get_config(args, override_args, args2config):
         config.dataset_path = user_config['paths']['cluster_dataset_dir_path'] + dataset_name
         config.save_checkpoints = True  # always save checkpoints on cluster
 
-    config.wandb.username = user_config.wandb.username
-    config.wandb.project_name = user_config.wandb.project_name
+    config.wandb.username = user_config['wandb']['username']
+    config.wandb.project_name = user_config['wandb']['project_name']
 
     return config
 

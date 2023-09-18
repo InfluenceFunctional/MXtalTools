@@ -42,7 +42,7 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
     wandb.log(sample_means)
     wandb.log(sample_stds)
 
-    if config.wandb.log_figures:
+    if config.logger.log_figures:
         fig_dict = {}  # consider replacing by Joy plot
 
         # bar graph of 1d overlaps
@@ -127,7 +127,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
         fig.update_layout(xaxis_title='packing target', yaxis_title='packing prediction')
 
         # #fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
-        if config.wandb.log_figures:
+        if config.logger.log_figures:
             wandb.log({'Cell Packing': fig})
         if (config.machine == 'local') and False:
             fig.show()
@@ -1301,10 +1301,8 @@ def log_regression_accuracy(dataDims, train_epoch_stats_dict, test_epoch_stats_d
     target_mean = dataDims['target mean']
     target_std = dataDims['target std']
 
-    target = np.asarray(test_epoch_stats_dict['regressor packing target'])
-    prediction = np.asarray(test_epoch_stats_dict['regressor packing prediction'])
-    orig_target = target * target_std + target_mean
-    orig_prediction = prediction * target_std + target_mean
+    orig_target = np.asarray(test_epoch_stats_dict['regressor packing target'])
+    orig_prediction = np.asarray(test_epoch_stats_dict['regressor packing prediction'])
 
     volume_ind = dataDims['tracking features dict'].index('molecule volume')
     mass_ind = dataDims['tracking features dict'].index('molecule mass')
@@ -1466,7 +1464,7 @@ def detailed_reporting(config, epoch, test_loader, train_epoch_stats_dict, test_
     elif config.mode == 'regression':
         log_regression_accuracy(config.dataDims, train_epoch_stats_dict, test_epoch_stats_dict)
 
-    if extra_test_dict is not None:
+    if extra_test_dict is not None and len(extra_test_dict) > 0:
         discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_dict)
 
     return None

@@ -75,7 +75,7 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
 
     fig.layout.margin = layout.margin
 
-    if config.wandb.log_figures:
+    if config.logger.log_figures:
         wandb.log({'Mini-CSP Scores': fig})
     if (config.machine == 'local') and False:
         fig.show()

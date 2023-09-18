@@ -1,15 +1,15 @@
-test_mode: True
-machine: "local"  # or "cluster"
+test_mode: False
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
-explicit_run_enumeration: False
+explicit_run_enumeration: True
 skip_saving_and_loading: True
-run_num: 0
+run_num: 12000
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 # for GAN training
-canonical_conformer_orientation: 'standardized' # 'standardized' 'random'
+canonical_conformer_orientation: 'random' # 'standardized' 'random'
 packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
 train_generator_vdw: True
 train_generator_adversarially: True
@@ -17,26 +17,26 @@ vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
 density_loss_func: l1  # 'l1' or 'mse'
 generator_adversarial_loss_func: 'score'  #
 train_generator_h_bond: False # (non-directional)
-generator_similarity_penalty: 0
+generator_similarity_penalty: 0  # doesn't make sense in most cases
 
 train_discriminator_adversarially: True
 train_discriminator_on_randn: True
 train_discriminator_on_distorted: True
 sample_distortion_magnitude: 0.1 # -1 for wide range test # noise for distorted generation
 
-extra_test_set_paths: #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
-                      # 'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_6_dataset',
-                      # 'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_targets']
+extra_test_set_paths:  #['/scratch/mk8347/csd_runs/datasets/blind_test_5_dataset',
+                       #'/scratch/mk8347/csd_runs/datasets/blind_test_6_dataset',
+                       #'/scratch/mk8347/csd_runs/datasets/blind_test_targets']
 extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 # for reloading pretrained models
-discriminator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
-generator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
-regressor_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
+discriminator_path: null
+generator_path: null
+regressor_path: null
 
-discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions
-generator_positional_noise: 0  # scaling for the randn noise added to all atom positions
-regressor_positional_noise: 0  # scaling for the randn noise added to all atom positions
+discriminator_positional_noise: 0.05  # scaling for the randn noise added to all atom positions
+generator_positional_noise: 0.05  # scaling for the randn noise added to all atom positions
+regressor_positional_noise: 0.05  # scaling for the randn noise added to all atom positions
 
 seeds:
   model: 0
@@ -44,10 +44,10 @@ seeds:
 
 # opt - sweep details
 logger:
-  mini_csp_frequency: 1
+  mini_csp_frequency: 2
   sample_reporting_frequency: 1
   log_figures: True
-  experiment_tag: dev
+  experiment_tag: gan_test
 
 sample_steps: 20 # now for mini csp
 sample_move_size: 0.001 # currently unused
@@ -82,7 +82,7 @@ include_organometallic: True
 max_atomic_number: 100
 exclude_missing_r_factor: False
 exclude_disordered_crystals: True
-exclude_polymorphs: False  # should almost always be true during training for regression or generator models
+exclude_polymorphs: True  # should almost always be true during training for regression or generator models
 exclude_nonstandard_settings: True #False
 exclude_crystal_systems: null # ['monoclinic','triclinic','orthorhombic']  #['hexagonal','trigonal','rhombohedral']
 exclude_blind_test_targets: True
@@ -90,7 +90,7 @@ single_molecule_dataset_identifier: null  # "NICOAM03"
 target_identifiers: null #["NICOAM13","NICOAM17"]#["NICOAM","NICOAM01","NICOAM02","NICOAM03","NICOAM04","NICOAM05", "NICOAM06","NICOAM07","NICOAM08","NICOAM09","NICOAM10","NICOAM11","NICOAM12","NICOAM13","NICOAM14","NICOAM15","NICOAM16","NICOAM17","NICOAM18"]
 include_sgs: null #["P-1","P21/c","P212121","C2/c"]  # space groups to be included in the dataset. null for all
 include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
-generate_sgs: ["P-1"] #["P-1","P21/c","P212121", "C2/c"] #["P21/c"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: ["P-1", "P21/c","P212121"] #["P-1","P21/c","P212121", "C2/c"] #["P21/c"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5 # should be very large, then automatically pares down
 
 # discriminator optimizer and model
@@ -128,7 +128,7 @@ discriminator:
   num_fc_layers: 4
   fc_depth: 64
   activation: gelu
-  fc_dropout_probability: 0
+  fc_dropout_probability: 0.25
   fc_norm_mode: layer # batch, layer
 
 #generator optimizer and model
@@ -147,10 +147,10 @@ generator_optimizer:
 
 generator:
   num_fc_layers: 2
-  fc_depth: 512
+  fc_depth: 128
   activation: 'gelu'
   fc_dropout_probability: 0
-  fc_norm_mode: layer
+  fc_norm_mode: null
 
   prior: multivariate normal
   prior_dimension: 12
@@ -163,7 +163,7 @@ generator:
     graph_filters: 64
     atom_embedding_size: 256
     output_dim: 256
-    graph_norm: 'graph layer'
+    graph_norm: null
     num_spherical: 6
     num_radial: 36
     graph_convolution_cutoff: 3
