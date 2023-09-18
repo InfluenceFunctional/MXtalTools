@@ -14,7 +14,8 @@ def update_args2config(args2config, arg, config=None):
 def add_args(parser):
     # high level
     args2config = {}
-    parser.add_argument('--yaml_config', type=str, default='configs/dev.yaml', required=False)
+    parser.add_argument('--user', type=str, default='mkilgour', required=False)
+    parser.add_argument('--yaml_config', type=str, default=None, required=False)
     parser.add_argument('--run_num', type=int, default=0)
     add_bool_arg(parser, 'explicit_run_enumeration', default=False)  # if this is True, the next run be fresh, in directory 'run%d'%run_num, if false, regular behaviour. Note: only use this on fresh runs
     add_bool_arg(parser, 'test_mode', default=True)
@@ -29,13 +30,10 @@ def add_args(parser):
     parser.add_argument("--regressor_path", default=None, type=str)
     add_bool_arg(parser, 'extra_test_evaluation', default=False)
     parser.add_argument("--extra_test_set_paths", default=None, type=list)
-    parser.add_argument("--local_dataset_dir_path", default='', type=str)
-    parser.add_argument("--local_workdir_path", default='', type=str)
-    parser.add_argument("--cluster_dataset_dir_path", default='', type=str)
-    parser.add_argument("--cluster_workdir_path", default='', type=str)
 
     add_bool_arg(parser, "save_checkpoints", default=False)  # will revert to True on cluster machine
 
+    update_args2config(args2config, 'user')
     update_args2config(args2config, 'yaml_config')
     update_args2config(args2config, 'run_num')
     update_args2config(args2config, 'explicit_run_enumeration')
@@ -51,26 +49,22 @@ def add_args(parser):
     update_args2config(args2config, 'regressor_path')
     update_args2config(args2config, 'extra_test_evaluation')
     update_args2config(args2config, 'extra_test_set_paths')
-    update_args2config(args2config, 'local_dataset_dir_path')
-    update_args2config(args2config, 'local_workdir_path')
-    update_args2config(args2config, 'cluster_dataset_dir_path')
-    update_args2config(args2config, 'cluster_workdir_path')
     update_args2config(args2config, 'save_checkpoints')
 
-    # wandb
-    parser.add_argument('--wandb_experiment_tag', type=str, default='MCryGAN_dev')
-    parser.add_argument('--wandb_username', type=str, default='mkilgour')
-    parser.add_argument('--wandb_project_name', type=str, default='MCryGAN')
-    parser.add_argument('--wandb_sample_reporting_frequency', type=int, default=1)
-    parser.add_argument('--wandb_mini_csp_frequency', type=int, default=1)
-    add_bool_arg(parser, 'wandb_log_figures', default=True)
+    # wandb / logging
+    parser.add_argument('--logger_experiment_tag', type=str, default='')
+    parser.add_argument('--wandb_username', type=str, default='')
+    parser.add_argument('--wandb_project_name', type=str, default='')
+    parser.add_argument('--logger_sample_reporting_frequency', type=int, default=1)
+    parser.add_argument('--logger_mini_csp_frequency', type=int, default=100)
+    add_bool_arg(parser, 'logger_log_figures', default=True)
 
-    update_args2config(args2config, 'wandb_experiment_tag', ['wandb', 'experiment_tag'])
+    update_args2config(args2config, 'logger_experiment_tag', ['logger', 'experiment_tag'])
     update_args2config(args2config, 'wandb_username', ['wandb', 'username'])
     update_args2config(args2config, 'wandb_project_name', ['wandb', 'project_name'])
-    update_args2config(args2config, 'wandb_sample_reporting_frequency', ['wandb', 'sample_reporting_frequency'])
-    update_args2config(args2config, 'wandb_mini_csp_frequency', ['wandb', 'mini_csp_frequency'])
-    update_args2config(args2config, 'wandb_log_figures', ['wandb', 'log_figures'])
+    update_args2config(args2config, 'logger_sample_reporting_frequency', ['logger', 'sample_reporting_frequency'])
+    update_args2config(args2config, 'logger_mini_csp_frequency', ['logger', 'mini_csp_frequency'])
+    update_args2config(args2config, 'logger_log_figures', ['logger', 'log_figures'])
 
     # dataset settings
     parser.add_argument('--target', type=str,
@@ -421,25 +415,6 @@ def add_args(parser):
     return parser, args2config
 
 
-def process_config(config):
-    if config.machine == 'local':
-        config.workdir = config.local_workdir_path
-        config.dataset_path = config.local_dataset_dir_path + 'full_dataset'
-
-    elif config.machine == 'cluster':
-        config.workdir = config.cluster_workdir_path
-        config.dataset_path = config.cluster_dataset_dir_path + 'full_dataset'
-        config.save_checkpoints = True
-
-    if config.test_mode:
-        if config.machine == 'cluster':
-            config.dataset_path = config.cluster_dataset_dir_path + 'test_dataset'
-        else:
-            config.dataset_path = config.local_dataset_dir_path + 'test_dataset'
-
-    return config
-
-
 def get_config(args, override_args, args2config):
     """
     Combines YAML configuration file, command line arguments and default arguments into
@@ -468,6 +443,17 @@ def get_config(args, override_args, args2config):
                 else:
                     config_aux = config_aux[k]
 
+    '''get user-specific configs'''
+    user_path = f'configs/users/{args.user}.yaml'
+    yaml_path = Path(user_path)
+    assert yaml_path.exists()
+    assert yaml_path.suffix in {".yaml", ".yml"}
+    with yaml_path.open("r") as f:
+        user_config = yaml.safe_load(f)
+
+    if args.yaml_config is None:  # default to user's dev config
+        args.yaml_config = user_config['paths']['dev_yaml_path']
+
     # Read YAML config
     if args.yaml_config:
         yaml_path = Path(args.yaml_config)
@@ -494,7 +480,27 @@ def get_config(args, override_args, args2config):
             _update_config(k, v, config, override=True)
         else:
             _update_config(k, v, config, override=False)
-    return dict2namespace(config)
+
+    config = dict2namespace(config)
+    # update user paths
+    if config.test_mode:
+        dataset_name = 'test_dataset'
+    else:
+        dataset_name = 'full_dataset'
+
+    if config.machine == 'local':
+        config.workdir = user_config['paths']['local_workdir_path']
+        config.dataset_path = user_config['paths']['local_dataset_dir_path'] + dataset_name
+
+    elif config.machine == 'cluster':
+        config.workdir = user_config['paths']['cluster_workdir_path']
+        config.dataset_path = user_config['paths']['cluster_dataset_dir_path'] + dataset_name
+        config.save_checkpoints = True  # always save checkpoints on cluster
+
+    config.wandb.username = user_config.wandb.username
+    config.wandb.project_name = user_config.wandb.project_name
+
+    return config
 
 
 def add_bool_arg(parser, name, default=False):

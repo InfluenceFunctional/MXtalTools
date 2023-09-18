@@ -1381,15 +1381,15 @@ class Modeller:
                 if np.average(discriminator_err_te) < np.amin(metrics_dict['discriminator test loss'][:-1]):
                     print("Saving discriminator checkpoint")
                     save_checkpoint(epoch, discriminator, discriminator_optimizer, self.config.discriminator.__dict__,
-                                    'best_discriminator_' + str(config.run_num))
+                                    self.config.checkpoint_dir_path + 'best_discriminator_' + str(config.run_num))
                 if np.average(generator_err_te) < np.amin(metrics_dict['generator test loss'][:-1]):
                     print("Saving generator checkpoint")
                     save_checkpoint(epoch, generator, generator_optimizer, self.config.generator.__dict__,
-                                    'best_generator_' + str(config.run_num))
+                                    self.config.checkpoint_dir_path + 'best_generator_' + str(config.run_num))
                 if np.average(regressor_err_te) < np.amin(metrics_dict['regressor test loss'][:-1]):
                     print("Saving regressor checkpoint")
                     save_checkpoint(epoch, regressor, regressor_optimizer, self.config.regressor.__dict__,
-                                    'best_regressor_' + str(config.run_num))
+                                    self.config.checkpoint_dir_path + 'best_regressor_' + str(config.run_num))
 
         return None
 
