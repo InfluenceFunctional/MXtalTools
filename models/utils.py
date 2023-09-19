@@ -363,7 +363,7 @@ def get_strides(n_target_bins, init_size=3):
         assert False, 'could not manage this resolution with current strided setup'
 
 
-def save_checkpoint(epoch, model, optimizer, config, model_name, save_path):
+def save_checkpoint(epoch, model, optimizer, config, save_path):
     torch.save({'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
