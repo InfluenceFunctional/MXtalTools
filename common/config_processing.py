@@ -491,10 +491,12 @@ def get_config(args, override_args, args2config):
     if config.machine == 'local':
         config.workdir = user_config['paths']['local_workdir_path']
         config.dataset_path = user_config['paths']['local_dataset_dir_path'] + dataset_name
+        config.checkpoint_dir_path = user_config['paths']['local_checkpoint_dir_path']
 
     elif config.machine == 'cluster':
         config.workdir = user_config['paths']['cluster_workdir_path']
         config.dataset_path = user_config['paths']['cluster_dataset_dir_path'] + dataset_name
+        config.checkpoint_dir_path = user_config['paths']['cluster_checkpoint_dir_path']
         config.save_checkpoints = True  # always save checkpoints on cluster
 
     config.wandb.username = user_config['wandb']['username']
