@@ -98,9 +98,9 @@ class Modeller:
             data_manager.load_for_modelling(return_dataset=False, save_dataset=True)
             self.prep_dataset = None
 
-        self.train_discriminator = any((config.train_discriminator_adversarially, config.train_discriminator_on_distorted, config.train_discriminator_on_randn))
-        self.train_generator = any((config.train_generator_vdw, config.train_generator_adversarially, config.train_generator_h_bond))
-
+        self.train_discriminator = (config.mode == 'gan') and any((config.train_discriminator_adversarially, config.train_discriminator_on_distorted, config.train_discriminator_on_randn))
+        self.train_generator = (config.mode == 'gan') and any((config.train_generator_vdw, config.train_generator_adversarially, config.train_generator_h_bond))
+        self.train_regressor = config.mode == 'regression'
     def prep_new_working_directory(self):
         if self.config.run_num == 0:
             self.make_sequential_directory()
@@ -1181,18 +1181,30 @@ class Modeller:
                             discriminator_optimizer, generator_optimizer, regressor_optimizer):
         if config.save_checkpoints:
             if epoch > 0:  # only save 'best' checkpoints
-                if np.average(self.logger.current_losses['discriminator']['mean_test']) < np.amin(self.logger.loss_record['discriminator']['mean_test'][:-1]):
-                    print("Saving discriminator checkpoint")
-                    save_checkpoint(epoch, discriminator, discriminator_optimizer, self.config.discriminator.__dict__,
-                                    self.config.checkpoint_dir_path + 'best_discriminator_' + str(config.run_num))
-                if np.average(self.logger.current_losses['generator']['mean_test']) < np.amin(self.logger.loss_record['generator']['mean_test'][:-1]):
-                    print("Saving generator checkpoint")
-                    save_checkpoint(epoch, generator, generator_optimizer, self.config.generator.__dict__,
-                                    self.config.checkpoint_dir_path + 'best_generator_' + str(config.run_num))
-                if np.average(self.logger.current_losses['regressor']['mean_test']) < np.amin(self.logger.loss_record['regressor']['mean_test'][:-1]):
-                    print("Saving regressor checkpoint")
-                    save_checkpoint(epoch, regressor, regressor_optimizer, self.config.regressor.__dict__,
-                                    self.config.checkpoint_dir_path + 'best_regressor_' + str(config.run_num))
+                if self.train_discriminator:
+                    model = 'discriminator'
+                    loss_record = self.logger.loss_record[model]['mean_test']
+                    past_mean_losses = [np.mean(record) for record in loss_record]
+                    if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
+                        print("Saving discriminator checkpoint")
+                        save_checkpoint(epoch, discriminator, discriminator_optimizer, self.config.discriminator.__dict__,
+                                        self.config.checkpoint_dir_path + 'best_discriminator_' + str(config.run_num))
+                if self.train_generator:
+                    model = 'generator'
+                    loss_record = self.logger.loss_record[model]['mean_test']
+                    past_mean_losses = [np.mean(record) for record in loss_record]
+                    if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
+                        print("Saving generator checkpoint")
+                        save_checkpoint(epoch, generator, generator_optimizer, self.config.generator.__dict__,
+                                        self.config.checkpoint_dir_path + 'best_generator_' + str(config.run_num))
+                if self.train_regressor:
+                    model = 'regressor'
+                    loss_record = self.logger.loss_record[model]['mean_test']
+                    past_mean_losses = [np.mean(record) for record in loss_record]
+                    if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
+                        print("Saving regressor checkpoint")
+                        save_checkpoint(epoch, regressor, regressor_optimizer, self.config.regressor.__dict__,
+                                        self.config.checkpoint_dir_path + 'best_regressor_' + str(config.run_num))
 
         return None
 

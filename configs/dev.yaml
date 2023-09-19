@@ -5,7 +5,7 @@ explicit_run_enumeration: False
 skip_saving_and_loading: True
 run_num: 0
 anomaly_detection: False  # slows down the code
-mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
+mode: regression  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 # for GAN training
