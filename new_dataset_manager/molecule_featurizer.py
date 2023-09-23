@@ -7,8 +7,8 @@ from common.utils import *
 import numpy.linalg as linalg
 import tqdm
 # don't need these for regular runs (screws up the python env in some cases)
-#import rdkit.Chem as Chem
-#from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
+import rdkit.Chem as Chem
+from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
 from crystal_building.coordinate_transformations import coor_trans_matrix
 from mendeleev import element as element_table
 from crystal_building.utils import (get_cell_fractional_centroids, c_f_transform)
@@ -27,7 +27,6 @@ def get_range_fraction(atomic_numbers, rrange):
 
 def get_dipole(coords, charges):
     center_of_geometry = np.average(np.asarray(coords), axis=0)
-    # center_of_charge = np.average(np.multiply(np.asarray(coords),np.asarray(charges)[:,np.newaxis]), axis=0)
     center_of_charge = np.average(np.asarray(coords), weights=charges, axis=0)
     return np.linalg.norm(center_of_charge - center_of_geometry), center_of_geometry
 
@@ -261,7 +260,7 @@ class CustomGraphFeaturizer():
             dataset[f'molecule {element_table(anum).symbol} fraction'] = get_fraction(dataset['atom Z'], anum)
 
         for key in Fragments.__dict__.keys(): # for all the class methods
-            if key[0:3] == 'fr_': # if it's a functional group analysis method
+            if key[0:3] == 'fr_': # if it's a functional group analysis methodad
                 dataset[f'molecule has {key[3:]}'] = Fragments.__dict__[key](mol, countUnique=False)
 
         dataset['molecule smiles'] = Chem.MolToSmiles(mol)
