@@ -1,110 +1,70 @@
 import os
 from ccdc import io
-import rdkit.Chem as Chem
 import pandas as pd
 import tqdm
-
 import warnings
+from random import shuffle
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
 
-from new_dataset_manager.featurization_utils import extract_crystal_data, featurize_molecule
+from new_dataset_manager.featurization_utils import extract_crystal_data, featurize_molecule, crystal_filter, chunkify
 
-
-def crystal_filter(crystal):
-    """
-    apply checks to see if this is a valid crystal to be featurized and put in the dataset
-    - disorder
-    """
-    passed_crystal_checks = True
-    passed_molecule_checks = True
-    # crystal checks
-    if any([crystal.has_disorder,
-            crystal.molecule.is_polymeric,
-            len(crystal.molecule.atoms) == 0,
-            not crystal.molecule.all_atoms_have_sites,
-            len(crystal.molecule.components) != crystal.z_prime,
-            crystal.z_prime < 1,
-            int(crystal.z_prime) != crystal.z_prime,  # integer z-prime only
-            len(crystal.molecule.components) == 0,
-            all([len(component.atoms) > 0 for component in crystal.molecule.components]),
-            ]):
-        passed_crystal_checks = False
-
-    # molecule check via RDKit. If RDKit doesn't see it as a real molecule, don't accept it to the dataset.
-    rd_mols = []
-    for component in crystal.asymmetric_unit_molecule.components:
-        mol = Chem.MolFromMol2Block(component.to_string('mol2'), sanitize=True, removeHs=True)
-        try:
-            rd_mols.append(Chem.RemoveAllHs(mol))
-        except:
-            passed_molecule_checks = False
-        if mol is None:
-            passed_molecule_checks = False
-
-    if not passed_crystal_checks:
-        print(f'{crystal.identifier} failed crystal checks')
-    if not passed_molecule_checks:
-        print(f'{crystal.identifier} failed molecule checks')
-
-    return all([passed_molecule_checks, passed_crystal_checks]), rd_mols
-
-dataset_path = r'D:/crystal_datasets/dataset.pkl'
-
-if os.path.exists(dataset_path):
-    df = pd.read_pickle(dataset_path)
-else:
-    df = None
-
+n_chunks = 1000
+chunks_path = r'D:/crystal_datasets/featurized_chunks/'
 cifs_path = r'D:/CSD_dump/'
 os.chdir(cifs_path)
 cifs_list = os.listdir()
 
 '''
 todo:
-asymmetric unit parameterization
+post-generation analysis:
+    -: cell parameterization
+    -: filtering
+        -: mol fingerprint
+        -: identifiers
 '''
-start_point = 0
-for ind, cif_path in enumerate(tqdm.tqdm(cifs_list)):
-    do_featurize = False
-    if df is not None:
-        if cif_path.split('.')[0] not in df['crystal_identifier']:
-            do_featurize = True
-    else:
-        do_featurize = True
+print(f"Breaking dataset into {n_chunks} chunks")
+chunks_list = chunkify(cifs_list, n_chunks)
+chunk_inds = [i for i in range(len(chunks_list))]
+start_ind, stop_ind = 0, len(chunks_list)
 
-    if do_featurize:
-        reader = io.CrystalReader(cif_path, format='cif')
+shuffle(chunk_inds)  # optionally do it in random order
+chunks_list = [chunks_list[ind] for ind in chunk_inds]
 
-        for crystal in reader:  # one cif file may have many crystals in it
-            passed_filter, rd_mols = crystal_filter(crystal)
-            if passed_filter:  # filter various undesirable traits
-                crystal_dict = extract_crystal_data(crystal)
-                molecules = []
-                for i_c, rd_mol in enumerate(rd_mols):
-                    molecules.append(featurize_molecule(crystal, crystal_dict, rd_mol, component_num=i_c))
+for chunk_ind, chunk in zip(chunk_inds, chunks_list[start_ind:stop_ind]):
+    print(f"Starting chunk {chunk_ind}")
+    increment_df = None
+    if not os.path.exists(chunks_path + f"chunk_{chunk_ind}.pkl"):
 
-                crystal_keys = list(crystal_dict.keys())
-                for key in crystal_keys:
-                    crystal_dict['crystal_' + key] = crystal_dict[key]
-                    del crystal_dict[key]
+        for ind, cif_path in enumerate(tqdm.tqdm(chunk)):
 
-                for key in molecules[0].keys():
-                    crystal_dict[key] = []
-                    for molecule in molecules:
-                        crystal_dict[key].append(molecule[key])
+            reader = io.CrystalReader(cif_path, format='cif')
 
-                new_df = pd.DataFrame()
-                for key in crystal_dict.keys():
-                    new_df[key] = [crystal_dict[key]]
+            for crystal in reader:  # one cif file may have many crystals in it
+                passed_filter, unit_cell, rd_mols = crystal_filter(crystal)
+                if passed_filter:  # filter various undesirable traits
+                    crystal_dict, mol_volumes = extract_crystal_data(crystal, unit_cell)
+                    molecules = []
+                    for i_c, rd_mol in enumerate(rd_mols):
+                        molecules.append(featurize_molecule(crystal, crystal_dict, rd_mol, mol_volumes[i_c], component_num=i_c))
 
-                if df is None:
-                    df = new_df
-                else:
-                    df = pd.concat([df, new_df])
+                    crystal_keys = list(crystal_dict.keys())
+                    for key in crystal_keys:
+                        crystal_dict['crystal_' + key] = crystal_dict[key]
+                        del crystal_dict[key]
 
-                if len(df) % 100 == 0:  # save each k iters
-                    df.to_pickle(dataset_path)
+                    for key in molecules[0].keys():
+                        crystal_dict[key] = []
+                        for molecule in molecules:
+                            crystal_dict[key].append(molecule[key])
 
-df.to_pickle(dataset_path)
+                    new_df = pd.DataFrame()
+                    for key in crystal_dict.keys():
+                        new_df[key] = [crystal_dict[key]]
 
-aa = 1
+                    if increment_df is None:
+                        increment_df = new_df
+                    else:
+                        increment_df = pd.concat([increment_df, new_df])
+
+        increment_df.to_pickle(chunks_path + f"chunk_{chunk_ind}.pkl")

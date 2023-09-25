@@ -7,19 +7,22 @@ from common.utils import *
 import numpy.linalg as linalg
 import tqdm
 # don't need these for regular runs (screws up the python env in some cases)
-#import rdkit.Chem as Chem
-#from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
+# import rdkit.Chem as Chem
+# from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
 from crystal_building.coordinate_transformations import coor_trans_matrix
 from mendeleev import element as element_table
 from crystal_building.utils import (get_cell_fractional_centroids, c_f_transform)
 from pyxtal import symmetry
 from scipy.spatial.transform import Rotation
+
+
 # REQUIRED FOR POINT GROUP ANALYSIS BELOW
 # from pymatgen.core import Molecule
 # from pymatgen.symmetry.analyzer import PointGroupAnalyzer
 
 def get_fraction(atomic_numbers, target):
     return atomic_numbers.count(target) / len(atomic_numbers)
+
 
 def get_range_fraction(atomic_numbers, rrange):
     return np.sum((np.asarray(atomic_numbers) > rrange[0]) * (np.asarray(atomic_numbers) < rrange[1])) / len(atomic_numbers)
@@ -124,14 +127,14 @@ class CustomGraphFeaturizer():
 
                     if mol is None:
                         bad_inds.append(j)
-                    elif df['crystal reference cell coords'][j] == 'error': # if we didn't get reference coordinates, reject the structure
+                    elif df['crystal reference cell coords'][j] == 'error':  # if we didn't get reference coordinates, reject the structure
                         bad_inds.append(j)
                     elif mol.GetNumAtoms() < 3:
                         bad_inds.append(j)
                     else:
                         mol_data = self.featurize_molecule(mol)
                         crystal_data = self.featurize_crystal(df.loc[j])
-                        mol_data['molecule volume'] = df['crystal packing coefficient'][j] * df['crystal cell volume'][j]/ df['crystal z value'][j] # much faster this way
+                        mol_data['molecule volume'] = df['crystal packing coefficient'][j] * df['crystal cell volume'][j] / df['crystal z value'][j]  # much faster this way
                         mol_data.update(crystal_data)
 
                         if new_features is None:
@@ -150,7 +153,7 @@ class CustomGraphFeaturizer():
 
                 df.to_pickle('../molecule_features/{}'.format(chunk_inds[0] + i))
 
-    def add_single_feature(self, molecule_chunks_path, chunk_inds=[0, 100], feature = None):
+    def add_single_feature(self, molecule_chunks_path, chunk_inds=[0, 100], feature=None):
         os.chdir(molecule_chunks_path)
         chunks = os.listdir()[chunk_inds[0]:chunk_inds[1]]
         self.init_features()
@@ -170,12 +173,12 @@ class CustomGraphFeaturizer():
                         bad_inds.append(j)
                         mol = None
                         print("Error kekulizing")
-                        print('ERROR') # note this should never ever happen when only adding
+                        print('ERROR')  # note this should never ever happen when only adding
 
                 if mol is None:
                     bad_inds.append(j)
-                    print('ERROR') # note this should never ever happen when only adding
-                elif df['crystal reference cell coords'][j] == 'error': # if we didn't get reference coordinates, reject the structure
+                    print('ERROR')  # note this should never ever happen when only adding
+                elif df['crystal reference cell coords'][j] == 'error':  # if we didn't get reference coordinates, reject the structure
                     bad_inds.append(j)
                     print('ERROR')
 
@@ -243,11 +246,11 @@ class CustomGraphFeaturizer():
 
         radii = rdFreeSASA.classifyAtoms(mol)
         dataset['molecule freeSASA'] = rdFreeSASA.CalcSASA(mol, radii)
-        dataset['molecule mass'] = Descriptors.MolWt(mol) # includes implicit protons
+        dataset['molecule mass'] = Descriptors.MolWt(mol)  # includes implicit protons
         dataset['molecule num atoms'] = len(dataset['atom Z'])  # mol.GetNumAtoms()
         dataset['molecule num rings'] = mol.GetRingInfo().NumRings()
-        #dataset['molecule point group'] = self.pointGroupAnalysis(dataset['atom Z'], dataset['atom coords'])  # this is also slow, approx 30% of total effort
-        #dataset['molecule volume'] = AllChem.ComputeMolVolume(mol)  # this is very slow - approx 50% of total effort - fill this in later from the CSD
+        # dataset['molecule point group'] = self.pointGroupAnalysis(dataset['atom Z'], dataset['atom coords'])  # this is also slow, approx 30% of total effort
+        # dataset['molecule volume'] = AllChem.ComputeMolVolume(mol)  # this is very slow - approx 50% of total effort - fill this in later from the CSD
         dataset['molecule num donors'] = len(h_donors)
         dataset['molecule num acceptors'] = len(h_acceptors)
         dataset['molecule polarity'], dataset['molecule centroid'] = get_dipole(dataset['atom coords'], dataset['atom electronegativity'])
@@ -257,11 +260,11 @@ class CustomGraphFeaturizer():
         dataset['molecule planarity'] = rdMolDescriptors.CalcPBF(mol)
         dataset['molecule radius of gyration'] = rdMolDescriptors.CalcRadiusOfGyration(mol)
 
-        for anum in range(1,36):
+        for anum in range(1, 36):
             dataset[f'molecule {element_table(anum).symbol} fraction'] = get_fraction(dataset['atom Z'], anum)
 
-        for key in Fragments.__dict__.keys(): # for all the class methods
-            if key[0:3] == 'fr_': # if it's a functional group analysis method
+        for key in Fragments.__dict__.keys():  # for all the class methods
+            if key[0:3] == 'fr_':  # if it's a functional group analysis method
                 dataset[f'molecule has {key[3:]}'] = Fragments.__dict__[key](mol, countUnique=False)
 
         dataset['molecule smiles'] = Chem.MolToSmiles(mol)
@@ -311,25 +314,25 @@ class CustomGraphFeaturizer():
         cell_coords = df['crystal reference cell coords']
         # todo rewrite for new asymmetric unit method
         fractional_centroids = get_cell_fractional_centroids(cell_coords, T_cf).astype('float16')
-        fractional_centroids -= np.floor(fractional_centroids) # ensure they are inside the unit cell
-        canonical_centroid_ind = np.argmin(np.linalg.norm(fractional_centroids,axis=1))
+        fractional_centroids -= np.floor(fractional_centroids)  # ensure they are inside the unit cell
+        canonical_centroid_ind = np.argmin(np.linalg.norm(fractional_centroids, axis=1))
         dataset['crystal asymmetric unit centroid x'] = fractional_centroids[canonical_centroid_ind, 0]
         dataset['crystal asymmetric unit centroid y'] = fractional_centroids[canonical_centroid_ind, 1]
         dataset['crystal asymmetric unit centroid z'] = fractional_centroids[canonical_centroid_ind, 2]
 
         # get coordinates for the canonical conformer
         canonical_mol_coords = cell_coords[canonical_centroid_ind] - np.floor(fractional_centroids[canonical_centroid_ind])
-        Ip, _, _ = compute_principal_axes_np(canonical_mol_coords) # ignore masses, as we are interested in the geometric property rather than the inertial one
+        Ip, _, _ = compute_principal_axes_np(canonical_mol_coords)  # ignore masses, as we are interested in the geometric property rather than the inertial one
         target_handedness = int(compute_Ip_handedness(Ip))
-        rotation_target = np.eye(3) # if the molecule is left handed, allow it to do a left handed rotation
-        rotation_target[0,0] = target_handedness
+        rotation_target = np.eye(3)  # if the molecule is left handed, allow it to do a left handed rotation
+        rotation_target[0, 0] = target_handedness
 
-        rotation_matrix = rotation_target.T @ np.linalg.inv(Ip).T # need transposes to agree with cell builder
-        rotvec = Rotation.from_matrix(rotation_matrix.T).as_rotvec() # transposed because we actually want the inverse transform
+        rotation_matrix = rotation_target.T @ np.linalg.inv(Ip).T  # need transposes to agree with cell builder
+        rotvec = Rotation.from_matrix(rotation_matrix.T).as_rotvec()  # transposed because we actually want the inverse transform
         dataset['crystal asymmetric unit rotvec 1'] = rotvec[0]
         dataset['crystal asymmetric unit rotvec 2'] = rotvec[1]
         dataset['crystal asymmetric unit rotvec 3'] = rotvec[2]
-        dataset['crystal asymmetric unit handedness'] = target_handedness # handedness of the canonical conformer
+        dataset['crystal asymmetric unit handedness'] = target_handedness  # handedness of the canonical conformer
 
         # compute overlaps with cell vectors out to 5x5x5
         # get mol axes in fractional basis
@@ -350,7 +353,7 @@ class CustomGraphFeaturizer():
         atoms = [self.element_symbols[str(number)] for number in numbers]
         try:
             molecule = Molecule(atoms, coords)
-            analyzer = PointGroupAnalyzer(molecule, matrix_tolerance = 0.2)
+            analyzer = PointGroupAnalyzer(molecule, matrix_tolerance=0.2)
             return str(analyzer.get_pointgroup())  # , analyzer.get_symmetry_operations()
         except:
             return 'error'  # , 'error'
