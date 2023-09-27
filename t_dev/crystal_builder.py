@@ -39,7 +39,7 @@ def cell_parameterization_and_reconstruction():
     '''
     pose analysis
     '''
-    position, rotation, handedness, canonical_coords_list = \
+    position, rotation, handedness, canonical_coords_list, well_defined_asym_unit = \
         batch_asymmetric_unit_pose_analysis_torch(
             [torch.Tensor(test_crystals.ref_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
             torch.Tensor(test_crystals.sg_ind),

@@ -90,7 +90,7 @@ class SupercellBuilder:
         unit_cell_coords_list = build_unit_cell(supercell_data.Z, canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
 
         # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction
-        mol_positions, mol_orientations, mol_handedness = \
+        mol_positions, mol_orientations, mol_handedness, well_defined_asym_unit = \
             batch_asymmetric_unit_pose_analysis_torch(
                 unit_cell_coords_list,
                 supercell_data.sg_ind,

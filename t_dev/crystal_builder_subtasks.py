@@ -21,6 +21,7 @@ supercell_size = 5
 '''initialize supercell builder'''
 supercell_builder = SupercellBuilder(symmetry_info, dataDims, supercell_size=supercell_size, device='cpu', rotation_basis='cartesian')
 
+
 class Group:
     def __init__(self):
         self.aa = 0
@@ -92,15 +93,16 @@ class Group:
 
     # todo this is redundant, as this same function is used to define these parameters in dataset construction
     def test_batch_asymmetric_unit_pose_analysis(self):
-        positions, orientations, handedness, canonical_conformer_coords = batch_asymmetric_unit_pose_analysis_torch(
-            unit_cell_coords_list=[torch.Tensor(test_crystals.ref_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
-            sg_ind_list=test_crystals.sg_ind,
-            asym_unit_dict=supercell_builder.asym_unit_dict,
-            T_fc_list=test_crystals.T_fc,
-            enforce_right_handedness=False,
-            rotation_basis='cartesian',
-            return_asym_unit_coords=True
-        )
+        positions, orientations, handedness, well_defined_asym_unit, canonical_conformer_coords = (
+            batch_asymmetric_unit_pose_analysis_torch(
+                unit_cell_coords_list=[torch.Tensor(test_crystals.ref_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
+                sg_ind_list=test_crystals.sg_ind,
+                asym_unit_dict=supercell_builder.asym_unit_dict,
+                T_fc_list=test_crystals.T_fc,
+                enforce_right_handedness=False,
+                rotation_basis='cartesian',
+                return_asym_unit_coords=True
+            ))
 
         '''confirm cell params agree with dataset construction'''
         assert (positions - test_crystals.cell_params[:, 6:9]).abs().mean() < 1e-4
@@ -115,4 +117,4 @@ group.rotvec2rotmat()
 # group.test_build_unit_cell()
 # group.test_scale_asymmetric_unit()
 # group.test_align_crystaldata_to_principal_axes()
-#group.test_batch_asymmetric_unit_pose_analysis()
+# group.test_batch_asymmetric_unit_pose_analysis()

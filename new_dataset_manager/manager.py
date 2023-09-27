@@ -6,10 +6,11 @@ import pandas as pd
 from constants.asymmetric_units import asym_unit_dict
 from crystal_building.utils import *
 from pyxtal import symmetry
-from crystal_building.coordinate_transformations import coor_trans_matrix
 import matplotlib.colors as colors
 import tqdm
 import os
+
+from crystal_building.utils_np import find_coord_in_box_np
 
 
 class Miner():

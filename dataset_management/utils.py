@@ -258,7 +258,7 @@ class DatasetBuilder:
         for key in asymmetric_unit_dict:
             asymmetric_unit_dict[key] = torch.Tensor(asymmetric_unit_dict[key])
 
-        position, rotation, handedness, canonical_coords_list = \
+        position, rotation, handedness, canonical_coords_list, well_defined_asym_unit = \
             batch_asymmetric_unit_pose_analysis_torch(
                 [torch.Tensor(dataset['crystal reference cell coords'][ii]) for ii in range(len(dataset))],
                 torch.Tensor(dataset['crystal spacegroup number']),

@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import tqdm
 from ase import Atoms
-from pyxtal import symmetry
 from scipy.cluster.hierarchy import dendrogram
 import pandas as pd
 from torch.nn.functional import softmax
@@ -13,7 +12,6 @@ from torch.nn.functional import softmax
 '''
 general utilities
 '''
-
 
 def plot_dendrogram(model, **kwargs):
     """
@@ -53,8 +51,8 @@ def chunkify(lst: list, n: int):
 
 def delete_from_dataframe(df: pd.DataFrame, inds):
     """
-    hacky way to delete rows "inds" from datafram df
-    """  # todo we're doing something wrong here
+    hacky way to delete rows "inds" from dataframe df
+    """  # todo decide if we're ok with this level_0 business
     df = df.drop(index=inds)
     if 'level_0' in df.columns:  # delete unwanted samples
         df = df.drop(columns='level_0')

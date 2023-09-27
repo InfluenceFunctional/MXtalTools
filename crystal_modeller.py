@@ -408,7 +408,7 @@ class Modeller:
         """
         to pass tools to another training pipeline
         """
-        '''miscellaneous setup'''  # todo undo hardoced path here
+        '''miscellaneous setup'''  # todo undo hardcoded path here
         if machine == 'local':
             std_dataDims_path = '/home/mkilgour/mcrygan/dataset_management/standard_dataDims.npy'
         elif machine == 'cluster':

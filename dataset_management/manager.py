@@ -1,14 +1,13 @@
-from common.geometry_calculations import compute_fractional_transform
 from common.utils import *
-import matplotlib.pyplot as plt
 import pandas as pd
 
 from constants.asymmetric_units import asym_unit_dict
 from crystal_building.utils import *
 from pyxtal import symmetry
-import matplotlib.colors as colors
 import tqdm
 import os
+
+from crystal_building.utils_np import find_coord_in_box_np
 
 
 class DataManager():
@@ -221,7 +220,6 @@ class DataManager():
             blind_test_identifiers.remove('XAFQON')  # multi-component
             blind_test_identifiers.remove('KONTIQ')  # multi-component
 
-            # samples with bad CSD-generated reference cells
             n_bad_inds = len(bad_inds)
             for j in range(len(self.dataset)):
                 item = self.dataset['identifier'][j]  # do it this way to remove the target, including any of its polymorphs

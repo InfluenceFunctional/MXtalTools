@@ -11,7 +11,7 @@ import rdkit.Chem as Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
 from crystal_building.coordinate_transformations import coor_trans_matrix
 from mendeleev import element as element_table
-from crystal_building.utils import (get_cell_fractional_centroids, c_f_transform)
+from crystal_building.utils import (get_cell_fractional_centroids, fractional_transform)
 from pyxtal import symmetry
 from scipy.spatial.transform import Rotation
 # REQUIRED FOR POINT GROUP ANALYSIS BELOW
@@ -332,7 +332,7 @@ class CustomGraphFeaturizer():
 
         # compute overlaps with cell vectors out to 5x5x5
         # get mol axes in fractional basis
-        Ip_f = c_f_transform(Ip, T_cf)
+        Ip_f = fractional_transform(Ip, T_cf)
         normed_Ip = Ip_f / np.linalg.norm(Ip_f, axis=1)[:, None]
         overlaps = np.einsum('ij,nj->ni', self.normed_fractional_translations, normed_Ip).astype('float16')
 
