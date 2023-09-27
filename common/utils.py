@@ -53,10 +53,8 @@ def delete_from_dataframe(df: pd.DataFrame, inds):
     """
     hacky way to delete rows "inds" from dataframe df
     """  # todo decide if we're ok with this level_0 business
-    df = df.drop(index=inds)
-    if 'level_0' in df.columns:  # delete unwanted samples
-        df = df.drop(columns='level_0')
-    df = df.reset_index()
+    df.drop(index=inds,inplace=True)
+    df.reset_index(drop=True, inplace=True)
 
     return df
 
