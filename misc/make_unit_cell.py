@@ -55,10 +55,15 @@ symmetry_operations = SYM_OPS[14]  # I believe P21/a should be the same as P21/c
 # alternatively try the 2a special postiion
 fractional_coords = np.concatenate((fractional_coords, -fractional_coords[1:]), axis=0)
 
-symmetry_operations = [symmetry.Group(14).wyckoffs_organized[1][0][i].affine_matrix for i in range(2)]
+symmetry_operations = [symmetry.Group(14).wyckoffs_organized[1][3][i].affine_matrix for i in range(2)]
 
 for i in range(len(symmetry_operations)):  # for some reason these have no rotational component
     symmetry_operations[i][:3, :3] += np.eye(3)
+
+# manual correction
+symmetry_operations[1][0, 3] = 0.5
+symmetry_operations[1][1, 3] = 0.5
+symmetry_operations[1][2, 3] = 0
 
 mol_species = species + species[1:]
 crystal_species = mol_species * 2
@@ -69,6 +74,8 @@ unit_cell = build_unit_cell(torch.tensor([len(symmetry_operations)], dtype=int),
                             torch.Tensor(T_cf)[None, :, :],
                             [torch.tensor(symmetry_operations, dtype=torch.float32)]
                             )[0].detach().numpy()
+
+frac_centroids = fractional_transform_np(unit_cell.mean(1), T_cf)
 
 crystal = Atoms(symbols=crystal_species, positions=unit_cell.reshape(82, 3), cell=T_fc.T)
 view(crystal)
