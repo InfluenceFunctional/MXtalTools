@@ -60,8 +60,8 @@ class molecule_graph_model(nn.Module):
         self.num_attention_heads = num_attention_heads
         self.add_spherical_basis = add_spherical_basis
         self.add_torsional_basis = add_torsional_basis
-        self.n_mol_feats = num_mol_feats  # dataDims['num mol features']
-        self.n_atom_feats = num_atom_feats  # dataDims['num atom features']
+        self.n_mol_feats = num_mol_feats  # dataDims['num_mol_features']
+        self.n_atom_feats = num_atom_feats  # dataDims['num_atom_features']
         self.radial_function = radial_function
         self.max_num_neighbors = max_num_neighbors
         self.graph_convolution_cutoff = convolution_cutoff

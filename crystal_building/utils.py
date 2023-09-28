@@ -642,8 +642,8 @@ def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_d
     supercell_data.x[:, sg_ind] = 1  # set all molecules to the given space group
     supercell_data.x[:, crysys_ind] = 1  # set all molecules to the given crystal system
     # todo replace sym_ops_list arg by Z value
-    supercell_data.Z = len(sym_ops_list[0]) * torch.ones_like(supercell_data.Z)
-    supercell_data.x[:, z_value_ind] = supercell_data.Z[0] * torch.ones_like(supercell_data.x[:, 0])
+    supercell_data.mult = len(sym_ops_list[0]) * torch.ones_like(supercell_data.mult)
+    supercell_data.x[:, z_value_ind] = supercell_data.mult[0] * torch.ones_like(supercell_data.x[:, 0])
     supercell_data.sg_ind = sg_num * torch.ones_like(supercell_data.sg_ind)
 
     return supercell_data
@@ -672,7 +672,7 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
 
     # compute and update Z values
     sample_Z_values = [len(mol_data.symmetry_operators[ii]) for ii in range(mol_data.num_graphs)]
-    mol_data.Z = torch.tensor(sample_Z_values, dtype=mol_data.Z.dtype, device=mol_data.Z.device)  # * torch.ones_like(mol_data.Z)
+    mol_data.mult = torch.tensor(sample_Z_values, dtype=mol_data.mult.dtype, device=mol_data.mult.device)  # * torch.ones_like(mol_data.mult)
     mol_data.sg_ind = torch.tensor(sample_sg_inds, dtype=mol_data.sg_ind.dtype, device=mol_data.sg_ind.device)
 
     #sum([1 for entry in dataDims['crystal generation features'] if 'coefficient' not in entry]) below should include all these
@@ -682,6 +682,6 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
         mol_inds = torch.arange(mol_data.ptr[ii], mol_data.ptr[ii + 1])
         mol_data.x[mol_inds, symmetries_dict['crysys_ind_dict'][symmetries_dict['lattice_type'][sg_ind]]] = 1  # one-hot for crystal system
         mol_data.x[mol_inds, symmetries_dict['sg_feature_ind_dict'][symmetries_dict['space_groups'][sg_ind]]] = 1  # one-hot for space group
-        mol_data.x[mol_inds, symmetries_dict['crystal_z_value_ind']] = mol_data.Z[ii].float()  # set Z-value
+        mol_data.x[mol_inds, symmetries_dict['crystal_z_value_ind']] = mol_data.mult[ii].float()  # set Z-value
 
     return mol_data

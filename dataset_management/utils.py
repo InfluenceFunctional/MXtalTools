@@ -348,7 +348,7 @@ class DatasetBuilder:
 
         keys_to_add = self.atom_keys
         if self.replace_dataDims is not None:
-            assert self.replace_dataDims['atom features'] == keys_to_add
+            assert self.replace_dataDims['atom_features'] == keys_to_add
 
             stds = self.replace_dataDims['atom stds']
             means = self.replace_dataDims['atom means']
@@ -407,7 +407,7 @@ class DatasetBuilder:
             keys_to_add.remove(self.target)
 
         if self.replace_dataDims is not None:
-            assert self.replace_dataDims['molecule features'] == keys_to_add
+            assert self.replace_dataDims['molecule_features'] == keys_to_add
 
             stds = self.replace_dataDims['molecule stds']
             means = self.replace_dataDims['molecule means']
@@ -489,8 +489,8 @@ class DatasetBuilder:
         key_dtype = []
         # featurize
         if self.replace_dataDims is not None:  # use mean & std from an external dataset
-            stds = self.replace_dataDims['lattice stds']
-            means = self.replace_dataDims['lattice means']
+            stds = self.replace_dataDims['lattice_stds']
+            means = self.replace_dataDims['lattice_means']
         else:
             stds, means = [], []
 
@@ -562,8 +562,8 @@ class DatasetBuilder:
         if self.replace_dataDims is not None:
             assert self.replace_dataDims['target features'] == self.target
 
-            self.target_mean = self.replace_dataDims['target mean']
-            self.target_std = self.replace_dataDims['target std']
+            self.target_mean = self.replace_dataDims['target_mean']
+            self.target_std = self.replace_dataDims['target_std']
         else:
             self.target_std = targets.std()
             self.target_mean = targets.mean()
@@ -657,20 +657,20 @@ class DatasetBuilder:
             'lattice dtypes': self.lattice_dtypes,
 
             'target': self.target,
-            'target mean': self.target_mean,
-            'target std': self.target_std,
+            'target_mean': self.target_mean,
+            'target_std': self.target_std,
 
-            'num tracking features': self.n_tracking_features,
-            'tracking features dict': self.tracking_dict_keys,
+            'num_tracking_features': self.n_tracking_features,
+            'tracking_features': self.tracking_dict_keys,
 
-            'num atom features': len(self.atom_keys) + len(self.mol_keys),
+            'num_atom_features': len(self.atom_keys) + len(self.mol_keys),
             'num atomwise features': len(self.atom_keys),
-            'atom features': self.atom_keys,
+            'atom_features': self.atom_keys,
             'atom means': self.atom_means,
             'atom stds': self.atom_stds,
 
-            'num mol features': len(self.mol_keys),
-            'molecule features': self.mol_keys,
+            'num_mol_features': len(self.mol_keys),
+            'molecule_features': self.mol_keys,
             'molecule means': self.mol_means,
             'molecule stds': self.mol_stds,
 

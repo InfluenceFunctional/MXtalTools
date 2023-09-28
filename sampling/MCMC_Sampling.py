@@ -369,7 +369,7 @@ class mcmcSampler:
         # renormalize
         nonstandardized_state = proposed_supercells.cell_params.cpu().detach().numpy()
         nonstandardized_state[:, -3:] = correct_rotation
-        self.proposed_state_canonical = (nonstandardized_state - self.supercell_builder.dataDims['lattice means']) / self.supercell_builder.dataDims['lattice stds']
+        self.proposed_state_canonical = (nonstandardized_state - self.supercell_builder.dataDims['lattice_means']) / self.supercell_builder.dataDims['lattice_stds']
 
         return score, vdw_penalty, proposed_supercells
 

@@ -11,8 +11,8 @@ class molecule_regressor(nn.Module):
         self.model = molecule_graph_model(
             dataDims,
             seed=config.seeds.model,
-            num_atom_feats=dataDims['num atom features'] - dataDims['num crystal generation features'],
-            num_mol_feats=dataDims['num mol features'] - dataDims['num crystal generation features'],
+            num_atom_feats=dataDims['num_atom_features'] - dataDims['num crystal generation features'],
+            num_mol_feats=dataDims['num_mol_features'] - dataDims['num crystal generation features'],
             output_dimension=1,  # single-target regression
             activation=regressor_config.activation,
             num_fc_layers=regressor_config.num_fc_layers,

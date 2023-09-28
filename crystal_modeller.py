@@ -585,7 +585,7 @@ class Modeller:
             if self.config.regressor_positional_noise > 0:
                 data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
 
-            regression_losses_list, predictions, targets = get_regression_loss(regressor, data, self.config.dataDims['target mean'], self.config.dataDims['target std'])
+            regression_losses_list, predictions, targets = get_regression_loss(regressor, data, self.config.dataDims['target_mean'], self.config.dataDims['target_std'])
             regression_loss = regression_losses_list.mean()
 
             if update_gradients:
@@ -827,10 +827,10 @@ class Modeller:
         '''recompute packing coeffs'''
         real_packing_coeffs = compute_packing_coefficient(cell_params=real_supercell_data.cell_params,
                                                           mol_volumes=real_supercell_data.tracking[:, self.tracking_mol_volume_ind],
-                                                          z_values=real_supercell_data.Z)
+                                                          z_values=real_supercell_data.mult)
         fake_packing_coeffs = compute_packing_coefficient(cell_params=fake_supercell_data.cell_params,
                                                           mol_volumes=fake_supercell_data.tracking[:, self.tracking_mol_volume_ind],
-                                                          z_values=fake_supercell_data.Z)
+                                                          z_values=fake_supercell_data.mult)
 
         return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), \
             real_distances_dict, fake_pairwise_distances_dict, \
@@ -890,8 +890,8 @@ class Modeller:
             with torch.no_grad():
                 standardized_target_packing_coeff = regressor(mol_data.clone().detach().to(self.config.device)).detach()[:, 0]
         else:
-            target_packing_coeff = mol_data.tracking[:, self.config.dataDims['tracking features dict'].index('crystal packing coefficient')]
-            standardized_target_packing_coeff = ((target_packing_coeff - self.config.dataDims['target mean']) / self.config.dataDims['target std']).to(self.config.device)
+            target_packing_coeff = mol_data.tracking[:, self.config.dataDims['tracking_features'].index('crystal packing coefficient')]
+            standardized_target_packing_coeff = ((target_packing_coeff - self.config.dataDims['target_mean']) / self.config.dataDims['target_std']).to(self.config.device)
 
         standardized_target_packing_coeff += torch.randn_like(standardized_target_packing_coeff) * self.config.packing_target_noise
 
@@ -938,9 +938,9 @@ class Modeller:
 
         packing_loss, packing_prediction, packing_target, packing_csd = \
             generator_density_matching_loss(
-                standardized_target_packing, self.config.dataDims['target mean'], self.config.dataDims['target std'],
+                standardized_target_packing, self.config.dataDims['target_mean'], self.config.dataDims['target_std'],
                 self.tracking_mol_volume_ind,
-                self.config.dataDims['tracking features dict'].index('crystal packing coefficient'),
+                self.config.dataDims['tracking_features'].index('crystal packing coefficient'),
                 supercell_data, generated_samples,
                 precomputed_volumes=generated_cell_volumes, loss_func=self.config.density_loss_func)
 
@@ -983,8 +983,8 @@ class Modeller:
             np.save(self.source_directory + r'/dataset_management/standard_dataDims', self.config.dataDims)
 
         '''init lattice mean & std'''
-        self.lattice_means = torch.tensor(self.config.dataDims['lattice means'], dtype=torch.float32, device=self.config.device)
-        self.lattice_stds = torch.tensor(self.config.dataDims['lattice stds'], dtype=torch.float32, device=self.config.device)
+        self.lattice_means = torch.tensor(self.config.dataDims['lattice_means'], dtype=torch.float32, device=self.config.device)
+        self.lattice_stds = torch.tensor(self.config.dataDims['lattice_stds'], dtype=torch.float32, device=self.config.device)
 
         '''
         init supercell builder
@@ -994,20 +994,20 @@ class Modeller:
         '''
         set tracking feature indices & property dicts we will use later
         '''
-        self.tracking_mol_volume_ind = self.config.dataDims['tracking features dict'].index('molecule volume')
+        self.tracking_mol_volume_ind = self.config.dataDims['tracking_features'].index('molecule volume')
 
         # index in the input where we can manipulate the desired crystal values: packing coefficient, sg indices, crystal systems
-        self.crystal_packing_ind = self.config.dataDims['num atomwise features'] + self.config.dataDims['molecule features'].index('crystal packing coefficient')
+        self.crystal_packing_ind = self.config.dataDims['num atomwise features'] + self.config.dataDims['molecule_features'].index('crystal packing coefficient')
         self.sg_feature_ind_dict = {thing[14:]: ind + self.config.dataDims['num atomwise features'] for ind, thing in
-                                    enumerate(self.config.dataDims['molecule features']) if 'sg is' in thing}
+                                    enumerate(self.config.dataDims['molecule_features']) if 'sg is' in thing}
         self.crysys_ind_dict = {thing[18:]: ind + self.config.dataDims['num atomwise features'] for ind, thing in
-                                enumerate(self.config.dataDims['molecule features']) if 'crystal system is' in thing}
+                                enumerate(self.config.dataDims['molecule_features']) if 'crystal system is' in thing}
 
         if self.config.feature_richness == 'full':
-            self.tracking_num_acceptors_ind = self.config.dataDims['tracking features dict'].index('molecule num acceptors')
-            self.tracking_num_donors_ind = self.config.dataDims['tracking features dict'].index('molecule num donors')
-            self.tracking_atom_acceptor_ind = self.config.dataDims['atom features'].index('atom is H bond acceptor')
-            self.tracking_atom_donor_ind = self.config.dataDims['atom features'].index('atom is H bond donor')
+            self.tracking_num_acceptors_ind = self.config.dataDims['tracking_features'].index('molecule num acceptors')
+            self.tracking_num_donors_ind = self.config.dataDims['tracking_features'].index('molecule num donors')
+            self.tracking_atom_acceptor_ind = self.config.dataDims['atom_features'].index('atom is H bond acceptor')
+            self.tracking_atom_donor_ind = self.config.dataDims['atom_features'].index('atom is H bond donor')
 
         '''
         add symmetry element indices to symmetry dict
@@ -1016,15 +1016,15 @@ class Modeller:
         self.sym_info['packing_coefficient_ind'] = self.crystal_packing_ind
         self.sym_info['sg_feature_ind_dict'] = self.sg_feature_ind_dict  # SG indices in input features
         self.sym_info['crysys_ind_dict'] = self.crysys_ind_dict  # crysys indices in input features
-        self.sym_info['crystal_z_value_ind'] = self.config.dataDims['num atomwise features'] + self.config.dataDims['molecule features'].index('crystal z value')  # Z value index in input features
+        self.sym_info['crystal_z_value_ind'] = self.config.dataDims['num atomwise features'] + self.config.dataDims['molecule_features'].index('crystal z value')  # Z value index in input features
 
         ''' 
         init gaussian generator for cell parameter sampling
         we don't always use it but it's very cheap so just do it every time
         '''
         self.gaussian_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice features'],
-                                                             means=self.config.dataDims['lattice means'],
-                                                             stds=self.config.dataDims['lattice stds'],
+                                                             means=self.config.dataDims['lattice_means'],
+                                                             stds=self.config.dataDims['lattice_stds'],
                                                              normed_length_means=self.config.dataDims[
                                                                  'lattice normed length means'],
                                                              normed_length_stds=self.config.dataDims[
@@ -1565,7 +1565,7 @@ class Modeller:
         for i in range(real_data.num_graphs):
             volumes_list.append(cell_vol_torch(real_data.cell_params[i, 0:3], real_data.cell_params[i, 3:6]))
         volumes = torch.stack(volumes_list)
-        real_packing_coeffs = real_data.Z * real_data.tracking[:, self.tracking_mol_volume_ind] / volumes
+        real_packing_coeffs = real_data.mult * real_data.tracking[:, self.tracking_mol_volume_ind] / volumes
 
         real_samples_dict = {'score': softmax_and_score(discriminator_score).cpu().detach().numpy(),
                              'vdw overlap': -vdw_score.cpu().detach().numpy(),
@@ -1655,7 +1655,7 @@ class Modeller:
                         cell_vol_torch(fake_supercell_data.cell_params[i, 0:3], fake_supercell_data.cell_params[i, 3:6]))
                 volumes = torch.stack(volumes_list)
 
-                fake_packing_coeffs = fake_supercell_data.Z * fake_supercell_data.tracking[:, self.tracking_mol_volume_ind] / volumes
+                fake_packing_coeffs = fake_supercell_data.mult * fake_supercell_data.tracking[:, self.tracking_mol_volume_ind] / volumes
 
                 sampling_dict['score'][:, ii] = softmax_and_score(discriminator_score).cpu().detach().numpy()
                 sampling_dict['vdw overlap'][:, ii] = -vdw_score.cpu().detach().numpy()

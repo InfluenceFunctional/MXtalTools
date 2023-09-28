@@ -14,8 +14,8 @@ class crystal_discriminator(nn.Module):
         self.model = molecule_graph_model(
             dataDims=dataDims,
             seed=config.seeds.model,
-            num_atom_feats=dataDims['num atom features'] - dataDims['num crystal generation features'],
-            num_mol_feats=dataDims['num mol features'] - dataDims['num crystal generation features'],
+            num_atom_feats=dataDims['num_atom_features'] - dataDims['num crystal generation features'],
+            num_mol_feats=dataDims['num_mol_features'] - dataDims['num crystal generation features'],
             output_dimension=2,  # 'yes' and 'no'
             activation=discrim_config.activation,
             num_fc_layers=discrim_config.num_fc_layers,

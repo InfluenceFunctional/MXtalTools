@@ -13,8 +13,8 @@
 #                                               lattice_dict=self.lattice_type, sym_ops_dict=self.sym_ops)
 #
 #     self.randn_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice features'],
-#                                                       means=self.config.dataDims['lattice means'],
-#                                                       stds=self.config.dataDims['lattice stds'],
+#                                                       means=self.config.dataDims['lattice_means'],
+#                                                       stds=self.config.dataDims['lattice_stds'],
 #                                                       normed_length_means=self.config.dataDims[
 #                                                           'lattice normed length means'],
 #                                                       normed_length_stds=self.config.dataDims[

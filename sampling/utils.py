@@ -8,8 +8,8 @@ from models.utils import undo_1d_bound, softmax_and_score
 
 
 def de_clean_samples(supercell_builder, samples, sg_inds):
-    means = supercell_builder.dataDims['lattice means']
-    stds = supercell_builder.dataDims['lattice stds']
+    means = supercell_builder.dataDims['lattice_means']
+    stds = supercell_builder.dataDims['lattice_stds']
 
     # soft clipping to ensure correct range with finite gradients
     cell_lengths = torch.Tensor(samples[:, :3] * stds[0:3] + means[0:3])
@@ -124,8 +124,8 @@ def sample_clustering(supercell_builder, config, sampling_dict, collater, extra_
                                                           standardized_sample=True, )
 
     assert np.mean(np.abs(best_cells.cell_params.cpu().detach().numpy() - (
-            best_samples_to_build * supercell_builder.dataDims['lattice stds'] +
-            supercell_builder.dataDims['lattice means']))) < 1e-4
+            best_samples_to_build * supercell_builder.dataDims['lattice_stds'] +
+            supercell_builder.dataDims['lattice_means']))) < 1e-4
     ss = softmax_and_score(discriminator(best_cells.clone().cuda())).cpu().detach().numpy()
 
     # mols = [ase_mol_from_crystaldata(best_cells, ii, highlight_aux=True, exclusion_level='distance', inclusion_distance=5) for ii in range(best_cells.num_graphs)]

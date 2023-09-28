@@ -267,7 +267,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     '''
     8. Functional group analysis
     '''
-    tracking_features_names = config.dataDims['tracking features dict']
+    tracking_features_names = config.dataDims['tracking_features']
     # get the indices for each functional group
     functional_group_inds = {}
     fraction_dict = {}
@@ -519,19 +519,19 @@ def nov_22_paper_discriminator_plots(config, wandb):
 
     # correlate losses with molecular features
     tracking_features = np.asarray(tracking_features)
-    g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+    g_loss_correlations = np.zeros(config.dataDims['num_tracking_features'])
     features = []
     ind = 0
-    for i in range(config.dataDims['num tracking features']):  # not that interesting
-        if ('spacegroup' not in config.dataDims['tracking features dict'][i]) and \
-                ('system' not in config.dataDims['tracking features dict'][i]) and \
-                ('density' not in config.dataDims['tracking features dict'][i]):
+    for i in range(config.dataDims['num_tracking_features']):  # not that interesting
+        if ('spacegroup' not in config.dataDims['tracking_features'][i]) and \
+                ('system' not in config.dataDims['tracking_features'][i]) and \
+                ('density' not in config.dataDims['tracking_features'][i]):
             if (np.average(tracking_features[:, i] != 0) > 0.05) and \
-                    (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
-                    (config.dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
+                    (config.dataDims['tracking_features'][i] != 'crystal z prime') and \
+                    (config.dataDims['tracking_features'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
                 corr = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
                 if np.abs(corr) > 0.05:
-                    features.append(config.dataDims['tracking features dict'][i])
+                    features.append(config.dataDims['tracking_features'][i])
                     g_loss_correlations[ind] = corr
                     ind += 1
 

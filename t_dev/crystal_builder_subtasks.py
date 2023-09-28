@@ -54,7 +54,7 @@ class Group:
     # todo doesn't currently work - have to set the pos argument as the canonical conformer which is not necessarily true
     def test_build_unit_cell(self):
         test_unit_cells = \
-            build_unit_cell(test_crystals.Z.clone(),
+            build_unit_cell(test_crystals.mult.clone(),
                             [test_crystals.pos[test_crystals.batch == ii] for ii in range(test_crystals.num_graphs)],
                             test_crystals.T_fc.clone(),
                             torch.linalg.inv(test_crystals.T_fc),

@@ -37,7 +37,7 @@ def compute_csp_sample_distances(config, real_samples_dict, generated_samples_di
     """cell parameter and discriminator latent distances"""
     intra_sample_cell_distance = np.zeros((num_crystals, num_samples, num_samples))
     intra_sample_latent_distance = np.zeros((num_crystals, num_samples, num_samples))
-    std_sample_cell_params = (generated_samples_dict['cell params'] - config.dataDims['lattice means']) / config.dataDims['lattice stds']
+    std_sample_cell_params = (generated_samples_dict['cell params'] - config.dataDims['lattice_means']) / config.dataDims['lattice_stds']
 
     for i in range(num_crystals):  # dot product - it's normed
         x1 = torch.Tensor(std_sample_cell_params[i])
@@ -47,7 +47,7 @@ def compute_csp_sample_distances(config, real_samples_dict, generated_samples_di
 
     real_sample_cell_distance = np.zeros((num_crystals, num_samples))
     real_sample_latent_distance = np.zeros((num_crystals, num_samples))
-    std_real_cell_params = (real_samples_dict['cell params'] - config.dataDims['lattice means']) / config.dataDims['lattice stds']
+    std_real_cell_params = (real_samples_dict['cell params'] - config.dataDims['lattice_means']) / config.dataDims['lattice_stds']
     for i in range(num_crystals):
         x1 = torch.Tensor(std_sample_cell_params[i])
         x2 = torch.Tensor(generated_samples_dict['discriminator latent'][i])
@@ -168,10 +168,10 @@ def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supe
         volumes_list.append(
             cell_vol_torch(best_supercells.cell_params[i, 0:3], best_supercells.cell_params[i, 3:6]))
     volumes = torch.stack(volumes_list)
-    generated_packing_coeffs = (best_supercells.Z * best_supercells.tracking[:,
+    generated_packing_coeffs = (best_supercells.mult * best_supercells.tracking[:,
                                                     mol_volume_ind] / volumes).cpu().detach().numpy()
-    target_packing = (best_supercells.y * config.dataDims['target std'] + config.dataDims[
-        'target mean']).cpu().detach().numpy()
+    target_packing = (best_supercells.y * config.dataDims['target_std'] + config.dataDims[
+        'target_mean']).cpu().detach().numpy()
 
     fig = go.Figure()
     for i in range(min(best_supercells.num_graphs, num_samples)):

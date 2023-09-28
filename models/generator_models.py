@@ -16,8 +16,8 @@ class crystal_generator(nn.Module):
 
         self.device = config.device
         self.symmetries_dict = sym_info
-        self.lattice_means = torch.tensor(dataDims['lattice means'], dtype=torch.float32, device=config.device)
-        self.lattice_stds = torch.tensor(dataDims['lattice stds'], dtype=torch.float32, device=config.device)
+        self.lattice_means = torch.tensor(dataDims['lattice_means'], dtype=torch.float32, device=config.device)
+        self.lattice_stds = torch.tensor(dataDims['lattice_stds'], dtype=torch.float32, device=config.device)
         self.norm_lattice_lengths = False
 
         # initialize asymmetric unit dict
@@ -45,8 +45,8 @@ class crystal_generator(nn.Module):
             self.num_mol_feats = 0
         else:
             self.skinny_inputs = False
-            self.atom_input_feats = dataDims['num atom features'] + 3 - self.num_crystal_features
-            self.num_mol_feats = dataDims['num mol features'] - self.num_crystal_features
+            self.atom_input_feats = dataDims['num_atom_features'] + 3 - self.num_crystal_features
+            self.num_mol_feats = dataDims['num_mol_features'] - self.num_crystal_features
 
         self.conditioner = molecule_graph_model(
             dataDims=dataDims,
@@ -178,7 +178,7 @@ class independent_gaussian_model(nn.Module):
         sg_inds = data.sg_ind
 
         samples = self.prior.sample((num_samples,)).to(data.x.device)  # samples in the destandardied 'real' basis
-        samples[:, :3] = samples[:, :3] * (data.Z[:, None] ** (1 / 3)) * (data.mol_volume[:, None] ** (1 / 3))  # denorm lattice vectors
+        samples[:, :3] = samples[:, :3] * (data.mult[:, None] ** (1 / 3)) * (data.mol_volume[:, None] ** (1 / 3))  # denorm lattice vectors
 
         final_samples = clean_cell_params(samples, sg_inds, self.means, self.stds,
                                           self.symmetries_dict, self.asym_unit_dict,

@@ -44,6 +44,8 @@ def chunkify(lst: list, n: int):
 def get_fraction(atomic_numbers, target):
     return np.sum(atomic_numbers == target) / len(atomic_numbers)
 
+def get_range_fraction(atomic_numbers, rrange):
+    return np.sum((np.asarray(atomic_numbers) > rrange[0]) * (np.asarray(atomic_numbers) < rrange[1])) / len(atomic_numbers)
 
 def get_dipole(coords, charges):
     center_of_geometry = np.average(np.asarray(coords), axis=0)
@@ -84,7 +86,7 @@ def extract_crystal_data(crystal, unit_cell):
     crystal_dict['space_group_number'], crystal_dict['space_group_setting'] = crystal.spacegroup_number_and_setting
     crystal_dict['space_group_symbol'] = crystal.spacegroup_symbol
     crystal_dict['system'] = crystal.crystal_system
-    crystal_dict['lattice_a'], crystal_dict['lattice_a'], crystal_dict['lattice_a'] = np.asarray(crystal.cell_lengths, dtype=float)
+    crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c'] = np.asarray(crystal.cell_lengths, dtype=float)
     crystal_dict['lattice_alpha'], crystal_dict['lattice_beta'], crystal_dict['lattice_gamma'] = np.asarray(crystal.cell_angles, dtype=float) / 180 * np.pi
     # NOTE this calls a (probably mol volume) calculation which is by far the heaviest part of this function - but it
     # differs from the below method by usually less than 1% but sometimes up to 5%
@@ -95,6 +97,7 @@ def extract_crystal_data(crystal, unit_cell):
     crystal_dict['fc_transform'], crystal_dict['cell_volume'] = coor_trans_matrix('f_to_c', np.asarray(crystal.cell_lengths), np.asarray(crystal.cell_angles) / 180 * np.pi, return_vol=True)
     crystal_dict['cf_transform'] = coor_trans_matrix('c_to_f', np.asarray(crystal.cell_lengths), np.asarray(crystal.cell_angles) / 180 * np.pi)
     crystal_dict['density'] = crystal.calculated_density
+    crystal_dict['reduced_volume'] = crystal_dict['cell_volume'] / crystal_dict['symmetry_multiplicity']
     mol_volumes = [component.molecular_volume for component in crystal.molecule.components]
 
     crystal_dict['packing_coefficient'] = (sum(mol_volumes) * crystal.z_value / crystal.z_prime / crystal_dict['cell_volume'])
@@ -105,7 +108,7 @@ def extract_crystal_data(crystal, unit_cell):
     crystal_dict['unit_cell_atomic_numbers'] = [np.asarray([heavy_atom.atomic_number for heavy_atom in component.heavy_atoms]) for component in unit_cell.components]
 
     if crystal_dict['space_group_number'] != 0:  # sometimes the sg number is broken, but if not, assign a consistent canonical SG symbol
-        crystal_dict['space group symbol'] = SPACE_GROUPS[crystal_dict['space_group_number']]
+        crystal_dict['space_group_symbol'] = SPACE_GROUPS[crystal_dict['space_group_number']]
     else:  # in which case, try reverse assigning the number, given the space group
         crystal_dict['space_group_number'] = sg_numbers[crystal_dict['space group symbol']]
 
@@ -168,11 +171,10 @@ def featurize_molecule(crystal, crystal_dict, rd_mol, mol_volume, component_num)
     # molecule_dict['molecule_volume'] = AllChem.ComputeMolVolume(rd_mol)  # this is very slow - approx 50% of total effort - fill this in later from the CSD
     # molecule_dict['molecule_volume'] = component.molecular_volume  # this is much faster
     molecule_dict['molecule_volume'] = mol_volume
-    molecule_dict['molecule_radius'] = np.amax(np.linalg.norm(molecule_dict['atom_coordinates'] - molecule_dict['atom_coordinates'].mean(0)))
     molecule_dict['molecule_num_donors'] = len(h_donors)
     molecule_dict['molecule_num_acceptors'] = len(h_acceptors)
     molecule_dict['molecule_polarity'], _ = get_dipole(molecule_dict['atom_coordinates'], molecule_dict['atom_electronegativity'])
-    molecule_dict['molecule_spherical defect'] = rdMolDescriptors.CalcAsphericity(rd_mol)
+    molecule_dict['molecule_spherical_defect'] = rdMolDescriptors.CalcAsphericity(rd_mol)
     molecule_dict['molecule_eccentricity'] = rdMolDescriptors.CalcEccentricity(rd_mol)
     molecule_dict['molecule_num_rotatable_bonds'] = rdMolDescriptors.CalcNumRotatableBonds((rd_mol))
     molecule_dict['molecule_planarity'] = rdMolDescriptors.CalcPBF(rd_mol)

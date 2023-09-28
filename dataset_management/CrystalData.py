@@ -66,7 +66,8 @@ class CrystalData(BaseData):
     """
     def __init__(self, x: OptTensor = None, edge_index: OptTensor = None,
                  edge_attr: OptTensor = None, y: OptTensor = None,
-                 pos: OptTensor = None, Z: OptTensor = None,
+                 pos: OptTensor = None, mult: OptTensor = None,
+                 mol_x: OptTensor = None,
                  tracking: OptTensor = None, sg_ind: OptTensor = None,
                  smiles: OptTensor = None, ref_cell_pos: OptTensor = None,
                  cell_params: OptTensor = None, T_fc: OptTensor = None,
@@ -85,10 +86,12 @@ class CrystalData(BaseData):
             self.edge_attr = edge_attr
         if y is not None:
             self.y = y
+        if mol_x is not None:
+            self.mol_x = mol_x
         if pos is not None:
             self.pos = pos
-        if Z is not None:
-            self.Z = Z
+        if mult is not None:
+            self.mult = mult
         if sg_ind is not None:
             self.sg_ind = sg_ind
         if tracking is not None:
@@ -435,8 +438,12 @@ class CrystalData(BaseData):
     custom crystal features
     '''
     @property
-    def Z(self) -> Any:
-        return self['Z'] if 'Z' in self._store else None
+    def mol_x(self) -> Any:
+        return self['mol_x'] if 'mol_x' in self._store else None
+
+    @property
+    def mult(self) -> Any:
+        return self['mult'] if 'mult' in self._store else None
 
     @property
     def sg_ind(self) -> Any:

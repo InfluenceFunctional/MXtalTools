@@ -51,19 +51,37 @@ species = [specie for i, specie in enumerate(misc) if i % 2 == 0]
 fractional_coords = np.asarray([specie for i, specie in enumerate(misc) if not i % 2 == 0])
 
 symmetry_operations = SYM_OPS[14]  # I believe P21/a should be the same as P21/c (group 14) - can check here https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
+# page 179 https://www.lpl.arizona.edu/PMRG/sites/lpl.arizona.edu.PMRG/files/ITC-Vol.A%20%282005%29%28ISBN%200792365909%29.pdf
+symmetry_operations[1] = np.array(
+    [[-1., 0., 0., .5],
+     [0., 1., 0., .5],
+     [0., 0., -1., 0],
+     [0., 0., 0., 1.]])
+
+symmetry_operations[2] = np.array(
+    [[-1., 0., 0., 0],
+     [0., -1., 0., 0],
+     [0., 0., -1., 0],
+     [0., 0., 0., 1.]])
+
+symmetry_operations[3] = np.array(
+    [[1., 0., 0., .5],
+     [0., -1., 0., .5],
+     [0., 0., 1., 0],
+     [0., 0., 0., 1.]])
 
 # alternatively try the 2a special postiion
-fractional_coords = np.concatenate((fractional_coords, -fractional_coords[1:]), axis=0)
-
-symmetry_operations = [symmetry.Group(14).wyckoffs_organized[1][3][i].affine_matrix for i in range(2)]
-
-for i in range(len(symmetry_operations)):  # for some reason these have no rotational component
-    symmetry_operations[i][:3, :3] += np.eye(3)
-
-# manual correction
-symmetry_operations[1][0, 3] = 0.5
-symmetry_operations[1][1, 3] = 0.5
-symmetry_operations[1][2, 3] = 0
+# fractional_coords = np.concatenate((fractional_coords, -fractional_coords[1:]), axis=0)
+#
+# symmetry_operations = [symmetry.Group(14).wyckoffs_organized[1][3][i].affine_matrix for i in range(2)]
+#
+# for i in range(len(symmetry_operations)):  # for some reason these have no rotational component
+#     symmetry_operations[i][:3, :3] += np.eye(3)
+#
+# # manual correction
+# symmetry_operations[1][0, 3] = 0.5
+# symmetry_operations[1][1, 3] = 0.5
+# symmetry_operations[1][2, 3] = 0
 
 mol_species = species + species[1:]
 crystal_species = mol_species * 2
@@ -75,16 +93,24 @@ unit_cell = build_unit_cell(torch.tensor([len(symmetry_operations)], dtype=int),
                             [torch.tensor(symmetry_operations, dtype=torch.float32)]
                             )[0].detach().numpy()
 
+zn_centroids = fractional_transform_np(unit_cell[:, 0], T_cf)
 frac_centroids = fractional_transform_np(unit_cell.mean(1), T_cf)
 
-crystal = Atoms(symbols=crystal_species, positions=unit_cell.reshape(82, 3), cell=T_fc.T)
+unit_cell[0, :, :] -= fractional_transform_np(np.asarray((0, 1, 0))[None, :], T_fc)
+unit_cell[1, :, :] -= fractional_transform_np(np.asarray((0, 0, 1))[None, :], T_fc)
+unit_cell[2, :, :] -= fractional_transform_np(np.asarray((1, 0, 1))[None, :], T_fc)
+
+zn_centroids = fractional_transform_np(unit_cell[:, 0], T_cf)
+
+
+crystal = Atoms(symbols=species * 4, positions=unit_cell.reshape(84, 3), cell=T_fc.T)
 view(crystal)
 
 coords, atoms, inds, copies = ref_to_supercell([unit_cell], torch.Tensor(T_fc).permute(1, 0)[None, :, :], torch.Tensor(T_fc)[None, :, :],
-                                               [torch.ones(41)], [2], supercell_scale=5, cutoff=3, pare_to_convolution_cluster=True
+                                               [torch.ones(21)], [4], supercell_scale=1, cutoff=1000, pare_to_convolution_cluster=False
                                                )
 
-supercell = Atoms(symbols=mol_species * copies, positions=coords[0].cpu().detach().numpy(), cell=T_fc.T)
+supercell = Atoms(symbols=species * copies, positions=coords[0].cpu().detach().numpy(), cell=T_fc.T)
 view(supercell)
 
 aa = 1

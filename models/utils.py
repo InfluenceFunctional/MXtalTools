@@ -205,11 +205,11 @@ def norm_scores(score, tracking_features, dataDims):
     """
     norm the incoming score according to some feature of the molecule (generally size)
     """
-    volume = tracking_features[:, dataDims['tracking features dict'].index('molecule volume')]
+    volume = tracking_features[:, dataDims['tracking_features'].index('molecule volume')]
     # radius = (3/4/np.pi * volume)**(1/3)
     # surface_area = 4*np.pi*radius**2
-    # eccentricity = tracking_features[:,config.dataDims['tracking features dict'].index('molecule eccentricity')]
-    # surface_area = tracking_features[:,config.dataDims['tracking features dict'].index('molecule freeSASA')]
+    # eccentricity = tracking_features[:,config.dataDims['tracking_features'].index('molecule eccentricity')]
+    # surface_area = tracking_features[:,config.dataDims['tracking_features'].index('molecule freeSASA')]
     return score / volume
 
 
@@ -413,7 +413,7 @@ def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
     else:
         volumes = precomputed_volumes
 
-    generated_packing_coeffs = data.Z * data.tracking[:, mol_volume_ind] / volumes
+    generated_packing_coeffs = data.mult * data.tracking[:, mol_volume_ind] / volumes
     standardized_gen_packing_coeffs = (generated_packing_coeffs - packing_mean) / packing_std
 
     csd_packing_coeffs = data.tracking[:, packing_coeff_ind]
@@ -451,7 +451,7 @@ def generator_density_matching_loss(standardized_target_packing, packing_mean, p
     else:
         volumes = precomputed_volumes
 
-    generated_packing_coeffs = data.Z * data.mol_volume / volumes
+    generated_packing_coeffs = data.mult * data.mol_volume / volumes
     standardized_gen_packing_coeffs = (generated_packing_coeffs - packing_mean) / packing_std
 
     target_packing_coeffs = standardized_target_packing * packing_std + packing_mean

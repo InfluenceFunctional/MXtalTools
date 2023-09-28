@@ -12,16 +12,16 @@ def nov_22_paper_regression_plots(config):
     #test_epoch_stats_dict = np.load('C:/Users\mikem\Desktop\CSP_runs/951_test_epoch_stats_dict.npy', allow_pickle=True).item()
     test_epoch_stats_dict = np.load('C:/Users\mikem\crystals\CSP_runs/951_test_epoch_stats_dict.npy', allow_pickle=True).item()
 
-    target_mean = config.dataDims['target mean']
-    target_std = config.dataDims['target std']
+    target_mean = config.dataDims['target_mean']
+    target_std = config.dataDims['target_std']
 
     target = np.asarray(test_epoch_stats_dict['generator density target'])
     prediction = np.asarray(test_epoch_stats_dict['generator density prediction'])
     orig_target = target * target_std + target_mean
     orig_prediction = prediction * target_std + target_mean
 
-    volume_ind = config.dataDims['tracking features dict'].index('molecule volume')
-    mass_ind = config.dataDims['tracking features dict'].index('molecule mass')
+    volume_ind = config.dataDims['tracking_features'].index('molecule volume')
+    mass_ind = config.dataDims['tracking_features'].index('molecule mass')
     molwise_density = test_epoch_stats_dict['tracking features'][:, mass_ind] / test_epoch_stats_dict['tracking features'][:, volume_ind]
     target_density = molwise_density * orig_target * 1.66  # conversion from amu/A^3 to g/mL
     predicted_density = molwise_density * orig_prediction * 1.66
@@ -150,18 +150,18 @@ def nov_22_paper_regression_plots(config):
     '''
     # correlate losses with molecular features
     tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
-    g_loss_correlations = np.zeros(config.dataDims['num tracking features'])
+    g_loss_correlations = np.zeros(config.dataDims['num_tracking_features'])
     features = []
     ind = 0
-    for i in range(config.dataDims['num tracking features']):  # not that interesting
+    for i in range(config.dataDims['num_tracking_features']):  # not that interesting
         if (np.average(tracking_features[:, i] != 0) > 0.05) and \
-                (config.dataDims['tracking features dict'][i] != 'crystal z prime') and \
-                (config.dataDims['tracking features dict'][i] != 'molecule point group is C1') and \
-                (config.dataDims['tracking features dict'][i] != 'crystal calculated density'):  # if we have at least 1# relevance
+                (config.dataDims['tracking_features'][i] != 'crystal z prime') and \
+                (config.dataDims['tracking_features'][i] != 'molecule point group is C1') and \
+                (config.dataDims['tracking_features'][i] != 'crystal calculated density'):  # if we have at least 1# relevance
 
             coeff = np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i], rowvar=False)[0, 1]
             if np.abs(coeff) > 0.05:
-                features.append(config.dataDims['tracking features dict'][i])
+                features.append(config.dataDims['tracking_features'][i])
                 g_loss_correlations[ind] = coeff
                 ind += 1
     g_loss_correlations = g_loss_correlations[:ind]
@@ -196,7 +196,7 @@ def nov_22_paper_regression_plots(config):
     # plt.clf()
     # for i in range(25):
     #     plt.subplot(5,5,i+1)
-    #     plt.title(config.dataDims['tracking features dict'][i])
+    #     plt.title(config.dataDims['tracking_features'][i])
     #     plt.hist(tracking_features[bad_inds,i],density=True,bins=25,alpha=0.5)
     #     plt.hist(tracking_features[:, i], density=True, bins=25,alpha=0.5)
     # plt.tight_layout()

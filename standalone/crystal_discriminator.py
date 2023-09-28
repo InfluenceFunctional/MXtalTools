@@ -30,7 +30,7 @@ class StandaloneDiscriminator():
         std_dataDims_path = str(Path(__file__).parent.parent.resolve()) + r'/dataset_management/standard_dataDims.npy'
         self.dataDims = np.load(std_dataDims_path, allow_pickle=True).item()
 
-        self.tracking_mol_volume_ind = self.dataDims['tracking features dict'].index('molecule volume')
+        self.tracking_mol_volume_ind = self.dataDims['tracking_features'].index('molecule volume')
 
         self.atom_weights = ATOM_WEIGHTS
         self.vdw_radii = VDW_RADII
@@ -39,9 +39,9 @@ class StandaloneDiscriminator():
         self.lattice_type = LATTICE_TYPE
         self.space_groups = SPACE_GROUPS
         self.sg_feature_ind_dict = {thing[14:]: ind + self.dataDims['num atomwise features'] for ind, thing in
-                                    enumerate(self.dataDims['molecule features']) if 'sg is' in thing}
+                                    enumerate(self.dataDims[.mult]) if 'sg is' in thing}
         self.crysys_ind_dict = {thing[18:]: ind + self.dataDims['num atomwise features'] for ind, thing in
-                                enumerate(self.dataDims['molecule features']) if 'crystal system is' in thing}
+                                enumerate(self.dataDims['molecule_features']) if 'crystal system is' in thing}
 
         self.sym_info = {'sym_ops': self.sym_ops,
                          'point_groups': self.point_groups,
@@ -49,7 +49,7 @@ class StandaloneDiscriminator():
                          'space_groups': self.space_groups,
                          'sg_feature_ind_dict': self.sg_feature_ind_dict,
                          'crysys_ind_dict': self.crysys_ind_dict,
-                         'crystal_z_value_ind': self.dataDims['num atomwise features'] + self.dataDims['molecule features'].index('crystal z value')}
+                         'crystal_z_value_ind': self.dataDims['num atomwise features'] + self.dataDims['molecule_features'].index('crystal z value')}
 
         # discriminator_path = r'/home/mkilgour/models/best_discriminator_10413'
 
@@ -83,7 +83,7 @@ class StandaloneDiscriminator():
         cell_params_i[:,9:12] = cell_params_i[:, 9:12] / 180 * torch.pi
 
         # denormalize the cell lengths against the molecule size and Z value
-        cell_params_i[:, 0:3] = cell_params_i[:, 0:3] * (mol_data.Z ** (1/3))[:, None] * (mol_data.mol_volume ** (1/3))[:, None]
+        cell_params_i[:, 0:3] = cell_params_i[:, 0:3] * (mol_data.mult ** (1/3))[:, None] * (mol_data.mol_volume ** (1/3))[:, None]
 
         # overwrite the appropriate symmetry operations in the mol data for the new space groups
         mol_data = update_crystal_symmetry_elements(
@@ -113,8 +113,8 @@ class StandaloneDiscriminator():
         packing_loss, packing_prediction, packing_target, packing_csd = \
             generator_density_matching_loss(
                 mol_data.y,
-                self.dataDims['target mean'], self.dataDims['target std'],
-                self.tracking_mol_volume_ind, self.dataDims['tracking features dict'].index('crystal packing coefficient'),
+                self.dataDims['target_mean'], self.dataDims['target_std'],
+                self.tracking_mol_volume_ind, self.dataDims['tracking_features'].index('crystal packing coefficient'),
                 supercell_data, cell_params_i,
                 precomputed_volumes=generated_cell_volumes, loss_func='l1')
 

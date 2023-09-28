@@ -148,16 +148,16 @@ def process_discriminator_outputs(config, epoch_stats_dict):
     scores_dict['Generator'] = softmax_and_score(epoch_stats_dict['discriminator fake score'][generator_inds])
     scores_dict['Distorted'] = softmax_and_score(epoch_stats_dict['discriminator fake score'][distorted_inds])
 
-    tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(config.dataDims['tracking features dict'],
+    tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(config.dataDims['tracking_features'],
                                                                     epoch_stats_dict['tracking features'].T)}
     tracking_features_dict['Distorted'] = {feat: vec for feat, vec in
-                                           zip(config.dataDims['tracking features dict'],
+                                           zip(config.dataDims['tracking_features'],
                                                epoch_stats_dict['tracking features'][distorted_inds].T)}
     tracking_features_dict['Gaussian'] = {feat: vec for feat, vec in
-                                          zip(config.dataDims['tracking features dict'],
+                                          zip(config.dataDims['tracking_features'],
                                               epoch_stats_dict['tracking features'][randn_inds].T)}
     tracking_features_dict['Generator'] = {feat: vec for feat, vec in
-                                           zip(config.dataDims['tracking features dict'],
+                                           zip(config.dataDims['tracking_features'],
                                                epoch_stats_dict['tracking features'][generator_inds].T)}
 
     vdw_penalty_dict['CSD'] = epoch_stats_dict['real vdw penalty']
@@ -324,12 +324,12 @@ def plot_generator_loss_correlates(config, wandb, epoch_stats_dict, generator_lo
 
     tracking_features = np.asarray(epoch_stats_dict['tracking features'])
 
-    for i in range(config.dataDims['num tracking features']):  # not that interesting
+    for i in range(config.dataDims['num_tracking_features']):  # not that interesting
         if (np.average(tracking_features[:, i] != 0) > 0.05):
             corr_dict = {
                 loss_label: np.corrcoef(generator_losses[loss_label], tracking_features[:, i], rowvar=False)[0, 1]
                 for loss_label in loss_labels}
-            correlates_dict[config.dataDims['tracking features dict'][i]] = corr_dict
+            correlates_dict[config.dataDims['tracking_features'][i]] = corr_dict
 
     sort_inds = np.argsort(np.asarray([(correlates_dict[key]['all']) for key in correlates_dict.keys()]))
     keys_list = list(correlates_dict.keys())
@@ -358,11 +358,11 @@ def plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout)
     real_scores = softmax_and_score(epoch_stats_dict['discriminator real score'])
     tracking_features = np.asarray(epoch_stats_dict['tracking features'])
 
-    for i in range(config.dataDims['num tracking features']):  # not that interesting
+    for i in range(config.dataDims['num_tracking_features']):  # not that interesting
         if (np.average(tracking_features[:, i] != 0) > 0.05):
             corr = np.corrcoef(real_scores, tracking_features[:, i], rowvar=False)[0, 1]
             if np.abs(corr) > 0.05:
-                correlates_dict[config.dataDims['tracking features dict'][i]] = corr
+                correlates_dict[config.dataDims['tracking_features'][i]] = corr
 
     sort_inds = np.argsort(np.asarray([(correlates_dict[key]) for key in correlates_dict.keys()]))
     keys_list = list(correlates_dict.keys())
@@ -555,9 +555,9 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
     # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
     scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds], old_method=True, correct_discontinuity=True)
 
-    tracking_features_dict['Test Real'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'].T)}
-    tracking_features_dict['Test Distorted'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'][distorted_inds].T)}
-    tracking_features_dict['Test Randn'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'][randn_inds].T)}
+    tracking_features_dict['Test Real'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], test_epoch_stats_dict['tracking features'].T)}
+    tracking_features_dict['Test Distorted'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], test_epoch_stats_dict['tracking features'][distorted_inds].T)}
+    tracking_features_dict['Test Randn'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], test_epoch_stats_dict['tracking features'][randn_inds].T)}
 
     if size_normed_score:
         scores_dict['Test Real'] = norm_scores(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'], dataDims)
@@ -566,7 +566,7 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
 
     if train_epoch_stats_dict is not None:
         scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'], old_method=True, correct_discontinuity=True)
-        tracking_features_dict['Train Real'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], train_epoch_stats_dict['tracking features'].T)}
+        tracking_features_dict['Train Real'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], train_epoch_stats_dict['tracking features'].T)}
 
         if size_normed_score:
             scores_dict['Train Real'] = norm_scores(scores_dict['Train Real'], train_epoch_stats_dict['tracking features'], dataDims)
@@ -603,7 +603,7 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
             scores = softmax_and_score(raw_scores[None, :], old_method=True, correct_discontinuity=True)
             scores_dict[target + ' exp'] = scores
 
-            tracking_features_dict[target + ' exp'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], extra_test_dict['tracking features'][target_index][None, :].T)}
+            tracking_features_dict[target + ' exp'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking features'][target_index][None, :].T)}
 
             if size_normed_score:
                 scores_dict[target + ' exp'] = norm_scores(scores_dict[target + ' exp'], extra_test_dict['tracking features'][target_index][None, :], dataDims)
@@ -617,7 +617,7 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
             raw_scores = extra_test_dict['discriminator real score'][target_indices]
             scores = softmax_and_score(raw_scores, old_method=True, correct_discontinuity=True)
             scores_dict[target] = scores
-            tracking_features_dict[target] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], extra_test_dict['tracking features'][target_indices].T)}
+            tracking_features_dict[target] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking features'][target_indices].T)}
 
             if size_normed_score:
                 scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking features'][target_indices], dataDims)
@@ -629,19 +629,19 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
 
             # correlate losses with molecular features
             tracking_features = np.asarray(extra_test_dict['tracking features'])
-            loss_correlations = np.zeros(dataDims['num tracking features'])
+            loss_correlations = np.zeros(dataDims['num_tracking_features'])
             features = []
             for j in range(tracking_features.shape[-1]):  # not that interesting
-                features.append(dataDims['tracking features dict'][j])
+                features.append(dataDims['tracking_features'][j])
                 loss_correlations[j] = np.corrcoef(scores, tracking_features[target_indices, j], rowvar=False)[0, 1]
 
             score_correlations_dict[target] = loss_correlations
 
     # compute loss correlates
-    loss_correlations = np.zeros(dataDims['num tracking features'])
+    loss_correlations = np.zeros(dataDims['num_tracking_features'])
     features = []
-    for j in range(dataDims['num tracking features']):  # not that interesting
-        features.append(dataDims['tracking features dict'][j])
+    for j in range(dataDims['num_tracking_features']):  # not that interesting
+        features.append(dataDims['tracking_features'][j])
         loss_correlations[j] = np.corrcoef(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'][:, j], rowvar=False)[0, 1]
     score_correlations_dict['Test Real'] = loss_correlations
 
@@ -921,7 +921,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     '''
     8. Functional group analysis
     '''
-    tracking_features_names = dataDims['tracking features dict']
+    tracking_features_names = dataDims['tracking_features']
     # get the indices for each functional group
     functional_group_inds = {}
     fraction_dict = {}
@@ -1119,19 +1119,19 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
 
     # correlate losses with molecular features
     tracking_features = np.asarray(tracking_features)
-    g_loss_correlations = np.zeros(dataDims['num tracking features'])
+    g_loss_correlations = np.zeros(dataDims['num_tracking_features'])
     features = []
     ind = 0
-    for i in range(dataDims['num tracking features']):  # not that interesting
-        if ('spacegroup' not in dataDims['tracking features dict'][i]) and \
-                ('system' not in dataDims['tracking features dict'][i]) and \
-                ('density' not in dataDims['tracking features dict'][i]):
+    for i in range(dataDims['num_tracking_features']):  # not that interesting
+        if ('spacegroup' not in dataDims['tracking_features'][i]) and \
+                ('system' not in dataDims['tracking_features'][i]) and \
+                ('density' not in dataDims['tracking_features'][i]):
             if (np.average(tracking_features[:, i] != 0) > 0.05) and \
-                    (dataDims['tracking features dict'][i] != 'crystal z prime') and \
-                    (dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
+                    (dataDims['tracking_features'][i] != 'crystal z prime') and \
+                    (dataDims['tracking_features'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
                 corr = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
                 if np.abs(corr) > 0.05:
-                    features.append(dataDims['tracking features dict'][i])
+                    features.append(dataDims['tracking_features'][i])
                     g_loss_correlations[ind] = corr
                     ind += 1
 
@@ -1298,14 +1298,14 @@ def cell_generation_analysis(config, epoch_stats_dict):
 
 
 def log_regression_accuracy(dataDims, train_epoch_stats_dict, test_epoch_stats_dict):
-    target_mean = dataDims['target mean']
-    target_std = dataDims['target std']
+    target_mean = dataDims['target_mean']
+    target_std = dataDims['target_std']
 
     orig_target = np.asarray(test_epoch_stats_dict['regressor packing target'])
     orig_prediction = np.asarray(test_epoch_stats_dict['regressor packing prediction'])
 
-    volume_ind = dataDims['tracking features dict'].index('molecule volume')
-    mass_ind = dataDims['tracking features dict'].index('molecule mass')
+    volume_ind = dataDims['tracking_features'].index('molecule volume')
+    mass_ind = dataDims['tracking_features'].index('molecule mass')
     molwise_density = test_epoch_stats_dict['tracking features'][:, mass_ind] / test_epoch_stats_dict[
                                                                                     'tracking features'][:,
                                                                                 volume_ind]
@@ -1424,10 +1424,10 @@ def log_regression_accuracy(dataDims, train_epoch_stats_dict, test_epoch_stats_d
 
         # correlate losses with molecular features
         tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
-        generator_loss_correlations = np.zeros(dataDims['num tracking features'])
+        generator_loss_correlations = np.zeros(dataDims['num_tracking_features'])
         features = []
-        for i in range(dataDims['num tracking features']):  # not that interesting
-            features.append(dataDims['tracking features dict'][i])
+        for i in range(dataDims['num_tracking_features']):  # not that interesting
+            features.append(dataDims['tracking_features'][i])
             generator_loss_correlations[i] = \
                 np.corrcoef(np.abs((orig_target - orig_prediction) / np.abs(orig_target)), tracking_features[:, i],
                             rowvar=False)[0, 1]
@@ -1436,9 +1436,9 @@ def log_regression_accuracy(dataDims, train_epoch_stats_dict, test_epoch_stats_d
         generator_loss_correlations = generator_loss_correlations[generator_sort_inds]
 
         fig = go.Figure(go.Bar(
-            y=[dataDims['tracking features dict'][i] for i in
-               range(dataDims['num tracking features'])],
-            x=[generator_loss_correlations[i] for i in range(dataDims['num tracking features'])],
+            y=[dataDims['tracking_features'][i] for i in
+               range(dataDims['num_tracking_features'])],
+            x=[generator_loss_correlations[i] for i in range(dataDims['num_tracking_features'])],
             orientation='h',
         ))
         wandb.log({'Regressor Loss Correlates': fig})

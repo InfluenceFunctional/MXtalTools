@@ -227,7 +227,7 @@ class DataManager():
                 values = np.concatenate(self.dataset[column])
             elif column[:7] == 'crystal':
                 values = self.dataset[column]
-            elif 'asymmetric_unit' in column:
+            elif column[:15] == 'asymmetric_unit':
                 values = np.concatenate(self.dataset[column])  # one for each Z' molecule
 
             if values is not None:
@@ -247,7 +247,7 @@ class DataManager():
         some crystals have multiple molecules, and we do batch analysis of molecules with a separate indexing scheme
         connect the crystal identifier-wise and mol-wise indexing with the following dicts
         """
-        #print("Generating mol-to-crystal mapping")
+        # print("Generating mol-to-crystal mapping")
         mol_index = 0
         crystal_to_mol_dict = {}
         mol_to_crystal_dict = {}
@@ -267,7 +267,7 @@ class DataManager():
 
         at train time, we can use this to repeat sampling of identical molecules
         """
-        #print("getting unique molecule fingerprints")
+        # print("getting unique molecule fingerprints")
         fps = np.concatenate(self.dataset['molecule_fingerprint'])
         unique_fps, inverse_map = np.unique(fps, axis=0, return_inverse=True)
         molecules_in_crystals_dict = {
@@ -466,17 +466,17 @@ class DataManager():
 if __name__ == '__main__':
     miner = DataManager(device='cuda', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
     miner.process_new_dataset('new_dataset.pkl')
-
-    test_conditions = [
-        ['molecule_mass', 'range', [0, 300]],
-        ['crystal_space_group_setting', 'not_in', [2]],
-        ['crystal_space_group_number', 'in', [1, 2, 14, 19]],
-        ['atom_atomic_numbers', 'range', [0, 20]],
-        ['crystal_is_organic', 'in', [True]],
-        ['molecule_is_symmetric_top', 'not_in', [True]]
-    ]
-
-    miner.load_dataset_for_modelling(dataset_name = 'new_dataset.pkl',
-                                     filter_conditions=test_conditions, filter_polymorphs=True, filter_duplicate_molecules=True)
-
-    aa = 1
+    #
+    # test_conditions = [
+    #     ['molecule_mass', 'range', [0, 300]],
+    #     ['crystal_space_group_setting', 'not_in', [2]],
+    #     ['crystal_space_group_number', 'in', [1, 2, 14, 19]],
+    #     ['atom_atomic_numbers', 'range', [0, 20]],
+    #     ['crystal_is_organic', 'in', [True]],
+    #     ['molecule_is_symmetric_top', 'not_in', [True]]
+    # ]
+    #
+    # miner.load_dataset_for_modelling(dataset_name='new_dataset.pkl',
+    #                                  filter_conditions=test_conditions, filter_polymorphs=True, filter_duplicate_molecules=True)
+    #
+    # aa = 1

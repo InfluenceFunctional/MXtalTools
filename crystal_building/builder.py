@@ -87,7 +87,7 @@ class SupercellBuilder:
             )
 
         # apply symmetry ops to build unit cell
-        unit_cell_coords_list = build_unit_cell(supercell_data.Z, canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
+        unit_cell_coords_list = build_unit_cell(supercell_data.mult, canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
 
         # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction
         mol_positions, mol_orientations, mol_handedness, well_defined_asym_unit = \
@@ -107,7 +107,7 @@ class SupercellBuilder:
         # get minimal supercell cluster for convolving about a given canonical conformer
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             ref_to_supercell(
-                unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.Z,
+                unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.mult,
                 supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
                 sorted_fractional_translations=self.sorted_fractional_translations,
                 pare_to_convolution_cluster=pare_to_convolution_cluster)
@@ -136,7 +136,7 @@ class SupercellBuilder:
         cell_vector_list = T_fc_list.permute(0, 2, 1)  # confirmed this is the right way to do this
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list,
-                             T_fc_list, atoms_list, supercell_data.Z,
+                             T_fc_list, atoms_list, supercell_data.mult,
                              supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
                              sorted_fractional_translations=self.sorted_fractional_translations,
                              pare_to_convolution_cluster=pare_to_convolution_cluster)
@@ -148,8 +148,8 @@ class SupercellBuilder:
     def process_cell_params(self, supercell_data, cell_sample, skip_cell_cleaning=False, standardized_sample=True, rescale_asymmetric_unit=True):
         if skip_cell_cleaning:  # don't clean up
             if standardized_sample:
-                destandardized_cell_sample = (cell_sample * torch.tensor(self.dataDims['lattice stds'], device=self.device, dtype=cell_sample.dtype)) + torch.tensor(
-                    self.dataDims['lattice means'], device=self.device, dtype=cell_sample.dtype)  # destandardize
+                destandardized_cell_sample = (cell_sample * torch.tensor(self.dataDims['lattice_stds'], device=self.device, dtype=cell_sample.dtype)) + torch.tensor(
+                    self.dataDims['lattice_means'], device=self.device, dtype=cell_sample.dtype)  # destandardize
                 cell_lengths, cell_angles, mol_position, mol_rotation_i = destandardized_cell_sample.split(3, 1)
             else:
                 cell_lengths, cell_angles, mol_position, mol_rotation_i = cell_sample.split(3, 1)
@@ -164,7 +164,7 @@ class SupercellBuilder:
             cell_lengths, cell_angles, mol_position, mol_rotation, _, _, _ = \
                 clean_cell_output(
                     cell_lengths, cell_angles, mol_position, mol_rotation, lattices,
-                    self.dataDims['lattice means'], self.dataDims['lattice stds'],
+                    self.dataDims['lattice_means'], self.dataDims['lattice_stds'],
                     enforce_crystal_system=True, return_transforms=True,
                     standardized_sample=standardized_sample, rotation_basis=self.rotation_basis)
 
