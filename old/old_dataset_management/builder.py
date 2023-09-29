@@ -12,8 +12,8 @@ import tqdm
 import os
 import pandas as pd
 import sys
-from dataset_management.molecule_featurizer import CustomGraphFeaturizer
-from dataset_management.manager import DataManager
+from old_dataset_management.molecule_featurizer import CustomGraphFeaturizer
+from old_dataset_management.manager import DataManager
 
 
 class CCDC_helper():

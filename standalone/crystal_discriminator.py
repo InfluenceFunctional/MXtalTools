@@ -5,7 +5,8 @@ from crystal_building.utils import update_crystal_symmetry_elements
 from models.discriminator_models import crystal_discriminator
 import sys
 
-from models.utils import softmax_and_score, reload_model, generator_density_matching_loss
+from models.utils import softmax_and_score, reload_model
+from crystal_modeller import generator_density_matching_loss
 import numpy as np
 import torch
 from argparse import Namespace
@@ -27,7 +28,7 @@ class StandaloneDiscriminator():
         self.temperature = temperature  # smaller means higher focus on best sample
         self.inv_loss_fraction = 0 # smaller means worse samples get punished more
 
-        std_dataDims_path = str(Path(__file__).parent.parent.resolve()) + r'/dataset_management/standard_dataDims.npy'
+        std_dataDims_path = str(Path(__file__).parent.parent.resolve()) + r'/old_dataset_management/standard_dataDims.npy'
         self.dataDims = np.load(std_dataDims_path, allow_pickle=True).item()
 
         self.tracking_mol_volume_ind = self.dataDims['tracking_features'].index('molecule volume')

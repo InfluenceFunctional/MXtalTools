@@ -75,9 +75,9 @@ def gradient_descent_sampling(discriminator, init_samples, single_mol_data, supe
         optimizer.step()  # apply grad
 
         if return_vdw:
-            vdw_record[i] = vdw_overlap(vdw_radii, dists=dist_dict['dists dict']['intermolecular dist'],
-                                        atomic_numbers=dist_dict['dists dict']['intermolecular dist atoms'],
-                                        batch_numbers=dist_dict['dists dict']['intermolecular dist batch'],
+            vdw_record[i] = vdw_overlap(vdw_radii, dists=dist_dict['dists_dict']['intermolecular_dist'],
+                                        atomic_numbers=dist_dict['dists_dict']['intermolecular_dist_atoms'],
+                                        batch_numbers=dist_dict['dists_dict']['intermolecular_dist_batch'],
                                         num_graphs=single_mol_data.num_graphs).cpu().detach().numpy()
 
         scores_record[i] = score.cpu().detach().numpy()

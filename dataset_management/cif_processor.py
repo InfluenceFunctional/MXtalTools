@@ -7,7 +7,7 @@ from random import shuffle
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
 
-from new_dataset_management.featurization_utils import extract_crystal_data, featurize_molecule, crystal_filter, chunkify
+from dataset_management.featurization_utils import extract_crystal_data, featurize_molecule, crystal_filter, chunkify
 
 n_chunks = 1000
 chunks_path = r'D:/crystal_datasets/featurized_chunks/'

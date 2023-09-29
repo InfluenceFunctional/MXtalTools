@@ -13,9 +13,9 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
     assert not (return_loss_only and return_score_only)
 
     if dist_dict is not None:
-        dists = dist_dict['intermolecular dist']
-        atomic_numbers = dist_dict['intermolecular dist atoms']
-        batch_numbers = dist_dict['intermolecular dist batch']
+        dists = dist_dict['intermolecular_dist']
+        atomic_numbers = dist_dict['intermolecular_dist_atoms']
+        batch_numbers = dist_dict['intermolecular_dist_batch']
 
     abs_overlaps, normed_overlaps = raw_vdw_overlap(
         vdw_radii, crystaldata=crystaldata,
@@ -76,7 +76,7 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=No
     if crystaldata is not None:  # extract distances from the crystal
         if crystaldata.aux_ind is not None:
             in_inds = torch.where(crystaldata.aux_ind == 0)[0]
-            # default to always intermolecular distances
+            # default to always intermolecular_distances
             out_inds = torch.where(crystaldata.aux_ind == 1)[0].to(crystaldata.pos.device)
 
         else:  # if we lack the info, just do it intramolecular

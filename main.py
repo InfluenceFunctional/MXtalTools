@@ -1,6 +1,6 @@
 """import statements"""
 import argparse, warnings
-from common.config_processing import add_args, get_config
+from common.config_processing import get_config
 from crystal_modeller import Modeller
 import pandas as pd
 
@@ -16,23 +16,19 @@ if __name__ == '__main__':
     '''
     parse arguments from config and command line and generate config namespace
     '''
-
-
     parser = argparse.ArgumentParser()
     _, override_args = parser.parse_known_args()
 
-    parser, args2config = add_args(parser)
-    args = parser.parse_args()
-
-    config = get_config(args, override_args, args2config)
+    config = get_config(override_args)
 
     print("Args:\n" + "\n".join([f"    {k:20}: {v}" for k, v in vars(config).items()]))
 
     '''
     run the code in selected mode
-    '''  # NOTE sampling mode currently under development
+    '''
     predictor = Modeller(config)
     if config.mode == 'gan' or config.mode == 'regression':
         predictor.train_crystal_models()
-    elif config.mode == 'embedding':
-        predictor.crystal_embedding_analysis()
+
+    # elif config.mode == 'embedding':  # todo rewrite
+    #     predictor.crystal_embedding_analysis()

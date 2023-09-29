@@ -104,9 +104,9 @@ class mcmcSampler:
         '''
         # crystaldata = self.align_crystaldata(crystaldata)
         if self.generator._get_name() == 'crystal_generator':
-            return self.generator.forward(n_samples=crystaldata.num_graphs, conditions=crystaldata).cpu().detach().numpy()
+            return self.generator.forward(,.cpu().detach().numpy()
         else:
-            return self.generator.forward(crystaldata.num_graphs, crystaldata).cpu().detach().numpy()
+            return self.generator.forward(crystaldata.num_graphs, crystaldata,,.cpu().detach().numpy()
 
     def resample_state(self, crystaldata, ind, reset_all=False):
         """
@@ -350,9 +350,9 @@ class mcmcSampler:
 
         output, dist_dict = score_model(proposed_supercells.clone().cuda(), return_dists=True)
 
-        vdw_penalty = vdw_overlap(self.vdw_radii, dists=dist_dict['dists dict']['intermolecular dist'],
-                                  atomic_numbers=dist_dict['dists dict']['intermolecular dist atoms'],
-                                  batch_numbers=dist_dict['dists dict']['intermolecular dist batch'],
+        vdw_penalty = vdw_overlap(self.vdw_radii, dists=dist_dict['dists_dict']['intermolecular_dist'],
+                                  atomic_numbers=dist_dict['dists_dict']['intermolecular_dist_atoms'],
+                                  batch_numbers=dist_dict['dists_dict']['intermolecular_dist_batch'],
                                   num_graphs=crystaldata.num_graphs).cpu().detach().numpy()
 
         score = -softmax_and_score(output).cpu().detach().numpy()  # we want actually to maximize the score

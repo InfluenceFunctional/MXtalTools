@@ -22,7 +22,7 @@ def nov_22_paper_regression_plots(config):
 
     volume_ind = config.dataDims['tracking_features'].index('molecule volume')
     mass_ind = config.dataDims['tracking_features'].index('molecule mass')
-    molwise_density = test_epoch_stats_dict['tracking features'][:, mass_ind] / test_epoch_stats_dict['tracking features'][:, volume_ind]
+    molwise_density = test_epoch_stats_dict['tracking_features'][:, mass_ind] / test_epoch_stats_dict['tracking_features'][:, volume_ind]
     target_density = molwise_density * orig_target * 1.66  # conversion from amu/A^3 to g/mL
     predicted_density = molwise_density * orig_prediction * 1.66
 
@@ -149,7 +149,7 @@ def nov_22_paper_regression_plots(config):
     Error correlates
     '''
     # correlate losses with molecular features
-    tracking_features = np.asarray(test_epoch_stats_dict['tracking features'])
+    tracking_features = np.asarray(test_epoch_stats_dict['tracking_features'])
     g_loss_correlations = np.zeros(config.dataDims['num_tracking_features'])
     features = []
     ind = 0

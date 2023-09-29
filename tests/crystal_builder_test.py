@@ -1,7 +1,7 @@
 import pytest
 from common.utils import compute_rdf_distance
 from crystal_building.builder import SupercellBuilder
-from dataset_management.utils import load_test_dataset
+from old_dataset_management.utils import load_test_dataset
 from models.crystal_rdf import crystal_rdf
 import numpy as np
 

@@ -2,7 +2,7 @@ import pytest
 from crystal_building.builder import SupercellBuilder
 from crystal_building.utils import (rotvec2rotmat, build_unit_cell, scale_asymmetric_unit,
                                     align_crystaldata_to_principal_axes, batch_asymmetric_unit_pose_analysis_torch)
-from dataset_management.utils import load_test_dataset
+from old_dataset_management.utils import load_test_dataset
 from scipy.spatial.transform import Rotation
 from common.geometry_calculations import rotvec2sph, batch_molecule_principal_axes_torch
 import numpy as np

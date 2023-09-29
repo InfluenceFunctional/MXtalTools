@@ -14,7 +14,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     test_epoch_stats_dict = np.load('C:/Users\mikem\crystals\CSP_runs/275_test_epoch_stats_dict.npy', allow_pickle=True).item()
     extra_test_dict = np.load('C:/Users\mikem\crystals\CSP_runs/275_extra_test_dict.npy', allow_pickle=True).item()
 
-    tracking_features = test_epoch_stats_dict['tracking features']
+    tracking_features = test_epoch_stats_dict['tracking_features']
     identifiers_list = extra_test_dict['identifiers']
     score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
     scores_dict, all_identifiers, blind_test_targets, target_identifiers, \

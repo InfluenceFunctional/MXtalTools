@@ -11,7 +11,7 @@ import sys
 
 
 def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_list: list,
-                     atoms_list: list, z_values, supercell_scale=5, cutoff=5,
+                     atoms_list: list, crystal_multiplicity, supercell_scale=5, cutoff=5,
                      sorted_fractional_translations=None, pare_to_convolution_cluster=True):
     """
     1) generate fractional translations for full supercell
@@ -38,8 +38,7 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
     supercell_atoms_list = []
     ref_mol_inds_list = []
     copies = []
-    z_values = [len(ref_list) for ref_list in reference_cell_list]  # todo delete once generator method is separated
-    for i, (ref_cell, unit_cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, z_values)):
+    for i, (ref_cell, unit_cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, crystal_multiplicity)):
         if type(ref_cell) == np.ndarray:
             ref_cell = torch.tensor(ref_cell, device=device)
 
@@ -100,7 +99,7 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
 
         copies.append(len(convolve_mol_inds))
 
-    n_copies = torch.tensor(copies, dtype=torch.int32)
+    n_copies = torch.tensor(copies, dtype=torch.int32)  # todo gives wrong behavior if not paring convolution cluster
 
     return supercell_coords_list, supercell_atoms_list, ref_mol_inds_list, n_copies
 

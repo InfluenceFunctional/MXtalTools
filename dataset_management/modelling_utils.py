@@ -2,17 +2,14 @@ import torch
 import numpy as np
 from common.utils import standardize
 from dataset_management.CrystalData import CrystalData
-from crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch
-from constants.asymmetric_units import asym_unit_dict as asymmetric_unit_dict
-import sys
 from torch_geometric.loader import DataLoader
 import tqdm
 import pandas as pd
-from pyxtal import symmetry
-from dataset_management.manager import DataManager
 import os
-from torch_geometric.loader.dataloader import Collater
-from new_dataset_management.featurization_utils import get_range_fraction
+
+
+def get_range_fraction(atomic_numbers, rrange):
+    return np.sum((np.asarray(atomic_numbers) > rrange[0]) * (np.asarray(atomic_numbers) < rrange[1])) / len(atomic_numbers)
 
 
 class TrainingDataBuilder:
@@ -20,18 +17,16 @@ class TrainingDataBuilder:
     build dataset object
     """
 
-    def __init__(self, config, dataset_path=None, data_std_path=None, preloaded_dataset=None, data_std_dict=None, override_length=None):
-        self.crystal_generation_features = None
-        self.crystal_keys = None
-        self.tracking_keys = None
-        self.lattice_keys = None
-
+    def __init__(self, config,
+                 dataset_path=None,
+                 data_std_path=None,
+                 preloaded_dataset=None,
+                 data_std_dict=None,
+                 override_length=None):
         self.regression_target = config.regression_target
         self.dataset_seed = config.seed
         self.single_molecule_dataset_identifier = config.single_molecule_dataset_identifier
         np.random.seed(self.dataset_seed)
-
-        self.model_mode = config.mode
 
         if override_length is not None:
             self.max_dataset_length = override_length
@@ -55,6 +50,7 @@ class TrainingDataBuilder:
 
         # shuffle and cut up dataset before processing
         dataset = dataset.loc[np.random.choice(len(dataset), self.dataset_length, replace=False)]
+        dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
         dataset = self.last_minute_featurization_and_one_hots(dataset, config)  # add a few odds & ends
 
         '''identify keys to load & track'''
@@ -75,7 +71,7 @@ class TrainingDataBuilder:
             new_datapoints = [self.datapoints[index] for i in range(self.dataset_length)]
             self.datapoints = new_datapoints
 
-        self.dataDims = self.get_dimension()
+        self.dataDims = self.get_data_dimensions()
 
         # '''flag for test dataset construction'''
         # self.build_dataset_for_tests = False
@@ -113,12 +109,12 @@ class TrainingDataBuilder:
         crystal_system_features = [column for column in dataset.columns if 'crystal_system_is' in column]
         self.crystal_generation_features.extend(space_group_features)
         self.crystal_generation_features.extend(crystal_system_features)
-        self.crystal_generation_features.append('crystal_z_value')
-        self.crystal_generation_features.append('crystal_z_prime')
+        #self.crystal_generation_features.append('crystal_z_value')
+        #self.crystal_generation_features.append('crystal_z_prime')
         self.crystal_generation_features.append('crystal_symmetry_multiplicity')
-        self.crystal_generation_features.append('crystal_packing_coefficient')
-        self.crystal_generation_features.append('crystal_cell_volume')
-        self.crystal_generation_features.append('crystal_reduced_volume')
+        # self.crystal_generation_features.append('crystal_packing_coefficient')
+        # self.crystal_generation_features.append('crystal_cell_volume')
+        # self.crystal_generation_features.append('crystal_reduced_volume')
 
     def set_tracking_keys(self):
         """
@@ -147,11 +143,10 @@ class TrainingDataBuilder:
 
     def set_crystal_keys(self):
         self.crystal_keys = ['crystal_space_group_number', 'crystal_space_group_setting',
-                             'crystal_calculated_density', 'crystal_packing_coefficient',
-                             'crystal_lattice_centring', 'crystal_system',
+                             'crystal_density', 'crystal_packing_coefficient',
                              'crystal_lattice_alpha', 'crystal_lattice_beta', 'crystal_lattice_gamma',
                              'crystal_lattice_a', 'crystal_lattice_b', 'crystal_lattice_c',
-                             'crystal_z_value', 'crystal_z_prime', 'crystal_reduced_volume',
+                             'crystal_z_value', 'crystal_z_prime', 'crystal_reduced_volume', 'crystal_cell_volume',
                              'crystal_symmetry_multiplicity', 'asymmetric_unit_handedness', 'asymmetric_unit_is_well_defined',
                              ]
 
@@ -172,20 +167,22 @@ class TrainingDataBuilder:
         '''
         z_value
         '''
-        for i in range(1, np.amax(dataset['crystal_z_value']) + 1):
+        for i in range(1, 32 + 1):
             dataset['crystal_z_is_{}'.format(i)] = dataset['crystal_z_value'] == i
 
         '''
         space group
         '''
-        for i, symbol in enumerate(np.unique(list(self.sg_dict.values()))):
-            dataset['crystal_sg_is_' + symbol] = dataset['crystal_space_group symbol'] == symbol
+        from constants.space_group_info import SPACE_GROUPS
+        for i, symbol in enumerate(np.unique(list(SPACE_GROUPS.values()))):
+            dataset['crystal_sg_is_' + symbol] = dataset['crystal_space_group_symbol'] == symbol
 
         '''
         crystal system
         '''
+        from constants.space_group_info import LATTICE_TYPE
         # get dictionary for crystal system elements
-        for i, system in enumerate(np.unique(list(self.lattice_dict.values()))):
+        for i, system in enumerate(np.unique(list(LATTICE_TYPE.values()))):
             dataset['crystal_system_is_' + system] = dataset['crystal_system'] == system
 
         '''
@@ -201,7 +198,7 @@ class TrainingDataBuilder:
         '''
         znums = [10, 18, 36, 54]
         for znum in znums:
-            dataset[f'molecule_atom_heavier_than_{znum}_fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200]) for atom_list in dataset['atom Z']])
+            dataset[f'molecule_atom_heavier_than_{znum}_fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200]) for atom_list in dataset['atom_atomic_numbers']])
 
         return dataset
 
@@ -235,12 +232,12 @@ class TrainingDataBuilder:
         for i in tqdm.tqdm(range(self.dataset_length)):
             datapoints.append(
                 CrystalData(x=torch.Tensor(atom_features_list[i]),
-                            pos=torch.Tensor(atom_coords[i]),
+                            pos=torch.Tensor(atom_coords[i])[0],
                             y=targets[i],
                             mol_x=torch.Tensor(mol_features[i, None, :]),
                             smiles=smiles[i],
                             tracking=tracking_features[i, None, :],
-                            ref_cell_pos=reference_cells[i][:, :, :3],  # won't collate properly as a torch tensor
+                            ref_cell_pos=np.asarray(reference_cells[i]),  # won't collate properly as a torch tensor
                             mult=tracking_features[i, mult_ind].int(),
                             sg_ind=tracking_features[i, sg_ind_value_ind].int(),
                             cell_params=torch.Tensor(lattice_features[i, None, :]),
@@ -261,14 +258,11 @@ class TrainingDataBuilder:
         :param dataset:
         :return:
         """
-        atom_features_list = [np.zeros((len(dataset['atom_atomic_numbers'][i]), len(self.atom_keys))) for i in range(self.dataset_length)]
+        atom_features_list = [np.zeros((len(dataset['atom_atomic_numbers'][i][0]), len(self.atom_keys))) for i in range(self.dataset_length)]
 
         for column_ind, key in enumerate(self.atom_keys):
             for i in range(self.dataset_length):
-                feature_vector = dataset[key][i]
-
-                if type(feature_vector) is not np.ndarray:
-                    feature_vector = np.asarray(feature_vector)
+                feature_vector = np.asarray(dataset[key][i])[0]  # all atom features are lists-of-lists, for Z'=1 always just take the first element
 
                 if key == 'atom Z':
                     pass
@@ -293,10 +287,11 @@ class TrainingDataBuilder:
 
         molecule_feature_array = np.zeros((self.dataset_length, len(self.molecule_keys)), dtype=float)
         for column_ind, key in enumerate(self.molecule_keys):
-            feature_vector = dataset[key]
+            feature_vector = np.asarray(dataset[key])
 
-            if type(feature_vector) is not np.ndarray:
-                feature_vector = np.asarray(feature_vector)
+            if isinstance(feature_vector[0], list):  # feature vector is an array of lists
+                feature_vector = np.concatenate(feature_vector)
+
 
             if feature_vector.dtype == bool:
                 pass
@@ -321,7 +316,7 @@ class TrainingDataBuilder:
                                            mol_features=molecule_features_array,
                                            targets=targets,
                                            tracking_features=tracking_features,
-                                           reference_cells=dataset['unit_cell_coordinates'],
+                                           reference_cells=dataset['crystal_unit_cell_coordinates'],
                                            lattice_features=lattice_features,
                                            T_fc_list=dataset['crystal_fc_transform'],
                                            identifiers=dataset['crystal_identifier'],
@@ -334,10 +329,10 @@ class TrainingDataBuilder:
 
         feature_array = np.zeros((self.dataset_length, len(self.lattice_keys)), dtype=float)
         for column_ind, key in enumerate(self.lattice_keys):
-            feature_vector = dataset[key]
+            feature_vector = np.asarray(dataset[key])
 
-            if type(feature_vector) is not np.ndarray:
-                feature_vector = np.asarray(feature_vector)
+            if isinstance(feature_vector[0], list):  # feature vector is an array of lists
+                feature_vector = np.concatenate(feature_vector)
 
             if key == 'crystal_z_value':
                 key_dtype.append('int32')
@@ -349,16 +344,11 @@ class TrainingDataBuilder:
             assert np.sum(np.isnan(feature_vector)) == 0
 
         '''
-        compute full covariance matrix, in normalized basis
+        compute full covariance matrix, in raw basis
         '''
-        # normalize the cell lengths against molecule volume & z_value
-        normed_cell_lengths = feature_array[:, :3] / (dataset['crystal_z_value'].to_numpy()[:, None] ** (1 / 3)) / (dataset['molecule_volume'].to_numpy()[:, None] ** (1 / 3))
-        feature_array_with_normed_lengths = feature_array.copy()
-        feature_array_with_normed_lengths[:, :3] = normed_cell_lengths
-
-        if len(feature_array_with_normed_lengths) == 1:  # error handling for if there_is_only one entry in the dataset, e.g., during CSP
-            feature_array_with_normed_lengths = np.stack([feature_array_with_normed_lengths for _ in range(10)])[:, 0, :]
-        self.covariance_matrix = np.cov(feature_array_with_normed_lengths, rowvar=False)  # we want the randn model to generate samples with normed lengths
+        if len(feature_array) == 1:  # error handling for if there_is_only one entry in the dataset, e.g., during CSP
+            feature_array_with_normed_lengths = np.stack([feature_array for _ in range(10)])[:, 0, :]
+        self.covariance_matrix = np.cov(feature_array, rowvar=False)  # we want the randn model to generate samples with normed lengths
 
         for i in range(len(self.covariance_matrix)):  # ensure it's well-conditioned
             self.covariance_matrix[i, i] = max((0.01, self.covariance_matrix[i, i]))
@@ -367,8 +357,8 @@ class TrainingDataBuilder:
 
     def get_regression_target(self, dataset):
         targets = dataset[self.regression_target]
-        target_mean = self.std_dict[self.regression_target[0]]
-        target_std = self.std_dict[self.regression_target[1]]
+        target_mean = self.std_dict[self.regression_target][0]
+        target_std = self.std_dict[self.regression_target][1]
 
         return (targets - target_mean) / target_std
 
@@ -379,25 +369,24 @@ class TrainingDataBuilder:
         """
         feature_array = np.zeros((self.dataset_length, len(self.tracking_keys)), dtype=float)
         for column_ind, key in enumerate(self.tracking_keys):
-            feature_vector = dataset[key]
+            feature_vector = np.asarray(dataset[key])
 
-            if type(feature_vector) is not np.ndarray:
-                feature_vector = np.asarray(feature_vector)
-
+            if isinstance(feature_vector[0], list):  # feature vector is an array of lists
+                feature_vector = np.concatenate(feature_vector)
             feature_array[:, column_ind] = feature_vector
 
         return feature_array
 
-    def get_dimension(self):
+    def get_data_dimensions(self):
         dim = {
             'standardization_dict': self.std_dict,
             'dataset_length': self.dataset_length,
 
             'lattice_features': self.lattice_keys,
-            'num lattice_features': len(self.lattice_keys),
+            'num_lattice_features': len(self.lattice_keys),
             'lattice_means': np.asarray([self.std_dict[key][0] for key in self.lattice_keys]),
             'lattice_stds': np.asarray([self.std_dict[key][1] for key in self.lattice_keys]),
-            'lattice cov mat': self.covariance_matrix,
+            'lattice_cov_mat': self.covariance_matrix,
 
             'regression_target': self.regression_target,
             'target_mean': self.std_dict[self.regression_target][0],
@@ -409,7 +398,7 @@ class TrainingDataBuilder:
             'num_atom_features': len(self.atom_keys),
             'atom_features': self.atom_keys,
 
-            'num_mol_features': len(self.molecule_keys),
+            'num_molecule_features': len(self.molecule_keys),
             'molecule_features': self.molecule_keys,
 
             'crystal_generation features': self.crystal_generation_features,

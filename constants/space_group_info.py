@@ -1,11 +1,11 @@
 from numpy import array
 
-
 """
 reference file for the following crystal symmetry properties
 as a function of space group numbers
 symmetry operators are for general positions
 """
+
 
 POINT_GROUPS = {1: '1', 2: '-1', 3: '2', 4: '2', 5: '2', 6: 'm', 7: 'm', 8: 'm', 9: 'm', 10: '2/m', 11: '2/m', 12: '2/m', 13: '2/m', 14: '2/m', 15: '2/m', 16: '222', 17: '222', 18: '222', 19: '222', 20: '222', 21: '222', 22: '222',
                 23: '222', 24: '222', 25: 'mm2', 26: 'mm2', 27: 'mm2', 28: 'mm2', 29: 'mm2', 30: 'mm2', 31: 'mm2', 32: 'mm2', 33: 'mm2', 34: 'mm2', 35: 'mm2', 36: 'mm2', 37: 'mm2', 38: 'mm2', 39: 'mm2', 40: 'mm2', 41: 'mm2', 42: 'mm2',

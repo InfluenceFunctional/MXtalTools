@@ -6,6 +6,8 @@ from torch import nn
 import torch_geometric.nn as gnn
 import torch.nn.functional as F
 
+from models.asymmetric_radius_graph import asymmetric_radius_graph
+
 
 class MLP(nn.Module):
     def __init__(self, layers, filters, input_dim, output_dim,
@@ -152,7 +154,7 @@ class Activation(nn.Module):
             self.activation = F.relu
         elif activation_func.lower() == 'gelu':
             self.activation = F.gelu
-        elif activation_func.lower() == 'kernel':
+        elif activation_func.lower() == 'kernel':  # rather expensive
             self.activation = kernelActivation(n_basis=10, span=4, channels=filters)
         elif activation_func.lower() == 'leaky relu':
             self.activation = F.leaky_relu
@@ -195,3 +197,35 @@ class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation
         x = self.linear(x).squeeze(-1).squeeze(-1)  # apply linear coefficients and sum
 
         return x
+
+
+def construct_radial_graph(pos, batch, ptr, cutoff, max_num_neighbors, aux_ind=None):
+    """
+    construct edge indices over a radial graph
+    optionally, compute intra (within ref_mol_inds) and inter (between ref_mol_inds and outside inds) edges
+    """
+    if aux_ind is not None:
+        inside_inds = torch.where(aux_ind == 0)[0]
+        outside_inds = torch.where(aux_ind == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
+        inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
+        n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]  # number of molecules in convolution region
+
+        # intramolecular edges
+        edge_index = asymmetric_radius_graph(pos, batch=batch, r=cutoff,  # intramolecular interactions - stack over range 3 convolutions
+                                             max_num_neighbors=max_num_neighbors, flow='source_to_target',
+                                             inside_inds=inside_inds, convolve_inds=inside_inds)
+
+        # intermolecular edges
+        edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=cutoff,  # extra radius for intermolecular graph convolution
+                                                   max_num_neighbors=max_num_neighbors, flow='source_to_target',
+                                                   inside_inds=inside_inds, convolve_inds=outside_inds)
+
+        return {'edge_index': edge_index, 'edge_index_inter': edge_index_inter, 'inside_inds': inside_inds,
+                'outside_inds': outside_inds, 'inside_batch': inside_batch, 'n_repeats': n_repeats}
+
+    else:
+
+        edge_index = gnn.radius_graph(pos, r=cutoff, batch=batch,
+                                      max_num_neighbors=max_num_neighbors, flow='source_to_target')  # note - requires batch be monotonically increasing
+
+        return {'edge_index': edge_index}

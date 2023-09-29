@@ -348,7 +348,7 @@ def rebuild_topk_crystals(scores_list, scores_dict, real_samples_dict, sampling_
 
             best_supercells_list.append(fake_supercell_data.cpu().detach())
 
-            best_samples_latents[:, n, :] = extra_outputs['latent']
+            best_samples_latents[:, n, :] = extra_outputs['final_activation']
 
     reconstructed_best_scores = np.asarray(best_supercell_scores).T
     # todo add even more robustness around these

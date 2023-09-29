@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from common.utils import standardize
-from dataset_management.CrystalData import CrystalData
+from old_dataset_management.CrystalData import CrystalData
 from crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch
 from constants.asymmetric_units import asym_unit_dict as asymmetric_unit_dict
 import sys
@@ -9,7 +9,7 @@ from torch_geometric.loader import DataLoader
 import tqdm
 import pandas as pd
 from pyxtal import symmetry
-from dataset_management.manager import DataManager
+from old_dataset_management.manager import DataManager
 import os
 from torch_geometric.loader.dataloader import Collater
 
@@ -247,7 +247,7 @@ class DatasetBuilder:
         '''
         check for heavy atoms
         '''
-        from dataset_management.molecule_featurizer import get_range_fraction
+        from old_dataset_management.molecule_featurizer import get_range_fraction
         znums = [10, 18, 36, 54]
         for znum in znums:
             dataset[f'molecule atom heavier than {znum} fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200]) for atom_list in dataset['atom Z']])

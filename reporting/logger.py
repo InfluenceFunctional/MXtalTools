@@ -12,8 +12,9 @@ class Logger:
     interface to external reporters e.g., self.wandb
     """
 
-    def __init__(self, config, wandb):
+    def __init__(self, config, dataDims, wandb):
         self.config = config
+        self.dataDims = dataDims
         self.wandb = wandb
         self.log_figs_to_self = config.logger.log_figures
         self.save_figs_to_local = False
@@ -37,6 +38,13 @@ class Logger:
 
         if not hasattr(self, 'loss_record'):  # initialize it just once
             self.loss_record = {k1: {k2: [] for k2 in self.current_losses[k1].keys() if 'mean' in k2} for k1 in self.current_losses.keys()}
+
+    def reset_for_new_epoch(self, epoch, batch_size):
+        self.init_loss_records()
+        self.reset_stats_dicts()
+
+        self.epoch = epoch
+        self.batch_size = batch_size
 
     def update_current_losses(self, model_name, epoch_type, mean_loss, all_loss):
         self.current_losses[model_name]['mean_' + epoch_type].append(mean_loss)
@@ -89,11 +97,11 @@ class Logger:
 
     def check_model_convergence(self):
         generator_convergence = check_convergence(self.loss_record['generator']['mean_test'], self.config.history,
-                                                  self.config.generator_optimizer.convergence_eps)
+                                                  self.config.generator.optimizer.convergence_eps)
         discriminator_convergence = check_convergence(self.loss_record['discriminator']['mean_test'], self.config.history,
-                                                      self.config.discriminator_optimizer.convergence_eps)
+                                                      self.config.discriminator.optimizer.convergence_eps)
         regressor_convergence = check_convergence(self.loss_record['regressor']['mean_test'], self.config.history,
-                                                  self.config.regressor_optimizer.convergence_eps)
+                                                  self.config.regressor.optimizer.convergence_eps)
 
         return generator_convergence, discriminator_convergence, regressor_convergence
 
@@ -107,8 +115,7 @@ class Logger:
 
     def log_training_metrics(self):
         if self.log_figs_to_self:
-            epoch_stats_dict = self.collate_current_metrics()
-            self.wandb.log(epoch_stats_dict)
+            self.wandb.log(self.collate_current_metrics())
 
     def collate_current_metrics(self):
         metrics_to_log = {}
@@ -130,29 +137,28 @@ class Logger:
                     elif 'extra' in key2:
                         ttype = 'Extra'
 
-                    metrics_to_log[key + ' best ' + ttype + ' loss'] = np.amin(self.current_losses[key][key2])
-                    metrics_to_log[key + ' ' + ttype + ' loss'] = np.average(self.current_losses[key][key2])
+                    metrics_to_log[key + '_' + ttype + '_loss'] = np.average(self.current_losses[key][key2])
 
         # special losses, scores, and miscellaneous items
         for name, stats_dict in zip(['Train', 'Test', 'Extra'], [self.train_stats, self.test_stats, self.extra_stats]):
             if len(stats_dict) > 0:
                 for key in stats_dict.keys():
                     if 'loss' in key:
-                        metrics_to_log[f'{name} {key}'] = np.average(stats_dict[key])
+                        metrics_to_log[f'{name}_{key}'] = np.average(stats_dict[key])
                     elif 'score' in key:
                         if stats_dict[key].ndim == 2:  # 2d inputs are generally classwise output scores
                             score = softmax_and_score(stats_dict[key])
                         else:
                             score = stats_dict[key]
-                        metrics_to_log[f'{name} {key}'] = np.average(score)
+                        metrics_to_log[f'{name}_{key}'] = np.average(score)
                     elif isinstance(stats_dict[key], np.ndarray):  # keep any other 1d arrays
                         if stats_dict[key].ndim == 1:
                             if '<U' not in str(stats_dict[key].dtype):  # if it is not a list of strings
-                                metrics_to_log[f'{name} {key}'] = np.average(stats_dict[key])
+                                metrics_to_log[f'{name}_{key}'] = np.average(stats_dict[key])
 
         return metrics_to_log
 
     def log_epoch_analysis(self, test_loader):
         """sometimes do detailed reporting"""
         if (self.epoch % self.sample_reporting_frequency) == 0:
-            detailed_reporting(self.config, self.epoch, test_loader, None, self.test_stats, extra_test_dict=self.extra_stats)
+            detailed_reporting(self.config, self.dataDims, test_loader, None, self.test_stats, extra_test_dict=self.extra_stats)

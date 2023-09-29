@@ -2,7 +2,7 @@
 from common.utils import compute_rdf_distance
 from crystal_building.builder import SupercellBuilder
 from crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch
-from dataset_management.utils import load_test_dataset
+from old_dataset_management.utils import load_test_dataset
 from models.crystal_rdf import crystal_rdf
 import numpy as np
 import torch

@@ -11,13 +11,13 @@ from constants.asymmetric_units import asym_unit_dict
 
 
 class crystal_generator(nn.Module):
-    def __init__(self, config, conditioner_config, generator_config, dataDims, sym_info):
+    def __init__(self, seed, device, config, dataDims, sym_info):
         super(crystal_generator, self).__init__()
 
-        self.device = config.device
+        self.device = device
         self.symmetries_dict = sym_info
-        self.lattice_means = torch.tensor(dataDims['lattice_means'], dtype=torch.float32, device=config.device)
-        self.lattice_stds = torch.tensor(dataDims['lattice_stds'], dtype=torch.float32, device=config.device)
+        self.lattice_means = torch.tensor(dataDims['lattice_means'], dtype=torch.float32, device=device)
+        self.lattice_stds = torch.tensor(dataDims['lattice_stds'], dtype=torch.float32, device=device)
         self.norm_lattice_lengths = False
 
         # initialize asymmetric unit dict
@@ -26,56 +26,47 @@ class crystal_generator(nn.Module):
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(self.device)
 
         '''set random prior'''
-        self.latent_dim = generator_config.prior_dimension
-        if generator_config.prior == 'multivariate normal':
+        self.latent_dim = config.prior_dimension
+        if config.prior == 'multivariate normal':
             self.prior = MultivariateNormal(torch.zeros(self.latent_dim), torch.eye(self.latent_dim))
-        elif generator_config.prior.lower() == 'uniform':
+        elif config.prior.lower() == 'uniform':
             self.prior = Uniform(low=0, high=1)
         else:
-            print(generator_config.prior + ' is not an implemented prior!!')
+            print(config.prior + ' is not an implemented prior!!')
             sys.exit()
 
         '''conditioning model'''
-        self.num_crystal_features = config.dataDims['num crystal generation features']
+        self.num_crystal_features = dataDims['num crystal generation features']
         torch.manual_seed(config.seeds.model)
-
-        if conditioner_config.skinny_atomwise_features:
-            self.skinny_inputs = True
-            self.atom_input_feats = 1 + 3  # take first dim (atomic number) and three for coordinates
-            self.num_mol_feats = 0
-        else:
-            self.skinny_inputs = False
-            self.atom_input_feats = dataDims['num_atom_features'] + 3 - self.num_crystal_features
-            self.num_mol_feats = dataDims['num_mol_features'] - self.num_crystal_features
 
         self.conditioner = molecule_graph_model(
             dataDims=dataDims,
-            atom_embedding_dims=conditioner_config.init_atom_embedding_dim,
-            seed=config.seeds.model,
+            atom_type_embedding_dims=config.conditioner.init_atom_embedding_dim,
+            seed=seed,
             num_atom_feats=self.atom_input_feats,  # we will add directly the normed coordinates to the node features
             num_mol_feats=self.num_mol_feats,
-            output_dimension=conditioner_config.output_dim,  # starting size for decoder model
-            activation=conditioner_config.activation,
-            num_fc_layers=conditioner_config.num_fc_layers,
-            fc_depth=conditioner_config.fc_depth,
-            fc_dropout_probability=conditioner_config.fc_dropout_probability,
-            fc_norm_mode=conditioner_config.fc_norm_mode,
-            graph_filters=conditioner_config.graph_filters,
-            graph_convolutional_layers=conditioner_config.graph_convolution_layers,
-            concat_mol_to_atom_features=conditioner_config.concat_mol_features,
-            pooling=conditioner_config.pooling,
-            graph_norm=conditioner_config.graph_norm,
-            num_spherical=conditioner_config.num_spherical,
-            num_radial=conditioner_config.num_radial,
-            graph_convolution=conditioner_config.graph_convolution,
-            num_attention_heads=conditioner_config.num_attention_heads,
-            add_spherical_basis=conditioner_config.add_spherical_basis,
-            add_torsional_basis=conditioner_config.add_torsional_basis,
-            graph_embedding_size=conditioner_config.atom_embedding_size,
-            radial_function=conditioner_config.radial_function,
-            max_num_neighbors=conditioner_config.max_num_neighbors,
-            convolution_cutoff=conditioner_config.graph_convolution_cutoff,
-            positional_embedding=conditioner_config.positional_embedding,
+            output_dimension=config.conditioner.output_dim,  # starting size for decoder model
+            activation=config.conditioner.activation,
+            num_fc_layers=config.conditioner.num_fc_layers,
+            fc_depth=config.conditioner.fc_depth,
+            fc_dropout_probability=config.conditioner.fc_dropout_probability,
+            fc_norm_mode=config.conditioner.fc_norm_mode,
+            graph_message_depth=config.conditioner.graph_filters,
+            graph_convolutional_layers=config.conditioner.graph_convolution_layers,
+            concat_mol_to_atom_features=config.conditioner.concat_mol_features,
+            graph_aggregator=config.conditioner.pooling,
+            graph_norm=config.conditioner.graph_norm,
+            num_spherical=config.conditioner.num_spherical,
+            num_radial=config.conditioner.num_radial,
+            graph_convolution_type=config.conditioner.graph_convolution,
+            num_attention_heads=config.conditioner.num_attention_heads,
+            add_spherical_basis=config.conditioner.add_spherical_basis,
+            add_torsional_basis=config.conditioner.add_torsional_basis,
+            graph_node_dims=config.conditioner.atom_embedding_size,
+            radial_function=config.conditioner.radial_function,
+            max_num_neighbors=config.conditioner.max_num_neighbors,
+            convolution_cutoff=config.conditioner.graph_convolution_cutoff,
+            positional_embedding=config.conditioner.positional_embedding,
             max_molecule_size=config.max_molecule_radius,
             crystal_mode=False,
             crystal_convolution_type=None,
@@ -84,13 +75,13 @@ class crystal_generator(nn.Module):
         '''
         generator model
         '''
-        self.model = MLP(layers=generator_config.num_fc_layers,
-                         filters=generator_config.fc_depth,
-                         norm=generator_config.fc_norm_mode,
-                         dropout=generator_config.fc_dropout_probability,
+        self.model = MLP(layers=config.num_fc_layers,
+                         filters=config.fc_depth,
+                         norm=config.fc_norm_mode,
+                         dropout=config.fc_dropout_probability,
                          input_dim=self.latent_dim,
                          output_dim=dataDims['num lattice features'] + 3,  # 3 extra dimensions for angle decoder
-                         conditioning_dim=conditioner_config.output_dim + self.num_crystal_features,  # include crystal information for the generator
+                         conditioning_dim=config.conditioner.output_dim + self.num_crystal_features,  # include crystal information for the generator
                          seed=config.seeds.model
                          )
 
@@ -134,20 +125,18 @@ class crystal_generator(nn.Module):
 
 
 class independent_gaussian_model(nn.Module):
-    def __init__(self, input_dim, means, stds, normed_length_means, normed_length_stds, sym_info, device, cov_mat=None):
+    def __init__(self, input_dim, means, stds,  sym_info, device, cov_mat=None):
         super(independent_gaussian_model, self).__init__()
 
         self.device = device
         self.input_dim = input_dim
-        fixed_norms = torch.Tensor(means)
-        fixed_norms[:3] = torch.Tensor(normed_length_means)
-        fixed_stds = torch.Tensor(stds)
-        fixed_stds[:3] = torch.Tensor(normed_length_stds)
+        means = torch.Tensor(means)
+        stds = torch.Tensor(stds)
 
         self.register_buffer('means', torch.Tensor(means))
         self.register_buffer('stds', torch.Tensor(stds))
-        self.register_buffer('fixed_norms', torch.Tensor(fixed_norms))
-        self.register_buffer('fixed_stds', torch.Tensor(fixed_stds))
+        self.register_buffer('fixed_norms', torch.Tensor(means))
+        self.register_buffer('fixed_stds', torch.Tensor(stds))
 
         self.symmetries_dict = sym_info
         # initialize asymmetric unit dict
@@ -158,15 +147,12 @@ class independent_gaussian_model(nn.Module):
         if cov_mat is not None:
             pass
         else:
-            cov_mat = torch.diag(torch.Tensor(fixed_stds).pow(2))
+            cov_mat = torch.diag(torch.Tensor(stds).pow(2))
 
-        fixed_means = means.copy()
-        fixed_means[:3] = normed_length_means
         try:
-            self.prior = MultivariateNormal(fixed_norms, torch.Tensor(cov_mat))  # apply standardization
+            self.prior = MultivariateNormal(means, torch.Tensor(cov_mat))  # apply standardization
         except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
-            self.prior = MultivariateNormal(loc=fixed_norms, covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(cov_mat).diagonal())
-        self.dummy_params = nn.Parameter(torch.ones(100))
+            self.prior = MultivariateNormal(loc=means, covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(cov_mat).diagonal())
 
     def forward(self, num_samples, data):
         """
@@ -174,13 +160,8 @@ class independent_gaussian_model(nn.Module):
         so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
         then standardize
         """
-        # unconditional sampling from the raw data distribution
-        sg_inds = data.sg_ind
-
         samples = self.prior.sample((num_samples,)).to(data.x.device)  # samples in the destandardied 'real' basis
-        samples[:, :3] = samples[:, :3] * (data.mult[:, None] ** (1 / 3)) * (data.mol_volume[:, None] ** (1 / 3))  # denorm lattice vectors
-
-        final_samples = clean_cell_params(samples, sg_inds, self.means, self.stds,
+        final_samples = clean_cell_params(samples, data.sg_ind, self.means, self.stds,
                                           self.symmetries_dict, self.asym_unit_dict,
                                           rescale_asymmetric_unit=False, destandardize=False, mode='hard')
 

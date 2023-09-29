@@ -288,8 +288,8 @@ def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.te
 def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     """
     compute the number of hydrogen bonds, up to a loose range (3.3 angstroms), and non-directionally
-    @param atom_donor_ind: index in tracking features to find donor status
-    @param atom_acceptor_ind: index in tracking features to find acceptor status
+    @param atom_donor_ind: index in tracking_features to find donor status
+    @param atom_acceptor_ind: index in tracking_features to find acceptor status
     @param supercell_data: crystal data
     @param dataDims: useful information
     @param i: cell index we are checking
@@ -372,33 +372,6 @@ def save_checkpoint(epoch, model, optimizer, config, save_path):
     return None
 
 
-def compute_h_bond_score(feature_richness, atom_acceptor_ind, atom_donor_ind, num_acceptors_ind, num_donors_ind, supercell_data=None):
-    if (supercell_data is not None) and (
-            feature_richness == 'full'):  # supercell_data is not None: # do vdw computation even if we don't need it
-        # get the total per-molecule counts
-        mol_acceptors = supercell_data.tracking[:, num_acceptors_ind]
-        mol_donors = supercell_data.tracking[:, num_donors_ind]
-
-        '''
-        count pairs within a close enough bubble ~2.7-3.3 Angstroms
-        '''
-        h_bonds_loss = []
-        for i in range(supercell_data.num_graphs):
-            if (mol_donors[i]) > 0 and (mol_acceptors[i] > 0):
-                h_bonds = compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i)
-
-                bonds_per_possible_bond = h_bonds / min(mol_donors[i], mol_acceptors[i])
-                h_bond_loss = 1 - torch.tanh(2 * bonds_per_possible_bond)  # smoother gradient about 0
-
-                h_bonds_loss.append(h_bond_loss)
-            else:
-                h_bonds_loss.append(torch.zeros(1)[0].to(supercell_data.x.device))
-        h_bond_loss_f = torch.stack(h_bonds_loss)
-    else:
-        h_bond_loss_f = None
-
-    return h_bond_loss_f
-
 def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
                       packing_mean, packing_std, data, raw_sample, precomputed_volumes=None):
     """
@@ -433,40 +406,6 @@ def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
     assert torch.sum(torch.isnan(packing_loss)) == 0
 
     return packing_loss, generated_packing_coeffs, csd_packing_coeffs
-
-
-def generator_density_matching_loss(standardized_target_packing, packing_mean, packing_std,
-                                    mol_volume_ind, packing_coeff_ind,
-                                    data, raw_sample,
-                                    precomputed_volumes=None, loss_func='mse'):
-    """ # todo deprecate mol_volume_ind
-    compute packing coefficients for generated cells
-    compute losses relating to packing density
-    """
-    if precomputed_volumes is None:
-        volumes_list = []
-        for i in range(len(raw_sample)):
-            volumes_list.append(cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6]))
-        volumes = torch.stack(volumes_list)
-    else:
-        volumes = precomputed_volumes
-
-    generated_packing_coeffs = data.mult * data.mol_volume / volumes
-    standardized_gen_packing_coeffs = (generated_packing_coeffs - packing_mean) / packing_std
-
-    target_packing_coeffs = standardized_target_packing * packing_std + packing_mean
-
-    csd_packing_coeffs = data.tracking[:, packing_coeff_ind]
-
-    # compute loss vs the target
-    if loss_func == 'mse':
-        packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
-                                  reduction='none')  # allow for more error around the minimum
-    elif loss_func == 'l1':
-        packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_target_packing,
-                                        reduction='none')
-
-    return packing_loss, generated_packing_coeffs, target_packing_coeffs, csd_packing_coeffs
 
 
 def compute_combo_score(packing_prediction, vdw_penalty, discriminator_raw_output):
@@ -661,8 +600,7 @@ def decode_to_sph_rotvec(mol_orientations):
 
     return real_orientation_theta[:, None], real_orientation_phi[:, None], real_orientation_r[:, None]
 
-
 def get_regression_loss(regressor, data, mean, std):
-    predictions = regressor(data.to(regressor.model.device))[:, 0]
+    predictions = regressor(data)[:, 0]
     targets = data.y
     return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions.cpu().detach().numpy() * std + mean, targets.cpu().detach().numpy() * std + mean

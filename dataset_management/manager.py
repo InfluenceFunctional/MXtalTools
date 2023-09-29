@@ -1,425 +1,313 @@
-from common.utils import *
 import pandas as pd
-
-from constants.asymmetric_units import asym_unit_dict
-from crystal_building.utils import *
-from pyxtal import symmetry
+import torch
 import tqdm
 import os
+import numpy as np
 
-from crystal_building.utils_np import find_coord_in_box_np
+from common.utils import delete_from_dataframe
+from constants.asymmetric_units import asym_unit_dict
+from constants.space_group_info import SYM_OPS
+from crystal_building.utils import build_unit_cell, batch_asymmetric_unit_pose_analysis_torch
 
 
 class DataManager():
-    def __init__(self, dataset_path, config=None, collect_chunks=False, database='csd'):
-        self.config = config
-        if config is None:
-            self.max_z_prime = 1
-            self.min_z_prime = 1
-            self.max_z_value = 50
-            self.min_z_value = 1
-            self.max_num_atoms = 1000
-            self.min_num_atoms = 5
-            self.max_molecule_radius = 1000
-            self.max_atomic_number = 87
-            self.max_packing_coefficient = 0.85
-            self.min_packing_coefficient = 0.55
-            self.include_organic = True
-            self.include_organometallic = True
-            self.exclude_disordered_crystals = False
-            self.exclude_missing_r_factor = False
-            self.exclude_polymorphs = False
-            self.exclude_nonstandard_settings = False
-            self.max_temperature = 1000
-            self.min_temperature = -10
-            self.include_sgs = None
-            self.include_pgs = None
-            self.exclude_crystal_systems = None
-            self.exclude_blind_test_targets = False
-        else:
-            self.max_z_prime = config.max_z_prime
-            self.min_z_prime = config.min_z_prime
-            self.max_z_value = config.max_z_value
-            self.min_z_value = config.min_z_value
-            self.max_num_atoms = config.max_num_atoms
-            self.min_num_atoms = config.min_num_atoms
-            self.max_molecule_radius = config.max_molecule_radius
-            self.max_atomic_number = config.max_atomic_number
-            self.max_packing_coefficient = 0.85
-            self.min_packing_coefficient = config.min_packing_coefficient
-            self.include_organic = config.include_organic
-            self.include_organometallic = config.include_organometallic
-            self.exclude_disordered_crystals = config.exclude_disordered_crystals
-            self.exclude_polymorphs = config.exclude_polymorphs
-            if self.exclude_polymorphs:
-                self.exclude_missing_r_factor = True
+    def __init__(self, datasets_path, device='cpu', chunks_path=None, seed=0):
+        self.misc_data_dict = None
+        self.standardization_dict = None
+        self.crystal_to_mol_dict = None
+        self.mol_to_crystal_dict = None
+        self.molecules_in_crystals_dict = None
+        self.dataset = None
+
+        self.datasets_path = datasets_path
+        self.chunks_path = chunks_path
+        self.device = device
+
+        np.random.seed(seed=seed)  # for certain random sampling ops
+
+        self.asym_unit_dict = asym_unit_dict.copy()
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
+
+    def load_chunks(self):
+        os.chdir(self.chunks_path)
+        chunks = os.listdir()
+        num_chunks = len(chunks)
+        print(f'Collecting {num_chunks} dataset chunks')
+        self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks[:25]], ignore_index=True)
+
+    def load_dataset_for_modelling(self, dataset_name,
+                                   filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False):
+
+        self.load_dataset_and_misc_data(dataset_name)
+
+        if filter_conditions is not None:
+            bad_inds = self.get_dataset_filter_inds(filter_conditions)
+            self.dataset = delete_from_dataframe(self.dataset, bad_inds)
+            print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
+            self.rebuild_indices()
+
+        if filter_polymorphs:
+            bad_inds = self.filter_polymorphs()
+            self.dataset = delete_from_dataframe(self.dataset, bad_inds)
+            print("Polymorph filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
+            self.rebuild_indices()
+
+        if filter_duplicate_molecules:
+            bad_inds = self.filter_duplicate_molecules()
+            self.dataset = delete_from_dataframe(self.dataset, bad_inds)
+            print("Duplicate molecule filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
+            self.rebuild_indices()
+
+    def rebuild_indices(self):
+        self.dataset = self.dataset.reset_index().drop(columns='index')
+
+        self.crystal_to_mol_dict, self.mol_to_crystal_dict = \
+            self.generate_mol2crystal_mapping()
+
+        self.molecules_in_crystals_dict = \
+            self.identify_unique_molecules_in_crystals()
+
+    def load_dataset_and_misc_data(self, dataset_name):
+        self.dataset = pd.read_pickle(self.datasets_path + dataset_name)
+        misc_data_dict = np.load(self.datasets_path + 'misc_data_for_' + dataset_name.removeprefix('test_') + '.npy', allow_pickle=True).item()
+
+        if 'test' in dataset_name:
+            self.rebuild_indices()
+
+        self.standardization_dict = misc_data_dict['standardization_dict']
+
+    def process_new_dataset(self, new_dataset_name):
+        self.load_chunks()
+        self.rebuild_indices()
+        self.asymmetric_unit_analysis()
+        self.get_dataset_standardization_statistics()
+
+        misc_data_dict = {
+            'crystal_to_mol_dict': self.crystal_to_mol_dict,
+            'mol_to_crystal_dict': self.mol_to_crystal_dict,
+            'molecules_in_crystals_dict': self.molecules_in_crystals_dict,
+            'standardization_dict': self.standardization_dict
+        }
+
+        np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
+        self.dataset.to_pickle(self.datasets_path + new_dataset_name)
+        ints = np.random.choice(min(len(self.dataset), 1000), min(len(self.dataset), 1000), replace=False)
+        self.dataset.loc[ints].to_pickle(self.datasets_path + 'test_' + new_dataset_name)
+
+    def asymmetric_unit_analysis(self):
+        """
+        for each crystal
+        for each molecule in Z' molecules
+        1) build periodic lattice
+        2) identify "canonical" asymmetric unit aka canonical conformer
+        3) compute pose relative to standardized initial condition
+        -: manage issues of symmetry
+        -: note each Z' molecule will be independently featurized
+
+        """
+        print("Parameterizing Crystals")
+
+        # symmetry_multiplicity = torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device)
+        # final_coords_list = [torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for ind, crystal in self.dataset.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))]
+        T_fc_list = torch.tensor(np.stack([crystal['crystal_fc_transform'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
+        # T_cf_list = torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
+        # sym_ops_list = [torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
+
+        # build unit cell for each molecule (separately for each Z')
+        unit_cells_list = build_unit_cell(
+            symmetry_multiplicity=torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device),
+            final_coords_list=[torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for ind, crystal in self.dataset.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))],
+            T_fc_list=T_fc_list,
+            T_cf_list=torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device),
+            sym_ops_list=[torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
+        )
+
+        # analyze the cell
+        mol_position_list, mol_orientation_list, handedness_list, well_defined_asym_unit, canonical_conformer_coords_list = \
+            batch_asymmetric_unit_pose_analysis_torch(
+                unit_cells_list,
+                torch.tensor([crystal['crystal_space_group_number'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device),
+                self.asym_unit_dict,
+                T_fc_list,
+                enforce_right_handedness=False,
+                rotation_basis='spherical',
+                return_asym_unit_coords=True
+            )
+
+        mol_position_list = mol_position_list.cpu().detach().numpy()
+        mol_orientation_list = mol_orientation_list.cpu().detach().numpy()
+        handedness_list = handedness_list.cpu().detach().numpy()
+
+        # write results to the dataset
+        (centroids_x_list, centroids_y_list, centroids_z_list,
+         orientations_theta_list, orientations_phi_list, orientations_r_list,
+         handednesses_list, validity_list, coordinates_list) = [[[] for _ in range(len(self.dataset))] for _ in range(9)]
+
+        for i, identifier in enumerate(self.crystal_to_mol_dict.keys()):  # index molecules with their respective crystals
+            df_index = self.dataset.loc[self.dataset['crystal_identifier'] == identifier].index[0]
+            (centroids_x, centroids_y, centroids_z, orientations_theta,
+             orientations_phi, orientations_r, handedness, well_defined, coords) = [], [], [], [], [], [], [], [], []
+
+            for mol_ind in self.crystal_to_mol_dict[identifier]:
+                centroids_x.append(mol_position_list[mol_ind, 0])
+                centroids_y.append(mol_position_list[mol_ind, 1])
+                centroids_z.append(mol_position_list[mol_ind, 2])
+
+                orientations_theta.append(mol_orientation_list[mol_ind, 0])
+                orientations_phi.append(mol_orientation_list[mol_ind, 1])
+                orientations_r.append(mol_orientation_list[mol_ind, 2])
+
+                handedness.append(handedness_list[mol_ind])
+                well_defined.append(well_defined_asym_unit[mol_ind])
+                coords.append(canonical_conformer_coords_list[mol_ind].cpu().detach().numpy())
+
+            centroids_x_list[df_index] = centroids_x
+            centroids_y_list[df_index] = centroids_y
+            centroids_z_list[df_index] = centroids_z
+
+            orientations_theta_list[df_index] = orientations_theta
+            orientations_phi_list[df_index] = orientations_phi
+            orientations_r_list[df_index] = orientations_r
+
+            handednesses_list[df_index] = handedness
+            validity_list[df_index] = well_defined
+            coordinates_list[df_index] = coords
+
+        self.dataset['asymmetric_unit_centroid_x'] = centroids_x_list
+        self.dataset['asymmetric_unit_centroid_y'] = centroids_y_list
+        self.dataset['asymmetric_unit_centroid_z'] = centroids_z_list
+
+        self.dataset['asymmetric_unit_rotvec_theta'] = orientations_theta_list
+        self.dataset['asymmetric_unit_rotvec_phi'] = orientations_phi_list
+        self.dataset['asymmetric_unit_rotvec_r'] = orientations_r_list
+
+        self.dataset['asymmetric_unit_handedness'] = handednesses_list
+        self.dataset['asymmetric_unit_is_well_defined'] = validity_list
+        self.dataset['atom_coordinates'] = coordinates_list
+
+        # check that all the crystals have the correct number of Z'
+        # for a small dataset, getting all of them right could be a fluke
+        # for a large one, if the below checks out, very likely we haven't screwed up the indexing
+        assert all([len(thing) == thing2 for thing, thing2 in zip(handednesses_list, self.dataset['crystal_z_prime'])]), "Error with asymmetric indexing and/or symmetry multiplicity"
+
+        # identify whether crystal symmetry ops exactly agree with standards
+        # this should be included in 'space group setting' but is sometimes missed
+        rand_mat = np.logspace(-3, 3, 16).reshape(4, 4)
+        sym_ops_agreement = np.zeros(len(self.dataset))
+        for i in range(len(self.dataset)):
+            sym_op = np.stack(self.dataset['crystal_symmetry_operators'].loc[i])
+            std_op = np.stack(SYM_OPS[self.dataset['crystal_space_group_number'].loc[i]])
+
+            if len(sym_op) == len(std_op):  # if the multiplicity is different, it is certainly nonstandard
+                # sort these in a canonical way to extract a fingerprint
+                # multiply them with a wacky matrix and order them by the sums
+
+                sample_args = np.argsort((sym_op * rand_mat).sum((1, 2)))
+                sym_args = np.argsort((std_op * rand_mat).sum((1, 2)))
+
+                sym_ops_agreement[i] = np.prod(sym_op[sample_args] == std_op[sym_args])
             else:
-                self.exclude_missing_r_factor = config.exclude_missing_r_factor
-            self.exclude_nonstandard_settings = config.exclude_nonstandard_settings
-            self.max_temperature = config.max_crystal_temperature
-            self.min_temperature = config.min_crystal_temperature
-            self.include_sgs = config.include_sgs
-            self.include_pgs = config.include_pgs
-            self.exclude_crystal_systems = config.exclude_crystal_systems
-            self.exclude_blind_test_targets = config.exclude_blind_test_targets
+                sym_ops_agreement[i] = 0
 
-        self.dataset_path = dataset_path
-        self.collect_chunks = collect_chunks
-        self.database = database
+        self.dataset['crystal_symmetry_operations_are_standard'] = sym_ops_agreement
 
-    def load_for_modelling(self, return_dataset=False, save_dataset=True):
-        self.dataset = pd.read_pickle(self.dataset_path)
-        self.dataset_keys = list(self.dataset.columns)
-        if self.config.target_identifiers is not None:
-            self.find_targets()
-        self.filter_dataset()
-        if self.exclude_polymorphs:
-            self.filter_polymorphs()
-        self.datasetPath = 'datasets/dataset'
-        if save_dataset:
-            self.dataset.to_pickle(self.datasetPath)
-        if return_dataset:
-            return self.dataset
-        else:
-            del self.dataset
-
-    def process_new_dataset(self, dataset_name='new_dataset', test_mode=False):
-
-        self.load_dataset(self.dataset_path, self.collect_chunks, test_mode=test_mode)
-        self.numerize_dataset()
-        self.curate_dataset()
-
-        self.dataset.to_pickle('../../new_dataset')  # '../../' + dataset_name)
-        self.dataset.loc[0:10000].to_pickle('../../test_new_dataset')
-
-    def load_dataset(self, dataset_path, collect_chunks=False, test_mode=False):
-
-        if collect_chunks:
-            os.chdir(dataset_path + '/molecule_features')
-            chunks = os.listdir()
-            print('collecting chunks')
-
-            if test_mode:
-                nChunks = min(5, len(chunks))
-            else:
-                nChunks = len(chunks)
-
-            data_chunks = []
-            for i in tqdm.tqdm(range(nChunks)):
-                data_chunks.append(pd.read_pickle(chunks[i]))
-            self.dataset = pd.concat(data_chunks, ignore_index=True)
-            del data_chunks
-
-        else:
-            self.dataset = pd.read_pickle(dataset_path)
-
-        self.finished_numerization = False
-        self.dataset_keys = list(self.dataset.columns)
-        self.dataset_length = len(self.dataset)
-
-    def curate_dataset(self):
-        '''
-        curate the dataset given conditions set in the config
-        :return:
-        '''
-        # start by filtering polymorphs
-        self.collate_spacegroups()
-        self.filter_dataset()
-        if self.exclude_polymorphs:
-            self.filter_polymorphs()
-
-    def collate_spacegroups(self):
-        '''
-        reassign spacegroup symbols using spacegroup numbers and settings
-        set all spacegroup symbols to setting 1
-        collect minority spacegroups into reasonable clusters
-        :return:
-        '''
-
-        print('Pre-generating spacegroup symmetries')
-
-        self.space_groups = {}
-        self.sg_numbers = {}
-        for i in tqdm.tqdm(range(1, 231)):
-            sym_group = symmetry.Group(i)
-            self.space_groups[i] = sym_group.symbol
-            self.sg_numbers[sym_group.symbol] = i
-
-        # standardize SG symbols
-        for i in tqdm.tqdm(range(self.dataset_length)):
-            if self.dataset['crystal spacegroup number'][i] != 0:  # sometimes the sg number is broken
-                self.dataset['crystal spacegroup symbol'][i] = self.space_groups[self.dataset['crystal spacegroup number'][i]]
-            else:  # in which case, try reverse assigning the number, given the space group
-                self.dataset['crystal spacegroup number'][i] = self.sg_numbers[self.dataset['crystal spacegroup symbol'][i]]
-
-    def find_targets(self):
+    def get_dataset_standardization_statistics(self):
         """
-        filter out samples with unwanted features
+        get mean and std deviation for all int and float features
+        for crystals, molecules, and atoms
         """
-        print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
+        print("Getting Dataset Statistics")
+        std_dict = {}
 
-        bad_inds = []
-        # filter out identifiers we are not explicitly searching for
-        n_bad_inds = len(bad_inds)
-        for j in range(len(self.dataset)):
-            item = self.dataset['identifier'][j]  # do it this way to remove the target, including any of its polymorphs
-            # if item[-1].isdigit():
-            #     item = item[:-2]  # cut off trailing digits, if any
-            if item not in self.config.target_identifiers:
-                bad_inds.append(j)
+        for column in tqdm.tqdm(self.dataset.columns):
+            values = None
+            if column[:4] == 'atom':
+                values = np.concatenate([atoms for atoms_lists in self.dataset[column] for atoms in atoms_lists])
+            elif column[:8] == 'molecule':
+                values = np.concatenate(self.dataset[column])
+            elif column[:7] == 'crystal':
+                values = self.dataset[column]
+            elif column[:15] == 'asymmetric_unit':
+                values = np.concatenate(self.dataset[column])  # one for each Z' molecule
 
-        print('Target search filtered {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+            if values is not None:
+                if not isinstance(values[0], str):  # not some string - check here since it crashes issubdtype below
+                    if values.ndim > 1:  # intentionally leaving out e.g., coordinates, principal axes
+                        pass
+                    elif values.dtype == bool:
+                        pass
+                    # this is clunky but np.issubdtype is too sensitive
+                    elif (values.dtype == np.float32) or (values.dtype == np.float64) or (values.dtype == float) or (values.dtype == int) or (values.dtype == np.int8) or (values.dtype == np.int16) or (values.dtype == np.int32) or (values.dtype == np.int64):
+                        std_dict[column] = [values.mean(), values.std()]
+                    else:
+                        pass
 
-        # collate bad indices
-        bad_inds = np.unique(bad_inds)
+        self.standardization_dict = std_dict
 
-        # apply filtering
-        self.dataset = delete_from_dataframe(self.dataset, bad_inds)
-        print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
-        if len(self.dataset) == 0:
-            print(f"{self.config.target_identifiers} not found in dataset")
-            assert False
-
-
-    def filter_dataset(self):
+    def generate_mol2crystal_mapping(self):
         """
-        filter out samples with unwanted features
+        some crystals have multiple molecules, and we do batch analysis of molecules with a separate indexing scheme
+        connect the crystal identifier-wise and mol-wise indexing with the following dicts
         """
-        print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
+        # print("Generating mol-to-crystal mapping")
+        mol_index = 0
+        crystal_to_mol_dict = {}
+        mol_to_crystal_dict = {}
+        for index, identifier in enumerate(self.dataset['crystal_identifier']):
+            crystal_to_mol_dict[identifier] = []
+            for _ in range(int(self.dataset['crystal_z_prime'][index])):  # assumes integer Z'
+                crystal_to_mol_dict[identifier].append(mol_index)
+                mol_to_crystal_dict[mol_index] = identifier
+                mol_index += 1
 
-        bad_inds = []
+        return crystal_to_mol_dict, mol_to_crystal_dict
 
-        #
-        # # exclude samples with extremely close atoms
-        # n_bad_inds = len(bad_inds)
-        # for j in range(len(self.dataset)):
-        #     coords = self.dataset['crystal reference cell coords'][j]
-        #     coords = coords.reshape(coords.shape[0] * coords.shape[1],3)
-        #     distmat = torch.cdist(torch.Tensor(coords), torch.Tensor(coords), p=2) + torch.eye(len(coords))
-        #     if torch.amin(distmat) < 0.1:
-        #         #print('bad')
-        #         bad_inds.append(j)
-        # print('overlapping atoms caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+    def identify_unique_molecules_in_crystals(self):
+        """
+        identify all exactly unique molecules (up to mol fingerprint)
+        list their dataset indices in a dict
 
-        # samples with bad CSD-generated reference cells
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:, 0])  # missing coordinates
-        bad_inds.extend(np.argwhere(np.asarray(np.isnan(self.dataset['crystal asymmetric unit centroid x'])))[:, 0])  # missing orientation features
-        print('bad coordinates caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+        at train time, we can use this to repeat sampling of identical molecules
+        """
+        # print("getting unique molecule fingerprints")
+        fps = np.concatenate(self.dataset['molecule_fingerprint'])
+        unique_fps, inverse_map = np.unique(fps, axis=0, return_inverse=True)
+        molecules_in_crystals_dict = {
+            unique.tobytes(): [] for unique in unique_fps
+        }
+        for ind, map in enumerate(inverse_map):  # we record the molecule inex for each unique molecular fingerprint
+            molecules_in_crystals_dict[unique_fps[map].tobytes()].append(ind)
 
-        if self.exclude_blind_test_targets:
-            # CSD blind test 5 and 6 targets
-            blind_test_identifiers = [
-                'OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
-                'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04',
-                "COUMAR01", "COUMAR02", "COUMAR10", "COUMAR11", "COUMAR12", "COUMAR13",
-                "COUMAR14", "COUMAR15", "COUMAR16", "COUMAR17",  # Z'!=1 or some other weird thing
-                "COUMAR18", "COUMAR19"
-            ]
-            blind_test_identifiers.remove('XATJOT')  # multi-component
-            blind_test_identifiers.remove('XAFQON')  # multi-component
-            blind_test_identifiers.remove('KONTIQ')  # multi-component
+        return molecules_in_crystals_dict
 
-            n_bad_inds = len(bad_inds)
-            for j in range(len(self.dataset)):
-                item = self.dataset['identifier'][j]  # do it this way to remove the target, including any of its polymorphs
-                if item[-1].isdigit():
-                    item = item[:-2]  # cut off trailing digits, if any
-                if item in blind_test_identifiers:
-                    bad_inds.append(j)
-            print('Blind test targets caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
+    def get_identifier_duplicates(self, mode='standard'):
+        """
+        by CSD identifier
+        CSD entries with numbers on the end are subsequent additions to the same crystal
+        often polymorphs or repeat  measurements
 
-        # filter for when the asymmetric unit definition is nonstandard (returns more than one centroid) # todo check for edge centroids
-        n_bad_inds = len(bad_inds)
-        for ii in range(len(self.dataset['atom coords'])):
-            sg_ind = self.dataset['crystal spacegroup number'][ii]
-            if str(sg_ind) in asym_unit_dict.keys():  # only do this check if this sg_ind is already encoded in the asym unit dict
-                unit_cell_coords = self.dataset['crystal reference cell coords'][ii]
-                T_cf = np.linalg.inv(self.dataset['crystal fc transform'][ii])
-                asym_unit = asym_unit_dict[str(int(sg_ind))]  # will only work for units which we have written down the parameterization for
-                # identify which of the Z asymmetric units is canonical
-                centroids_cartesian = unit_cell_coords.mean(-2)
-                centroids_fractional = np.inner(T_cf, centroids_cartesian).T
-                centroids_fractional -= np.floor(centroids_fractional)
-                if torch.is_tensor(asym_unit):
-                    asym_unit = asym_unit.cpu().detach().numpy()
-                canonical_conformer_index = find_coord_in_box_np(centroids_fractional, asym_unit)
-                if len(canonical_conformer_index) != 1:
-                    bad_inds.append(ii)
-        print('Non uniform asymmetric unit caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # when the molecule is too long
-        # cases where the csd has the wrong number of molecules
-        n_bad_inds = len(bad_inds)
-        # self.config.max_molecule_radius
-        mol_radii = np.asarray([np.amax(np.linalg.norm(coords - coords.mean(0), axis=-1)) for coords in self.dataset['atom coords']])
-        bad_inds.extend(np.argwhere(np.asarray(mol_radii) > self.max_molecule_radius)[:, 0])
-        print('molecule too long filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # cases where the csd has the wrong number of molecules
-        n_bad_inds = len(bad_inds)
-        lens = [len(item) for item in self.dataset['crystal reference cell coords']]
-        bad_inds.extend(np.argwhere(np.asarray(lens != self.dataset['crystal z value']))[:, 0])
-        print('improper CSD Z value filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # # cases where the symmetry ops disagree with the Z value
-        # n_bad_inds = len(bad_inds)
-        # lens = [len(item) for item in self.dataset['crystal symmetries']]
-        # bad_inds.extend(np.argwhere(np.asarray(lens != self.dataset['crystal z value']))[:, 0])
-        # print('improper sym ops multiplicity filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # exclude samples with atoms on special positions # todo eventually relax this
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal atoms on special positions'].ne([[] for _ in range(len(self.dataset))])))[:, 0])
-        print('special positions filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # Z prime
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z prime']) > self.max_z_prime)[:, 0])  # self.config.max_z_prime))
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z prime']) < self.min_z_prime)[:, 0])  # self.config.min_z_prime))
-        print('z prime filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # Z value
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z value']) > self.max_z_value)[:, 0])  # self.config.max_z_value))
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z value']) < self.min_z_value)[:, 0])  # self.config.min_z_value))
-        print('z value filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # molecule num atoms
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule num atoms']) > self.max_num_atoms)[:, 0])  # self.config.max_molecule_size))
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule num atoms']) < self.min_num_atoms)[:, 0])  # self.config.min_molecule_size))
-        print('molecule num atoms filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # heaviest atom
-        n_bad_inds = len(bad_inds)
-        heaviest_atoms = np.asarray([max(atom_z) for atom_z in self.dataset['atom Z']])
-        bad_inds.extend(np.argwhere(heaviest_atoms > self.max_atomic_number)[:, 0])  # self.config.max_atomic_number))
-        print('max atom size filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # too diffuse or too dense
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal packing coefficient']) > self.max_packing_coefficient)[:, 0])  # self.config.max_molecule_size))
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal packing coefficient']) < self.min_packing_coefficient)[:, 0])  # self.config.min_molecule_size))
-        print('crystal packing coefficient filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # erroneous densities
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal calculated density']) == 0)[:, 0])  # self.config.max_molecule_size))
-        print('0 density filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # too hot or too cold
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) > self.max_temperature)[:, 0])
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) < self.min_temperature)[:, 0])
-        print('crystal temperature filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # supported space groups
-        if self.include_sgs is not None:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere([self.dataset['crystal spacegroup symbol'][i] not in self.include_sgs for i in range(len(self.dataset['crystal spacegroup symbol']))])[:, 0])
-            print('spacegroup filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        if self.exclude_crystal_systems is not None:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere([self.dataset['crystal system'][i] in self.exclude_crystal_systems for i in range(len(self.dataset['crystal system']))])[:, 0])
-            print('crystal system filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        if self.include_pgs is not None:
-            # filter by point group
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere([self.dataset['crystal point group'][i] not in self.include_pgs for i in range(len(self.dataset['crystal point group']))])[:, 0])  # missing coordinates
-            print('unwanted point groups caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # molecule organic
-        if not self.include_organic:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organic'] == 'True'))[:, 0])
-            print('organic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # molecule organometallic
-        if not self.include_organometallic:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organometallic'] == 'True'))[:, 0])
-            print('organometallic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # molecule has disorder
-        if self.exclude_disordered_crystals:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal has disorder']))[:, 0])
-            print('disorder filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # missing r factor
-        if self.exclude_missing_r_factor:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.asarray([i for i in range(len(self.dataset['crystal r factor'])) if self.dataset['crystal r factor'][i] is None]))
-            print('missing r factor filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        if self.exclude_nonstandard_settings:
-            # nonstandard spacegroup setings have inconsistent lattice definitions
-            n_bad_inds = len(bad_inds)
-            settings = np.asarray([self.dataset['crystal spacegroup setting'][i] for i in range(len(self.dataset))])
-            bad_inds.extend(np.argwhere(settings != 1)[:, 0])
-            print('nonstandard spacegroup setting filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # collate bad indices
-        bad_inds = np.unique(bad_inds)
-
-        # apply filtering
-        self.dataset = delete_from_dataframe(self.dataset, bad_inds)
-        print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
-
-    def filter_polymorphs(self):
-        '''
-        find duplicate examples and pick one representative per molecule
-        :return:
-        '''
-        # use CSD identifiers to pick out polymorphs
-        duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
-
-        # duplicate_groups_identifiers = {ident:[self.dataset['identifier'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
-        # duplicate_groups_packings = {ident:[self.dataset['crystal packing coefficient'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
-
-        # todo delete blind test and any extra CSP samples from the training dataset
-
-        # now, the 'representative structure' is the highest resolution structure which as the same space group as the oldest structure
-        # we will add all others to 'bad_inds', and filter them out at our leisure
-        print('selecting representative structures from duplicate groups')
-        bad_inds = []
-        for key in duplicate_groups.keys():
-            # print(key)
-            inds = duplicate_groups[key]
-            space_groups = [self.dataset['crystal spacegroup symbol'][ind] for ind in inds]
-            oldest_structure = inds[np.argmin([self.dataset['crystal date'][ind] for ind in inds])]  # get the dataset index for the oldest structure
-            oldest_structure_SG = self.dataset['crystal spacegroup symbol'][oldest_structure]
-            inds_agree_with_oldest_SG = np.argwhere([sg == oldest_structure_SG for sg in space_groups])[:, 0]
-            inds_agree_with_oldest_SG = [inds[ind] for ind in inds_agree_with_oldest_SG]
-            agreeing_ind_with_best_arg_factor = inds[np.argmin([self.dataset['crystal r factor'][ind] for ind in inds_agree_with_oldest_SG])]
-            inds.remove(agreeing_ind_with_best_arg_factor)  # remove the good one
-            bad_inds.extend(inds)  # delete residues from the dataset
-
-        self.dataset = delete_from_dataframe(self.dataset, bad_inds)
-
-    def get_identifier_duplicates(self):
-        # by CSD identifier
-        # CSD entries with numbers on the end are subsequent additions
+        option for grouping identifier by blind test sample submission
+        """
         print('getting identifier duplicates')
-        all_identifiers = {}
-        if self.database.lower() == 'csd':
-            for i in tqdm.tqdm(range(len(self.dataset['identifier']))):
-                item = self.dataset['identifier'][i]
+
+        if mode == 'standard':
+            all_identifiers = {}
+            for i in tqdm.tqdm(range(len(self.dataset['crystal_identifier']))):
+                item = self.dataset['crystal_identifier'][i]
                 if item[-1].isdigit():
                     item = item[:-2]  # cut off trailing digits, if any
                 if item not in all_identifiers.keys():
                     all_identifiers[item] = []
                 all_identifiers[item].append(i)
-        elif self.database.lower() == 'cif':  # todo unfinished
+        elif mode == 'blind_test':  # todo untested
             blind_test_targets = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
                                   'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
-                                  'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
+                                  'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX']
+
             all_identifiers = {key: [] for key in blind_test_targets}
-            for i in tqdm.tqdm(range(len(self.dataset['identifier']))):
-                item = self.dataset['identifier'][i]
+            for i in tqdm.tqdm(range(len(self.dataset['crystal_identifier']))):
+                item = self.dataset['crystal_identifier'][i]
                 for j in range(len(blind_test_targets)):  # go in reverse to account for roman numerals system of duplication
                     if blind_test_targets[-1 - j] in item:
                         all_identifiers[blind_test_targets[-1 - j]].append(i)
@@ -438,58 +326,160 @@ class DataManager():
 
         return duplicate_lists, duplicate_list_extension, duplicate_groups
 
-    def numerize_dataset(self):
-        '''
-        convert dataset features such as strings into purely numerical vectors (not normed etc yet)
+    def get_dataset_filter_inds(self, filter_conditions):
+        """
+        identify indices not passing certain filter conditions
+        conditions in the format [column_name, condition_type, [min, max] or [set]]
+        condition_type in ['range','in','not_in']
+        """
+        #
+        # blind_test_identifiers = [
+        #     'OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
+        #     'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04',
+        #     "COUMAR01", "COUMAR02", "COUMAR10", "COUMAR11", "COUMAR12", "COUMAR13",
+        #     "COUMAR14", "COUMAR15", "COUMAR16", "COUMAR17",  # Z'!=1 or some other weird thing
+        #     "COUMAR18", "COUMAR19"
+        # ]
+
+        # test_conditions = [
+        #     ['molecule_mass', 'range', [0, 300]],
+        #     ['crystal_space_group_setting', 'not_in', [2]],
+        #     ['crystal_space_group_number', 'in', [1, 2, 14, 19]],
+        #     ['atom_atomic_numbers', 'range', [0, 20]],
+        #     ['crystal_is_organic', 'in', [True]],
+        #     ['molecule_is_symmetric_top', 'not_in', [True]]
+        # ]
+
+        print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
+        bad_inds = []  # indices to be filtered
+
+        for condition in filter_conditions:
+            bad_inds.extend(self.compute_filter(condition))
+
+        bad_inds = np.unique(bad_inds)  # remove redundant conditions
+
+        return bad_inds
+
+    def compute_filter(self, condition):
+        """
+        apply given filters
+        for atoms & molecules with potential Z'>1, need to adjust formatting a bit
+        """
+        condition_key, condition_type, condition_range = condition
+        if condition_type == 'range':
+            # check fo the values to be in the range (inclusive)
+            assert condition_range[1] > condition_range[0], "Range condition must be set low to high"
+            if 'crystal' in condition_key:
+                bad_inds = np.concatenate((
+                    np.argwhere(np.asarray(self.dataset[condition_key]) > condition_range[1]),
+                    np.argwhere(np.asarray(self.dataset[condition_key]) < condition_range[0])
+                ))[:, 0]
+            elif condition_key[:4] == 'atom':
+                max_values = np.asarray([np.amax(np.concatenate(atoms)) for atoms in self.dataset[condition_key]])
+                min_values = np.asarray([np.amin(np.concatenate(atoms)) for atoms in self.dataset[condition_key]])
+                bad_inds = np.concatenate((
+                    np.argwhere(max_values > condition_range[1]),
+                    np.argwhere(min_values < condition_range[0])
+                ))[:, 0]
+            elif 'molecule' in condition_key or 'asymmetric_unit' in condition_key:
+                max_values = np.asarray([np.amax(mols) for mols in self.dataset[condition_key]])
+                min_values = np.asarray([np.amin(mols) for mols in self.dataset[condition_key]])
+                bad_inds = np.concatenate((
+                    np.argwhere(max_values > condition_range[1]),
+                    np.argwhere(min_values < condition_range[0])
+                ))[:, 0]
+
+        elif condition_type == 'in':
+            # check for where the data is not equal to the explicitly enumerated range elements to be included
+            if 'crystal' in condition_key:  # todo filters need to interact
+                bad_inds = np.argwhere([
+                    thing not in condition_range for thing in self.dataset[condition_key]
+                ])[:, 0]
+            elif 'molecule' in condition_key or 'asymmetric_unit' in condition_key:
+                bad_inds = np.argwhere([
+                    cond not in mol for mol in self.dataset[condition_key] for cond in condition_range
+                ])[:, 0]
+            elif condition_key[:4] == 'atom':
+                bad_inds = np.argwhere([
+                    cond not in np.concatenate(atoms) for atoms in self.dataset[condition_key] for cond in condition_range
+                ])[:, 0]
+
+        elif condition_type == 'not_in':
+            # check for where the data is equal to the explicitly enumerated elements to be excluded
+            if 'crystal' in condition_key:
+                bad_inds = np.argwhere([
+                    thing in condition_range for thing in self.dataset[condition_key]
+                ])[:, 0]
+            elif 'molecule' in condition_key or 'asymmetric_unit' in condition_key:
+                bad_inds = np.argwhere([
+                    cond in mol for mol in self.dataset[condition_key] for cond in condition_range
+                ])[:, 0]
+            elif condition_key[:4] == 'atom':
+                bad_inds = np.argwhere([
+                    cond in np.concatenate(atoms) for atoms in self.dataset[condition_key] for cond in condition_range
+                ])[:, 0]
+        else:
+            assert False, f"{condition_type} is not an implemented dataset filter condition"
+
+        print(f'{condition} filtered {len(bad_inds)} samples')
+
+        return bad_inds
+
+    def filter_polymorphs(self):
+        """
+        find duplicate examples and pick one representative per molecule
         :return:
-        '''
-        # if type(self.dataset['molecule point group']) is not str:
-        #     self.dataset['molecule point group'] = [str(pg) for pg in self.dataset['molecule point group']]
+        """
+        # use CSD identifiers to pick out polymorphs
+        duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
 
-        self.modellable_keys = []
+        # TODO consider other ways to select 'representative' polymorph
+        # the representative structure will be randomly sampled from all available polymorphs
+        # we will add all others to 'bad_inds', and filter them out at our leisure
+        print('selecting representative structures from duplicate polymorphs')
+        bad_inds = []
+        for key in duplicate_groups.keys():
+            inds = duplicate_groups[key]
+            sampled_ind = np.random.choice(inds, size=1)
+            inds.remove(sampled_ind)  # remove the good one
+            bad_inds.extend(inds)  # delete unselected polymorphs from the dataset
 
-        # manually add this one to get started
-        self.dataset['molecule num atoms'] = np.asarray(self.dataset['molecule num atoms'])
-        self.modellable_keys.append('molecule num atoms')
+        return bad_inds
 
-        for key in self.dataset_keys:
-            if ('atom' not in key) and ('symmetry operators' not in key) \
-                    and ('pressure' not in key) and ('chemical name' not in key) \
-                    and ('disorder details' not in key) and ('polymorph' not in key) \
-                    and ('identifier' not in key) and ('date' not in key) \
-                    and ('smiles' not in key) and ('formula' not in key) \
-                    and ('xyz' not in key) and ('organic' not in key) \
-                    and ('polymeric' not in key) and ('organometallic' not in key) \
-                    and ('powder' not in key) and ('spacegroup' not in key) \
-                    and ('cell length' not in key) and ('angles' not in key) \
-                    and ('radiation' not in key) and ('setting' not in key) \
-                    and ('planes' not in key) and (('centroids') not in key) \
-                    and ('axes' not in key):  # leave atom features as lists, as well as things we don't want to be categorized
-                self.dataset[key] = np.asarray(self.dataset[key])  # convert molecule and crystal features to numpy arrays for easy processing
+    def filter_duplicate_molecules(self):
+        """
+        find duplicate examples and pick one representative per molecule
+        :return:
+        """
+        # the representative structure will be randomly sampled from all available identical molecules
+        # we will add all others to 'bad_inds', and filter them out at our leisure
+        print('selecting representative structures from duplicate molecules')
+        bad_inds = []
+        for key in self.molecules_in_crystals_dict.keys():
+            mol_inds = self.molecules_in_crystals_dict[key]
+            crystal_identifiers = [self.mol_to_crystal_dict[ind] for ind in mol_inds]
+            crystal_inds = [self.dataset.loc[self.dataset['crystal_identifier'] == identifier].index[0] for identifier in crystal_identifiers]
+            sampled_ind = np.random.choice(crystal_inds, size=1)
+            crystal_inds.remove(sampled_ind)  # remove the good one
+            bad_inds.extend(crystal_inds)  # delete unselected polymorphs from the dataset
 
-                if self.dataset[key].dtype == bool:  # keep bools
-                    self.modellable_keys.append(key)
-                    pass  # already effectively 'one-hot'
-
-                elif self.dataset[key].dtype.type is np.str_:  # now, process categorial strings into one-hots
-                    unique_entries = np.unique(self.dataset[key])
-                    print("One-hotting " + key + " with unique entries {}".format(unique_entries))
-                    for entry in unique_entries:
-                        self.dataset[key + ' is ' + entry] = self.dataset[key] == entry
-                        self.modellable_keys.append(key + ' is ' + entry)
-
-                elif self.dataset[key].dtype == int:
-                    self.modellable_keys.append(key)
-                    pass
-                elif self.dataset[key].dtype == float:
-                    self.modellable_keys.append(key)
-                    pass
-
-        self.finished_numerization = True
+        return bad_inds
 
 
 if __name__ == '__main__':
-    config = None
-    # todo deprecate for new dataset construction method
-    miner = DataManager(dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/may_new_pull/mol_features', config=None, collect_chunks=True)
-    miner.process_new_dataset(test_mode=False)
+    miner = DataManager(device='cuda', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
+    miner.process_new_dataset('new_dataset.pkl')
+    #
+    # test_conditions = [
+    #     ['molecule_mass', 'range', [0, 300]],
+    #     ['crystal_space_group_setting', 'not_in', [2]],
+    #     ['crystal_space_group_number', 'in', [1, 2, 14, 19]],
+    #     ['atom_atomic_numbers', 'range', [0, 20]],
+    #     ['crystal_is_organic', 'in', [True]],
+    #     ['molecule_is_symmetric_top', 'not_in', [True]]
+    # ]
+    #
+    # miner.load_dataset_for_modelling(dataset_name='new_dataset.pkl',
+    #                                  filter_conditions=test_conditions, filter_polymorphs=True, filter_duplicate_molecules=True)
+    #
+    aa = 1
