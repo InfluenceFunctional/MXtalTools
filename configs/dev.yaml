@@ -1,10 +1,9 @@
-test_mode: False
+test_mode: True
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-save_dataset: False
 anomaly_detection: False  # slows down the code
-mode: regression  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
-dataset_yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/dataset/regression.yaml'
+mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
+dataset_yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/dataset/gan.yaml'
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 # batching & convergence
@@ -22,22 +21,27 @@ logger:
   sample_reporting_frequency: 5
   log_figures: True
   experiment_tag: dev
+
 sample_steps: 20 # now for mini csp
 sample_move_size: 0.001 # currently unused
+
 extra_test_set_path: null  # todo reimplement
 extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+
 seeds:
   model: 0
   dataset: 0
+
 # for reloading prior checkpoints
 discriminator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
 generator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
+
 discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
 
-generate_sgs: ["P-1"] #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 
 # for GAN training
 generator:

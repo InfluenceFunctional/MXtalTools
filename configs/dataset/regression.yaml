@@ -7,6 +7,7 @@
 
 seed: 1
 max_dataset_length: 1000000
+save_dataset: False
 
 regression_target: 'crystal_packing_coefficient'
 single_molecule_dataset_identifier: null

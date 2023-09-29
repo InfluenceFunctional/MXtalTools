@@ -52,6 +52,8 @@ class TrainingDataBuilder:
         dataset = dataset.loc[np.random.choice(len(dataset), self.dataset_length, replace=False)]
         dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
         dataset = self.last_minute_featurization_and_one_hots(dataset, config)  # add a few odds & ends
+        if config.save_dataset:
+            dataset.to_pickle('training_dataset.pkl')
 
         '''identify keys to load & track'''
         self.atom_keys = config.atom_feature_keys
