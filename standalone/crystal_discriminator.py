@@ -115,7 +115,7 @@ class StandaloneDiscriminator():
             generator_density_matching_loss(
                 mol_data.y,
                 self.dataDims['target_mean'], self.dataDims['target_std'],
-                self.tracking_mol_volume_ind, self.dataDims['tracking_features'].index('crystal packing coefficient'),
+                self.tracking_mol_volume_ind, self.dataDims['tracking_features'].index('crystal_packing_coefficient'),
                 supercell_data, cell_params_i,
                 precomputed_volumes=generated_cell_volumes, loss_func='l1')
 

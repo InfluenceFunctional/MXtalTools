@@ -6,7 +6,7 @@ from ase.visualize import view
 from ase import Atoms
 from pyxtal import symmetry
 from crystal_building.utils_np import fractional_transform_np
-from crystal_building.utils import build_unit_cell, ref_to_supercell
+from crystal_building.utils import build_unit_cell, unit_cell_to_convolution_cluster
 from constants.space_group_info import SYM_OPS
 from crystal_building.coordinate_transformations import coor_trans_matrix
 
@@ -105,9 +105,9 @@ zn_centroids = fractional_transform_np(unit_cell[:, 0], T_cf)
 crystal = Atoms(symbols=species * 4, positions=unit_cell.reshape(84, 3), cell=T_fc.T)
 view(crystal)
 
-coords, atoms, inds, copies = ref_to_supercell([unit_cell], torch.Tensor(T_fc).permute(1, 0)[None, :, :], torch.Tensor(T_fc)[None, :, :],
-                                               [torch.ones(21)], [4], supercell_scale=3, cutoff=5, pare_to_convolution_cluster=True
-                                               )
+coords, atoms, inds, copies = unit_cell_to_convolution_cluster([unit_cell], torch.Tensor(T_fc).permute(1, 0)[None, :, :], torch.Tensor(T_fc)[None, :, :],
+                                                               [torch.ones(21)], [4], supercell_scale=3, cutoff=5, pare_to_convolution_cluster=True
+                                                               )
 
 supercell = Atoms(symbols=species * copies, positions=coords[0].cpu().detach().numpy(), cell=T_fc.T)
 view(supercell)

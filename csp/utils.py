@@ -187,7 +187,7 @@ def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supe
 
     fig.update_layout(width=800, height=800, font=dict(size=12), xaxis_range=[0, 2])
     fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
-    fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing prediction')
+    fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing_prediction')
 
     wandb.log({'Generated Sample Analysis': fig})
 

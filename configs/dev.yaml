@@ -37,15 +37,15 @@ discriminator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_
 generator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
 
-discriminator_positional_noise: 0
+discriminator_positional_noise: 0.1
 generator_positional_noise: 0
 regressor_positional_noise: 0
 
 generate_sgs: ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
-
+supercell_size: 5
 # for GAN training
 generator:
-  canonical_conformer_orientation: 'standardized' # 'standardized' 'random'
+  canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
   train_vdw: True
   train_adversarially: True
@@ -70,41 +70,41 @@ generator:
     lr_shrink_lambda: 0.99
 
   model:
-    num_fc_layers: 2
+    num_fc_layers: 4
     fc_depth: 512
     activation: 'gelu'
     fc_dropout_probability: 0
     fc_norm_mode: layer
+    conditioning_mode: 'all_layers' # 'first_layer" or 'all_layers'
 
     prior: multivariate normal
     prior_dimension: 12
+    radial_norm_factor: 5
 
     conditioner:
-      skinny_atomwise_features: False  # cut atom features down to bare minimum for conditioner input
-      concat_mol_features: True  # exclusive with skinny features
-      init_atom_embedding_dim: 5
-      graph_convolution_layers: 4
-      graph_filters: 64
-      atom_embedding_size: 256
-      output_dim: 256
-      graph_norm: 'graph layer'
-      num_spherical: 6
-      num_radial: 36
-      graph_convolution_cutoff: 3
-      max_num_neighbors: 100
-      radial_function: 'gaussian' # bessel or gaussian
-      num_attention_heads: 1 # mikenet GATv2 mode only - must evenly divide graph filters
-      graph_convolution_type: 'TransformerConv' #'TransformerConv' 'none' GATv2, schnet, or full message passing, or 'TransformerConv'
-      add_spherical_basis: False # mikenet only
-      add_torsional_basis: False
-      graph_aggregator: max # combo, geometric max mean sum attention
-      positional_embedding: 'sph3' # 'sph' or 'pos' or 'combo', for 'geometric' pooling
-
-      num_fc_layers: 0
+      graph_convolution_type: TransformerConv
+      graph_aggregator:  max
+      concat_mol_to_atom_features: True
+      activation: gelu
+      num_fc_layers: 2
       fc_depth: 128
-      activation: 'gelu'
-      fc_dropout_probability: 0
       fc_norm_mode: null
+      fc_dropout_probability: 0
+      graph_node_norm: null
+      graph_node_dropout: 0
+      graph_message_norm: null
+      graph_message_dropout: 0
+      num_attention_heads: 4
+      graph_message_depth: 128
+      graph_node_dims: 256
+      num_graph_convolutions: 4
+      graph_embedding_depth: 256
+      nodewise_fc_layers: 1
+      num_radial: 32
+      radial_function: bessel
+      max_num_neighbors: 100
+      convolution_cutoff: 6
+      atom_type_embedding_dims: 5
 
 discriminator:
   train_adversarially: True
@@ -128,27 +128,30 @@ discriminator:
     lr_shrink_lambda: 0.99
 
   model:
-    crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
-    graph_convolution_layers: 2
-    graph_filters: 32
-    atom_embedding_size: 64
-    graph_norm: 'graph layer' # layer, graph, batch, graph layer
-    num_spherical: 5
-    num_radial: 32
-    graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
-    max_num_neighbors: 100
-    radial_function: 'bessel' # 'gaussian' or 'bessel'
-    num_attention_heads: 4 # mikenet GATv2 or TransformerConv mode only - must evenly divide graph filters
-    graph_convolution_type: 'TransformerConv' # 'full message passing' or schnet or 'GATv2' or 'TransformerConv'
-    add_spherical_basis: False # mikenet only
-    add_torsional_basis: False #
-    graph_aggregator: combo
-
-    num_fc_layers: 4
-    fc_depth: 64
+    graph_convolution_type: TransformerConv
+    graph_aggregator:  combo
+    concat_mol_to_atom_features: True
     activation: gelu
-    fc_dropout_probability: 0
-    fc_norm_mode: layer # batch, layer
+    num_fc_layers: 2
+    fc_depth: 128
+    fc_norm_mode: 'layer'
+    fc_dropout_probability: 0.5
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0.5
+    graph_message_norm: null
+    graph_message_dropout: 0.5
+    num_attention_heads: 4
+    graph_message_depth: 128
+    graph_node_dims: 256
+    num_graph_convolutions: 4
+    graph_embedding_depth: 256
+    nodewise_fc_layers: 1
+    num_radial: 12
+    radial_function: bessel
+    max_num_neighbors: 100
+    convolution_cutoff: 6
+    atom_type_embedding_dims: 5
+    periodic_convolution_type: 'all_layers'  # or 'last_layer'
 
 regressor:
   optimizer:

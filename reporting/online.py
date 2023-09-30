@@ -12,18 +12,18 @@ from crystal_building.coordinate_transformations import cell_vol
 from models.utils import softmax_and_score, norm_scores
 
 
-def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
-    n_crystal_features = config.dataDims['num lattice features']
+def cell_params_analysis(config, dataDims, wandb, train_loader, test_epoch_stats_dict):
+    n_crystal_features = 12
     # slightly expensive to do this every time
     dataset_cell_distribution = np.asarray(
         [train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
 
-    cleaned_samples = test_epoch_stats_dict['final generated cell parameters']
+    cleaned_samples = test_epoch_stats_dict['final_generated_cell_parameters']
 
     overlaps_1d = {}
     sample_means = {}
     sample_stds = {}
-    for i, key in enumerate(config.dataDims['lattice features']):
+    for i, key in enumerate(dataDims['lattice_features']):
         mini, maxi = np.amin(dataset_cell_distribution[:, i]), np.amax(dataset_cell_distribution[:, i])
         h1, r1 = np.histogram(dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
         h1 = h1 / len(dataset_cell_distribution[:, i])
@@ -38,9 +38,11 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
 
     average_overlap = np.average([overlaps_1d[key] for key in overlaps_1d.keys()])
     overlaps_1d['average 1D overlap'] = average_overlap
-    wandb.log(overlaps_1d.copy())
-    wandb.log(sample_means)
-    wandb.log(sample_stds)
+    overlap_results = {}
+    overlap_results.update(overlaps_1d)
+    overlap_results.update(sample_means)
+    overlap_results.update(sample_stds)
+    wandb.log(overlap_results)
 
     if config.logger.log_figures:
         fig_dict = {}  # consider replacing by Joy plot
@@ -52,31 +54,35 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
             orientation='h',
             marker=dict(color='red')
         ))
-        fig_dict['1D overlaps'] = fig
+        fig_dict['1D_overlaps'] = fig
 
         # 1d Histograms
+        fig = make_subplots(rows=4,cols=3,subplot_titles=dataDims['lattice_features'])
         for i in range(n_crystal_features):
-            fig = go.Figure()
+            row = i // 3 + 1
+            col = i % 3 + 1
 
             fig.add_trace(go.Histogram(
                 x=dataset_cell_distribution[:, i],
                 histnorm='probability density',
                 nbinsx=100,
                 name="Dataset samples",
-                showlegend=True,
-            ))
+                showlegend=True if i == 0 else False,
+                marker_color='#1f77b4',
+            ), row=row, col=col)
 
             fig.add_trace(go.Histogram(
                 x=cleaned_samples[:, i],
                 histnorm='probability density',
                 nbinsx=100,
-                name="Cleaned Samples",
-                showlegend=True,
-            ))
-            fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-            fig.update_traces(opacity=0.5)
+                name="Generated Samples",
+                showlegend=True if i == 0 else False,
+                marker_color='#ff7f0e',
+            ), row=row, col=col)
+        fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        fig.update_traces(opacity=0.5)
 
-            fig_dict[config.dataDims['lattice features'][i] + ' distribution'] = fig
+        fig_dict['lattice_features_distribution'] = fig
 
         wandb.log(fig_dict)
 
@@ -98,11 +104,11 @@ def plotly_setup(config):
 
 
 def cell_density_plot(config, wandb, epoch_stats_dict, layout):
-    if epoch_stats_dict['generator packing prediction'] is not None and \
-            epoch_stats_dict['generator packing target'] is not None:
+    if epoch_stats_dict['generator_packing_prediction'] is not None and \
+            epoch_stats_dict['generator_packing_target'] is not None:
 
-        x = epoch_stats_dict['generator packing target']  # generator_losses['generator per mol vdw loss']
-        y = epoch_stats_dict['generator packing prediction']  # generator_losses['generator packing loss']
+        x = epoch_stats_dict['generator_packing_target']  # generator_losses['generator per mol vdw loss']
+        y = epoch_stats_dict['generator_packing_prediction']  # generator_losses['generator packing loss']
 
         xy = np.vstack([x, y])
         try:
@@ -124,7 +130,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
         fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)', showlegend=False))
 
         fig.layout.margin = layout.margin
-        fig.update_layout(xaxis_title='packing target', yaxis_title='packing prediction')
+        fig.update_layout(xaxis_title='packing_target', yaxis_title='packing_prediction')
 
         # #fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
         if config.logger.log_figures:
@@ -133,42 +139,42 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
             fig.show()
 
 
-def process_discriminator_outputs(config, epoch_stats_dict):
+def process_discriminator_outputs(dataDims, epoch_stats_dict):
     scores_dict = {}
     vdw_penalty_dict = {}
     tracking_features_dict = {}
     packing_coeff_dict = {}
 
-    generator_inds = np.where(epoch_stats_dict['generator sample source'] == 0)
-    randn_inds = np.where(epoch_stats_dict['generator sample source'] == 1)[0]
-    distorted_inds = np.where(epoch_stats_dict['generator sample source'] == 2)[0]
+    generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 0)
+    randn_inds = np.where(epoch_stats_dict['generator_sample_source'] == 1)[0]
+    distorted_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0]
 
-    scores_dict['CSD'] = softmax_and_score(epoch_stats_dict['discriminator real score'])
-    scores_dict['Gaussian'] = softmax_and_score(epoch_stats_dict['discriminator fake score'][randn_inds])
-    scores_dict['Generator'] = softmax_and_score(epoch_stats_dict['discriminator fake score'][generator_inds])
-    scores_dict['Distorted'] = softmax_and_score(epoch_stats_dict['discriminator fake score'][distorted_inds])
+    scores_dict['CSD'] = softmax_and_score(epoch_stats_dict['discriminator_real_score'])
+    scores_dict['Gaussian'] = softmax_and_score(epoch_stats_dict['discriminator_fake_score'][randn_inds])
+    scores_dict['Generator'] = softmax_and_score(epoch_stats_dict['discriminator_fake_score'][generator_inds])
+    scores_dict['Distorted'] = softmax_and_score(epoch_stats_dict['discriminator_fake_score'][distorted_inds])
 
-    tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(config.dataDims['tracking_features'],
+    tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
                                                                     epoch_stats_dict['tracking_features'].T)}
     tracking_features_dict['Distorted'] = {feat: vec for feat, vec in
-                                           zip(config.dataDims['tracking_features'],
+                                           zip(dataDims['tracking_features'],
                                                epoch_stats_dict['tracking_features'][distorted_inds].T)}
     tracking_features_dict['Gaussian'] = {feat: vec for feat, vec in
-                                          zip(config.dataDims['tracking_features'],
+                                          zip(dataDims['tracking_features'],
                                               epoch_stats_dict['tracking_features'][randn_inds].T)}
     tracking_features_dict['Generator'] = {feat: vec for feat, vec in
-                                           zip(config.dataDims['tracking_features'],
+                                           zip(dataDims['tracking_features'],
                                                epoch_stats_dict['tracking_features'][generator_inds].T)}
 
     vdw_penalty_dict['CSD'] = epoch_stats_dict['real vdw penalty']
-    vdw_penalty_dict['Gaussian'] = epoch_stats_dict['fake vdw penalty'][randn_inds]
-    vdw_penalty_dict['Generator'] = epoch_stats_dict['fake vdw penalty'][generator_inds]
-    vdw_penalty_dict['Distorted'] = epoch_stats_dict['fake vdw penalty'][distorted_inds]
+    vdw_penalty_dict['Gaussian'] = epoch_stats_dict['fake_vdw_penalty'][randn_inds]
+    vdw_penalty_dict['Generator'] = epoch_stats_dict['fake_vdw_penalty'][generator_inds]
+    vdw_penalty_dict['Distorted'] = epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
 
-    packing_coeff_dict['CSD'] = epoch_stats_dict['real packing coefficients']
-    packing_coeff_dict['Gaussian'] = epoch_stats_dict['generated packing coefficients'][randn_inds]
-    packing_coeff_dict['Generator'] = epoch_stats_dict['generated packing coefficients'][generator_inds]
-    packing_coeff_dict['Distorted'] = epoch_stats_dict['generated packing coefficients'][distorted_inds]
+    packing_coeff_dict['CSD'] = epoch_stats_dict['real_packing_coefficients']
+    packing_coeff_dict['Gaussian'] = epoch_stats_dict['generated_packing_coefficients'][randn_inds]
+    packing_coeff_dict['Generator'] = epoch_stats_dict['generated_packing_coefficients'][generator_inds]
+    packing_coeff_dict['Distorted'] = epoch_stats_dict['generated_packing_coefficients'][distorted_inds]
 
     return scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict
 
@@ -316,19 +322,19 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
     return None
 
 
-def plot_generator_loss_correlates(config, wandb, epoch_stats_dict, generator_losses, layout):
+def plot_generator_loss_correlates(config, dataDims, wandb, epoch_stats_dict, generator_losses, layout):
     correlates_dict = {}
     generator_losses['all'] = np.vstack([generator_losses[key] for key in generator_losses.keys()]).T.sum(1)
     loss_labels = list(generator_losses.keys())
 
     tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
 
-    for i in range(config.dataDims['num_tracking_features']):  # not that interesting
+    for i in range(dataDims['num_tracking_features']):  # not that interesting
         if (np.average(tracking_features[:, i] != 0) > 0.05):
             corr_dict = {
                 loss_label: np.corrcoef(generator_losses[loss_label], tracking_features[:, i], rowvar=False)[0, 1]
                 for loss_label in loss_labels}
-            correlates_dict[config.dataDims['tracking_features'][i]] = corr_dict
+            correlates_dict[dataDims['tracking_features'][i]] = corr_dict
 
     sort_inds = np.argsort(np.asarray([(correlates_dict[key]['all']) for key in correlates_dict.keys()]))
     keys_list = list(correlates_dict.keys())
@@ -352,16 +358,16 @@ def plot_generator_loss_correlates(config, wandb, epoch_stats_dict, generator_lo
     wandb.log({'Generator Loss Correlates': fig})
 
 
-def plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout):
+def plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout):
     correlates_dict = {}
-    real_scores = softmax_and_score(epoch_stats_dict['discriminator real score'])
+    real_scores = softmax_and_score(epoch_stats_dict['discriminator_real_score'])
     tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
 
-    for i in range(config.dataDims['num_tracking_features']):  # not that interesting
+    for i in range(dataDims['num_tracking_features']):  # not that interesting
         if (np.average(tracking_features[:, i] != 0) > 0.05):
             corr = np.corrcoef(real_scores, tracking_features[:, i], rowvar=False)[0, 1]
             if np.abs(corr) > 0.05:
-                correlates_dict[config.dataDims['tracking_features'][i]] = corr
+                correlates_dict[dataDims['tracking_features'][i]] = corr
 
     sort_inds = np.argsort(np.asarray([(correlates_dict[key]) for key in correlates_dict.keys()]))
     keys_list = list(correlates_dict.keys())
@@ -381,7 +387,7 @@ def plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout)
     wandb.log({'Discriminator Score Correlates': fig})
 
 
-def sampling_telemetry_plot(config, wandb, sampling_dict):
+def sampling_telemetry_plot(config, wandb, sampling_dict):  # todo deprecate or rewrite
     n_runs = len(sampling_dict['scores'])
     num_iters = sampling_dict['scores'].shape[1]
 
@@ -542,17 +548,17 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
     scores_dict = {}
     vdw_penalty_dict = {}  # todo harmonize 'penalties' and 'scores' (negatives)
     tracking_features_dict = {}
-    # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
-    randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)[0]
-    distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)[0]
+    # nf_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 0)
+    randn_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 1)[0]
+    distorted_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 2)[0]
 
     '''
     extract all the various types of scores
     '''
-    scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'], old_method=True, correct_discontinuity=True)
-    scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds], old_method=True, correct_discontinuity=True)
-    # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
-    scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds], old_method=True, correct_discontinuity=True)
+    scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator_real_score'], old_method=True, correct_discontinuity=True)
+    scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator_fake_score'][randn_inds], old_method=True, correct_discontinuity=True)
+    # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator_fake_score'][nf_inds])[:, 1]
+    scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator_fake_score'][distorted_inds], old_method=True, correct_discontinuity=True)
 
     tracking_features_dict['Test Real'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], test_epoch_stats_dict['tracking_features'].T)}
     tracking_features_dict['Test Distorted'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], test_epoch_stats_dict['tracking_features'][distorted_inds].T)}
@@ -564,7 +570,7 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
         scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking_features'][distorted_inds], dataDims)
 
     if train_epoch_stats_dict is not None:
-        scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'], old_method=True, correct_discontinuity=True)
+        scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator_real_score'], old_method=True, correct_discontinuity=True)
         tracking_features_dict['Train Real'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], train_epoch_stats_dict['tracking_features'].T)}
 
         if size_normed_score:
@@ -575,8 +581,8 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
         wandb.log({'Train score std': np.std(scores_dict['Train Real'])})
 
     vdw_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdw penalty']
-    vdw_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake vdw penalty'][randn_inds]
-    vdw_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake vdw penalty'][distorted_inds]
+    vdw_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake_vdw_penalty'][randn_inds]
+    vdw_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
 
     wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
     wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})
@@ -598,7 +604,7 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
         if target_identifiers_inds[target] != []:  # record target data
 
             target_index = target_identifiers_inds[target]
-            raw_scores = extra_test_dict['discriminator real score'][target_index]
+            raw_scores = extra_test_dict['discriminator_real_score'][target_index]
             scores = softmax_and_score(raw_scores[None, :], old_method=True, correct_discontinuity=True)
             scores_dict[target + ' exp'] = scores
 
@@ -613,7 +619,7 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
 
         if all_identifiers[target] != []:  # record sample data
             target_indices = all_identifiers[target]
-            raw_scores = extra_test_dict['discriminator real score'][target_indices]
+            raw_scores = extra_test_dict['discriminator_real_score'][target_indices]
             scores = softmax_and_score(raw_scores, old_method=True, correct_discontinuity=True)
             scores_dict[target] = scores
             tracking_features_dict[target] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_indices].T)}
@@ -1254,25 +1260,25 @@ def log_cubic_defect(samples):
 
 
 def process_generator_losses(config, epoch_stats_dict):
-    generator_loss_keys = ['generator packing prediction', 'generator packing target', 'generator per mol vdw loss',
+    generator_loss_keys = ['generator_packing_prediction', 'generator_packing_target', 'generator per mol vdw loss',
                            'generator adversarial loss', 'generator h bond loss']
     generator_losses = {}
     for key in generator_loss_keys:
         if key in epoch_stats_dict.keys():
             if epoch_stats_dict[key] is not None:
                 if key == 'generator adversarial loss':
-                    if config.train_generator_adversarially:
+                    if config.generator.train_adversarially:
                         generator_losses[key[10:]] = epoch_stats_dict[key]
                     else:
                         pass
                 else:
                     generator_losses[key[10:]] = epoch_stats_dict[key]
 
-                if key == 'generator packing target':
+                if key == 'generator_packing_target':
                     generator_losses['packing normed mae'] = np.abs(
-                        generator_losses['packing prediction'] - generator_losses['packing target']) / \
-                                                             generator_losses['packing target']
-                    del generator_losses['packing prediction'], generator_losses['packing target']
+                        generator_losses['packing_prediction'] - generator_losses['packing_target']) / \
+                                                             generator_losses['packing_target']
+                    del generator_losses['packing_prediction'], generator_losses['packing_target']
             else:
                 generator_losses[key[10:]] = None
 
@@ -1280,18 +1286,18 @@ def process_generator_losses(config, epoch_stats_dict):
                               value is not None}
 
 
-def cell_generation_analysis(config, epoch_stats_dict):
+def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     """
     do analysis and plotting for cell generator
     """
     layout = plotly_setup(config)
-    log_cubic_defect(epoch_stats_dict['final generated cell parameters'])
-    wandb.log({"Generated cell parameter variation": epoch_stats_dict['generated cell parameters'].std(0).mean()})
+    log_cubic_defect(epoch_stats_dict['final_generated_cell_parameters'])
+    wandb.log({"Generated cell parameter variation": epoch_stats_dict['generated_cell_parameters'].std(0).mean()})
     generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
     wandb.log(average_losses_dict)
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
-    plot_generator_loss_correlates(config, wandb, epoch_stats_dict, generator_losses, layout)
+    plot_generator_loss_correlates(config, dataDims, wandb, epoch_stats_dict, generator_losses, layout)
 
     return None
 
@@ -1398,13 +1404,13 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
     Do analysis and upload results to w&b
     """
     if (test_epoch_stats_dict is not None) and config.mode == 'gan':
-        if test_epoch_stats_dict['generated cell parameters'] is not None:
+        if test_epoch_stats_dict['generated_cell_parameters'] is not None:
             cell_params_analysis(config, dataDims, wandb, test_loader, test_epoch_stats_dict)
 
-        if config.train_generator_vdw or config.train_generator_adversarially:
+        if config.generator.train_vdw or config.generator.train_adversarially:
             cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
 
-        if config.train_discriminator_on_distorted or config.train_discriminator_on_randn or config.train_discriminator_adversarially:
+        if config.discriminator.train_on_distorted or config.discriminator.train_on_randn or config.discriminator.train_adversarially:
             discriminator_analysis(config, dataDims, test_epoch_stats_dict)
 
     elif config.mode == 'regression':
@@ -1416,7 +1422,7 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
     return None
 
 
-def discriminator_analysis(config, epoch_stats_dict):
+def discriminator_analysis(config, dataDims, epoch_stats_dict):
     '''
     do analysis and plotting for cell discriminator
 
@@ -1426,9 +1432,9 @@ def discriminator_analysis(config, epoch_stats_dict):
     layout = plotly_setup(config)
 
     scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict \
-        = process_discriminator_outputs(config, epoch_stats_dict)
+        = process_discriminator_outputs(dataDims, epoch_stats_dict)
 
     discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
-    plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout)
+    plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout)
 
     return None

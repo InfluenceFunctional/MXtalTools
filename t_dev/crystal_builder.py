@@ -32,7 +32,7 @@ def cell_parameterization_and_reconstruction():
     supercell_builder = SupercellBuilder(symmetry_info, dataDims, supercell_size=supercell_size,
                                          device='cpu', rotation_basis=rotation_basis)
 
-    reference_supercells = supercell_builder.unit_cell_to_supercell(
+    reference_supercells = supercell_builder.prebuilt_unit_cell_to_supercell(
         test_crystals, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
@@ -98,7 +98,7 @@ def distorted_cell_reconstruction():
     supercell_builder = SupercellBuilder(symmetry_info, dataDims, supercell_size=supercell_size,
                                          device='cpu', rotation_basis=rotation_basis)
 
-    reference_supercells = supercell_builder.unit_cell_to_supercell(
+    reference_supercells = supercell_builder.prebuilt_unit_cell_to_supercell(
         test_crystals, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 

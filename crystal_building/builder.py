@@ -1,6 +1,6 @@
 import torch
 from crystal_building.utils import \
-    (update_supercell_data, ref_to_supercell, clean_cell_output,
+    (update_supercell_data, unit_cell_to_convolution_cluster, clean_cell_output,
      align_crystaldata_to_principal_axes,
      batch_asymmetric_unit_pose_analysis_torch, set_sym_ops,
      rotvec2rotmat, build_unit_cell, scale_asymmetric_unit)
@@ -106,7 +106,7 @@ class SupercellBuilder:
 
         # get minimal supercell cluster for convolving about a given canonical conformer
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            ref_to_supercell(
+            unit_cell_to_convolution_cluster(
                 unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.mult,
                 supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
                 sorted_fractional_translations=self.sorted_fractional_translations,
@@ -116,7 +116,7 @@ class SupercellBuilder:
 
         return supercell_data, generated_cell_volumes, None
 
-    def unit_cell_to_supercell(self, supercell_data, supercell_size=5, graph_convolution_cutoff=6, pare_to_convolution_cluster=True):
+    def prebuilt_unit_cell_to_supercell(self, supercell_data, supercell_size=5, graph_convolution_cutoff=6, pare_to_convolution_cluster=True):
         """
         build a supercell cluster using a pre-built unit cell
         will not check for physicality or apply any symmetry options - merely pattern the unit cell
@@ -125,21 +125,21 @@ class SupercellBuilder:
         """
         supercell_data = supercell_data.clone().to(self.device)
 
-        T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform(
-            cell_lengths=supercell_data.cell_params[:, 0:3], cell_angles=supercell_data.cell_params[:, 3:6])
+        # T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform(
+        #     cell_lengths=supercell_data.cell_params[:, 0:3], cell_angles=supercell_data.cell_params[:, 3:6])
 
         atoms_list = []
         for i in range(supercell_data.num_graphs):
             atoms_i = supercell_data.x[supercell_data.batch == i]
             atoms_list.append(atoms_i)
 
-        cell_vector_list = T_fc_list.permute(0, 2, 1)  # confirmed this is the right way to do this
+        cell_vector_list = supercell_data.T_fc.permute(0, 2, 1)  # confirmed this is the right way to do this
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            ref_to_supercell(supercell_data.ref_cell_pos, cell_vector_list,
-                             T_fc_list, atoms_list, supercell_data.mult,
-                             supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
-                             sorted_fractional_translations=self.sorted_fractional_translations,
-                             pare_to_convolution_cluster=pare_to_convolution_cluster)
+            unit_cell_to_convolution_cluster(supercell_data.ref_cell_pos, cell_vector_list,
+                                             supercell_data.T_fc, atoms_list, supercell_data.mult,
+                                             supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
+                                             sorted_fractional_translations=self.sorted_fractional_translations,
+                                             pare_to_convolution_cluster=pare_to_convolution_cluster)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list, supercell_data.ref_cell_pos)
 

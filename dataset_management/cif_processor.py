@@ -44,6 +44,7 @@ for chunk_ind, chunk in zip(chunk_inds, chunks_list[start_ind:stop_ind]):
                 passed_filter, unit_cell, rd_mols = crystal_filter(crystal)
                 if passed_filter:  # filter various undesirable traits
                     crystal_dict, mol_volumes = extract_crystal_data(crystal, unit_cell)
+
                     molecules = []
                     for i_c, rd_mol in enumerate(rd_mols):
                         molecules.append(featurize_molecule(crystal, crystal_dict, rd_mol, mol_volumes[i_c], component_num=i_c))

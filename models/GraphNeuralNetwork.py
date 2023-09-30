@@ -103,7 +103,8 @@ class GraphNeuralNetwork(torch.nn.Module):
             assert not self.periodize_inside_nodes, "Cannot periodize to outside nodes if there are no outside nodes"
         elif self.outside_convolution_type == 'all_layers':
             edge_index, edge_index_inter, inside_inds, outside_inds, inside_batch, n_repeats = list(edges_dict.values())
-            dist, rbf = self.get_geom_embedding(torch.cat((edge_index, edge_index_inter), dim=1), pos)
+            edge_index = torch.cat((edge_index, edge_index_inter), dim=1)  # all edges counted in one big batch
+            dist, rbf = self.get_geom_embedding(edge_index, pos)
         elif self.outside_convolution_type == 'last_layer':
             edge_index, edge_index_inter, inside_inds, outside_inds, inside_batch, n_repeats = list(edges_dict.values())
             dist, rbf = self.get_geom_embedding(edge_index, pos)
@@ -203,7 +204,7 @@ class GCBlock(torch.nn.Module):
                 beta=True,
             )
 
-    def compute_edge_attributes(self, edge_index, rbf):
+    def compute_edge_attributes(self, rbf):
         edge_attr = self.radial_to_message(rbf)
 
         return edge_attr
@@ -213,7 +214,7 @@ class GCBlock(torch.nn.Module):
         x = self.norm1(self.node_to_message(x), batch)
 
         # generate edge embeddings
-        edge_attr = self.norm2(self.compute_edge_attributes(edge_index, rbf), batch[edge_index[0]])
+        edge_attr = self.norm2(self.compute_edge_attributes(rbf), batch[edge_index[0]])
 
         # convolve # todo only update nodes which will actually pass messages on this round
         x = self.GConv(x, edge_index, edge_attr)

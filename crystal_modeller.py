@@ -1,4 +1,3 @@
-import glob
 import os
 import time
 from datetime import datetime
@@ -94,8 +93,8 @@ class Modeller:
         self.std_dict = data_manager.standardization_dict
         del data_manager
 
-        self.train_discriminator = (config.mode == 'gan') and any((config.train_discriminator_adversarially, config.train_discriminator_on_distorted, config.train_discriminator_on_randn))
-        self.train_generator = (config.mode == 'gan') and any((config.train_generator_vdw, config.train_generator_adversarially, config.train_generator_h_bond))
+        self.train_discriminator = (config.mode == 'gan') and any((config.discriminator.train_adversarially, config.discriminator.train_on_distorted, config.discriminator.train_on_randn))
+        self.train_generator = (config.mode == 'gan') and any((config.generator.train_vdw, config.generator.train_adversarially, config.generator.train_h_bond))
         self.train_regressor = config.mode == 'regression'
 
     def prep_new_working_directory(self):
@@ -256,7 +255,7 @@ class Modeller:
     #
     #                 np.save('embedding_dict', embedding_dict) #
 
-    def embed_dataset(self, data_loader, discriminator, generator=None, regressor=None):
+    def embed_dataset(self, data_loader):
         t0 = time.time()
         discriminator.eval()
 
@@ -274,8 +273,8 @@ class Modeller:
             '''
 
             '''real data'''
-            real_supercell_data = self.supercell_builder.unit_cell_to_supercell(
-                data, self.config.supercell_size, self.config.discriminator.model.graph_convolution_cutoff)
+            real_supercell_data = self.supercell_builder.prebuilt_unit_cell_to_supercell(
+                data, self.config.supercell_size, self.config.discriminator.model.convolution_cutoff)
 
             score_on_real, real_distances_dict, latent = \
                 self.adversarial_score(real_supercell_data, return_latent=True)
@@ -294,7 +293,7 @@ class Modeller:
 
                 fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
                     real_data, generated_samples_i, self.config.supercell_size,
-                    self.config.discriminator.model.graph_convolution_cutoff,
+                    self.config.discriminator.model.convolution_cutoff,
                     align_molecules=(negative_type != 'generated'),
                     target_handedness=real_data.asym_unit_handedness,
                 )
@@ -467,7 +466,7 @@ class Modeller:
                         '''sometimes test the generator on a mini CSP problem'''
                         if (self.config.mode == 'gan') and (epoch % self.config.logger.mini_csp_frequency == 0) and \
                                 self.train_generator and (epoch > 0):
-                            self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
+                            pass # self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
 
                         '''record metrics and analysis'''
                         self.logger.log_training_metrics()
@@ -585,10 +584,10 @@ class Modeller:
         # hold discriminator training when it's beating the generator
 
         skip_discriminator_step = False
-        if (i == 0) and self.config.train_generator_adversarially:
+        if (i == 0) and self.config.generator.train_adversarially:
             skip_discriminator_step = True  # do not train except by express permission of the below condition
-        if i > 0 and self.config.train_discriminator_adversarially:  # must skip first step since there will be no fake score to compare against
-            avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator fake score'])[np.argwhere(np.asarray(epoch_stats_dict['generator sample source']) == 0)[:, 0]])[:, 1].mean()
+        if i > 0 and self.config.discriminator.train_adversarially:  # must skip first step since there will be no fake score to compare against
+            avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator_fake_score'])[np.argwhere(np.asarray(epoch_stats_dict['generator_sample_source']) == 0)[:, 0]])[:, 1].mean()
             if avg_generator_score < 0.5:
                 skip_discriminator_step = True
         return skip_discriminator_step
@@ -612,7 +611,7 @@ class Modeller:
             evaluate discriminator
             '''
             real_supercell_data = \
-                self.supercell_builder.unit_cell_to_supercell(data, self.config.supercell_size, self.config.discriminator.model.graph_convolution_cutoff)
+                self.supercell_builder.prebuilt_unit_cell_to_supercell(data, self.config.supercell_size, self.config.discriminator.model.convolution_cutoff)
 
             if self.config.device.lower() == 'cuda':  # redundant
                 real_supercell_data = real_supercell_data.cuda()
@@ -678,10 +677,10 @@ class Modeller:
                 discriminator_loss.backward()  # back-propagation
                 self.discriminator_optimizer.step()  # update parameters
 
-            stats_keys = ['discriminator real score', 'discriminator fake score',
-                          'real vdw penalty', 'fake vdw penalty',
-                          'generated cell parameters', 'final generated cell parameters',
-                          'real packing coefficients', 'generated packing coefficients']
+            stats_keys = ['discriminator_real_score', 'discriminator_fake_score',
+                          'real vdw penalty', 'fake_vdw_penalty',
+                          'generated_cell_parameters', 'final_generated_cell_parameters',
+                          'real_packing_coefficients', 'generated_packing_coefficients']
             stats_values = [score_on_real.cpu().detach().numpy(), score_on_fake.cpu().detach().numpy(),
                             -real_vdw_score.cpu().detach().numpy(), -fake_vdw_score.cpu().detach().numpy(),
                             generated_samples_i.cpu().detach().numpy(), generated_samples,
@@ -710,7 +709,7 @@ class Modeller:
                 generator_loss.backward()  # back-propagation
                 self.generator_optimizer.step()  # update parameters
 
-            self.logger.update_stats_dict(self.epoch_type, 'final generated cell parameters',
+            self.logger.update_stats_dict(self.epoch_type, 'final_generated_cell_parameters',
                                           supercell_examples.cell_params.cpu().detach().numpy(), mode='extend')
 
             del supercell_examples
@@ -722,7 +721,8 @@ class Modeller:
         """
 
         '''get real supercells'''
-        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(data, self.config.supercell_size, self.config.discriminator.model.graph_convolution_cutoff)
+        real_supercell_data = self.supercell_builder.prebuilt_unit_cell_to_supercell(
+            data, self.config.supercell_size, self.config.discriminator.model.convolution_cutoff)
 
         '''get fake supercells'''
         generated_samples_i, negative_type, generator_data = \
@@ -730,7 +730,7 @@ class Modeller:
 
         fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
-            self.config.discriminator.model.graph_convolution_cutoff,
+            self.config.discriminator.model.convolution_cutoff,
             align_molecules=(negative_type != 'generated'),
             target_handedness=generator_data.asym_unit_handedness,
         )
@@ -765,7 +765,7 @@ class Modeller:
         if mode_override is not None:
             mode = mode_override
         else:
-            mode = self.config.canonical_conformer_orientation
+            mode = self.config.generator.canonical_conformer_orientation
 
         if mode == 'standardized':
             data = align_crystaldata_to_principal_axes(data, handedness=data.asym_unit_handedness)
@@ -809,19 +809,15 @@ class Modeller:
             with torch.no_grad():
                 standardized_target_packing_coeff = self.regressor(mol_data.clone().detach().to(self.config.device)).detach()[:, 0]
         else:
-            target_packing_coeff = mol_data.tracking[:, self.dataDims['tracking_features'].index('crystal packing coefficient')]
-            standardized_target_packing_coeff = ((target_packing_coeff - self.dataDims['target_mean']) / self.dataDims['target_std']).to(self.config.device)
+            target_packing_coeff = mol_data.tracking[:, self.dataDims['tracking_features'].index('crystal_packing_coefficient')]
+            standardized_target_packing_coeff = ((target_packing_coeff - self.std_dict['crystal_packing_coefficient'][0]) / self.std_dict['crystal_packing_coefficient'][1]).to(self.config.device)
 
-        standardized_target_packing_coeff += torch.randn_like(standardized_target_packing_coeff) * self.config.packing_target_noise
-
-        for ii in range(len(standardized_target_packing_coeff)):
-            mol_inds = torch.arange(mol_data.ptr[ii], mol_data.ptr[ii + 1])
-            mol_data.x[mol_inds, int(self.sym_info['packing_coefficient_ind'])] = standardized_target_packing_coeff[ii]  # assign target packing coefficient
+        standardized_target_packing_coeff += torch.randn_like(standardized_target_packing_coeff) * self.config.generator.packing_target_noise
 
         # generate the samples
-        [generated_samples, latent, prior, condition] = self.generator.forward(
-            n_samples=mol_data.num_graphs, conditions=mol_data.to(self.config.device).clone(),
-            return_latent=True, return_condition=True, return_prior=True)
+        [generated_samples, prior, condition] = self.generator.forward(
+            n_samples=mol_data.num_graphs, molecule_data=mol_data.to(self.config.device).clone(),
+            return_condition=True, return_prior=True, target_packing=standardized_target_packing_coeff)
 
         return generated_samples, prior, standardized_target_packing_coeff, mol_data
 
@@ -836,7 +832,7 @@ class Modeller:
         supercell_data, generated_cell_volumes, _ = (
             self.supercell_builder.build_supercells(
                 generator_data, generated_samples, self.config.supercell_size,
-                self.config.discriminator.model.graph_convolution_cutoff,
+                self.config.discriminator.model.convolution_cutoff,
                 align_molecules=False
             ))
 
@@ -848,11 +844,11 @@ class Modeller:
                                                 dist_dict=dist_dict,
                                                 num_graphs=generator_data.num_graphs,
                                                 graph_sizes=generator_data.mol_size,
-                                                loss_func=self.config.vdw_loss_func)
+                                                loss_func=self.config.generator.vdw_loss_func)
         packing_loss, packing_prediction, packing_target, packing_csd = \
             self.generator_density_matching_loss(
                 standardized_target_packing, supercell_data, generated_samples,
-                precomputed_volumes=generated_cell_volumes, loss_func=self.config.density_loss_func)
+                precomputed_volumes=generated_cell_volumes, loss_func=self.config.generator.density_loss_func)
 
         return discriminator_raw_output, generated_samples.cpu().detach().numpy(), \
             packing_loss, packing_prediction.cpu().detach().numpy(), \
@@ -903,18 +899,18 @@ class Modeller:
         return dataset_builder
 
     def what_generators_to_use(self, override_randn, override_distorted, override_adversarial):
-        n_generators = sum((self.config.train_discriminator_on_randn or override_randn,
-                            self.config.train_discriminator_on_distorted or override_distorted,
-                            self.config.train_discriminator_adversarially or override_adversarial))
+        n_generators = sum((self.config.discriminator.train_on_randn or override_randn,
+                            self.config.discriminator.train_on_distorted or override_distorted,
+                            self.config.discriminator.train_adversarially or override_adversarial))
 
         gen_randint = np.random.randint(0, n_generators, 1)
 
         generator_ind_list = []
-        if self.config.train_discriminator_adversarially or override_adversarial:
+        if self.config.discriminator.train_adversarially or override_adversarial:
             generator_ind_list.append(1)
-        if self.config.train_discriminator_on_randn or override_randn:
+        if self.config.discriminator.train_on_randn or override_randn:
             generator_ind_list.append(2)
-        if self.config.train_discriminator_on_distorted or override_distorted:
+        if self.config.discriminator.train_on_distorted or override_distorted:
             generator_ind_list.append(3)
 
         generator_ind = generator_ind_list[int(gen_randint)]  # randomly select which generator to use from the available set
@@ -927,28 +923,28 @@ class Modeller:
         """
         n_generators, generator_ind = self.what_generators_to_use(override_randn, override_distorted, override_adversarial)
 
-        if (self.config.train_discriminator_adversarially or override_adversarial) and (generator_ind == 1):
+        if (self.config.discriminator.train_adversarially or override_adversarial) and (generator_ind == 1):
             negative_type = 'generator'
             with torch.no_grad():
                 generated_samples, _, _, generator_data = self.get_generator_samples(real_data)
 
-                self.logger.update_stats_dict(self.epoch_type, 'generator sample source', np.zeros(len(generated_samples)), mode='extend')
+                self.logger.update_stats_dict(self.epoch_type, 'generator_sample_source', np.zeros(len(generated_samples)), mode='extend')
 
-        elif (self.config.train_discriminator_on_randn or override_randn) and (generator_ind == 2):
+        elif (self.config.discriminator.train_on_randn or override_randn) and (generator_ind == 2):
             generator_data = real_data  # no change to original
             negative_type = 'randn'
 
             generated_samples = self.gaussian_generator.forward(real_data.num_graphs, real_data).to(self.config.device)
 
-            self.logger.update_stats_dict(self.epoch_type, 'generator sample source', np.ones(len(generated_samples)), mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, 'generator_sample_source', np.ones(len(generated_samples)), mode='extend')
 
-        elif (self.config.train_discriminator_on_distorted or override_distorted) and (generator_ind == 3):
+        elif (self.config.discriminator.train_on_distorted or override_distorted) and (generator_ind == 3):
             generator_data = real_data  # no change to original
             negative_type = 'distorted'
 
             generated_samples, distortion = self.make_distorted_samples(real_data)
 
-            self.logger.update_stats_dict(self.epoch_type, 'generator sample source', 2 * np.ones(len(generated_samples)), mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, 'generator_sample_source', 2 * np.ones(len(generated_samples)), mode='extend')
             self.logger.update_stats_dict(self.epoch_type, 'distortion level',
                                           torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy(),
                                           mode='extend')
@@ -971,10 +967,10 @@ class Modeller:
         if distortion_override is not None:
             distortion = torch.randn_like(generated_samples_std) * distortion_override
         else:
-            if self.config.sample_distortion_magnitude == -1:
+            if self.config.discriminator.distortion_magnitude == -1:
                 distortion = torch.randn_like(generated_samples_std) * torch.logspace(-.5, 0.5, len(generated_samples_std)).to(generated_samples_std.device)[:, None]  # wider range
             else:
-                distortion = torch.randn_like(generated_samples_std) * self.config.sample_distortion_magnitude
+                distortion = torch.randn_like(generated_samples_std) * self.config.discriminator.distortion_magnitude
 
         distorted_samples_std = (generated_samples_std + distortion).to(self.config.device)  # add jitter and return in standardized basis
 
@@ -1136,7 +1132,7 @@ class Modeller:
 
             # sometimes test the generator on a mini CSP problem
             if (self.config.mode == 'gan') and self.train_generator:
-                self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
+                pass # self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
 
             if extra_test_loader is not None:
                 self.run_epoch(epoch_type='extra', data_loader=extra_test_loader, update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
@@ -1166,7 +1162,7 @@ class Modeller:
             sample_variance = std_samples.var(dim=0)
             variance_penalty = F.smooth_l1_loss(input=sample_variance, target=prior_variance, reduction='none').mean().tile(len(prior))
 
-            similarity_penalty = prior_distance_penalty + variance_penalty
+            similarity_penalty = (prior_distance_penalty + variance_penalty)
             # TODO improve the distance between the different cell params are not at all equally meaningful
             # also in some SGs, lattice parameters are fixed, giving the model an escape from the similarity penalty
 
@@ -1229,8 +1225,8 @@ class Modeller:
 
             self.logger.packing_loss_coefficient = self.packing_loss_coefficient
 
-            stats_keys += ['generator packing loss', 'generator packing prediction',
-                           'generator packing target', 'generator packing mae']
+            stats_keys += ['generator packing loss', 'generator_packing_prediction',
+                           'generator_packing_target', 'generator packing mae']
             stats_values += [packing_loss.cpu().detach().numpy() * self.packing_loss_coefficient, packing_prediction,
                              packing_target, packing_mae]
 
@@ -1238,17 +1234,17 @@ class Modeller:
                 generator_losses_list.append(packing_loss.float() * self.packing_loss_coefficient)
 
         if discriminator_raw_output is not None:
-            if self.config.generator_adversarial_loss_func == 'hot softmax':
+            if self.config.generator.adversarial_loss_func == 'hot softmax':
                 adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:, 1]  # high temp smears out the function over a wider range
-            elif self.config.generator_adversarial_loss_func == 'minimax':
+            elif self.config.generator.adversarial_loss_func == 'minimax':
                 softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax
                 adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
-            elif self.config.generator_adversarial_loss_func == 'score':
+            elif self.config.generator.adversarial_loss_func == 'score':
                 adversarial_loss = -softmax_and_score(discriminator_raw_output)  # linearized score
-            elif self.config.generator_adversarial_loss_func == 'softmax':
+            elif self.config.generator.adversarial_loss_func == 'softmax':
                 adversarial_loss = 1 - F.softmax(discriminator_raw_output, dim=1)[:, 1]
             else:
-                print(f'{self.config.generator_adversarial_loss_func} is not an implemented adversarial loss')
+                print(f'{self.config.generator.adversarial_loss_func} is not an implemented adversarial loss')
                 sys.exit()
 
             stats_keys += ['generator adversarial loss']
@@ -1256,7 +1252,7 @@ class Modeller:
             stats_keys += ['generator adversarial score']
             stats_values += [discriminator_raw_output.cpu().detach().numpy()]
 
-            if self.config.train_generator_adversarially:
+            if self.config.generator.train_adversarially:
                 generator_losses_list.append(adversarial_loss)
 
         if vdw_loss is not None:
@@ -1264,11 +1260,11 @@ class Modeller:
             stats_values += [vdw_loss.cpu().detach().numpy()]
             stats_values += [vdw_score.cpu().detach().numpy()]
 
-            if self.config.train_generator_vdw:
+            if self.config.generator.train_vdw:
                 generator_losses_list.append(vdw_loss)
 
         if h_bond_score is not None:
-            if self.config.train_generator_h_bond:
+            if self.config.generator.train_h_bond:
                 generator_losses_list.append(h_bond_score)
 
             stats_keys += ['generator h bond loss']
@@ -1278,9 +1274,9 @@ class Modeller:
             stats_keys += ['generator similarity loss']
             stats_values += [similarity_penalty.cpu().detach().numpy()]
 
-            if self.config.generator_similarity_penalty != 0:
+            if self.config.generator.similarity_penalty != 0:
                 if similarity_penalty is not None:
-                    generator_losses_list.append(self.config.generator_similarity_penalty * similarity_penalty)
+                    generator_losses_list.append(self.config.generator.similarity_penalty * similarity_penalty)
                 else:
                     print('similarity penalty was none')
 
@@ -1400,7 +1396,7 @@ class Modeller:
         return None
 
     def analyze_real_crystals(self, real_data, rdf_bins, rdf_range):
-        real_supercell_data = self.supercell_builder.unit_cell_to_supercell(real_data, self.config.supercell_size, self.config.discriminator.model.graph_convolution_cutoff)
+        real_supercell_data = self.supercell_builder.prebuilt_unit_cell_to_supercell(real_data, self.config.supercell_size, self.config.discriminator.model.convolution_cutoff)
 
         discriminator_score, dist_dict, discriminator_latent = self.score_adversarially(real_supercell_data.clone(), self.discriminator, return_latent=True)
         h_bond_score = self.compute_h_bond_score(real_supercell_data)
@@ -1458,7 +1454,7 @@ class Modeller:
                     fake_supercell_data, generated_cell_volumes, _ = \
                         self.supercell_builder.build_supercells(
                             fake_data, samples, self.config.supercell_size,
-                            self.config.discriminator.model.graph_convolution_cutoff,
+                            self.config.discriminator.model.convolution_cutoff,
                             align_molecules=False,
                         )
 
@@ -1466,11 +1462,11 @@ class Modeller:
                     # test - do slight distortions on existing crystals
                     generated_samples_ii = (real_data.cell_params - self.lattice_means) / self.lattice_stds
 
-                    if True:  # self.config.sample_distortion_magnitude == -1:
+                    if True:  # self.config.discriminator.distortion_magnitude == -1:
                         distortion = torch.randn_like(generated_samples_ii) * torch.logspace(-4, 1, len(generated_samples_ii)).to(generated_samples_ii.device)[:, None]  # wider range
                         distortion = distortion[torch.randperm(len(distortion))]
                     else:
-                        distortion = torch.randn_like(generated_samples_ii) * self.config.sample_distortion_magnitude
+                        distortion = torch.randn_like(generated_samples_ii) * self.config.discriminator.distortion_magnitude
 
                     generated_samples_i_d = (generated_samples_ii + distortion).to(self.config.device)  # add jitter and return in standardized basis
 
@@ -1482,7 +1478,7 @@ class Modeller:
 
                     fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
                         fake_data, generated_samples_i, self.config.supercell_size,
-                        self.config.discriminator.model.graph_convolution_cutoff,
+                        self.config.discriminator.model.convolution_cutoff,
                         align_molecules=True,
                         target_handedness=real_data.asym_unit_handedness,
                     )
@@ -1568,9 +1564,9 @@ class Modeller:
         generated_packing_coeffs = data.mult * data.mol_volume / volumes
         standardized_gen_packing_coeffs = (generated_packing_coeffs - self.std_dict['crystal_packing_coefficient'][0]) / self.std_dict['crystal_packing_coefficient'][1]
 
-        target_packing_coeffs = standardized_target_packing * self.std_dict['crystal_packing_coefficient'][1] + self.std_dict['crystal_packing_coefficient[0]']
+        target_packing_coeffs = standardized_target_packing * self.std_dict['crystal_packing_coefficient'][1] + self.std_dict['crystal_packing_coefficient'][0]
 
-        csd_packing_coeffs = data.tracking[:, self.dataDims['tracking_features'].index('crystal packing coefficient')]
+        csd_packing_coeffs = data.tracking[:, self.dataDims['tracking_features'].index('crystal_packing_coefficient')]
 
         # compute loss vs the target
         if loss_func == 'mse':

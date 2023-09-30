@@ -84,7 +84,7 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
 
 
 def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict, crystal_name, crystal_ind):
-    fig = make_subplots(rows=4, cols=3, subplot_titles=config.dataDims['lattice features'])
+    fig = make_subplots(rows=4, cols=3, subplot_titles=config.dataDims['lattice_features'])
     for i in range(12):
         bandwidth = np.ptp(generated_samples_dict['cell params'][crystal_ind, :, i]) / 100
         col = i % 3 + 1

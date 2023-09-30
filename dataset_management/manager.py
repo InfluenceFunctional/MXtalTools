@@ -34,7 +34,7 @@ class DataManager():
         chunks = os.listdir()
         num_chunks = len(chunks)
         print(f'Collecting {num_chunks} dataset chunks')
-        self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks[:25]], ignore_index=True)
+        self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks], ignore_index=True)
 
     def load_dataset_for_modelling(self, dataset_name,
                                    filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False):
@@ -92,7 +92,7 @@ class DataManager():
 
         np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
         self.dataset.to_pickle(self.datasets_path + new_dataset_name)
-        ints = np.random.choice(min(len(self.dataset), 1000), min(len(self.dataset), 1000), replace=False)
+        ints = np.random.choice(min(len(self.dataset), 10000), min(len(self.dataset), 10000), replace=False)
         self.dataset.loc[ints].to_pickle(self.datasets_path + 'test_' + new_dataset_name)
 
     def asymmetric_unit_analysis(self):
@@ -468,7 +468,7 @@ class DataManager():
 
 if __name__ == '__main__':
     miner = DataManager(device='cuda', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
-    miner.process_new_dataset('new_dataset.pkl')
+    miner.process_new_dataset('dataset.pkl')
     #
     # test_conditions = [
     #     ['molecule_mass', 'range', [0, 300]],

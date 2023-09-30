@@ -89,15 +89,15 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
     scores_dict = {}
     vdw_penalty_dict = {}
     tracking_features_dict = {}
-    # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
-    randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)[0]
-    distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)[0]
+    # nf_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 0)
+    randn_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 1)[0]
+    distorted_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 2)[0]
 
     if True: # config.gan_loss == 'standard':
-        scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'],old_method = True, correct_discontinuity = True)
-        scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds],old_method = True, correct_discontinuity = True)
-        # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
-        scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds],old_method = True, correct_discontinuity = True)
+        scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator_real_score'],old_method = True, correct_discontinuity = True)
+        scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator_fake_score'][randn_inds],old_method = True, correct_discontinuity = True)
+        # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator_fake_score'][nf_inds])[:, 1]
+        scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator_fake_score'][distorted_inds],old_method = True, correct_discontinuity = True)
 
         tracking_features_dict['Test Real'] = {feat: vec for feat, vec in zip(config.dataDims['tracking_features'], test_epoch_stats_dict['tracking_features'].T)}
         tracking_features_dict['Test Distorted'] = {feat: vec for feat, vec in zip(config.dataDims['tracking_features'], test_epoch_stats_dict['tracking_features'][distorted_inds].T)}
@@ -109,7 +109,7 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
             scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking_features'][distorted_inds], config.dataDims)
 
         if train_epoch_stats_dict is not None:
-            scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'],old_method = True, correct_discontinuity = True)
+            scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator_real_score'],old_method = True, correct_discontinuity = True)
             tracking_features_dict['Train Real'] = {feat: vec for feat, vec in zip(config.dataDims['tracking_features'], train_epoch_stats_dict['tracking_features'].T)}
 
             if size_normed_score:
@@ -120,8 +120,8 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
             wandb.log({'Train score std': np.std(scores_dict['Train Real'])})
 
         vdw_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdW penalty']
-        vdw_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake vdW penalty'][randn_inds]
-        vdw_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake vdW penalty'][distorted_inds]
+        vdw_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake_vdw_penalty'][randn_inds]
+        vdw_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
 
         wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
         wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})

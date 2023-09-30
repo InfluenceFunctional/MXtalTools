@@ -74,7 +74,6 @@ def extract_crystal_data(crystal, unit_cell):
     crystal is a csd python crystal object loaded from cif file or directly from csd
     extracts key information
     """
-
     crystal_dict = {}
     crystal_dict['identifier'] = crystal.identifier
 
@@ -105,6 +104,9 @@ def extract_crystal_data(crystal, unit_cell):
     crystal_dict['packing_coefficient'] = (sum(mol_volumes) * crystal.z_value / crystal.z_prime / crystal_dict['cell_volume'])
 
     # extract a complete unit cell. Leave outputs as lists, since they may have different lengths for different molecules
+    # this uses a pattern over the asymmetric unit molecule, which is sometimes different from the 'molecule' molecule
+    # e.g., extra (erroneous or dubous) atoms in silly places
+    # TODO optionally do this with our code, or just toss such structures
     crystal_dict['unit_cell_coordinates'] = [np.asarray([np.asarray(heavy_atom.coordinates) for heavy_atom in component.heavy_atoms]) for component in unit_cell.components]
     crystal_dict['unit_cell_fractional_coordinates'] = [np.asarray([heavy_atom.fractional_coordinates for heavy_atom in component.heavy_atoms]) for component in unit_cell.components]
     crystal_dict['unit_cell_atomic_numbers'] = [np.asarray([heavy_atom.atomic_number for heavy_atom in component.heavy_atoms]) for component in unit_cell.components]
@@ -116,6 +118,9 @@ def extract_crystal_data(crystal, unit_cell):
 
     # somehow a C-1 in SG#1 got passed us here
     assert crystal_dict['space_group_symbol'] in list(SPACE_GROUPS.values())
+
+    # some issues with packings
+    assert len(crystal_dict['unit_cell_coordinates']) == int(crystal_dict['symmetry_multiplicity'] * crystal_dict['z_prime'])
 
     return crystal_dict, mol_volumes
 
@@ -226,6 +231,9 @@ def crystal_filter(crystal):
             int(crystal.z_prime) != crystal.z_prime,  # integer z-prime only
             len(crystal.molecule.components) == 0,
             any([len(component.atoms) == 0 for component in crystal.molecule.components]),
+            len(crystal.asymmetric_unit_molecule.heavy_atoms) != len(crystal.molecule.heavy_atoms),  # could make this done Z'-by-Z'
+            len(crystal.molecule.components) != crystal.z_prime,
+            len(crystal.asymmetric_unit_molecule.components) != crystal.z_prime,  # can relax this if we build our own reference cells
             ]):
         # print(f'{crystal.identifier} failed crystal checks')
         return False, None, None
@@ -233,7 +241,9 @@ def crystal_filter(crystal):
     try:
         unit_cell = crystal.packing(box_dimensions=((0, 0, 0), (1, 1, 1)), inclusion='CentroidIncluded')
     except RuntimeError:  # sometimes packing fails
-        # print(f'{crystal.identifier} failed crystal checks')
+        return False, None, None
+
+    if len(unit_cell.components) != int(len(crystal.symmetry_operators) * crystal.z_prime):
         return False, None, None
 
     # molecule check via RDKit. If RDKit doesn't see it as a real molecule, don't accept it to the dataset.
@@ -249,5 +259,7 @@ def crystal_filter(crystal):
 
     if not passed_molecule_checks:
         pass  # print(f'{crystal.identifier} failed molecule checks')
+
+    # todo might be a little expensive but could build the radial graph and check no atoms are overlapping
 
     return all([passed_molecule_checks, passed_crystal_checks]), unit_cell, rd_mols

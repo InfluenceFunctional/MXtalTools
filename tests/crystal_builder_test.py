@@ -28,7 +28,7 @@ def test_cell_parameterization_and_reconstruction():
     then analyze and rebuild it from scratch
     one crystal per space group in test dataset
     """
-    reference_supercells = supercell_builder.unit_cell_to_supercell(
+    reference_supercells = supercell_builder.prebuilt_unit_cell_to_supercell(
         test_crystals, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
@@ -72,7 +72,7 @@ def test_distorted_cell_reconstruction():
     then analyze and rebuilt it from scratch, with some distortion
     one crystal per space group in test dataset
     """
-    reference_supercells = supercell_builder.unit_cell_to_supercell(
+    reference_supercells = supercell_builder.prebuilt_unit_cell_to_supercell(
         test_crystals, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 

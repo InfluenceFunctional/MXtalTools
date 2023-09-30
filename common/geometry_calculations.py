@@ -125,7 +125,7 @@ def batch_molecule_principal_axes_torch(coords_list: list):
     Iyz = -scatter(all_coords[:, 1] * all_coords[:, 2], batch)
     Ixz = -scatter(all_coords[:, 0] * all_coords[:, 2], batch)
 
-    I = torch.cat(
+    I = torch.cat( # todo .T will be deprecated - switch to permute (-1,-2)
         (torch.vstack((scatter(all_coords[:, 1] ** 2 + all_coords[:, 2] ** 2, batch), Ixy, Ixz))[:, None, :].T,
          torch.vstack((Ixy, scatter(all_coords[:, 0] ** 2 + all_coords[:, 2] ** 2, batch), Iyz))[:, None, :].T,
          torch.vstack((Ixz, Iyz, scatter(all_coords[:, 0] ** 2 + all_coords[:, 1] ** 2, batch)))[:, None, :].T

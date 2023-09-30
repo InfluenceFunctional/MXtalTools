@@ -12,7 +12,7 @@
 #                                               pg_dict=self.point_groups, sg_dict=self.space_groups,
 #                                               lattice_dict=self.lattice_type, sym_ops_dict=self.sym_ops)
 #
-#     self.randn_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice features'],
+#     self.randn_generator = independent_gaussian_model(input_dim=self.config.dataDims['num lattice_features'],
 #                                                       means=self.config.dataDims['lattice_means'],
 #                                                       stds=self.config.dataDims['lattice_stds'],
 #                                                       normed_length_means=self.config.dataDims[

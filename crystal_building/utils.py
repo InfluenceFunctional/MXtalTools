@@ -10,9 +10,9 @@ import torch.nn.functional as F
 import sys
 
 
-def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_list: list,
-                     atoms_list: list, crystal_multiplicity, supercell_scale=5, cutoff=5,
-                     sorted_fractional_translations=None, pare_to_convolution_cluster=True):
+def unit_cell_to_convolution_cluster(reference_cell_list: list, cell_vector_list: list, T_fc_list: list,
+                                     atoms_list: list, crystal_multiplicity, supercell_scale=5, cutoff=5,
+                                     sorted_fractional_translations=None, pare_to_convolution_cluster=True):
     """
     1) generate fractional translations for full supercell
     for each sample
@@ -38,25 +38,27 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
     supercell_atoms_list = []
     ref_mol_inds_list = []
     copies = []
-    for i, (ref_cell, unit_cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, crystal_multiplicity)):
+    for i, (ref_cell, unit_cell_vectors, atoms, sym_mult) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, crystal_multiplicity)):
         if type(ref_cell) == np.ndarray:
             ref_cell = torch.tensor(ref_cell, device=device)
 
         mol_n_atoms = len(atoms)
-        supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(n_cells, 1)  # duplicate over XxXxX supercell
+        supercell_coords = ref_cell.clone().reshape(sym_mult * ref_cell.shape[1], 3).tile(n_cells, 1)  # duplicate over XxXxX supercell
         cart_translations_i = torch.mul(unit_cell_vectors.tile(n_cells, 1), sorted_fractional_translations.reshape(n_cells * 3, 1))  # 3 cell vectors
         # cart_translations = torch.stack(cart_translations_i.split(3, dim=0), dim=0).sum(1)
         cart_translations = cart_translations_i.reshape(n_cells, 3, 3).sum(1)  # faster
 
         full_supercell_coords = supercell_coords + torch.repeat_interleave(cart_translations, ref_cell.shape[1] * ref_cell.shape[0], dim=0)  # add translations throughout
 
+        # todo these coords are insanely way too densely packed
+
         in_mol_inds = torch.arange(mol_n_atoms)  # assume canonical conformer is indexed first
         if pare_to_convolution_cluster:
             # TODO canonical conformer is not indexed first in prebuilt reference cells - shouldn't actually impact morphology but would be nice to clean up
-            molwise_supercell_coords = full_supercell_coords.reshape(n_cells * z_value, mol_n_atoms, 3)
+            molwise_supercell_coords = full_supercell_coords.reshape(n_cells * sym_mult, mol_n_atoms, 3)
 
             ref_mol_centroid = molwise_supercell_coords[0].mean(0)  # first is always the canonical conformer
-            all_mol_centroids = torch.mean(molwise_supercell_coords, dim=1)  # centroids for all molecules in the supercell
+            all_mol_centroids = molwise_supercell_coords.mean(1)  # centroids for all molecules in the supercell
 
             mol_centroid_dists = torch.cdist(ref_mol_centroid[None, :], all_mol_centroids, p=2)[0]  # distances between canonical conformer and all other molecules
             ref_mol_radius = torch.max(torch.cdist(ref_mol_centroid[None, :], full_supercell_coords[in_mol_inds]))  # molecule radius of canonical conformer
@@ -68,20 +70,20 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
             '''
             successful_gconv = False
             extra_cutoff = 0
-            while successful_gconv == False:
+            while not successful_gconv:
                 # ignore atoms which are more than mol_radius + conv_cutoff + buffer
-                convolve_mol_inds = torch.where((mol_centroid_dists <= (2 * ref_mol_radius + cutoff + extra_cutoff + 0.1)))[0]
+                convolve_mol_inds = torch.where((mol_centroid_dists <= (ref_mol_radius + cutoff + extra_cutoff + 0.01)))[0]
 
-                if len(convolve_mol_inds) <= mol_n_atoms:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
+                if len(convolve_mol_inds) <= 9:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
                     extra_cutoff += 0.5
                 else:
                     successful_gconv = True
 
-            assert len(convolve_mol_inds) > mol_n_atoms  # must be more than one molecule in convolution
+            assert len(convolve_mol_inds) > 1  # must be more than one molecule in convolution
 
             '''add final indexing of atoms which are canonical conformer: 0, kept symmetry images: 1, and otherwise tossed'''
             ref_mol_inds = torch.ones(len(convolve_mol_inds) * mol_n_atoms, dtype=int, device=device)  # only index molecules which will be kept
-            ref_mol_inds[in_mol_inds] = 0
+            ref_mol_inds[in_mol_inds] = 0  # 0 is for 'inside', 1 is for 'outside'
 
             convolve_atom_inds = (torch.arange(mol_n_atoms, device=device)[:, None] + convolve_mol_inds * mol_n_atoms).T.reshape(len(convolve_mol_inds) * mol_n_atoms)  # looks complicated but it's fast
 
@@ -668,19 +670,7 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
 
     # update sym ops
     mol_data.symmetry_operators = [torch.Tensor(symmetries_dict['sym_ops'][sg_ind]).to(mol_data.x.device) for sg_ind in sample_sg_inds]
-
-    # compute and update Z values
-    sample_Z_values = [len(mol_data.symmetry_operators[ii]) for ii in range(mol_data.num_graphs)]
-    mol_data.mult = torch.tensor(sample_Z_values, dtype=mol_data.mult.dtype, device=mol_data.mult.device)  # * torch.ones_like(mol_data.mult)
     mol_data.sg_ind = torch.tensor(sample_sg_inds, dtype=mol_data.sg_ind.dtype, device=mol_data.sg_ind.device)
-
-    #sum([1 for entry in dataDims['crystal generation features'] if 'coefficient' not in entry]) below should include all these
-    mol_data.x[:, -dataDims['num crystal generation features']:-1] = 0  # set all crystal features to 0 (last index is packing coeff)  # todo manage this in a non ad-hoc way
-    # update sym ops, sg ind, sg one_hot, crystal system one_hot, Z value
-    for ii, sg_ind in enumerate(sample_sg_inds):
-        mol_inds = torch.arange(mol_data.ptr[ii], mol_data.ptr[ii + 1])
-        mol_data.x[mol_inds, symmetries_dict['crysys_ind_dict'][symmetries_dict['lattice_type'][sg_ind]]] = 1  # one-hot for crystal system
-        mol_data.x[mol_inds, symmetries_dict['sg_feature_ind_dict'][symmetries_dict['space_groups'][sg_ind]]] = 1  # one-hot for space group
-        mol_data.x[mol_inds, symmetries_dict['crystal_z_value_ind']] = mol_data.mult[ii].float()  # set Z-value
+    mol_data.mult = torch.tensor([len(ops) for ops in mol_data.symmetry_operators], dtype=torch.int32, device=mol_data.sg_ind.device)
 
     return mol_data

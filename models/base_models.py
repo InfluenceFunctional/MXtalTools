@@ -53,13 +53,15 @@ class molecule_graph_model(nn.Module):
         self.convolution_cutoff, self.max_num_neighbors = convolution_cutoff, max_num_neighbors
         self.num_fc_layers = num_fc_layers
 
+        self.register_buffer('SG_FEATURE_TENSOR', SG_FEATURE_TENSOR.clone())
+
         input_node_depth = num_atom_feats
         if concat_pos_to_atom_features:
             input_node_depth += 3
         if concat_mol_to_atom_features:
             input_node_depth += num_mol_feats
         if concat_crystal_to_atom_features:
-            input_node_depth += SG_FEATURE_TENSOR.shape(1)
+            input_node_depth += SG_FEATURE_TENSOR.shape[1]
 
         self.graph_net = GraphNeuralNetwork(
             input_node_depth=input_node_depth,
@@ -121,23 +123,30 @@ class molecule_graph_model(nn.Module):
         if edges_dict is None:  # option to pass pre-prepared radial graph
             edges_dict = construct_radial_graph(data.pos, data.batch, data.ptr, self.convolution_cutoff, self.max_num_neighbors, aux_ind=data.aux_ind)
 
-        x = data.x.clone()
+        if self.graph_net.outside_convolution_type != 'none':
+            agg_batch = edges_dict['inside_batch']
+        else:
+            agg_batch = data.batch
+
+        x = data.x  # already cloned before it comes into this function
         if self.concat_pos_to_atom_features:
             x = torch.cat((x, data.pos), dim=-1)
 
         if self.concat_mol_to_atom_features:
+            nodes_per_graph = torch.diff(data.ptr)
             x = torch.cat((x,
-                           torch.repeat_interleave(data.mol_x, data.mol_size.int(), 0)),
+                           torch.repeat_interleave(data.mol_x, nodes_per_graph, 0)),
                           dim=-1)
 
         if self.concat_crystal_to_atom_features:
-            crystal_features = torch.tensor(SG_FEATURE_TENSOR.sg_ind, dtype=torch.float32, device=data.x.device)
+            nodes_per_graph = torch.diff(data.ptr)
+            crystal_features = torch.tensor(self.SG_FEATURE_TENSOR[data.sg_ind], dtype=torch.float32, device=data.x.device)
             x = torch.cat((x,
-                           torch.repeat_interleave(crystal_features, data.mol_size, 0)),
+                           torch.repeat_interleave(crystal_features, nodes_per_graph, 0)),
                           dim=-1)
 
         x = self.graph_net(x, data.pos, data.batch, data.ptr, edges_dict)  # get graph encoding
-        x = self.global_pool(x, data.pos, data.batch, output_dim=data.num_graphs)  # aggregate atoms to molecule
+        x = self.global_pool(x, data.pos, agg_batch, output_dim=data.num_graphs)  # aggregate atoms to molecule
 
         if self.mol_fc is not None:
             mol_feats = self.mol_fc(data.mol_x)  # molecule features are repeated, only need one per molecule (hence data.ptr)
@@ -152,7 +161,7 @@ class molecule_graph_model(nn.Module):
         extra_outputs = {}
         if return_dists:
             extra_outputs['dists_dict'] = {}
-            if hasattr(edges_dict, 'edge_index_inter'):
+            if 'edge_index_inter' in edges_dict.keys():
                 extra_outputs['dists_dict']['intermolecular_dist'] = (data.pos[edges_dict['edge_index_inter'][0]] - data.pos[edges_dict['edge_index_inter'][1]]).pow(2).sum(dim=-1).sqrt()
                 extra_outputs['dists_dict']['intermolecular_dist_batch'] = data.batch[edges_dict['edge_index_inter'][0]]
                 extra_outputs['dists_dict']['intermolecular_dist_atoms'] = [data.x[edges_dict['edge_index_inter'][0], 0].long(), data.x[edges_dict['edge_index_inter'][1], 0].long()]

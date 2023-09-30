@@ -146,14 +146,15 @@ class TrainingDataBuilder:
     def set_crystal_keys(self):
         self.crystal_keys = ['crystal_space_group_number', 'crystal_space_group_setting',
                              'crystal_density', 'crystal_packing_coefficient',
-                             'crystal_lattice_alpha', 'crystal_lattice_beta', 'crystal_lattice_gamma',
                              'crystal_lattice_a', 'crystal_lattice_b', 'crystal_lattice_c',
+                             'crystal_lattice_alpha', 'crystal_lattice_beta', 'crystal_lattice_gamma',
                              'crystal_z_value', 'crystal_z_prime', 'crystal_reduced_volume', 'crystal_cell_volume',
                              'crystal_symmetry_multiplicity', 'asymmetric_unit_handedness', 'asymmetric_unit_is_well_defined',
                              ]
 
-        self.lattice_keys = ['crystal_lattice_alpha', 'crystal_lattice_beta', 'crystal_lattice_gamma',
-                             'crystal_lattice_a', 'crystal_lattice_b', 'crystal_lattice_c',
+        # correct order here is crucially important
+        self.lattice_keys = ['crystal_lattice_a', 'crystal_lattice_b', 'crystal_lattice_c',
+                             'crystal_lattice_alpha', 'crystal_lattice_beta', 'crystal_lattice_gamma',
                              'asymmetric_unit_centroid_x', 'asymmetric_unit_centroid_y', 'asymmetric_unit_centroid_z',
                              'asymmetric_unit_rotvec_theta', 'asymmetric_unit_rotvec_phi', 'asymmetric_unit_rotvec_r'
                              ]
@@ -247,7 +248,7 @@ class TrainingDataBuilder:
                             mol_size=torch.Tensor(tracking_features[i, mol_size_ind]),
                             mol_volume=torch.Tensor(tracking_features[i, mol_volume_ind]),
                             csd_identifier=identifiers[i],
-                            asym_unit_handedness=torch.Tensor(np.asarray(asymmetric_unit_handedness[i])[None]),
+                            asym_unit_handedness=torch.Tensor(np.asarray(asymmetric_unit_handedness[i])),
                             symmetry_operators=crystal_symmetries[i]
                             ))
 
@@ -266,7 +267,7 @@ class TrainingDataBuilder:
             for i in range(self.dataset_length):
                 feature_vector = np.asarray(dataset[key][i])[0]  # all atom features are lists-of-lists, for Z'=1 always just take the first element
 
-                if key == 'atom Z':
+                if key == 'atom_atomic_numbers':
                     pass
                 elif feature_vector.dtype == bool:
                     pass
@@ -326,6 +327,9 @@ class TrainingDataBuilder:
                                            crystal_symmetries=dataset['crystal_symmetry_operators'])
 
     def get_cell_features(self, dataset):
+        """
+        the 12 lattice parameters in correct order
+        """
         key_dtype = []
         # featurize
 
@@ -336,10 +340,7 @@ class TrainingDataBuilder:
             if isinstance(feature_vector[0], list):  # feature vector is an array of lists
                 feature_vector = np.concatenate(feature_vector)
 
-            if key == 'crystal_z_value':
-                key_dtype.append('int32')
-            else:
-                key_dtype.append(feature_vector.dtype)
+            key_dtype.append(feature_vector.dtype)
 
             feature_array[:, column_ind] = feature_vector
 
