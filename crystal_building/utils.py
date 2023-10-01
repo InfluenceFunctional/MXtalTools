@@ -10,9 +10,15 @@ import torch.nn.functional as F
 import sys
 
 
-def unit_cell_to_convolution_cluster(reference_cell_list: list, cell_vector_list: list, T_fc_list: list,
-                                     atoms_list: list, crystal_multiplicity, supercell_scale=5, cutoff=5,
-                                     sorted_fractional_translations=None, pare_to_convolution_cluster=True):
+def unit_cell_to_convolution_cluster(reference_cell_list: list,
+                                     cell_vector_list: list,
+                                     T_fc_list,
+                                     atoms_list: list,
+                                     crystal_multiplicity,
+                                     supercell_scale=5,
+                                     cutoff=5,
+                                     sorted_fractional_translations=None,
+                                     pare_to_convolution_cluster=True):
     """
     1) generate fractional translations for full supercell
     for each sample
@@ -75,7 +81,7 @@ def unit_cell_to_convolution_cluster(reference_cell_list: list, cell_vector_list
                 convolve_mol_inds = torch.where((mol_centroid_dists <= (ref_mol_radius + cutoff + extra_cutoff + 0.01)))[0]
 
                 if len(convolve_mol_inds) <= 9:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
-                    extra_cutoff += 0.5
+                    extra_cutoff += 1
                 else:
                     successful_gconv = True
 

@@ -31,13 +31,13 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, test_epoch_stats
         h2, r2 = np.histogram(cleaned_samples[:, i], bins=r1)
         h2 = h2 / len(cleaned_samples[:, i])
 
-        overlaps_1d[f'{key} 1D Overlap'] = np.min(np.concatenate((h1[None], h2[None]), axis=0), axis=0).sum()
+        overlaps_1d[f'{key}_1D_Overlap'] = np.min(np.concatenate((h1[None], h2[None]), axis=0), axis=0).sum()
 
-        sample_means[f'{key} mean'] = np.mean(cleaned_samples[:, i])
-        sample_stds[f'{key} std'] = np.std(cleaned_samples[:, i])
+        sample_means[f'{key}_mean'] = np.mean(cleaned_samples[:, i])
+        sample_stds[f'{key}_std'] = np.std(cleaned_samples[:, i])
 
     average_overlap = np.average([overlaps_1d[key] for key in overlaps_1d.keys()])
-    overlaps_1d['average 1D overlap'] = average_overlap
+    overlaps_1d['average_1D_overlap'] = average_overlap
     overlap_results = {}
     overlap_results.update(overlaps_1d)
     overlap_results.update(sample_means)
@@ -107,7 +107,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
     if epoch_stats_dict['generator_packing_prediction'] is not None and \
             epoch_stats_dict['generator_packing_target'] is not None:
 
-        x = epoch_stats_dict['generator_packing_target']  # generator_losses['generator per mol vdw loss']
+        x = epoch_stats_dict['generator_packing_target']  # generator_losses['generator_per_mol_vdw_loss']
         y = epoch_stats_dict['generator_packing_prediction']  # generator_losses['generator packing loss']
 
         xy = np.vstack([x, y])
@@ -606,16 +606,16 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
             target_index = target_identifiers_inds[target]
             raw_scores = extra_test_dict['discriminator_real_score'][target_index]
             scores = softmax_and_score(raw_scores[None, :], old_method=True, correct_discontinuity=True)
-            scores_dict[target + ' exp'] = scores
+            scores_dict[target + '_exp'] = scores
 
-            tracking_features_dict[target + ' exp'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_index][None, :].T)}
+            tracking_features_dict[target + '_exp'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_index][None, :].T)}
 
             if size_normed_score:
-                scores_dict[target + ' exp'] = norm_scores(scores_dict[target + ' exp'], extra_test_dict['tracking_features'][target_index][None, :], dataDims)
+                scores_dict[target + '_exp'] = norm_scores(scores_dict[target + '_exp'], extra_test_dict['tracking_features'][target_index][None, :], dataDims)
 
-            vdw_penalty_dict[target + ' exp'] = extra_test_dict['real vdw penalty'][target_index][None]
+            vdw_penalty_dict[target + '_exp'] = extra_test_dict['real vdw penalty'][target_index][None]
 
-            wandb.log({f'Average {target} exp score': np.average(scores)})
+            wandb.log({f'Average_{target}_exp_score': np.average(scores)})
 
         if all_identifiers[target] != []:  # record sample data
             target_indices = all_identifiers[target]
@@ -629,8 +629,8 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
 
             vdw_penalty_dict[target] = extra_test_dict['real vdw penalty'][target_indices]
 
-            wandb.log({f'Average {target} score': np.average(scores)})
-            wandb.log({f'Average {target} std': np.std(scores)})
+            wandb.log({f'Average_{target}_score': np.average(scores)})
+            wandb.log({f'Average_{target}_std': np.std(scores)})
 
             # correlate losses with molecular features
             tracking_features = np.asarray(extra_test_dict['tracking_features'])
@@ -709,7 +709,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     for target in all_identifiers.keys():
         if all_identifiers[target] != []:
             plot_color_dict[target] = colors[ind]
-            plot_color_dict[target + ' exp'] = colors[ind]
+            plot_color_dict[target + '_exp'] = colors[ind]
             ind += 1
 
     scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
@@ -793,7 +793,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     for target in all_identifiers.keys():
         if all_identifiers[target] != []:
             plot_color_dict[target] = colors[ind]
-            plot_color_dict[target + ' exp'] = colors[ind]
+            plot_color_dict[target + '_exp'] = colors[ind]
             ind += 1
 
     # plot 1
@@ -893,7 +893,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     normed_quantiles = np.quantile(normed_scores_dict['Test Real'], vals)
     normed_submissions_fraction_below_csd_quantile = {value: np.average(normed_BT_submission_scores < cutoff) for value, cutoff in zip(vals, normed_quantiles)}
 
-    submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + ' exp']) for key in all_identifiers.keys() if key in scores_dict.keys()}
+    submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + '_exp']) for key in all_identifiers.keys() if key in scores_dict.keys()}
     submissions_average_below_target = np.average(list(submissions_fraction_below_target.values()))
 
     fig = go.Figure(data=go.Table(
@@ -972,7 +972,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     #     fig.show()
 
     fig = go.Figure()
-    fig.add_trace(go.Scattergl(x=[f'{key} {fraction_dict[key]:.2f}' for key in sorted_functional_group_keys],
+    fig.add_trace(go.Scattergl(x=[f'{key}_{fraction_dict[key]:.2f}' for key in sorted_functional_group_keys],
                                y=[np.average(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
                                error_y=dict(type='data',
                                             array=[np.std(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
@@ -1260,7 +1260,7 @@ def log_cubic_defect(samples):
 
 
 def process_generator_losses(config, epoch_stats_dict):
-    generator_loss_keys = ['generator_packing_prediction', 'generator_packing_target', 'generator per mol vdw loss',
+    generator_loss_keys = ['generator_packing_prediction', 'generator_packing_target', 'generator_per_mol_vdw_loss',
                            'generator adversarial loss', 'generator h bond loss']
     generator_losses = {}
     for key in generator_loss_keys:
@@ -1292,7 +1292,7 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     """
     layout = plotly_setup(config)
     log_cubic_defect(epoch_stats_dict['final_generated_cell_parameters'])
-    wandb.log({"Generated cell parameter variation": epoch_stats_dict['generated_cell_parameters'].std(0).mean()})
+    wandb.log({"Generated cell parameter variation": epoch_stats_dict['final_generated_cell_parameters'].std(0).mean()})
     generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
     wandb.log(average_losses_dict)
 
@@ -1342,12 +1342,12 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
                 loss_i = (tgt_value - pred_value) ** 2
             else:
                 assert False, "Loss not implemented"
-            loss_dict[name + ' ' + loss + ' mean'] = np.mean(loss_i)
-            loss_dict[name + ' ' + loss + ' std'] = np.std(loss_i)
+            loss_dict[name + '_' + loss + '_mean'] = np.mean(loss_i)
+            loss_dict[name + '_' + loss + '_std'] = np.std(loss_i)
 
         linreg_result = linregress(tgt_value, pred_value)
-        loss_dict[name + ' Regression R'] = linreg_result.rvalue
-        loss_dict[name + ' Regression slope'] = linreg_result.slope
+        loss_dict[name + '_Regression R'] = linreg_result.rvalue
+        loss_dict[name + '_Regression slope'] = linreg_result.slope
 
         # predictions vs target trace
         xline = np.linspace(max(min(tgt_value), min(pred_value)),
@@ -1361,7 +1361,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         fig.add_trace(go.Scattergl(x=xline, y=xline))
         fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
         fig.update_layout(showlegend=True)
-        fig_dict[name + " scatter"] = fig
+        fig_dict[name + "_scatter"] = fig
 
         fig = go.Figure()
         fig.add_trace(go.Histogram(x=pred_value - tgt_value,
@@ -1369,7 +1369,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
                                    nbinsx=100,
                                    name="Error Distribution",
                                    showlegend=False))
-        fig_dict[name + ' Error Distribution'] = fig
+        fig_dict[name + '_Error Distribution'] = fig
 
     # correlate losses with molecular features
     tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
@@ -1404,7 +1404,7 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
     Do analysis and upload results to w&b
     """
     if (test_epoch_stats_dict is not None) and config.mode == 'gan':
-        if test_epoch_stats_dict['generated_cell_parameters'] is not None:
+        if 'final_generated_cell_parameters' in test_epoch_stats_dict.keys():
             cell_params_analysis(config, dataDims, wandb, test_loader, test_epoch_stats_dict)
 
         if config.generator.train_vdw or config.generator.train_adversarially:

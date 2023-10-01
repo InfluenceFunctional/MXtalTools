@@ -140,7 +140,7 @@ class Logger:
                     metrics_to_log[key + '_' + ttype + '_loss'] = np.average(self.current_losses[key][key2])
 
         # special losses, scores, and miscellaneous items
-        for name, stats_dict in zip(['Train', 'Test', 'Extra'], [self.train_stats, self.test_stats, self.extra_stats]):
+        for name, stats_dict in zip(['train', 'test', 'extra'], [self.train_stats, self.test_stats, self.extra_stats]):
             if len(stats_dict) > 0:
                 for key in stats_dict.keys():
                     if 'loss' in key:

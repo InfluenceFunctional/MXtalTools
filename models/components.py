@@ -33,10 +33,7 @@ class MLP(nn.Module):
         else:
             self.same_depth = True
 
-        if conditioning_mode == 'all_layers':
-            self.n_filters = [depth + conditioning_dim for depth in self.n_filters]
-
-        self.conditioning_mode = conditioning_mode
+        self.conditioning_mode = conditioning_mode  # todo write a proper all_layer mode
         self.conditioning_dim = conditioning_dim
         self.output_dim = output_dim
         self.input_dim = input_dim + conditioning_dim
@@ -97,9 +94,6 @@ class MLP(nn.Module):
                 res = x.clone()
             else:
                 res = self.residue_adjust[i](x)
-
-            if conditions is not None and self.conditioning_mode == 'all_layers':
-                x = torch.cat((x,conditions),dim=1)
 
             if self.norm_after_linear:
                 x = res + dropout(activation(norm(linear(x), batch=batch)))  # residue

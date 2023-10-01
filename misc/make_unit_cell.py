@@ -1,10 +1,8 @@
 #!/usr/bin/env python
 
 import numpy as np
-from ase.io import write
 from ase.visualize import view
 from ase import Atoms
-from pyxtal import symmetry
 from crystal_building.utils_np import fractional_transform_np
 from crystal_building.utils import build_unit_cell, unit_cell_to_convolution_cluster
 from constants.space_group_info import SYM_OPS

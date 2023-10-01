@@ -6,7 +6,7 @@
 # this config has minimal dataset limits and almost all of our calculated features
 
 seed: 1
-max_dataset_length: 1000
+max_dataset_length: 100000
 save_dataset: False
 
 regression_target: 'crystal_packing_coefficient'
@@ -24,7 +24,7 @@ filter_conditions: [['crystal_z_prime','in',[1]],  # NOTE we can currently only 
                     ['molecule_is_spherical_top','in',[False]],
                     ['crystal_packing_coefficient','range',[0.55, 0.85]],
                     ['molecule_num_atoms','range',[3,100]],
-                    ['molecule_radius','range',[1,10]],
+                    ['molecule_radius','range',[1,5]],
                     ['asymmetric_unit_is_well_defined','in',[True]],
                     #['crystal_space_group_number','in',[2,14,19]]
                     ]

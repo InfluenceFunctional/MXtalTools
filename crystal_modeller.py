@@ -1142,7 +1142,7 @@ class Modeller:
     def compute_similarity_penalty(self, generated_samples, prior):
         """
         punish batches in which the samples are too self-similar
-
+        overally not really that good to be honest
         Parameters
         ----------
         generated_samples
@@ -1218,9 +1218,9 @@ class Modeller:
         if packing_loss is not None:
             packing_mae = np.abs(packing_prediction - packing_target) / packing_target
 
-            if packing_mae.mean() < 0.025:  # dynamically soften the packing loss when the model is doing well
+            if packing_mae.mean() < (0.05 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
                 self.packing_loss_coefficient *= 0.99
-            if (packing_mae.mean() > 0.025) and (self.packing_loss_coefficient < 100):
+            if (packing_mae.mean() > (0.05 + self.config.generator.packing_target_noise)) and (self.packing_loss_coefficient < 100):
                 self.packing_loss_coefficient *= 1.01
 
             self.logger.packing_loss_coefficient = self.packing_loss_coefficient
@@ -1256,7 +1256,7 @@ class Modeller:
                 generator_losses_list.append(adversarial_loss)
 
         if vdw_loss is not None:
-            stats_keys += ['generator per mol vdw loss', 'generator per mol vdw score']
+            stats_keys += ['generator_per_mol_vdw_loss', 'generator_per_mol_vdw_score']
             stats_values += [vdw_loss.cpu().detach().numpy()]
             stats_values += [vdw_score.cpu().detach().numpy()]
 
