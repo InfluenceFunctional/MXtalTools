@@ -12,7 +12,7 @@ dependencies:
   - csd-python-api
   - pyg
   - pytorch
-  - pytorch-cuda=12.1  # update with your CUDA version
+  - pytorch-cuda=11.8  # update with your CUDA version
   - plotly
   - wandb
   - pytest
@@ -24,10 +24,11 @@ dependencies:
   - scikit-learn
   - ase
   - rdkit
-  - pip:
+  - pip:  # note torch_scatter and torch_cluster are extremely specific about versions when installing on Windows
     - --find-links https://data.pyg.org/whl/torch-2.0.1+cu118.htm  # update with your torch and cuda version
     - torch_scatter
     - torch_cluster
+    - torch_sparse
 
 
 # pip install torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.0.1+cu118.htm  # update with your torch and cuda version

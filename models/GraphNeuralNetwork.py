@@ -1,17 +1,14 @@
 from math import pi as PI
 
-from models.basis_functions import TorsionalEmbedding, SphericalBasisLayer, GaussianEmbedding, BesselBasisLayer
-from models.components import Normalization, Activation, construct_radial_graph
+from models.basis_functions import GaussianEmbedding, BesselBasisLayer
+from models.components import Normalization, Activation
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from torch_scatter import scatter
-from torch_sparse import SparseTensor
 import torch_geometric.nn as gnn
-from models.asymmetric_radius_graph import asymmetric_radius_graph
 from models.components import MLP
-from old.positional_encodings import PosEncoding3D
 
 
 class GraphNeuralNetwork(torch.nn.Module):
@@ -331,25 +328,3 @@ class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation
 
         return x
 
-
-def triplets(edge_index, num_nodes):
-    row, col = edge_index  # j->i
-
-    value = torch.arange(row.size(0), device=row.device)
-    adj_t = SparseTensor(row=col, col=row, value=value,
-                         sparse_sizes=(num_nodes, num_nodes))
-    adj_t_row = adj_t[row]
-    num_triplets = adj_t_row.set_value(None).sum(dim=1).to(torch.long)
-
-    # Node indices (k->j->i) for triplets.
-    idx_i = col.repeat_interleave(num_triplets)
-    idx_j = row.repeat_interleave(num_triplets)
-    idx_k = adj_t_row.storage.col()
-    mask = idx_i != idx_k  # Remove i == k triplets.
-    idx_i, idx_j, idx_k = idx_i[mask], idx_j[mask], idx_k[mask]
-
-    # Edge indices (k-j, j->i) for triplets.
-    idx_kj = adj_t_row.storage.value()[mask]
-    idx_ji = adj_t_row.storage.row()[mask]
-
-    return col, row, idx_i, idx_j, idx_k, idx_kj, idx_ji
