@@ -1,45 +1,15 @@
 """import statement"""
-import numpy
 import numpy as np
 
 import torch
 import tqdm
 from ase import Atoms
-from scipy.cluster.hierarchy import dendrogram
 import pandas as pd
 from torch.nn.functional import softmax
 
 '''
 general utilities
 '''
-
-def plot_dendrogram(model, **kwargs):
-    """
-    make a dendrogram plot from a scipy clustering model
-    """
-    # Create linkage matrix and then plot the dendrogram
-    # create the counts of samples under each node
-    counts = np.zeros(model.children_.shape[0])
-    n_samples = len(model.labels_)
-    for i, merge in enumerate(model.children_):
-        current_count = 0
-        for child_idx in merge:
-            if child_idx < n_samples:
-                current_count += 1  # leaf node
-            else:
-                current_count += counts[child_idx - n_samples]
-        counts[i] = current_count
-
-    linkage_matrix = np.column_stack(
-        [model.children_, model.distances_, counts]
-    ).astype(float)
-
-    # Plot the corresponding dendrogram
-    dendrogram(linkage_matrix, **kwargs)
-
-
-def initialize_dict_of_lists(keys: list):
-    return {key: [] for key in keys}
 
 
 def chunkify(lst: list, n: int):
@@ -53,7 +23,7 @@ def delete_from_dataframe(df: pd.DataFrame, inds):
     """
     hacky way to delete rows "inds" from dataframe df
     """  # todo decide if we're ok with this level_0 business
-    df.drop(index=inds,inplace=True)
+    df.drop(index=inds, inplace=True)
     df.reset_index(drop=True, inplace=True)
 
     return df
@@ -190,9 +160,6 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
     """
     if isinstance(keys, list):
         for key, value in zip(keys, values):
-            # if isinstance(value, list):
-            #     value = np.stack(value)
-
             if key not in dictionary.keys():
                 dictionary[key] = []
 
@@ -204,9 +171,6 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
         key, value = keys, values
         if key not in dictionary.keys():
             dictionary[key] = []
-        #
-        # if isinstance(value, list):
-        #     value = np.stack(value)
 
         if mode == 'append':
             dictionary[key].append(value)
@@ -283,7 +247,6 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
         atom_inds = inside_inds
         coords = data.pos[inside_inds].cpu().detach().numpy()
 
-
     elif exclusion_level == 'inside cell':
         fractional_coords = torch.inner(torch.linalg.inv(data.T_fc[index]), data.pos[data.batch == index]).T
         inside_coords = torch.prod((fractional_coords < 1) * (fractional_coords > 0), dim=-1)
@@ -326,7 +289,7 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
     return mol
 
 
-def components2angle(components):
+def components2angle(components: torch.tensor):
     """
     take two non-normalized components[n_samples, 2] representing
     sin(angle) and cos(angle), compute the resulting angle, following
@@ -341,35 +304,41 @@ def components2angle(components):
     return angle
 
 
-def prep_symmetry_info():
+def angle2components(angle: torch.tensor):
     """
-    if we don't have the symmetry dict prepared already, generate it
-    DEPRECATED USAGE - LEFT IN TO DEMONSTRATE HOW TO GENERATE THESE DATA
+    decompose an angle input into sin(angle) and cos(angle)
     """
+    return torch.cat((torch.sin(angle)[:, None], torch.cos(angle)[:, None]), dim=1)
 
-    from pyxtal import symmetry
-    print('Pre-generating spacegroup symmetries')
-    sym_ops = {}
-    point_groups = {}
-    lattice_type = {}
-    space_groups = {}
-    space_group_indices = {}
-    for i in tqdm.tqdm(range(1, 231)):
-        sym_group = symmetry.Group(i)
-        general_position_syms = sym_group.wyckoffs_organized[0][0]
-        sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
-            len(general_position_syms))]  # first 0 index is for general position, second index is
-        # superfluous, third index is the symmetry operation
-        point_groups[i] = sym_group.point_group
-        lattice_type[i] = sym_group.lattice_type
-        space_groups[i] = sym_group.symbol
-        space_group_indices[sym_group.symbol] = i
-
-    sym_info = {
-        'sym_ops': sym_ops,
-        'point_groups': point_groups,
-        'lattice_type': lattice_type,
-        'space_groups': space_groups,
-        'space_group_indices': space_group_indices}
-
-    np.save('symmetry_info', sym_info)
+# def prep_symmetry_info():
+#     """
+#     if we don't have the symmetry dict prepared already, generate it
+#     DEPRECATED USAGE - LEFT IN TO DEMONSTRATE HOW TO GENERATE THESE DATA
+#     """
+#
+#     from pyxtal import symmetry
+#     print('Pre-generating spacegroup symmetries')
+#     sym_ops = {}
+#     point_groups = {}
+#     lattice_type = {}
+#     space_groups = {}
+#     space_group_indices = {}
+#     for i in tqdm.tqdm(range(1, 231)):
+#         sym_group = symmetry.Group(i)
+#         general_position_syms = sym_group.wyckoffs_organized[0][0]
+#         sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
+#             len(general_position_syms))]  # first 0 index is for general position, second index is
+#         # superfluous, third index is the symmetry operation
+#         point_groups[i] = sym_group.point_group
+#         lattice_type[i] = sym_group.lattice_type
+#         space_groups[i] = sym_group.symbol
+#         space_group_indices[sym_group.symbol] = i
+#
+#     sym_info = {
+#         'sym_ops': sym_ops,
+#         'point_groups': point_groups,
+#         'lattice_type': lattice_type,
+#         'space_groups': space_groups,
+#         'space_group_indices': space_group_indices}
+#
+#     np.save('symmetry_info', sym_info)

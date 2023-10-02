@@ -61,9 +61,9 @@ def gradient_descent_sampling(discriminator, init_samples, single_mol_data, supe
             supercell_builder.build_supercells(single_mol_data, sample,
                                                supercell_size=supercell_size,
                                                graph_convolution_cutoff=cutoff,
-                                               align_molecules=align_molecules,
-                                               skip_cell_cleaning = False, # first iter are pre-cleaned cells
-                                               rescale_asymmetric_unit= True, # first iter are pre-cleaned cells
+                                               align_to_standardized_orientation=align_molecules,
+                                               skip_cell_cleaning = False,  # first iter are pre-cleaned cells
+                                               rescale_asymmetric_unit= True,  # first iter are pre-cleaned cells
                                                )
 
         output, dist_dict = discriminator(supercell_data.clone().cuda(), return_dists=True)

@@ -36,6 +36,10 @@ def get_config(override_args):
 
     - Command line arguments override values in YAML file
 
+    # todo confirm behavior of nested command line overrides
+    # todo option to override dataset path in main yaml file
+    # todo rename 'dev' / main / experiments officially to main
+
     Returns
     -------
         Namespace
@@ -48,14 +52,10 @@ def get_config(override_args):
     override_values = [
         arg for arg in override_args if "--" not in arg
     ]
-    override_args = dict2namespace({key:val for key,val in zip(override_keys, override_values)})
+    override_args = dict2namespace({key: val for key, val in zip(override_keys, override_values)})
 
     user_path = f'configs/users/{override_args.user}.yaml'  # this is a necessary cmd line argument
-    yaml_path = Path(user_path)
-    assert yaml_path.exists()
-    assert yaml_path.suffix in {".yaml", ".yml"}
-    with yaml_path.open("r") as f:
-        user_config = yaml.safe_load(f)
+    user_config = load_yaml(user_path)
 
     # Read YAML config
     if hasattr(override_args, 'yaml_config'):
@@ -63,10 +63,7 @@ def get_config(override_args):
     else:
         yaml_path = Path(user_config['paths']['yaml_path'])
 
-    assert yaml_path.exists()
-    assert yaml_path.suffix in {".yaml", ".yml"}
-    with yaml_path.open("r") as f:
-        config = yaml.safe_load(f)
+    config = load_yaml(yaml_path)
 
     config['paths'] = user_config['paths']
     config['wandb'] = user_config['wandb']
@@ -94,63 +91,13 @@ def get_config(override_args):
         config['save_checkpoints'] = True  # always save checkpoints on cluster
 
     dataset_yaml_path = Path(config['dataset_yaml_path'])
-    assert dataset_yaml_path.exists()
-    assert dataset_yaml_path.suffix in {".yaml", ".yml"}
-    with dataset_yaml_path.open("r") as f:
-        dataset_config = yaml.safe_load(f)
-
+    dataset_config = load_yaml(dataset_yaml_path)
     config['dataset'] = dataset_config
 
-    config = dict2namespace(config)
-
-    return config
+    return dict2namespace(config)
 
 
-def add_bool_arg(parser, name, default=False):
-    group = parser.add_mutually_exclusive_group(required=False)
-    group.add_argument('--' + name, dest=name, action='store_true')
-    group.add_argument('--no-' + name, dest=name, action='store_false')
-    parser.set_defaults(**{name: default})
-
-
-def add_arg_list(parser, arg_list):
-    for entry in arg_list:
-        if entry['type'] == 'bool':
-            add_bool_arg(parser, entry['name'], entry['default'])
-        else:
-            parser.add_argument('--' + entry['name'], type=entry['type'], default=entry['default'])
-
-    return parser
-
-
-def dict2namespace(data_dict: dict):
-    """
-    Recursively converts a dictionary and its internal dictionaries into an
-    argparse.Namespace
-
-    Parameters
-    ----------
-    data_dict : dict
-        The input dictionary
-
-    Return
-    ------
-    data_namespace : argparse.Namespace
-        The output namespace
-    """
-    for k, v in data_dict.items():
-        if isinstance(v, dict):
-            data_dict[k] = dict2namespace(v)
-        else:
-            pass
-    data_namespace = Namespace(**data_dict)
-
-    return data_namespace
-
-
-def load_yaml(path, append_config_dir=True):
-    if append_config_dir:
-        path = "configs/" + path
+def load_yaml(path):
     yaml_path = Path(path)
     assert yaml_path.exists()
     assert yaml_path.suffix in {".yaml", ".yml"}

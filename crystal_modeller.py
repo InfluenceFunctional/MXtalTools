@@ -41,7 +41,7 @@ from dataset_management.modelling_utils import (TrainingDataBuilder, get_dataloa
 from reporting.logger import Logger
 
 from csp.utils import log_csp_summary_stats, compute_csp_sample_distances, plot_mini_csp_dist_vs_score, sample_density_funnel_plot, sample_rdf_funnel_plot
-from reporting.csp.utils import log_mini_csp_scores_distributions, log_csp_cell_params
+from reporting.online import log_mini_csp_scores_distributions, log_csp_cell_params
 from common.utils import np_softmax
 from torch_geometric.loader.dataloader import Collater
 
@@ -291,10 +291,10 @@ class Modeller:
                 generated_samples_i, negative_type, real_data = \
                     self.generate_discriminator_negatives(real_data, i, override_randn=True, override_distorted=True)
 
-                fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+                fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
                     real_data, generated_samples_i, self.config.supercell_size,
                     self.config.discriminator.model.convolution_cutoff,
-                    align_molecules=(negative_type != 'generated'),
+                    align_to_standardized_orientation=(negative_type != 'generated'),
                     target_handedness=real_data.asym_unit_handedness,
                 )
 
@@ -457,7 +457,8 @@ class Modeller:
                         self.update_lr()
 
                         '''save checkpoints'''
-                        self.model_checkpointing(epoch)
+                        if self.config.save_checkpoints and epoch > 0:
+                            self.model_checkpointing(epoch)
 
                         '''check convergence status'''
                         generator_converged, discriminator_converged, regressor_converged = \
@@ -466,7 +467,7 @@ class Modeller:
                         '''sometimes test the generator on a mini CSP problem'''
                         if (self.config.mode == 'gan') and (epoch % self.config.logger.mini_csp_frequency == 0) and \
                                 self.train_generator and (epoch > 0):
-                            pass # self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
+                            pass  # self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
 
                         '''record metrics and analysis'''
                         self.logger.log_training_metrics()
@@ -728,10 +729,10 @@ class Modeller:
         generated_samples_i, negative_type, generator_data = \
             self.generate_discriminator_negatives(data, i)
 
-        fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+        fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
             self.config.discriminator.model.convolution_cutoff,
-            align_molecules=(negative_type != 'generated'),
+            align_to_standardized_orientation=(negative_type != 'generated'),
             target_handedness=generator_data.asym_unit_handedness,
         )
 
@@ -829,11 +830,11 @@ class Modeller:
         generated_samples, prior, standardized_target_packing, generator_data = (
             self.get_generator_samples(data))
 
-        supercell_data, generated_cell_volumes, _ = (
+        supercell_data, generated_cell_volumes = (
             self.supercell_builder.build_supercells(
                 generator_data, generated_samples, self.config.supercell_size,
                 self.config.discriminator.model.convolution_cutoff,
-                align_molecules=False
+                align_to_standardized_orientation=False
             ))
 
         """get losses"""
@@ -1034,34 +1035,34 @@ class Modeller:
         return train_loader, test_loader, extra_test_loader
 
     def model_checkpointing(self, epoch):
-        if self.config.save_checkpoints:
-            if epoch > 0:  # only save 'best' checkpoints
-                if self.train_discriminator:
-                    model = 'discriminator'
-                    loss_record = self.logger.loss_record[model]['mean_test']
-                    past_mean_losses = [np.mean(record) for record in loss_record]
-                    if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
-                        print("Saving discriminator checkpoint")
-                        save_checkpoint(epoch, self.discriminator, self.discriminator_optimizer, self.config.discriminator.__dict__,
-                                        self.config.checkpoint_dir_path + 'best_discriminator_' + str(self.working_directory))
-                if self.train_generator:
-                    model = 'generator'
-                    loss_record = self.logger.loss_record[model]['mean_test']
-                    past_mean_losses = [np.mean(record) for record in loss_record]
-                    if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
-                        print("Saving generator checkpoint")
-                        save_checkpoint(epoch, self.generator, self.generator_optimizer, self.config.generator.__dict__,
-                                        self.config.checkpoint_dir_path + 'best_generator_' + str(self.working_directory))
-                if self.train_regressor:
-                    model = 'regressor'
-                    loss_record = self.logger.loss_record[model]['mean_test']
-                    past_mean_losses = [np.mean(record) for record in loss_record]
-                    if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
-                        print("Saving regressor checkpoint")
-                        save_checkpoint(epoch, self.regressor, self.regressor_optimizer, self.config.regressor.__dict__,
-                                        self.config.checkpoint_dir_path + 'best_regressor_' + str(self.working_directory))
+        if self.train_discriminator:
+            model = 'discriminator'
+            loss_record = self.logger.loss_record[model]['mean_test']
+            past_mean_losses = [np.mean(record) for record in loss_record]
+            if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
+                print("Saving discriminator checkpoint")
+                self.logger.save_stats_dict(prefix='best_discriminator_')
+                save_checkpoint(epoch, self.discriminator, self.discriminator_optimizer, self.config.discriminator.__dict__,
+                                self.config.checkpoint_dir_path + 'best_discriminator_' + str(self.working_directory))
+        if self.train_generator:
+            model = 'generator'
+            loss_record = self.logger.loss_record[model]['mean_test']
+            past_mean_losses = [np.mean(record) for record in loss_record]
+            if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
+                print("Saving generator checkpoint")
+                self.logger.save_stats_dict(prefix='best_generator_')
+                save_checkpoint(epoch, self.generator, self.generator_optimizer, self.config.generator.__dict__,
+                                self.config.checkpoint_dir_path + 'best_generator_' + str(self.working_directory))
+        if self.train_regressor:
+            model = 'regressor'
+            loss_record = self.logger.loss_record[model]['mean_test']
+            past_mean_losses = [np.mean(record) for record in loss_record]
+            if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
+                print("Saving regressor checkpoint")
+                self.logger.save_stats_dict(prefix='best_regressor_')
+                save_checkpoint(epoch, self.regressor, self.regressor_optimizer, self.config.regressor.__dict__,
+                                self.config.checkpoint_dir_path + 'best_regressor_' + str(self.working_directory))
 
-        return None
 
     def update_lr(self):  # update learning rate
         self.discriminator_optimizer, discriminator_lr = set_lr(self.discriminator_schedulers, self.discriminator_optimizer,
@@ -1132,7 +1133,7 @@ class Modeller:
 
             # sometimes test the generator on a mini CSP problem
             if (self.config.mode == 'gan') and self.train_generator:
-                pass # self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
+                pass  # self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
 
             if extra_test_loader is not None:
                 self.run_epoch(epoch_type='extra', data_loader=extra_test_loader, update_gradients=False, record_stats=True, epoch=epoch)  # compute loss on test set
@@ -1451,11 +1452,11 @@ class Modeller:
                     samples, prior, standardized_target_packing_coeff, fake_data = \
                         self.get_generator_samples(fake_data)
 
-                    fake_supercell_data, generated_cell_volumes, _ = \
+                    fake_supercell_data, generated_cell_volumes = \
                         self.supercell_builder.build_supercells(
                             fake_data, samples, self.config.supercell_size,
                             self.config.discriminator.model.convolution_cutoff,
-                            align_molecules=False,
+                            align_to_standardized_orientation=False,
                         )
 
                 elif sample_source == 'distorted':
@@ -1476,10 +1477,10 @@ class Modeller:
                         self.sym_info, self.supercell_builder.asym_unit_dict,
                         rescale_asymmetric_unit=False, destandardize=True, mode='hard')
 
-                    fake_supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+                    fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
                         fake_data, generated_samples_i, self.config.supercell_size,
                         self.config.discriminator.model.convolution_cutoff,
-                        align_molecules=True,
+                        align_to_standardized_orientation=True,
                         target_handedness=real_data.asym_unit_handedness,
                     )
                     sampling_dict['distortion_size'][:, ii] = torch.linalg.norm(distortion, axis=-1).cpu().detach().numpy()

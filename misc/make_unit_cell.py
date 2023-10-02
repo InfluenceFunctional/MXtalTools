@@ -3,10 +3,9 @@
 import numpy as np
 from ase.visualize import view
 from ase import Atoms
-from crystal_building.utils_np import fractional_transform_np
-from crystal_building.utils import build_unit_cell, unit_cell_to_convolution_cluster
+from crystal_building.utils import build_unit_cell, unit_cell_to_convolution_cluster, fractional_transform_np
 from constants.space_group_info import SYM_OPS
-from crystal_building.coordinate_transformations import coor_trans_matrix
+from common.geometry_calculations import coor_trans_matrix
 
 import torch
 

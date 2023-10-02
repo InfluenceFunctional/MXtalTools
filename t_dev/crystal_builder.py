@@ -53,9 +53,9 @@ def cell_parameterization_and_reconstruction():
     updated_params[:, 9:12] = rotation  # overwrite to canonical parameters
     #supercell_data.asym_unit_handedness = mol_handedness
 
-    rebuilt_supercells, _, _ = supercell_builder.build_supercells(
+    rebuilt_supercells, _ = supercell_builder.build_supercells(
         test_crystals, updated_params,
-        align_molecules=True, target_handedness=reference_supercells.asym_unit_handedness,
+        align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
         graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
@@ -103,9 +103,9 @@ def distorted_cell_reconstruction():
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
     distorted_params = test_crystals.cell_params + 0.1
-    rebuilt_supercells, _, _ = supercell_builder.build_supercells(
+    rebuilt_supercells, _ = supercell_builder.build_supercells(
         test_crystals, distorted_params,
-        align_molecules=True, target_handedness=reference_supercells.asym_unit_handedness,
+        align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
         graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 

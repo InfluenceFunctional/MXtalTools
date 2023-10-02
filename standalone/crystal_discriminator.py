@@ -93,11 +93,11 @@ class StandaloneDiscriminator():
             self.dataDims,
             self.sym_info, randomize_sgs=False)
 
-        supercell_data, generated_cell_volumes, _ = self.supercell_builder.build_supercells(
+        supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
             mol_data, cell_params_i,
             self.supercell_size,
             self.graph_convolution_cutoff,
-            align_molecules=False,
+            align_to_standardized_orientation=False,
             target_handedness=mol_data.asym_unit_handedness,
         )
 

@@ -32,10 +32,10 @@ def test_cell_parameterization_and_reconstruction():
         test_crystals, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
-    rebuilt_supercells, _, _ = supercell_builder.build_supercells(
+    rebuilt_supercells, _ = supercell_builder.build_supercells(
         test_crystals, test_crystals.cell_params,
         skip_cell_cleaning=True, standardized_sample=False,
-        align_molecules=True, target_handedness=reference_supercells.asym_unit_handedness,
+        align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
         rescale_asymmetric_unit=False, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
@@ -78,10 +78,10 @@ def test_distorted_cell_reconstruction():
 
     # todo put explicit reparameterization here
     distorted_params = test_crystals.cell_params + 0.1
-    rebuilt_supercells, _, _ = supercell_builder.build_supercells(
+    rebuilt_supercells, _ = supercell_builder.build_supercells(
         test_crystals, distorted_params,
         skip_cell_cleaning=False, standardized_sample=False,
-        align_molecules=True, target_handedness=reference_supercells.asym_unit_handedness,
+        align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
         rescale_asymmetric_unit=True, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 

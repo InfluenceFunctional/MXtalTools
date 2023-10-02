@@ -1,14 +1,15 @@
 import numpy as np
 import torch
 import wandb
-from _plotly_utils.colors import n_colors
+from _plotly_utils.colors import n_colors, sample_colorscale
+from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.stats import gaussian_kde, linregress
 import plotly.graph_objects as go
 import plotly.express as px
 
 from crystal_building.utils import write_sg_to_all_crystals
-from crystal_building.coordinate_transformations import cell_vol
+from common.geometry_calculations import cell_vol
 from models.utils import softmax_and_score, norm_scores
 
 
@@ -442,55 +443,6 @@ def sampling_telemetry_plot(config, wandb, sampling_dict):  # todo deprecate or 
     #                   col=2, row=2)
     fig.update_layout(showlegend=True)
     # fig.update_yaxes(range=[0, 1], row=1, col=2)
-    fig.layout.margin = layout.margin
-    # #fig.write_image('../paper1_figs_new_architecture/sampling_telemetry.png')
-    # wandb.log({'Sampling Telemetry': fig})
-    if config.machine == 'local':
-        import plotly.io as pio
-        pio.renderers.default = 'browser'
-        fig.show()
-
-
-def cell_params_tracking_plot(wandb, supercell_builder, layout, config, sampling_dict, collater, extra_test_loader):
-    # DEPRECATED
-    num_iters = sampling_dict['scores'].shape[1]
-    n_runs = sampling_dict['canonical samples'].shape[1]
-
-    all_samples = torch.tensor(sampling_dict['canonical samples'].reshape(12, n_runs * num_iters).T)
-    single_mol_data_0 = extra_test_loader.dataset[0]
-    big_single_mol_data = collater([single_mol_data_0 for n in range(len(all_samples))]).cuda()
-    override_sg_ind = list(supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
-    sym_ops_list = [torch.Tensor(supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
-        big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
-    big_single_mol_data = write_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
-                                                   supercell_builder.symmetries_dict, sym_ops_list)
-    processed_cell_params = torch.cat(supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda(),
-                                                                            rescale_asymmetric_unit=False, skip_cell_cleaning=True), dim=-1).T
-    del big_single_mol_data
-
-    processed_cell_params = processed_cell_params.reshape(12, n_runs, num_iters).cpu().detach().numpy()
-
-    fig = make_subplots(rows=4, cols=3, subplot_titles=[
-        'a', 'b', 'c', 'alpha', 'beta', 'gamma',
-        'x', 'y', 'z', 'phi', 'psi', 'theta'
-    ])
-    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', min(10, n_runs), colortype='rgb')
-    for i in range(12):
-        row = i // 3 + 1
-        col = i % 3 + 1
-        x = np.arange(num_iters * n_runs)
-        for j in range(min(10, n_runs)):
-            y = processed_cell_params[i, j]
-            opacity = 0.75  # np.clip(1 - np.abs(np.ptp(y) - np.ptp(processed_cell_params[i])) / np.ptp(processed_cell_params[i]), a_min=0.1, a_max=1)
-            fig.add_trace(go.Scattergl(x=x, y=y, line_color=colors[j], opacity=opacity),
-                          row=row, col=col)
-            fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][j],
-                                       y=y[sampling_dict['resampled state record'][j]],
-                                       mode='markers', line_color=colors[j], marker=dict(size=7), opacity=opacity,
-                                       showlegend=False),
-                          row=row, col=col)
-
-    fig.update_layout(showlegend=False)
     fig.layout.margin = layout.margin
     # #fig.write_image('../paper1_figs_new_architecture/sampling_telemetry.png')
     # wandb.log({'Sampling Telemetry': fig})
@@ -1437,4 +1389,120 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict):
     discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
     plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout)
 
+    return None
+
+
+def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, real_samples_dict, real_data, sym_info):
+    """
+    report on key metrics from mini-csp
+    """
+    scores_labels = ['score', 'vdw overlap', 'density']  # , 'h bond score']
+    fig = make_subplots(rows=1, cols=len(scores_labels),
+                        vertical_spacing=0.075, horizontal_spacing=0.075)
+
+    colors = sample_colorscale('viridis', 1 + len(np.unique(generated_samples_dict['space group'])))
+    real_color = 'rgb(250,0,250)'
+    opacity = 0.65
+
+    for i, label in enumerate(scores_labels):
+        row = 1  # i // 2 + 1
+        col = i + 1  # i % 2 + 1
+        for j in range(min(15, real_data.num_graphs)):
+            bandwidth1 = np.ptp(generated_samples_dict[label][j]) / 50
+            real_score = real_samples_dict[label][j]
+
+            unique_space_group_inds = np.unique(generated_samples_dict['space group'][j])
+            n_space_groups = len(unique_space_group_inds)
+            space_groups = np.asarray([sym_info['space_groups'][sg] for sg in generated_samples_dict['space group'][j]])
+            unique_space_groups = np.asarray([sym_info['space_groups'][sg] for sg in unique_space_group_inds])
+
+            all_sample_score = generated_samples_dict[label][j]
+            for k in range(n_space_groups):
+                sample_score = all_sample_score[space_groups == unique_space_groups[k]]
+
+                fig.add_trace(go.Violin(x=sample_score, y=[str(real_data.csd_identifier[j]) for _ in range(len(sample_score))],
+                                        side='positive', orientation='h', width=2, line_color=colors[k],
+                                        meanline_visible=True, bandwidth=bandwidth1, opacity=opacity,
+                                        name=unique_space_groups[k], legendgroup=unique_space_groups[k], showlegend=False),
+                              row=row, col=col)
+
+            fig.add_trace(go.Violin(x=[real_score], y=[str(real_data.csd_identifier[j])], line_color=real_color,
+                                    side='positive', orientation='h', width=2, meanline_visible=True,
+                                    name="Experiment", showlegend=True if (i == 0 and j == 0) else False),
+                          row=row, col=col)
+
+            fig.update_xaxes(title_text=label, row=1, col=col)
+
+        unique_space_group_inds = np.unique(generated_samples_dict['space group'].flatten())
+        n_space_groups = len(unique_space_group_inds)
+        space_groups = np.asarray([sym_info['space_groups'][sg] for sg in generated_samples_dict['space group'].flatten()])
+        unique_space_groups = np.asarray([sym_info['space_groups'][sg] for sg in unique_space_group_inds])
+
+        if real_data.num_graphs > 1:
+            for k in range(n_space_groups):
+                all_sample_score = generated_samples_dict[label].flatten()[space_groups == unique_space_groups[k]]
+
+                fig.add_trace(go.Violin(x=all_sample_score, y=['all samples' for _ in range(len(all_sample_score))],
+                                        side='positive', orientation='h', width=2, line_color=colors[k],
+                                        meanline_visible=True, bandwidth=np.ptp(generated_samples_dict[label].flatten()) / 100, opacity=opacity,
+                                        name=unique_space_groups[k], legendgroup=unique_space_groups[k], showlegend=True if i == 0 else False),
+                              row=row, col=col)
+
+    layout = go.Layout(
+        margin=go.layout.Margin(
+            l=0,  # left margin
+            r=0,  # right margin
+            b=0,  # bottom margin
+            t=100,  # top margin
+        )
+    )
+    fig.update_xaxes(row=1, col=scores_labels.index('vdw overlap') + 1, range=[0, np.minimum(1, generated_samples_dict['vdw overlap'].flatten().max())])
+
+    fig.update_layout(yaxis_showgrid=True)  # legend_traceorder='reversed',
+
+    fig.layout.margin = layout.margin
+
+    if config.logger.log_figures:
+        wandb.log({'Mini-CSP Scores': fig})
+    if (config.machine == 'local') and False:
+        fig.show()
+
+    return None
+
+
+def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict, crystal_name, crystal_ind):
+    fig = make_subplots(rows=4, cols=3, subplot_titles=config.dataDims['lattice_features'])
+    for i in range(12):
+        bandwidth = np.ptp(generated_samples_dict['cell params'][crystal_ind, :, i]) / 100
+        col = i % 3 + 1
+        row = i // 3 + 1
+        fig.add_trace(go.Violin(
+            x=[real_samples_dict['cell params'][crystal_ind, i]],
+            bandwidth=bandwidth,
+            name="Samples",
+            showlegend=False,
+            line_color='darkorchid',
+            side='positive',
+            orientation='h',
+            width=2,
+        ), row=row, col=col)
+        for cc, cutoff in enumerate([0, 0.5, 0.95]):
+            colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', 3, colortype='rgb')
+            good_inds = np.argwhere(generated_samples_dict['score'][crystal_ind] > np.quantile(generated_samples_dict['score'][crystal_ind], cutoff))[:, 0]
+            fig.add_trace(go.Violin(
+                x=generated_samples_dict['cell params'][crystal_ind, :, i][good_inds],
+                bandwidth=bandwidth,
+                name="Samples",
+                showlegend=False,
+                line_color=colors[cc],
+                side='positive',
+                orientation='h',
+                width=2,
+            ), row=row, col=col)
+
+    fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_traces(opacity=0.5)
+    fig.update_layout(title=crystal_name)
+
+    wandb.log({"Mini-CSP Cell Parameters": fig})
     return None

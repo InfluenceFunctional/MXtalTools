@@ -8,8 +8,10 @@ import pandas as pd
 import os
 
 
-def get_range_fraction(atomic_numbers, rrange):
-    return np.sum((np.asarray(atomic_numbers) > rrange[0]) * (np.asarray(atomic_numbers) < rrange[1])) / len(atomic_numbers)
+def get_range_fraction(atomic_numbers, atomic_number_range: [int, int]):
+    """get the fraction of atomic nubmers within the given range"""
+    assert len(list) == 2, "atomic_number_range must be in format [low, high]"  # low-to-high
+    return np.sum((np.asarray(atomic_numbers) > atomic_number_range[0]) * (np.asarray(atomic_numbers) < atomic_number_range[1])) / len(atomic_numbers)
 
 
 class TrainingDataBuilder:
@@ -111,8 +113,8 @@ class TrainingDataBuilder:
         crystal_system_features = [column for column in dataset.columns if 'crystal_system_is' in column]
         self.crystal_generation_features.extend(space_group_features)
         self.crystal_generation_features.extend(crystal_system_features)
-        #self.crystal_generation_features.append('crystal_z_value')
-        #self.crystal_generation_features.append('crystal_z_prime')
+        # self.crystal_generation_features.append('crystal_z_value')
+        # self.crystal_generation_features.append('crystal_z_prime')
         self.crystal_generation_features.append('crystal_symmetry_multiplicity')
         # self.crystal_generation_features.append('crystal_packing_coefficient')
         # self.crystal_generation_features.append('crystal_cell_volume')
@@ -294,7 +296,6 @@ class TrainingDataBuilder:
 
             if isinstance(feature_vector[0], list):  # feature vector is an array of lists
                 feature_vector = np.concatenate(feature_vector)
-
 
             if feature_vector.dtype == bool:
                 pass

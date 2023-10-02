@@ -342,11 +342,11 @@ class mcmcSampler:
         :param config:
         :return:
         """
-        proposed_supercells, _, _ = self.supercell_builder.build_supercells(crystaldata, torch.Tensor(self.proposed_states),
+        proposed_supercells, _ = self.supercell_builder.build_supercells(crystaldata, torch.Tensor(self.proposed_states),
                                                                             supercell_size=self.supercell_size,
                                                                             graph_convolution_cutoff=self.graph_convolution_cutoff,
                                                                             override_sg=self.sg_to_search,
-                                                                            align_molecules=False, )
+                                                                            align_to_standardized_orientation=False, )
 
         output, dist_dict = score_model(proposed_supercells.clone().cuda(), return_dists=True)
 

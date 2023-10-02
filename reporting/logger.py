@@ -95,6 +95,10 @@ class Logger:
                 else:  # just a list
                     stat_dict[key] = np.asarray(value)
 
+    def save_stats_dict(self, prefix=None):
+        save_path = prefix + r'test_stats_dict'
+        np.save(save_path, self.test_stats)
+
     def check_model_convergence(self):
         generator_convergence = check_convergence(self.loss_record['generator']['mean_test'], self.config.history,
                                                   self.config.generator.optimizer.convergence_eps)

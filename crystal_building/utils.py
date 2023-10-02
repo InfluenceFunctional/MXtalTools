@@ -1,12 +1,10 @@
 import numpy as np
 from torch.nn.utils import rnn as rnn
 
-from crystal_building.utils_np import fractional_transform_np
-from models.utils import enforce_1d_bound, clean_generator_output, enforce_crystal_system
+from models.utils import clean_generator_output, enforce_crystal_system
 from common.geometry_calculations import single_molecule_principal_axes_torch, batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, sph2rotvec
 from scipy.spatial.transform import Rotation
 import torch
-import torch.nn.functional as F
 import sys
 
 
@@ -137,97 +135,11 @@ def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords
     return supercell_data
 
 
-def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol_position: torch.tensor, mol_rotation: torch.tensor,
-                      lattices, means, stds,
-                      enforce_crystal_system=False, rotation_basis='spherical',
-                      return_transforms=False, standardized_sample: bool = True):
-    """
-    constrain cell parameters to physically meaningful values
-    :param cell_lengths:
-    :param cell_angles:
-    :param mol_position:
-    :param mol_rotation:
-    :return:
-    """
-    if standardized_sample:
-        # de-standardize everything
-        means = torch.Tensor(means).to(cell_lengths.device)
-        stds = torch.Tensor(stds).to(cell_lengths.device)
-
-        # soft clipping to ensure correct range with finite gradients
-        cell_lengths = cell_lengths * stds[0:3] + means[0:3]
-        cell_angles = cell_angles * stds[3:6] + means[3:6]
-        mol_position = mol_position * stds[6:9] + means[6:9]
-        mol_rotation = mol_rotation * stds[9:12] + means[9:12]
-
-    '''
-    enforce bounds on the cell parameters
-    a,b,c: positive nonzero
-    alpha,beta,gamma: 0,pi
-    fractional centroid: 0,1
-    mol orientation: 
-        -> cartesian mode: vector norm < 2pi
-        -> spherical mode: theta < pi/2, phi in -pi,pi, r < 2pi
-    '''
-    cell_lengths = F.softplus(cell_lengths - 0.1) + 0.1  # enforces positive nonzero
-
-    cell_angles = enforce_1d_bound(cell_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='soft')  # prevent too-skinny cells
-
-    mol_position = enforce_1d_bound(mol_position, 0.5, 0.5, mode='soft')
-
-    if rotation_basis == 'cartesian':
-        norms = torch.linalg.norm(mol_rotation, dim=1)
-        normed_norms = enforce_1d_bound(norms, torch.pi, torch.pi, mode='soft')
-        mol_rotation = mol_rotation / norms[:, None] * normed_norms[:, None]
-    elif rotation_basis == 'spherical':
-        theta = enforce_1d_bound(mol_rotation[:, 0], torch.pi / 4, torch.pi / 4, mode='soft')
-        phi = enforce_1d_bound(mol_rotation[:, 1], torch.pi, torch.pi, mode='soft')
-        r = enforce_1d_bound(mol_rotation[:, 2], torch.pi, torch.pi, mode='soft')
-        mol_rotation = torch.cat((theta[:, None], phi[:, None], r[:, None]), dim=-1)
-    else:
-        print(f"{rotation_basis} is not an implemented rotation basis!")
-        sys.exit()
-
-    for i in range(len(cell_lengths)):
-        if enforce_crystal_system:  # enforce properties of crystal system
-            lattice = lattices[i]
-
-            # enforce agreement with crystal system
-            if lattice.lower() == 'triclinic':
-                pass
-            elif lattice.lower() == 'monoclinic':  # fix alpha and gamma
-                cell_angles[i, 0], cell_angles[i, 2] = torch.pi / 2, torch.pi / 2
-            elif lattice.lower() == 'orthorhombic':  # fix all angles
-                cell_angles[i] = torch.ones(3) * torch.pi / 2
-            elif lattice.lower() == 'tetragonal':  # fix all angles and a & b vectors
-                cell_angles[i] = torch.ones(3) * torch.pi / 2
-                cell_lengths[i, 0:2] = cell_lengths[i, 0]
-            elif (lattice.lower() == 'hexagonal') or (lattice.lower() == 'trigonal') or (lattice.lower() == 'rhombohedral'):
-                cell_lengths[i, 0:2] = cell_lengths[i, 0]
-                cell_angles[i, 0:2] = torch.pi / 2
-                cell_angles[i, 2] = torch.pi * 2 / 3
-            elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
-                cell_lengths[i] = cell_lengths[i, 0]
-                cell_angles[i] = torch.pi * torch.ones(3) / 2
-            else:
-                print(lattice + ' is not a valid crystal lattice!')
-                sys.exit()
-        else:
-            # don't assume a crystal system, but snap angles close to 90, to assist in precise symmetry
-            pass  # cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.01] = torch.pi / 2
-
-    if return_transforms:
-        return cell_lengths, cell_angles, mol_position, mol_rotation, None, None, None
-    else:
-        return cell_lengths, cell_angles, mol_position, mol_rotation
-
-
 def compute_lattice_vector_overlap(coords_list: list, T_cf_list: list, normed_lattice_vectors=None):
     """
     compute overlap between molecule principal axes and the crystal lattice vectors
-    """
+    """  # do not deprecate - may be useful later
     if normed_lattice_vectors is None:
-        # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
         # ideally precomputed and fed to the function
         supercell_scale = 2  # t
         n_cells = (2 * supercell_scale + 1) ** 3
@@ -253,16 +165,6 @@ def compute_lattice_vector_overlap(coords_list: list, T_cf_list: list, normed_la
     return torch.einsum('ij,nmj->nmi', (normed_lattice_vectors, normed_vectors_f))
 
 
-def get_cell_fractional_centroids(coords, T_cf):
-    """
-    input is the cartesian coordinates and the c->f transformation matrix
-    """
-    if isinstance(coords, np.ndarray):
-        return np.einsum('nmj,ij->nmi', coords, T_cf).mean(1)
-    elif torch.is_tensor(coords):
-        return torch.einsum('nmj,ij->nmi', (coords, T_cf)).mean(1)
-
-
 def fractional_transform(coords, T_mat):
     """
     input is the cartesian coordinates and the c-f or f-c fractional transformation matrix
@@ -278,6 +180,7 @@ def fractional_transform_torch(coords, T_mat):
         return torch.einsum('nj,ij->ni', (coords, T_mat))
     elif coords.ndim == 3:
         return torch.einsum('nmj,ij->nmi', (coords, T_mat))
+
 
 def find_coord_in_box_torch(coords, box, epsilon=0):
     # which of the given coords is inside the specified box, with option for a little leeway
@@ -297,7 +200,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
     asym_unit_dict: dict which defines the asymmetric unit for each space group
     T_cf : list of cartesian-to-fractional matrix transforms
     enforce_right_handedness : DEPRECATED doesn't make sense given nature of our transform
-    rotation_basis : 'cartesian' or 'spherical' whether mol orientation rotvec should be paramterized in cartesian or spherical coordinates
+    rotation_basis : 'cartesian' or 'spherical' whether mol orientation rotvec should be parameterized in cartesian or spherical coordinates
     Returns : standardized pose parameters and canonical conformer handedness
     -------
     """
@@ -374,7 +277,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
             # for safety must set these as something, may as well be this  # todo look at such ill-conditioned cases
             r = torch.pi
             direction_vector = torch.ones(3, device=rotation_matrix.device,
-                                     dtype=torch.float32)
+                                          dtype=torch.float32)
         else:  # calculate as normal
             r = torch.arccos(r_arg)
 
@@ -449,7 +352,7 @@ def compute_principal_axes_list(coords_list):
     return Ip_axes_list
 
 
-def align_crystaldata_to_principal_axes(crystaldata: object, handedness: object = None) -> object:
+def align_crystaldata_to_principal_axes(crystaldata, handedness):
     """
     align principal inertial axes of molecules in a crystaldata object to the xyz or xy(-z) axes
     only works for geometric principal axes (all atoms mass = 1)
@@ -492,7 +395,8 @@ def random_crystaldata_alignment(crystaldata):
 def set_sym_ops(supercell_data):
     """
     enforce known symmetry operations for given space groups
-    sometimes, the samples come with nonstandard space groups, which we do not want to use by accident
+    sometimes, the samples come with nonstandard space groups, which we do not want to use by accidend
+    consider the general positions in the standard settings
     @param supercell_data:
     @return:
     """
@@ -680,3 +584,15 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetrie
     mol_data.mult = torch.tensor([len(ops) for ops in mol_data.symmetry_operators], dtype=torch.int32, device=mol_data.sg_ind.device)
 
     return mol_data
+
+
+def fractional_transform_np(coords, T_mat):
+    if coords.ndim == 2:
+        return np.einsum('nj,ij->ni', coords, T_mat)
+    elif coords.ndim == 3:
+        return np.einsum('nmj,ij->nmi', coords, T_mat)
+
+
+def find_coord_in_box_np(coords, box, epsilon=0):
+    # which of the given coords is inside the specified box, with option for a little leeway
+    return np.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]

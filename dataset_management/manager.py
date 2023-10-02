@@ -1,6 +1,6 @@
 import pandas as pd
 import torch
-import tqdm
+from tqdm import tqdm
 import os
 import numpy as np
 
@@ -10,7 +10,7 @@ from constants.space_group_info import SYM_OPS
 from crystal_building.utils import build_unit_cell, batch_asymmetric_unit_pose_analysis_torch
 
 
-class DataManager():
+class DataManager:
     def __init__(self, datasets_path, device='cpu', chunks_path=None, seed=0):
         self.misc_data_dict = None
         self.standardization_dict = None
@@ -108,43 +108,60 @@ class DataManager():
         """
         print("Parameterizing Crystals")
 
-        # symmetry_multiplicity = torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device)
-        # final_coords_list = [torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for ind, crystal in self.dataset.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))]
-        T_fc_list = torch.tensor(np.stack([crystal['crystal_fc_transform'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
-        # T_cf_list = torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
-        # sym_ops_list = [torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
+        mol_position_list = []
+        mol_orientation_list = []
+        handedness_list = []
+        well_defined_asym_unit = []
+        canonical_conformer_coords_list = []
 
-        # build unit cell for each molecule (separately for each Z')
-        unit_cells_list = build_unit_cell(
-            symmetry_multiplicity=torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device),
-            final_coords_list=[torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for ind, crystal in self.dataset.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))],
-            T_fc_list=T_fc_list,
-            T_cf_list=torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device),
-            sym_ops_list=[torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
-        )
+        # do the parameterization in batches of 1000
+        chunk_size = 1000
+        n_chunks = int(np.ceil(len(self.dataset) / chunk_size))
+        for i in tqdm(range(n_chunks)):
+            chunk = self.dataset.loc[i * chunk_size:(i+1) * chunk_size]
+            symmetry_multiplicity = torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device)
+            final_coords_list = [torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for ind, crystal in chunk.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))]
+            T_fc_list = torch.tensor(np.stack([crystal['crystal_fc_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
+            T_cf_list = torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
+            sym_ops_list = [torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
 
-        # analyze the cell
-        mol_position_list, mol_orientation_list, handedness_list, well_defined_asym_unit, canonical_conformer_coords_list = \
-            batch_asymmetric_unit_pose_analysis_torch(
-                unit_cells_list,
-                torch.tensor([crystal['crystal_space_group_number'] for ind, crystal in self.dataset.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device),
-                self.asym_unit_dict,
-                T_fc_list,
-                enforce_right_handedness=False,
-                rotation_basis='spherical',
-                return_asym_unit_coords=True
+            # build unit cell for each molecule (separately for each Z')
+            unit_cells_list = build_unit_cell(
+                symmetry_multiplicity=symmetry_multiplicity,
+                final_coords_list=final_coords_list,
+                T_fc_list=T_fc_list,
+                T_cf_list=T_cf_list,
+                sym_ops_list=sym_ops_list
             )
 
-        mol_position_list = mol_position_list.cpu().detach().numpy()
-        mol_orientation_list = mol_orientation_list.cpu().detach().numpy()
-        handedness_list = handedness_list.cpu().detach().numpy()
+            # analyze the cell
+            mol_position_list_i, mol_orientation_list_i, handedness_list_i, well_defined_asym_unit_i, canonical_conformer_coords_list_i = \
+                batch_asymmetric_unit_pose_analysis_torch(
+                    unit_cells_list,
+                    torch.tensor([crystal['crystal_space_group_number'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device),
+                    self.asym_unit_dict,
+                    T_fc_list,
+                    enforce_right_handedness=False,
+                    rotation_basis='spherical',
+                    return_asym_unit_coords=True
+                )
+
+            mol_position_list.extend(mol_position_list_i.cpu().detach().numpy())
+            mol_orientation_list.extend(mol_orientation_list_i.cpu().detach().numpy())
+            handedness_list.extend(handedness_list_i.cpu().detach().numpy())
+            well_defined_asym_unit.extend(well_defined_asym_unit_i)
+            canonical_conformer_coords_list.extend(canonical_conformer_coords_list_i)
+
+        mol_position_list = np.stack(mol_position_list)
+        mol_orientation_list = np.stack(mol_orientation_list)
+        handedness_list = np.stack(handedness_list)
 
         # write results to the dataset
         (centroids_x_list, centroids_y_list, centroids_z_list,
          orientations_theta_list, orientations_phi_list, orientations_r_list,
          handednesses_list, validity_list, coordinates_list) = [[[] for _ in range(len(self.dataset))] for _ in range(9)]
 
-        for i, identifier in enumerate(self.crystal_to_mol_dict.keys()):  # index molecules with their respective crystals
+        for i, identifier in enumerate(tqdm(self.crystal_to_mol_dict.keys())):  # index molecules with their respective crystals
             df_index = self.dataset.loc[self.dataset['crystal_identifier'] == identifier].index[0]
             (centroids_x, centroids_y, centroids_z, orientations_theta,
              orientations_phi, orientations_r, handedness, well_defined, coords) = [], [], [], [], [], [], [], [], []
@@ -220,7 +237,7 @@ class DataManager():
         print("Getting Dataset Statistics")
         std_dict = {}
 
-        for column in tqdm.tqdm(self.dataset.columns):
+        for column in tqdm(self.dataset.columns):
             values = None
             if column[:4] == 'atom':
                 values = np.concatenate([atoms for atoms_lists in self.dataset[column] for atoms in atoms_lists])
@@ -238,7 +255,10 @@ class DataManager():
                     elif values.dtype == bool:
                         pass
                     # this is clunky but np.issubdtype is too sensitive
-                    elif (values.dtype == np.float32) or (values.dtype == np.float64) or (values.dtype == float) or (values.dtype == int) or (values.dtype == np.int8) or (values.dtype == np.int16) or (values.dtype == np.int32) or (values.dtype == np.int64):
+                    elif ((values.dtype == np.float32) or (values.dtype == np.float64)
+                          or (values.dtype == float) or (values.dtype == int)
+                          or (values.dtype == np.int8) or (values.dtype == np.int16)
+                          or (values.dtype == np.int32) or (values.dtype == np.int64)):
                         std_dict[column] = [values.mean(), values.std()]
                     else:
                         pass
@@ -276,8 +296,8 @@ class DataManager():
         molecules_in_crystals_dict = {
             unique.tobytes(): [] for unique in unique_fps
         }
-        for ind, map in enumerate(inverse_map):  # we record the molecule inex for each unique molecular fingerprint
-            molecules_in_crystals_dict[unique_fps[map].tobytes()].append(ind)
+        for ind, mapping in enumerate(inverse_map):  # we record the molecule inex for each unique molecular fingerprint
+            molecules_in_crystals_dict[unique_fps[mapping].tobytes()].append(ind)
 
         return molecules_in_crystals_dict
 
@@ -293,7 +313,7 @@ class DataManager():
 
         if mode == 'standard':
             all_identifiers = {}
-            for i in tqdm.tqdm(range(len(self.dataset['crystal_identifier']))):
+            for i in tqdm(range(len(self.dataset['crystal_identifier']))):
                 item = self.dataset['crystal_identifier'][i]
                 if item[-1].isdigit():
                     item = item[:-2]  # cut off trailing digits, if any
@@ -306,7 +326,7 @@ class DataManager():
                                   'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX']
 
             all_identifiers = {key: [] for key in blind_test_targets}
-            for i in tqdm.tqdm(range(len(self.dataset['crystal_identifier']))):
+            for i in tqdm(range(len(self.dataset['crystal_identifier']))):
                 item = self.dataset['crystal_identifier'][i]
                 for j in range(len(blind_test_targets)):  # go in reverse to account for roman numerals system of duplication
                     if blind_test_targets[-1 - j] in item:
