@@ -73,7 +73,7 @@ def get_config(override_args):
             config[arg] = override_args.__dict__[arg]
 
     # update user paths
-    if config['test_mode']:  # todo put this in the config yaml
+    if config['test_mode']:  # todo put dataset name in the config yaml
         dataset_name = 'test_dataset.pkl'
     else:
         dataset_name = 'dataset.pkl'

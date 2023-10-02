@@ -560,7 +560,7 @@ def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_d
     return supercell_data
 
 
-def update_crystal_symmetry_elements(mol_data, generate_sgs, dataDims, symmetries_dict, randomize_sgs=False):
+def update_crystal_symmetry_elements(mol_data, generate_sgs, symmetries_dict, randomize_sgs=False):
     """
     update the symmetry information in molecule-wise crystaldata objects
     """

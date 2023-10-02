@@ -72,8 +72,6 @@ When filtering these, we identify all the duplicates and pick a single 'represen
 ## 3. Modes
 There are multiple modes for training, inference and analysis. 
 
-TODO add examples
-
 1. train_crystal_models
 
     Within training mode, there are two types of models which can currently be trained. 
@@ -88,6 +86,17 @@ TODO add examples
    Currently incomplete, and folded into training mode.
 4. embedding mode WIP - rebuilding
    - For using one of our crystal models (so far, discriminator) as an embedding generator. 
+
+Modes and datasets can be called via experiment configs and dataset configs.
+- For experiment specification (usually in `configs/experiments` and called on the command line or in the user config)
+see `configs/test_configs/discriminator.yaml`.
+This loads the full_gan specified dataset, and trains a discriminator model only on randn and distorted fakes.
+- For dataset construction, see the configs `configs/dataset/full_gan.yaml` and `configs/dataset/skinny_regression.yaml`.
+These construct training datasets for training generator/discriminator models with all atom & molecule features, and
+a regressor model with only a few input features. 
+Note the differences in filter conditions between modes, such as the filtering of all polymorphs and duplicate molecules
+in the regression task, and the filtering of dubious or nonstandard settings in the generation task. 
+- For an example slurm script for cluster batch submission, see `bash_sub.sh`.
 
 ## 4. Components
 

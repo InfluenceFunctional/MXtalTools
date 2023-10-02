@@ -330,9 +330,7 @@ def rebuild_topk_crystals(scores_list, scores_dict, real_samples_dict, sampling_
         for n in tqdm.tqdm(range(topk_size)):
             real_data_i = real_data.clone()
 
-            real_data_i = update_crystal_symmetry_elements(
-                real_data_i, best_samples_space_groups[:, n],
-                config.dataDims, supercell_builder.symmetries_dict, randomize_sgs=False)
+            real_data_i = update_crystal_symmetry_elements(real_data_i, best_samples_space_groups[:, n], supercell_builder.symmetries_dict, randomize_sgs=False)
 
             fake_supercell_data = supercell_builder.build_supercells(
                 real_data_i,

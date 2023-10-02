@@ -10,7 +10,7 @@ import os
 
 def get_range_fraction(atomic_numbers, atomic_number_range: [int, int]):
     """get the fraction of atomic nubmers within the given range"""
-    assert len(list) == 2, "atomic_number_range must be in format [low, high]"  # low-to-high
+    assert len(atomic_number_range) == 2, "atomic_number_range must be in format [low, high]"  # low-to-high
     return np.sum((np.asarray(atomic_numbers) > atomic_number_range[0]) * (np.asarray(atomic_numbers) < atomic_number_range[1])) / len(atomic_numbers)
 
 

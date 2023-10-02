@@ -1,7 +1,10 @@
 import torch
 from constants.space_group_info import LATTICE_TYPE, SYM_OPS
 
-# SG one-hot : crystal one-hot : symmetry multiplicity
+"""
+generate a feature tensor encoding the symmetry information of a given sample
+SG one-hot : crystal one-hot : symmetry multiplicity
+"""
 feature_length = 230 + 6 + 1
 SG_FEATURE_TENSOR = torch.zeros((231, feature_length))
 

@@ -87,11 +87,7 @@ class StandaloneDiscriminator():
         cell_params_i[:, 0:3] = cell_params_i[:, 0:3] * (mol_data.mult ** (1/3))[:, None] * (mol_data.mol_volume ** (1/3))[:, None]
 
         # overwrite the appropriate symmetry operations in the mol data for the new space groups
-        mol_data = update_crystal_symmetry_elements(
-            mol_data,
-            space_groups,
-            self.dataDims,
-            self.sym_info, randomize_sgs=False)
+        mol_data = update_crystal_symmetry_elements(mol_data, space_groups, self.sym_info, randomize_sgs=False)
 
         supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
             mol_data, cell_params_i,

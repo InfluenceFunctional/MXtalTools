@@ -4,7 +4,6 @@ from models.asymmetric_radius_graph import asymmetric_radius_graph
 import sys
 
 
-# TODO merge this with vdw_penalty
 def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomic_numbers=None,
                 num_graphs=None, crystaldata=None, graph_sizes=None,
                 return_loss_only=False, return_score_only=False,

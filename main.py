@@ -29,6 +29,3 @@ if __name__ == '__main__':
     predictor = Modeller(config)
     if config.mode == 'gan' or config.mode == 'regression':
         predictor.train_crystal_models()
-
-    # elif config.mode == 'embedding':  # todo rewrite
-    #     predictor.crystal_embedding_analysis()

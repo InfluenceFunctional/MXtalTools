@@ -2,25 +2,17 @@ import sys
 
 import numpy as np
 import torch
+import wandb
 from torch import optim, nn as nn
 from torch.nn import functional as F
 from torch.optim import lr_scheduler as lr_scheduler
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import np_softmax, components2angle
+from dataset_management.modelling_utils import update_dataloader_batch_size
 
 
-def get_grad_norm(model):
-    params = [p for p in model.parameters() if p.grad is not None and p.requires_grad]
-    if len(params) == 0:
-        norm = 0
-    else:
-        norm = torch.norm(torch.stack([torch.norm(p.grad.detach()).cpu() for p in params]), 2.0).item()
-
-    return norm
-
-
-def set_lr(schedulers, optimizer, lr_schedule, min_lr, max_lr, err_tr, hit_max_lr):
+def set_lr(schedulers, optimizer, lr_schedule, min_lr, err_tr, hit_max_lr):
     if lr_schedule:
         lr = optimizer.param_groups[0]['lr']
         if lr > min_lr:
@@ -34,39 +26,6 @@ def set_lr(schedulers, optimizer, lr_schedule, min_lr, max_lr, err_tr, hit_max_l
 
     lr = optimizer.param_groups[0]['lr']
     return optimizer, lr
-
-
-def compute_F1_score(confusion_matrix, num_classes):
-    true_positive = [confusion_matrix[i, i] for i in range(num_classes)]
-    false_positive = [np.sum(confusion_matrix[i, :]) - confusion_matrix[i, i] for i in range(num_classes)]
-    false_negative = [np.sum(confusion_matrix[:, i]) - confusion_matrix[i, i] for i in range(num_classes)]
-
-    accuracy = np.sum(confusion_matrix.diagonal()) / np.sum(confusion_matrix)
-    recall = np.asarray([true_positive[i] / (true_positive[i] + false_positive[i]) for i in range(num_classes)])
-    precision = np.asarray([true_positive[i] / (true_positive[i] + false_negative[i]) for i in range(num_classes)])
-    F1 = np.asarray([2 * precision[i] * recall[i] / (precision[i] + recall[i]) for i in range(num_classes)])
-
-    return accuracy, np.average(np.nan_to_num(precision, nan=0)), np.average(np.nan_to_num(recall, nan=0)), np.average(np.nan_to_num(F1, nan=0))
-
-
-def compute_top_k_accuracy(config, probs, targets, X=5):
-    # this actually computes the 'true positive rate' true positive / all positives
-    correct_counter = np.zeros(config.dataDims['output classes'][0], dtype='uint64')
-    incorrect_counter = np.zeros_like(correct_counter)
-
-    for i in range(len(probs)):
-        topXPredictions = np.argpartition(probs[i], -X)[-X:]  # not sorted
-        if targets[i] in topXPredictions:
-            correct_counter[targets[i]] += 1
-        else:
-            incorrect_counter[targets[i]] += 1
-
-    overall_top_x_accuracy = correct_counter.sum() / (correct_counter.sum() + incorrect_counter.sum())
-    by_group_top_x_accuracy = np.zeros(len(correct_counter))
-    for i in range(len(correct_counter)):
-        by_group_top_x_accuracy[i] = correct_counter[i] / (correct_counter[i] + incorrect_counter[i])
-
-    return overall_top_x_accuracy, by_group_top_x_accuracy
 
 
 def check_convergence(record, history, convergence_eps):
@@ -133,12 +92,9 @@ def init_optimizer(optim_config, model, freeze_params=False):
     return optimizer
 
 
-def init_schedulers(config, optimizer):
+def init_schedulers(optimizer, lr_shrink_lambda, lr_growth_lambda):
     """
     initialize a series of LR schedulers
-    @param config: config for the given optimizer
-    @param optimizer:
-    @return: set of schedulers
     """
     scheduler1 = lr_scheduler.ReduceLROnPlateau(
         optimizer,
@@ -149,9 +105,9 @@ def init_schedulers(config, optimizer):
         threshold_mode='rel',
         cooldown=500
     )
-    lr_lambda = lambda epoch: config.lr_growth_lambda
+    lr_lambda = lambda epoch: lr_growth_lambda
     scheduler2 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda)
-    lr_lambda2 = lambda epoch: config.lr_shrink_lambda
+    lr_lambda2 = lambda epoch: lr_shrink_lambda
     scheduler3 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda2)
 
     return [scheduler1, scheduler2, scheduler3]
@@ -206,10 +162,7 @@ def norm_scores(score, tracking_features, dataDims):
     norm the incoming score according to some feature of the molecule (generally size)
     """
     volume = tracking_features[:, dataDims['tracking_features'].index('molecule volume')]
-    # radius = (3/4/np.pi * volume)**(1/3)
-    # surface_area = 4*np.pi*radius**2
-    # eccentricity = tracking_features[:,config.dataDims['tracking_features'].index('molecule eccentricity')]
-    # surface_area = tracking_features[:,config.dataDims['tracking_features'].index('molecule freeSASA')]
+
     return score / volume
 
 
@@ -270,18 +223,18 @@ def reload_model(model, optimizer, path, reload_optimizer=False):
     return model, optimizer
 
 
-def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.tensor, z_values: torch.tensor):
+def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.tensor, crystal_multiplicity: torch.tensor):
     """
     @param cell_params: cell parameters using our standard scheme 0-5 are a,b,c,alpha,beta,gamma
     @param mol_volumes: molumes in cubic angstrom of each single molecule
-    @param z_values: Z value for each crystal
+    @param crystal_multiplicity: Z value for each crystal
     @return: crystal packing coefficient
     """
     volumes_list = []
     for i in range(len(cell_params)):
         volumes_list.append(cell_vol_torch(cell_params[i, 0:3], cell_params[i, 3:6]))
     cell_volumes = torch.stack(volumes_list)
-    coeffs = z_values * mol_volumes / cell_volumes
+    coeffs = crystal_multiplicity * mol_volumes / cell_volumes
     return coeffs
 
 
@@ -291,7 +244,6 @@ def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     @param atom_donor_ind: index in tracking_features to find donor status
     @param atom_acceptor_ind: index in tracking_features to find acceptor status
     @param supercell_data: crystal data
-    @param dataDims: useful information
     @param i: cell index we are checking
     @return: sum of total hydrogen bonds for the canonical conformer
     """
@@ -311,58 +263,6 @@ def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     return torch.sum(torch.cdist(donors_pos, acceptors_pos, p=2) < 3.3)
 
 
-def get_strides(n_target_bins, init_size=3):
-    """
-    compute the deconvolution stride size for an approximately fixed number of deconvolution steps
-    required to achieve a certain output size
-    @param n_target_bins: desired cubic edge length
-    @param init_size: edge length of input
-    @return: list of the desired strides
-    """
-    target_size = n_target_bins
-    tolerance = -1
-    converged = False
-    while not converged and tolerance < 4:
-        tolerance += 1
-        for i in range(4):
-            for j in range(4):
-                for k in range(4):
-                    for l in range(4):
-                        inds = [1, 2, 3, 4]
-                        strides = [inds[i], inds[j], inds[k], inds[l]]
-                        img_size = [init_size]
-                        for ii, stride in enumerate(strides):
-                            if stride == 1:
-                                img_size += [img_size[ii] + 2]
-                            elif stride == 2:
-                                img_size += [img_size[ii] + img_size[ii] + 1]
-                            elif stride == 3:
-                                img_size += [img_size[ii] + 2 * img_size[ii]]
-                            elif stride == 4:
-                                img_size += [img_size[ii] + 3 * img_size[ii] - 1]
-
-                        if (img_size[-1] == target_size - tolerance):
-                            converged = True
-                        if converged:
-                            # print(strides)
-                            # print(img_size[-1])
-                            break
-                    if converged:
-                        break
-                if converged:
-                    break
-            if converged:
-                break
-
-    for n in range(tolerance):
-        strides += [1]
-
-    if converged:
-        return strides, img_size[-1] + 2 * tolerance
-    else:
-        assert False, 'could not manage this resolution with current strided setup'
-
-
 def save_checkpoint(epoch, model, optimizer, config, save_path):
     torch.save({'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -370,60 +270,6 @@ def save_checkpoint(epoch, model, optimizer, config, save_path):
                 'config': config},
                save_path)
     return None
-
-
-def cell_density_loss(packing_loss_rescaling, packing_coeff_ind, mol_volume_ind,
-                      packing_mean, packing_std, data, raw_sample, precomputed_volumes=None):
-    """
-    compute packing coefficients for generated cells
-    compute losses relating to packing density
-    """
-    if precomputed_volumes is None:
-        volumes_list = []
-        for i in range(len(raw_sample)):
-            volumes_list.append(cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6]))
-        volumes = torch.stack(volumes_list)
-    else:
-        volumes = precomputed_volumes
-
-    generated_packing_coeffs = data.mult * data.tracking[:, mol_volume_ind] / volumes
-    standardized_gen_packing_coeffs = (generated_packing_coeffs - packing_mean) / packing_std
-
-    csd_packing_coeffs = data.tracking[:, packing_coeff_ind]
-    standardized_csd_packing_coeffs = (csd_packing_coeffs - packing_mean) / packing_std  # requires that packing coefficnet is set as regression target in main
-
-    if packing_loss_rescaling == 'log':
-        packing_loss = torch.log(
-            1 + F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs,
-                                 reduction='none'))  # log(1+loss) is a soft rescaling to avoid gigantic losses
-    elif packing_loss_rescaling is None:
-        packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs,
-                                        reduction='none')
-    elif packing_loss_rescaling == 'mse':
-        packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_csd_packing_coeffs,
-                                  reduction='none')
-
-    assert torch.sum(torch.isnan(packing_loss)) == 0
-
-    return packing_loss, generated_packing_coeffs, csd_packing_coeffs
-
-
-def compute_combo_score(packing_prediction, vdw_penalty, discriminator_raw_output):
-    # combo
-    f1 = 100  # for sharp sigmoid scaling
-    # accept packing within range 0.675 +/- 0.125
-    packing_center = 0.675
-    packing_span = 0.125
-    packing_range_loss = F.sigmoid(-f1 * (packing_prediction - packing_center + packing_span)) * (-(packing_prediction - packing_center)) + \
-                         F.sigmoid(f1 * (packing_prediction - packing_center - packing_span)) * (packing_prediction - packing_center)
-
-    vdw_span = 0.5  # accept vdw overlaps of up to 0.5 angstrom
-    vdw_range_loss = F.sigmoid(f1 * (vdw_penalty - vdw_span)) * vdw_penalty
-
-    # combo score is the two above bracketing losses plus the adversarial probability we want to minimize
-    discriminator_loss = F.softmax(discriminator_raw_output / 5, dim=-1)[:, 0]  # high temperature for more linear gradient
-    combo_score = -(vdw_range_loss + packing_range_loss + discriminator_loss)
-    return combo_score
 
 
 def weight_reset(m):
@@ -439,10 +285,10 @@ def get_n_config(model):
     """
     pp = 0
     for p in list(model.parameters()):
-        nn = 1
+        numm = 1
         for s in list(p.size()):
-            nn = nn * s
-        pp += nn
+            numm = numm * s
+        pp += numm
     return pp
 
 
@@ -583,10 +429,10 @@ def enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_
 
 
 def decode_to_sph_rotvec(mol_orientations):
-    '''
+    """
     each angle is predicted with 2 params
     we bound the encodings for theta on 0-1 to restrict the range of theta to [0,pi/2]
-    '''
+    """
     theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
     real_orientation_theta = components2angle(theta_encoding)
     real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted [-pi,pi
@@ -600,7 +446,21 @@ def decode_to_sph_rotvec(mol_orientations):
 
     return real_orientation_theta[:, None], real_orientation_phi[:, None], real_orientation_r[:, None]
 
+
 def get_regression_loss(regressor, data, mean, std):
     predictions = regressor(data)[:, 0]
     targets = data.y
     return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions.cpu().detach().numpy() * std + mean, targets.cpu().detach().numpy() * std + mean
+
+
+def slash_batch(train_loader, test_loader, slash_fraction):
+    slash_increment = max(4, int(train_loader.batch_size * slash_fraction))
+    train_loader = update_dataloader_batch_size(train_loader, train_loader.batch_size - slash_increment)
+    test_loader = update_dataloader_batch_size(test_loader, test_loader.batch_size - slash_increment)
+    print('==============================')
+    print('OOMOOMOOMOOMOOMOOMOOMOOMOOMOOM')
+    print(f'Batch size slashed to {train_loader.batch_size} due to OOM')
+    print('==============================')
+    wandb.log({'batch size': train_loader.batch_size})
+
+    return train_loader, test_loader

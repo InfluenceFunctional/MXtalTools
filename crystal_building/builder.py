@@ -71,15 +71,11 @@ class SupercellBuilder:
         if align_to_standardized_orientation:  # align canonical conformers principal axes to cartesian axes - not usually done here, but allowed
             supercell_data = align_crystaldata_to_principal_axes(supercell_data, handedness=target_handedness)
 
-        # get molecule information  # todo check this against the below
-        atomic_number_list = [supercell_data.x[supercell_data.batch == i] for i in range(supercell_data.num_graphs)]
-        coords_list = [supercell_data.pos[supercell_data.batch == i] for i in range(supercell_data.num_graphs)]
-
-        # atomic_number_list = []
-        # coords_list = []
-        # for i in range(supercell_data.num_graphs):
-        #     atomic_number_list.append(supercell_data.x[supercell_data.batch == i])
-        #     coords_list.append(supercell_data.pos[supercell_data.batch == i])
+        # get molecule information
+        atomic_number_list, coords_list = [], []
+        for i in range(supercell_data.num_graphs):
+            atomic_number_list.append(supercell_data.x[supercell_data.batch == i])
+            coords_list.append(supercell_data.pos[supercell_data.batch == i])
 
         # center, apply rotation, apply translation (to canonical conformer)
         canonical_conformer_coords_list = []

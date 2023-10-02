@@ -1,8 +1,6 @@
-"""import statement"""
 import numpy as np
 
 import torch
-import tqdm
 from ase import Atoms
 import pandas as pd
 from torch.nn.functional import softmax
@@ -21,8 +19,8 @@ def chunkify(lst: list, n: int):
 
 def delete_from_dataframe(df: pd.DataFrame, inds):
     """
-    hacky way to delete rows "inds" from dataframe df
-    """  # todo decide if we're ok with this level_0 business
+    delete rows "inds" from dataframe df
+    """
     df.drop(index=inds, inplace=True)
     df.reset_index(drop=True, inplace=True)
 
@@ -30,6 +28,9 @@ def delete_from_dataframe(df: pd.DataFrame, inds):
 
 
 def torch_ptp(tensor: torch.tensor):
+    """
+    torch implementation of np.ptp
+    """
     return torch.max(tensor) - torch.min(tensor)
 
 
