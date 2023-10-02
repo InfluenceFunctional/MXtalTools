@@ -1,441 +1,333 @@
-from common.geometry_calculations import compute_fractional_transform
-from common.utils import *
-import matplotlib.pyplot as plt
 import pandas as pd
-
-from constants.asymmetric_units import asym_unit_dict
-from crystal_building.utils import *
-from pyxtal import symmetry
-from crystal_building.coordinate_transformations import coor_trans_matrix
-import matplotlib.colors as colors
-import tqdm
+import torch
+from tqdm import tqdm
 import os
+import numpy as np
+
+from common.utils import delete_from_dataframe
+from constants.asymmetric_units import asym_unit_dict
+from constants.space_group_info import SYM_OPS
+from crystal_building.utils import build_unit_cell, batch_asymmetric_unit_pose_analysis_torch
 
 
-class Miner():
-    def __init__(self, dataset_path, config=None, collect_chunks=False, database='csd'):
-        self.config = config
-        if config is None:
-            self.max_z_prime = 1
-            self.min_z_prime = 1
-            self.max_z_value = 50
-            self.min_z_value = 1
-            self.max_num_atoms = 1000
-            self.min_num_atoms = 5
-            self.max_molecule_radius = 1000
-            self.max_atomic_number = 87
-            self.max_packing_coefficient = 0.85
-            self.min_packing_coefficient = 0.55
-            self.include_organic = True
-            self.include_organometallic = True
-            self.exclude_disordered_crystals = False
-            self.exclude_missing_r_factor = False
-            self.exclude_polymorphs = False
-            self.exclude_nonstandard_settings = False
-            self.max_temperature = 1000
-            self.min_temperature = -10
-            self.include_sgs = None
-            self.include_pgs = None
-            self.exclude_crystal_systems = None
-            self.exclude_blind_test_targets = False
-        else:
-            self.max_z_prime = config.max_z_prime
-            self.min_z_prime = config.min_z_prime
-            self.max_z_value = config.max_z_value
-            self.min_z_value = config.min_z_value
-            self.max_num_atoms = config.max_num_atoms
-            self.min_num_atoms = config.min_num_atoms
-            self.max_molecule_radius = config.max_molecule_radius
-            self.max_atomic_number = config.max_atomic_number
-            self.max_packing_coefficient = 0.85
-            self.min_packing_coefficient = config.min_packing_coefficient
-            self.include_organic = config.include_organic
-            self.include_organometallic = config.include_organometallic
-            self.exclude_disordered_crystals = config.exclude_disordered_crystals
-            self.exclude_polymorphs = config.exclude_polymorphs
-            if self.exclude_polymorphs:
-                self.exclude_missing_r_factor = True
+class DataManager:
+    def __init__(self, datasets_path, device='cpu', chunks_path=None, seed=0):
+        self.misc_data_dict = None
+        self.standardization_dict = None
+        self.crystal_to_mol_dict = None
+        self.mol_to_crystal_dict = None
+        self.molecules_in_crystals_dict = None
+        self.dataset = None
+
+        self.datasets_path = datasets_path
+        self.chunks_path = chunks_path
+        self.device = device
+
+        np.random.seed(seed=seed)  # for certain random sampling ops
+
+        self.asym_unit_dict = asym_unit_dict.copy()
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
+
+    def load_chunks(self):
+        os.chdir(self.chunks_path)
+        chunks = os.listdir()
+        num_chunks = len(chunks)
+        print(f'Collecting {num_chunks} dataset chunks')
+        self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks], ignore_index=True)
+
+    def load_dataset_for_modelling(self, dataset_name,
+                                   filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False):
+
+        self.load_dataset_and_misc_data(dataset_name)
+
+        if filter_conditions is not None:
+            bad_inds = self.get_dataset_filter_inds(filter_conditions)
+            self.dataset = delete_from_dataframe(self.dataset, bad_inds)
+            print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
+            self.rebuild_indices()
+
+        if filter_polymorphs:
+            bad_inds = self.filter_polymorphs()
+            self.dataset = delete_from_dataframe(self.dataset, bad_inds)
+            print("Polymorph filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
+            self.rebuild_indices()
+
+        if filter_duplicate_molecules:
+            bad_inds = self.filter_duplicate_molecules()
+            self.dataset = delete_from_dataframe(self.dataset, bad_inds)
+            print("Duplicate molecule filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
+            self.rebuild_indices()
+
+    def rebuild_indices(self):
+        self.dataset = self.dataset.reset_index().drop(columns='index')
+
+        self.crystal_to_mol_dict, self.mol_to_crystal_dict = \
+            self.generate_mol2crystal_mapping()
+
+        self.molecules_in_crystals_dict = \
+            self.identify_unique_molecules_in_crystals()
+
+    def load_dataset_and_misc_data(self, dataset_name):
+        self.dataset = pd.read_pickle(self.datasets_path + dataset_name)
+        misc_data_dict = np.load(self.datasets_path + 'misc_data_for_' + dataset_name.removeprefix('test_') + '.npy', allow_pickle=True).item()
+
+        if 'test' in dataset_name:
+            self.rebuild_indices()
+
+        self.standardization_dict = misc_data_dict['standardization_dict']
+
+    def process_new_dataset(self, new_dataset_name):
+        self.load_chunks()
+        self.rebuild_indices()
+        self.asymmetric_unit_analysis()
+        self.get_dataset_standardization_statistics()
+
+        misc_data_dict = {
+            'crystal_to_mol_dict': self.crystal_to_mol_dict,
+            'mol_to_crystal_dict': self.mol_to_crystal_dict,
+            'molecules_in_crystals_dict': self.molecules_in_crystals_dict,
+            'standardization_dict': self.standardization_dict
+        }
+
+        np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
+        self.dataset.to_pickle(self.datasets_path + new_dataset_name)
+        ints = np.random.choice(min(len(self.dataset), 10000), min(len(self.dataset), 10000), replace=False)
+        self.dataset.loc[ints].to_pickle(self.datasets_path + 'test_' + new_dataset_name)
+
+    def asymmetric_unit_analysis(self):
+        """
+        for each crystal
+        for each molecule in Z' molecules
+        1) build periodic lattice
+        2) identify "canonical" asymmetric unit aka canonical conformer
+        3) compute pose relative to standardized initial condition
+        -: manage issues of symmetry
+        -: note each Z' molecule will be independently featurized
+
+        """
+        print("Parameterizing Crystals")
+
+        mol_position_list = []
+        mol_orientation_list = []
+        handedness_list = []
+        well_defined_asym_unit = []
+        canonical_conformer_coords_list = []
+
+        # do the parameterization in batches of 1000
+        chunk_size = 1000
+        n_chunks = int(np.ceil(len(self.dataset) / chunk_size))
+        for i in tqdm(range(n_chunks)):
+            chunk = self.dataset.loc[i * chunk_size:(i+1) * chunk_size]
+            symmetry_multiplicity = torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device)
+            final_coords_list = [torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for ind, crystal in chunk.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))]
+            T_fc_list = torch.tensor(np.stack([crystal['crystal_fc_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
+            T_cf_list = torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
+            sym_ops_list = [torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
+
+            # build unit cell for each molecule (separately for each Z')
+            unit_cells_list = build_unit_cell(
+                symmetry_multiplicity=symmetry_multiplicity,
+                final_coords_list=final_coords_list,
+                T_fc_list=T_fc_list,
+                T_cf_list=T_cf_list,
+                sym_ops_list=sym_ops_list
+            )
+
+            # analyze the cell
+            mol_position_list_i, mol_orientation_list_i, handedness_list_i, well_defined_asym_unit_i, canonical_conformer_coords_list_i = \
+                batch_asymmetric_unit_pose_analysis_torch(
+                    unit_cells_list,
+                    torch.tensor([crystal['crystal_space_group_number'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device),
+                    self.asym_unit_dict,
+                    T_fc_list,
+                    enforce_right_handedness=False,
+                    rotation_basis='spherical',
+                    return_asym_unit_coords=True
+                )
+
+            mol_position_list.extend(mol_position_list_i.cpu().detach().numpy())
+            mol_orientation_list.extend(mol_orientation_list_i.cpu().detach().numpy())
+            handedness_list.extend(handedness_list_i.cpu().detach().numpy())
+            well_defined_asym_unit.extend(well_defined_asym_unit_i)
+            canonical_conformer_coords_list.extend(canonical_conformer_coords_list_i)
+
+        mol_position_list = np.stack(mol_position_list)
+        mol_orientation_list = np.stack(mol_orientation_list)
+        handedness_list = np.stack(handedness_list)
+
+        # write results to the dataset
+        (centroids_x_list, centroids_y_list, centroids_z_list,
+         orientations_theta_list, orientations_phi_list, orientations_r_list,
+         handednesses_list, validity_list, coordinates_list) = [[[] for _ in range(len(self.dataset))] for _ in range(9)]
+
+        for i, identifier in enumerate(tqdm(self.crystal_to_mol_dict.keys())):  # index molecules with their respective crystals
+            df_index = self.dataset.loc[self.dataset['crystal_identifier'] == identifier].index[0]
+            (centroids_x, centroids_y, centroids_z, orientations_theta,
+             orientations_phi, orientations_r, handedness, well_defined, coords) = [], [], [], [], [], [], [], [], []
+
+            for mol_ind in self.crystal_to_mol_dict[identifier]:
+                centroids_x.append(mol_position_list[mol_ind, 0])
+                centroids_y.append(mol_position_list[mol_ind, 1])
+                centroids_z.append(mol_position_list[mol_ind, 2])
+
+                orientations_theta.append(mol_orientation_list[mol_ind, 0])
+                orientations_phi.append(mol_orientation_list[mol_ind, 1])
+                orientations_r.append(mol_orientation_list[mol_ind, 2])
+
+                handedness.append(handedness_list[mol_ind])
+                well_defined.append(well_defined_asym_unit[mol_ind])
+                coords.append(canonical_conformer_coords_list[mol_ind].cpu().detach().numpy())
+
+            centroids_x_list[df_index] = centroids_x
+            centroids_y_list[df_index] = centroids_y
+            centroids_z_list[df_index] = centroids_z
+
+            orientations_theta_list[df_index] = orientations_theta
+            orientations_phi_list[df_index] = orientations_phi
+            orientations_r_list[df_index] = orientations_r
+
+            handednesses_list[df_index] = handedness
+            validity_list[df_index] = well_defined
+            coordinates_list[df_index] = coords
+
+        self.dataset['asymmetric_unit_centroid_x'] = centroids_x_list
+        self.dataset['asymmetric_unit_centroid_y'] = centroids_y_list
+        self.dataset['asymmetric_unit_centroid_z'] = centroids_z_list
+
+        self.dataset['asymmetric_unit_rotvec_theta'] = orientations_theta_list
+        self.dataset['asymmetric_unit_rotvec_phi'] = orientations_phi_list
+        self.dataset['asymmetric_unit_rotvec_r'] = orientations_r_list
+
+        self.dataset['asymmetric_unit_handedness'] = handednesses_list
+        self.dataset['asymmetric_unit_is_well_defined'] = validity_list
+        self.dataset['atom_coordinates'] = coordinates_list
+
+        # check that all the crystals have the correct number of Z'
+        # for a small dataset, getting all of them right could be a fluke
+        # for a large one, if the below checks out, very likely we haven't screwed up the indexing
+        assert all([len(thing) == thing2 for thing, thing2 in zip(handednesses_list, self.dataset['crystal_z_prime'])]), "Error with asymmetric indexing and/or symmetry multiplicity"
+
+        # identify whether crystal symmetry ops exactly agree with standards
+        # this should be included in 'space group setting' but is sometimes missed
+        rand_mat = np.logspace(-3, 3, 16).reshape(4, 4)
+        sym_ops_agreement = np.zeros(len(self.dataset))
+        for i in range(len(self.dataset)):
+            sym_op = np.stack(self.dataset['crystal_symmetry_operators'].loc[i])
+            std_op = np.stack(SYM_OPS[self.dataset['crystal_space_group_number'].loc[i]])
+
+            if len(sym_op) == len(std_op):  # if the multiplicity is different, it is certainly nonstandard
+                # sort these in a canonical way to extract a fingerprint
+                # multiply them with a wacky matrix and order them by the sums
+
+                sample_args = np.argsort((sym_op * rand_mat).sum((1, 2)))
+                sym_args = np.argsort((std_op * rand_mat).sum((1, 2)))
+
+                sym_ops_agreement[i] = np.prod(sym_op[sample_args] == std_op[sym_args])
             else:
-                self.exclude_missing_r_factor = config.exclude_missing_r_factor
-            self.exclude_nonstandard_settings = config.exclude_nonstandard_settings
-            self.max_temperature = config.max_crystal_temperature
-            self.min_temperature = config.min_crystal_temperature
-            self.include_sgs = config.include_sgs
-            self.include_pgs = config.include_pgs
-            self.exclude_crystal_systems = config.exclude_crystal_systems
-            self.exclude_blind_test_targets = config.exclude_blind_test_targets
+                sym_ops_agreement[i] = 0
 
-        self.dataset_path = dataset_path
-        self.collect_chunks = collect_chunks
-        self.database = database
+        self.dataset['crystal_symmetry_operations_are_standard'] = sym_ops_agreement
 
-    def load_for_modelling(self, return_dataset=False, save_dataset=True):
-        self.dataset = pd.read_pickle(self.dataset_path)
-        self.dataset_keys = list(self.dataset.columns)
-        self.filter_dataset()
-        if self.exclude_polymorphs:
-            self.filter_polymorphs()
-        self.datasetPath = 'datasets/dataset'
-        if save_dataset:
-            self.dataset.to_pickle(self.datasetPath)
-        if return_dataset:
-            return self.dataset
-        else:
-            del (self.dataset)
+    def get_dataset_standardization_statistics(self):
+        """
+        get mean and std deviation for all int and float features
+        for crystals, molecules, and atoms
+        """
+        print("Getting Dataset Statistics")
+        std_dict = {}
 
-    def load_npy_for_modelling(self):
-        self.dataset = np.load(self.dataset_path + '.npy', allow_pickle=True).item()
-        self.dataset = pd.DataFrame.from_dict(self.dataset)
-        self.dataset_keys = list(self.dataset.columns)
-        self.filter_dataset()
-        if self.exclude_polymorphs:
-            self.filter_polymorphs()
-        self.datasetPath = 'datasets/dataset'
-        self.dataset.to_pickle(self.datasetPath)
-        del (self.dataset)
+        for column in tqdm(self.dataset.columns):
+            values = None
+            if column[:4] == 'atom':
+                values = np.concatenate([atoms for atoms_lists in self.dataset[column] for atoms in atoms_lists])
+            elif column[:8] == 'molecule':
+                values = np.concatenate(self.dataset[column])
+            elif column[:7] == 'crystal':
+                values = self.dataset[column]
+            elif column[:15] == 'asymmetric_unit':
+                values = np.concatenate(self.dataset[column])  # one for each Z' molecule
 
-    def process_new_dataset(self, dataset_name='new_dataset', test_mode=False):
+            if values is not None:
+                if not isinstance(values[0], str):  # not some string - check here since it crashes issubdtype below
+                    if values.ndim > 1:  # intentionally leaving out e.g., coordinates, principal axes
+                        pass
+                    elif values.dtype == bool:
+                        pass
+                    # this is clunky but np.issubdtype is too sensitive
+                    elif ((values.dtype == np.float32) or (values.dtype == np.float64)
+                          or (values.dtype == float) or (values.dtype == int)
+                          or (values.dtype == np.int8) or (values.dtype == np.int16)
+                          or (values.dtype == np.int32) or (values.dtype == np.int64)):
+                        std_dict[column] = [values.mean(), values.std()]
+                    else:
+                        pass
 
-        self.load_dataset(self.dataset_path, self.collect_chunks, test_mode=test_mode)
-        self.numerize_dataset()
-        self.curate_dataset()
+        self.standardization_dict = std_dict
 
-        self.dataset.to_pickle('../../new_dataset')  # '../../' + dataset_name)
-        self.dataset.loc[0:10000].to_pickle('../../test_new_dataset')
+    def generate_mol2crystal_mapping(self):
+        """
+        some crystals have multiple molecules, and we do batch analysis of molecules with a separate indexing scheme
+        connect the crystal identifier-wise and mol-wise indexing with the following dicts
+        """
+        # print("Generating mol-to-crystal mapping")
+        mol_index = 0
+        crystal_to_mol_dict = {}
+        mol_to_crystal_dict = {}
+        for index, identifier in enumerate(self.dataset['crystal_identifier']):
+            crystal_to_mol_dict[identifier] = []
+            for _ in range(int(self.dataset['crystal_z_prime'][index])):  # assumes integer Z'
+                crystal_to_mol_dict[identifier].append(mol_index)
+                mol_to_crystal_dict[mol_index] = identifier
+                mol_index += 1
 
-    def load_dataset(self, dataset_path, collect_chunks=False, test_mode=False):
+        return crystal_to_mol_dict, mol_to_crystal_dict
 
-        if collect_chunks:
-            os.chdir(dataset_path + '/molecule_features')
-            chunks = os.listdir()
-            print('collecting chunks')
+    def identify_unique_molecules_in_crystals(self):
+        """
+        identify all exactly unique molecules (up to mol fingerprint)
+        list their dataset indices in a dict
 
-            if test_mode:
-                nChunks = min(5, len(chunks))
-            else:
-                nChunks = len(chunks)
+        at train time, we can use this to repeat sampling of identical molecules
+        """
+        # print("getting unique molecule fingerprints")
+        fps = np.concatenate(self.dataset['molecule_fingerprint'])
+        unique_fps, inverse_map = np.unique(fps, axis=0, return_inverse=True)
+        molecules_in_crystals_dict = {
+            unique.tobytes(): [] for unique in unique_fps
+        }
+        for ind, mapping in enumerate(inverse_map):  # we record the molecule inex for each unique molecular fingerprint
+            molecules_in_crystals_dict[unique_fps[mapping].tobytes()].append(ind)
 
-            data_chunks = []
-            for i in tqdm.tqdm(range(nChunks)):
-                data_chunks.append(pd.read_pickle(chunks[i]))
-            self.dataset = pd.concat(data_chunks, ignore_index=True)
-            del data_chunks
+        return molecules_in_crystals_dict
 
-        else:
-            self.dataset = pd.read_pickle(dataset_path)
+    def get_identifier_duplicates(self, mode='standard'):
+        """
+        by CSD identifier
+        CSD entries with numbers on the end are subsequent additions to the same crystal
+        often polymorphs or repeat  measurements
 
-        self.finished_numerization = False
-        self.dataset_keys = list(self.dataset.columns)
-        self.dataset_length = len(self.dataset)
-
-    def curate_dataset(self):
-        '''
-        curate the dataset given conditions set in the config
-        :return:
-        '''
-        # start by filtering polymorphs
-        self.collate_spacegroups()
-        self.filter_dataset()
-        if self.exclude_polymorphs:
-            self.filter_polymorphs()
-
-    def collate_spacegroups(self):
-        '''
-        reassign spacegroup symbols using spacegroup numbers and settings
-        set all spacegroup symbols to setting 1
-        collect minority spacegroups into reasonable clusters
-        :return:
-        '''
-
-        # main_symbol = {}
-        # for i in tqdm.tqdm(range(self.dataset_length)):
-        #     element = self.dataset['crystal spacegroup number'][i], self.dataset['crystal spacegroup setting'][i],
-        #     if element[1] == 1:  # extract only the main or primary setting - if there are entries for which we are missing the primary setting, ignore them for now (assume marginal)
-        #         if str(element[0]) not in main_symbol.keys():
-        #             main_symbol[str(element[0])] = [self.dataset['crystal spacegroup symbol'][i]]
-        #         else:
-        #             main_symbol[str(element[0])].append(self.dataset['crystal spacegroup symbol'][i])
-        #
-        # # confirm they're all unique
-        # sg_dict = {}
-        # for key in main_symbol.keys():
-        #     # if len(np.unique(main_symbol[key])) > 1: # the only groups where this doesn't work are with or without minus signs (chiral groups?)
-        #     sg_dict[key] = np.unique(main_symbol[key])[0]
-        print('Pre-generating spacegroup symmetries')
-
-        self.space_groups = {}
-        self.sg_numbers = {}
-        for i in tqdm.tqdm(range(1, 231)):
-            sym_group = symmetry.Group(i)
-            self.space_groups[i] = sym_group.symbol
-            self.sg_numbers[sym_group.symbol] = i
-
-        # standardize SG symbols
-        for i in tqdm.tqdm(range(self.dataset_length)):
-            if self.dataset['crystal spacegroup number'][i] != 0:  # sometimes the sg number is broken
-                self.dataset['crystal spacegroup symbol'][i] = self.space_groups[self.dataset['crystal spacegroup number'][i]]
-            else:  # in which case, try reverse assigning the number, given the space group
-                self.dataset['crystal spacegroup number'][i] = self.sg_numbers[self.dataset['crystal spacegroup symbol'][i]]
-
-        #
-        # self.sg_probabilities = {}
-        # key = 'crystal spacegroup symbol'
-        # self.dataset[key] = np.asarray(self.dataset[key])  # convert molecule and crystal features to numpy arrays for easy processing
-        # unique_entries = np.unique(self.dataset[key])
-        # print("One-hotting " + key + " with unique entries {}".format(unique_entries))
-        # for entry in unique_entries:
-        #     self.dataset[key + ' is ' + entry] = self.dataset[key] == entry
-        #     self.sg_probabilities[entry] = np.average(self.dataset[key + ' is ' + entry])
-        #     self.modellable_keys.append(key + ' is ' + entry)
-        #
-        # # identify majority and minority SGs
-        # self.majority_sgs = []
-        # self.minority_sgs = []
-        # for key in self.sg_probabilities:
-        #     if self.sg_probabilities[key] >= 0.01:
-        #         self.majority_sgs.append(key)
-        #     elif self.sg_probabilities[key] < 0.01:
-        #         self.minority_sgs.append(key)
-        #
-        # self.dataset['crystal spacegroup is minority'] = np.asarray([spacegroup not in self.majority_sgs for spacegroup in self.dataset['crystal spacegroup symbol']])
-
-    def filter_dataset(self):
-        print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
-        ## filtering out unwanted characteristics
-        bad_inds = []
-
-        #
-        # # exclude samples with extremely close atoms
-        # n_bad_inds = len(bad_inds)
-        # for j in range(len(self.dataset)):
-        #     coords = self.dataset['crystal reference cell coords'][j]
-        #     coords = coords.reshape(coords.shape[0] * coords.shape[1],3)
-        #     distmat = torch.cdist(torch.Tensor(coords), torch.Tensor(coords), p=2) + torch.eye(len(coords))
-        #     if torch.amin(distmat) < 0.1:
-        #         #print('bad')
-        #         bad_inds.append(j)
-        # print('overlapping atoms caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # samples with bad CSD-generated reference cells
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal reference cell coords']) == 'error')[:, 0])  # missing coordinates
-        bad_inds.extend(np.argwhere(np.asarray(np.isnan(self.dataset['crystal asymmetric unit centroid x'])))[:, 0])  # missing orientation features
-        print('bad coordinates caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        if self.exclude_blind_test_targets:
-            # CSD blind test 5 and 6 targets
-            blind_test_identifiers = [
-                'OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
-                'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04',
-                "COUMAR01", "COUMAR02", "COUMAR10", "COUMAR11", "COUMAR12", "COUMAR13",
-                "COUMAR14", "COUMAR15", "COUMAR16", "COUMAR17",  # Z'!=1 or some other weird thing
-                "COUMAR18", "COUMAR19"
-            ]
-            blind_test_identifiers.remove('XATJOT')  # multi-component
-            blind_test_identifiers.remove('XAFQON')  # multi-component
-            blind_test_identifiers.remove('KONTIQ')  # multi-component
-
-            # samples with bad CSD-generated reference cells
-            n_bad_inds = len(bad_inds)
-            for j in range(len(self.dataset)):
-                item = self.dataset['identifier'][j]  # do it this way to remove the target, including any of its polymorphs
-                if item[-1].isdigit():
-                    item = item[:-2]  # cut off trailing digits, if any
-                if item in blind_test_identifiers:
-                    bad_inds.append(j)
-            print('Blind test targets caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # filter for when the asymmetric unit definition is nonstandard (returns more than one centroid) # todo check for edge centroids
-        n_bad_inds = len(bad_inds)
-        for ii in range(len(self.dataset['atom coords'])):
-            sg_ind = self.dataset['crystal spacegroup number'][ii]
-            if str(sg_ind) in asym_unit_dict.keys():  # only do this check if this sg_ind is already encoded in the asym unit dict
-                unit_cell_coords = self.dataset['crystal reference cell coords'][ii]
-                T_cf = np.linalg.inv(self.dataset['crystal fc transform'][ii])
-                asym_unit = asym_unit_dict[str(int(sg_ind))]  # will only work for units which we have written down the parameterization for
-                # identify which of the Z asymmetric units is canonical
-                centroids_cartesian = unit_cell_coords.mean(-2)
-                centroids_fractional = np.inner(T_cf, centroids_cartesian).T
-                centroids_fractional -= np.floor(centroids_fractional)
-                if torch.is_tensor(asym_unit):
-                    asym_unit = asym_unit.cpu().detach().numpy()
-                canonical_conformer_index = find_coord_in_box_np(centroids_fractional, asym_unit)
-                if len(canonical_conformer_index) != 1:
-                    bad_inds.append(ii)
-        print('Non uniform asymmetric unit caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # when the molecule is too long
-        # cases where the csd has the wrong number of molecules
-        n_bad_inds = len(bad_inds)
-        # self.config.max_molecule_radius
-        mol_radii = np.asarray([np.amax(np.linalg.norm(coords - coords.mean(0), axis=-1)) for coords in self.dataset['atom coords']])
-        bad_inds.extend(np.argwhere(np.asarray(mol_radii) > self.max_molecule_radius)[:, 0])
-        print('molecule too long filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # cases where the csd has the wrong number of molecules
-        n_bad_inds = len(bad_inds)
-        lens = [len(item) for item in self.dataset['crystal reference cell coords']]
-        bad_inds.extend(np.argwhere(np.asarray(lens != self.dataset['crystal z value']))[:, 0])
-        print('improper CSD Z value filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # # cases where the symmetry ops disagree with the Z value
-        # n_bad_inds = len(bad_inds)
-        # lens = [len(item) for item in self.dataset['crystal symmetries']]
-        # bad_inds.extend(np.argwhere(np.asarray(lens != self.dataset['crystal z value']))[:, 0])
-        # print('improper sym ops multiplicity filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # exclude samples with atoms on special positions # todo eventually relax this
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal atoms on special positions'].ne([[] for _ in range(len(self.dataset))])))[:, 0])
-        print('special positions filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # Z prime
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z prime']) > self.max_z_prime)[:, 0])  # self.config.max_z_prime))
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z prime']) < self.min_z_prime)[:, 0])  # self.config.min_z_prime))
-        print('z prime filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # Z value
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z value']) > self.max_z_value)[:, 0])  # self.config.max_z_value))
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal z value']) < self.min_z_value)[:, 0])  # self.config.min_z_value))
-        print('z value filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # molecule num atoms
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule num atoms']) > self.max_num_atoms)[:, 0])  # self.config.max_molecule_size))
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['molecule num atoms']) < self.min_num_atoms)[:, 0])  # self.config.min_molecule_size))
-        print('molecule num atoms filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # heaviest atom
-        n_bad_inds = len(bad_inds)
-        heaviest_atoms = np.asarray([max(atom_z) for atom_z in self.dataset['atom Z']])
-        bad_inds.extend(np.argwhere(heaviest_atoms > self.max_atomic_number)[:, 0])  # self.config.max_atomic_number))
-        print('max atom size filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # too diffuse or too dense
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal packing coefficient']) > self.max_packing_coefficient)[:, 0])  # self.config.max_molecule_size))
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal packing coefficient']) < self.min_packing_coefficient)[:, 0])  # self.config.min_molecule_size))
-        print('crystal packing coefficient filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # erroneous densities
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal calculated density']) == 0)[:, 0])  # self.config.max_molecule_size))
-        print('0 density filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # too hot or too cold
-        n_bad_inds = len(bad_inds)
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) > self.max_temperature)[:, 0])
-        bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal temperature']) < self.min_temperature)[:, 0])
-        print('crystal temperature filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # supported space groups
-        if self.include_sgs is not None:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere([self.dataset['crystal spacegroup symbol'][i] not in self.include_sgs for i in range(len(self.dataset['crystal spacegroup symbol']))])[:, 0])
-            print('spacegroup filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        if self.exclude_crystal_systems is not None:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere([self.dataset['crystal system'][i] in self.exclude_crystal_systems for i in range(len(self.dataset['crystal system']))])[:, 0])
-            print('crystal system filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        if self.include_pgs is not None:
-            # filter by point group
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere([self.dataset['crystal point group'][i] not in self.include_pgs for i in range(len(self.dataset['crystal point group']))])[:, 0])  # missing coordinates
-            print('unwanted point groups caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # molecule organic
-        if not self.include_organic:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organic'] == 'True'))[:, 0])
-            print('organic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # molecule organometallic
-        if not self.include_organometallic:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal is organometallic'] == 'True'))[:, 0])
-            print('organometallic filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # molecule has disorder
-        if self.exclude_disordered_crystals:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.argwhere(np.asarray(self.dataset['crystal has disorder']))[:, 0])
-            print('disorder filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # missing r factor
-        if self.exclude_missing_r_factor:
-            n_bad_inds = len(bad_inds)
-            bad_inds.extend(np.asarray([i for i in range(len(self.dataset['crystal r factor'])) if self.dataset['crystal r factor'][i] is None]))
-            print('missing r factor filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        if self.exclude_nonstandard_settings:
-            # nonstandard spacegroup setings have inconsistent lattice definitions
-            n_bad_inds = len(bad_inds)
-            settings = np.asarray([self.dataset['crystal spacegroup setting'][i] for i in range(len(self.dataset))])
-            bad_inds.extend(np.argwhere(settings != 1)[:, 0])
-            print('nonstandard spacegroup setting filter caught {} samples'.format(int(len(bad_inds) - n_bad_inds)))
-
-        # collate bad indices
-        bad_inds = np.unique(bad_inds)
-
-        # apply filtering
-        self.dataset = delete_from_dataframe(self.dataset, bad_inds)
-        print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
-
-    def filter_polymorphs(self):
-        '''
-        find duplicate examples and pick one representative per molecule
-        :return:
-        '''
-        # use CSD identifiers to pick out polymorphs
-        duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
-
-        # duplicate_groups_identifiers = {ident:[self.dataset['identifier'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
-        # duplicate_groups_packings = {ident:[self.dataset['crystal packing coefficient'][n] for n in duplicate_groups[ident]] for ident in duplicate_groups.keys()}
-
-        # todo delete blind test and any extra CSP samples from the training dataset
-
-        # now, the 'representative structure' is the highest resolution structure which as the same space group as the oldest structure
-        # we will add all others to 'bad_inds', and filter them out at our leisure
-        print('selecting representative structures from duplicate groups')
-        bad_inds = []
-        for key in duplicate_groups.keys():
-            # print(key)
-            inds = duplicate_groups[key]
-            space_groups = [self.dataset['crystal spacegroup symbol'][ind] for ind in inds]
-            oldest_structure = inds[np.argmin([self.dataset['crystal date'][ind] for ind in inds])]  # get the dataset index for the oldest structure
-            oldest_structure_SG = self.dataset['crystal spacegroup symbol'][oldest_structure]
-            inds_agree_with_oldest_SG = np.argwhere([sg == oldest_structure_SG for sg in space_groups])[:, 0]
-            inds_agree_with_oldest_SG = [inds[ind] for ind in inds_agree_with_oldest_SG]
-            agreeing_ind_with_best_arg_factor = inds[np.argmin([self.dataset['crystal r factor'][ind] for ind in inds_agree_with_oldest_SG])]
-            inds.remove(agreeing_ind_with_best_arg_factor)  # remove the good one
-            bad_inds.extend(inds)  # delete residues from the dataset
-
-        self.dataset = delete_from_dataframe(self.dataset, bad_inds)
-
-    def get_identifier_duplicates(self):
-        # by CSD identifier
-        # CSD entries with numbers on the end are subsequent additions
+        option for grouping identifier by blind test sample submission
+        """
         print('getting identifier duplicates')
-        all_identifiers = {}
-        if self.database.lower() == 'csd':
-            for i in tqdm.tqdm(range(len(self.dataset['identifier']))):
-                item = self.dataset['identifier'][i]
+
+        if mode == 'standard':
+            all_identifiers = {}
+            for i in tqdm(range(len(self.dataset['crystal_identifier']))):
+                item = self.dataset['crystal_identifier'][i]
                 if item[-1].isdigit():
                     item = item[:-2]  # cut off trailing digits, if any
                 if item not in all_identifiers.keys():
                     all_identifiers[item] = []
                 all_identifiers[item].append(i)
-        elif self.database.lower() == 'cif':  # todo unfinished
+        elif mode == 'blind_test':  # todo untested
             blind_test_targets = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
                                   'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
-                                  'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', ]
+                                  'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX']
+
             all_identifiers = {key: [] for key in blind_test_targets}
-            for i in tqdm.tqdm(range(len(self.dataset['identifier']))):
-                item = self.dataset['identifier'][i]
+            for i in tqdm(range(len(self.dataset['crystal_identifier']))):
+                item = self.dataset['crystal_identifier'][i]
                 for j in range(len(blind_test_targets)):  # go in reverse to account for roman numerals system of duplication
                     if blind_test_targets[-1 - j] in item:
                         all_identifiers[blind_test_targets[-1 - j]].append(i)
@@ -454,507 +346,160 @@ class Miner():
 
         return duplicate_lists, duplicate_list_extension, duplicate_groups
 
-    def numerize_dataset(self):
-        '''
-        convert dataset features such as strings into purely numerical vectors (not normed etc yet)
-        :return:
-        '''
-        # if type(self.dataset['molecule point group']) is not str:
-        #     self.dataset['molecule point group'] = [str(pg) for pg in self.dataset['molecule point group']]
-
-        self.modellable_keys = []
-
-        # manually add this one to get started
-        self.dataset['molecule num atoms'] = np.asarray(self.dataset['molecule num atoms'])
-        self.modellable_keys.append('molecule num atoms')
-
-        for key in self.dataset_keys:
-            if ('atom' not in key) and ('symmetry operators' not in key) \
-                    and ('pressure' not in key) and ('chemical name' not in key) \
-                    and ('disorder details' not in key) and ('polymorph' not in key) \
-                    and ('identifier' not in key) and ('date' not in key) \
-                    and ('smiles' not in key) and ('formula' not in key) \
-                    and ('xyz' not in key) and ('organic' not in key) \
-                    and ('polymeric' not in key) and ('organometallic' not in key) \
-                    and ('powder' not in key) and ('spacegroup' not in key) \
-                    and ('cell length' not in key) and ('angles' not in key) \
-                    and ('radiation' not in key) and ('setting' not in key) \
-                    and ('planes' not in key) and (('centroids') not in key) \
-                    and ('axes' not in key):  # leave atom features as lists, as well as things we don't want to be categorized
-                self.dataset[key] = np.asarray(self.dataset[key])  # convert molecule and crystal features to numpy arrays for easy processing
-
-                if self.dataset[key].dtype == bool:  # keep bools
-                    self.modellable_keys.append(key)
-                    pass  # already effectively 'one-hot'
-
-                elif self.dataset[key].dtype.type is np.str_:  # now, process categorial strings into one-hots
-                    unique_entries = np.unique(self.dataset[key])
-                    print("One-hotting " + key + " with unique entries {}".format(unique_entries))
-                    for entry in unique_entries:
-                        self.dataset[key + ' is ' + entry] = self.dataset[key] == entry
-                        self.modellable_keys.append(key + ' is ' + entry)
-
-                elif self.dataset[key].dtype == int:
-                    self.modellable_keys.append(key)
-                    pass
-                elif self.dataset[key].dtype == float:
-                    self.modellable_keys.append(key)
-                    pass
-
-        self.finished_numerization = True
-
-    def correlations_analysis(self):
-        '''
-        evaluate pairwise correlations for molecule and crystal features
-        :return:
-        '''
-
-        import seaborn as sb
-
-        # make useful correlates
-        correlates_list = []
-        bad_keys = ['spacegroup', 'point group', 'cell lengths', 'angles', 'setting', 'powder', 'formula', 'radiation', 'polymeric', 'organic', 'organometallic', 'symmetry operators', 'xyz', 'crystal has', 'z prime', 'centring']
-        for key in self.modellable_keys:
-            key_good = True
-            for bad_key in bad_keys:
-                if bad_key in key:
-                    key_good = False
-                    break
-            if key_good:
-                if 'molecule' in key:
-                    correlates_list.append(key)
-
-        # correlates_list.append('molecule point group is C1')
-
-        for key in self.modellable_keys:
-            key_good = True
-            for bad_key in bad_keys:
-                if bad_key in key:
-                    key_good = False
-                    break
-            if key_good:
-                if 'crystal' in key:
-                    correlates_list.append(key)
-
-        correlates_list.append('crystal spacegroup symbol is P21/c')
-        correlates_list.append('crystal spacegroup symbol is P212121')
-        correlates_list.append('crystal spacegroup symbol is P21')
-        correlates_list.append('crystal spacegroup symbol is P-1')
-        correlates_list.append('crystal spacegroup symbol is C2/c')
-        correlates_list.append('crystal has glide')
-        correlates_list.append('crystal has inversion')
-        correlates_list.append('crystal has rotoinversion')
-        correlates_list.append('crystal has mirror')
-        correlates_list.append('crystal has rotation')
-        correlates_list.append('crystal has screw')
-
-        correlates_list.remove('crystal system is cubic')
-
-        # setup correlates dict
-        correlate_data = dict((k, self.dataset[k]) for k in (correlates_list))
-
-        # visualize correlations
-        df = pd.DataFrame.from_dict(correlate_data)
-        C_mat = df.corr(method='pearson')
-        plt.figure(1)
-        plt.clf()
-        sb.set(font_scale=.75)
-        sb.heatmap(np.abs(C_mat - np.eye(len(C_mat), len(C_mat))), vmax=1.0, square=True)
-        plt.tight_layout()
-
-        # pull out biggest correlations
-        correlations = np.triu(C_mat - np.eye(len(C_mat), len(C_mat)))
-        # sort by absolute correlation
-        sorted_correlation_inds = np.dstack(np.unravel_index(np.argsort(np.abs(correlations).ravel()), (len(C_mat), len(C_mat))))[0]
-        corr_vals = [correlations[inds[0], inds[1]] for inds in sorted_correlation_inds]
-
-        best_correlates = []
-        for i in range(len(sorted_correlation_inds) - 50, len(sorted_correlation_inds)):
-            best_correlates.append(correlates_list[sorted_correlation_inds[i, 0]] + ' + ' + correlates_list[sorted_correlation_inds[i, 1]] + ' ==> {:.3f}'.format(corr_vals[i]))
-
-        # molecule - to - crystal correlations (stuff we care about)
-        mol_cryst_corrs = []
-        mol_cryst_corrs_record = []
-        for i in range(len(sorted_correlation_inds)):
-            correlate_1 = correlates_list[sorted_correlation_inds[i, 0]]
-            correlate_2 = correlates_list[sorted_correlation_inds[i, 1]]
-            if 'organ' not in correlate_1 and 'organ' not in correlate_2:
-                if ('crystal' in correlate_1 and 'molecule' in correlate_2) or ('crystal' in correlate_2 and 'molecule' in correlate_1):
-                    mol_cryst_corrs.append(correlates_list[sorted_correlation_inds[i, 0]] + ' + ' + correlates_list[sorted_correlation_inds[i, 1]] + ' ==> {:.3f}'.format(corr_vals[i]))
-                    mol_cryst_corrs_record.append([correlates_list[sorted_correlation_inds[i, 0]] + ' <==> ' + correlates_list[sorted_correlation_inds[i, 1]], corr_vals[i]])
-
-        mol_cryst_to_plot = [record for record in mol_cryst_corrs_record if np.abs(record[1]) > 0.12]
-        plt.figure(2)
-        plt.clf()
-        colors = ['b' if entry[1] > 0 else 'r' for entry in mol_cryst_to_plot]
-        plt.barh([record[0] for record in mol_cryst_to_plot], [abs(record[1]) for record in mol_cryst_to_plot], color=colors)
-        plt.title('Molecule-to-Crystal Correlations')
-        plt.tight_layout()
-
-    def todays_analysis(self):
-
-        self.dataset = pd.read_pickle(self.dataset_path)
-        self.dataset_keys = list(self.dataset.columns)
-
-        '''
-        analysis to-do
-        0.
-        X confirm csd fractional transforms agree with my method
-        1. 
-        X get reference cell
-        X get all centroids
-        X consider nearest centroid as canonical
-        2. 
-        X compute inertial plane
-        X compute orientation w.r.t. a and b axes
-        rotation w.r.t. some canonical axis
-        X plane overlaps with supercell axes out to 5x5
-        3. 
-        compute histograms of raw data and distances on CSD data
-            distance - e.g., some kind of RMSD or COMPACK calc, now that we do have the CCDC api to-hand
-        3a.
-        repeat analysis for random cells
-        3b. try to fit it all with a joint distribution, with auxiliary loss(es) [e.g., volume, orientation distance]
-        4. 
-        compare inertial and/or ring planes to 5x5 cell axes
-        5. 
-        '''
-        print('Analyzing reference cells')
-        self.sym_ops = {}
-        self.point_groups = {}
-        self.lattice_type = {}
-        for i in tqdm.tqdm(range(1, 231)):
-            sym_group = symmetry.Group(i)
-            general_position_syms = sym_group.wyckoffs_organized[0][0]
-            self.sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(len(general_position_syms))]  # first 0 index is for general position, second index is superfluous, third index is the symmetry operation
-            self.point_groups[i] = sym_group.point_group
-            self.lattice_type[i] = sym_group.lattice_type
-
-        # generate all combinations of 5x5 fractional vectors
-        # Nikos says only take these [-n_max,n_max], n_1*n_2*n_3=0 and n_1|n_2|n_3=n_max
-        supercell_ref_vectors_f = []
-        for i in range(-2, 3):
-            for j in range(-2, 3):
-                for k in range(-2, 3):
-                    if (i != j != k):
-                        supercell_ref_vectors_f.append([i, j, k])
-        supercell_ref_vectors_f = np.asarray(supercell_ref_vectors_f)
-
-        self.centroids_f = []
-        self.supercell_angle_overlaps = []
-        self.centroid_fractional_displacement = []
-        self.centroid_cartesian_displacement = []
-        self.inertial_angles = []
-        self.inertial_axes = []
-        self.orientation_angles = []
-        good_inds = []
-        rand_inds = []
-        csd_inds = []
-        tests = []
-        ind = -1
-        study_cells = True
-        compare_cells = False
-        diff_list = []
-        for i in tqdm.tqdm(range(len(self.dataset))):
-            if self.dataset['crystal reference cell coords'][i] != 'error':  # skip bad cells
-                # confirm we have good syms
-                z_value = int(self.dataset['crystal z value'][i])
-                sg_number = self.dataset['crystal spacegroup number'][i]
-                # sym_group = symmetry.Group(self.dataset['crystal spacegroup number'][i])
-                if z_value != len(self.sym_ops[sg_number]):  # sym_group[0]): # if there's something wrong with the symmetry
-                    continue
-                '''
-                SETUP & BOILERPLATE
-                '''
-                # get cell params
-
-                ind += 1
-                good_inds.append(i)
-                cell_lengths = np.asarray(self.dataset['crystal cell lengths'][i])
-                cell_angles = np.asarray(self.dataset['crystal cell angles'][i])
-
-                # get all the transforms
-                T_fc = compute_fractional_transform('f_to_c', cell_lengths, cell_angles)
-                T_cf = compute_fractional_transform('c_to_f', cell_lengths, cell_angles)  # np.linalg.inv(T_fc)#
-
-                atomic_numbers = np.asarray(self.dataset['atom Z'][i])
-                heavy_atom_inds = np.argwhere(atomic_numbers > 1)[:, 0]
-                masses = np.asarray(self.dataset['atom mass'][i])[heavy_atom_inds]
-                atomic_numbers = atomic_numbers[heavy_atom_inds]
-
-                if study_cells:
-                    # atoms in cartesian coords
-                    from_csd = np.random.randint(0, 2, size=1)
-                    if from_csd:
-                        csd_inds.append(ind)
-
-                        # reference cell coords
-                        cell_coords_c = self.dataset['crystal reference cell coords'][i][:, :, :3]
-                        cell_coords_f = self.dataset['crystal reference cell coords'][i][:, :, 3:]
-                    else:
-                        # random cell
-                        rand_inds.append(ind)
-                        # reference cell coords
-                        coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
-                        random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc, T_cf, np.asarray(self.sym_ops[sg_number]), confirm_transform=False)
-                        # tests.append(np.average(T_cf.dot(random_coords.T).T,axis=0))
-                        cell_coords_c, cell_coords_f = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
-
-                    self.get_cell_data(i, masses, T_cf, T_fc, cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f)
-                if compare_cells:
-                    # check against CSD cell
-                    #
-                    # # get csd corrected for centroids outside the reference cell
-                    # cell_coords_c = self.dataset['crystal reference cell coords'][i][:, :, :3]
-                    # cell_coords_f = self.dataset['crystal reference cell coords'][i][:, :, 3:]
-                    #
-                    # # manually enforce our style of centroid
-                    # flag = 0
-                    # for j in range(z_value):
-                    #     if (np.amin(CoG_f[j])) < 0 or (np.amax(CoG_f[j]) > 1):
-                    #         flag = 1
-                    #         # print('Sample found with molecule out of cell')
-                    #         floor = np.floor(CoG_f[j])
-                    #         new_fractional_coords = cell_coords_f[j] - floor
-                    #         cell_coords_c[j] = T_fc.dot(new_fractional_coords.T).T
-                    #         cell_coords_f[j] = new_fractional_coords
-                    #
-                    # # redo it
-                    # if flag:
-                    #     CoG_c = np.average(cell_coords_c, axis=1)
-                    #     CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
-                    #
-                    # coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
-                    # x, y, z = self.dataset['crystal asymmetric unit centroid x'][i], self.dataset['crystal asymmetric unit centroid y'][i], self.dataset['crystal asymmetric unit centroid z'][i]
-                    # #ang1, ang2, ang3 = self.dataset['crystal reference cell angle 1'][i], self.dataset['crystal reference cell angle 2'][i], self.dataset['crystal reference cell angle 3'][i]
-                    # ang1, ang2, ang3 = orientation_angles
-                    # random_coords = randomize_molecule_position_and_orientation(coords_c, masses, T_fc, confirm_transform=False, set_position=(x, y, z), set_rotation=(ang1, ang2, ang3))
-                    # generated_c, _ = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
-                    #
-                    # mol1 = Atoms(numbers=np.tile(atomic_numbers, z_value), positions=cell_coords_c.reshape(z_value * len(atomic_numbers), 3), cell=np.concatenate((cell_lengths, cell_angles)), pbc=True)
-                    # mol2 = Atoms(numbers=np.tile(atomic_numbers, z_value), positions=generated_c.reshape(z_value * len(atomic_numbers), 3), cell=np.concatenate((cell_lengths, cell_angles)), pbc=True)
-                    # #a1 = Analysis(mol1)
-                    # #a2 = Analysis(mol2)
-                    # r_maxs = np.zeros(3)
-                    # for j in range(3):
-                    #     axb = np.cross(mol1.cell[(j + 1) % 3, :], mol1.cell[(j + 2) % 3, :])
-                    #     h = mol1.get_volume() / np.linalg.norm(axb)
-                    #     r_maxs[j] = h/2.01
-                    #
-                    # rdf1 = get_rdf(mol1,rmax=r_maxs.min(),nbins=50)[0]
-                    # rdf2 = get_rdf(mol2,rmax=r_maxs.min(),nbins=50)[0]
-                    # diff = np.sum(np.abs(rdf1-rdf2))
-                    # if diff > 0.1:
-                    #     aa = 1
-                    # diff_list.append(diff)
-
-                    # # check our ability to standardize consistently
-                    coords_c = self.dataset['atom coords'][i][heavy_atom_inds]
-
-                    angs = np.random.uniform(-np.pi, np.pi, 3)
-                    angs[1] /= 2
-                    pos = np.random.uniform(0, 1, 3)
-                    error = rotate_invert_and_check(atomic_numbers, masses, coords_c, T_fc, T_cf, np.asarray(self.sym_ops[sg_number]), angs, pos)
-                    # error = check_standardization(atomic_numbers, masses, coords_c, T_fc, T_cf, np.asarray(self.sym_ops[sg_number]), angs, pos)
-
-                    # # check our ability to invert angles correctly
-                    # cell_coords_c, _ = build_random_crystal(T_cf, T_fc, random_coords, np.asarray(self.sym_ops[sg_number]), z_value)
-                    #
-                    # # get all the centroids
-                    # CoG_c = np.average(cell_coords_c, axis=1)
-                    # CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
-                    #
-                    # # take the fractional molecule centroid closest to the origin
-                    # centroid_distance_from_origin_f = np.linalg.norm(CoG_f, axis=1)
-                    # canonical_mol_ind = np.argmin(centroid_distance_from_origin_f)
-                    #
-                    # retrieved_centroid_f, orientation_angles = retrieve_alignment_parameters(masses, cell_coords_c[canonical_mol_ind], T_fc, T_cf)
-                    #
-                    # if np.linalg.norm(orientation_angles - angs) > 1e-6:
-                    #     aa = 1
-                    # view((mol1,mol2))
-
-        if study_cells:
-            results_dict = {
-                'csd_centroids_f': np.asarray(self.centroids_f)[csd_inds],
-                # 'csd_supercell_angles' : np.asarray(self.supercell_angle_overlaps)[csd_inds],
-                'csd_centroid_fractional_displacement': np.asarray(self.centroid_fractional_displacement)[csd_inds],
-                'csd_centroid_cartesian_displacement': np.asarray(self.centroid_cartesian_displacement)[csd_inds],
-                # 'csd_inertial_angles' : np.asarray(self.inertial_angles)[csd_inds],
-                'csd_orientation_angles': np.asarray(self.orientation_angles)[csd_inds],
-                'rand_centroids_f': np.asarray(self.centroids_f)[rand_inds],
-                # 'rand_supercell_angles': np.asarray(self.supercell_angle_overlaps)[rand_inds],
-                'rand_centroid_fractional_displacement': np.asarray(self.centroid_fractional_displacement)[rand_inds],
-                'rand_centroid_cartesian_displacement': np.asarray(self.centroid_cartesian_displacement)[rand_inds],
-                # 'rand_inertial_angles': np.asarray(self.inertial_angles)[rand_inds],
-                'rand_orientation_angles': np.asarray(self.orientation_angles)[rand_inds],
-            }
-            np.save('cell_analysis', results_dict)
-        if compare_cells:
-            diffs = np.asarray(diff_list)
-        debug_stop = 1
-        if True:
-            # look at results
-            plt.figure(1)
-            plt.clf()
-            plt.title('Canonical molecule centroid fractional distance')
-            plt.hist(results_dict['csd_centroid_fractional_displacement'], density=True, bins=100, alpha=0.5, label='csd')
-            plt.hist(results_dict['rand_centroid_fractional_displacement'], density=True, bins=100, alpha=0.5, label='random')
-            plt.legend()
-
-            # # nearest alignment of inertial axis to one of a,b,c
-            # plt.figure(2)
-            # plt.clf()
-            # plt.title('Closest overlap of principal inertial axis to a, b, or c')
-            # plt.hist(np.amin(results_dict['csd_inertial_angles'],axis=1), density=True, bins=100, alpha=0.5,label='csd')
-            # plt.hist(np.amin(results_dict['rand_inertial_angles'],axis=1), density=True, bins=100, alpha=0.5,label='random')
-            # plt.legend()
-            #
-            # # nearest alignment of inertial axis to a 5x5 supercell direction
-            # plt.figure(3)
-            # plt.clf()
-            # plt.title('Closest overlap of principal inertial axis to any crystallographic direction in 5x5')
-            # plt.hist(np.amin(results_dict['csd_supercell_angles'],axis=1), density=True, bins=100, alpha=0.5,label='csd')
-            # plt.hist(np.amin(results_dict['rand_supercell_angles'],axis=1), density=True, bins=100, alpha=0.5,label='random')
-            # plt.legend()
-
-            plt.figure(4)
-            plt.clf()
-            plt.subplot(2, 2, 1)
-            plt.title('CSD fractional x-y centroid')
-            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 1], bins=100, norm=colors.LogNorm())
-            plt.subplot(2, 2, 2)
-            plt.title('Random fractional x-y centroid')
-            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 1], bins=100, norm=colors.LogNorm())
-            plt.subplot(2, 2, 3)
-            plt.title('CSD fractional x-z centroid')
-            plt.hist2d(x=results_dict['csd_centroids_f'][:, 0], y=results_dict['csd_centroids_f'][:, 2], bins=100, norm=colors.LogNorm())
-            plt.subplot(2, 2, 4)
-            plt.title('Random fractional x-z centroid')
-            plt.hist2d(x=results_dict['rand_centroids_f'][:, 0], y=results_dict['rand_centroids_f'][:, 2], bins=100, norm=colors.LogNorm())
-            plt.tight_layout()
-
-            plt.figure(5)
-            plt.clf()
-            for i in range(3):
-                plt.subplot(1, 3, i + 1)
-                plt.title('angle {}'.format(i))
-                plt.hist(results_dict['csd_orientation_angles'][:, i], density=True, bins=100)
-                plt.hist(results_dict['rand_orientation_angles'][:, i], density=True, bins=100, alpha=0.35)
-
-            plt.figure(6)
-            plt.clf()
-            plt.subplot(2, 3, 1)
-            plt.title('CSD 0-1 angles')
-            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 0], y=results_dict['csd_orientation_angles'][:, 1], bins=100, norm=colors.LogNorm())
-            plt.subplot(2, 3, 4)
-            plt.title('Random 0-1 angles')
-            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 0], y=results_dict['rand_orientation_angles'][:, 1], bins=100, norm=colors.LogNorm())
-            plt.subplot(2, 3, 2)
-            plt.title('CSD 0-2 angles')
-            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 0], y=results_dict['csd_orientation_angles'][:, 2], bins=100, norm=colors.LogNorm())
-            plt.subplot(2, 3, 5)
-            plt.title('Random 0-2 angles')
-            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 0], y=results_dict['rand_orientation_angles'][:, 2], bins=100, norm=colors.LogNorm())
-            plt.subplot(2, 3, 3)
-            plt.title('CSD 1-2 angles')
-            plt.hist2d(x=results_dict['csd_orientation_angles'][:, 1], y=results_dict['csd_orientation_angles'][:, 2], bins=100, norm=colors.LogNorm())
-            plt.subplot(2, 3, 6)
-            plt.title('Random 1-2 angles')
-            plt.hist2d(x=results_dict['rand_orientation_angles'][:, 1], y=results_dict['rand_orientation_angles'][:, 2], bins=100, norm=colors.LogNorm())
-            plt.tight_layout()
-
-    def get_cell_data(self, i, masses, T_cf, T_fc, cell_coords_c, cell_coords_f, z_value, supercell_ref_vectors_f):
-
-        # # confirm my fractional coords agree with CSD
-        # my_cell_coords_f = np.zeros_like(cell_coords_f)
-        # for n in range(len(my_cell_coords_f)):
-        #     my_cell_coords_f[n] = (T_cf.dot(cell_coords_c[n].T)).T
+    def get_dataset_filter_inds(self, filter_conditions):
+        """
+        identify indices not passing certain filter conditions
+        conditions in the format [column_name, condition_type, [min, max] or [set]]
+        condition_type in ['range','in','not_in']
+        """
         #
-        # # sometimes, the CSD fractional and cartesian coordinates disagree with each other
-        # conversion_error = np.average(np.abs(my_cell_coords_f - cell_coords_f))
-        # if conversion_error > 1e-5:
-        #     print("fractional conversion discrepancy of {:.3f} at {}, replacing cartesian coordinates by f_to_c transform".format(conversion_error, i))
-        #     cell_coords_c = np.zeros_like(cell_coords_f)
-        #     for n in range(len(my_cell_coords_f)):
-        #         cell_coords_c[n] = (T_fc.dot(cell_coords_f[n].T)).T
+        # blind_test_identifiers = [
+        #     'OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
+        #     'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04',
+        #     "COUMAR01", "COUMAR02", "COUMAR10", "COUMAR11", "COUMAR12", "COUMAR13",
+        #     "COUMAR14", "COUMAR15", "COUMAR16", "COUMAR17",  # Z'!=1 or some other weird thing
+        #     "COUMAR18", "COUMAR19"
+        # ]
 
-        # get all lattice vectors in cartesian coords
-        lattice_f = np.eye(3)
-        lattice_c = (T_fc.dot(lattice_f.T)).T
+        # test_conditions = [
+        #     ['molecule_mass', 'range', [0, 300]],
+        #     ['crystal_space_group_setting', 'not_in', [2]],
+        #     ['crystal_space_group_number', 'in', [1, 2, 14, 19]],
+        #     ['atom_atomic_numbers', 'range', [0, 20]],
+        #     ['crystal_is_organic', 'in', [True]],
+        #     ['molecule_is_symmetric_top', 'not_in', [True]]
+        # ]
 
-        '''
-        CENTROIDS
-        '''
-        # get all the centroids
-        CoG_c = np.average(cell_coords_c, axis=1)
-        CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
-        CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
-        CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
+        print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
+        bad_inds = []  # indices to be filtered
 
-        # manually enforce our style of centroid
-        flag = 0
-        for i in range(z_value):
-            if (np.amin(CoG_f[i])) < 0 or (np.amax(CoG_f[i]) > 1):
-                flag = 1
-                # print('Sample found with molecule out of cell')
-                floor = np.floor(CoG_f[i])
-                new_fractional_coords = cell_coords_f[i] - floor
-                cell_coords_c[i] = T_fc.dot(new_fractional_coords.T).T
-                cell_coords_f[i] = new_fractional_coords
+        for condition in filter_conditions:
+            bad_inds.extend(self.compute_filter(condition))
 
-        # redo it
-        if flag:
-            CoG_c = np.average(cell_coords_c, axis=1)
-            CoG_f = np.asarray([(T_cf.dot(CoG_c[n].T)).T for n in range(z_value)])
-            CoM_c = np.asarray([(cell_coords_c[n].T @ masses[:, None] / np.sum(masses)).T for n in range(z_value)])[:, 0, :]  # np.transpose(coords_c.T @ masses[:, None] / np.sum(masses)) # center of mass
-            CoM_f = np.asarray([(T_cf.dot(CoM_c[n].T)).T for n in range(z_value)])
+        bad_inds = np.unique(bad_inds)  # remove redundant conditions
 
-        # take the fractional molecule centroid closest to the origin
-        centroid_distance_from_origin_c = np.linalg.norm(CoG_c, axis=1)
-        centroid_distance_from_origin_f = np.linalg.norm(CoG_f, axis=1)
-        canonical_mol_ind = np.argmin(centroid_distance_from_origin_f)
+        return bad_inds
 
-        '''
-        INERTIAL AXES
-        # look for overlaps with lattice vectors
-        '''
-        # # get inertial axes
-        # Ip_axes_c, Ip_moments_c, I_tensor_c = compute_principal_axes_np(masses, cell_coords_c[canonical_mol_ind])
-        # # get angles w.r.t. a-axis and b-axis
-        # inertial_angle1 = np.arccos(np.dot(lattice_c[0] / np.linalg.norm(lattice_c[0]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
-        # inertial_angle2 = np.arccos(np.dot(lattice_c[1] / np.linalg.norm(lattice_c[1]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
-        # inertial_angle3 = np.arccos(np.dot(lattice_c[2] / np.linalg.norm(lattice_c[2]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
-        #
-        # # get overlaps with supercell angles
-        # supercell_ref_vectors_c = (T_fc.dot(supercell_ref_vectors_f.T)).T
-        # supercell_vector_angles = np.zeros(len(supercell_ref_vectors_c))
-        # for n in range(len(supercell_ref_vectors_c)):
-        #     supercell_vector_angles[n] = np.arccos(np.dot(supercell_ref_vectors_c[n] / np.linalg.norm(supercell_ref_vectors_c[n]), (Ip_axes_c[-1]) / np.linalg.norm(Ip_axes_c[-1]))) / np.pi * 180
+    def compute_filter(self, condition):
+        """
+        apply given filters
+        for atoms & molecules with potential Z'>1, need to adjust formatting a bit
+        """
+        condition_key, condition_type, condition_range = condition
+        if condition_type == 'range':
+            # check fo the values to be in the range (inclusive)
+            assert condition_range[1] > condition_range[0], "Range condition must be set low to high"
+            if 'crystal' in condition_key:
+                bad_inds = np.concatenate((
+                    np.argwhere(np.asarray(self.dataset[condition_key]) > condition_range[1]),
+                    np.argwhere(np.asarray(self.dataset[condition_key]) < condition_range[0])
+                ))[:, 0]
+            elif condition_key[:4] == 'atom':
+                max_values = np.asarray([np.amax(np.concatenate(atoms)) for atoms in self.dataset[condition_key]])
+                min_values = np.asarray([np.amin(np.concatenate(atoms)) for atoms in self.dataset[condition_key]])
+                bad_inds = np.concatenate((
+                    np.argwhere(max_values > condition_range[1]),
+                    np.argwhere(min_values < condition_range[0])
+                ))[:, 0]
+            elif 'molecule' in condition_key or 'asymmetric_unit' in condition_key:
+                max_values = np.asarray([np.amax(mols) for mols in self.dataset[condition_key]])
+                min_values = np.asarray([np.amin(mols) for mols in self.dataset[condition_key]])
+                bad_inds = np.concatenate((
+                    np.argwhere(max_values > condition_range[1]),
+                    np.argwhere(min_values < condition_range[0])
+                ))[:, 0]
 
-        '''
-        ORIENTATION ANALYSIS
-        Compute the rotations necessary to achieve the 'standard' orientation (I1 aligned with (1,1,1)-(0,0,0), 
-        and I2 pointed along the perpendicular vector between (1,1,1)-(0,0,0) and (0,1,1) 
-        '''
-        _, orientation_angles = retrieve_alignment_parameters(masses, cell_coords_c[canonical_mol_ind], T_fc, T_cf)
+        elif condition_type == 'in':
+            # check for where the data is not equal to the explicitly enumerated range elements to be included
+            if 'crystal' in condition_key:  # todo filters need to interact
+                bad_inds = np.argwhere([
+                    thing not in condition_range for thing in self.dataset[condition_key]
+                ])[:, 0]
+            elif 'molecule' in condition_key or 'asymmetric_unit' in condition_key:
+                bad_inds = np.argwhere([
+                    cond not in mol for mol in self.dataset[condition_key] for cond in condition_range
+                ])[:, 0]
+            elif condition_key[:4] == 'atom':
+                bad_inds = np.argwhere([
+                    cond not in np.concatenate(atoms) for atoms in self.dataset[condition_key] for cond in condition_range
+                ])[:, 0]
 
-        self.centroids_f.append(CoG_f[canonical_mol_ind])
-        # self.supercell_angle_overlaps.append(supercell_vector_angles)
-        self.centroid_fractional_displacement.append(centroid_distance_from_origin_f[canonical_mol_ind])
-        self.centroid_cartesian_displacement.append(centroid_distance_from_origin_c[canonical_mol_ind])
-        # self.inertial_angles.append([inertial_angle1, inertial_angle2, inertial_angle3])
-        # self.inertial_axes.append(Ip_axes_c)
-        self.orientation_angles.append(orientation_angles)
+        elif condition_type == 'not_in':
+            # check for where the data is equal to the explicitly enumerated elements to be excluded
+            if 'crystal' in condition_key:
+                bad_inds = np.argwhere([
+                    thing in condition_range for thing in self.dataset[condition_key]
+                ])[:, 0]
+            elif 'molecule' in condition_key or 'asymmetric_unit' in condition_key:
+                bad_inds = np.argwhere([
+                    cond in mol for mol in self.dataset[condition_key] for cond in condition_range
+                ])[:, 0]
+            elif condition_key[:4] == 'atom':
+                bad_inds = np.argwhere([
+                    cond in np.concatenate(atoms) for atoms in self.dataset[condition_key] for cond in condition_range
+                ])[:, 0]
+        else:
+            assert False, f"{condition_type} is not an implemented dataset filter condition"
+
+        print(f'{condition} filtered {len(bad_inds)} samples')
+
+        return bad_inds
+
+    def filter_polymorphs(self):
+        """
+        find duplicate examples and pick one representative per molecule
+        :return:
+        """
+        # use CSD identifiers to pick out polymorphs
+        duplicate_lists, duplicate_list_extension, duplicate_groups = self.get_identifier_duplicates()  # issue - some of these are not isomorphic (i.e., different ionization), maybe ~2% from early tests
+
+        # TODO consider other ways to select 'representative' polymorph
+        # the representative structure will be randomly sampled from all available polymorphs
+        # we will add all others to 'bad_inds', and filter them out at our leisure
+        print('selecting representative structures from duplicate polymorphs')
+        bad_inds = []
+        for key in duplicate_groups.keys():
+            inds = duplicate_groups[key]
+            sampled_ind = np.random.choice(inds, size=1)
+            inds.remove(sampled_ind)  # remove the good one
+            bad_inds.extend(inds)  # delete unselected polymorphs from the dataset
+
+        return bad_inds
+
+    def filter_duplicate_molecules(self):
+        """
+        find duplicate examples and pick one representative per molecule
+        :return:
+        """
+        # the representative structure will be randomly sampled from all available identical molecules
+        # we will add all others to 'bad_inds', and filter them out at our leisure
+        print('selecting representative structures from duplicate molecules')
+        bad_inds = []
+        for key in self.molecules_in_crystals_dict.keys():
+            mol_inds = self.molecules_in_crystals_dict[key]
+            crystal_identifiers = [self.mol_to_crystal_dict[ind] for ind in mol_inds]
+            crystal_inds = [self.dataset.loc[self.dataset['crystal_identifier'] == identifier].index[0] for identifier in crystal_identifiers]
+            sampled_ind = np.random.choice(crystal_inds, size=1)
+            crystal_inds.remove(sampled_ind)  # remove the good one
+            bad_inds.extend(crystal_inds)  # delete unselected polymorphs from the dataset
+
+        return bad_inds
 
 
 if __name__ == '__main__':
-    config = None
-    mode = 'analyze'
-
-    if mode == 'gather':
-        miner = Miner(dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/may_new_pull/mol_features', config=None, collect_chunks=True)
-        miner.process_new_dataset(test_mode=False)
-    elif mode == 'analyze':
-        miner = Miner(dataset_path='C:/Users\mikem\Desktop\CSP_runs\datasets/test_dataset', config=None, collect_chunks=False)
-        miner.todays_analysis()
+    miner = DataManager(device='cuda', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
+    miner.process_new_dataset('dataset.pkl')
+    #
+    # test_conditions = [
+    #     ['molecule_mass', 'range', [0, 300]],
+    #     ['crystal_space_group_setting', 'not_in', [2]],
+    #     ['crystal_space_group_number', 'in', [1, 2, 14, 19]],
+    #     ['atom_atomic_numbers', 'range', [0, 20]],
+    #     ['crystal_is_organic', 'in', [True]],
+    #     ['molecule_is_symmetric_top', 'not_in', [True]]
+    # ]
+    #
+    # miner.load_dataset_for_modelling(dataset_name='new_dataset.pkl',
+    #                                  filter_conditions=test_conditions, filter_polymorphs=True, filter_duplicate_molecules=True)
+    #
+    aa = 1

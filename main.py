@@ -1,12 +1,14 @@
 """import statements"""
 import argparse, warnings
-from common.config_processing import add_args, process_config, get_config
+from common.config_processing import get_config
 from crystal_modeller import Modeller
+import pandas as pd
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
 
 # ====================================
@@ -16,12 +18,8 @@ if __name__ == '__main__':
     '''
     parser = argparse.ArgumentParser()
     _, override_args = parser.parse_known_args()
-    parser, args2config = add_args(parser)
 
-    args = parser.parse_args()
-
-    config = get_config(args, override_args, args2config)
-    config = process_config(config)
+    config = get_config(override_args)
 
     print("Args:\n" + "\n".join([f"    {k:20}: {v}" for k, v in vars(config).items()]))
 
@@ -29,9 +27,5 @@ if __name__ == '__main__':
     run the code in selected mode
     '''
     predictor = Modeller(config)
-    if config.mode == 'figures':
-        predictor.nov_22_figures()  # figures like those from the Nov/2022 paper
-    elif config.mode == 'sampling':
-        predictor.model_sampling()
-    else:
+    if config.mode == 'gan' or config.mode == 'regression':
         predictor.train_crystal_models()

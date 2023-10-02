@@ -1,18 +1,22 @@
 import numpy as np
-from torch.nn import functional as F
 from torch.nn.utils import rnn as rnn
 
-from models.utils import enforce_1d_bound
-from common.geometry_calculations import compute_principal_axes_np, single_molecule_principal_axes_torch, batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, sph2rotvec
+from models.utils import clean_generator_output, enforce_crystal_system
+from common.geometry_calculations import single_molecule_principal_axes_torch, batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, sph2rotvec
 from scipy.spatial.transform import Rotation
 import torch
-import torch.nn.functional as F
 import sys
 
 
-def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_list: list,
-                     atoms_list: list, z_values, supercell_scale=5, cutoff=5,
-                     sorted_fractional_translations=None, pare_to_convolution_cluster=True):
+def unit_cell_to_convolution_cluster(reference_cell_list: list,
+                                     cell_vector_list: list,
+                                     T_fc_list,
+                                     atoms_list: list,
+                                     crystal_multiplicity,
+                                     supercell_scale=5,
+                                     cutoff=5,
+                                     sorted_fractional_translations=None,
+                                     pare_to_convolution_cluster=True):
     """
     1) generate fractional translations for full supercell
     for each sample
@@ -38,26 +42,27 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
     supercell_atoms_list = []
     ref_mol_inds_list = []
     copies = []
-    z_values = [len(ref_list) for ref_list in reference_cell_list]  # todo delete once generator method is separated
-    for i, (ref_cell, unit_cell_vectors, atoms, z_value) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, z_values)):
+    for i, (ref_cell, unit_cell_vectors, atoms, sym_mult) in enumerate(zip(reference_cell_list, cell_vector_list, atoms_list, crystal_multiplicity)):
         if type(ref_cell) == np.ndarray:
             ref_cell = torch.tensor(ref_cell, device=device)
 
         mol_n_atoms = len(atoms)
-        supercell_coords = ref_cell.clone().reshape(z_value * ref_cell.shape[1], 3).tile(n_cells, 1)  # duplicate over XxXxX supercell
+        supercell_coords = ref_cell.clone().reshape(sym_mult * ref_cell.shape[1], 3).tile(n_cells, 1)  # duplicate over XxXxX supercell
         cart_translations_i = torch.mul(unit_cell_vectors.tile(n_cells, 1), sorted_fractional_translations.reshape(n_cells * 3, 1))  # 3 cell vectors
         # cart_translations = torch.stack(cart_translations_i.split(3, dim=0), dim=0).sum(1)
         cart_translations = cart_translations_i.reshape(n_cells, 3, 3).sum(1)  # faster
 
         full_supercell_coords = supercell_coords + torch.repeat_interleave(cart_translations, ref_cell.shape[1] * ref_cell.shape[0], dim=0)  # add translations throughout
 
+        # todo these coords are insanely way too densely packed
+
         in_mol_inds = torch.arange(mol_n_atoms)  # assume canonical conformer is indexed first
         if pare_to_convolution_cluster:
             # TODO canonical conformer is not indexed first in prebuilt reference cells - shouldn't actually impact morphology but would be nice to clean up
-            molwise_supercell_coords = full_supercell_coords.reshape(n_cells * z_value, mol_n_atoms, 3)
+            molwise_supercell_coords = full_supercell_coords.reshape(n_cells * sym_mult, mol_n_atoms, 3)
 
             ref_mol_centroid = molwise_supercell_coords[0].mean(0)  # first is always the canonical conformer
-            all_mol_centroids = torch.mean(molwise_supercell_coords, dim=1)  # centroids for all molecules in the supercell
+            all_mol_centroids = molwise_supercell_coords.mean(1)  # centroids for all molecules in the supercell
 
             mol_centroid_dists = torch.cdist(ref_mol_centroid[None, :], all_mol_centroids, p=2)[0]  # distances between canonical conformer and all other molecules
             ref_mol_radius = torch.max(torch.cdist(ref_mol_centroid[None, :], full_supercell_coords[in_mol_inds]))  # molecule radius of canonical conformer
@@ -69,20 +74,20 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
             '''
             successful_gconv = False
             extra_cutoff = 0
-            while successful_gconv == False:
+            while not successful_gconv:
                 # ignore atoms which are more than mol_radius + conv_cutoff + buffer
-                convolve_mol_inds = torch.where((mol_centroid_dists <= (2 * ref_mol_radius + cutoff + extra_cutoff + 0.1)))[0]
+                convolve_mol_inds = torch.where((mol_centroid_dists <= (ref_mol_radius + cutoff + extra_cutoff + 0.01)))[0]
 
-                if len(convolve_mol_inds) <= mol_n_atoms:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
-                    extra_cutoff += 0.5
+                if len(convolve_mol_inds) <= 9:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
+                    extra_cutoff += 1
                 else:
                     successful_gconv = True
 
-            assert len(convolve_mol_inds) > mol_n_atoms  # must be more than one molecule in convolution
+            assert len(convolve_mol_inds) > 1  # must be more than one molecule in convolution
 
             '''add final indexing of atoms which are canonical conformer: 0, kept symmetry images: 1, and otherwise tossed'''
             ref_mol_inds = torch.ones(len(convolve_mol_inds) * mol_n_atoms, dtype=int, device=device)  # only index molecules which will be kept
-            ref_mol_inds[in_mol_inds] = 0
+            ref_mol_inds[in_mol_inds] = 0  # 0 is for 'inside', 1 is for 'outside'
 
             convolve_atom_inds = (torch.arange(mol_n_atoms, device=device)[:, None] + convolve_mol_inds * mol_n_atoms).T.reshape(len(convolve_mol_inds) * mol_n_atoms)  # looks complicated but it's fast
 
@@ -100,7 +105,7 @@ def ref_to_supercell(reference_cell_list: list, cell_vector_list: list, T_fc_lis
 
         copies.append(len(convolve_mol_inds))
 
-    n_copies = torch.tensor(copies, dtype=torch.int32)
+    n_copies = torch.tensor(copies, dtype=torch.int32)  # todo gives wrong behavior if not paring convolution cluster
 
     return supercell_coords_list, supercell_atoms_list, ref_mol_inds_list, n_copies
 
@@ -130,98 +135,11 @@ def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords
     return supercell_data
 
 
-def clean_cell_output(cell_lengths: torch.tensor, cell_angles: torch.tensor, mol_position: torch.tensor, mol_rotation: torch.tensor,
-                      lattices, dataDims,
-                      enforce_crystal_system=False, rotation_basis='spherical',
-                      return_transforms=False, standardized_sample: bool = True):
-    """
-    constrain cell parameters to physically meaningful values
-    :param cell_lengths:
-    :param cell_angles:
-    :param mol_position:
-    :param mol_rotation:
-    :return:
-    """
-    # todo sub datadims for raw means and stds
-    if standardized_sample:
-        # de-standardize everything
-        means = torch.Tensor(dataDims['lattice means']).to(cell_lengths.device)
-        stds = torch.Tensor(dataDims['lattice stds']).to(cell_lengths.device)
-
-        # soft clipping to ensure correct range with finite gradients
-        cell_lengths = cell_lengths * stds[0:3] + means[0:3]
-        cell_angles = cell_angles * stds[3:6] + means[3:6]
-        mol_position = mol_position * stds[6:9] + means[6:9]
-        mol_rotation = mol_rotation * stds[9:12] + means[9:12]
-
-    '''
-    enforce bounds on the cell parameters
-    a,b,c: positive nonzero
-    alpha,beta,gamma: 0,pi
-    fractional centroid: 0,1
-    mol orientation: 
-        -> cartesian mode: vector norm < 2pi
-        -> spherical mode: theta < pi/2, phi in -pi,pi, r < 2pi
-    '''
-    cell_lengths = F.softplus(cell_lengths - 0.1) + 0.1  # enforces positive nonzero
-
-    cell_angles = enforce_1d_bound(cell_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='soft')  # prevent too-skinny cells
-
-    mol_position = enforce_1d_bound(mol_position, 0.5, 0.5, mode='soft')
-
-    if rotation_basis == 'cartesian':
-        norms = torch.linalg.norm(mol_rotation, dim=1)
-        normed_norms = enforce_1d_bound(norms, torch.pi, torch.pi, mode='soft')
-        mol_rotation = mol_rotation / norms[:, None] * normed_norms[:, None]
-    elif rotation_basis == 'spherical':
-        theta = enforce_1d_bound(mol_rotation[:, 0], torch.pi / 4, torch.pi / 4, mode='soft')
-        phi = enforce_1d_bound(mol_rotation[:, 1], torch.pi, 0, mode='soft')
-        r = enforce_1d_bound(mol_rotation[:, 2], torch.pi, torch.pi, mode='soft')
-        mol_rotation = torch.cat((theta[:, None], phi[:, None], r[:, None]), dim=-1)
-    else:
-        print(f"{rotation_basis} is not an implemented rotation basis!")
-        sys.exit()
-
-    for i in range(len(cell_lengths)):
-        if enforce_crystal_system:  # enforce properties of crystal system
-            lattice = lattices[i]
-
-            # enforce agreement with crystal system
-            if lattice.lower() == 'triclinic':
-                pass
-            elif lattice.lower() == 'monoclinic':  # fix alpha and gamma
-                cell_angles[i, 0], cell_angles[i, 2] = torch.pi / 2, torch.pi / 2
-            elif lattice.lower() == 'orthorhombic':  # fix all angles
-                cell_angles[i] = torch.ones(3) * torch.pi / 2
-            elif lattice.lower() == 'tetragonal':  # fix all angles and a & b vectors
-                cell_angles[i] = torch.ones(3) * torch.pi / 2
-                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2).to(cell_lengths.device)
-            elif (lattice.lower() == 'hexagonal') or (lattice.lower() == 'trigonal') or (lattice.lower() == 'rhombohedral'):
-                cell_lengths[i, 0], cell_lengths[i, 1] = torch.mean(cell_lengths[i, 0:2]) * torch.ones(2).to(cell_lengths.device)
-                cell_angles[i, 0:2] = torch.pi / 2
-                cell_angles[i, 2] = torch.pi * 2 / 3
-            elif lattice.lower() == 'cubic':  # all angles 90 all lengths equal
-                cell_lengths[i] = cell_lengths[i].mean() * torch.ones(3).to(cell_lengths.device)
-                cell_angles[i] = torch.pi * torch.ones(3) / 2
-            else:
-                print(lattice + ' is not a valid crystal lattice!')
-                sys.exit()
-        else:
-            # don't assume a crystal system, but snap angles close to 90, to assist in precise symmetry
-            pass  # cell_angles[i, torch.abs(cell_angles[i] - torch.pi / 2) < 0.01] = torch.pi / 2
-
-    if return_transforms:
-        return cell_lengths, cell_angles, mol_position, mol_rotation, None, None, None
-    else:
-        return cell_lengths, cell_angles, mol_position, mol_rotation
-
-
 def compute_lattice_vector_overlap(coords_list: list, T_cf_list: list, normed_lattice_vectors=None):
     """
     compute overlap between molecule principal axes and the crystal lattice vectors
-    """
+    """  # do not deprecate - may be useful later
     if normed_lattice_vectors is None:
-        # initialize fractional lattice vectors - should be exactly identical to what's in molecule_featurizer.py
         # ideally precomputed and fed to the function
         supercell_scale = 2  # t
         n_cells = (2 * supercell_scale + 1) ** 3
@@ -247,56 +165,28 @@ def compute_lattice_vector_overlap(coords_list: list, T_cf_list: list, normed_la
     return torch.einsum('ij,nmj->nmi', (normed_lattice_vectors, normed_vectors_f))
 
 
-def get_cell_fractional_centroids(coords, T_cf):
+def fractional_transform(coords, T_mat):
     """
-    input is the cartesian coordinates and the c->f transformation matrix
+    input is the cartesian coordinates and the c-f or f-c fractional transformation matrix
     """
     if isinstance(coords, np.ndarray):
-        return np.einsum('nmj,ij->nmi', coords, T_cf).mean(1)
+        return fractional_transform_np(coords, T_mat)
     elif torch.is_tensor(coords):
-        return torch.einsum('nmj,ij->nmi', (coords, T_cf)).mean(1)
+        return fractional_transform_torch(coords, T_mat)
 
 
-def c_f_transform(coords, T_cf):
-    """
-    input is the cartesian coordinates and the c->f transformation matrix
-    """
-    if coords.ndim == 2:  # option for extra dimension
-        if isinstance(coords, np.ndarray):
-            return np.einsum('nj,ij->ni', coords, T_cf)
-        elif torch.is_tensor(coords):
-            return torch.einsum('nj,ij->ni', (coords, T_cf))
+def fractional_transform_torch(coords, T_mat):
+    if coords.ndim == 2:
+        return torch.einsum('nj,ij->ni', (coords, T_mat))
     elif coords.ndim == 3:
-        if isinstance(coords, np.ndarray):
-            return np.einsum('nmj,ij->nmi', coords, T_cf)
-        elif torch.is_tensor(coords):
-            return torch.einsum('nmj,ij->nmi', (coords, T_cf))
-
-
-def f_c_transform(coords, T_fc):
-    """
-    input is the fractional coordinates and the f->c transformation matrix
-    """
-    if coords.ndim == 2:  # option for extra dimension
-        if isinstance(coords, np.ndarray):
-            return np.einsum('nj,ij->ni', coords, T_fc)
-        elif torch.is_tensor(coords):
-            return torch.einsum('nj,ij->ni', (coords, T_fc))
-    elif coords.ndim == 3:
-        if isinstance(coords, np.ndarray):
-            return np.einsum('nmj,ij->nmi', coords, T_fc)
-        elif torch.is_tensor(coords):
-            return torch.einsum('nmj,ij->nmi', (coords, T_fc))
-
-
-def find_coord_in_box_np(coords, box, epsilon=0):
-    # which of the given coords is inside the specified box, with option for a little leeway
-    return np.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
+        return torch.einsum('nmj,ij->nmi', (coords, T_mat))
 
 
 def find_coord_in_box_torch(coords, box, epsilon=0):
     # which of the given coords is inside the specified box, with option for a little leeway
-    return torch.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
+    return torch.where((coords[:, 0] <= (box[0] + epsilon)) *
+                       (coords[:, 1] <= (box[1] + epsilon)) *
+                       (coords[:, 2] <= (box[2] + epsilon)))[0]
 
 
 def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list, asym_unit_dict,
@@ -310,32 +200,53 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
     asym_unit_dict: dict which defines the asymmetric unit for each space group
     T_cf : list of cartesian-to-fractional matrix transforms
     enforce_right_handedness : DEPRECATED doesn't make sense given nature of our transform
-    rotation_basis : 'cartesian' or 'spherical' whether mol orientation rotvec should be paramterized in cartesian or spherical coordinates
+    rotation_basis : 'cartesian' or 'spherical' whether mol orientation rotvec should be parameterized in cartesian or spherical coordinates
     Returns : standardized pose parameters and canonical conformer handedness
     -------
     """
 
+    '''Asymmetric Unit Centroid Analysis'''
     T_cf_list = torch.linalg.inv(T_fc_list)
     num_samples = len(unit_cell_coords_list)
     canonical_conformer_coords_list = []
     mol_position_list = []
+    well_defined_asym_unit_list = []
     for i, unit_cell_coords in enumerate(unit_cell_coords_list):
-        # identify which of the Z asymmetric units is canonical # todo need a better system for when conformers are exactly or nearly exactly on the edge
+        # identify which of the Z asymmetric units is canonical
         centroids_cartesian = unit_cell_coords.mean(-2)
-        centroids_fractional = torch.inner(T_cf_list[i], centroids_cartesian).T
+        centroids_fractional = fractional_transform(centroids_cartesian, T_cf_list[i])
         centroids_fractional -= torch.floor(centroids_fractional)
         asym_unit = asym_unit_dict[str(int(sg_ind_list[i]))]
-        canonical_conformer_index = find_coord_in_box_torch(centroids_fractional, asym_unit)
+        canonical_conformer_index_i = find_coord_in_box_torch(centroids_fractional, asym_unit)
 
-        if len(canonical_conformer_index) == 0:  # if we didn't find one, patch over by just picking the closest # todo delete this when we have the above fixed
+        well_defined_asym_unit = False
+        if len(canonical_conformer_index_i) == 0:  # if we didn't find one, or found more than one pick the closest. In some cases, they are truly indistinguishable otherwise.
             canonical_conformer_index = [torch.argmin(torch.linalg.norm(centroids_fractional, axis=1))]
+        elif len(canonical_conformer_index_i) > 1:
+            dists = torch.linalg.norm(centroids_fractional[canonical_conformer_index_i], axis=1)
+            if len(set(dists)) < len(dists):  # if any are equal, go dimension-by-dimension
+                canonical_conformer_index = [canonical_conformer_index_i[0]]  # pre-set a random ind, overwrite later
+                for dim in range(3):
+                    dists = centroids_fractional[canonical_conformer_index_i][:, dim]
+                    if len(set(dists)) < len(dists):
+                        pass  # if are equal, go to next dim
+                    else:
+                        canonical_conformer_index = [canonical_conformer_index_i[torch.argmin(dists)]]
+                        break  # stop at this dim
+            else:
+                canonical_conformer_index = [canonical_conformer_index_i[torch.argmin(dists)]]
+        elif len(canonical_conformer_index_i) == 1:
+            well_defined_asym_unit = True  # if there is any ambiguity, it is not 'well defined'
+            canonical_conformer_index = canonical_conformer_index_i * 1
 
         canonical_conformer_coords_list.append(unit_cell_coords[canonical_conformer_index[0]])
         mol_position_list.append(centroids_fractional[canonical_conformer_index[0]])
+        well_defined_asym_unit_list.extend([well_defined_asym_unit])
 
     mol_position_list = torch.stack(mol_position_list)
 
-    # next we need to compute the inverse of the rotation required to align the molecule with the cartesian axes
+    '''Pose Analysis'''
+    # compute the inverse of the rotation required to align the molecule with the cartesian axes
     Ip_axes_list, _, _ = batch_molecule_principal_axes_torch(canonical_conformer_coords_list)
     handedness_list = compute_Ip_handedness(Ip_axes_list)
 
@@ -351,25 +262,26 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         if not enforce_right_handedness:
             assert torch.linalg.det(rotation_matrix) > 0  # negative determinant is an improper rotation, which we do not want - inverts the molecule
 
-        unit_vector = torch.tensor([
+        direction_vector = torch.tensor([
             rotation_matrix[2, 1] - rotation_matrix[1, 2],
             rotation_matrix[0, 2] - rotation_matrix[2, 0],
             rotation_matrix[1, 0] - rotation_matrix[0, 1]],
             device=rotation_matrix.device, dtype=torch.float32)  # 32 precision is limiting here in some cases
 
-        theta_arg = (torch.trace(rotation_matrix) - 1) / 2
+        r_arg = (torch.trace(rotation_matrix) - 1) / 2
 
-        if torch.abs(theta_arg) >= 1:  # if we are close enough to one, the arccos will NaN
-            # situation corresponds to a rotation by ~pi (identity operation), so the axis is arbitrary
-            # some ill conditioned rotations may also throw |args| greater than 1 - for safety must set these
-            # as something - may as well be identity
-            theta = torch.pi
-            unit_vector = torch.ones(3, device=rotation_matrix.device,
-                                     dtype=torch.float32)
+        if torch.abs(r_arg) >= 1:  # if we are close enough to one, the arccos will NaN
+            # situation corresponds to a rotation by ~pi, with an unknown direction
+            # fortunately, either direction results in the same transformation (C2)
+            # some ill conditioned rotations may also throw |args| greater than 1 -
+            # for safety must set these as something, may as well be this  # todo look at such ill-conditioned cases
+            r = torch.pi
+            direction_vector = torch.ones(3, device=rotation_matrix.device,
+                                          dtype=torch.float32)
         else:  # calculate as normal
-            theta = torch.arccos(theta_arg)
+            r = torch.arccos(r_arg)
 
-        rotvec_list.append(unit_vector / torch.linalg.norm(unit_vector) * theta)
+        rotvec_list.append(direction_vector / torch.linalg.norm(direction_vector) * r)
 
     rotvec_list = torch.stack(rotvec_list)
 
@@ -393,7 +305,6 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
     m2 = Rotation.from_rotvec(rotvec_list0.detach().numpy()).as_matrix() # pre-inversion rotvec list
     print((m1 - m2).sum())
     '''
-
     if rotation_basis == 'cartesian':
         mol_orientation = rotvec_list
     elif rotation_basis == 'spherical':  # convert from cartesian to spherical coordinates
@@ -405,9 +316,9 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
     assert torch.sum(torch.isnan(torch.cat((mol_position_list, mol_orientation), dim=-1))) == 0
 
     if return_asym_unit_coords:
-        return mol_position_list, mol_orientation, handedness_list, canonical_conformer_coords_list
+        return mol_position_list, mol_orientation, handedness_list, well_defined_asym_unit_list, canonical_conformer_coords_list
     else:
-        return mol_position_list, mol_orientation, handedness_list
+        return mol_position_list, mol_orientation, handedness_list, well_defined_asym_unit_list
 
 
 def flip_I3(coords: torch.tensor, Ip: torch.tensor):
@@ -441,7 +352,7 @@ def compute_principal_axes_list(coords_list):
     return Ip_axes_list
 
 
-def align_crystaldata_to_principal_axes(crystaldata: object, handedness: object = None) -> object:
+def align_crystaldata_to_principal_axes(crystaldata, handedness):
     """
     align principal inertial axes of molecules in a crystaldata object to the xyz or xy(-z) axes
     only works for geometric principal axes (all atoms mass = 1)
@@ -484,7 +395,8 @@ def random_crystaldata_alignment(crystaldata):
 def set_sym_ops(supercell_data):
     """
     enforce known symmetry operations for given space groups
-    sometimes, the samples come with nonstandard space groups, which we do not want to use by accident
+    sometimes, the samples come with nonstandard space groups, which we do not want to use by accidend
+    consider the general positions in the standard settings
     @param supercell_data:
     @return:
     """
@@ -502,12 +414,12 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
     rotvec -> quat -> rotation matrix (old way)
     """
     if basis == 'cartesian':
-        theta = torch.linalg.norm(mol_rotation, dim=1)
-        unit_vector = mol_rotation / theta[:, None]
-    elif basis == 'spherical':  # psi, phi, (spherical unit vector) theta (rotaiton vector)
+        r = torch.linalg.norm(mol_rotation, dim=1)
+        unit_vector = mol_rotation / r[:, None]
+    elif basis == 'spherical':  # psi, phi, (spherical unit vector) theta (rotation vector)
+        r = mol_rotation[:, -1]  # third dimension in spherical basis is the norm #torch.linalg.norm(mol_rotation, dim=1)
         mol_rotation = sph2rotvec(mol_rotation)
-        theta = torch.linalg.norm(mol_rotation, dim=1)
-        unit_vector = mol_rotation / theta[:, None]
+        unit_vector = mol_rotation / r[:, None]
     else:
         print(f'{basis} is not a valid orientation parameterization!')
         sys.exit()
@@ -518,61 +430,20 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
         torch.stack((-unit_vector[:, 1], unit_vector[:, 0], torch.zeros_like(unit_vector[:, 0])), dim=1)
     ), dim=1)
 
-    applied_rotation_list = torch.eye(3, device=theta.device)[None, :, :].tile(len(theta), 1, 1) + torch.sin(theta[:, None, None]) * K + (1 - torch.cos(theta[:, None, None])) * (K @ K)
-
-    # old way via quaternion
-    # q = torch.cat([torch.cos(theta / 2)[:, None], unit_vector * torch.sin(theta / 2)[:, None]], dim=1)
-    #
-    # applied_rotation_list = torch.stack((torch.stack((1 - 2 * q[:, 2] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 1] * q[:, 2] - 2 * q[:, 0] * q[:, 3], 2 * q[:, 1] * q[:, 3] + 2 * q[:, 0] * q[:, 2]), dim=1),
-    #                                      torch.stack((2 * q[:, 1] * q[:, 2] + 2 * q[:, 0] * q[:, 3], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 3] ** 2, 2 * q[:, 2] * q[:, 3] - 2 * q[:, 0] * q[:, 1]), dim=1),
-    #                                      torch.stack((2 * q[:, 1] * q[:, 3] - 2 * q[:, 0] * q[:, 2], 2 * q[:, 2] * q[:, 3] + 2 * q[:, 0] * q[:, 1], 1 - 2 * q[:, 1] ** 2 - 2 * q[:, 2] ** 2), dim=1)),
-    #                                     dim=1)
+    applied_rotation_list = torch.eye(3, device=r.device)[None, :, :].tile(len(r), 1, 1) + torch.sin(r[:, None, None]) * K + (1 - torch.cos(r[:, None, None])) * (K @ K)
 
     return applied_rotation_list
 
 
-def get_canonical_conformer(supercell_data, mol_position, sym_ops_list, debug=False):
-    """ # todo officially deprecate - unusedc
-    identify canonical conformer
-    """
-    # do it in batches of same z-values to allow some parallelization
-    unique_z_values = torch.unique(supercell_data.Z)
-    z_inds = [torch.where(supercell_data.Z == z)[0] for z in unique_z_values]
-
-    # initialize final list
-    canonical_fractional_centroids_list = torch.zeros((len(mol_position), 3)).to(mol_position.device)
-    # split it into z values and do each in parallel for speed
-    for i, (inds, z_value) in enumerate(zip(z_inds, unique_z_values)):
-        centroids_i = torch.zeros((z_value, len(inds), 3)).to(mol_position.device)  # initialize
-        for zv in range(z_value):
-            centroids_i[zv, :, :] = \
-                torch.einsum('nhb,nb->nh', (torch.stack([sym_ops_list[j] for j in inds])[:, zv],  # was an index error here
-                                            torch.cat((mol_position[inds],
-                                                       torch.ones(mol_position[inds].shape[:-1] + (1,)).to(mol_position.device)), dim=-1)
-                                            )
-                             )[:, :-1]
-        centroids = centroids_i - torch.floor(centroids_i)
-
-        canonical_fractional_centroids_list[inds] = centroids[torch.argmin(torch.linalg.norm(centroids, dim=2), dim=0), torch.arange(len(inds))]
-
-        if debug:  # todo rewrite these debug statements as tests
-            assert F.l1_loss(canonical_fractional_centroids_list[inds], mol_position[inds], reduction='mean') < 0.001
-
-    if debug:
-        assert F.l1_loss(canonical_fractional_centroids_list, mol_position, reduction='mean') < 0.001
-
-    return canonical_fractional_centroids_list
-
-
-def build_unit_cell(z_values, final_coords_list, T_fc_list, T_cf_list, sym_ops_list):
+def build_unit_cell(symmetry_multiplicity, final_coords_list, T_fc_list, T_cf_list, sym_ops_list):
     """
     use cell symmetry to pattern canonical conformer into full unit cell
     batch crystals with same Z value together for added speed in large batches
     """
     reference_cell_list_i = []
 
-    unique_z_values = torch.unique(z_values)
-    z_inds = [torch.where(z_values == z)[0] for z in unique_z_values]
+    unique_z_values = torch.unique(symmetry_multiplicity)
+    z_inds = [torch.where(symmetry_multiplicity == z)[0] for z in unique_z_values]
 
     for i, (inds, z_value) in enumerate(zip(z_inds, unique_z_values)):
         # padding allows for parallel transforms below
@@ -595,7 +466,7 @@ def build_unit_cell(z_values, final_coords_list, T_fc_list, T_cf_list, sym_ops_l
             # force centroids within unit cell
             centroids_f_z_in_cell = centroids_f_z - torch.floor(centroids_f_z)
 
-            # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame  # todo reconfirm this is the right way to do this
+            # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame
             rot_coords_f = torch.einsum('nmj,nij->nmi',
                                         (torch.einsum('mij,mnj->mni',
                                                       (T_cf_list[inds],
@@ -615,7 +486,32 @@ def build_unit_cell(z_values, final_coords_list, T_fc_list, T_cf_list, sym_ops_l
     return reference_cell_list
 
 
-def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_ind):
+def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_dict, asym_unit_dict,
+                      rescale_asymmetric_unit=True, destandardize=False, mode='soft'):
+
+    lattice_lengths, lattice_angles, mol_positions, mol_orientations \
+        = clean_generator_output(samples, lattice_means, lattice_stds, destandardize=destandardize, mode=mode)
+
+    fixed_lengths, fixed_angles = (
+        enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_dict))
+
+    if rescale_asymmetric_unit:
+        fixed_positions = scale_asymmetric_unit(asym_unit_dict, mol_positions, sg_inds)
+    else:
+        fixed_positions = mol_positions * 1
+
+    '''collect'''
+    final_samples = torch.cat((
+        fixed_lengths,
+        fixed_angles,
+        fixed_positions,
+        mol_orientations,
+    ), dim=-1)
+
+    return final_samples
+
+
+def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     """
     input fractional coordinates are scaled on 0-1
     rescale these for the specific ranges according to each space group
@@ -623,14 +519,80 @@ def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_ind):
     this approach will not work for asymmetric units which are not parallelpipeds
     Parameters
     ----------
+    asym_unit_dict
     mol_position
-    sg_ind
+    sg_inds
 
     Returns
     -------
-    """  # todo vectorize
-    scaled_mol_position = mol_position.clone()
-    for i, ind in enumerate(sg_ind):
-        scaled_mol_position[i, :] = mol_position[i, :] * asym_unit_dict[str(int(ind))]
+    """
+    # scaled_mol_position = mol_position.clone()
+    # for i, ind in enumerate(sg_ind):
+    #     scaled_mol_position[i, :] = mol_position[i, :] * asym_unit_dict[str(int(ind))]
 
-    return scaled_mol_position
+    # vectorized for speed
+    # asym_units = torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_ind])
+    # scaled_mol_position = mol_position * asym_units
+
+    return mol_position * torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
+
+
+def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
+    # overwrite point group one-hot
+    # overwrite space group one-hot
+    # overwrite crystal system one-hot
+    # overwrite z value
+
+    sg_num = list(symmetries_dict['space_groups'].values()).index(override_sg) + 1  # indexing from 0
+    sg_ind = symmetries_dict['sg_feature_ind_dict'][symmetries_dict['space_groups'][sg_num]]
+    crysys_ind = symmetries_dict['crysys_ind_dict'][symmetries_dict['lattice_type'][sg_num]]
+    z_value_ind = max(list(symmetries_dict['crysys_ind_dict'].values())) + 1  # todo hardcode
+
+    # todo replace datadims call by crystal generation features
+    supercell_data.x[:, -dataDims['num crystal generation features']] = 0  # set all crystal features to 0
+    supercell_data.x[:, sg_ind] = 1  # set all molecules to the given space group
+    supercell_data.x[:, crysys_ind] = 1  # set all molecules to the given crystal system
+    # todo replace sym_ops_list arg by Z value
+    supercell_data.mult = len(sym_ops_list[0]) * torch.ones_like(supercell_data.mult)
+    supercell_data.x[:, z_value_ind] = supercell_data.mult[0] * torch.ones_like(supercell_data.x[:, 0])
+    supercell_data.sg_ind = sg_num * torch.ones_like(supercell_data.sg_ind)
+
+    return supercell_data
+
+
+def update_crystal_symmetry_elements(mol_data, generate_sgs, symmetries_dict, randomize_sgs=False):
+    """
+    update the symmetry information in molecule-wise crystaldata objects
+    """
+    # identify the SG numbers we want to generate
+    if type(generate_sgs[0]) == str:
+        generate_sg_inds = [list(symmetries_dict['space_groups'].values()).index(SG) + 1 for SG in generate_sgs]  # indexing from 0
+    elif torch.is_tensor(generate_sgs):
+        generate_sg_inds = generate_sgs.cpu().detach().numpy()
+    else:
+        generate_sg_inds = generate_sgs
+
+    # randomly assign SGs to samples
+    if randomize_sgs:
+        sample_sg_inds = np.random.choice(generate_sg_inds, size=mol_data.num_graphs, replace=True)
+    else:
+        sample_sg_inds = generate_sg_inds
+
+    # update sym ops
+    mol_data.symmetry_operators = [torch.Tensor(symmetries_dict['sym_ops'][sg_ind]).to(mol_data.x.device) for sg_ind in sample_sg_inds]
+    mol_data.sg_ind = torch.tensor(sample_sg_inds, dtype=mol_data.sg_ind.dtype, device=mol_data.sg_ind.device)
+    mol_data.mult = torch.tensor([len(ops) for ops in mol_data.symmetry_operators], dtype=torch.int32, device=mol_data.sg_ind.device)
+
+    return mol_data
+
+
+def fractional_transform_np(coords, T_mat):
+    if coords.ndim == 2:
+        return np.einsum('nj,ij->ni', coords, T_mat)
+    elif coords.ndim == 3:
+        return np.einsum('nmj,ij->nmi', coords, T_mat)
+
+
+def find_coord_in_box_np(coords, box, epsilon=0):
+    # which of the given coords is inside the specified box, with option for a little leeway
+    return np.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]

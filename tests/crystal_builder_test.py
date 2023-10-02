@@ -1,7 +1,7 @@
 import pytest
 from common.utils import compute_rdf_distance
 from crystal_building.builder import SupercellBuilder
-from dataset_management.utils import load_test_dataset
+from old_dataset_management.utils import load_test_dataset
 from models.crystal_rdf import crystal_rdf
 import numpy as np
 
@@ -28,16 +28,14 @@ def test_cell_parameterization_and_reconstruction():
     then analyze and rebuild it from scratch
     one crystal per space group in test dataset
     """
-    reference_supercells = supercell_builder.unit_cell_to_supercell(
+    reference_supercells = supercell_builder.prebuilt_unit_cell_to_supercell(
         test_crystals, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
-    # todo put explicit reparameterization here
-
-    rebuilt_supercells, _, _ = supercell_builder.build_supercells(
+    rebuilt_supercells, _ = supercell_builder.build_supercells(
         test_crystals, test_crystals.cell_params,
         skip_cell_cleaning=True, standardized_sample=False,
-        align_molecules=True, target_handedness=reference_supercells.asym_unit_handedness,
+        align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
         rescale_asymmetric_unit=False, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
@@ -74,16 +72,16 @@ def test_distorted_cell_reconstruction():
     then analyze and rebuilt it from scratch, with some distortion
     one crystal per space group in test dataset
     """
-    reference_supercells = supercell_builder.unit_cell_to_supercell(
+    reference_supercells = supercell_builder.prebuilt_unit_cell_to_supercell(
         test_crystals, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
     # todo put explicit reparameterization here
     distorted_params = test_crystals.cell_params + 0.1
-    rebuilt_supercells, _, _ = supercell_builder.build_supercells(
+    rebuilt_supercells, _ = supercell_builder.build_supercells(
         test_crystals, distorted_params,
         skip_cell_cleaning=False, standardized_sample=False,
-        align_molecules=True, target_handedness=reference_supercells.asym_unit_handedness,
+        align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
         rescale_asymmetric_unit=True, graph_convolution_cutoff=6,
         supercell_size=supercell_size, pare_to_convolution_cluster=True)
 

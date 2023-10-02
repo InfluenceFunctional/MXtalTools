@@ -125,7 +125,7 @@ def batch_molecule_principal_axes_torch(coords_list: list):
     Iyz = -scatter(all_coords[:, 1] * all_coords[:, 2], batch)
     Ixz = -scatter(all_coords[:, 0] * all_coords[:, 2], batch)
 
-    I = torch.cat(
+    I = torch.cat( # todo .T will be deprecated - switch to permute (-1,-2)
         (torch.vstack((scatter(all_coords[:, 1] ** 2 + all_coords[:, 2] ** 2, batch), Ixy, Ixz))[:, None, :].T,
          torch.vstack((Ixy, scatter(all_coords[:, 0] ** 2 + all_coords[:, 2] ** 2, batch), Iyz))[:, None, :].T,
          torch.vstack((Ixz, Iyz, scatter(all_coords[:, 0] ** 2 + all_coords[:, 1] ** 2, batch)))[:, None, :].T
@@ -270,8 +270,8 @@ def rotvec2sph(rotvec):
         return None
 
 
-def compute_fractional_transform(cell_lengths, cell_angles):
-    """ # todo harmonize behaviour with the torch version - currently return different things
+def compute_fractional_transform_torch(cell_lengths, cell_angles):
+    """
     compute f->c and c->f transforms as well as cell volume in a vectorized, differentiable way
     """
     cos_a = torch.cos(cell_angles)
@@ -317,14 +317,6 @@ def cell_vol_torch(v: torch.tensor, a: torch.tensor):
     return vol
 
 
-def invert_rotvec_handedness(rotvec):
-    """ # todo delete this if we have no use for it
-    invert the handedness of a rotation vector
-    """
-    rot_mat = Rotation.from_rotvec(rotvec).as_matrix()
-    return Rotation.from_matrix(-rot_mat).as_rotvec()  # negative of the rotation matrix gives the accurate rotation for opposite handed object?
-
-
 def compute_Ip_handedness(Ip):
     """
     determine the right or left handedness from the cross products of principal inertial axes
@@ -347,22 +339,53 @@ def compute_Ip_handedness(Ip):
         sys.exit()
 
 
-def initialize_fractional_vectors(supercell_scale: int = 2):
+def cell_vol(v, a):
     """
-    initialize set of fractional cell vectors up to supercell size param: scale
-    e.g., -1,0,1, 0,0,2, 0,1,0, 0,1,1, etc.
+    compute cell volume given v=[abc], a=[alpha,beta,gamma]
+    with shapes [:,3]
     """
-    n_cells = (2 * supercell_scale + 1) ** 3
+    """ Calculate cos and sin of cell angles """
+    cos_a = np.cos(a)  # in natural units
 
-    fractional_translations = np.zeros((n_cells, 3))  # initialize the translations in fractional coords
-    i = 0
-    for xx in range(-supercell_scale, supercell_scale + 1):
-        for yy in range(-supercell_scale, supercell_scale + 1):
-            for zz in range(-supercell_scale, supercell_scale + 1):
-                fractional_translations[i] = np.array((xx, yy, zz))
-                i += 1
+    ''' Calculate volume of the unit cell '''
+    val = 1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2]
+    vol = v[0] * v[1] * v[2] * np.sqrt(np.abs(val))  # technically a signed quanitity
 
-    sorted_fractional_translations = fractional_translations[np.argsort(np.abs(fractional_translations).sum(1))][1:]  # leave out the 0,0,0 element
-    normed_fractional_translations = sorted_fractional_translations / np.linalg.norm(sorted_fractional_translations, axis=1)[:, None]
+    return vol
 
-    return sorted_fractional_translations, normed_fractional_translations
+
+def coor_trans_matrix(opt, v, a, return_vol=False):
+    """ Calculate cos and sin of cell angles """  # todo test - enforce this agrees with the torch version
+    if max(a) > np.pi:
+        print('Warning - large angles! Remember to convert to natural units!')
+
+    cos_a = np.cos(a)
+    sin_a = np.sin(a)
+
+    ''' Calculate volume of the unit cell '''
+    val = 1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2]
+    vol = np.sign(val) * v[0] * v[1] * v[2] * np.sqrt(np.abs(val))  # technically a signed quanitity
+
+    ''' Setting the transformation matrix '''
+    m = np.zeros((3, 3), dtype=np.float_)
+    if opt == 'c_to_f':
+        ''' Converting from cartesian to fractional '''
+        m[0, 0] = 1.0 / v[0]
+        m[0, 1] = -cos_a[2] / v[0] / sin_a[2]
+        m[0, 2] = v[1] * v[2] * (cos_a[0] * cos_a[2] - cos_a[1]) / vol / sin_a[2]
+        m[1, 1] = 1.0 / v[1] / sin_a[2]
+        m[1, 2] = v[0] * v[2] * (cos_a[1] * cos_a[2] - cos_a[0]) / vol / sin_a[2]
+        m[2, 2] = v[0] * v[1] * sin_a[2] / vol
+    elif opt == 'f_to_c':
+        ''' Converting from fractional to cartesian '''
+        m[0, 0] = v[0]
+        m[0, 1] = v[1] * cos_a[2]
+        m[0, 2] = v[2] * cos_a[1]
+        m[1, 1] = v[1] * sin_a[2]
+        m[1, 2] = v[2] * (cos_a[0] - cos_a[1] * cos_a[2]) / sin_a[2]
+        m[2, 2] = vol / v[0] / v[1] / sin_a[2]
+
+    if return_vol:
+        return m, np.abs(vol)
+    else:
+        return m

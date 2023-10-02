@@ -1,0 +1,223 @@
+test_mode: False
+machine: "cluster"  # or "cluster"
+device: "cuda"  # or "cpu"
+explicit_run_enumeration: True
+skip_saving_and_loading: True
+run_num: 10436
+anomaly_detection: False  # slows down the code
+mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
+save_checkpoints: False # will do it always on cluster, only locally if True
+
+# for GAN training
+canonical_conformer_orientation: 'random' # 'standardized' 'random'
+packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
+train_generator_vdw: True
+train_generator_adversarially: False
+vdw_loss_func: null  # null mse or log
+density_loss_func: l1  # l1 or mse
+generator_adversarial_loss_func: 'score'  # l1 or mse
+train_generator_h_bond: False # (non-directional)
+generator_similarity_penalty: 0
+
+train_discriminator_adversarially: False
+train_discriminator_on_randn: False
+train_discriminator_on_distorted: False
+sample_distortion_magnitude: 0.1 # -1 for wide range test # noise for distorted generation
+
+local_dataset_dir_path: "C:/Users/mikem/crystals/CSP_runs/datasets/"
+cluster_dataset_dir_path: '/scratch/mk8347/csd_runs/datasets/'
+local_workdir_path: 'C:/Users/mikem/crystals/CSP_runs/'
+cluster_workdir_path: '/scratch/mk8347/csd_runs/'
+extra_test_set_paths: #['C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_5_dataset',
+                      # 'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_6_dataset',
+                      # 'C:\Users\mikem\crystals\CSP_runs\datasets\blind_test_targets']
+extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+
+# for reloading pretrained models
+discriminator_path: '/scratch/mk8347/csd_runs/models/best_discriminator_10413'
+generator_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\best_generator_1599'
+regressor_path: null #'/scratch/mk8347/csd_runs/models/best_regressor_10431'
+
+discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions
+generator_positional_noise: 0  # scaling for the randn noise added to all atom positions
+regressor_positional_noise: 0  # scaling for the randn noise added to all atom positions
+
+seeds:
+  model: 0
+  dataset: 0
+
+# opt - sweep details
+wandb:
+  username: mkilgour
+  project_name: MCryGAN
+  mini_csp_frequency: 10
+  sample_reporting_frequency: 1
+  experiment_tag: dev
+  log_figures: True
+
+sample_steps: 1000 # now for mini csp
+sample_move_size: 0.001 # currently unused
+
+# batching & convergence
+grow_batch_size: True
+min_batch_size: 10
+max_batch_size: 10000
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
+max_epochs: 10000 # 0 epochs takes us straight to evaluation (only implemented for GAN)
+history: 5000
+gradient_norm_clip: 1
+
+# dataset curation
+rotation_basis: "spherical" # "spherical" for rotvec in spherical coordinates, "cartesian" for rotvec in cartesian coordinates DEPRECATED
+target: packing # "packing" only supported
+dataset_length: 1000000
+feature_richness: full # full or minimal
+max_crystal_temperature: 1000 # set very high to include full dataset
+min_crystal_temperature: -100 # set below -1 to include all entries with missing temps
+max_num_atoms: 100
+min_num_atoms: 5 # target XVI has only 9 heavy atoms
+max_molecule_radius: 5 # angstroms
+max_z_value: 18
+min_z_value: 0
+max_z_prime: 1
+min_z_prime: 1
+max_packing_coefficient: 0.85
+min_packing_coefficient: 0.55
+include_organic: True
+include_organometallic: True
+max_atomic_number: 100
+exclude_missing_r_factor: False
+exclude_disordered_crystals: True
+exclude_polymorphs: True
+exclude_nonstandard_settings: True #False
+exclude_crystal_systems: null # ['monoclinic','triclinic','orthorhombic']  #['hexagonal','trigonal','rhombohedral']
+exclude_blind_test_targets: False
+include_sgs: null # ["P-1","P21/c","P212121","C2/c"]  # space groups to be included in the dataset. null for all
+include_pgs: null  # DEPRECATED [222, -1, 2/m, 2, mm2, mmm, m]
+generate_sgs: ["P21/c","P-1","P212121","C2/c"]  # ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+supercell_size: 5 # should be very large, then automatically pares down
+
+# discriminator optimizer and model
+discriminator_optimizer:
+  optimizer: adamw
+  init_lr: 1.0E-4
+  max_lr: 1.0E-3
+  min_lr: 1.0E-4
+  lr_schedule: True
+  beta1: 0.9
+  beta2: 0.999
+  weight_decay: 0.001
+  convergence_eps: 0.00001
+  training_period: 1
+  lr_growth_lambda: 1.05
+  lr_shrink_lambda: 0.99
+
+discriminator:
+  crystal_convolution_type: 2 # 1 - counts inter and intramolecular the same, 2 - separates intermolecular
+  graph_convolution_layers: 4
+  graph_filters: 128
+  atom_embedding_size: 256
+  graph_norm: 'graph layer' # layer, graph, batch, graph layer
+  num_spherical: 6
+  num_radial: 36
+  graph_convolution_cutoff: 6 # vdw direct force approx 6 angstrom
+  max_num_neighbors: 100
+  radial_function: 'bessel' # 'gaussian' or 'bessel'
+  num_attention_heads: 1 # mikenet GATv2 or TransformerConv mode only - must evenly divide graph filters
+  graph_convolution: 'TransformerConv' # 'full message passing' or schnet or 'GATv2' or 'TransformerConv'
+  add_spherical_basis: False # mikenet only
+  add_torsional_basis: False #
+  pooling: combo
+
+  num_fc_layers: 4
+  fc_depth: 256
+  activation: gelu
+  fc_dropout_probability: 0
+  fc_norm_mode: layer # batch, layer
+
+#generator optimizer and model
+generator_optimizer:
+  optimizer: adamw
+  init_lr: 1.0E-4
+  max_lr: 1.0E-3
+  min_lr: 1.0E-4
+  lr_schedule: True
+  beta1: 0.9 #0.9
+  beta2: 0.999 #0.999
+  weight_decay: 0.01
+  convergence_eps: 0.00001
+  lr_growth_lambda: 1.05
+  lr_shrink_lambda: 0.99
+
+generator:
+  num_fc_layers: 4
+  fc_depth: 256
+  activation: 'gelu'
+  fc_dropout_probability: 0
+  fc_norm_mode: layer
+
+  prior: multivariate normal
+  prior_dimension: 12
+
+  conditioner:
+    skinny_atomwise_features: False  # cut atom features down to bare minimum for conditioner input
+    concat_mol_features: True  # exclusive with skinny features
+    init_atom_embedding_dim: 5
+    graph_convolution_layers: 4
+    graph_filters: 128
+    atom_embedding_size: 256
+    output_dim: 256
+    graph_norm: 'graph layer'
+    num_spherical: 6
+    num_radial: 36
+    graph_convolution_cutoff: 6
+    max_num_neighbors: 100
+    radial_function: 'gaussian' # bessel or gaussian
+    num_attention_heads: 1 # mikenet GATv2 mode only - must evenly divide graph filters
+    graph_convolution: 'TransformerConv' #'TransformerConv' 'none' GATv2, schnet, or full message passing, or 'TransformerConv'
+    add_spherical_basis: False # mikenet only
+    add_torsional_basis: False
+    pooling: max # combo, geometric max mean sum attention
+    positional_embedding: 'sph3' # 'sph' or 'pos' or 'combo', for 'geometric' pooling
+
+    num_fc_layers: 0
+    fc_depth: 128
+    activation: 'gelu'
+    fc_dropout_probability: 0
+    fc_norm_mode: layer
+
+regressor_optimizer:
+  optimizer: adamw
+  init_lr: 1.0E-4
+  max_lr: 1.0E-3
+  min_lr: 1.0E-5
+  lr_schedule: True
+  beta1: 0.9 #0.9
+  beta2: 0.999 #0.999
+  weight_decay: 0.01
+  convergence_eps: 0.00001
+  lr_growth_lambda: 1.05
+  lr_shrink_lambda: 0.975
+
+regressor:
+  graph_convolution_layers: 4
+  graph_filters: 128
+  atom_embedding_size: 256
+  graph_norm: 'graph layer'
+  num_spherical: 6
+  num_radial: 32
+  graph_convolution_cutoff: 3
+  max_num_neighbors: 100
+  radial_function: 'bessel' # mikenet only
+  num_attention_heads: 4 # mikenet GATv2 mode only - must evenly divide graph filters
+  graph_convolution: 'TransformerConv' #'TransformerConv' 'none' GATv2, schnet, or full message passing, or 'TransformerConv'
+  add_spherical_basis: False # mikenet only
+  add_torsional_basis: False
+  pooling: combo # combo, geometric max mean sum attention
+  positional_embedding: 'sph3' # 'sph' or 'pos' or 'combo', for 'geometric' pooling
+
+  num_fc_layers: 4
+  fc_depth: 256
+  activation: 'gelu'
+  fc_dropout_probability: 0
+  fc_norm_mode: layer

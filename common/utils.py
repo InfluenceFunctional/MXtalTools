@@ -1,42 +1,13 @@
-"""import statement"""
 import numpy as np
 
 import torch
 from ase import Atoms
-from scipy.cluster.hierarchy import dendrogram
 import pandas as pd
+from torch.nn.functional import softmax
 
 '''
 general utilities
 '''
-
-def plot_dendrogram(model, **kwargs):
-    """
-    make a dendrogram plot from a scipy clustering model
-    """
-    # Create linkage matrix and then plot the dendrogram
-    # create the counts of samples under each node
-    counts = np.zeros(model.children_.shape[0])
-    n_samples = len(model.labels_)
-    for i, merge in enumerate(model.children_):
-        current_count = 0
-        for child_idx in merge:
-            if child_idx < n_samples:
-                current_count += 1  # leaf node
-            else:
-                current_count += counts[child_idx - n_samples]
-        counts[i] = current_count
-
-    linkage_matrix = np.column_stack(
-        [model.children_, model.distances_, counts]
-    ).astype(float)
-
-    # Plot the corresponding dendrogram
-    dendrogram(linkage_matrix, **kwargs)
-
-
-def initialize_dict_of_lists(keys: list):
-    return {key: [] for key in keys}
 
 
 def chunkify(lst: list, n: int):
@@ -48,21 +19,22 @@ def chunkify(lst: list, n: int):
 
 def delete_from_dataframe(df: pd.DataFrame, inds):
     """
-    hacky way to delete rows "inds" from datafram df
-    """  # todo we're doing something wrong here
-    df = df.drop(index=inds)
-    if 'level_0' in df.columns:  # delete unwanted samples
-        df = df.drop(columns='level_0')
-    df = df.reset_index()
+    delete rows "inds" from dataframe df
+    """
+    df.drop(index=inds, inplace=True)
+    df.reset_index(drop=True, inplace=True)
 
     return df
 
 
 def torch_ptp(tensor: torch.tensor):
+    """
+    torch implementation of np.ptp
+    """
     return torch.max(tensor) - torch.min(tensor)
 
 
-def standardize(data: np.ndarray, return_standardization: bool = False, known_mean: float = None, known_std: float = None):
+def standardize(data: np.ndarray, return_standardization: bool = False, known_mean=None, known_std=None):
     """
     standardize an input 1D array by subtracting mean and dividing by standard deviation
     optionally use precomputed mean and standard deviation (useful to compare data between datasets)
@@ -110,7 +82,7 @@ def np_softmax(x: np.ndarray, temperature: float = 1):
     return probabilities
 
 
-def compute_rdf_distance(rdf1, rdf2, rr):
+def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
     """
     compute a distance metric between two radial distribution functions with shapes
     [num_sub_rdfs, num_bins] where sub_rdfs are e.g., particular interatomic RDFS within a certain sample (elementwise or atomwise modes)
@@ -138,19 +110,24 @@ def compute_rdf_distance(rdf1, rdf2, rr):
     # TODO come up with a clever way to norm these
     # emd_norm = (torch_rdf1.sum(-1) + torch_rdf2.sum(-1)) / 2  # sub-rdf-wise symmetrical norm sub-rdf-wise
 
-    normed_rdf1 = torch_rdf1  # / emd_norm[:, None]
+    if n_parallel_rdf2 is not None:  # we can in parallel compare many rdf2's to a single rdf1
+        torch_rdf1_f = torch_rdf1.tile(n_parallel_rdf2, 1, 1)
+    else:
+        torch_rdf1_f = torch_rdf1
+
+    normed_rdf1 = torch_rdf1_f  # / emd_norm[:, None]
     normed_rdf2 = torch_rdf2  # / emd_norm[:, None]
 
     emd = earth_movers_distance_torch(normed_rdf1, normed_rdf2)
 
-    range_normed_emd = emd * (torch_range[1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+    range_normed_emd = emd * (torch_range[1] - torch_range[0]) ** 2  # rescale the distance from units of bins to the real physical range - hit twice for the two rdfs
 
     if return_numpy:
-        distance = range_normed_emd.mean().cpu().detach().numpy()
+        distance = range_normed_emd.mean(-1).cpu().detach().numpy()
+        assert np.sum(np.isnan(distance)) == 0
     else:
-        distance = range_normed_emd.mean()
-
-    assert np.sum(np.isnan(distance)) == 0
+        distance = range_normed_emd.mean(-1)
+        assert torch.sum(torch.isnan(distance)) == 0
 
     return distance
 
@@ -184,9 +161,6 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
     """
     if isinstance(keys, list):
         for key, value in zip(keys, values):
-            # if isinstance(value, list):
-            #     value = np.stack(value)
-
             if key not in dictionary.keys():
                 dictionary[key] = []
 
@@ -198,9 +172,6 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
         key, value = keys, values
         if key not in dictionary.keys():
             dictionary[key] = []
-        #
-        # if isinstance(value, list):
-        #     value = np.stack(value)
 
         if mode == 'append':
             dictionary[key].append(value)
@@ -239,6 +210,9 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
     generate an ASE Atoms object from a crystaldata object, up to certain exclusions
     optionally highlight atoms in the asymmetric unit
 
+    view with
+    from ase.visualize import view
+    view(output_of_this_function)
     """
     data = data.clone().cpu().detach()
     if data.batch is not None:  # more than one crystal in the datafile
@@ -263,7 +237,7 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
         fractional_centroids = torch.inner(torch.linalg.inv(data.T_fc[index]), molecule_centroids).T
 
         inside_centroids = torch.prod((fractional_centroids < 1) * (fractional_centroids > 0), dim=-1)
-        #assert inside_centroids.sum() == data.Z[index]  # must be exactly Z molecules in the unit cell
+        # assert inside_centroids.sum() == data.Z[index]  # must be exactly Z molecules in the unit cell
         inside_centroids_inds = torch.where(inside_centroids)[0]
 
         inside_inds = torch.cat(
@@ -273,7 +247,6 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
         inside_inds += data.ptr[index]
         atom_inds = inside_inds
         coords = data.pos[inside_inds].cpu().detach().numpy()
-
 
     elif exclusion_level == 'inside cell':
         fractional_coords = torch.inner(torch.linalg.inv(data.T_fc[index]), data.pos[data.batch == index]).T
@@ -315,3 +288,58 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
     mol = Atoms(symbols=numbers, positions=coords, cell=cell)
 
     return mol
+
+
+def components2angle(components: torch.tensor):
+    """
+    take two non-normalized components[n_samples, 2] representing
+    sin(angle) and cos(angle), compute the resulting angle, following
+    https://ai.stackexchange.com/questions/38045/how-can-i-encode-angle-data-to-train-neural-networks
+
+    norm the sum of squares via softmax to enforce prediction on the unit circle
+    """
+
+    '''use softmax to norm the sum of squares, and multiply by the signs to keep all 4 quadrants'''
+    normed_components = torch.sign(components) * softmax(components ** 2)
+    angle = torch.atan2(normed_components[:, 0], normed_components[:, 1])
+    return angle
+
+
+def angle2components(angle: torch.tensor):
+    """
+    decompose an angle input into sin(angle) and cos(angle)
+    """
+    return torch.cat((torch.sin(angle)[:, None], torch.cos(angle)[:, None]), dim=1)
+
+# def prep_symmetry_info():
+#     """
+#     if we don't have the symmetry dict prepared already, generate it
+#     DEPRECATED USAGE - LEFT IN TO DEMONSTRATE HOW TO GENERATE THESE DATA
+#     """
+#
+#     from pyxtal import symmetry
+#     print('Pre-generating spacegroup symmetries')
+#     sym_ops = {}
+#     point_groups = {}
+#     lattice_type = {}
+#     space_groups = {}
+#     space_group_indices = {}
+#     for i in tqdm.tqdm(range(1, 231)):
+#         sym_group = symmetry.Group(i)
+#         general_position_syms = sym_group.wyckoffs_organized[0][0]
+#         sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
+#             len(general_position_syms))]  # first 0 index is for general position, second index is
+#         # superfluous, third index is the symmetry operation
+#         point_groups[i] = sym_group.point_group
+#         lattice_type[i] = sym_group.lattice_type
+#         space_groups[i] = sym_group.symbol
+#         space_group_indices[sym_group.symbol] = i
+#
+#     sym_info = {
+#         'sym_ops': sym_ops,
+#         'point_groups': point_groups,
+#         'lattice_type': lattice_type,
+#         'space_groups': space_groups,
+#         'space_group_indices': space_group_indices}
+#
+#     np.save('symmetry_info', sym_info)

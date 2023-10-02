@@ -1,46 +1,30 @@
-import ase.io
 import numpy as np
 import torch
-from _plotly_utils.colors import n_colors
-from plotly import graph_objects
+import wandb
+from _plotly_utils.colors import n_colors, sample_colorscale
+from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.stats import gaussian_kde, linregress
 import plotly.graph_objects as go
 import plotly.express as px
-from torch_geometric.loader.dataloader import Collater
 
-from common.geometry_calculations import cell_vol_torch
-from common.utils import update_stats_dict, np_softmax, earth_movers_distance_torch, earth_movers_distance_np, compute_rdf_distance, ase_mol_from_crystaldata
-from crystal_building.builder import write_sg_to_all_crystals, update_crystal_symmetry_elements
-from models.crystal_rdf import crystal_rdf
+from crystal_building.utils import write_sg_to_all_crystals
+from common.geometry_calculations import cell_vol
 from models.utils import softmax_and_score, norm_scores
-from models.vdw_overlap import vdw_overlap
-from reporting.nov_22_discriminator import process_discriminator_evaluation_data
 
 
-def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
-    n_crystal_features = config.dataDims['num lattice features']
-    generated_samples = test_epoch_stats_dict['generated cell parameters']
-    if generated_samples.ndim == 3:
-        generated_samples = generated_samples[0]
-    means = config.dataDims['lattice means']
-    stds = config.dataDims['lattice stds']
-
+def cell_params_analysis(config, dataDims, wandb, train_loader, test_epoch_stats_dict):
+    n_crystal_features = 12
     # slightly expensive to do this every time
     dataset_cell_distribution = np.asarray(
         [train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
 
-    # raw outputs
-    renormalized_samples = np.zeros_like(generated_samples)
-    for i in range(generated_samples.shape[1]):
-        renormalized_samples[:, i] = generated_samples[:, i] * stds[i] + means[i]
-
-    cleaned_samples = test_epoch_stats_dict['final generated cell parameters']
+    cleaned_samples = test_epoch_stats_dict['final_generated_cell_parameters']
 
     overlaps_1d = {}
     sample_means = {}
     sample_stds = {}
-    for i, key in enumerate(config.dataDims['lattice features']):
+    for i, key in enumerate(dataDims['lattice_features']):
         mini, maxi = np.amin(dataset_cell_distribution[:, i]), np.amax(dataset_cell_distribution[:, i])
         h1, r1 = np.histogram(dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
         h1 = h1 / len(dataset_cell_distribution[:, i])
@@ -48,18 +32,20 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
         h2, r2 = np.histogram(cleaned_samples[:, i], bins=r1)
         h2 = h2 / len(cleaned_samples[:, i])
 
-        overlaps_1d[f'{key} 1D Overlap'] = np.min(np.concatenate((h1[None], h2[None]), axis=0), axis=0).sum()
+        overlaps_1d[f'{key}_1D_Overlap'] = np.min(np.concatenate((h1[None], h2[None]), axis=0), axis=0).sum()
 
-        sample_means[f'{key} mean'] = np.mean(cleaned_samples[:, i])
-        sample_stds[f'{key} std'] = np.std(cleaned_samples[:, i])
+        sample_means[f'{key}_mean'] = np.mean(cleaned_samples[:, i])
+        sample_stds[f'{key}_std'] = np.std(cleaned_samples[:, i])
 
     average_overlap = np.average([overlaps_1d[key] for key in overlaps_1d.keys()])
-    overlaps_1d['average 1D overlap'] = average_overlap
-    wandb.log(overlaps_1d.copy())
-    wandb.log(sample_means)
-    wandb.log(sample_stds)
+    overlaps_1d['average_1D_overlap'] = average_overlap
+    overlap_results = {}
+    overlap_results.update(overlaps_1d)
+    overlap_results.update(sample_means)
+    overlap_results.update(sample_stds)
+    wandb.log(overlap_results)
 
-    if config.wandb.log_figures:
+    if config.logger.log_figures:
         fig_dict = {}  # consider replacing by Joy plot
 
         # bar graph of 1d overlaps
@@ -69,38 +55,35 @@ def cell_params_analysis(config, wandb, train_loader, test_epoch_stats_dict):
             orientation='h',
             marker=dict(color='red')
         ))
-        fig_dict['1D overlaps'] = fig
+        fig_dict['1D_overlaps'] = fig
 
         # 1d Histograms
+        fig = make_subplots(rows=4,cols=3,subplot_titles=dataDims['lattice_features'])
         for i in range(n_crystal_features):
-            fig = go.Figure()
+            row = i // 3 + 1
+            col = i % 3 + 1
 
             fig.add_trace(go.Histogram(
                 x=dataset_cell_distribution[:, i],
                 histnorm='probability density',
                 nbinsx=100,
                 name="Dataset samples",
-                showlegend=True,
-            ))
+                showlegend=True if i == 0 else False,
+                marker_color='#1f77b4',
+            ), row=row, col=col)
 
-            fig.add_trace(go.Histogram(
-                x=renormalized_samples[:, i],
-                histnorm='probability density',
-                nbinsx=100,
-                name="Samples",
-                showlegend=True,
-            ))
             fig.add_trace(go.Histogram(
                 x=cleaned_samples[:, i],
                 histnorm='probability density',
                 nbinsx=100,
-                name="Cleaned Samples",
-                showlegend=True,
-            ))
-            fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-            fig.update_traces(opacity=0.5)
+                name="Generated Samples",
+                showlegend=True if i == 0 else False,
+                marker_color='#ff7f0e',
+            ), row=row, col=col)
+        fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        fig.update_traces(opacity=0.5)
 
-            fig_dict[config.dataDims['lattice features'][i] + ' distribution'] = fig
+        fig_dict['lattice_features_distribution'] = fig
 
         wandb.log(fig_dict)
 
@@ -122,11 +105,11 @@ def plotly_setup(config):
 
 
 def cell_density_plot(config, wandb, epoch_stats_dict, layout):
-    if epoch_stats_dict['generator packing prediction'] is not None and \
-            epoch_stats_dict['generator packing target'] is not None:
+    if epoch_stats_dict['generator_packing_prediction'] is not None and \
+            epoch_stats_dict['generator_packing_target'] is not None:
 
-        x = epoch_stats_dict['generator packing target']  # generator_losses['generator per mol vdw loss']
-        y = epoch_stats_dict['generator packing prediction']  # generator_losses['generator packing loss']
+        x = epoch_stats_dict['generator_packing_target']  # generator_losses['generator_per_mol_vdw_loss']
+        y = epoch_stats_dict['generator_packing_prediction']  # generator_losses['generator packing loss']
 
         xy = np.vstack([x, y])
         try:
@@ -148,66 +131,71 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
         fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)', showlegend=False))
 
         fig.layout.margin = layout.margin
-        fig.update_layout(xaxis_title='packing target', yaxis_title='packing prediction')
+        fig.update_layout(xaxis_title='packing_target', yaxis_title='packing_prediction')
 
         # #fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
-        if config.wandb.log_figures:
+        if config.logger.log_figures:
             wandb.log({'Cell Packing': fig})
         if (config.machine == 'local') and False:
             fig.show()
 
 
-def process_discriminator_outputs(config, epoch_stats_dict):
+def process_discriminator_outputs(dataDims, epoch_stats_dict):
     scores_dict = {}
     vdw_penalty_dict = {}
     tracking_features_dict = {}
     packing_coeff_dict = {}
 
-    generator_inds = np.where(epoch_stats_dict['generator sample source'] == 0)
-    randn_inds = np.where(epoch_stats_dict['generator sample source'] == 1)[0]
-    distorted_inds = np.where(epoch_stats_dict['generator sample source'] == 2)[0]
+    generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 0)
+    randn_inds = np.where(epoch_stats_dict['generator_sample_source'] == 1)[0]
+    distorted_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0]
 
-    scores_dict['CSD'] = softmax_and_score(epoch_stats_dict['discriminator real score'])
-    scores_dict['Gaussian'] = softmax_and_score(epoch_stats_dict['discriminator fake score'][randn_inds])
-    scores_dict['Generator'] = softmax_and_score(epoch_stats_dict['discriminator fake score'][generator_inds])
-    scores_dict['Distorted'] = softmax_and_score(epoch_stats_dict['discriminator fake score'][distorted_inds])
+    scores_dict['CSD'] = softmax_and_score(epoch_stats_dict['discriminator_real_score'])
+    scores_dict['Gaussian'] = softmax_and_score(epoch_stats_dict['discriminator_fake_score'][randn_inds])
+    scores_dict['Generator'] = softmax_and_score(epoch_stats_dict['discriminator_fake_score'][generator_inds])
+    scores_dict['Distorted'] = softmax_and_score(epoch_stats_dict['discriminator_fake_score'][distorted_inds])
 
-    tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(config.dataDims['tracking features dict'],
-                                                                    epoch_stats_dict['tracking features'].T)}
+    tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
+                                                                    epoch_stats_dict['tracking_features'].T)}
     tracking_features_dict['Distorted'] = {feat: vec for feat, vec in
-                                           zip(config.dataDims['tracking features dict'],
-                                               epoch_stats_dict['tracking features'][distorted_inds].T)}
+                                           zip(dataDims['tracking_features'],
+                                               epoch_stats_dict['tracking_features'][distorted_inds].T)}
     tracking_features_dict['Gaussian'] = {feat: vec for feat, vec in
-                                          zip(config.dataDims['tracking features dict'],
-                                              epoch_stats_dict['tracking features'][randn_inds].T)}
+                                          zip(dataDims['tracking_features'],
+                                              epoch_stats_dict['tracking_features'][randn_inds].T)}
     tracking_features_dict['Generator'] = {feat: vec for feat, vec in
-                                           zip(config.dataDims['tracking features dict'],
-                                               epoch_stats_dict['tracking features'][generator_inds].T)}
+                                           zip(dataDims['tracking_features'],
+                                               epoch_stats_dict['tracking_features'][generator_inds].T)}
 
     vdw_penalty_dict['CSD'] = epoch_stats_dict['real vdw penalty']
-    vdw_penalty_dict['Gaussian'] = epoch_stats_dict['fake vdw penalty'][randn_inds]
-    vdw_penalty_dict['Generator'] = epoch_stats_dict['fake vdw penalty'][generator_inds]
-    vdw_penalty_dict['Distorted'] = epoch_stats_dict['fake vdw penalty'][distorted_inds]
+    vdw_penalty_dict['Gaussian'] = epoch_stats_dict['fake_vdw_penalty'][randn_inds]
+    vdw_penalty_dict['Generator'] = epoch_stats_dict['fake_vdw_penalty'][generator_inds]
+    vdw_penalty_dict['Distorted'] = epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
 
-    packing_coeff_dict['CSD'] = epoch_stats_dict['real packing coefficients']
-    packing_coeff_dict['Gaussian'] = epoch_stats_dict['generated packing coefficients'][randn_inds]
-    packing_coeff_dict['Generator'] = epoch_stats_dict['generated packing coefficients'][generator_inds]
-    packing_coeff_dict['Distorted'] = epoch_stats_dict['generated packing coefficients'][distorted_inds]
+    packing_coeff_dict['CSD'] = epoch_stats_dict['real_packing_coefficients']
+    packing_coeff_dict['Gaussian'] = epoch_stats_dict['generated_packing_coefficients'][randn_inds]
+    packing_coeff_dict['Generator'] = epoch_stats_dict['generated_packing_coefficients'][generator_inds]
+    packing_coeff_dict['Distorted'] = epoch_stats_dict['generated_packing_coefficients'][distorted_inds]
 
     return scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict
 
 
 def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout):
-    plot_color_dict = {}
-    plot_color_dict['CSD'] = ('rgb(250,150,50)')  # test
-    plot_color_dict['Generator'] = ('rgb(100,50,0)')  # test
-    plot_color_dict['Gaussian'] = ('rgb(0,50,0)')  # fake csd
-    plot_color_dict['Distorted'] = ('rgb(0,100,100)')  # fake distortion
+    plot_color_dict = {'CSD': ('rgb(250,150,50)'),
+                       'Generator': ('rgb(100,50,0)'),
+                       'Gaussian': ('rgb(0,50,0)'),
+                       'Distorted': ('rgb(0,100,100)')}
 
-    scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
+    all_vdws = np.concatenate((vdw_penalty_dict['CSD'], vdw_penalty_dict['Gaussian'], vdw_penalty_dict['Distorted'],
+                               vdw_penalty_dict['Generator']))
+    all_scores_i = np.concatenate(
+        (scores_dict['CSD'], scores_dict['Gaussian'], scores_dict['Distorted'], scores_dict['Generator']))
+
+    scores_range = np.ptp(all_scores_i)
     bandwidth1 = scores_range / 200
 
-    bandwidth2 = 15 / 200
+    vdw_cutoff = np.quantile(all_vdws, 0.975)
+    bandwidth2 = vdw_cutoff / 200
     viridis = px.colors.sequential.Viridis
 
     scores_labels = ['CSD', 'Gaussian', 'Distorted', 'Generator']
@@ -220,23 +208,20 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
                                 side='positive', orientation='h', width=4,
                                 meanline_visible=True, bandwidth=bandwidth1, points=False),
                       row=1, col=1)
-        fig.add_trace(go.Violin(x=-np.log10(vdw_penalty_dict[label] + 1e-3), name=legend_label,
+        fig.add_trace(go.Violin(x=-np.minimum(vdw_penalty_dict[label], vdw_cutoff), name=legend_label,
                                 line_color=plot_color_dict[label],
                                 side='positive', orientation='h', width=4, meanline_visible=True,
                                 bandwidth=bandwidth2, points=False),
                       row=1, col=2)
 
-    all_vdws = np.concatenate((vdw_penalty_dict['CSD'], vdw_penalty_dict['Gaussian'], vdw_penalty_dict['Distorted'],
-                               vdw_penalty_dict['Generator']))
-    all_scores_i = np.concatenate(
-        (scores_dict['CSD'], scores_dict['Gaussian'], scores_dict['Distorted'], scores_dict['Generator']))
+    # fig.update_xaxes(col=2, row=1, range=[-3, 0])
 
     rrange = np.logspace(3, 0, len(viridis))
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
 
     fig.add_trace(go.Histogram2d(x=all_scores_i,
-                                 y=-np.log10(all_vdws + 1e-3),
+                                 y=-np.minimum(all_vdws, vdw_cutoff),
                                  showscale=False,
                                  nbinsy=50, nbinsx=200,
                                  colorscale=cscale,
@@ -249,9 +234,9 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
 
     fig.update_layout(showlegend=False, yaxis_showgrid=True)
     fig.update_xaxes(title_text='Model Score', row=1, col=1)
-    fig.update_xaxes(title_text='vdw Score', row=1, col=2)
+    fig.update_xaxes(title_text='vdW Score', row=1, col=2)
     fig.update_xaxes(title_text='Model Score', row=2, col=1)
-    fig.update_yaxes(title_text='vdw Score', row=2, col=1)
+    fig.update_yaxes(title_text='vdW Score', row=2, col=1)
 
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
@@ -322,35 +307,35 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
     '''
     fig = go.Figure()
     fig.add_trace(go.Scattergl(
-        x=-np.log10(all_vdws + 1e-3),
+        x=-np.minimum(vdw_cutoff, all_vdws),
         y=np.clip(all_coeffs, a_min=0, a_max=1),
         mode='markers',
-        marker=dict(color=all_scores_i, opacity=.75,
+        marker=dict(color=all_scores_i, opacity=1,
                     colorbar=dict(title="Score"),
-                    colorscale="inferno",
+                    colorscale="inferno", size=5
                     )
     ))
     fig.layout.margin = layout.margin
-
+    fig.update_layout(xaxis_range=[-vdw_cutoff, 0], yaxis_range=[0, 1])
     fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
     wandb.log({'Discriminator Scores Analysis': fig})
 
     return None
 
 
-def plot_generator_loss_correlates(config, wandb, epoch_stats_dict, generator_losses, layout):
+def plot_generator_loss_correlates(config, dataDims, wandb, epoch_stats_dict, generator_losses, layout):
     correlates_dict = {}
     generator_losses['all'] = np.vstack([generator_losses[key] for key in generator_losses.keys()]).T.sum(1)
     loss_labels = list(generator_losses.keys())
 
-    tracking_features = np.asarray(epoch_stats_dict['tracking features'])
+    tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
 
-    for i in range(config.dataDims['num tracking features']):  # not that interesting
+    for i in range(dataDims['num_tracking_features']):  # not that interesting
         if (np.average(tracking_features[:, i] != 0) > 0.05):
             corr_dict = {
                 loss_label: np.corrcoef(generator_losses[loss_label], tracking_features[:, i], rowvar=False)[0, 1]
                 for loss_label in loss_labels}
-            correlates_dict[config.dataDims['tracking features dict'][i]] = corr_dict
+            correlates_dict[dataDims['tracking_features'][i]] = corr_dict
 
     sort_inds = np.argsort(np.asarray([(correlates_dict[key]['all']) for key in correlates_dict.keys()]))
     keys_list = list(correlates_dict.keys())
@@ -374,16 +359,16 @@ def plot_generator_loss_correlates(config, wandb, epoch_stats_dict, generator_lo
     wandb.log({'Generator Loss Correlates': fig})
 
 
-def plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout):
+def plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout):
     correlates_dict = {}
-    real_scores = softmax_and_score(epoch_stats_dict['discriminator real score'])
-    tracking_features = np.asarray(epoch_stats_dict['tracking features'])
+    real_scores = softmax_and_score(epoch_stats_dict['discriminator_real_score'])
+    tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
 
-    for i in range(config.dataDims['num tracking features']):  # not that interesting
+    for i in range(dataDims['num_tracking_features']):  # not that interesting
         if (np.average(tracking_features[:, i] != 0) > 0.05):
             corr = np.corrcoef(real_scores, tracking_features[:, i], rowvar=False)[0, 1]
             if np.abs(corr) > 0.05:
-                correlates_dict[config.dataDims['tracking features dict'][i]] = corr
+                correlates_dict[dataDims['tracking_features'][i]] = corr
 
     sort_inds = np.argsort(np.asarray([(correlates_dict[key]) for key in correlates_dict.keys()]))
     keys_list = list(correlates_dict.keys())
@@ -403,71 +388,7 @@ def plot_discriminator_score_correlates(config, wandb, epoch_stats_dict, layout)
     wandb.log({'Discriminator Score Correlates': fig})
 
 
-def log_mini_csp_scores_distributions(config, wandb, sampling_dict, real_samples_dict, real_data):
-    """
-    report on key metrics from mini-csp
-    """
-    scores_labels = ['score', 'vdw overlap', 'density', 'h bond score']
-    fig = make_subplots(rows=2, cols=2, vertical_spacing=0.075,
-                        horizontal_spacing=0.075)
-
-    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', min(15, real_data.num_graphs) + 1, colortype='rgb')
-
-    for i, label in enumerate(scores_labels):
-        row = i // 2 + 1
-        col = i % 2 + 1
-        for j in range(min(15, real_data.num_graphs)):
-            bandwidth1 = np.ptp(sampling_dict[label][j]) / 50
-
-            sample_score = sampling_dict[label][j]
-            real_score = real_samples_dict[label][j]
-            if label == 'score':
-                sample_score = sample_score - real_score
-                real_score = real_score - real_score
-
-            fig.add_trace(go.Violin(x=[real_score], name=str(real_data.csd_identifier[j]), line_color=colors[j],
-                                    side='positive', orientation='h', width=2, meanline_visible=True),
-                          row=row, col=col)
-
-            fig.add_trace(go.Violin(x=sample_score, name=str(real_data.csd_identifier[j]),
-                                    side='positive', orientation='h', width=2, line_color=colors[j],
-                                    meanline_visible=True, bandwidth=bandwidth1),
-                          row=row, col=col)
-
-        all_sample_score = sampling_dict[label].flatten()
-        if label == 'score':
-            all_sample_score = sampling_dict[label].flatten() - real_samples_dict[label].mean()
-
-        fig.add_trace(go.Violin(x=all_sample_score, name='all samples',
-                                side='positive', orientation='h', width=2, line_color=colors[-1],
-                                meanline_visible=True, bandwidth=np.ptp(sampling_dict[label].flatten()) / 100),
-                      row=row, col=col)
-
-    layout = go.Layout(
-        margin=go.layout.Margin(
-            l=0,  # left margin
-            r=0,  # right margin
-            b=0,  # bottom margin
-            t=100,  # top margin
-        )
-    )
-    fig.update_xaxes(title_text='Score - CSD Score', row=1, col=1)
-    fig.update_xaxes(title_text='vdW overlap', range=[0, 4], row=1, col=2)
-    fig.update_xaxes(title_text='Packing Coeff.', row=2, col=1)
-    fig.update_xaxes(title_text='H-bond score', row=2, col=2)
-    fig.update_layout(showlegend=False, yaxis_showgrid=True)  # legend_traceorder='reversed',
-
-    fig.layout.margin = layout.margin
-
-    if config.wandb.log_figures:
-        wandb.log({'Mini-CSP Scores': fig})
-    if (config.machine == 'local') and False:
-        fig.show()
-
-    return None
-
-
-def sampling_telemetry_plot(config, wandb, sampling_dict):
+def sampling_telemetry_plot(config, wandb, sampling_dict):  # todo deprecate or rewrite
     n_runs = len(sampling_dict['scores'])
     num_iters = sampling_dict['scores'].shape[1]
 
@@ -531,350 +452,6 @@ def sampling_telemetry_plot(config, wandb, sampling_dict):
         fig.show()
 
 
-def cell_params_tracking_plot(wandb, supercell_builder, layout, config, sampling_dict, collater, extra_test_loader):
-    # DEPRECATED
-    num_iters = sampling_dict['scores'].shape[1]
-    n_runs = sampling_dict['canonical samples'].shape[1]
-
-    all_samples = torch.tensor(sampling_dict['canonical samples'].reshape(12, n_runs * num_iters).T)
-    single_mol_data_0 = extra_test_loader.dataset[0]
-    big_single_mol_data = collater([single_mol_data_0 for n in range(len(all_samples))]).cuda()
-    override_sg_ind = list(supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
-    sym_ops_list = [torch.Tensor(supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
-        big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
-    big_single_mol_data = write_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
-                                                   supercell_builder.symmetries_dict, sym_ops_list)
-    processed_cell_params = torch.cat(supercell_builder.process_cell_params(big_single_mol_data, all_samples.cuda(),
-                                                                            rescale_asymmetric_unit=False, skip_cell_cleaning=True), dim=-1).T
-    del big_single_mol_data
-
-    processed_cell_params = processed_cell_params.reshape(12, n_runs, num_iters).cpu().detach().numpy()
-
-    fig = make_subplots(rows=4, cols=3, subplot_titles=[
-        'a', 'b', 'c', 'alpha', 'beta', 'gamma',
-        'x', 'y', 'z', 'phi', 'psi', 'theta'
-    ])
-    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', min(10, n_runs), colortype='rgb')
-    for i in range(12):
-        row = i // 3 + 1
-        col = i % 3 + 1
-        x = np.arange(num_iters * n_runs)
-        for j in range(min(10, n_runs)):
-            y = processed_cell_params[i, j]
-            opacity = 0.75  # np.clip(1 - np.abs(np.ptp(y) - np.ptp(processed_cell_params[i])) / np.ptp(processed_cell_params[i]), a_min=0.1, a_max=1)
-            fig.add_trace(go.Scattergl(x=x, y=y, line_color=colors[j], opacity=opacity),
-                          row=row, col=col)
-            fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][j],
-                                       y=y[sampling_dict['resampled state record'][j]],
-                                       mode='markers', line_color=colors[j], marker=dict(size=7), opacity=opacity,
-                                       showlegend=False),
-                          row=row, col=col)
-
-    fig.update_layout(showlegend=False)
-    fig.layout.margin = layout.margin
-    # #fig.write_image('../paper1_figs_new_architecture/sampling_telemetry.png')
-    # wandb.log({'Sampling Telemetry': fig})
-    if config.machine == 'local':
-        import plotly.io as pio
-        pio.renderers.default = 'browser'
-        fig.show()
-
-
-def log_best_mini_csp_samples(config, wandb, discriminator, sampling_dict, real_samples_dict, real_data, supercell_builder, mol_volume_ind, sym_info, vdw_radii):
-    """
-    extract the best guesses for each crystal and reconstruct and analyze them
-    compare best samples to the experimental crystal
-    """
-
-    # identify the best samples (later, use clustering to filter down to a diverse set)
-    scores_list = ['score', 'vdw overlap', 'h bond score', 'density']
-    scores_dict = {key: sampling_dict[key] for key in scores_list}
-
-    num_crystals, num_samples = scores_dict['score'].shape
-
-    topk_size = min(10, sampling_dict['score'].shape[1])
-    sort_inds = sampling_dict['score'].argsort(axis=-1)[:, -topk_size:]  #
-    best_scores_dict = {key: np.asarray([sampling_dict[key][ii, sort_inds[ii]] for ii in range(num_crystals)]) for key in scores_list}
-    best_samples = np.asarray([sampling_dict['cell params'][ii, sort_inds[ii], :] for ii in range(num_crystals)])
-    best_samples_space_groups = np.asarray([sampling_dict['space group'][ii, sort_inds[ii]] for ii in range(num_crystals)])
-    best_samples_handedness = np.asarray([sampling_dict['handedness'][ii, sort_inds[ii]] for ii in range(num_crystals)])
-
-    # reconstruct the best samples from the cell params
-    best_supercells_list = []
-    best_supercell_scores = []
-    best_supercell_rdfs = []
-
-    rdf_bins = 100
-    rdf_range = [0, 10]
-
-    discriminator.eval()
-    with torch.no_grad():
-        for n in range(topk_size):
-            real_data_i = real_data.clone()
-
-            real_data_i = update_crystal_symmetry_elements(
-                real_data_i, best_samples_space_groups[:, n],
-                config.dataDims, supercell_builder.symmetries_dict, randomize_sgs=False)
-
-            fake_supercell_data, _, _ = supercell_builder.build_supercells(
-                real_data_i,
-                torch.tensor(best_samples[:, n, :], device=real_data_i.x.device, dtype=torch.float32),
-                config.supercell_size,
-                config.discriminator.graph_convolution_cutoff,
-                align_molecules=True, skip_cell_cleaning=True, standardized_sample=False,
-                target_handedness=best_samples_handedness[:, n],
-                rescale_asymmetric_unit=False)
-
-            output, extra_outputs = discriminator(fake_supercell_data.clone(), return_dists=True)  # reshape output from flat filters to channels * filters per channel
-            best_supercell_scores.append(softmax_and_score(output).cpu().detach().numpy())
-
-            rdf, rr, dist_dict = crystal_rdf(fake_supercell_data, rrange=rdf_range, bins=rdf_bins, raw_density=True, atomwise=True, mode='intermolecular', cpu_detach=True)
-            best_supercell_rdfs.append(rdf)
-
-            best_supercells_list.append(fake_supercell_data.cpu().detach())
-
-    reconstructed_best_scores = np.asarray(best_supercell_scores).T
-    print(f'cell reconstruction mean score difference = {np.mean(np.abs(best_scores_dict["score"] - reconstructed_best_scores)):.4f}')  # should be ~0
-    print(f'cell reconstruction median score difference = {np.median(np.abs(best_scores_dict["score"] - reconstructed_best_scores)):.4f}')  # should be ~0
-    print(f'cell reconstruction 95% quantile score difference = {np.quantile(np.abs(best_scores_dict["score"] - reconstructed_best_scores), .95):.4f}')  # should be ~0
-
-    best_rdfs = [np.stack([best_supercell_rdfs[ii][jj] for ii in range(topk_size)]) for jj in range(real_data.num_graphs)]
-
-    rdf_dists = np.zeros((real_data.num_graphs, topk_size, topk_size))
-    for i in range(real_data.num_graphs):
-        for j in range(topk_size):
-            for k in range(j, topk_size):
-                rdf_dists[i, j, k] = compute_rdf_distance(best_rdfs[i][j], best_rdfs[i][k], rr)
-
-    rdf_dists = rdf_dists + np.moveaxis(rdf_dists, (1, 2), (2, 1))  # add lower diagonal (distance matrix is symmetric)
-
-    rdf_real_dists = np.zeros((real_data.num_graphs, topk_size))
-    for i in range(real_data.num_graphs):
-        for j in range(topk_size):
-            rdf_real_dists[i, j] = compute_rdf_distance(real_samples_dict['RDF'][i], best_rdfs[i][j], rr)
-
-    x = rdf_real_dists.flatten()
-    y = (reconstructed_best_scores - real_samples_dict['score'][:, None]).flatten()
-    xy = np.vstack([x, y])
-    try:
-        z = gaussian_kde(xy)(xy)
-    except:
-        z = np.ones_like(x)
-
-    fig = go.Figure()
-    fig.add_trace(go.Scattergl(x=x, y=y, mode='markers', marker=dict(color=z)))
-
-    fig.update_layout(xaxis_title='RDF Distance From Target', yaxis_title='Sample vs. experimental score difference', showlegend=False)
-    wandb.log({"Sample RDF vs. Score": fig})
-
-    best_supercells = best_supercells_list[-1]  # last sample was the best
-    save_3d_structure_examples(wandb, best_supercells)
-
-    """
-    Overlaps & Crystal-wise summary plot
-    """
-    sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supercells, sym_info, best_scores_dict, vdw_radii, mol_volume_ind)
-
-    """
-    CSP Funnels
-    """
-    sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict)
-
-    sample_wise_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists)
-
-    ## debug check to make sure we are recreating the same cells
-    # fig = go.Figure()
-    # colors = n_colors('rgb(250,40,100)', 'rgb(5,250,200)', real_data.num_graphs, colortype='rgb')
-    # for ii in range(num_crystals):
-    #     # fig.add_trace(go.Scatter(x=best_scores_dict['score'][ii], y=reconstructed_best_scores[ii], mode='markers', line_color=colors[ii]))
-    #     fig.add_trace(go.Histogram(x=np.abs(best_scores_dict['score'][ii] - reconstructed_best_scores[ii]),
-    #                                nbinsx=10,
-    #                                marker_color=colors[ii]))
-    # fig.update_layout(title=str(config.discriminator.graph_norm) + ' ' + str(config.discriminator.fc_norm_mode) + ' ' + str(config.discriminator.fc_dropout_probability))
-    # fig.show()
-    # print(np.mean(np.abs(best_scores_dict['score'] - reconstructed_best_scores))) # should be ~0
-
-    return None
-
-
-def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supercells, sym_info, best_scores_dict, vdw_radii, mol_volume_ind):
-    num_samples = min(num_crystals, 25)
-    vdw_loss, normed_vdw_loss, vdw_penalties = \
-        vdw_overlap(vdw_radii, crystaldata=best_supercells, return_atomwise=True, return_normed=True,
-                    graph_sizes=best_supercells.tracking[:,
-                                config.dataDims['tracking features dict'].index('molecule num atoms')])
-    vdw_loss /= best_supercells.tracking[:,
-                config.dataDims['tracking features dict'].index('molecule num atoms')]
-
-    volumes_list = []
-    for i in range(best_supercells.num_graphs):
-        volumes_list.append(
-            cell_vol_torch(best_supercells.cell_params[i, 0:3], best_supercells.cell_params[i, 3:6]))
-    volumes = torch.stack(volumes_list)
-    generated_packing_coeffs = (best_supercells.Z * best_supercells.tracking[:,
-                                                    mol_volume_ind] / volumes).cpu().detach().numpy()
-    target_packing = (best_supercells.y * config.dataDims['target std'] + config.dataDims[
-        'target mean']).cpu().detach().numpy()
-
-    fig = go.Figure()
-    for i in range(min(best_supercells.num_graphs, num_samples)):
-        pens = vdw_penalties[i].cpu().detach()
-        fig.add_trace(go.Violin(x=pens[pens != 0], side='positive', orientation='h',
-                                bandwidth=0.01, width=1, showlegend=False, opacity=1,
-                                name=f'{best_supercells.csd_identifier[i]} : ' + f'SG={sym_info["space_groups"][int(best_supercells.sg_ind[i])]} <br /> ' +
-                                     f'c_t={target_packing[i]:.2f} c_p={generated_packing_coeffs[i]:.2f} <br /> ' +
-                                     f'tot_norm_ov={normed_vdw_loss[i]:.2f} <br />' +
-                                     f'Score={best_scores_dict["score"][i, -1]:.2f}'
-                                ),
-                      )
-
-    # Can only run this section with RDKit installed, which doesn't always work
-    # Commented out - not that important anyway.
-    # molecule = rdkit.Chem.MolFromSmiles(supercell_examples[i].smiles)
-    # try:
-    #     rdkit.Chem.AllChem.Compute2DCoords(molecule)
-    #     rdkit.Chem.AllChem.GenerateDepictionMatching2DStructure(molecule, molecule)
-    #     pil_image = rdkit.Chem.Draw.MolToImage(molecule, size=(500, 500))
-    #     pil_image.save('mol_img.png', 'png')
-    #     # Add trace
-    #     img = Image.open("mol_img.png")
-    #     # Add images
-    #     fig.add_layout_image(
-    #         dict(
-    #             source=img,
-    #             xref="x domain", yref="y domain",
-    #             x=.1 + (.15 * (i % 2)), y=i / 10.5 + 0.05,
-    #             sizex=.15, sizey=.15,
-    #             xanchor="center",
-    #             yanchor="middle",
-    #             opacity=0.75
-    #         )
-    #     )
-    # except:  # ValueError("molecule was rejected by rdkit"):
-    #     pass
-
-    fig.update_layout(width=800, height=800, font=dict(size=12), xaxis_range=[0, 4])
-    fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
-    fig.update_layout(xaxis_title='Nonzero vdW overlaps', yaxis_title='packing prediction')
-
-    wandb.log({'Generated Sample Analysis': fig})
-
-    return None
-
-
-def sample_csp_funnel_plot(config, wandb, best_supercells, sampling_dict, real_samples_dict):
-    num_crystals = best_supercells.num_graphs
-    num_reporting_samples = min(25, num_crystals)
-    n_rows = int(np.ceil(np.sqrt(num_reporting_samples)))
-    n_cols = int(n_rows)
-
-    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(best_supercells.csd_identifier)[:num_reporting_samples],
-                        x_title='Packing Coefficient', y_title='Model Score')
-    for ii in range(num_reporting_samples):
-        row = ii // n_cols + 1
-        col = ii % n_cols + 1
-        x = sampling_dict['density'][ii]
-        y = sampling_dict['score'][ii]
-        z = sampling_dict['vdw overlap'][ii]
-        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                                   mode='markers', marker=dict(color=z, colorbar=dict(title="vdW Overlap"), cmin=0, cmax=4, opacity=0.5, colorscale="rainbow"), opacity=1),
-                      row=row, col=col)
-
-        fig.add_trace(go.Scattergl(x=[real_samples_dict['density'][ii]], y=[real_samples_dict['score'][ii]],
-                                   mode='markers', marker=dict(color=[real_samples_dict['vdw overlap'][ii]], colorscale='rainbow', size=10,
-                                                               colorbar=dict(title="vdW Overlap"), cmin=0, cmax=4),
-                                   showlegend=False),
-                      row=row, col=col)
-
-    # fig.update_layout(xaxis_range=[0, 1])
-    fig.update_yaxes(autorange="reversed")
-
-    if config.wandb.log_figures:
-        wandb.log({'Density Funnel': fig})
-    if (config.machine == 'local') and False:
-        fig.show()
-
-    return None
-
-
-def sample_wise_rdf_funnel_plot(config, wandb, best_supercells, reconstructed_best_scores, real_samples_dict, rdf_real_dists):
-
-    num_crystals = best_supercells.num_graphs
-    num_reporting_samples = min(25, num_crystals)
-    n_rows = int(np.ceil(np.sqrt(num_reporting_samples)))
-    n_cols = int(n_rows)
-
-    fig = make_subplots(rows=n_rows, cols=n_cols, subplot_titles=list(best_supercells.csd_identifier)[:num_reporting_samples],
-                        x_title='RDF Distance', y_title='Model Score')
-    for ii in range(num_reporting_samples):
-        row = ii // n_cols + 1
-        col = ii % n_cols + 1
-        x = rdf_real_dists[ii]
-        y = reconstructed_best_scores[ii]
-        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                                   mode='markers', opacity=1),
-                      row=row, col=col)
-
-        fig.add_trace(go.Scattergl(x=[0], y=[real_samples_dict['score'][ii]],
-                                   mode='markers', marker=dict(size=10),
-                                   showlegend=False),
-                      row=row, col=col)
-
-    # fig.update_layout(xaxis_title='RDF Distance', yaxis_title='Model Score')
-    fig.update_xaxes(range=[0, np.amax(rdf_real_dists.flatten()) + 0.1])
-    fig.update_yaxes(autorange="reversed")
-
-    if config.wandb.log_figures:
-        wandb.log({'RDF Funnel': fig})
-    if (config.machine == 'local') and False:
-        fig.show()
-
-    return None
-
-
-def save_3d_structure_examples(wandb, generated_supercell_examples):
-    num_samples = min(25, generated_supercell_examples.num_graphs)
-    identifiers = [generated_supercell_examples.csd_identifier[i] for i in range(num_samples)]
-    sgs = [str(int(generated_supercell_examples.sg_ind[i])) for i in range(num_samples)]
-
-    crystals = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_canonical_conformer=False,
-                                         index=i, exclusion_level='distance', inclusion_distance=4)
-                for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
-
-    for i in range(len(crystals)):
-        ase.io.write(f'supercell_{identifiers[i]}.cif', crystals[i])
-        wandb.log({'Generated Clusters': wandb.Molecule(open(f"supercell_{identifiers[i]}.cif"),
-                                                        caption=identifiers[i] + ' ' + sgs[i])})
-
-    unit_cells = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_canonical_conformer=False,
-                                           index=i, exclusion_level='unit cell')
-                  for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
-
-    for i in range(len(crystals)):
-        ase.io.write(f'unit_cell_{identifiers[i]}.cif', unit_cells[i])
-        wandb.log({'Generated Unit Cells': wandb.Molecule(open(f"unit_cell_{identifiers[i]}.cif"),
-                                                          caption=identifiers[i] + ' ' + sgs[i])})
-
-    unit_cells_inside = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_canonical_conformer=False,
-                                                  index=i, exclusion_level='inside cell')
-                         for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
-
-    for i in range(len(crystals)):
-        ase.io.write(f'unit_cell_inside_{identifiers[i]}.cif', unit_cells_inside[i])
-        wandb.log({'Generated Unit Cells 2': wandb.Molecule(open(f"unit_cell_inside_{identifiers[i]}.cif"),
-                                                            caption=identifiers[i] + ' ' + sgs[i])})
-
-    mols = [ase_mol_from_crystaldata(generated_supercell_examples,
-                                     index=i, exclusion_level='conformer')
-            for i in range(min(num_samples, generated_supercell_examples.num_graphs))]
-
-    for i in range(len(mols)):
-        ase.io.write(f'conformer_{identifiers[i]}.cif', mols[i])
-        wandb.log({'Single Conformers': wandb.Molecule(open(f"conformer_{identifiers[i]}.cif"), caption=identifiers[i])})
-
-    return None
-
-
 def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict, size_normed_score=False):
     blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
         'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
@@ -921,43 +498,43 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
     record all the stats for the CSD data
     '''
     scores_dict = {}
-    vdw_penalty_dict = {}
+    vdw_penalty_dict = {}  # todo harmonize 'penalties' and 'scores' (negatives)
     tracking_features_dict = {}
-    # nf_inds = np.where(test_epoch_stats_dict['generator sample source'] == 0)
-    randn_inds = np.where(test_epoch_stats_dict['generator sample source'] == 1)[0]
-    distorted_inds = np.where(test_epoch_stats_dict['generator sample source'] == 2)[0]
+    # nf_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 0)
+    randn_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 1)[0]
+    distorted_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 2)[0]
 
     '''
     extract all the various types of scores
     '''
-    scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator real score'], old_method=True, correct_discontinuity=True)
-    scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][randn_inds], old_method=True, correct_discontinuity=True)
-    # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator fake score'][nf_inds])[:, 1]
-    scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator fake score'][distorted_inds], old_method=True, correct_discontinuity=True)
+    scores_dict['Test Real'] = softmax_and_score(test_epoch_stats_dict['discriminator_real_score'], old_method=True, correct_discontinuity=True)
+    scores_dict['Test Randn'] = softmax_and_score(test_epoch_stats_dict['discriminator_fake_score'][randn_inds], old_method=True, correct_discontinuity=True)
+    # scores_dict['Test NF'] = np_softmax(test_epoch_stats_dict['discriminator_fake_score'][nf_inds])[:, 1]
+    scores_dict['Test Distorted'] = softmax_and_score(test_epoch_stats_dict['discriminator_fake_score'][distorted_inds], old_method=True, correct_discontinuity=True)
 
-    tracking_features_dict['Test Real'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'].T)}
-    tracking_features_dict['Test Distorted'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'][distorted_inds].T)}
-    tracking_features_dict['Test Randn'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], test_epoch_stats_dict['tracking features'][randn_inds].T)}
+    tracking_features_dict['Test Real'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], test_epoch_stats_dict['tracking_features'].T)}
+    tracking_features_dict['Test Distorted'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], test_epoch_stats_dict['tracking_features'][distorted_inds].T)}
+    tracking_features_dict['Test Randn'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], test_epoch_stats_dict['tracking_features'][randn_inds].T)}
 
     if size_normed_score:
-        scores_dict['Test Real'] = norm_scores(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'], dataDims)
-        scores_dict['Test Randn'] = norm_scores(scores_dict['Test Randn'], test_epoch_stats_dict['tracking features'][randn_inds], dataDims)
-        scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking features'][distorted_inds], dataDims)
+        scores_dict['Test Real'] = norm_scores(scores_dict['Test Real'], test_epoch_stats_dict['tracking_features'], dataDims)
+        scores_dict['Test Randn'] = norm_scores(scores_dict['Test Randn'], test_epoch_stats_dict['tracking_features'][randn_inds], dataDims)
+        scores_dict['Test Distorted'] = norm_scores(scores_dict['Test Distorted'], test_epoch_stats_dict['tracking_features'][distorted_inds], dataDims)
 
     if train_epoch_stats_dict is not None:
-        scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator real score'], old_method=True, correct_discontinuity=True)
-        tracking_features_dict['Train Real'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], train_epoch_stats_dict['tracking features'].T)}
+        scores_dict['Train Real'] = softmax_and_score(train_epoch_stats_dict['discriminator_real_score'], old_method=True, correct_discontinuity=True)
+        tracking_features_dict['Train Real'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], train_epoch_stats_dict['tracking_features'].T)}
 
         if size_normed_score:
-            scores_dict['Train Real'] = norm_scores(scores_dict['Train Real'], train_epoch_stats_dict['tracking features'], dataDims)
+            scores_dict['Train Real'] = norm_scores(scores_dict['Train Real'], train_epoch_stats_dict['tracking_features'], dataDims)
 
         vdw_penalty_dict['Train Real'] = train_epoch_stats_dict['real vdW penalty']
         wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
         wandb.log({'Train score std': np.std(scores_dict['Train Real'])})
 
     vdw_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdw penalty']
-    vdw_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake vdw penalty'][randn_inds]
-    vdw_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake vdw penalty'][distorted_inds]
+    vdw_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake_vdw_penalty'][randn_inds]
+    vdw_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
 
     wandb.log({'Average Test score': np.average(scores_dict['Test Real'])})
     wandb.log({'Average Randn Fake score': np.average(scores_dict['Test Randn'])})
@@ -979,50 +556,50 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
         if target_identifiers_inds[target] != []:  # record target data
 
             target_index = target_identifiers_inds[target]
-            raw_scores = extra_test_dict['discriminator real score'][target_index]
+            raw_scores = extra_test_dict['discriminator_real_score'][target_index]
             scores = softmax_and_score(raw_scores[None, :], old_method=True, correct_discontinuity=True)
-            scores_dict[target + ' exp'] = scores
+            scores_dict[target + '_exp'] = scores
 
-            tracking_features_dict[target + ' exp'] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], extra_test_dict['tracking features'][target_index][None, :].T)}
+            tracking_features_dict[target + '_exp'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_index][None, :].T)}
 
             if size_normed_score:
-                scores_dict[target + ' exp'] = norm_scores(scores_dict[target + ' exp'], extra_test_dict['tracking features'][target_index][None, :], dataDims)
+                scores_dict[target + '_exp'] = norm_scores(scores_dict[target + '_exp'], extra_test_dict['tracking_features'][target_index][None, :], dataDims)
 
-            vdw_penalty_dict[target + ' exp'] = extra_test_dict['real vdw penalty'][target_index][None]
+            vdw_penalty_dict[target + '_exp'] = extra_test_dict['real vdw penalty'][target_index][None]
 
-            wandb.log({f'Average {target} exp score': np.average(scores)})
+            wandb.log({f'Average_{target}_exp_score': np.average(scores)})
 
         if all_identifiers[target] != []:  # record sample data
             target_indices = all_identifiers[target]
-            raw_scores = extra_test_dict['discriminator real score'][target_indices]
+            raw_scores = extra_test_dict['discriminator_real_score'][target_indices]
             scores = softmax_and_score(raw_scores, old_method=True, correct_discontinuity=True)
             scores_dict[target] = scores
-            tracking_features_dict[target] = {feat: vec for feat, vec in zip(dataDims['tracking features dict'], extra_test_dict['tracking features'][target_indices].T)}
+            tracking_features_dict[target] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_indices].T)}
 
             if size_normed_score:
-                scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking features'][target_indices], dataDims)
+                scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking_features'][target_indices], dataDims)
 
             vdw_penalty_dict[target] = extra_test_dict['real vdw penalty'][target_indices]
 
-            wandb.log({f'Average {target} score': np.average(scores)})
-            wandb.log({f'Average {target} std': np.std(scores)})
+            wandb.log({f'Average_{target}_score': np.average(scores)})
+            wandb.log({f'Average_{target}_std': np.std(scores)})
 
             # correlate losses with molecular features
-            tracking_features = np.asarray(extra_test_dict['tracking features'])
-            loss_correlations = np.zeros(dataDims['num tracking features'])
+            tracking_features = np.asarray(extra_test_dict['tracking_features'])
+            loss_correlations = np.zeros(dataDims['num_tracking_features'])
             features = []
             for j in range(tracking_features.shape[-1]):  # not that interesting
-                features.append(dataDims['tracking features dict'][j])
+                features.append(dataDims['tracking_features'][j])
                 loss_correlations[j] = np.corrcoef(scores, tracking_features[target_indices, j], rowvar=False)[0, 1]
 
             score_correlations_dict[target] = loss_correlations
 
     # compute loss correlates
-    loss_correlations = np.zeros(dataDims['num tracking features'])
+    loss_correlations = np.zeros(dataDims['num_tracking_features'])
     features = []
-    for j in range(dataDims['num tracking features']):  # not that interesting
-        features.append(dataDims['tracking features dict'][j])
-        loss_correlations[j] = np.corrcoef(scores_dict['Test Real'], test_epoch_stats_dict['tracking features'][:, j], rowvar=False)[0, 1]
+    for j in range(dataDims['num_tracking_features']):  # not that interesting
+        features.append(dataDims['tracking_features'][j])
+        loss_correlations[j] = np.corrcoef(scores_dict['Test Real'], test_epoch_stats_dict['tracking_features'][:, j], rowvar=False)[0, 1]
     score_correlations_dict['Test Real'] = loss_correlations
 
     # collect all BT targets & submissions into single dicts
@@ -1046,7 +623,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     # test_epoch_stats_dict = np.load('C:/Users\mikem\crystals\CSP_runs/275_test_epoch_stats_dict.npy', allow_pickle=True).item()
     # extra_test_dict = np.load('C:/Users\mikem\crystals\CSP_runs/275_extra_test_dict.npy', allow_pickle=True).item()
 
-    tracking_features = test_epoch_stats_dict['tracking features']
+    tracking_features = test_epoch_stats_dict['tracking_features']
     identifiers_list = extra_test_dict['identifiers']
     dataDims = test_epoch_stats_dict['data dims']
     score_correlations_dict, rdf_full_distance_dict, rdf_inter_distance_dict, \
@@ -1084,7 +661,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     for target in all_identifiers.keys():
         if all_identifiers[target] != []:
             plot_color_dict[target] = colors[ind]
-            plot_color_dict[target + ' exp'] = colors[ind]
+            plot_color_dict[target + '_exp'] = colors[ind]
             ind += 1
 
     scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
@@ -1145,11 +722,10 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.layout.annotations[1].update(x=0.575)
 
     fig.layout.margin = layout.margin
-    #fig.write_image('../paper1_figs_new_architecture/real_vs_fake_scores.png', scale=4)
+    # fig.write_image('../paper1_figs_new_architecture/real_vs_fake_scores.png', scale=4)
     if config.machine == 'local':
         fig.show()
     wandb.log({"Real vs Fake Scores": fig})
-
 
     '''
     5. BT scores distributions w aggregate inset
@@ -1169,7 +745,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     for target in all_identifiers.keys():
         if all_identifiers[target] != []:
             plot_color_dict[target] = colors[ind]
-            plot_color_dict[target + ' exp'] = colors[ind]
+            plot_color_dict[target + '_exp'] = colors[ind]
             ind += 1
 
     # plot 1
@@ -1259,7 +835,6 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
         fig.show()
     wandb.log({"BT Submissions Distribution": fig})
 
-
     '''
     7. Table of BT separation statistics
     '''
@@ -1270,7 +845,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     normed_quantiles = np.quantile(normed_scores_dict['Test Real'], vals)
     normed_submissions_fraction_below_csd_quantile = {value: np.average(normed_BT_submission_scores < cutoff) for value, cutoff in zip(vals, normed_quantiles)}
 
-    submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + ' exp']) for key in all_identifiers.keys() if key in scores_dict.keys()}
+    submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + '_exp']) for key in all_identifiers.keys() if key in scores_dict.keys()}
     submissions_average_below_target = np.average(list(submissions_fraction_below_target.values()))
 
     fig = go.Figure(data=go.Table(
@@ -1280,7 +855,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
                            ], format=[".3", ".3"])))
     fig.update_layout(width=200)
     fig.layout.margin = layout.margin
-    #fig.write_image('../paper1_figs_new_architecture/scores_separation_table.png', scale=4)
+    # fig.write_image('../paper1_figs_new_architecture/scores_separation_table.png', scale=4)
     if config.machine == 'local':
         fig.show()
     wandb.log({"Nice Scores Separation Table": fig})
@@ -1292,7 +867,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
                            ], format=[".3", ".3"])))
     fig.update_layout(width=200)
     fig.layout.margin = layout.margin
-    #fig.write_image('../paper1_figs_new_architecture/normed_scores_separation_table.png', scale=4)
+    # fig.write_image('../paper1_figs_new_architecture/normed_scores_separation_table.png', scale=4)
     if config.machine == 'local':
         fig.show()
     wandb.log({"Nice Normed Scores Separation Table": fig})
@@ -1303,7 +878,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     '''
     8. Functional group analysis
     '''
-    tracking_features_names = dataDims['tracking features dict']
+    tracking_features_names = dataDims['tracking_features']
     # get the indices for each functional group
     functional_group_inds = {}
     fraction_dict = {}
@@ -1349,7 +924,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     #     fig.show()
 
     fig = go.Figure()
-    fig.add_trace(go.Scattergl(x=[f'{key} {fraction_dict[key]:.2f}' for key in sorted_functional_group_keys],
+    fig.add_trace(go.Scattergl(x=[f'{key}_{fraction_dict[key]:.2f}' for key in sorted_functional_group_keys],
                                y=[np.average(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
                                error_y=dict(type='data',
                                             array=[np.std(scores_dict['Test Real'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
@@ -1362,7 +937,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.update_layout(width=1600, height=600)
     fig.update_layout(font=dict(size=12))
     fig.layout.margin = layout.margin
-    #fig.write_image('../paper1_figs_new_architecture/functional_group_scores.png', scale=2)
+    # fig.write_image('../paper1_figs_new_architecture/functional_group_scores.png', scale=2)
     if config.machine == 'local':
         fig.show()
     wandb.log({"Functional Group Scores": fig})
@@ -1445,11 +1020,10 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.update_layout(width=1000, height=300)
     fig.layout.margin = layout.margin
     fig.layout.margin.b = 50
-    #fig.write_image('../paper1_figs_new_architecture/interesting_groups.png', scale=4)
+    # fig.write_image('../paper1_figs_new_architecture/interesting_groups.png', scale=4)
     if config.machine == 'local':
         fig.show()
     wandb.log({"Interesting Groups": fig})
-
 
     '''
     S1. All group-wise analysis
@@ -1502,19 +1076,19 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
 
     # correlate losses with molecular features
     tracking_features = np.asarray(tracking_features)
-    g_loss_correlations = np.zeros(dataDims['num tracking features'])
+    g_loss_correlations = np.zeros(dataDims['num_tracking_features'])
     features = []
     ind = 0
-    for i in range(dataDims['num tracking features']):  # not that interesting
-        if ('spacegroup' not in dataDims['tracking features dict'][i]) and \
-                ('system' not in dataDims['tracking features dict'][i]) and \
-                ('density' not in dataDims['tracking features dict'][i]):
+    for i in range(dataDims['num_tracking_features']):  # not that interesting
+        if ('spacegroup' not in dataDims['tracking_features'][i]) and \
+                ('system' not in dataDims['tracking_features'][i]) and \
+                ('density' not in dataDims['tracking_features'][i]):
             if (np.average(tracking_features[:, i] != 0) > 0.05) and \
-                    (dataDims['tracking features dict'][i] != 'crystal z prime') and \
-                    (dataDims['tracking features dict'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
+                    (dataDims['tracking_features'][i] != 'crystal z prime') and \
+                    (dataDims['tracking_features'][i] != 'molecule point group is C1'):  # if we have at least 1# relevance
                 corr = np.corrcoef(scores_dict['Test Real'], tracking_features[:, i], rowvar=False)[0, 1]
                 if np.abs(corr) > 0.05:
-                    features.append(dataDims['tracking features dict'][i])
+                    features.append(dataDims['tracking_features'][i])
                     g_loss_correlations[ind] = corr
                     ind += 1
 
@@ -1589,7 +1163,7 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.update_xaxes(range=[np.amin(list(g_loss_dict.values())), np.amax(list(g_loss_dict.values()))])
     fig.update_layout(width=1200, height=400)
     fig.update_layout(showlegend=False)
-    #fig.write_image('../paper1_figs_new_architecture/scores_correlates.png', scale=4)
+    # fig.write_image('../paper1_figs_new_architecture/scores_correlates.png', scale=4)
     if config.machine == 'local':
         fig.show()
     wandb.log({"Score Correlates": fig})
@@ -1618,11 +1192,317 @@ def discriminator_BT_reporting(config, wandb, test_epoch_stats_dict, extra_test_
     fig.layout.margin = layout.margin
     fig.layout.margin.b = 60
 
-    #fig.write_image('../paper1_figs_new_architecture/ToC_discriminator.png', scale=4)
+    # fig.write_image('../paper1_figs_new_architecture/ToC_discriminator.png', scale=4)
     if config.machine == 'local':
         fig.show()
-    #wandb.log({"Functional Group Scores": fig})
-
+    # wandb.log({"Functional Group Scores": fig})
 
     aa = 0
+    return None
+
+
+def log_cubic_defect(samples):
+    cleaned_samples = samples
+    cubic_distortion = np.abs(1 - np.nan_to_num(np.stack(
+        [cell_vol(cleaned_samples[i, 0:3], cleaned_samples[i, 3:6]) / np.prod(cleaned_samples[i, 0:3], axis=-1) for
+         i in range(len(cleaned_samples))])))
+    wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
+    hist = np.histogram(cubic_distortion, bins=256, range=(0, 1))
+    wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})
+
+
+def process_generator_losses(config, epoch_stats_dict):
+    generator_loss_keys = ['generator_packing_prediction', 'generator_packing_target', 'generator_per_mol_vdw_loss',
+                           'generator adversarial loss', 'generator h bond loss']
+    generator_losses = {}
+    for key in generator_loss_keys:
+        if key in epoch_stats_dict.keys():
+            if epoch_stats_dict[key] is not None:
+                if key == 'generator adversarial loss':
+                    if config.generator.train_adversarially:
+                        generator_losses[key[10:]] = epoch_stats_dict[key]
+                    else:
+                        pass
+                else:
+                    generator_losses[key[10:]] = epoch_stats_dict[key]
+
+                if key == 'generator_packing_target':
+                    generator_losses['packing normed mae'] = np.abs(
+                        generator_losses['packing_prediction'] - generator_losses['packing_target']) / \
+                                                             generator_losses['packing_target']
+                    del generator_losses['packing_prediction'], generator_losses['packing_target']
+            else:
+                generator_losses[key[10:]] = None
+
+    return generator_losses, {key: np.average(value) for i, (key, value) in enumerate(generator_losses.items()) if
+                              value is not None}
+
+
+def cell_generation_analysis(config, dataDims, epoch_stats_dict):
+    """
+    do analysis and plotting for cell generator
+    """
+    layout = plotly_setup(config)
+    log_cubic_defect(epoch_stats_dict['final_generated_cell_parameters'])
+    wandb.log({"Generated cell parameter variation": epoch_stats_dict['final_generated_cell_parameters'].std(0).mean()})
+    generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
+    wandb.log(average_losses_dict)
+
+    cell_density_plot(config, wandb, epoch_stats_dict, layout)
+    plot_generator_loss_correlates(config, dataDims, wandb, epoch_stats_dict, generator_losses, layout)
+
+    return None
+
+
+def log_regression_accuracy(config, dataDims, epoch_stats_dict):
+    target_key = config.dataset.regression_target
+
+    target = np.asarray(epoch_stats_dict['regressor_target'])
+    prediction = np.asarray(epoch_stats_dict['regressor_prediction'])
+
+    multiplicity = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_symmetry_multiplicity')]
+    mol_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_volume')]
+    mol_mass = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_mass')]
+    target_density = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_density')]
+    target_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_cell_volume')]
+    target_packing_coefficient = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_packing_coefficient')]
+
+    if target_key == 'crystal_reduced_volume':
+        predicted_volume = prediction
+        predicted_packing_coefficient = mol_volume * multiplicity / (prediction * multiplicity)
+    elif target_key == 'crystal_packing_coefficient':
+        predicted_volume = mol_volume * multiplicity / prediction
+        predicted_packing_coefficient = prediction
+    elif target_key == 'crystal_density':
+        predicted_volume = prediction / (mol_mass * multiplicity) / 1.66
+        predicted_packing_coefficient = prediction * mol_volume / mol_mass / 1.66
+    else:
+        assert False, f"Detailed reporting for {target_key} is not yet implemented"
+
+    predicted_density = (mol_mass * multiplicity) / predicted_volume * 1.66
+
+    losses = ['normed_error', 'abs_normed_error', 'squared_error']
+    loss_dict = {}
+    fig_dict = {}
+    for name, tgt_value, pred_value in zip(['asym_unit_volume', 'packing_coefficient', 'density'], [target_volume, target_packing_coefficient, target_density], [predicted_volume, predicted_packing_coefficient, predicted_density]):
+        for loss in losses:
+            if loss == 'normed_error':
+                loss_i = (tgt_value - pred_value) / np.abs(tgt_value)
+            elif loss == 'abs_normed_error':
+                loss_i = np.abs((tgt_value - pred_value) / np.abs(tgt_value))
+            elif loss == 'squared_error':
+                loss_i = (tgt_value - pred_value) ** 2
+            else:
+                assert False, "Loss not implemented"
+            loss_dict[name + '_' + loss + '_mean'] = np.mean(loss_i)
+            loss_dict[name + '_' + loss + '_std'] = np.std(loss_i)
+
+        linreg_result = linregress(tgt_value, pred_value)
+        loss_dict[name + '_Regression R'] = linreg_result.rvalue
+        loss_dict[name + '_Regression slope'] = linreg_result.slope
+
+        # predictions vs target trace
+        xline = np.linspace(max(min(tgt_value), min(pred_value)),
+                            min(max(tgt_value), max(pred_value)), 10)
+        fig = go.Figure()
+        fig.add_trace(go.Histogram2dContour(x=tgt_value, y=pred_value, ncontours=50, nbinsx=40, nbinsy=40,
+                                            showlegend=True))
+        fig.update_traces(contours_coloring="fill")
+        fig.update_traces(contours_showlines=False)
+        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', showlegend=True, opacity=0.5))
+        fig.add_trace(go.Scattergl(x=xline, y=xline))
+        fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
+        fig.update_layout(showlegend=True)
+        fig_dict[name + "_scatter"] = fig
+
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(x=pred_value - tgt_value,
+                                   histnorm='probability density',
+                                   nbinsx=100,
+                                   name="Error Distribution",
+                                   showlegend=False))
+        fig_dict[name + '_Error Distribution'] = fig
+
+    # correlate losses with molecular features
+    tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
+    generator_loss_correlations = np.zeros(dataDims['num_tracking_features'])
+    features = []
+    for i in range(dataDims['num_tracking_features']):  # not that interesting
+        features.append(dataDims['tracking_features'][i])
+        generator_loss_correlations[i] = \
+            np.corrcoef(np.abs((target - prediction) / np.abs(target)), tracking_features[:, i],
+                        rowvar=False)[0, 1]
+
+    generator_sort_inds = np.argsort(generator_loss_correlations)
+    generator_loss_correlations = generator_loss_correlations[generator_sort_inds]
+
+    fig = go.Figure(go.Bar(
+        y=[dataDims['tracking_features'][i] for i in
+           range(dataDims['num_tracking_features'])],
+        x=[generator_loss_correlations[i] for i in range(dataDims['num_tracking_features'])],
+        orientation='h',
+    ))
+    fig_dict['Regressor Loss Correlates'] = fig
+
+    wandb.log(loss_dict)
+    wandb.log(fig_dict)
+
+    return None
+
+
+def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, test_epoch_stats_dict,
+                       extra_test_dict=None):
+    """
+    Do analysis and upload results to w&b
+    """
+    if (test_epoch_stats_dict is not None) and config.mode == 'gan':
+        if 'final_generated_cell_parameters' in test_epoch_stats_dict.keys():
+            cell_params_analysis(config, dataDims, wandb, test_loader, test_epoch_stats_dict)
+
+        if config.generator.train_vdw or config.generator.train_adversarially:
+            cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
+
+        if config.discriminator.train_on_distorted or config.discriminator.train_on_randn or config.discriminator.train_adversarially:
+            discriminator_analysis(config, dataDims, test_epoch_stats_dict)
+
+    elif config.mode == 'regression':
+        log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
+
+    if extra_test_dict is not None and len(extra_test_dict) > 0:
+        discriminator_BT_reporting(config, dataDims, wandb, test_epoch_stats_dict, extra_test_dict)
+
+    return None
+
+
+def discriminator_analysis(config, dataDims, epoch_stats_dict):
+    '''
+    do analysis and plotting for cell discriminator
+
+    -: scores distribution and vdw penalty by sample source
+    -: loss correlates
+    '''
+    layout = plotly_setup(config)
+
+    scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict \
+        = process_discriminator_outputs(dataDims, epoch_stats_dict)
+
+    discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
+    plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout)
+
+    return None
+
+
+def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, real_samples_dict, real_data, sym_info):
+    """
+    report on key metrics from mini-csp
+    """
+    scores_labels = ['score', 'vdw overlap', 'density']  # , 'h bond score']
+    fig = make_subplots(rows=1, cols=len(scores_labels),
+                        vertical_spacing=0.075, horizontal_spacing=0.075)
+
+    colors = sample_colorscale('viridis', 1 + len(np.unique(generated_samples_dict['space group'])))
+    real_color = 'rgb(250,0,250)'
+    opacity = 0.65
+
+    for i, label in enumerate(scores_labels):
+        row = 1  # i // 2 + 1
+        col = i + 1  # i % 2 + 1
+        for j in range(min(15, real_data.num_graphs)):
+            bandwidth1 = np.ptp(generated_samples_dict[label][j]) / 50
+            real_score = real_samples_dict[label][j]
+
+            unique_space_group_inds = np.unique(generated_samples_dict['space group'][j])
+            n_space_groups = len(unique_space_group_inds)
+            space_groups = np.asarray([sym_info['space_groups'][sg] for sg in generated_samples_dict['space group'][j]])
+            unique_space_groups = np.asarray([sym_info['space_groups'][sg] for sg in unique_space_group_inds])
+
+            all_sample_score = generated_samples_dict[label][j]
+            for k in range(n_space_groups):
+                sample_score = all_sample_score[space_groups == unique_space_groups[k]]
+
+                fig.add_trace(go.Violin(x=sample_score, y=[str(real_data.csd_identifier[j]) for _ in range(len(sample_score))],
+                                        side='positive', orientation='h', width=2, line_color=colors[k],
+                                        meanline_visible=True, bandwidth=bandwidth1, opacity=opacity,
+                                        name=unique_space_groups[k], legendgroup=unique_space_groups[k], showlegend=False),
+                              row=row, col=col)
+
+            fig.add_trace(go.Violin(x=[real_score], y=[str(real_data.csd_identifier[j])], line_color=real_color,
+                                    side='positive', orientation='h', width=2, meanline_visible=True,
+                                    name="Experiment", showlegend=True if (i == 0 and j == 0) else False),
+                          row=row, col=col)
+
+            fig.update_xaxes(title_text=label, row=1, col=col)
+
+        unique_space_group_inds = np.unique(generated_samples_dict['space group'].flatten())
+        n_space_groups = len(unique_space_group_inds)
+        space_groups = np.asarray([sym_info['space_groups'][sg] for sg in generated_samples_dict['space group'].flatten()])
+        unique_space_groups = np.asarray([sym_info['space_groups'][sg] for sg in unique_space_group_inds])
+
+        if real_data.num_graphs > 1:
+            for k in range(n_space_groups):
+                all_sample_score = generated_samples_dict[label].flatten()[space_groups == unique_space_groups[k]]
+
+                fig.add_trace(go.Violin(x=all_sample_score, y=['all samples' for _ in range(len(all_sample_score))],
+                                        side='positive', orientation='h', width=2, line_color=colors[k],
+                                        meanline_visible=True, bandwidth=np.ptp(generated_samples_dict[label].flatten()) / 100, opacity=opacity,
+                                        name=unique_space_groups[k], legendgroup=unique_space_groups[k], showlegend=True if i == 0 else False),
+                              row=row, col=col)
+
+    layout = go.Layout(
+        margin=go.layout.Margin(
+            l=0,  # left margin
+            r=0,  # right margin
+            b=0,  # bottom margin
+            t=100,  # top margin
+        )
+    )
+    fig.update_xaxes(row=1, col=scores_labels.index('vdw overlap') + 1, range=[0, np.minimum(1, generated_samples_dict['vdw overlap'].flatten().max())])
+
+    fig.update_layout(yaxis_showgrid=True)  # legend_traceorder='reversed',
+
+    fig.layout.margin = layout.margin
+
+    if config.logger.log_figures:
+        wandb.log({'Mini-CSP Scores': fig})
+    if (config.machine == 'local') and False:
+        fig.show()
+
+    return None
+
+
+def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict, crystal_name, crystal_ind):
+    fig = make_subplots(rows=4, cols=3, subplot_titles=config.dataDims['lattice_features'])
+    for i in range(12):
+        bandwidth = np.ptp(generated_samples_dict['cell params'][crystal_ind, :, i]) / 100
+        col = i % 3 + 1
+        row = i // 3 + 1
+        fig.add_trace(go.Violin(
+            x=[real_samples_dict['cell params'][crystal_ind, i]],
+            bandwidth=bandwidth,
+            name="Samples",
+            showlegend=False,
+            line_color='darkorchid',
+            side='positive',
+            orientation='h',
+            width=2,
+        ), row=row, col=col)
+        for cc, cutoff in enumerate([0, 0.5, 0.95]):
+            colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', 3, colortype='rgb')
+            good_inds = np.argwhere(generated_samples_dict['score'][crystal_ind] > np.quantile(generated_samples_dict['score'][crystal_ind], cutoff))[:, 0]
+            fig.add_trace(go.Violin(
+                x=generated_samples_dict['cell params'][crystal_ind, :, i][good_inds],
+                bandwidth=bandwidth,
+                name="Samples",
+                showlegend=False,
+                line_color=colors[cc],
+                side='positive',
+                orientation='h',
+                width=2,
+            ), row=row, col=col)
+
+    fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_traces(opacity=0.5)
+    fig.update_layout(title=crystal_name)
+
+    wandb.log({"Mini-CSP Cell Parameters": fig})
     return None

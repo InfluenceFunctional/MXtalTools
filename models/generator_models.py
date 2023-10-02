@@ -1,118 +1,169 @@
 import sys
 
 import torch
-import torch.nn.functional as F
-import torch.nn as nn
+from torch import nn as nn
 from torch.distributions import MultivariateNormal, Uniform
 
+from constants.space_group_feature_tensor import SG_FEATURE_TENSOR
+from crystal_building.utils import clean_cell_params
 from models.components import MLP
 from models.base_models import molecule_graph_model
+from constants.asymmetric_units import asym_unit_dict
 
 
 class crystal_generator(nn.Module):
-    def __init__(self, config, dataDims):
+    def __init__(self, seed, device, config, dataDims, sym_info):
         super(crystal_generator, self).__init__()
 
-        self.device = config.device
-        self.latent_dim = config.generator.prior_dimension
-        if config.generator.prior == 'multivariate normal':
+        self.device = device
+        self.symmetries_dict = sym_info
+        self.lattice_means = torch.tensor(dataDims['lattice_means'], dtype=torch.float32, device=device)
+        self.lattice_stds = torch.tensor(dataDims['lattice_stds'], dtype=torch.float32, device=device)
+        self.radial_norm_factor = config.radial_norm_factor
+
+        # initialize asymmetric unit dict
+        self.asym_unit_dict = asym_unit_dict.copy()
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(self.device)
+
+        self.register_buffer('SG_FEATURE_TENSOR', SG_FEATURE_TENSOR.clone())
+
+        '''set random prior'''
+        self.latent_dim = config.prior_dimension
+        if config.prior == 'multivariate normal':
             self.prior = MultivariateNormal(torch.zeros(self.latent_dim), torch.eye(self.latent_dim))
-        elif config.generator.prior.lower() == 'uniform':
+        elif config.prior.lower() == 'uniform':
             self.prior = Uniform(low=0, high=1)
         else:
-            print(config.generator.prior + ' is not an implemented prior!!')
+            print(config.prior + ' is not an implemented prior!!')
             sys.exit()
 
-        '''
-        conditioning model
-        '''
-        self.num_crystal_features = config.dataDims['num crystal generation features']
-        torch.manual_seed(config.seeds.model)
-
-        if config.generator.conditioner.skinny_atomwise_features:
-            self.skinny_inputs = True
-            self.atom_input_feats = 1 + 3  # take first dim (atomic number) and three for coordinates
-            self.num_mol_feats = 0
-        else:
-            self.skinny_inputs = False
-            self.atom_input_feats = dataDims['num atom features'] + 3 - self.num_crystal_features
-            self.num_mol_feats = dataDims['num mol features'] - self.num_crystal_features
+        '''conditioning model'''
+        torch.manual_seed(seed)
 
         self.conditioner = molecule_graph_model(
-            dataDims=dataDims,
-            atom_embedding_dims=config.generator.conditioner.init_atom_embedding_dim,
-            seed=config.seeds.model,
-            num_atom_feats=self.atom_input_feats,  # we will add directly the normed coordinates to the node features
-            num_mol_feats=self.num_mol_feats,
-            output_dimension=config.generator.conditioner.output_dim,  # starting size for decoder model
-            activation=config.generator.conditioner.activation,
-            num_fc_layers=config.generator.conditioner.num_fc_layers,
-            fc_depth=config.generator.conditioner.fc_depth,
-            fc_dropout_probability=config.generator.conditioner.fc_dropout_probability,
-            fc_norm_mode=config.generator.conditioner.fc_norm_mode,
-            graph_filters=config.generator.conditioner.graph_filters,
-            graph_convolutional_layers=config.generator.conditioner.graph_convolution_layers,
-            concat_mol_to_atom_features=config.generator.conditioner.concat_mol_features,
-            pooling=config.generator.conditioner.pooling,
-            graph_norm=config.generator.conditioner.graph_norm,
-            num_spherical=config.generator.conditioner.num_spherical,
-            num_radial=config.generator.conditioner.num_radial,
-            graph_convolution=config.generator.conditioner.graph_convolution,
-            num_attention_heads=config.generator.conditioner.num_attention_heads,
-            add_spherical_basis=config.generator.conditioner.add_spherical_basis,
-            add_torsional_basis=config.generator.conditioner.add_torsional_basis,
-            graph_embedding_size=config.generator.conditioner.atom_embedding_size,
-            radial_function=config.generator.conditioner.radial_function,
-            max_num_neighbors=config.generator.conditioner.max_num_neighbors,
-            convolution_cutoff=config.generator.conditioner.graph_convolution_cutoff,
-            positional_embedding=config.generator.conditioner.positional_embedding,
-            max_molecule_size=config.max_molecule_radius,
-            crystal_mode=False,
-            crystal_convolution_type=None,
+            num_atom_feats=dataDims['num_atom_features'],
+            num_mol_feats=dataDims['num_molecule_features'],
+            output_dimension=config.conditioner.graph_embedding_depth,
+            seed=seed,
+            graph_convolution_type=config.conditioner.graph_convolution_type,
+            graph_aggregator=config.conditioner.graph_aggregator,
+            concat_pos_to_atom_features=True,
+            concat_mol_to_atom_features=config.conditioner.concat_mol_to_atom_features,
+            concat_crystal_to_atom_features=True,
+            activation=config.conditioner.activation,
+            num_fc_layers=config.conditioner.num_fc_layers,
+            fc_depth=config.conditioner.fc_depth,
+            fc_norm_mode=config.conditioner.fc_norm_mode,
+            fc_dropout_probability=config.conditioner.fc_dropout_probability,
+            graph_node_norm=config.conditioner.graph_node_norm,
+            graph_node_dropout=config.conditioner.graph_node_dropout,
+            graph_message_norm=config.conditioner.graph_message_norm,
+            graph_message_dropout=config.conditioner.graph_message_dropout,
+            num_attention_heads=config.conditioner.num_attention_heads,
+            graph_message_depth=config.conditioner.graph_message_depth,
+            graph_node_dims=config.conditioner.graph_node_dims,
+            num_graph_convolutions=config.conditioner.num_graph_convolutions,
+            graph_embedding_depth=config.conditioner.graph_embedding_depth,
+            nodewise_fc_layers=config.conditioner.nodewise_fc_layers,
+            num_radial=config.conditioner.num_radial,
+            radial_function=config.conditioner.radial_function,
+            max_num_neighbors=config.conditioner.max_num_neighbors,
+            convolution_cutoff=config.conditioner.convolution_cutoff,
+            atom_type_embedding_dims=config.conditioner.atom_type_embedding_dims,
+            periodic_structure=False,
+            periodic_convolution_type='none'
         )
 
         '''
         generator model
         '''
-        self.model = MLP(layers=config.generator.num_fc_layers,
-                         filters=config.generator.fc_depth,
-                         norm=config.generator.fc_norm_mode,
-                         dropout=config.generator.fc_dropout_probability,
+        self.model = MLP(layers=config.num_fc_layers,
+                         filters=config.fc_depth,
+                         norm=config.fc_norm_mode,
+                         dropout=config.fc_dropout_probability,
                          input_dim=self.latent_dim,
-                         output_dim=dataDims['num lattice features'],
-                         conditioning_dim=config.generator.conditioner.output_dim + self.num_crystal_features,  # include crystal information for the generator
-                         seed=config.seeds.model
+                         output_dim=12 + 3,  # 3 extra dimensions for angle decoder
+                         conditioning_dim=config.conditioner.graph_embedding_depth + SG_FEATURE_TENSOR.shape[1] + 1,  # include crystal information for the generator and the target packing coeff
+                         seed=seed,
+                         conditioning_mode=config.conditioning_mode,
                          )
 
     def sample_latent(self, n_samples):
         # return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
         return self.prior.sample((n_samples,)).to(self.device)
 
-    def forward(self, n_samples, z=None, conditions=None, return_latent=False, return_condition=False, return_prior=False, prior_amplification=None):
+    def forward(self, n_samples, molecule_data, z=None, return_condition=False, return_prior=False, target_packing=0):
         if z is None:  # sample random numbers from prior distribution
             z = self.sample_latent(n_samples)
-            if prior_amplification is not None:
-                z *= prior_amplification
 
-        normed_coords = conditions.pos / self.conditioner.max_molecule_size  # norm coords by maximum molecule radius
-        crystal_information = conditions.x[:, -self.num_crystal_features:]
+        molecule_data.pos = molecule_data.pos / self.radial_norm_factor
+        molecule_encoding = self.conditioner(molecule_data)
+        molecule_encoding = torch.cat((molecule_encoding,
+                                       torch.tensor(self.SG_FEATURE_TENSOR[molecule_data.sg_ind], dtype=torch.float32, device=molecule_data.x.device),
+                                       target_packing[:, None]), dim=-1)
 
-        if self.skinny_inputs:
-            conditions.x = torch.cat((conditions.x[:, 0, None], normed_coords), dim=-1)  # take only the atomic number for atomwise features
-        else:
-            conditions.x = torch.cat((conditions.x[:, :-self.num_crystal_features], normed_coords), dim=-1)  # concatenate to input features, leaving out crystal info from conditioner
+        samples = self.model(z, conditions=molecule_encoding)
 
-        conditions_encoding = self.conditioner(conditions)
+        clean_samples = clean_cell_params(samples, molecule_data.sg_ind, self.lattice_means, self.lattice_stds,
+                                          self.symmetries_dict, self.asym_unit_dict, destandardize=True, mode='soft')
 
-        conditions_encoding = torch.cat((conditions_encoding, crystal_information[conditions.ptr[:-1]]), dim=-1)
-
-        # into generator model
-        if any((return_condition, return_prior, return_latent)):
-            output = [self.model(z, conditions=conditions_encoding, return_latent=return_latent)]
+        if any((return_condition, return_prior)):
+            output = [clean_samples]
             if return_prior:
                 output.append(z)
             if return_condition:
-                output.append(conditions_encoding)
+                output.append(molecule_encoding)
             return output
         else:
-            return self.model(z, conditions=conditions_encoding, return_latent=return_latent)
+            return clean_samples
+
+
+class independent_gaussian_model(nn.Module):
+    def __init__(self, input_dim, means, stds, sym_info, device, cov_mat=None):
+        super(independent_gaussian_model, self).__init__()
+
+        self.device = device
+        self.input_dim = input_dim
+        means = torch.Tensor(means)
+        stds = torch.Tensor(stds)
+
+        self.register_buffer('means', torch.Tensor(means))
+        self.register_buffer('stds', torch.Tensor(stds))
+        self.register_buffer('fixed_norms', torch.Tensor(means))
+        self.register_buffer('fixed_stds', torch.Tensor(stds))
+
+        self.symmetries_dict = sym_info
+        # initialize asymmetric unit dict
+        self.asym_unit_dict = asym_unit_dict.copy()
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])  # .to(self.device)
+
+        if cov_mat is not None:
+            pass
+        else:
+            cov_mat = torch.diag(torch.Tensor(stds).pow(2))
+
+        try:
+            self.prior = MultivariateNormal(means, torch.Tensor(cov_mat))  # apply standardization
+        except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
+            self.prior = MultivariateNormal(loc=means, covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(cov_mat).diagonal())
+
+    def forward(self, num_samples, data):
+        """
+        sample comes out in non-standardized basis, but with normalized cell lengths
+        so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
+        then standardize
+        """
+        samples = self.prior.sample((num_samples,)).to(data.x.device)  # samples in the destandardied 'real' basis
+        final_samples = clean_cell_params(samples, data.sg_ind, self.means, self.stds,
+                                          self.symmetries_dict, self.asym_unit_dict,
+                                          rescale_asymmetric_unit=False, destandardize=False, mode='hard')
+
+        return final_samples
+
+    def backward(self, samples):
+        return samples * self.stds + self.means
+
+    def score(self, samples):
+        return self.prior.log_prob(samples)

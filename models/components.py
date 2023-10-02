@@ -6,11 +6,13 @@ from torch import nn
 import torch_geometric.nn as gnn
 import torch.nn.functional as F
 
+from models.asymmetric_radius_graph import asymmetric_radius_graph
+
 
 class MLP(nn.Module):
     def __init__(self, layers, filters, input_dim, output_dim,
                  activation='gelu', seed=0, dropout=0, conditioning_dim=0,
-                 norm=None, bias=True, norm_after_linear=False):
+                 norm=None, bias=True, norm_after_linear=False, conditioning_mode = 'concat_to_first'):
         super(MLP, self).__init__()
         # initialize constants and layers
 
@@ -31,9 +33,7 @@ class MLP(nn.Module):
         else:
             self.same_depth = True
 
-        self.input_filters = self.n_filters
-        self.output_filters = self.n_filters
-
+        self.conditioning_mode = conditioning_mode  # todo write a proper all_layer mode
         self.conditioning_dim = conditioning_dim
         self.output_dim = output_dim
         self.input_dim = input_dim + conditioning_dim
@@ -84,20 +84,7 @@ class MLP(nn.Module):
             self.output_layer = nn.Identity()
 
     def forward(self, x, conditions=None, return_latent=False, batch=None):
-        if 'geometric' in str(type(x)):  # extract conditions from trailing atomic features
-            # todo fix above
-            # if x.num_graphs == 1:
-            #     x = x.x[:, -self.input_dim:]
-            # else:
-            x = gnn.global_max_pool(x.x, x.batch)[:, -self.input_dim:]  # x.x[x.ptr[:-1]][:, -self.input_dim:]
-
         if conditions is not None:
-            # if type(conditions) == torch_geometric.data.batch.DataBatch: # extract conditions from trailing atomic features
-            #     if len(x) == 1:
-            #         conditions = conditions.x[:,-self.conditioning_dim:]
-            #     else:
-            #         conditions = conditions.x[conditions.ptr[:-1]][:,-self.conditioning_dim:]
-
             x = torch.cat((x, conditions), dim=1)
 
         x = self.init_layer(x)  # get the right feature depth
@@ -107,6 +94,7 @@ class MLP(nn.Module):
                 res = x.clone()
             else:
                 res = self.residue_adjust[i](x)
+
             if self.norm_after_linear:
                 x = res + dropout(activation(norm(linear(x), batch=batch)))  # residue
             else:
@@ -152,7 +140,7 @@ class Activation(nn.Module):
             self.activation = F.relu
         elif activation_func.lower() == 'gelu':
             self.activation = F.gelu
-        elif activation_func.lower() == 'kernel':
+        elif activation_func.lower() == 'kernel':  # rather expensive
             self.activation = kernelActivation(n_basis=10, span=4, channels=filters)
         elif activation_func.lower() == 'leaky relu':
             self.activation = F.leaky_relu
@@ -195,3 +183,35 @@ class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation
         x = self.linear(x).squeeze(-1).squeeze(-1)  # apply linear coefficients and sum
 
         return x
+
+
+def construct_radial_graph(pos, batch, ptr, cutoff, max_num_neighbors, aux_ind=None):
+    """
+    construct edge indices over a radial graph
+    optionally, compute intra (within ref_mol_inds) and inter (between ref_mol_inds and outside inds) edges
+    """
+    if aux_ind is not None:
+        inside_inds = torch.where(aux_ind == 0)[0]
+        outside_inds = torch.where(aux_ind == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
+        inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
+        n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]  # number of molecules in convolution region
+
+        # intramolecular edges
+        edge_index = asymmetric_radius_graph(pos, batch=batch, r=cutoff,  # intramolecular interactions - stack over range 3 convolutions
+                                             max_num_neighbors=max_num_neighbors, flow='source_to_target',
+                                             inside_inds=inside_inds, convolve_inds=inside_inds)
+
+        # intermolecular edges
+        edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=cutoff,  # extra radius for intermolecular graph convolution
+                                                   max_num_neighbors=max_num_neighbors, flow='source_to_target',
+                                                   inside_inds=inside_inds, convolve_inds=outside_inds)
+
+        return {'edge_index': edge_index, 'edge_index_inter': edge_index_inter, 'inside_inds': inside_inds,
+                'outside_inds': outside_inds, 'inside_batch': inside_batch, 'n_repeats': n_repeats}
+
+    else:
+
+        edge_index = gnn.radius_graph(pos, r=cutoff, batch=batch,
+                                      max_num_neighbors=max_num_neighbors, flow='source_to_target')  # note - requires batch be monotonically increasing
+
+        return {'edge_index': edge_index}

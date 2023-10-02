@@ -4,46 +4,46 @@ import torch
 
 
 class crystal_discriminator(nn.Module):
-    def __init__(self, config, dataDims):
+    def __init__(self, seed, config, dataDims):
         '''
         wrapper for molecule model, with appropriate I/O
         '''
-        torch.manual_seed(config.seeds.model)
+        torch.manual_seed(seed)
 
         super(crystal_discriminator, self).__init__()
         self.model = molecule_graph_model(
-            dataDims=dataDims,
-            seed=config.seeds.model,
-            num_atom_feats=dataDims['num atom features'] - dataDims['num crystal generation features'],
-            num_mol_feats=dataDims['num mol features'] - dataDims['num crystal generation features'],
-            output_dimension=2,  # 'yes' and 'no'
-            activation=config.discriminator.activation,
-            num_fc_layers=config.discriminator.num_fc_layers,
-            fc_depth=config.discriminator.fc_depth,
-            fc_dropout_probability=config.discriminator.fc_dropout_probability,
-            fc_norm_mode=config.discriminator.fc_norm_mode,
-            graph_filters=config.discriminator.graph_filters,
-            graph_convolutional_layers=config.discriminator.graph_convolution_layers,
-            concat_mol_to_atom_features=True,
-            pooling=config.discriminator.pooling,
-            graph_norm=config.discriminator.graph_norm,
-            num_spherical=config.discriminator.num_spherical,
-            num_radial=config.discriminator.num_radial,
-            graph_convolution=config.discriminator.graph_convolution,
-            num_attention_heads=config.discriminator.num_attention_heads,
-            add_spherical_basis=config.discriminator.add_spherical_basis,
-            add_torsional_basis=config.discriminator.add_torsional_basis,
-            graph_embedding_size=config.discriminator.atom_embedding_size,
-            radial_function=config.discriminator.radial_function,
-            max_num_neighbors=config.discriminator.max_num_neighbors,
-            convolution_cutoff=config.discriminator.graph_convolution_cutoff,
-            crystal_mode=True,
-            device=config.device,
-            crystal_convolution_type=config.discriminator.crystal_convolution_type,
-            max_molecule_size=config.max_molecule_radius,
+            num_atom_feats=dataDims['num_atom_features'],
+            num_mol_feats=dataDims['num_molecule_features'],
+            output_dimension=2,
+            seed=seed,
+            graph_convolution_type=config.graph_convolution_type,
+            graph_aggregator=config.graph_aggregator,
+            concat_pos_to_atom_features=False,
+            concat_mol_to_atom_features=config.concat_mol_to_atom_features,
+            concat_crystal_to_atom_features=False,
+            activation=config.activation,
+            num_fc_layers=config.num_fc_layers,
+            fc_depth=config.fc_depth,
+            fc_norm_mode=config.fc_norm_mode,
+            fc_dropout_probability=config.fc_dropout_probability,
+            graph_node_norm=config.graph_node_norm,
+            graph_node_dropout=config.graph_node_dropout,
+            graph_message_norm=config.graph_message_norm,
+            graph_message_dropout=config.graph_message_dropout,
+            num_attention_heads=config.num_attention_heads,
+            graph_message_depth=config.graph_message_depth,
+            graph_node_dims=config.graph_node_dims,
+            num_graph_convolutions=config.num_graph_convolutions,
+            graph_embedding_depth=config.graph_embedding_depth,
+            nodewise_fc_layers=config.nodewise_fc_layers,
+            num_radial=config.num_radial,
+            radial_function=config.radial_function,
+            max_num_neighbors=config.max_num_neighbors,
+            convolution_cutoff=config.convolution_cutoff,
+            atom_type_embedding_dims=config.atom_type_embedding_dims,
+            periodic_structure=True,
+            periodic_convolution_type=config.periodic_convolution_type
         )
-        self.crystal_features_to_ignore = config.dataDims['num crystal generation features']
 
     def forward(self, data, return_dists=False, return_latent=False):
-        data.x = data.x[:, :-self.crystal_features_to_ignore]  # leave out the trailing N features, which give information on the crystal lattice
         return self.model(data, return_dists=return_dists, return_latent=return_latent)

@@ -1,0 +1,12 @@
+wandb:
+  username: mkilgour
+  project_name: MXtalTools
+
+paths:
+  local_dataset_dir_path: "D:/crystal_datasets/"
+  cluster_dataset_dir_path: '/scratch/mk8347/csd_runs/datasets/'
+  local_workdir_path: 'C:/Users/mikem/crystals/CSP_runs/'
+  cluster_workdir_path: '/scratch/mk8347/csd_runs/'
+  local_checkpoint_dir_path: 'C:/Users/mikem/crystals/CSP_runs/models/'
+  cluster_checkpoint_dir_path: '/scratch/mk8347/csd_runs/models/'
+  yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/experiments/dev.yaml'
