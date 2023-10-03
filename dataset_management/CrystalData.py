@@ -212,7 +212,7 @@ class CrystalData(BaseData):
             return 0
 
     def debug(self):
-        pass  # TODO
+        pass
 
     def is_node_attr(self, key: str) -> bool:
         r"""Returns :obj:`True` if the object at key :obj:`key` denotes a

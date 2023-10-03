@@ -34,7 +34,7 @@ class DataManager:
         chunks = os.listdir()
         num_chunks = len(chunks)
         print(f'Collecting {num_chunks} dataset chunks')
-        self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks], ignore_index=True)
+        self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks[:100]], ignore_index=True)
 
     def load_dataset_for_modelling(self, dataset_name,
                                    filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False):
@@ -118,9 +118,9 @@ class DataManager:
         chunk_size = 1000
         n_chunks = int(np.ceil(len(self.dataset) / chunk_size))
         for i in tqdm(range(n_chunks)):
-            chunk = self.dataset.loc[i * chunk_size:(i+1) * chunk_size]
+            chunk = self.dataset.iloc[i * chunk_size:(i+1) * chunk_size]
             symmetry_multiplicity = torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device)
-            final_coords_list = [torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for ind, crystal in chunk.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))]
+            final_coords_list = [torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for _, crystal in chunk.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))]
             T_fc_list = torch.tensor(np.stack([crystal['crystal_fc_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
             T_cf_list = torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
             sym_ops_list = [torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
@@ -151,6 +151,8 @@ class DataManager:
             handedness_list.extend(handedness_list_i.cpu().detach().numpy())
             well_defined_asym_unit.extend(well_defined_asym_unit_i)
             canonical_conformer_coords_list.extend(canonical_conformer_coords_list_i)
+
+        assert len(mol_position_list) == len(self.mol_to_crystal_dict), "Molecule indexing failure in chunking system"
 
         mol_position_list = np.stack(mol_position_list)
         mol_orientation_list = np.stack(mol_orientation_list)
@@ -207,6 +209,7 @@ class DataManager:
         # for a small dataset, getting all of them right could be a fluke
         # for a large one, if the below checks out, very likely we haven't screwed up the indexing
         assert all([len(thing) == thing2 for thing, thing2 in zip(handednesses_list, self.dataset['crystal_z_prime'])]), "Error with asymmetric indexing and/or symmetry multiplicity"
+        assert all([len(self.dataset['atom_coordinates'][ii][0]) == self.dataset['molecule_num_atoms'][ii][0] for ii in range(len(self.dataset))]), "Error with coordinates indexing"
 
         # identify whether crystal symmetry ops exactly agree with standards
         # this should be included in 'space group setting' but is sometimes missed
@@ -411,7 +414,7 @@ class DataManager:
 
         elif condition_type == 'in':
             # check for where the data is not equal to the explicitly enumerated range elements to be included
-            if 'crystal' in condition_key:  # todo filters need to interact
+            if 'crystal' in condition_key:
                 bad_inds = np.argwhere([
                     thing not in condition_range for thing in self.dataset[condition_key]
                 ])[:, 0]

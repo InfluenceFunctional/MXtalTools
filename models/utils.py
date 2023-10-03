@@ -8,7 +8,7 @@ from torch.nn import functional as F
 from torch.optim import lr_scheduler as lr_scheduler
 
 from common.geometry_calculations import cell_vol_torch
-from common.utils import np_softmax, components2angle
+from common.utils import softmax_np, components2angle
 from dataset_management.modelling_utils import update_dataloader_batch_size
 
 
@@ -134,7 +134,7 @@ def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, cor
             assert torch.sum(torch.isnan(score)) == 0
             return score
         else:
-            soft_activation = np_softmax(raw_classwise_output)
+            soft_activation = softmax_np(raw_classwise_output)
             score = np.log10(soft_activation[:, 1] / soft_activation[:, 0])
             assert np.sum(np.isnan(score)) == 0
             return score
@@ -145,7 +145,7 @@ def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, cor
             correction = 0
 
         if isinstance(raw_classwise_output, np.ndarray):
-            softmax_output = np_softmax(raw_classwise_output.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
+            softmax_output = softmax_np(raw_classwise_output.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
             tanned = np.tan((softmax_output - 0.5) * np.pi)
             sign = (raw_classwise_output[:, 1] > raw_classwise_output[:, 0]) * 2 - 1  # values very close to zero can realize a sign error
             return sign * np.log10(correction + np.abs(tanned))  # new factor of 1+ conditions the function about zero
@@ -195,7 +195,7 @@ def undo_1d_bound(x: torch.tensor, x_span, x_center, mode='soft'):
     undo / rescale an enforced 1d bound
     only setup for soft rescaling
     """
-    # todo: hard mode
+    # todo: write a version for hard bounds
 
     if mode == 'soft':
         return x_span * torch.atanh((x - x_center) / x_span) + x_center

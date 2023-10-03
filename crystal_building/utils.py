@@ -8,6 +8,22 @@ import torch
 import sys
 
 
+def generate_sorted_fractional_translations(supercell_size):
+    # initialize fractional translations for supercell construction
+    n_cells = (2 * supercell_size + 1) ** 3
+    fractional_translations = torch.zeros((n_cells, 3))  # initialize the translations in fractional coords
+    i = 0
+    for xx in range(-supercell_size, supercell_size + 1):
+        for yy in range(-supercell_size, supercell_size + 1):
+            for zz in range(-supercell_size, supercell_size + 1):
+                fractional_translations[i] = torch.tensor((xx, yy, zz))
+                i += 1
+
+    # sort fractional vectors from closest to furthest from central unit cell
+    return fractional_translations[torch.argsort(fractional_translations.abs().sum(1))]
+
+
+
 def unit_cell_to_convolution_cluster(reference_cell_list: list,
                                      cell_vector_list: list,
                                      T_fc_list,
@@ -24,20 +40,13 @@ def unit_cell_to_convolution_cluster(reference_cell_list: list,
     3) identify canonical conformer, inside inds, outside inds
     4) kick out molecules which are outside
     """
-    n_cells = (2 * supercell_scale + 1) ** 3
-    if sorted_fractional_translations is None:
-        fractional_translations = torch.zeros((n_cells, 3), device=T_fc_list.device)  # initialize the translations in fractional coords
-        i = 0
-        for xx in range(-supercell_scale, supercell_scale + 1):
-            for yy in range(-supercell_scale, supercell_scale + 1):
-                for zz in range(-supercell_scale, supercell_scale + 1):
-                    fractional_translations[i] = torch.tensor((xx, yy, zz), device=T_fc_list.device)
-                    i += 1
-        sorted_fractional_translations = fractional_translations[torch.argsort(fractional_translations.abs().sum(1))]
-    else:
-        n_cells = len(sorted_fractional_translations)
-
     device = T_fc_list.device
+
+    if sorted_fractional_translations is None:
+        sorted_fractional_translations = generate_sorted_fractional_translations(supercell_scale).to(device)
+
+    max_num_cells = len(sorted_fractional_translations)
+
     supercell_coords_list = []
     supercell_atoms_list = []
     ref_mol_inds_list = []
@@ -46,26 +55,23 @@ def unit_cell_to_convolution_cluster(reference_cell_list: list,
         if type(ref_cell) == np.ndarray:
             ref_cell = torch.tensor(ref_cell, device=device)
 
-        mol_n_atoms = len(atoms)
-        supercell_coords = ref_cell.clone().reshape(sym_mult * ref_cell.shape[1], 3).tile(n_cells, 1)  # duplicate over XxXxX supercell
-        cart_translations_i = torch.mul(unit_cell_vectors.tile(n_cells, 1), sorted_fractional_translations.reshape(n_cells * 3, 1))  # 3 cell vectors
-        # cart_translations = torch.stack(cart_translations_i.split(3, dim=0), dim=0).sum(1)
-        cart_translations = cart_translations_i.reshape(n_cells, 3, 3).sum(1)  # faster
-
+        ref_mol_radius = torch.max(torch.cdist(ref_cell[0].mean(0)[None, :], ref_cell[0]))
+        cart_translations_i = torch.mul(unit_cell_vectors.tile(max_num_cells, 1), sorted_fractional_translations.reshape(max_num_cells * 3, 1))  # 3 cell vectors
+        supercell_coords = ref_cell.clone().reshape(sym_mult * ref_cell.shape[1], 3).tile(max_num_cells, 1)  # duplicate over XxXxX supercell
+        cart_translations = cart_translations_i.reshape(max_num_cells, 3, 3).sum(1)  # faster
         full_supercell_coords = supercell_coords + torch.repeat_interleave(cart_translations, ref_cell.shape[1] * ref_cell.shape[0], dim=0)  # add translations throughout
 
-        # todo these coords are insanely way too densely packed
-
-        in_mol_inds = torch.arange(mol_n_atoms)  # assume canonical conformer is indexed first
+        mol_num_atoms = len(atoms)
+        in_mol_inds = torch.arange(mol_num_atoms)  # assume canonical conformer is indexed first
         if pare_to_convolution_cluster:
-            # TODO canonical conformer is not indexed first in prebuilt reference cells - shouldn't actually impact morphology but would be nice to clean up
-            molwise_supercell_coords = full_supercell_coords.reshape(n_cells * sym_mult, mol_n_atoms, 3)
+            # NOTE canonical conformer is not always indexed first in prebuilt reference cells - shouldn't actually impact morphology but would be nice to clean up
+            # will only be fixed if we build our own unit cells in dataset construction
+            molwise_supercell_coords = full_supercell_coords.reshape(max_num_cells * sym_mult, mol_num_atoms, 3)
 
             ref_mol_centroid = molwise_supercell_coords[0].mean(0)  # first is always the canonical conformer
             all_mol_centroids = molwise_supercell_coords.mean(1)  # centroids for all molecules in the supercell
 
             mol_centroid_dists = torch.cdist(ref_mol_centroid[None, :], all_mol_centroids, p=2)[0]  # distances between canonical conformer and all other molecules
-            ref_mol_radius = torch.max(torch.cdist(ref_mol_centroid[None, :], full_supercell_coords[in_mol_inds]))  # molecule radius of canonical conformer
 
             '''
             include atoms with molecules within the convolution window
@@ -86,26 +92,26 @@ def unit_cell_to_convolution_cluster(reference_cell_list: list,
             assert len(convolve_mol_inds) > 1  # must be more than one molecule in convolution
 
             '''add final indexing of atoms which are canonical conformer: 0, kept symmetry images: 1, and otherwise tossed'''
-            ref_mol_inds = torch.ones(len(convolve_mol_inds) * mol_n_atoms, dtype=int, device=device)  # only index molecules which will be kept
+            ref_mol_inds = torch.ones(len(convolve_mol_inds) * mol_num_atoms, dtype=int, device=device)  # only index molecules which will be kept
             ref_mol_inds[in_mol_inds] = 0  # 0 is for 'inside', 1 is for 'outside'
 
-            convolve_atom_inds = (torch.arange(mol_n_atoms, device=device)[:, None] + convolve_mol_inds * mol_n_atoms).T.reshape(len(convolve_mol_inds) * mol_n_atoms)  # looks complicated but it's fast
+            convolve_atom_inds = (torch.arange(mol_num_atoms, device=device)[:, None] + convolve_mol_inds * mol_num_atoms).T.reshape(len(convolve_mol_inds) * mol_num_atoms)  # looks complicated but it's fast
 
             supercell_coords_list.append(full_supercell_coords[convolve_atom_inds])  # only the relevant molecules are now kept
             supercell_atoms = atoms.repeat(len(convolve_mol_inds), 1)  # take the number of kept molecules only
         else:  # keep the whole NxNxN supercell
             supercell_coords_list.append(full_supercell_coords)
-            supercell_atoms = atoms.repeat(len(full_supercell_coords) // mol_n_atoms, 1)
+            supercell_atoms = atoms.repeat(len(full_supercell_coords) // mol_num_atoms, 1)
             ref_mol_inds = torch.ones(len(supercell_atoms), dtype=int, device=device)  # only index molecules which will be kept
             ref_mol_inds[in_mol_inds] = 0
-            convolve_mol_inds = torch.arange(1, ref_mol_inds.sum() / mol_n_atoms)  # index every molecule
+            convolve_mol_inds = torch.arange(0, ref_mol_inds.sum() / mol_num_atoms)  # index every molecule
 
         supercell_atoms_list.append(supercell_atoms)
         ref_mol_inds_list.append(ref_mol_inds)
 
         copies.append(len(convolve_mol_inds))
 
-    n_copies = torch.tensor(copies, dtype=torch.int32)  # todo gives wrong behavior if not paring convolution cluster
+    n_copies = torch.tensor(copies, dtype=torch.int32)
 
     return supercell_coords_list, supercell_atoms_list, ref_mol_inds_list, n_copies
 
@@ -195,7 +201,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
     """
     Parameters
     ----------
-    unit_cell_coords: coordinates for the full unit cell. Each list entry [Z, n_atoms, 3]
+    unit_cell_coords: coordinates for the full unit cell. Each list entry [Z, num_atoms, 3]
     sg_ind: space group index
     asym_unit_dict: dict which defines the asymmetric unit for each space group
     T_cf : list of cartesian-to-fractional matrix transforms
@@ -394,14 +400,12 @@ def random_crystaldata_alignment(crystaldata):
 
 def set_sym_ops(supercell_data):
     """
-    enforce known symmetry operations for given space groups
-    sometimes, the samples come with nonstandard space groups, which we do not want to use by accidend
-    consider the general positions in the standard settings
+    return symmetry operators as a list
     @param supercell_data:
     @return:
     """
     sym_ops_list = [torch.tensor(supercell_data.symmetry_operators[n], device=supercell_data.x.device, dtype=supercell_data.x.dtype)
-                    for n in range(len(supercell_data.symmetry_operators))]  # todo refeaturize symmetry_operators as lists
+                    for n in range(len(supercell_data.symmetry_operators))]
 
     return sym_ops_list, supercell_data
 
@@ -537,7 +541,8 @@ def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     return mol_position * torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
 
 
-def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
+def DEPRECATED_write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
+    # todo rewrite or deprecate when we update sampling
     # overwrite point group one-hot
     # overwrite space group one-hot
     # overwrite crystal system one-hot
@@ -546,13 +551,12 @@ def write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_d
     sg_num = list(symmetries_dict['space_groups'].values()).index(override_sg) + 1  # indexing from 0
     sg_ind = symmetries_dict['sg_feature_ind_dict'][symmetries_dict['space_groups'][sg_num]]
     crysys_ind = symmetries_dict['crysys_ind_dict'][symmetries_dict['lattice_type'][sg_num]]
-    z_value_ind = max(list(symmetries_dict['crysys_ind_dict'].values())) + 1  # todo hardcode
+    z_value_ind = max(list(symmetries_dict['crysys_ind_dict'].values())) + 1
 
-    # todo replace datadims call by crystal generation features
     supercell_data.x[:, -dataDims['num crystal generation features']] = 0  # set all crystal features to 0
     supercell_data.x[:, sg_ind] = 1  # set all molecules to the given space group
     supercell_data.x[:, crysys_ind] = 1  # set all molecules to the given crystal system
-    # todo replace sym_ops_list arg by Z value
+
     supercell_data.mult = len(sym_ops_list[0]) * torch.ones_like(supercell_data.mult)
     supercell_data.x[:, z_value_ind] = supercell_data.mult[0] * torch.ones_like(supercell_data.x[:, 0])
     supercell_data.sg_ind = sg_num * torch.ones_like(supercell_data.sg_ind)

@@ -8,8 +8,9 @@ from sklearn.cluster import AgglomerativeClustering
 
 import constants.asymmetric_units
 from common.geometry_calculations import cell_vol_torch
-from common.utils import ase_mol_from_crystaldata, compute_rdf_distance
-from crystal_building.utils import update_crystal_symmetry_elements, write_sg_to_all_crystals
+from common.utils import compute_rdf_distance
+from common.ase_interface import ase_mol_from_crystaldata
+from crystal_building.utils import update_crystal_symmetry_elements, DEPRECATED_write_sg_to_all_crystals
 from models.crystal_rdf import crystal_rdf
 from models.utils import softmax_and_score, undo_1d_bound
 from models.vdw_overlap import vdw_overlap
@@ -492,8 +493,8 @@ def sample_clustering(supercell_builder, config, sampling_dict, collater, extra_
     override_sg_ind = list(supercell_builder.symmetries_dict['space_groups'].values()).index('P-1') + 1
     sym_ops_list = [torch.Tensor(supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(
         big_single_mol_data.x.device) for i in range(big_single_mol_data.num_graphs)]
-    big_single_mol_data = write_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
-                                                   supercell_builder.symmetries_dict, sym_ops_list)
+    big_single_mol_data = DEPRECATED_write_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
+                                                              supercell_builder.symmetries_dict, sym_ops_list)
 
     best_cells, _ = supercell_builder.build_supercells(big_single_mol_data,
                                                           torch.tensor(best_samples_to_build, device='cuda',

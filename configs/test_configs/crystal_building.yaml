@@ -1,34 +1,34 @@
 machine: "local"  # or "cluster"
 device: "cpu"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: regression  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
+mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
-dataset_yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/dataset/full_gan.yaml'
-save_checkpoints: True # will do it always on cluster, only locally if True
+dataset_yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/dataset/full_gan_for_tests.yaml'
+save_checkpoints: False # will do it always on cluster, only locally if True
 
-dataset:  # overrides standard dataset config
+dataset:
   max_dataset_length: 100
 
 # batching & convergence
-grow_batch_size: True
-min_batch_size: 10
-max_batch_size: 10000
+grow_batch_size: False
+min_batch_size: 100
+max_batch_size: 100
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 10 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 1000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
 
 logger:
-  run_name: dev
+  run_name: test
   mini_csp_frequency: 5
   sample_reporting_frequency: 5
   log_figures: True
-  experiment_tag: dev
+  experiment_tag: test
 
 sample_steps: 20 # now for mini csp
 sample_move_size: 0.001 # currently unused
 
-extra_test_set_path: null
+extra_test_set_path: null # not currently working
 extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 seeds:
@@ -40,18 +40,18 @@ discriminator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_
 generator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
 
-discriminator_positional_noise: 0.1
+discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
 
-generate_sgs: ["P21/c"] #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: 'all'  #'["P21/c"] #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
 # for GAN training
 generator:
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
   train_vdw: True
-  train_adversarially: False
+  train_adversarially: True
   vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
   density_loss_func: l1  # 'l1' or 'mse'
   adversarial_loss_func: 'score'  #
@@ -110,7 +110,7 @@ generator:
       atom_type_embedding_dims: 5
 
 discriminator:
-  train_adversarially: False
+  train_adversarially: True
   train_on_randn: True
   train_on_distorted: True
   distortion_magnitude: 0.1 # -1 for wide range test # noise for distorted generation

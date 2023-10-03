@@ -39,7 +39,7 @@ from dataset_management.manager import DataManager
 from dataset_management.modelling_utils import (TrainingDataBuilder, get_dataloaders, update_dataloader_batch_size)
 from reporting.logger import Logger
 
-from common.utils import np_softmax
+from common.utils import softmax_np
 
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
@@ -79,10 +79,6 @@ class Modeller:
         if self.config.generate_sgs == 'all':
             self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-        '''prep workdir'''
-        self.source_directory = os.getcwd()
-        self.prep_new_working_directory()
-
         '''load dataset'''
         data_manager = DataManager(device=self.device,
                                    datasets_path=self.config.dataset_path
@@ -97,9 +93,6 @@ class Modeller:
         self.std_dict = data_manager.standardization_dict
         del data_manager
 
-        self.train_discriminator = (config.mode == 'gan') and any((config.discriminator.train_adversarially, config.discriminator.train_on_distorted, config.discriminator.train_on_randn))
-        self.train_generator = (config.mode == 'gan') and any((config.generator.train_vdw, config.generator.train_adversarially, config.generator.train_h_bond))
-        self.train_regressor = config.mode == 'regression'
 
     def prep_new_working_directory(self):
         """
@@ -132,7 +125,8 @@ class Modeller:
         hopefully does not overlap with any other workdirs
         :return:
         """
-        self.working_directory = self.config.workdir + datetime.today().strftime("%d-%m-%H-%M-%S")
+        self.run_identifier = datetime.today().strftime("%d-%m-%H-%M-%S")
+        self.working_directory = self.config.workdir + self.run_identifier
         os.mkdir(self.working_directory)
 
     def init_models(self):
@@ -413,7 +407,11 @@ class Modeller:
         train and/or evaluate one or more models
         regressor
         GAN (generator and/or discriminator)
-        """  # todo possibly we should have separate methods rather than this combined one
+        """
+        '''prep workdir'''
+        self.source_directory = os.getcwd()
+        self.prep_new_working_directory()
+
         with ((wandb.init(config=self.config,
                           project=self.config.wandb.project_name,
                           entity=self.config.wandb.username,
@@ -423,6 +421,10 @@ class Modeller:
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.config.logger.run_name + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
             # this means we also can't do wandb sweeps properly, as-is
+
+            self.train_discriminator = (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn))
+            self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
+            self.train_regressor = self.config.mode == 'regression'
 
             '''miscellaneous setup'''
             dataset_builder = self.misc_pre_training_items()
@@ -502,7 +504,7 @@ class Modeller:
                         torch.cuda.empty_cache()  # clear GPU --- not clear this does anything
 
                 if self.config.mode == 'gan':  # evaluation on test metrics
-                    self.gan_evaluation(epoch, test_loader, extra_test_loader)
+                    pass #self.gan_evaluation(epoch, test_loader, extra_test_loader)
 
     def run_epoch(self, epoch_type, data_loader=None, update_gradients=True, iteration_override=None):
         self.epoch_type = epoch_type
@@ -596,7 +598,7 @@ class Modeller:
         if (i == 0) and self.config.generator.train_adversarially:
             skip_discriminator_step = True  # do not train except by express permission of the below condition
         if i > 0 and self.config.discriminator.train_adversarially:  # must skip first step since there will be no fake score to compare against
-            avg_generator_score = np_softmax(np.stack(epoch_stats_dict['discriminator_fake_score'])[np.argwhere(np.asarray(epoch_stats_dict['generator_sample_source']) == 0)[:, 0]])[:, 1].mean()
+            avg_generator_score = softmax_np(np.stack(epoch_stats_dict['discriminator_fake_score'])[np.argwhere(np.asarray(epoch_stats_dict['generator_sample_source']) == 0)[:, 0]])[:, 1].mean()
             if avg_generator_score < 0.5:
                 skip_discriminator_step = True
         return skip_discriminator_step
@@ -628,9 +630,6 @@ class Modeller:
 
             if self.config.device.lower() == 'cuda':  # redundant
                 real_supercell_data = real_supercell_data.cuda()
-
-            if self.config.test_mode or self.config.anomaly_detection:
-                assert torch.sum(torch.isnan(real_supercell_data.x)) == 0, "NaN in training input"
 
             score_on_real, real_distances_dict = self.adversarial_score(discriminator, real_supercell_data)
 
@@ -1043,7 +1042,7 @@ class Modeller:
                 print("Saving discriminator checkpoint")
                 self.logger.save_stats_dict(prefix='best_discriminator_')
                 save_checkpoint(epoch, self.discriminator, self.discriminator_optimizer, self.config.discriminator.__dict__,
-                                self.config.checkpoint_dir_path + 'best_discriminator_' + str(self.working_directory))
+                                self.config.checkpoint_dir_path + 'best_discriminator_' + self.run_identifier)
         if self.train_generator:
             model = 'generator'
             loss_record = self.logger.loss_record[model]['mean_test']
@@ -1052,7 +1051,7 @@ class Modeller:
                 print("Saving generator checkpoint")
                 self.logger.save_stats_dict(prefix='best_generator_')
                 save_checkpoint(epoch, self.generator, self.generator_optimizer, self.config.generator.__dict__,
-                                self.config.checkpoint_dir_path + 'best_generator_' + str(self.working_directory))
+                                self.config.checkpoint_dir_path + 'best_generator_' + self.run_identifier)
         if self.train_regressor:
             model = 'regressor'
             loss_record = self.logger.loss_record[model]['mean_test']
@@ -1061,10 +1060,9 @@ class Modeller:
                 print("Saving regressor checkpoint")
                 self.logger.save_stats_dict(prefix='best_regressor_')
                 save_checkpoint(epoch, self.regressor, self.regressor_optimizer, self.config.regressor.__dict__,
-                                self.config.checkpoint_dir_path + 'best_regressor_' + str(self.working_directory))
+                                self.config.checkpoint_dir_path + 'best_regressor_' + self.run_identifier)
 
-
-    def update_lr(self):  # update learning rate
+    def update_lr(self):
         self.discriminator_optimizer, discriminator_lr = set_lr(self.discriminator_schedulers, self.discriminator_optimizer, self.config.discriminator.optimizer.lr_schedule, self.config.discriminator.optimizer.min_lr,
                                                                 self.logger.current_losses['discriminator']['mean_train'], self.discriminator_hit_max_lr)
 
@@ -1091,8 +1089,9 @@ class Modeller:
     def reload_best_test_checkpoint(self, epoch):
         # reload best test
         if epoch != 0:  # if we have trained at all, reload the best model
-            generator_path = f'../models/generator_{self.config.run_num}'
-            discriminator_path = f'../models/discriminator_{self.config.run_num}'
+            generator_path = f'../models/best_generator_{self.run_identifier}'
+            discriminator_path = f'../models/best_discriminator_{self.run_identifier}'
+
             if os.path.exists(generator_path):
                 generator_checkpoint = torch.load(generator_path)
                 if list(generator_checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
@@ -1185,11 +1184,7 @@ class Modeller:
         if (self.config.device.lower() == 'cuda') and (supercell_data.x.device != 'cuda'):
             supercell_data = supercell_data.cuda()
 
-        if self.config.test_mode or self.config.anomaly_detection:
-            assert torch.sum(torch.isnan(supercell_data.x)) == 0, "NaN in training input"
-
         discriminator_score, dist_dict, latent = self.adversarial_score(supercell_data, return_latent=True)
-
 
         if return_latent:
             return discriminator_score, dist_dict, latent

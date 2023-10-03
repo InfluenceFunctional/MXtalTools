@@ -2,7 +2,7 @@ from plotly.colors import n_colors
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import numpy as np
-from common.utils import normalize, earth_movers_distance_np, histogram_overlap_np, compute_rdf_distance_old
+from common.utils import normalize_np, earth_movers_distance_np, histogram_overlap_np
 from models.utils import softmax_and_score, norm_scores
 from scipy.stats import linregress
 
@@ -539,7 +539,7 @@ def distance_vs_score_plot(config, wandb, layout, rdf_full_distance_dict, rdf_in
     fig = make_subplots(rows=1, cols=2)
     full_rdf = np.concatenate([val for val in rdf_full_distance_dict.values()])
     inter_rdf = np.concatenate([val for val in rdf_inter_distance_dict.values()])
-    normed_score = np.concatenate([normalize(scores_dict[key]) for key in scores_dict.keys() if key in blind_test_targets])  # if key in normed_energy_dict.keys()])
+    normed_score = np.concatenate([normalize_np(scores_dict[key]) for key in scores_dict.keys() if key in blind_test_targets])  # if key in normed_energy_dict.keys()])
 
     clip = np.quantile(full_rdf, 0.99) * 2
     full_rdf = np.clip(full_rdf, a_min=0, a_max=clip)
@@ -800,3 +800,22 @@ def groupwise_target_ranking_analysis(config, wandb, layout, group, rankings, li
     #               row=2, col=3)
 
     return None
+
+
+def compute_rdf_distance_old(target_rdf: np.ndarray, sample_rdf: np.ndarray):
+    '''
+    earth mover's distance
+    assuming dimension [sample, element-pair, radius]
+    normed against target rdf (sample is not strictly a PDF in this case)
+    averaged over nnz elements - only works for single type of molecule per call
+    OLD way of doing this
+    '''
+
+    nonzero_element_pairs = np.sum(np.sum(target_rdf, axis=1) > 0)
+    target_CDF = np.cumsum(target_rdf, axis=-1)
+    sample_CDF = np.cumsum(sample_rdf, axis=-1)
+    norm = target_CDF[:, -1]
+    target_CDF = np.nan_to_num(target_CDF / norm[:, None])
+    sample_CDF = np.nan_to_num(sample_CDF / norm[None, :, None])
+    emd = np.sum(np.abs(target_CDF - sample_CDF), axis=(1, 2))
+    return emd / nonzero_element_pairs  # manual normalization elementwise

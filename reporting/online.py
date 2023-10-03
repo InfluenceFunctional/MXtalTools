@@ -8,7 +8,7 @@ from scipy.stats import gaussian_kde, linregress
 import plotly.graph_objects as go
 import plotly.express as px
 
-from crystal_building.utils import write_sg_to_all_crystals
+from crystal_building.utils import DEPRECATED_write_sg_to_all_crystals
 from common.geometry_calculations import cell_vol
 from models.utils import softmax_and_score, norm_scores
 
@@ -388,70 +388,6 @@ def plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layou
     wandb.log({'Discriminator Score Correlates': fig})
 
 
-def sampling_telemetry_plot(config, wandb, sampling_dict):  # todo deprecate or rewrite
-    n_runs = len(sampling_dict['scores'])
-    num_iters = sampling_dict['scores'].shape[1]
-
-    layout = go.Layout(
-        margin=go.layout.Margin(
-            l=0,  # left margin
-            r=0,  # right margin
-            b=0,  # bottom margin
-            t=40,  # top margin
-        )
-    )
-
-    '''
-    full telemetry
-    '''
-    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', n_runs, colortype='rgb')
-    fig = make_subplots(cols=2, rows=1, subplot_titles=['Model Score', 'vdw Score'])
-    for i in range(n_runs):
-        x = np.arange(num_iters)
-        y = sampling_dict['scores'][i]
-        opacity = np.clip(
-            1 - np.abs(np.amax(y) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']), a_min=0.1,
-            a_max=1)
-        fig.add_trace(go.Scattergl(x=x, y=y, opacity=opacity, line_color=colors[i], name=f'score_{i}'),
-                      col=1, row=1)
-        fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][i],
-                                   y=y[sampling_dict['resampled state record'][i]],
-                                   mode='markers', line_color=colors[i], marker=dict(size=10), opacity=1,
-                                   showlegend=False),
-                      col=1, row=1)
-    for i in range(n_runs):
-        y = -sampling_dict['vdw penalties'][i]
-        opacity = np.clip(
-            1 - np.abs(np.amax(y) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']), a_min=0.1,
-            a_max=1)
-        fig.add_trace(go.Scattergl(x=x, y=y, opacity=opacity, line_color=colors[i], name=f'vdw_{i}'),
-                      col=2, row=1)
-        fig.add_trace(go.Scattergl(x=sampling_dict['resampled state record'][i],
-                                   y=y[sampling_dict['resampled state record'][i]],
-                                   mode='markers', line_color=colors[i], marker=dict(size=10), opacity=1,
-                                   showlegend=False),
-                      col=2, row=1)
-    # for i in range(n_samples):
-    #     opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
-    #                       a_min=0.1, a_max=1)
-    #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=sampling_dict['acceptance ratio'][i], opacity=opacity, line_color=colors[i], name=f'run_{i}'),
-    #                   col=1, row=2)
-    # for i in range(n_samples):
-    #     opacity = np.clip(1 - np.abs(np.amax(sampling_dict['scores'][i]) - np.amax(sampling_dict['scores'])) / np.amax(sampling_dict['scores']),
-    #                       a_min=0.1, a_max=1)
-    #     fig.add_trace(go.Scattergl(x=np.arange(num_iters), y=np.log10(sampling_dict['step size'][i]), opacity=opacity, line_color=colors[i], name=f'run_{i}'),
-    #                   col=2, row=2)
-    fig.update_layout(showlegend=True)
-    # fig.update_yaxes(range=[0, 1], row=1, col=2)
-    fig.layout.margin = layout.margin
-    # #fig.write_image('../paper1_figs_new_architecture/sampling_telemetry.png')
-    # wandb.log({'Sampling Telemetry': fig})
-    if config.machine == 'local':
-        import plotly.io as pio
-        pio.renderers.default = 'browser'
-        fig.show()
-
-
 def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict, size_normed_score=False):
     blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
         'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
@@ -498,7 +434,7 @@ def new_process_discriminator_evaluation_data(dataDims, wandb, extra_test_dict, 
     record all the stats for the CSD data
     '''
     scores_dict = {}
-    vdw_penalty_dict = {}  # todo harmonize 'penalties' and 'scores' (negatives)
+    vdw_penalty_dict = {}
     tracking_features_dict = {}
     # nf_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 0)
     randn_inds = np.where(test_epoch_stats_dict['generator_sample_source'] == 1)[0]

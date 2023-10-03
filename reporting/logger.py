@@ -1,4 +1,3 @@
-# TODO finish
 import numpy as np
 
 from common.utils import update_stats_dict

@@ -8,7 +8,7 @@ from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 from crystal_building.utils import \
     (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
-     batch_asymmetric_unit_pose_analysis_torch, write_sg_to_all_crystals)
+     batch_asymmetric_unit_pose_analysis_torch, DEPRECATED_write_sg_to_all_crystals)
 from common.geometry_calculations import batch_molecule_principal_axes_torch, compute_Ip_handedness
 
 '''
@@ -198,7 +198,7 @@ class mcmcSampler:
         '''
         override_sg_ind = list(self.supercell_builder.symmetries_dict['space_groups'].values()).index(self.sg_to_search) + 1
         sym_ops_list = [torch.Tensor(self.supercell_builder.symmetries_dict['sym_ops'][override_sg_ind]).to(crystaldata.x.device) for i in range(crystaldata.num_graphs)]
-        crystaldata = write_sg_to_all_crystals(self.sg_to_search, self.supercell_builder.dataDims, crystaldata, self.supercell_builder.symmetries_dict, sym_ops_list)
+        crystaldata = DEPRECATED_write_sg_to_all_crystals(self.sg_to_search, self.supercell_builder.dataDims, crystaldata, self.supercell_builder.symmetries_dict, sym_ops_list)
 
         score_model = score_model.cuda()
         crystaldata = crystaldata.cuda()

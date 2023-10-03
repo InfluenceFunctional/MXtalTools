@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from common.utils import standardize
+from common.utils import standardize_np
 from dataset_management.CrystalData import CrystalData
 from torch_geometric.loader import DataLoader
 import tqdm
@@ -67,7 +67,7 @@ class TrainingDataBuilder:
         '''
         prep for modelling
         '''
-        self.datapoints = self.generate_training_datapoints(dataset)  # todo consider namespace args
+        self.datapoints = self.generate_training_datapoints(dataset)
 
         if config.single_molecule_dataset_identifier is not None:  # make dataset a bunch of the same molecule
             identifiers = [item.csd_identifier for item in self.datapoints]
@@ -274,7 +274,7 @@ class TrainingDataBuilder:
                 elif feature_vector.dtype == bool:
                     pass
                 else:
-                    feature_vector = standardize(feature_vector, known_mean=self.std_dict[key][0], known_std=self.std_dict[key][1])
+                    feature_vector = standardize_np(feature_vector, known_mean=self.std_dict[key][0], known_std=self.std_dict[key][1])
 
                 assert np.sum(np.isnan(feature_vector)) == 0
                 atom_features_list[i][:, column_ind] = feature_vector
@@ -300,7 +300,7 @@ class TrainingDataBuilder:
             if feature_vector.dtype == bool:
                 pass
             else:
-                feature_vector = standardize(feature_vector, known_mean=self.std_dict[key][0], known_std=self.std_dict[key][1])
+                feature_vector = standardize_np(feature_vector, known_mean=self.std_dict[key][0], known_std=self.std_dict[key][1])
 
             molecule_feature_array[:, column_ind] = feature_vector
 
@@ -499,20 +499,3 @@ def update_dataloader_batch_size(loader, new_batch_size):
 #     return extra_test_loader
 #
 #
-# def load_test_dataset(test_dataset_path: str): # todo rewrite
-#     """
-#     load dataset & useful info for test modules
-#     testing dataset generated in BuildDataset with flag build_dataset_for_tests
-#     """
-#     '''load dataset'''
-#     test_dataset = torch.load(test_dataset_path)
-#
-#     '''retrieve dataset statistics'''
-#     dataDims = torch.load(test_dataset_path + '_dataDims')
-#
-#     '''load symmetry info'''
-#     sym_info = np.load(r'C:\Users\mikem\OneDrive\NYU\CSD\MCryGAN\symmetry_info.npy', allow_pickle=True).item()
-#     symmetry_info = {'sym_ops': sym_info['sym_ops'], 'point_groups': sym_info['point_groups'],
-#                      'lattice_type': sym_info['lattice_type'], 'space_groups': sym_info['space_groups']}
-#
-#     return test_dataset, dataDims, symmetry_info

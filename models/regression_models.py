@@ -8,7 +8,7 @@ class molecule_regressor(nn.Module):
         wrapper for molecule model, with appropriate I/O
         """
         super(molecule_regressor, self).__init__()
-        self.model = molecule_graph_model(  # todo might be a better way to pass these via **kwargs or something
+        self.model = molecule_graph_model(
             num_atom_feats=dataDims['num_atom_features'],
             num_mol_feats=dataDims['num_molecule_features'],
             output_dimension=1,

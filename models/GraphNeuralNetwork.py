@@ -213,7 +213,7 @@ class GCBlock(torch.nn.Module):
         # generate edge embeddings
         edge_attr = self.norm2(self.compute_edge_attributes(rbf), batch[edge_index[0]])
 
-        # convolve # todo only update nodes which will actually pass messages on this round
+        # convolve
         x = self.GConv(x, edge_index, edge_attr)
 
         # reshape to node-wise

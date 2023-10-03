@@ -3,7 +3,7 @@ from crystal_building.utils import \
     (update_supercell_data, unit_cell_to_convolution_cluster,
      align_crystaldata_to_principal_axes,
      batch_asymmetric_unit_pose_analysis_torch, set_sym_ops,
-     rotvec2rotmat, build_unit_cell)
+     rotvec2rotmat, build_unit_cell, generate_sorted_fractional_translations)
 from common.geometry_calculations import compute_fractional_transform_torch, sph2rotvec
 from constants.asymmetric_units import asym_unit_dict
 
@@ -24,18 +24,7 @@ class SupercellBuilder:
         for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 
-        # initialize fractional translations for supercell construction
-        n_cells = (2 * supercell_size + 1) ** 3
-        fractional_translations = torch.zeros((n_cells, 3))  # initialize the translations in fractional coords
-        i = 0
-        for xx in range(-supercell_size, supercell_size + 1):
-            for yy in range(-supercell_size, supercell_size + 1):
-                for zz in range(-supercell_size, supercell_size + 1):
-                    fractional_translations[i] = torch.tensor((xx, yy, zz))
-                    i += 1
-
-        # sort fractional vectors from closest to furthest from central unit cell
-        self.sorted_fractional_translations = fractional_translations[torch.argsort(fractional_translations.abs().sum(1))].to(device)
+        self.sorted_fractional_translations = generate_sorted_fractional_translations(supercell_size).to(device)
 
     def build_supercells(self,
                          molecule_data,

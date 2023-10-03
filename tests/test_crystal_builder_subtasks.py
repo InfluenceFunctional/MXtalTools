@@ -1,33 +1,31 @@
-import pytest
-from crystal_building.builder import SupercellBuilder
+from common.config_processing import get_config
+from crystal_modeller import Modeller
 from crystal_building.utils import (rotvec2rotmat, build_unit_cell, scale_asymmetric_unit,
                                     align_crystaldata_to_principal_axes, batch_asymmetric_unit_pose_analysis_torch)
-from old_dataset_management.utils import load_test_dataset
 from scipy.spatial.transform import Rotation
 from common.geometry_calculations import sph2rotvec, rotvec2sph, batch_molecule_principal_axes_torch
-from models.crystal_rdf import crystal_rdf
 import numpy as np
 import torch
 
 '''
 run tests on subtasks of the supercell builder
 '''
-
 '''load test dataset'''
-test_dataset_path = r'C:\Users\mikem\OneDrive\NYU\CSD\MCryGAN\tests/dataset_for_tests'
-test_crystals, dataDims, symmetry_info = load_test_dataset(test_dataset_path)
+config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/crystal_building.yaml'
+user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
+config = get_config(user_yaml_path=user_path, main_yaml_path=config_path)
+modeller = Modeller(config)
+dataset_builder = modeller.misc_pre_training_items()
+_, data_loader, _ = modeller.prep_dataloaders(dataset_builder, test_fraction=1)
+supercell_builder = modeller.supercell_builder
+test_crystals = next(iter(data_loader))
+
 supercell_size = 5
-
-'''initialize supercell builder'''
-supercell_builder = SupercellBuilder(symmetry_info, dataDims, supercell_size=supercell_size, device='cpu', rotation_basis='cartesian')
+rotation_basis = 'spherical'
 
 
-class Group:
-    def __init__(self):
-        self.aa = 0
-        return None
-
-    def rotvec2rotmat(self):
+class TestClass:
+    def test_rotvec2rotmat(self):
         """
         confirm transformation from rotvec to rotation matrix in cartesian and spherical bases
         """
@@ -52,7 +50,7 @@ class Group:
         return None
 
     # todo doesn't currently work - have to set the pos argument as the canonical conformer which is not necessarily true
-    def test_build_unit_cell(self):
+    def WIP_build_unit_cell(self):
         test_unit_cells = \
             build_unit_cell(test_crystals.mult.clone(),
                             [test_crystals.pos[test_crystals.batch == ii] for ii in range(test_crystals.num_graphs)],
@@ -66,7 +64,7 @@ class Group:
         return None
 
     # todo define an assertion - right now the function itself is the best check unless we do it manually for each SG
-    def test_scale_asymmetric_unit(self):
+    def WIP_scale_asymmetric_unit(self):
         space_groups = torch.tensor(np.asarray(list(supercell_builder.asym_unit_dict.keys())).astype(int))
         centroid_coords = torch.Tensor(np.random.uniform(0, 1, size=(len(space_groups), 3)))
         scaled_centroids = scale_asymmetric_unit(supercell_builder.asym_unit_dict, mol_position=centroid_coords, sg_inds=space_groups)
@@ -92,7 +90,7 @@ class Group:
         return None
 
     # todo this is redundant, as this same function is used to define these parameters in dataset construction
-    def test_batch_asymmetric_unit_pose_analysis(self):
+    def WIP_batch_asymmetric_unit_pose_analysis(self):
         positions, orientations, handedness, well_defined_asym_unit, canonical_conformer_coords = (
             batch_asymmetric_unit_pose_analysis_torch(
                 unit_cell_coords_list=[torch.Tensor(test_crystals.ref_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
@@ -110,11 +108,3 @@ class Group:
         assert (handedness - test_crystals.asym_unit_handedness).abs().mean() < 1e-4
 
         return None
-
-
-group = Group()
-group.rotvec2rotmat()
-# group.test_build_unit_cell()
-# group.test_scale_asymmetric_unit()
-# group.test_align_crystaldata_to_principal_axes()
-# group.test_batch_asymmetric_unit_pose_analysis()

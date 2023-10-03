@@ -2,7 +2,6 @@ import sys
 
 import numpy as np
 import torch
-from scipy.spatial.transform import Rotation
 from torch_scatter import scatter
 
 
@@ -125,13 +124,13 @@ def batch_molecule_principal_axes_torch(coords_list: list):
     Iyz = -scatter(all_coords[:, 1] * all_coords[:, 2], batch)
     Ixz = -scatter(all_coords[:, 0] * all_coords[:, 2], batch)
 
-    I = torch.cat( # todo .T will be deprecated - switch to permute (-1,-2)
-        (torch.vstack((scatter(all_coords[:, 1] ** 2 + all_coords[:, 2] ** 2, batch), Ixy, Ixz))[:, None, :].T,
-         torch.vstack((Ixy, scatter(all_coords[:, 0] ** 2 + all_coords[:, 2] ** 2, batch), Iyz))[:, None, :].T,
-         torch.vstack((Ixz, Iyz, scatter(all_coords[:, 0] ** 2 + all_coords[:, 1] ** 2, batch)))[:, None, :].T
+    inertial_tensor = torch.cat(
+        (torch.vstack((scatter(all_coords[:, 1] ** 2 + all_coords[:, 2] ** 2, batch), Ixy, Ixz))[:, None, :].permute(2, 1, 0),
+         torch.vstack((Ixy, scatter(all_coords[:, 0] ** 2 + all_coords[:, 2] ** 2, batch), Iyz))[:, None, :].permute(2, 1, 0),
+         torch.vstack((Ixz, Iyz, scatter(all_coords[:, 0] ** 2 + all_coords[:, 1] ** 2, batch)))[:, None, :].permute(2, 1, 0)
          ), dim=-2)  # inertial tensor
 
-    Ipm, Ip = torch.linalg.eig(I)  # principal inertial tensor
+    Ipm, Ip = torch.linalg.eig(inertial_tensor)  # principal inertial tensor
     Ipm, Ip = torch.real(Ipm), torch.real(Ip)
     sort_inds = torch.argsort(Ipm, dim=1)
     Ipm = torch.stack([Ipm[i, sort_inds[i]] for i in range(len(sort_inds))])
@@ -156,7 +155,7 @@ def batch_molecule_principal_axes_torch(coords_list: list):
 
         Ip_fin[ii] = Ip_i
 
-    return Ip_fin, Ipm, I
+    return Ip_fin, Ipm, inertial_tensor
 
 
 def coor_trans_matrix_torch(opt: str, v: torch.tensor, a: torch.tensor, return_vol: bool = False):
@@ -182,7 +181,7 @@ def coor_trans_matrix_torch(opt: str, v: torch.tensor, a: torch.tensor, return_v
         m[1, 1] = 1.0 / v[1] / sin_a[2]
         m[1, 2] = v[0] * v[2] * (cos_a[1] * cos_a[2] - cos_a[0]) / vol / sin_a[2]
         m[2, 2] = v[0] * v[1] * sin_a[2] / vol
-    elif (opt == 'f_to_c'):
+    elif opt == 'f_to_c':
         ''' Converting from fractional to cartesian '''
         m[0, 0] = v[0]
         m[0, 1] = v[1] * cos_a[2]
