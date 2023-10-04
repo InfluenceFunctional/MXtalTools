@@ -1,29 +1,26 @@
-machine: "local"  # or "cluster"
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
+mode: regression  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
-dataset_yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/dataset/full_gan.yaml'
+dataset_yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/dataset/full_regression.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
-
-dataset:  # overrides standard dataset config
-  max_dataset_length: 1000
 
 # batching & convergence
 grow_batch_size: True
 min_batch_size: 10
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 40 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
 
 logger:
-  run_name: dev
+  run_name: standard_regressor
   mini_csp_frequency: 5
   sample_reporting_frequency: 5
   log_figures: True
-  experiment_tag: dev
+  experiment_tag: benchmarks
 
 sample_steps: 20 # now for mini csp
 
@@ -43,13 +40,13 @@ discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
 
-generate_sgs: ["P21/c"] #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: null #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
 # for GAN training
 generator:
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
-  train_vdw: False
+  train_vdw: True
   train_adversarially: False
   vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
   density_loss_func: l1  # 'l1' or 'mse'
@@ -71,42 +68,7 @@ generator:
     lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.99
 
-  model:
-    num_fc_layers: 4
-    fc_depth: 512
-    activation: 'gelu'
-    fc_dropout_probability: 0.5
-    fc_norm_mode: layer
-    conditioning_mode: 'first_layer' # 'first_layer' only for now
-
-    prior: multivariate normal
-    prior_dimension: 12  # NOTE this must be 12
-    radial_norm_factor: 5
-
-    conditioner:
-      graph_convolution_type: TransformerConv
-      graph_aggregator: combo
-      concat_mol_to_atom_features: False
-      activation: gelu
-      num_fc_layers: 4
-      fc_depth: 512
-      fc_norm_mode: layer
-      fc_dropout_probability: 0.5
-      graph_node_norm: 'graph layer'
-      graph_node_dropout: 0.5
-      graph_message_norm: null
-      graph_message_dropout: 0.2
-      num_attention_heads: 4
-      graph_message_depth: 64
-      graph_node_dims: 512
-      num_graph_convolutions: 2
-      graph_embedding_depth: 512
-      nodewise_fc_layers: 2
-      num_radial: 50
-      radial_function: gaussian
-      max_num_neighbors: 100
-      convolution_cutoff: 6
-      atom_type_embedding_dims: 5
+  model: null
 
 discriminator:
   train_adversarially: False
@@ -129,31 +91,7 @@ discriminator:
     lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.99
 
-  model:
-    graph_convolution_type: TransformerConv
-    graph_aggregator:  combo
-    concat_mol_to_atom_features: True
-    activation: gelu
-    num_fc_layers: 2
-    fc_depth: 128
-    fc_norm_mode: 'layer'
-    fc_dropout_probability: 0.5
-    graph_node_norm: 'graph layer'
-    graph_node_dropout: 0.5
-    graph_message_norm: null
-    graph_message_dropout: 0.5
-    num_attention_heads: 4
-    graph_message_depth: 128
-    graph_node_dims: 256
-    num_graph_convolutions: 4
-    graph_embedding_depth: 256
-    nodewise_fc_layers: 1
-    num_radial: 12
-    radial_function: bessel
-    max_num_neighbors: 100
-    convolution_cutoff: 6
-    atom_type_embedding_dims: 5
-    periodic_convolution_type: 'all_layers'  # or 'last_layer'
+  model: null
 
 regressor:
   optimizer:
@@ -176,12 +114,12 @@ regressor:
     activation: gelu
     num_fc_layers: 4
     fc_depth: 128
-    fc_norm_mode: null
+    fc_norm_mode: layer
     fc_dropout_probability: 0
-    graph_node_norm: null
-    graph_node_dropout: 0
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0.5
     graph_message_norm: null
-    graph_message_dropout: 0
+    graph_message_dropout: 0.5
     num_attention_heads: 4
     graph_message_depth: 128
     graph_node_dims: 256

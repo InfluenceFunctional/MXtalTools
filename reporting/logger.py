@@ -134,11 +134,11 @@ class Logger:
             for key2 in self.current_losses[key].keys():
                 if isinstance(self.current_losses[key][key2], np.ndarray) and (len(self.current_losses[key][key2] > 0)):  # log 'best' metrics
                     if 'train' in key2:
-                        ttype = 'Train'
+                        ttype = 'train'
                     elif 'test' in key2:
-                        ttype = 'Test'
+                        ttype = 'test'
                     elif 'extra' in key2:
-                        ttype = 'Extra'
+                        ttype = 'extra'
 
                     metrics_to_log[key + '_' + ttype + '_loss'] = np.average(self.current_losses[key][key2])
 

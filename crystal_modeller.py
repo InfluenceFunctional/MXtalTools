@@ -50,6 +50,7 @@ class Modeller:
     """
     main class which handles everything
     """
+
     def __init__(self, config):
         """
         initialize config, physical constants, SGs to be generated
@@ -92,7 +93,6 @@ class Modeller:
         self.prepped_dataset = data_manager.dataset
         self.std_dict = data_manager.standardization_dict
         del data_manager
-
 
     def prep_new_working_directory(self):
         """
@@ -441,7 +441,7 @@ class Modeller:
             self.discriminator_hit_max_lr, self.generator_hit_max_lr, self.regressor_hit_max_lr, converged, epoch = \
                 (False, False, False, self.config.max_epochs == 0, 0)
 
-            # training loop
+            # etraining loop
             with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
                 while (epoch < self.config.max_epochs) and not converged:
                     print("⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅")
@@ -504,7 +504,7 @@ class Modeller:
                         torch.cuda.empty_cache()  # clear GPU --- not clear this does anything
 
                 if self.config.mode == 'gan':  # evaluation on test metrics
-                    pass #self.gan_evaluation(epoch, test_loader, extra_test_loader)
+                    self.gan_evaluation(epoch, test_loader, extra_test_loader)
 
     def run_epoch(self, epoch_type, data_loader=None, update_gradients=True, iteration_override=None):
         self.epoch_type = epoch_type
@@ -602,60 +602,6 @@ class Modeller:
             if avg_generator_score < 0.5:
                 skip_discriminator_step = True
         return skip_discriminator_step
-
-    def discriminator_evaluation(self, data_loader=None, discriminator=None, iteration_override=None):
-        """
-        see what the discriminator things of a certain dataset
-        inference and reporting
-        """
-        t0 = time.time()
-        discriminator.eval()
-
-        epoch_stats_dict = {  # todo replace with logger
-            'tracking_features': [],
-            'identifiers': [],
-            'scores': [],
-            'intermolecular rdf': [],
-            'atomistic energy': [],
-            'full rdf': [],
-            'vdw penalty': [],
-        }
-
-        for i, data in enumerate(tqdm.tqdm(data_loader)):
-            '''
-            evaluate discriminator
-            '''
-            real_supercell_data = \
-                self.supercell_builder.prebuilt_unit_cell_to_supercell(data, self.config.supercell_size, self.config.discriminator.model.convolution_cutoff)
-
-            if self.config.device.lower() == 'cuda':  # redundant
-                real_supercell_data = real_supercell_data.cuda()
-
-            score_on_real, real_distances_dict = self.adversarial_score(discriminator, real_supercell_data)
-
-            epoch_stats_dict['tracking_features'].extend(data.tracking.cpu().detach().numpy())
-            epoch_stats_dict['identifiers'].extend(data.csd_identifier)  #
-            epoch_stats_dict['scores'].extend(score_on_real.cpu().detach().numpy())
-
-            epoch_stats_dict['vdw penalty'].extend(
-                -vdw_overlap(self.vdw_radii,
-                             crystaldata=real_supercell_data,
-                             return_score_only=True
-                             ).cpu().detach().numpy())
-
-            if iteration_override is not None:
-                if i >= iteration_override:
-                    break  # stop training early - for debugging purposes
-
-        epoch_stats_dict['scores'] = np.stack(epoch_stats_dict['scores'])
-        epoch_stats_dict['tracking_features'] = np.stack(epoch_stats_dict['tracking_features'])
-        # epoch_stats_dict['full rdf'] = np.stack(epoch_stats_dict['full rdf'])
-        # epoch_stats_dict['intermolecular rdf'] = np.stack(epoch_stats_dict['intermolecular rdf'])
-        epoch_stats_dict['vdw penalty'] = np.asarray(epoch_stats_dict['vdw penalty'])
-
-        total_time = time.time() - t0
-
-        return epoch_stats_dict, total_time
 
     def adversarial_score(self, data, return_latent=False):
         """
@@ -1111,6 +1057,7 @@ class Modeller:
         run post-training evaluation
         """
         self.reload_best_test_checkpoint(epoch)
+        self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
 
         # rerun test inference
         self.generator.eval()
@@ -1298,6 +1245,7 @@ class Modeller:
             self.config.regressor = Namespace(**regressor_checkpoint['config'])  # overwrite the settings for the model
 
         return self.config
+
     #
     # def batch_csp(self, data_loader):
     #     print('Starting Mini CSP')

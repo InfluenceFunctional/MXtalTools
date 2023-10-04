@@ -1,14 +1,12 @@
 import numpy as np
-import torch
 import wandb
 from _plotly_utils.colors import n_colors, sample_colorscale
-from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.stats import gaussian_kde, linregress
 import plotly.graph_objects as go
 import plotly.express as px
+import pandas as pd
 
-from crystal_building.utils import DEPRECATED_write_sg_to_all_crystals
 from common.geometry_calculations import cell_vol
 from models.utils import softmax_and_score, norm_scores
 
@@ -58,7 +56,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, test_epoch_stats
         fig_dict['1D_overlaps'] = fig
 
         # 1d Histograms
-        fig = make_subplots(rows=4,cols=3,subplot_titles=dataDims['lattice_features'])
+        fig = make_subplots(rows=4, cols=3, subplot_titles=dataDims['lattice_features'])
         for i in range(n_crystal_features):
             row = i // 3 + 1
             col = i % 3 + 1
@@ -188,13 +186,19 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
 
     all_vdws = np.concatenate((vdw_penalty_dict['CSD'], vdw_penalty_dict['Gaussian'], vdw_penalty_dict['Distorted'],
                                vdw_penalty_dict['Generator']))
-    all_scores_i = np.concatenate(
+    all_scores = np.concatenate(
         (scores_dict['CSD'], scores_dict['Gaussian'], scores_dict['Distorted'], scores_dict['Generator']))
 
-    scores_range = np.ptp(all_scores_i)
+    sample_source = np.concatenate([
+        ['CSD' for _ in range(len(scores_dict['CSD']))],
+        ['Gaussian' for _ in range(len(scores_dict['Gaussian']))],
+        ['Distorted' for _ in range(len(scores_dict['Distorted']))],
+        ['Generator' for _ in range(len(scores_dict['Generator']))],
+    ])
+    scores_range = np.ptp(all_scores)
     bandwidth1 = scores_range / 200
 
-    vdw_cutoff = np.quantile(all_vdws, 0.975)
+    vdw_cutoff = min(np.quantile(all_vdws, 0.975), 3)
     bandwidth2 = vdw_cutoff / 200
     viridis = px.colors.sequential.Viridis
 
@@ -220,7 +224,7 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
 
-    fig.add_trace(go.Histogram2d(x=all_scores_i,
+    fig.add_trace(go.Histogram2d(x=all_scores,
                                  y=-np.minimum(all_vdws, vdw_cutoff),
                                  showscale=False,
                                  nbinsy=50, nbinsx=200,
@@ -275,7 +279,7 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
 
-    fig.add_trace(go.Histogram2d(x=all_scores_i,
+    fig.add_trace(go.Histogram2d(x=all_scores,
                                  y=np.clip(all_coeffs, a_min=0, a_max=1),
                                  showscale=False,
                                  nbinsy=50, nbinsx=200,
@@ -303,27 +307,25 @@ def discriminator_scores_plot(wandb, scores_dict, vdw_penalty_dict, packing_coef
     wandb.log({'Discriminator vs packing coefficient': fig})
 
     '''
-    All in one
+    # All in one
     '''
-    fig = go.Figure()
-    fig.add_trace(go.Scattergl(
-        x=-np.minimum(vdw_cutoff, all_vdws),
-        y=np.clip(all_coeffs, a_min=0, a_max=1),
-        mode='markers',
-        marker=dict(color=all_scores_i, opacity=1,
-                    colorbar=dict(title="Score"),
-                    colorscale="inferno", size=5
-                    )
-    ))
+    scatter_dict = {'vdw_score': -all_vdws.clip(max=vdw_cutoff), 'model_score': all_scores, 'packing_coefficient': all_coeffs.clip(min=0,max=1), 'sample_source': sample_source}
+    df = pd.DataFrame.from_dict(scatter_dict)
+    fig = px.scatter(df,
+                     x='vdw_score', y='packing_coefficient',
+                     color='model_score', symbol='sample_source',
+                     marginal_x='histogram', marginal_y='histogram'
+                     )
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_range=[-vdw_cutoff, 0], yaxis_range=[0, 1])
+    fig.update_layout(xaxis_range=[-vdw_cutoff, 0.1], yaxis_range=[0, 1.1])
     fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
+    fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
     wandb.log({'Discriminator Scores Analysis': fig})
 
     return None
 
 
-def plot_generator_loss_correlates(config, dataDims, wandb, epoch_stats_dict, generator_losses, layout):
+def plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout):
     correlates_dict = {}
     generator_losses['all'] = np.vstack([generator_losses[key] for key in generator_losses.keys()]).T.sum(1)
     loss_labels = list(generator_losses.keys())
@@ -331,7 +333,7 @@ def plot_generator_loss_correlates(config, dataDims, wandb, epoch_stats_dict, ge
     tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
 
     for i in range(dataDims['num_tracking_features']):  # not that interesting
-        if (np.average(tracking_features[:, i] != 0) > 0.05):
+        if np.average(tracking_features[:, i] != 0) > 0.05:
             corr_dict = {
                 loss_label: np.corrcoef(generator_losses[loss_label], tracking_features[:, i], rowvar=False)[0, 1]
                 for loss_label in loss_labels}
@@ -1185,7 +1187,7 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     wandb.log(average_losses_dict)
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
-    plot_generator_loss_correlates(config, dataDims, wandb, epoch_stats_dict, generator_losses, layout)
+    plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
 
     return None
 
@@ -1311,12 +1313,12 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
 
 
 def discriminator_analysis(config, dataDims, epoch_stats_dict):
-    '''
+    """
     do analysis and plotting for cell discriminator
 
     -: scores distribution and vdw penalty by sample source
     -: loss correlates
-    '''
+    """
     layout = plotly_setup(config)
 
     scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict \
