@@ -80,42 +80,6 @@ class Modeller:
         if self.config.generate_sgs == 'all':
             self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
 
-        '''load dataset'''
-        data_manager = DataManager(device=self.device,
-                                   datasets_path=self.config.dataset_path
-                                   )
-        data_manager.load_dataset_for_modelling(
-            dataset_name=self.config.dataset_name,
-            misc_dataset_name=self.config.misc_dataset_name,
-            filter_conditions=self.config.dataset.filter_conditions,
-            filter_polymorphs=self.config.dataset.filter_polymorphs,
-            filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules
-        )
-        self.prepped_dataset = data_manager.dataset
-        self.std_dict = data_manager.standardization_dict
-        del data_manager
-
-        if self.config.extra_test_set_name is not None:
-            blind_test_conditions = [['crystal_z_prime', 'in', [1]],  # very permissive
-                                     ['crystal_z_value', 'range', [1, 32]],
-                                     ['atom_atomic_numbers', 'range', [1, 100]]]
-
-            # omit blind test 5 & 6 targets
-            data_manager = DataManager(device=self.device,
-                                       datasets_path=self.config.dataset_path
-                                       )
-            data_manager.load_dataset_for_modelling(  # todo move this into training & combine with builder
-                dataset_name=self.config.extra_test_set_name,
-                misc_dataset_name=self.config.misc_dataset_name,
-                filter_conditions=blind_test_conditions,  # standard filtration conditions
-                filter_polymorphs=False,  # do not filter duplicates - e.g., in Blind test they're almost all duplicates!
-                filter_duplicate_molecules=False,
-            )
-            self.extra_dataset = data_manager.dataset
-            del data_manager
-        else:
-            self.extra_dataset = None
-
     def prep_new_working_directory(self):
         """
         make a workdir
@@ -200,6 +164,78 @@ class Modeller:
         wandb.watch((self.generator, self.discriminator, self.regressor), log_graph=True, log_freq=100)
         wandb.log({"Model Num Parameters": np.sum(np.asarray(num_params)),
                    "Initial Batch Size": self.config.current_batch_size})
+
+    def load_dataset_and_dataloaders(self, override_test_fraction = None):
+        """
+        use data manager to load and filter dataset
+        use dataset builder to generate crystaldata objects
+        return dataloaders
+        """
+
+        """load and filter dataset"""
+        data_manager = DataManager(device=self.device,
+                                   datasets_path=self.config.dataset_path
+                                   )
+        data_manager.load_dataset_for_modelling(
+            dataset_name=self.config.dataset_name,
+            misc_dataset_name=self.config.misc_dataset_name,
+            filter_conditions=self.config.dataset.filter_conditions,
+            filter_polymorphs=self.config.dataset.filter_polymorphs,
+            filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules
+        )
+        prepped_dataset = data_manager.dataset
+        self.std_dict = data_manager.standardization_dict
+        del data_manager
+
+        if self.config.extra_test_set_name is not None:
+            blind_test_conditions = [['crystal_z_prime', 'in', [1]],  # very permissive
+                                     ['crystal_z_value', 'range', [1, 32]],
+                                     ['atom_atomic_numbers', 'range', [1, 100]]]
+
+            # omit blind test 5 & 6 targets
+            data_manager = DataManager(device=self.device,
+                                       datasets_path=self.config.dataset_path
+                                       )
+            data_manager.load_dataset_for_modelling(  # todo move this into training & combine with builder
+                dataset_name=self.config.extra_test_set_name,
+                misc_dataset_name=self.config.misc_dataset_name,
+                filter_conditions=blind_test_conditions,  # standard filtration conditions
+                filter_polymorphs=False,  # do not filter duplicates - e.g., in Blind test they're almost all duplicates!
+                filter_duplicate_molecules=False,
+            )
+            extra_dataset = data_manager.dataset
+            del data_manager
+        else:
+            extra_dataset = None
+
+        """generate crystaldata points"""
+        dataset_builder = TrainingDataBuilder(self.config.dataset,
+                                              preloaded_dataset=prepped_dataset,
+                                              data_std_dict=self.std_dict,
+                                              override_length=self.config.dataset.max_dataset_length)
+
+        self.dataDims = dataset_builder.dataDims
+        del prepped_dataset  # we don't actually want this huge thing floating around
+
+        if extra_dataset is not None:
+            extra_dataset_builder = TrainingDataBuilder(
+                self.config.dataset,
+                preloaded_dataset=extra_dataset,
+                data_std_dict=self.std_dict,
+                override_length=int(1e6))  # if we cut off elements, we may miss the experimental samples
+
+            # todo optionally load targets as a separate dataset and combine them here
+            del extra_dataset  # we don't actually want this huge thing floating around
+        else:
+            extra_dataset_builder = None
+
+        """return dataloaders"""
+        if override_test_fraction is not None:
+            test_fraction = override_test_fraction
+        else:
+            test_fraction = self.config.dataset.test_fraction
+
+        return self.prep_dataloaders(dataset_builder, extra_dataset_builder, test_fraction)
 
     def prep_dataloaders(self, dataset_builder, extra_dataset_builder=None, test_fraction=0.2, override_batch_size: int = None):
         """
@@ -447,13 +483,13 @@ class Modeller:
             self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
             self.train_regressor = self.config.mode == 'regression'
 
-            '''miscellaneous setup'''
-            dataset_builder, extra_dataset_builder = self.misc_pre_training_items()
-            self.logger = Logger(self.config, self.dataDims, wandb)
-
             '''prep dataloaders'''
             train_loader, test_loader, extra_test_loader = \
-                self.prep_dataloaders(dataset_builder, extra_dataset_builder=extra_dataset_builder, test_fraction=self.config.dataset.test_fraction)
+                self.load_dataset_and_dataloaders()
+
+            '''miscellaneous setup'''
+            self.misc_pre_training_items()
+            self.logger = Logger(self.config, self.dataDims, wandb)
 
             '''instantiate models'''
             self.init_models()
@@ -866,26 +902,6 @@ class Modeller:
         multivariate gaussian generator
         """
 
-        dataset_builder = TrainingDataBuilder(self.config.dataset,
-                                              preloaded_dataset=self.prepped_dataset,
-                                              data_std_dict=self.std_dict,
-                                              override_length=self.config.dataset.max_dataset_length)
-
-        self.dataDims = dataset_builder.dataDims
-        del self.prepped_dataset  # we don't actually want this huge thing floating around
-
-        if self.extra_dataset is not None:
-            extra_dataset_builder = TrainingDataBuilder(
-                self.config.dataset,
-                preloaded_dataset=self.extra_dataset,
-                data_std_dict=self.std_dict,
-                override_length=int(1e6))  # if we cut off elements, we may miss the experimental samples
-            # todo optionally load targets as a separate dataset and combine them here
-
-            del self.extra_dataset  # we don't actually want this huge thing floating around
-        else:
-            extra_dataset_builder = None
-
         '''init lattice mean & std'''
         self.lattice_means = torch.tensor(self.dataDims['lattice_means'], dtype=torch.float32, device=self.config.device)
         self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], dtype=torch.float32, device=self.config.device)
@@ -907,7 +923,6 @@ class Modeller:
                                                              device=self.config.device,
                                                              cov_mat=self.dataDims['lattice_cov_mat'])
 
-        return dataset_builder, extra_dataset_builder
 
     def what_generators_to_use(self, override_randn, override_distorted, override_adversarial):
         """
