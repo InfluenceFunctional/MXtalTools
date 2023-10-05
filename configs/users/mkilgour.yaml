@@ -3,6 +3,8 @@ wandb:
   project_name: MXtalTools
 
 paths:
+  local_config_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/'
+  cluster_config_path: '/scratch/mk8347/mcrygan/configs/'
   local_dataset_dir_path: "D:/crystal_datasets/"
   cluster_dataset_dir_path: '/scratch/mk8347/csd_runs/datasets/'
   local_workdir_path: 'C:/Users/mikem/crystals/CSP_runs/'

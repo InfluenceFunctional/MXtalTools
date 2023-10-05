@@ -1,6 +1,6 @@
 name: mxtaltools_env
 channels:
-  - pytorch-nightly
+  - pytorch-nightly  # comment out -nightly for older cuda versions - check on PyTorch installation instructions
   - nvidia
   - pyg
   - conda-forge

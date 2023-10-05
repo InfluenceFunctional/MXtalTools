@@ -4,7 +4,7 @@ anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
-dataset_yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/dataset/full_gan_for_tests.yaml'
+dataset_yaml_path: '/dataset/full_gan_for_tests.yaml'
 extra_test_set_name: null
 save_checkpoints: False # will do it always on cluster, only locally if True
 

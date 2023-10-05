@@ -483,22 +483,17 @@ class Modeller:
             self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
             self.train_regressor = self.config.mode == 'regression'
 
-            '''prep dataloaders'''
-            train_loader, test_loader, extra_test_loader = \
-                self.load_dataset_and_dataloaders()
-
-            '''miscellaneous setup'''
+            '''initialize datasets and useful classes'''
+            train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
             self.misc_pre_training_items()
             self.logger = Logger(self.config, self.dataDims, wandb)
-
-            '''instantiate models'''
             self.init_models()
 
             '''initialize some training metrics'''
             self.discriminator_hit_max_lr, self.generator_hit_max_lr, self.regressor_hit_max_lr, converged, epoch = \
                 (False, False, False, self.config.max_epochs == 0, 0)
 
-            # etraining loop
+            # training loop
             with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
                 while (epoch < self.config.max_epochs) and not converged:
                     print("⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅")
@@ -1200,8 +1195,8 @@ class Modeller:
 
             self.logger.packing_loss_coefficient = self.packing_loss_coefficient
 
-            stats_keys += ['generator packing loss', 'generator_packing_prediction',
-                           'generator_packing_target', 'generator packing mae']
+            stats_keys += ['generator_packing_loss', 'generator_packing_prediction',
+                           'generator_packing_target', 'generator_packing_mae']
             stats_values += [packing_loss.cpu().detach().numpy() * self.packing_loss_coefficient, packing_prediction,
                              packing_target, packing_mae]
 

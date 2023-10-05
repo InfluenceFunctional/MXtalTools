@@ -124,7 +124,7 @@ class Logger:
         metrics_to_log = {}
         # general metrics
         metrics_to_log['epoch'] = self.epoch
-        metrics_to_log['packing loss coefficient'] = self.packing_loss_coefficient
+        metrics_to_log['packing_loss_coefficient'] = self.packing_loss_coefficient
         for key in self.learning_rates.keys():
             metrics_to_log[f'{key} learning rate'] = self.learning_rates[key]
         metrics_to_log['batch size'] = self.batch_size

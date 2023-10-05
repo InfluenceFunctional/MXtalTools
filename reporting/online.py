@@ -331,11 +331,11 @@ def functional_group_analysis_fig(scores_dict, tracking_features, layout, dataDi
     functional_group_inds = {}
     fraction_dict = {}
     for ii, key in enumerate(tracking_features_names):
-        if ('molecule' in key and 'fraction' in key):
+        if 'molecule' in key and 'fraction' in key:
             if np.average(tracking_features[:, ii] > 0) > 0.01:
                 fraction_dict[key.split()[1]] = np.average(tracking_features[:, ii] > 0)
                 functional_group_inds[key.split()[1]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
-        elif 'molecule has' in key:
+        elif 'molecule' in key and 'count' in key:
             if np.average(tracking_features[:, ii] > 0) > 0.01:
                 fraction_dict[key.split()[2]] = np.average(tracking_features[:, ii] > 0)
                 functional_group_inds[key.split()[2]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
@@ -471,7 +471,7 @@ def score_correlates_fig(scores_dict, dataDims, tracking_features, layout):
     features_sorted = [features[i] for i in g_sort_inds]
     features_sorted_cleaned_i = [feat.replace('molecule', 'mol') for feat in features_sorted]
     features_sorted_cleaned_ii = [feat.replace('crystal', 'crys') for feat in features_sorted_cleaned_i]
-    features_sorted_cleaned = [feat.replace('mol_atom_heavier_than', 'atomic # >') for feat in features_sorted_cleaned_ii]
+    features_sorted_cleaned = [feat.replace('molecule_atom_heavier_than', 'atomic # >') for feat in features_sorted_cleaned_ii]
 
     functional_group_dict = {
         'NH0': 'tert amine',

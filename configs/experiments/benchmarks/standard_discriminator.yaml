@@ -4,7 +4,8 @@ anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
-dataset_yaml_path: '/scratch/mk8347/MCryGAN/configs/dataset/full_gan.yaml'
+dataset_yaml_path: '/dataset/full_gan.yaml'
+extra_test_set_name: 'blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 
 # batching & convergence
@@ -15,6 +16,7 @@ batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
+extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
   run_name: standard_discriminator
@@ -25,8 +27,6 @@ logger:
 
 sample_steps: 100 # now for mini csp
 
-extra_test_set_path: null
-extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 seeds:
   model: 0
@@ -134,12 +134,12 @@ discriminator:
     activation: gelu
     num_fc_layers: 2
     fc_depth: 128
-    fc_norm_mode: 'layer'
-    fc_dropout_probability: 0.5
-    graph_node_norm: 'graph layer'
-    graph_node_dropout: 0.5
+    fc_norm_mode: null
+    fc_dropout_probability: 0
+    graph_node_norm: null
+    graph_node_dropout: 0
     graph_message_norm: null
-    graph_message_dropout: 0.5
+    graph_message_dropout: 0
     num_attention_heads: 4
     graph_message_depth: 128
     graph_node_dims: 256

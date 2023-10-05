@@ -61,7 +61,7 @@ class TrainingDataBuilder:
         self.atom_keys = config.atom_feature_keys
         self.molecule_keys = config.molecule_feature_keys
         self.set_crystal_keys()
-        self.set_tracking_keys()
+        self.set_tracking_keys(dataset)
         self.set_crystal_generation_keys(dataset)
 
         '''
@@ -120,7 +120,7 @@ class TrainingDataBuilder:
         # self.crystal_generation_features.append('crystal_cell_volume')
         # self.crystal_generation_features.append('crystal_reduced_volume')
 
-    def set_tracking_keys(self):
+    def set_tracking_keys(self, dataset):
         """
         set keys to be kept in tracking feature array
         will break if any of these are objects or strings
@@ -129,6 +129,15 @@ class TrainingDataBuilder:
         self.tracking_keys.extend(self.crystal_keys)
         self.tracking_keys.extend(self.lattice_keys)
         self.tracking_keys.extend(self.molecule_keys)
+
+        composition_keys = []
+        for key in dataset.columns:
+            if 'count' in key:
+                composition_keys.append(key)
+            if 'fraction' in key and 'fractional' not in key:
+                composition_keys.append(key)
+        self.tracking_keys.extend(composition_keys)
+
         self.tracking_keys = list(set(self.tracking_keys))  # remove duplicates
 
         # 

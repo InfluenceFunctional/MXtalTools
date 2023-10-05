@@ -79,15 +79,17 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
         config['workdir'] = user_config['paths']['local_workdir_path']
         config['dataset_path'] = user_config['paths']['local_dataset_dir_path']
         config['checkpoint_dir_path'] = user_config['paths']['local_checkpoint_dir_path']
+        config['config_path'] = user_config['paths']['local_config_path']
 
     elif config['machine'] == 'cluster':
         config['workdir'] = user_config['paths']['cluster_workdir_path']
         config['dataset_path'] = user_config['paths']['cluster_dataset_dir_path']
         config['checkpoint_dir_path'] = user_config['paths']['cluster_checkpoint_dir_path']
+        config['config_path'] = user_config['paths']['cluster_config_path']
         config['save_checkpoints'] = True  # always save checkpoints on cluster
 
     # load dataset config - but do not overwrite any settings from main config
-    dataset_yaml_path = Path(config['dataset_yaml_path'])
+    dataset_yaml_path = Path(config['config_path'] + config['dataset_yaml_path'])
     dataset_config = load_yaml(dataset_yaml_path)
     if 'dataset' in config.keys():
         for key in dataset_config.keys():
