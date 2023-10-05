@@ -1,0 +1,69 @@
+#First, define the dataset by a series of conditions in format [key, type, [elements]]
+#where type is in not_in or range and elements are [min, max], or a list of discrete values
+#
+#Then, specify the features which will be fed to models in training
+
+seed: 1
+max_dataset_length: 1000000
+save_dataset: False
+
+regression_target: 'crystal_packing_coefficient' # 'crystal_reduced_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
+single_molecule_dataset_identifier: null
+test_fraction: 0.2
+
+filter_polymorphs: True
+filter_duplicate_molecules: True
+filter_conditions: [['crystal_z_prime','in',[1]],  # NOTE we can currently only process Z' == 1 in models
+                    ['crystal_space_group_setting','in',[1]],
+                    ['crystal_symmetry_operations_are_standard','in',[True]],
+                    ['crystal_z_value','range',[1,32]],
+                    ['atom_atomic_numbers','range',[1,100]],
+                    ['molecule_is_symmetric_top','in',[False]],
+                    ['molecule_is_spherical_top','in',[False]],
+                    ['crystal_packing_coefficient','range',[0.55, 0.85]],
+                    ['molecule_num_atoms','range',[3,100]],
+                    ['molecule_radius','range',[1,100]],
+                    ['asymmetric_unit_is_well_defined','in',[True]],
+                    #['crystal_identifier', 'not_in', ['OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ','NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04','XAFQON','XAFQIH']],  # omit blind test 5 & 6 targets
+                    #['crystal_space_group_number','in',[2,14,19]]
+                    ]
+
+
+atom_feature_keys: [
+'atom_atomic_numbers',
+'atom_mass',
+'atom_is_H_bond_donor',
+'atom_is_H_bond_acceptor',
+'atom_valence',
+'atom_vdW_radius',
+'atom_on_a_ring',
+'atom_chirality',
+'atom_is_aromatic',
+'atom_degree',
+'atom_electronegativity',
+'atom_group',
+'atom_period'
+]
+
+molecule_feature_keys : [
+'molecule_freeSASA',
+'molecule_mass',
+'molecule_num_atoms',
+'molecule_num_rings',
+'molecule_volume',
+'molecule_num_donors',
+'molecule_num_acceptors',
+'molecule_polarity',
+'molecule_spherical_defect',
+'molecule_eccentricity',
+'molecule_num_rotatable_bonds',
+'molecule_planarity',
+'molecule_radius_of_gyration',
+'molecule_radius',
+'molecule_principal_moment_1',
+'molecule_principal_moment_2',
+'molecule_principal_moment_3',
+'molecule_is_spherical_top',
+'molecule_is_symmetric_top',
+'molecule_is_asymmetric_top',
+]

@@ -488,14 +488,16 @@ class DataManager:
         # the representative structure will be randomly sampled from all available identical molecules
         # we will add all others to 'bad_inds', and filter them out at our leisure
         print('selecting representative structures from duplicate molecules')
+        index_to_identifier_dict = {ident: ind for ind, ident in enumerate(self.dataset['crystal_identifier'])}
         bad_inds = []
-        for key in self.molecules_in_crystals_dict.keys():
-            mol_inds = self.molecules_in_crystals_dict[key]
-            crystal_identifiers = [self.mol_to_crystal_dict[ind] for ind in mol_inds]
-            crystal_inds = [self.dataset.loc[self.dataset['crystal_identifier'] == identifier].index[0] for identifier in crystal_identifiers]
-            sampled_ind = np.random.choice(crystal_inds, size=1)
-            crystal_inds.remove(sampled_ind)  # remove the good one
-            bad_inds.extend(crystal_inds)  # delete unselected polymorphs from the dataset
+        for ind, (key, value) in enumerate(self.molecules_in_crystals_dict.items()):
+            if len(value) > 1:  # if there are multiple molecules
+                mol_inds = self.molecules_in_crystals_dict[key]  # identify their mol indices
+                crystal_identifiers = [self.mol_to_crystal_dict[ind] for ind in mol_inds]  # identify their crystal identifiers
+                crystal_inds = [index_to_identifier_dict[identifier] for identifier in crystal_identifiers]
+                sampled_ind = np.random.choice(crystal_inds, size=1)
+                crystal_inds.remove(sampled_ind)  # remove the good one
+                bad_inds.extend(crystal_inds)  # delete unselected polymorphs from the dataset
 
         return bad_inds
 

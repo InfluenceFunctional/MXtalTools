@@ -4,7 +4,7 @@ anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
-dataset_yaml_path: '/dataset/full_gan.yaml'
+dataset_yaml_path: '/dataset/full_discriminator.yaml'
 extra_test_set_name: 'blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 
@@ -68,42 +68,7 @@ generator:
     lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.99
 
-  model:
-    num_fc_layers: 4
-    fc_depth: 256
-    activation: 'gelu'
-    fc_dropout_probability: 0
-    fc_norm_mode: null
-    conditioning_mode: 'first_layer' # 'first_layer' only for now
-
-    prior: multivariate normal
-    prior_dimension: 12  # NOTE this must be 12 currently
-    radial_norm_factor: 5
-
-    conditioner:
-      graph_convolution_type: TransformerConv
-      graph_aggregator: combo
-      concat_mol_to_atom_features: False
-      activation: gelu
-      num_fc_layers: 4
-      fc_depth: 256
-      fc_norm_mode: null
-      fc_dropout_probability: 0
-      graph_node_norm: null
-      graph_node_dropout: 0
-      graph_message_norm: null
-      graph_message_dropout: 0
-      num_attention_heads: 4
-      graph_message_depth: 64
-      graph_node_dims: 256
-      num_graph_convolutions: 2
-      graph_embedding_depth: 256
-      nodewise_fc_layers: 1
-      num_radial: 50
-      radial_function: gaussian
-      max_num_neighbors: 100
-      convolution_cutoff: 6
-      atom_type_embedding_dims: 5
+  model: null
 
 discriminator:
   train_adversarially: False
@@ -128,7 +93,7 @@ discriminator:
 
   model:
     graph_convolution_type: TransformerConv
-    graph_aggregator:  combo
+    graph_aggregator:  max
     concat_mol_to_atom_features: True
     activation: gelu
     num_fc_layers: 2
