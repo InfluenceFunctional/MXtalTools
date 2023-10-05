@@ -67,7 +67,7 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
 
     config = load_yaml(yaml_path)
     config['paths'] = user_config['paths']
-    config.paths.yaml_path = yaml_path  # overwrite here
+    config['paths']['yaml_path'] = yaml_path  # overwrite here
     config['wandb'] = user_config['wandb']
 
     if override_args is not None:
