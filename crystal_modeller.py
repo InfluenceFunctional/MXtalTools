@@ -86,7 +86,6 @@ class Modeller:
         copy the source directory to the new working directory
         """
         self.make_sequential_directory()
-
         self.copy_source_to_workdir()
 
     def copy_source_to_workdir(self):

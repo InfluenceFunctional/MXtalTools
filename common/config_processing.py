@@ -66,8 +66,8 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
         yaml_path = Path(user_config['paths']['yaml_path'])
 
     config = load_yaml(yaml_path)
-
     config['paths'] = user_config['paths']
+    config.paths.yaml_path = yaml_path  # overwrite here
     config['wandb'] = user_config['wandb']
 
     if override_args is not None:
@@ -97,6 +97,7 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
                 config['dataset'][key] = dataset_config[key]
     else:
         config['dataset'] = dataset_config
+
 
     return dict2namespace(config)
 

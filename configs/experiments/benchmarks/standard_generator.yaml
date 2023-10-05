@@ -2,7 +2,7 @@ machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
-dataset_name: 'test_dataset.pkl'
+dataset_name: 'dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/dataset/full_gan.yaml'
 extra_test_set_name: null #'blind_test_dataset.pkl'
@@ -26,7 +26,6 @@ logger:
   experiment_tag: benchmarks
 
 sample_steps: 100 # now for mini csp
-
 
 seeds:
   model: 0
