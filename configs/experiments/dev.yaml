@@ -3,7 +3,9 @@ device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
+misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/dataset/full_gan.yaml'
+extra_test_set_name: 'blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 
 dataset:  # overrides standard dataset config
@@ -11,24 +13,23 @@ dataset:  # overrides standard dataset config
 
 # batching & convergence
 grow_batch_size: True
-min_batch_size: 10
+min_batch_size: 50
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 40 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
+extra_test_period: 20 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
   run_name: dev
   mini_csp_frequency: 5
-  sample_reporting_frequency: 5
+  sample_reporting_frequency: 20
   log_figures: True
   experiment_tag: dev
 
 sample_steps: 20 # now for mini csp
 
-extra_test_set_path: null
-extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 seeds:
   model: 0

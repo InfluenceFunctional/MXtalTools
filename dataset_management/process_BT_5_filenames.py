@@ -1,6 +1,11 @@
 import os
 from shutil import copyfile
 
+
+"""
+BT5 files need to be reformatted to be consistent with BT6 and for later processing
+"""
+
 path = 'C:/Users\mikem\crystals\/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/Submissions/'
 dump_path = 'C:/Users\mikem\crystals\/CSP_runs/datasets/test_structures/blind_tests/blind_test_5/bk5106sup2/'
 

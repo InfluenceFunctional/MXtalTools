@@ -67,13 +67,13 @@ def get_crystal_sym_ops(crystal):
     return sym_elements
 
 
-def extract_crystal_data(crystal, unit_cell):
+def extract_crystal_data(identifier, crystal, unit_cell):
     """
     crystal is a csd crystal object loaded from cif file or directly from csd
     extracts key information for crystal modelling
     """
     crystal_dict = {}
-    crystal_dict['identifier'] = crystal.identifier
+    crystal_dict['identifier'] = identifier
 
     # extract crystal features
     crystal_dict['z_prime'] = crystal.z_prime
@@ -231,20 +231,33 @@ def crystal_filter(crystal):
     """
     passed_crystal_checks = True
     passed_molecule_checks = True
-    # crystal checks
-    if any([crystal.has_disorder,
-            crystal.molecule.is_polymeric,
-            len(crystal.molecule.atoms) == 0,
-            not crystal.molecule.all_atoms_have_sites,
-            len(crystal.molecule.components) != crystal.z_prime,
-            crystal.z_prime < 1,
-            int(crystal.z_prime) != crystal.z_prime,  # integer z-prime only
-            len(crystal.molecule.components) == 0,
-            any([len(component.atoms) == 0 for component in crystal.molecule.components]),
-            len(crystal.asymmetric_unit_molecule.heavy_atoms) != len(crystal.molecule.heavy_atoms),  # could make this done Z'-by-Z'
-            len(crystal.asymmetric_unit_molecule.components) != crystal.z_prime,  # can relax this if we build our own reference cells
-            ]):
-        # print(f'{crystal.identifier} failed crystal checks')
+    # crystal checks  # I believe one at a time like this should be faster than checking all of them
+    if crystal.has_disorder:
+        return False, None, None
+    if crystal.molecule.is_polymeric:
+        return False, None, None
+    if len(crystal.molecule.atoms) == 0:
+        return False, None, None
+    if not crystal.molecule.all_atoms_have_sites:
+        return False, None, None
+    if len(crystal.molecule.components) != crystal.z_prime:
+        return False, None, None
+    if crystal.z_prime < 1:
+        return False, None, None
+    if int(crystal.z_prime) != crystal.z_prime:  # integer z-prime only
+        return False, None, None
+    if len(crystal.molecule.components) == 0:
+        return False, None, None
+    if any([len(component.atoms) == 0 for component in crystal.molecule.components]):
+        return False, None, None
+    if len(crystal.asymmetric_unit_molecule.heavy_atoms) != len(crystal.molecule.heavy_atoms):  # could make this done Z'-by-Z'
+        return False, None, None
+    if len(crystal.asymmetric_unit_molecule.components) != crystal.z_prime:  # can relax this if we build our own reference cells
+        return False, None, None
+
+    try:  # some entries have invalid SG information
+        _ = crystal.spacegroup_number_and_setting
+    except RuntimeError:
         return False, None, None
 
     try:
@@ -261,7 +274,7 @@ def crystal_filter(crystal):
         mol = Chem.MolFromMol2Block(component.to_string('mol2'), sanitize=True, removeHs=True)
         try:
             rd_mols.append(Chem.RemoveAllHs(mol))
-        except:  # todo add exception
+        except:  # todo add exception type
             passed_molecule_checks = False
         if mol is None:
             passed_molecule_checks = False

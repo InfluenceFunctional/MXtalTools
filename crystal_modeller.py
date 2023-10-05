@@ -86,6 +86,7 @@ class Modeller:
                                    )
         data_manager.load_dataset_for_modelling(
             dataset_name=self.config.dataset_name,
+            misc_dataset_name=self.config.misc_dataset_name,
             filter_conditions=self.config.dataset.filter_conditions,
             filter_polymorphs=self.config.dataset.filter_polymorphs,
             filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules
@@ -93,6 +94,27 @@ class Modeller:
         self.prepped_dataset = data_manager.dataset
         self.std_dict = data_manager.standardization_dict
         del data_manager
+
+        if self.config.extra_test_set_name is not None:
+            blind_test_conditions = [['crystal_z_prime', 'in', [1]],  # very permissive
+                                     ['crystal_z_value', 'range', [1, 32]],
+                                     ['atom_atomic_numbers', 'range', [1, 100]]]
+
+            # omit blind test 5 & 6 targets
+            data_manager = DataManager(device=self.device,
+                                       datasets_path=self.config.dataset_path
+                                       )
+            data_manager.load_dataset_for_modelling(  # todo move this into training & combine with builder
+                dataset_name=self.config.extra_test_set_name,
+                misc_dataset_name=self.config.misc_dataset_name,
+                filter_conditions=blind_test_conditions,  # standard filtration conditions
+                filter_polymorphs=False,  # do not filter duplicates - e.g., in Blind test they're almost all duplicates!
+                filter_duplicate_molecules=False,
+            )
+            self.extra_dataset = data_manager.dataset
+            del data_manager
+        else:
+            self.extra_dataset = None
 
     def prep_new_working_directory(self):
         """
@@ -179,7 +201,7 @@ class Modeller:
         wandb.log({"Model Num Parameters": np.sum(np.asarray(num_params)),
                    "Initial Batch Size": self.config.current_batch_size})
 
-    def prep_dataloaders(self, dataset_builder, test_fraction=0.2, override_batch_size: int = None):
+    def prep_dataloaders(self, dataset_builder, extra_dataset_builder=None, test_fraction=0.2, override_batch_size: int = None):
         """
         get training, test, ane optionall extra validation dataloaders
         """
@@ -195,15 +217,14 @@ class Modeller:
         print("Initial training batch size set to {}".format(self.config.current_batch_size))
         del dataset_builder
 
-        extra_test_loader = None  # data_loader for a secondary test set - analysis is hardcoded for CSD Blind Tests 5 & 6
-        # if self.config.extra_test_set_paths is not None:
-        #     extra_test_loader = get_extra_test_loader(self.config,
-        #                                               self.config.extra_test_set_paths,
-        #                                               dataDims=self.dataDims,
-        #                                               pg_dict=self.point_groups,
-        #                                               sg_dict=self.space_groups,
-        #                                               lattice_dict=self.lattice_type,
-        #                                               sym_ops_dict=self.sym_ops)
+        # data_loader for a secondary test set - analysis is hardcoded for CSD Blind Tests 5 & 6
+        if extra_dataset_builder is not None:
+            _, extra_test_loader = get_dataloaders(extra_dataset_builder,
+                                                   machine=self.config.machine,
+                                                   batch_size=loader_batch_size,
+                                                   test_fraction=1)
+        else:
+            extra_test_loader = None
 
         return train_loader, test_loader, extra_test_loader
 
@@ -427,12 +448,12 @@ class Modeller:
             self.train_regressor = self.config.mode == 'regression'
 
             '''miscellaneous setup'''
-            dataset_builder = self.misc_pre_training_items()
+            dataset_builder, extra_dataset_builder = self.misc_pre_training_items()
             self.logger = Logger(self.config, self.dataDims, wandb)
 
             '''prep dataloaders'''
             train_loader, test_loader, extra_test_loader = \
-                self.prep_dataloaders(dataset_builder, test_fraction=self.config.dataset.test_fraction)
+                self.prep_dataloaders(dataset_builder, extra_dataset_builder=extra_dataset_builder, test_fraction=self.config.dataset.test_fraction)
 
             '''instantiate models'''
             self.init_models()
@@ -456,7 +477,7 @@ class Modeller:
                             self.run_epoch(epoch_type='test', data_loader=test_loader,
                                            update_gradients=False)
 
-                            if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0):
+                            if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0) and (epoch > 0):
                                 self.run_epoch(epoch_type='extra', data_loader=extra_test_loader,
                                                update_gradients=False)  # compute loss on test set
 
@@ -698,7 +719,7 @@ class Modeller:
         fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
             self.config.discriminator.model.convolution_cutoff,
-            align_to_standardized_orientation=(negative_type != 'generated'),
+            align_to_standardized_orientation=(negative_type != 'generated'),  # take generator samples as-given
             target_handedness=generator_data.asym_unit_handedness,
         )
 
@@ -853,6 +874,18 @@ class Modeller:
         self.dataDims = dataset_builder.dataDims
         del self.prepped_dataset  # we don't actually want this huge thing floating around
 
+        if self.extra_dataset is not None:
+            extra_dataset_builder = TrainingDataBuilder(
+                self.config.dataset,
+                preloaded_dataset=self.extra_dataset,
+                data_std_dict=self.std_dict,
+                override_length=int(1e6))  # if we cut off elements, we may miss the experimental samples
+            # todo optionally load targets as a separate dataset and combine them here
+
+            del self.extra_dataset  # we don't actually want this huge thing floating around
+        else:
+            extra_dataset_builder = None
+
         '''init lattice mean & std'''
         self.lattice_means = torch.tensor(self.dataDims['lattice_means'], dtype=torch.float32, device=self.config.device)
         self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], dtype=torch.float32, device=self.config.device)
@@ -874,7 +907,7 @@ class Modeller:
                                                              device=self.config.device,
                                                              cov_mat=self.dataDims['lattice_cov_mat'])
 
-        return dataset_builder
+        return dataset_builder, extra_dataset_builder
 
     def what_generators_to_use(self, override_randn, override_distorted, override_adversarial):
         """

@@ -11,7 +11,7 @@ from crystal_building.utils import build_unit_cell, batch_asymmetric_unit_pose_a
 
 
 class DataManager:
-    def __init__(self, datasets_path, device='cpu', chunks_path=None, seed=0):
+    def __init__(self, datasets_path, device='cpu', mode='standard', chunks_path=None, seed=0):
         self.misc_data_dict = None
         self.standardization_dict = None
         self.crystal_to_mol_dict = None
@@ -21,7 +21,8 @@ class DataManager:
 
         self.datasets_path = datasets_path
         self.chunks_path = chunks_path
-        self.device = device
+        self.device = device  # cpu or cuda
+        self.mode = mode  # standard or 'blind test'
 
         np.random.seed(seed=seed)  # for certain random sampling ops
 
@@ -34,12 +35,12 @@ class DataManager:
         chunks = os.listdir()
         num_chunks = len(chunks)
         print(f'Collecting {num_chunks} dataset chunks')
-        self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks[:100]], ignore_index=True)
+        self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks], ignore_index=True)
 
-    def load_dataset_for_modelling(self, dataset_name,
+    def load_dataset_for_modelling(self, dataset_name, misc_dataset_name,
                                    filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False):
 
-        self.load_dataset_and_misc_data(dataset_name)
+        self.load_dataset_and_misc_data(dataset_name, misc_dataset_name)
 
         if filter_conditions is not None:
             bad_inds = self.get_dataset_filter_inds(filter_conditions)
@@ -68,9 +69,13 @@ class DataManager:
         self.molecules_in_crystals_dict = \
             self.identify_unique_molecules_in_crystals()
 
-    def load_dataset_and_misc_data(self, dataset_name):
+    def load_dataset_and_misc_data(self, dataset_name, misc_dataset_name):
         self.dataset = pd.read_pickle(self.datasets_path + dataset_name)
-        misc_data_dict = np.load(self.datasets_path + 'misc_data_for_' + dataset_name.removeprefix('test_') + '.npy', allow_pickle=True).item()
+        misc_data_dict = np.load(self.datasets_path + misc_dataset_name, allow_pickle=True).item()
+
+        if 'blind_test' in dataset_name:
+            self.mode = 'blind test'
+            print("Switching to blind test indexing mode")
 
         if 'test' in dataset_name:
             self.rebuild_indices()
@@ -91,9 +96,9 @@ class DataManager:
         }
 
         np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
-        self.dataset.to_pickle(self.datasets_path + new_dataset_name)
+        self.dataset.to_pickle(self.datasets_path + new_dataset_name + '.pkl')
         ints = np.random.choice(min(len(self.dataset), 10000), min(len(self.dataset), 10000), replace=False)
-        self.dataset.loc[ints].to_pickle(self.datasets_path + 'test_' + new_dataset_name)
+        self.dataset.loc[ints].to_pickle(self.datasets_path + 'test_' + new_dataset_name + '.pkl')
 
     def asymmetric_unit_analysis(self):
         """
@@ -304,7 +309,7 @@ class DataManager:
 
         return molecules_in_crystals_dict
 
-    def get_identifier_duplicates(self, mode='standard'):
+    def get_identifier_duplicates(self):
         """
         by CSD identifier
         CSD entries with numbers on the end are subsequent additions to the same crystal
@@ -314,38 +319,40 @@ class DataManager:
         """
         print('getting identifier duplicates')
 
-        if mode == 'standard':
-            all_identifiers = {}
+        if self.mode == 'standard':  #
+            crystal_to_identifier = {}
             for i in tqdm(range(len(self.dataset['crystal_identifier']))):
                 item = self.dataset['crystal_identifier'][i]
                 if item[-1].isdigit():
-                    item = item[:-2]  # cut off trailing digits, if any
-                if item not in all_identifiers.keys():
-                    all_identifiers[item] = []
-                all_identifiers[item].append(i)
-        elif mode == 'blind_test':  # todo untested
+                    item = item[:-2]  # cut off 2 trailing digits, if any - always 2 in the CSD
+                if item not in crystal_to_identifier.keys():
+                    crystal_to_identifier[item] = []
+                crystal_to_identifier[item].append(i)
+        elif self.mode == 'blind_test':  # todo test
             blind_test_targets = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
                                   'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
                                   'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX']
 
-            all_identifiers = {key: [] for key in blind_test_targets}
+            crystal_to_identifier = {key: [] for key in blind_test_targets}
             for i in tqdm(range(len(self.dataset['crystal_identifier']))):
                 item = self.dataset['crystal_identifier'][i]
                 for j in range(len(blind_test_targets)):  # go in reverse to account for roman numerals system of duplication
                     if blind_test_targets[-1 - j] in item:
-                        all_identifiers[blind_test_targets[-1 - j]].append(i)
+                        crystal_to_identifier[blind_test_targets[-1 - j]].append(i)
                         break
+        else:
+            assert False, f"No such mode as {self.mode}"
 
         # delete identifiers with only one entry, despite having an index attached
-        duplicate_lists = [all_identifiers[key] for key in all_identifiers.keys() if len(all_identifiers[key]) > 1]
+        duplicate_lists = [crystal_to_identifier[key] for key in crystal_to_identifier.keys() if len(crystal_to_identifier[key]) > 1]
         duplicate_list_extension = []
         for d_list in duplicate_lists:
             duplicate_list_extension.extend(d_list)
 
         duplicate_groups = {}
-        for key in all_identifiers.keys():
-            if len(all_identifiers[key]) > 1:
-                duplicate_groups[key] = all_identifiers[key]
+        for key in crystal_to_identifier.keys():
+            if len(crystal_to_identifier[key]) > 1:
+                duplicate_groups[key] = crystal_to_identifier[key]
 
         return duplicate_lists, duplicate_list_extension, duplicate_groups
 
@@ -490,9 +497,13 @@ class DataManager:
 
 
 if __name__ == '__main__':
-    miner = DataManager(device='cuda', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
-    miner.process_new_dataset('dataset.pkl')
-    #
+    # miner = DataManager(device='cuda', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
+    # miner.process_new_dataset('dataset.pkl')
+
+    miner = DataManager(device='cuda', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/BT_chunks/")
+    miner.process_new_dataset('blind_test_dataset')
+
+    # '''filtering test'''
     # test_conditions = [
     #     ['molecule_mass', 'range', [0, 300]],
     #     ['crystal_space_group_setting', 'not_in', [2]],
@@ -505,4 +516,3 @@ if __name__ == '__main__':
     # miner.load_dataset_for_modelling(dataset_name='new_dataset.pkl',
     #                                  filter_conditions=test_conditions, filter_polymorphs=True, filter_duplicate_molecules=True)
     #
-    aa = 1

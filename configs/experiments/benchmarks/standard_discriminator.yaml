@@ -3,6 +3,7 @@ device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
+misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/scratch/mk8347/MCryGAN/configs/dataset/full_gan.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
 
