@@ -61,7 +61,7 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
     if hasattr(override_args, 'yaml_config'):
         yaml_path = Path(override_args.yaml_config)
     elif main_yaml_path is not None:
-        yaml_path = main_yaml_path
+        yaml_path = Path(main_yaml_path)
     else:
         yaml_path = Path(user_config['paths']['yaml_path'])
 
