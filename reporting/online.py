@@ -734,7 +734,7 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
         process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict,
                                       test_epoch_stats_dict, None, size_normed_score=False)
 
-    layout = go.Layout(
+    layout = go.Layout(  # todo increase upper margin - figure titles are getting cutoff
         margin=go.layout.Margin(
             l=0,  # left margin
             r=0,  # right margin

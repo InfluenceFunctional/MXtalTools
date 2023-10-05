@@ -96,9 +96,11 @@ class DataManager:
         }
 
         np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
-        self.dataset.to_pickle(self.datasets_path + new_dataset_name + '.pkl')
         ints = np.random.choice(min(len(self.dataset), 10000), min(len(self.dataset), 10000), replace=False)
         self.dataset.loc[ints].to_pickle(self.datasets_path + 'test_' + new_dataset_name + '.pkl')
+
+        del misc_data_dict, self.mol_to_crystal_dict, self.crystal_to_mol_dict, self.standardization_dict, self.molecules_in_crystals_dict  # free up some memory
+        self.dataset.to_pickle(self.datasets_path + new_dataset_name + '.pkl')
 
     def asymmetric_unit_analysis(self):
         """
@@ -123,20 +125,20 @@ class DataManager:
         chunk_size = 1000
         n_chunks = int(np.ceil(len(self.dataset) / chunk_size))
         for i in tqdm(range(n_chunks)):
-            chunk = self.dataset.iloc[i * chunk_size:(i+1) * chunk_size]
-            symmetry_multiplicity = torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device)
-            final_coords_list = [torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for _, crystal in chunk.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))]
+            chunk = self.dataset.iloc[i * chunk_size:(i + 1) * chunk_size]
+            # symmetry_multiplicity = torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device)
+            # final_coords_list = [torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for _, crystal in chunk.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))]
             T_fc_list = torch.tensor(np.stack([crystal['crystal_fc_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
-            T_cf_list = torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
-            sym_ops_list = [torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
+            # T_cf_list = torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device)
+            # sym_ops_list = [torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
 
             # build unit cell for each molecule (separately for each Z')
             unit_cells_list = build_unit_cell(
-                symmetry_multiplicity=symmetry_multiplicity,
-                final_coords_list=final_coords_list,
+                symmetry_multiplicity=torch.tensor([crystal['crystal_symmetry_multiplicity'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))], dtype=torch.int, device=self.device),
+                final_coords_list=[torch.tensor(crystal['atom_coordinates'][z_ind], dtype=torch.float32, device=self.device) for _, crystal in chunk.iterrows() for z_ind in range(int(crystal['crystal_z_prime']))],
                 T_fc_list=T_fc_list,
-                T_cf_list=T_cf_list,
-                sym_ops_list=sym_ops_list
+                T_cf_list=torch.tensor(np.stack([crystal['crystal_cf_transform'] for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]), dtype=torch.float32, device=self.device),
+                sym_ops_list=[torch.tensor(crystal['crystal_symmetry_operators'], dtype=torch.float32, device=self.device) for ind, crystal in chunk.iterrows() for _ in range(int(crystal['crystal_z_prime']))]
             )
 
             # analyze the cell
@@ -168,8 +170,10 @@ class DataManager:
          orientations_theta_list, orientations_phi_list, orientations_r_list,
          handednesses_list, validity_list, coordinates_list) = [[[] for _ in range(len(self.dataset))] for _ in range(9)]
 
+        mol_to_ident_dict = {ident: ind for ind, ident in enumerate(self.dataset['crystal_identifier'])}
+
         for i, identifier in enumerate(tqdm(self.crystal_to_mol_dict.keys())):  # index molecules with their respective crystals
-            df_index = self.dataset.loc[self.dataset['crystal_identifier'] == identifier].index[0]
+            df_index = mol_to_ident_dict[identifier]
             (centroids_x, centroids_y, centroids_z, orientations_theta,
              orientations_phi, orientations_r, handedness, well_defined, coords) = [], [], [], [], [], [], [], [], []
 
@@ -497,11 +501,11 @@ class DataManager:
 
 
 if __name__ == '__main__':
-    # miner = DataManager(device='cuda', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
-    # miner.process_new_dataset('dataset.pkl')
+    # miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
+    # miner.process_new_dataset('dataset')
 
-    miner = DataManager(device='cuda', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/BT_chunks/")
-    miner.process_new_dataset('blind_test_dataset')
+    miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
+    miner.process_new_dataset('dataset')
 
     # '''filtering test'''
     # test_conditions = [

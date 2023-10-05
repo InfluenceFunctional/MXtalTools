@@ -8,15 +8,16 @@ from dataset_management.featurization_utils import extract_crystal_data, featuri
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
 
-n_chunks = 1  # too many chunks can cause problems e.g., if some have zero valid entries
+n_chunks = 1000  # too many chunks can cause problems e.g., if some have zero valid entries
 use_filenames_for_identifiers = False  # for blind test submissions & other cases where the identifiers are in the filenames rather than in the .cif itself
-filter_by_targets = True
-chunks_path = r'D:/crystal_datasets/BT_chunks/'  # where you would like processed dataset chunks to be stored before collation into final dataset
+filter_by_targets = False
+chunks_path = r'D:/crystal_datasets/featurized_chunks/'  # where you would like processed dataset chunks to be stored before collation into final dataset
 
-chunk_prefix = 'BT_targets'
+chunk_prefix = ''
 cifs_path = r'D:\CSD_dump/'
-target_identifiers = ['OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
-    'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04']
+target_identifiers = None
+# target_identifiers = ['OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
+#     'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04']
 # chunk_prefix = 'BT_5'
 # cifs_path = r'D:\crystal_datasets\blind_test_3-6_cifs\blind_test_5\bk5106sup2\file_dump/'  # where are the cifs
 # chunk_prefix = 'BT_6'
