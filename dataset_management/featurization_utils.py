@@ -2,6 +2,7 @@ import numpy as np
 from rdkit import Chem as Chem
 import rdkit.Chem.AllChem as AllChem
 from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
+from scipy.spatial.distance import cdist
 
 from common.geometry_calculations import compute_principal_axes_np, coor_trans_matrix
 from constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, SYMBOLS
@@ -268,6 +269,14 @@ def crystal_filter(crystal):
     if len(unit_cell.components) != int(len(crystal.symmetry_operators) * crystal.z_prime):
         return False, None, None
 
+    for zp in range(int(crystal.z_prime)):  # confirm unit cell symmetry images have each the right number of atoms
+        l1 = len(crystal.molecule.components[zp].heavy_atoms)
+        for z in range(int(crystal.z_value / crystal.z_prime)):
+            l2 = len(unit_cell.components[zp * int(crystal.z_prime) + z].heavy_atoms)
+
+            if l1 != l2:
+                return False, None, None
+
     # molecule check via RDKit. If RDKit doesn't see it as a real molecule, don't accept it to the dataset.
     rd_mols = []
     for component in crystal.molecule.components:
@@ -282,6 +291,12 @@ def crystal_filter(crystal):
     if not passed_molecule_checks:
         pass  # print(f'{crystal.identifier} failed molecule checks')
 
-    # todo might be a little expensive but could build the radial graph and check no atoms are overlapping
+    for component in crystal.molecule.components:  # check for overlapping atoms or unconnected fragments
+        coords = np.asarray([np.asarray(heavy_atom.coordinates) for heavy_atom in component.heavy_atoms])
+        distmat = cdist(coords, coords) + np.eye(len(coords)) * 100
+        min_interatomic_distance = distmat.min(1)
+        # if any atoms are too close, or have no neighbors, in a very generous range (3 angstroms and 0.9 angstroms)
+        if any(min_interatomic_distance > 3) or any(min_interatomic_distance < 0.9):
+            return False, None, None
 
     return all([passed_molecule_checks, passed_crystal_checks]), unit_cell, rd_mols
