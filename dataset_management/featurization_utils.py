@@ -271,9 +271,9 @@ def crystal_filter(crystal):
 
     for zp in range(int(crystal.z_prime)):  # confirm unit cell symmetry images have each the right number of atoms
         l1 = len(crystal.molecule.components[zp].heavy_atoms)
-        for z in range(int(crystal.z_value / crystal.z_prime)):
-            l2 = len(unit_cell.components[zp * int(crystal.z_prime) + z].heavy_atoms)
-
+        mult = len(crystal.symmetry_operators)
+        for z in range(mult):
+            l2 = len(unit_cell.components[zp * mult + z].heavy_atoms)
             if l1 != l2:
                 return False, None, None
 
