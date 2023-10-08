@@ -64,9 +64,10 @@ class Modeller:
         self.packing_loss_coefficient = 1
         '''get some physical constants'''
         self.atom_weights = ATOM_WEIGHTS
-
         self.vdw_radii = VDW_RADII
         self.sym_info = init_sym_info()
+
+        self.supercell_builder = SupercellBuilder(device=self.config.device, rotation_basis='spherical')
 
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
@@ -887,15 +888,12 @@ class Modeller:
         symmetry element indexing
         multivariate gaussian generator
         """
+        # todo reconsider the need for this function
 
         '''init lattice mean & std'''
         self.lattice_means = torch.tensor(self.dataDims['lattice_means'], dtype=torch.float32, device=self.config.device)
         self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], dtype=torch.float32, device=self.config.device)
 
-        '''
-        init supercell builder
-        '''
-        self.supercell_builder = SupercellBuilder(device=self.config.device, rotation_basis='spherical')
 
         ''' 
         init gaussian generator for cell parameter sampling
