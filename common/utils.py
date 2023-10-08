@@ -4,6 +4,8 @@ import torch
 import pandas as pd
 from torch.nn.functional import softmax
 
+from constants.space_group_info import SYM_OPS, LATTICE_TYPE, POINT_GROUPS, SPACE_GROUPS
+
 '''
 general utilities
 '''
@@ -179,6 +181,19 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
 
     return dictionary
 
+
+def init_sym_info():
+    sym_ops = SYM_OPS
+    point_groups = POINT_GROUPS
+    lattice_type = LATTICE_TYPE
+    space_groups = SPACE_GROUPS
+    sym_info = {  # collect space group info into single dict
+        'sym_ops': sym_ops,
+        'point_groups': point_groups,
+        'lattice_type': lattice_type,
+        'space_groups': space_groups}
+
+    return sym_info
 
 def norm_circular_components(components: torch.tensor):
     """use softmax to norm the sum of squares, and multiply by the signs to keep all 4 quadrants"""

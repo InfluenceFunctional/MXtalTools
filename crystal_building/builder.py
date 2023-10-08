@@ -1,4 +1,6 @@
 import torch
+
+from common.utils import init_sym_info
 from crystal_building.utils import \
     (update_supercell_data, unit_cell_to_convolution_cluster,
      align_crystaldata_to_principal_axes,
@@ -9,14 +11,12 @@ from constants.asymmetric_units import asym_unit_dict
 
 
 class SupercellBuilder:
-    def __init__(self, symmetries_dict, dataDims, supercell_size=5, device='cuda', rotation_basis='spherical'):
+    def __init__(self, supercell_size=5, device='cuda', rotation_basis='spherical'):
         """
         class for converting single molecules -> unit cells -> supercells/clusters
         """
-
-        self.sym_ops = symmetries_dict['sym_ops']  # list of symmetry operations
-        self.symmetries_dict = symmetries_dict  # other symmetry information
-        self.dataDims = dataDims  # information about the dataset
+        self.symmetries_dict = init_sym_info()  # other symmetry information
+        self.sym_ops = self.symmetries_dict['sym_ops']  # list of symmetry operations
         self.device = device
         self.numpy_asym_unit_dict = asym_unit_dict.copy()
         self.asym_unit_dict = asym_unit_dict.copy()

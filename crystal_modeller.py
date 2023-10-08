@@ -20,7 +20,6 @@ from torch.nn import functional as F
 
 from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
 from constants.asymmetric_units import asym_unit_dict
-from constants.space_group_info import (POINT_GROUPS, LATTICE_TYPE, SPACE_GROUPS, SYM_OPS)
 
 from models.discriminator_models import crystal_discriminator
 from models.generator_models import crystal_generator, independent_gaussian_model
@@ -39,7 +38,7 @@ from dataset_management.manager import DataManager
 from dataset_management.modelling_utils import (TrainingDataBuilder, get_dataloaders, update_dataloader_batch_size)
 from reporting.logger import Logger
 
-from common.utils import softmax_np
+from common.utils import softmax_np, init_sym_info
 
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
@@ -65,16 +64,9 @@ class Modeller:
         self.packing_loss_coefficient = 1
         '''get some physical constants'''
         self.atom_weights = ATOM_WEIGHTS
+
         self.vdw_radii = VDW_RADII
-        self.sym_ops = SYM_OPS
-        self.point_groups = POINT_GROUPS
-        self.lattice_type = LATTICE_TYPE
-        self.space_groups = SPACE_GROUPS
-        self.sym_info = {  # collect space group info into single dict
-            'sym_ops': self.sym_ops,
-            'point_groups': self.point_groups,
-            'lattice_type': self.lattice_type,
-            'space_groups': self.space_groups}
+        self.sym_info = init_sym_info()
 
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
@@ -903,8 +895,7 @@ class Modeller:
         '''
         init supercell builder
         '''
-        self.supercell_builder = SupercellBuilder(
-            self.sym_info, self.dataDims, device=self.config.device, rotation_basis='spherical')
+        self.supercell_builder = SupercellBuilder(device=self.config.device, rotation_basis='spherical')
 
         ''' 
         init gaussian generator for cell parameter sampling
