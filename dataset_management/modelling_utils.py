@@ -160,7 +160,7 @@ class TrainingDataBuilder:
                              'crystal_lattice_a', 'crystal_lattice_b', 'crystal_lattice_c',
                              'crystal_lattice_alpha', 'crystal_lattice_beta', 'crystal_lattice_gamma',
                              'crystal_z_value', 'crystal_z_prime', 'crystal_reduced_volume', 'crystal_cell_volume',
-                             'crystal_symmetry_multiplicity', 'asymmetric_unit_handedness', 'asymmetric_unit_is_well_defined',
+                             'crystal_symmetry_multiplicity', 'asymmetric_unit_is_well_defined',
                              ]
 
         # correct order here is crucially important
@@ -251,7 +251,7 @@ class TrainingDataBuilder:
                             mol_x=torch.Tensor(mol_features[i, None, :]),
                             smiles=smiles[i],
                             tracking=tracking_features[i, None, :],
-                            ref_cell_pos=np.asarray(reference_cells[i]),  # won't collate properly as a torch tensor
+                            ref_cell_pos=np.asarray(reference_cells[i]),  # won't collate properly as a torch tensor - must leave as np array
                             mult=tracking_features[i, mult_ind].int(),
                             sg_ind=tracking_features[i, sg_ind_value_ind].int(),
                             cell_params=torch.Tensor(lattice_features[i, None, :]),
@@ -317,24 +317,39 @@ class TrainingDataBuilder:
         return molecule_feature_array
 
     def generate_training_datapoints(self, dataset):
+        tracking_features = self.gather_tracking_features(dataset)
         lattice_features = self.get_cell_features(dataset)
         targets = self.get_regression_target(dataset)
-        tracking_features = self.gather_tracking_features(dataset)
         molecule_features_array = self.concatenate_molecule_features(dataset)
         atom_features_list = self.concatenate_atom_features(dataset)
 
-        return self.generate_training_data(atom_coords=dataset['atom_coordinates'],
-                                           smiles=dataset['molecule_smiles'],
+        combined_keys = self.atom_keys + self.molecule_keys + self.crystal_keys
+        dataset.drop(columns=[key for key in combined_keys if key in dataset.columns], inplace=True)  # delete encoded columns to save on RAM
+        dataset.drop(columns=[key for key in self.tracking_keys if key in dataset.columns], inplace=True)  # some of these are duplicates of above
+
+        atom_coords = np.asarray(dataset['atom_coordinates'])
+        smiles = np.asarray(dataset['molecule_smiles'])
+        unit_cell_coords = dataset['crystal_unit_cell_coordinates']
+        T_fc_list = dataset['crystal_fc_transform']
+        crystal_identifier = dataset['crystal_identifier']
+        asym_unit_handedness = dataset['asymmetric_unit_handedness']
+        symmetry_ops = dataset['crystal_symmetry_operators']
+        #
+        # dataset.drop(columns=['atom_coordinates', 'molecule_smiles', 'crystal_unit_cell_coordinates',
+        #                       'crystal_fc_transform', 'crystal_identifier', 'asym_unit_handedness', 'crystal_symmetry_operators'], inplace=True)  # delete encoded columns to save on RAM
+        del dataset
+        return self.generate_training_data(atom_coords=atom_coords,
+                                           smiles=smiles,
                                            atom_features_list=atom_features_list,
                                            mol_features=molecule_features_array,
                                            targets=targets,
                                            tracking_features=tracking_features,
-                                           reference_cells=dataset['crystal_unit_cell_coordinates'],
+                                           reference_cells=unit_cell_coords,
                                            lattice_features=lattice_features,
-                                           T_fc_list=dataset['crystal_fc_transform'],
-                                           identifiers=dataset['crystal_identifier'],
-                                           asymmetric_unit_handedness=dataset['asymmetric_unit_handedness'],
-                                           crystal_symmetries=dataset['crystal_symmetry_operators'])
+                                           T_fc_list=T_fc_list,
+                                           identifiers=crystal_identifier,
+                                           asymmetric_unit_handedness=asym_unit_handedness,
+                                           crystal_symmetries=symmetry_ops)
 
     def get_cell_features(self, dataset):
         """
@@ -459,4 +474,3 @@ def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2):
 
 def update_dataloader_batch_size(loader, new_batch_size):
     return DataLoader(loader.dataset, batch_size=new_batch_size, shuffle=True, num_workers=loader.num_workers, pin_memory=loader.pin_memory)
-
