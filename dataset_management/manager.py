@@ -9,7 +9,7 @@ from constants.asymmetric_units import asym_unit_dict
 from constants.space_group_info import SYM_OPS
 from crystal_building.utils import build_unit_cell, batch_asymmetric_unit_pose_analysis_torch
 from dataset_management.CrystalData import CrystalData
-from dataset_management.modelling_utils import get_range_fraction
+from dataset_management.utils import get_range_fraction
 
 
 class DataManager:

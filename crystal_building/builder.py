@@ -28,7 +28,7 @@ class SupercellBuilder:
 
     def build_supercells(self,
                          molecule_data,
-                         cell_sample: torch.tensor,
+                         cell_parameters: torch.tensor,
                          supercell_size: int = 5,
                          graph_convolution_cutoff: float = 6,
                          target_handedness=None,
@@ -39,11 +39,11 @@ class SupercellBuilder:
         convert reference cell to "supercell" (in fact, it's truncated to an appropriate cluster size)
         """
         supercell_data = molecule_data.clone()
-        supercell_data, cell_sample, target_handedness = \
-            self.move_cell_data_to_device(supercell_data, cell_sample, target_handedness)
+        supercell_data, cell_parameters, target_handedness = \
+            self.move_cell_data_to_device(supercell_data, cell_parameters, target_handedness)
 
         cell_lengths, cell_angles, mol_position, mol_rotation_i = (
-            cell_sample[:, :3], cell_sample[:, 3:6], cell_sample[:, 6:9], cell_sample[:, 9:])
+            cell_parameters[:, :3], cell_parameters[:, 3:6], cell_parameters[:, 6:9], cell_parameters[:, 9:])
 
         if self.rotation_basis == 'spherical':
             mol_rotation = sph2rotvec(mol_rotation_i)
@@ -103,7 +103,10 @@ class SupercellBuilder:
 
         return supercell_data, generated_cell_volumes
 
-    def prebuilt_unit_cell_to_supercell(self, supercell_data, supercell_size=5, graph_convolution_cutoff=6, pare_to_convolution_cluster=True):
+    def prebuilt_unit_cell_to_supercell(self, supercell_data,
+                                        supercell_size=5,
+                                        graph_convolution_cutoff=6,
+                                        pare_to_convolution_cluster=True):
         """
         build a supercell cluster using a pre-built unit cell
         will not check for physicality or apply any symmetry options - merely pattern the unit cell

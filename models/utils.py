@@ -9,7 +9,7 @@ from torch.optim import lr_scheduler as lr_scheduler
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import softmax_np, components2angle
-from dataset_management.modelling_utils import update_dataloader_batch_size
+from dataset_management.utils import update_dataloader_batch_size
 
 
 def set_lr(schedulers, optimizer, lr_schedule, min_lr, err_tr, hit_max_lr):

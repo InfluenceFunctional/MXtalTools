@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import datetime
 from argparse import Namespace
 #
@@ -35,7 +34,7 @@ from crystal_building.builder import SupercellBuilder
 from crystal_building.utils import update_crystal_symmetry_elements
 
 from dataset_management.manager import DataManager
-from dataset_management.modelling_utils import (get_dataloaders, update_dataloader_batch_size)
+from dataset_management.utils import (get_dataloaders, update_dataloader_batch_size)
 from reporting.logger import Logger
 
 from common.utils import softmax_np, init_sym_info
@@ -167,7 +166,6 @@ class Modeller:
         """load and filter dataset"""
         data_manager = DataManager(device=self.device,
                                    datasets_path=self.config.dataset_path)
-
         data_manager.load_dataset_for_modelling(
             config=self.config.dataset,
             dataset_name=self.config.dataset_name,
@@ -177,6 +175,10 @@ class Modeller:
             filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules
         )
         self.dataDims = data_manager.dataDims
+        self.t_i_d = {feat: index for index, feat in enumerate(self.dataDims['tracking_features'])}  # tracking feature index dictionary
+        self.lattice_means = torch.tensor(self.dataDims['lattice_means'], dtype=torch.float32, device=self.config.device)
+        self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], dtype=torch.float32, device=self.config.device)
+        self.std_dict = data_manager.standardization_dict
 
         if self.config.extra_test_set_name is not None:
             blind_test_conditions = [['crystal_z_prime', 'in', [1]],  # very permissive
@@ -809,7 +811,7 @@ class Modeller:
             with torch.no_grad():
                 standardized_target_packing_coeff = self.regressor(mol_data.clone().detach().to(self.config.device)).detach()[:, 0]
         else:
-            target_packing_coeff = mol_data.tracking[:, self.dataDims['tracking_features'].index('crystal_packing_coefficient')]
+            target_packing_coeff = mol_data.tracking[:, self.t_i_d['crystal_packing_coefficient']]
             standardized_target_packing_coeff = ((target_packing_coeff - self.std_dict['crystal_packing_coefficient'][0]) / self.std_dict['crystal_packing_coefficient'][1]).to(self.config.device)
 
         standardized_target_packing_coeff += torch.randn_like(standardized_target_packing_coeff) * self.config.generator.packing_target_noise
@@ -868,11 +870,6 @@ class Modeller:
         multivariate gaussian generator
         """
         # todo reconsider the need for this function
-
-        '''init lattice mean & std'''
-        self.lattice_means = torch.tensor(self.dataDims['lattice_means'], dtype=torch.float32, device=self.config.device)
-        self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], dtype=torch.float32, device=self.config.device)
-
         ''' 
         init gaussian generator for cell parameter sampling
         we don't always use it but it's very cheap so just do it every time
@@ -1457,8 +1454,8 @@ class Modeller:
         if (supercell_data is not None) and ('atom_is_H_bond_donor' in self.dataDims['atom_features']) and (
                 'molecule_num_donors' in self.dataDims['molecule_features']):  # supercell_data is not None: # do vdw computation even if we don't need it
             # get the total per-molecule counts
-            mol_acceptors = supercell_data.tracking[:, self.dataDims['tracking_features'].index('molecule_num_acceptors')]
-            mol_donors = supercell_data.tracking[:, self.dataDims['tracking_features'].index('molecule_num_donors')]
+            mol_acceptors = supercell_data.tracking[:, self.t_i_d['molecule_num_acceptors']]
+            mol_donors = supercell_data.tracking[:, self.t_i_d['molecule_num_donors']]
 
             '''
             count pairs within a close enough bubble ~2.7-3.3 Angstroms
@@ -1467,8 +1464,8 @@ class Modeller:
             for i in range(supercell_data.num_graphs):
                 if (mol_donors[i]) > 0 and (mol_acceptors[i] > 0):
                     h_bonds = compute_num_h_bonds(supercell_data,
-                                                  self.dataDims['atom_features'].index('atom_is_H_bond_acceptor'),
-                                                  self.dataDims['atom_features'].index('atom_is_H_bond_donor'), i)
+                                                  self.t_i_d['atom_is_H_bond_acceptor'],
+                                                  self.t_i_d['atom_is_H_bond_donor'], i)
 
                     bonds_per_possible_bond = h_bonds / min(mol_donors[i], mol_acceptors[i])
                     h_bond_loss = 1 - torch.tanh(2 * bonds_per_possible_bond)  # smoother gradient about 0
@@ -1502,7 +1499,7 @@ class Modeller:
 
         target_packing_coeffs = standardized_target_packing * self.std_dict['crystal_packing_coefficient'][1] + self.std_dict['crystal_packing_coefficient'][0]
 
-        csd_packing_coeffs = data.tracking[:, self.dataDims['tracking_features'].index('crystal_packing_coefficient')]
+        csd_packing_coeffs = data.tracking[:, self.t_i_d['crystal_packing_coefficient']]
 
         # compute loss vs the target
         if loss_func == 'mse':
