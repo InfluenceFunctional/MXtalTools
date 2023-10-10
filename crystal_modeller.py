@@ -35,7 +35,7 @@ from crystal_building.builder import SupercellBuilder
 from crystal_building.utils import update_crystal_symmetry_elements
 
 from dataset_management.manager import DataManager
-from dataset_management.modelling_utils import (TrainingDataBuilder, get_dataloaders, update_dataloader_batch_size)
+from dataset_management.modelling_utils import (get_dataloaders, update_dataloader_batch_size)
 from reporting.logger import Logger
 
 from common.utils import softmax_np, init_sym_info
@@ -103,7 +103,7 @@ class Modeller:
         hopefully does not overlap with any other workdirs
         :return:
         """
-        self.run_identifier = datetime.today().strftime("%d-%m-%H-%M-%S") + str(self.config.paths.yaml_path).split('.yaml')[0].split('configs')[1].replace('\\','_').replace('/','_')
+        self.run_identifier = datetime.today().strftime("%d-%m-%H-%M-%S") + str(self.config.paths.yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace('/', '_')
         self.working_directory = self.config.workdir + self.run_identifier
         os.mkdir(self.working_directory)
 
@@ -157,7 +157,7 @@ class Modeller:
         wandb.log({"Model Num Parameters": np.sum(np.asarray(num_params)),
                    "Initial Batch Size": self.config.current_batch_size})
 
-    def load_dataset_and_dataloaders(self, override_test_fraction = None):
+    def load_dataset_and_dataloaders(self, override_test_fraction=None):
         """
         use data manager to load and filter dataset
         use dataset builder to generate crystaldata objects
@@ -166,18 +166,17 @@ class Modeller:
 
         """load and filter dataset"""
         data_manager = DataManager(device=self.device,
-                                   datasets_path=self.config.dataset_path
-                                   )
+                                   datasets_path=self.config.dataset_path)
+
         data_manager.load_dataset_for_modelling(
+            config=self.config.dataset,
             dataset_name=self.config.dataset_name,
             misc_dataset_name=self.config.misc_dataset_name,
             filter_conditions=self.config.dataset.filter_conditions,
             filter_polymorphs=self.config.dataset.filter_polymorphs,
             filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules
         )
-        prepped_dataset = data_manager.dataset
-        self.std_dict = data_manager.standardization_dict
-        del data_manager
+        self.dataDims = data_manager.dataDims
 
         if self.config.extra_test_set_name is not None:
             blind_test_conditions = [['crystal_z_prime', 'in', [1]],  # very permissive
@@ -185,41 +184,20 @@ class Modeller:
                                      ['atom_atomic_numbers', 'range', [1, 100]]]
 
             # omit blind test 5 & 6 targets
-            data_manager = DataManager(device=self.device,
-                                       datasets_path=self.config.dataset_path
-                                       )
-            data_manager.load_dataset_for_modelling(  # todo move this into training & combine with builder
+            extra_data_manager = DataManager(device=self.device,
+                                             datasets_path=self.config.dataset_path
+                                             )
+            extra_data_manager.load_dataset_for_modelling(
+                config=self.config.dataset,
                 dataset_name=self.config.extra_test_set_name,
                 misc_dataset_name=self.config.misc_dataset_name,
                 filter_conditions=blind_test_conditions,  # standard filtration conditions
                 filter_polymorphs=False,  # do not filter duplicates - e.g., in Blind test they're almost all duplicates!
                 filter_duplicate_molecules=False,
             )
-            extra_dataset = data_manager.dataset
-            del data_manager
+
         else:
-            extra_dataset = None
-
-        """generate crystaldata points"""
-        dataset_builder = TrainingDataBuilder(self.config.dataset,
-                                              preloaded_dataset=prepped_dataset,
-                                              data_std_dict=self.std_dict,
-                                              override_length=self.config.dataset.max_dataset_length)
-
-        self.dataDims = dataset_builder.dataDims
-        del prepped_dataset  # we don't actually want this huge thing floating around
-
-        if extra_dataset is not None:
-            extra_dataset_builder = TrainingDataBuilder(
-                self.config.dataset,
-                preloaded_dataset=extra_dataset,
-                data_std_dict=self.std_dict,
-                override_length=int(1e6))  # if we cut off elements, we may miss the experimental samples
-
-            # todo optionally load targets as a separate dataset and combine them here
-            del extra_dataset  # we don't actually want this huge thing floating around
-        else:
-            extra_dataset_builder = None
+            extra_data_manager = None
 
         """return dataloaders"""
         if override_test_fraction is not None:
@@ -227,7 +205,7 @@ class Modeller:
         else:
             test_fraction = self.config.dataset.test_fraction
 
-        return self.prep_dataloaders(dataset_builder, extra_dataset_builder, test_fraction)
+        return self.prep_dataloaders(data_manager, extra_data_manager, test_fraction)
 
     def prep_dataloaders(self, dataset_builder, extra_dataset_builder=None, test_fraction=0.2, override_batch_size: int = None):
         """
@@ -251,6 +229,7 @@ class Modeller:
                                                    machine=self.config.machine,
                                                    batch_size=loader_batch_size,
                                                    test_fraction=1)
+            del extra_dataset_builder
         else:
             extra_test_loader = None
 
@@ -894,7 +873,6 @@ class Modeller:
         self.lattice_means = torch.tensor(self.dataDims['lattice_means'], dtype=torch.float32, device=self.config.device)
         self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], dtype=torch.float32, device=self.config.device)
 
-
         ''' 
         init gaussian generator for cell parameter sampling
         we don't always use it but it's very cheap so just do it every time
@@ -905,7 +883,6 @@ class Modeller:
                                                              sym_info=self.sym_info,
                                                              device=self.config.device,
                                                              cov_mat=self.dataDims['lattice_cov_mat'])
-
 
     def what_generators_to_use(self, override_randn, override_distorted, override_adversarial):
         """

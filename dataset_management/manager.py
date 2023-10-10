@@ -4,21 +4,17 @@ from tqdm import tqdm
 import os
 import numpy as np
 
-from common.utils import delete_from_dataframe
+from common.utils import delete_from_dataframe, standardize_np
 from constants.asymmetric_units import asym_unit_dict
 from constants.space_group_info import SYM_OPS
 from crystal_building.utils import build_unit_cell, batch_asymmetric_unit_pose_analysis_torch
+from dataset_management.CrystalData import CrystalData
+from dataset_management.modelling_utils import get_range_fraction
 
 
 class DataManager:
     def __init__(self, datasets_path, device='cpu', mode='standard', chunks_path=None, seed=0):
-        self.misc_data_dict = None
-        self.standardization_dict = None
-        self.crystal_to_mol_dict = None
-        self.mol_to_crystal_dict = None
-        self.molecules_in_crystals_dict = None
-        self.dataset = None
-
+        self.datapoints = None
         self.datasets_path = datasets_path
         self.chunks_path = chunks_path
         self.device = device  # cpu or cuda
@@ -37,7 +33,7 @@ class DataManager:
         print(f'Collecting {num_chunks} dataset chunks')
         self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks], ignore_index=True)
 
-    def load_dataset_for_modelling(self, dataset_name, misc_dataset_name,
+    def load_dataset_for_modelling(self, config, dataset_name, misc_dataset_name, override_length=None,
                                    filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False):
 
         self.load_dataset_and_misc_data(dataset_name, misc_dataset_name)
@@ -59,6 +55,357 @@ class DataManager:
             self.dataset = delete_from_dataframe(self.dataset, bad_inds)
             print("Duplicate molecule filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
             self.rebuild_indices()
+
+        self.generate_datapoints(config, override_length)
+
+    def generate_datapoints(self, config, override_length):
+        self.regression_target = config.regression_target
+        self.dataset_seed = config.seed
+        self.single_molecule_dataset_identifier = config.single_molecule_dataset_identifier
+        np.random.seed(self.dataset_seed)
+
+        if override_length is not None:
+            self.max_dataset_length = override_length
+        else:
+            self.max_dataset_length = config.max_dataset_length
+
+        self.dataset_length = min(len(self.dataset), self.max_dataset_length)
+
+        # shuffle and cut up dataset before processing
+        self.dataset = self.dataset.loc[np.random.choice(len(self.dataset), self.dataset_length, replace=False)]
+        self.dataset = self.dataset.reset_index().drop(columns='index')  # reindexing is crucial here
+        self.last_minute_featurization_and_one_hots()  # add a few odds & ends
+        if config.save_dataset:
+            self.dataset.to_pickle('training_dataset.pkl')
+
+        '''identify keys to load & track'''
+        self.atom_keys = config.atom_feature_keys
+        self.molecule_keys = config.molecule_feature_keys
+        self.set_crystal_keys()
+        self.set_tracking_keys()
+        self.set_crystal_generation_keys()
+
+        '''
+        prep for modelling
+        '''
+        self.datapoints = self.generate_training_datapoints()
+
+        if config.single_molecule_dataset_identifier is not None:  # make dataset a bunch of the same molecule
+            identifiers = [item.csd_identifier for item in self.datapoints]
+            index = identifiers.index(self.single_molecule_dataset_identifier)  # PIQTOY # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
+            new_datapoints = [self.datapoints[index] for i in range(self.dataset_length)]
+            self.datapoints = new_datapoints
+
+        self.dataDims = self.get_data_dimensions()
+
+    def get_data_dimensions(self):
+        dim = {
+            'standardization_dict': self.standardization_dict,
+            'dataset_length': self.dataset_length,
+
+            'lattice_features': self.lattice_keys,
+            'num_lattice_features': len(self.lattice_keys),
+            'lattice_means': np.asarray([self.standardization_dict[key][0] for key in self.lattice_keys]),
+            'lattice_stds': np.asarray([self.standardization_dict[key][1] for key in self.lattice_keys]),
+            'lattice_cov_mat': self.covariance_matrix,
+
+            'regression_target': self.regression_target,
+            'target_mean': self.standardization_dict[self.regression_target][0],
+            'target_std': self.standardization_dict[self.regression_target][1],
+
+            'num_tracking_features': len(self.tracking_keys),
+            'tracking_features': self.tracking_keys,
+
+            'num_atom_features': len(self.atom_keys),
+            'atom_features': self.atom_keys,
+
+            'num_molecule_features': len(self.molecule_keys),
+            'molecule_features': self.molecule_keys,
+
+            'crystal_generation features': self.crystal_generation_features,
+            'num crystal generation features': len(self.crystal_generation_features),
+
+        }
+
+        return dim
+
+    def set_crystal_generation_keys(self):
+        # add symmetry features for generator
+        self.crystal_generation_features = []
+        space_group_features = [column for column in self.dataset.columns if 'sg_is' in column]
+        crystal_system_features = [column for column in self.dataset.columns if 'crystal_system_is' in column]
+        self.crystal_generation_features.extend(space_group_features)
+        self.crystal_generation_features.extend(crystal_system_features)
+        # self.crystal_generation_features.append('crystal_z_value')
+        # self.crystal_generation_features.append('crystal_z_prime')
+        self.crystal_generation_features.append('crystal_symmetry_multiplicity')
+        # self.crystal_generation_features.append('crystal_packing_coefficient')
+        # self.crystal_generation_features.append('crystal_cell_volume')
+        # self.crystal_generation_features.append('crystal_reduced_volume')
+
+    def set_tracking_keys(self):
+        """
+        set keys to be kept in tracking feature array
+        will break if any of these are objects or strings
+        """
+        self.tracking_keys = []
+        self.tracking_keys.extend(self.crystal_keys)
+        self.tracking_keys.extend(self.lattice_keys)
+        self.tracking_keys.extend(self.molecule_keys)
+
+        composition_keys = []
+        for key in self.dataset.columns:
+            if 'count' in key:
+                composition_keys.append(key)
+            if 'fraction' in key and 'fractional' not in key:
+                composition_keys.append(key)
+        self.tracking_keys.extend(composition_keys)
+
+        self.tracking_keys = list(set(self.tracking_keys))  # remove duplicates
+
+    def set_crystal_keys(self):
+        self.crystal_keys = ['crystal_space_group_number', 'crystal_space_group_setting',
+                             'crystal_density', 'crystal_packing_coefficient',
+                             'crystal_lattice_a', 'crystal_lattice_b', 'crystal_lattice_c',
+                             'crystal_lattice_alpha', 'crystal_lattice_beta', 'crystal_lattice_gamma',
+                             'crystal_z_value', 'crystal_z_prime', 'crystal_reduced_volume', 'crystal_cell_volume',
+                             'crystal_symmetry_multiplicity', 'asymmetric_unit_is_well_defined',
+                             ]
+
+        # correct order here is crucially important
+        self.lattice_keys = ['crystal_lattice_a', 'crystal_lattice_b', 'crystal_lattice_c',
+                             'crystal_lattice_alpha', 'crystal_lattice_beta', 'crystal_lattice_gamma',
+                             'asymmetric_unit_centroid_x', 'asymmetric_unit_centroid_y', 'asymmetric_unit_centroid_z',
+                             'asymmetric_unit_rotvec_theta', 'asymmetric_unit_rotvec_phi', 'asymmetric_unit_rotvec_r'
+                             ]
+
+    def last_minute_featurization_and_one_hots(self):
+        """
+        add or update a few features including crystal feature one-hots
+        #
+        note we are surpressing a performancewarning from Pandas here.
+        It's easier to do it this way and doesn't seem that slow.
+        """
+
+        '''
+        z_value
+        '''
+        for i in range(1, 32 + 1):
+            self.dataset['crystal_z_is_{}'.format(i)] = self.dataset['crystal_z_value'] == i
+
+        '''
+        space group
+        '''
+        from constants.space_group_info import SPACE_GROUPS
+        for i, symbol in enumerate(np.unique(list(SPACE_GROUPS.values()))):
+            self.dataset['crystal_sg_is_' + symbol] = self.dataset['crystal_space_group_symbol'] == symbol
+
+        '''
+        crystal system
+        '''
+        from constants.space_group_info import LATTICE_TYPE
+        # get dictionary for crystal system elements
+        for i, system in enumerate(np.unique(list(LATTICE_TYPE.values()))):
+            self.dataset['crystal_system_is_' + system] = self.dataset['crystal_system'] == system
+
+        '''
+        # set angle units to natural
+        '''
+        if (max(self.dataset['crystal_lattice_alpha']) > np.pi) or (max(self.dataset['crystal_lattice_beta']) > np.pi) or (max(self.dataset['crystal_lattice_gamma']) > np.pi):
+            self.dataset['crystal_lattice_alpha'] = self.dataset['crystal_lattice_alpha'] * np.pi / 180
+            self.dataset['crystal_lattice_beta'] = self.dataset['crystal_lattice_beta'] * np.pi / 180
+            self.dataset['crystal_lattice_gamma'] = self.dataset['crystal_lattice_gamma'] * np.pi / 180
+
+        '''
+        check for heavy atoms
+        '''
+        znums = [10, 18, 36, 54]
+        for znum in znums:
+            self.dataset[f'molecule_atom_heavier_than_{znum}_fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200]) for atom_list in self.dataset['atom_atomic_numbers']])
+
+    def get_regression_target(self):
+        targets = self.dataset[self.regression_target]
+        target_mean = self.standardization_dict[self.regression_target][0]
+        target_std = self.standardization_dict[self.regression_target][1]
+
+        return (targets - target_mean) / target_std
+
+    def gather_tracking_features(self):
+        """
+        collect features of 'molecules' and append to atom-level data
+        these must all be bools ints or floats - no strings will be processed
+        """
+        feature_array = np.zeros((self.dataset_length, len(self.tracking_keys)), dtype=float)
+        for column_ind, key in enumerate(self.tracking_keys):
+            feature_vector = np.asarray(self.dataset[key])
+
+            if isinstance(feature_vector[0], list):  # feature vector is an array of lists
+                feature_vector = np.concatenate(feature_vector)
+            feature_array[:, column_ind] = feature_vector
+
+        return feature_array
+
+    def get_cell_features(self, ):
+        """
+        the 12 lattice parameters in correct order
+        """
+        key_dtype = []
+        # featurize
+
+        feature_array = np.zeros((self.dataset_length, len(self.lattice_keys)), dtype=float)
+        for column_ind, key in enumerate(self.lattice_keys):
+            feature_vector = np.asarray(self.dataset[key])
+
+            if isinstance(feature_vector[0], list):  # feature vector is an array of lists
+                feature_vector = np.concatenate(feature_vector)
+
+            key_dtype.append(feature_vector.dtype)
+
+            feature_array[:, column_ind] = feature_vector
+
+            assert np.sum(np.isnan(feature_vector)) == 0
+
+        '''
+        compute full covariance matrix, in raw basis
+        '''
+        if len(feature_array) == 1:  # error handling for if there_is_only one entry in the dataset, e.g., during CSP
+            feature_array_with_normed_lengths = np.stack([feature_array for _ in range(10)])[:, 0, :]
+        self.covariance_matrix = np.cov(feature_array, rowvar=False)  # we want the randn model to generate samples with normed lengths
+
+        for i in range(len(self.covariance_matrix)):  # ensure it's well-conditioned
+            self.covariance_matrix[i, i] = max((0.01, self.covariance_matrix[i, i]))
+
+        return feature_array
+
+    def concatenate_atom_features(self):
+        """
+        collect and normalize/standardize relevant atomic features
+        must be bools ints or floats
+        :param dataset:
+        :return:
+        """
+        atom_features_list = [np.zeros((len(self.dataset['atom_atomic_numbers'][i][0]), len(self.atom_keys))) for i in range(self.dataset_length)]
+
+        for column_ind, key in enumerate(self.atom_keys):
+            for i in range(self.dataset_length):
+                feature_vector = np.asarray(self.dataset[key][i])[0]  # all atom features are lists-of-lists, for Z'=1 always just take the first element
+
+                if key == 'atom_atomic_numbers':
+                    pass
+                elif feature_vector.dtype == bool:
+                    pass
+                else:
+                    feature_vector = standardize_np(feature_vector, known_mean=self.standardization_dict[key][0], known_std=self.standardization_dict[key][1])
+
+                assert np.sum(np.isnan(feature_vector)) == 0
+                atom_features_list[i][:, column_ind] = feature_vector
+
+        return atom_features_list
+
+    def concatenate_molecule_features(self):
+        """
+        collect features of 'molecules' and append to atom-level data
+        """
+
+        # don't add molecule target if we are going to model it
+        if self.regression_target in self.molecule_keys:
+            self.molecule_keys.remove(self.regression_target)
+
+        molecule_feature_array = np.zeros((self.dataset_length, len(self.molecule_keys)), dtype=float)
+        for column_ind, key in enumerate(self.molecule_keys):
+            feature_vector = np.asarray(self.dataset[key])
+
+            if isinstance(feature_vector[0], list):  # feature vector is an array of lists
+                feature_vector = np.concatenate(feature_vector)
+
+            if feature_vector.dtype == bool:
+                pass
+            else:
+                feature_vector = standardize_np(feature_vector, known_mean=self.standardization_dict[key][0], known_std=self.standardization_dict[key][1])
+
+            molecule_feature_array[:, column_ind] = feature_vector
+
+        assert np.sum(np.isnan(molecule_feature_array)) == 0
+        return molecule_feature_array
+
+    def generate_training_datapoints(self):
+        tracking_features = self.gather_tracking_features()
+        lattice_features = self.get_cell_features()
+        targets = self.get_regression_target()
+        molecule_features_array = self.concatenate_molecule_features()
+        atom_features_list = self.concatenate_atom_features()
+
+        combined_keys = self.atom_keys + self.molecule_keys + self.crystal_keys
+        self.dataset.drop(columns=[key for key in combined_keys if key in self.dataset.columns], inplace=True)  # delete encoded columns to save on RAM
+        self.dataset.drop(columns=[key for key in self.tracking_keys if key in self.dataset.columns], inplace=True)  # some of these are duplicates of above
+
+        atom_coords = np.asarray(self.dataset['atom_coordinates'])
+        smiles = np.asarray(self.dataset['molecule_smiles'])
+        unit_cell_coords = self.dataset['crystal_unit_cell_coordinates']
+        T_fc_list = self.dataset['crystal_fc_transform']
+        crystal_identifier = self.dataset['crystal_identifier']
+        asym_unit_handedness = self.dataset['asymmetric_unit_handedness']
+        symmetry_ops = self.dataset['crystal_symmetry_operators']
+        #
+        # dataset.drop(columns=['atom_coordinates', 'molecule_smiles', 'crystal_unit_cell_coordinates',
+        #                       'crystal_fc_transform', 'crystal_identifier', 'asym_unit_handedness', 'crystal_symmetry_operators'], inplace=True)  # delete encoded columns to save on RAM
+        self.dataset = None
+        return self.make_datapoints(atom_coords=atom_coords,
+                                    smiles=smiles,
+                                    atom_features_list=atom_features_list,
+                                    mol_features=molecule_features_array,
+                                    targets=targets,
+                                    tracking_features=tracking_features,
+                                    reference_cells=unit_cell_coords,
+                                    lattice_features=lattice_features,
+                                    T_fc_list=T_fc_list,
+                                    identifiers=crystal_identifier,
+                                    asymmetric_unit_handedness=asym_unit_handedness,
+                                    crystal_symmetries=symmetry_ops)
+
+    def make_datapoints(self, atom_coords, smiles, atom_features_list, mol_features,
+                        targets, tracking_features, reference_cells, lattice_features,
+                        T_fc_list, identifiers, asymmetric_unit_handedness, crystal_symmetries):
+        """
+        convert feature, target and tracking vectors into torch.geometric data objects
+        :param atom_coords:
+        :param smiles:
+        :param atom_features_list:
+        :param mol_features:
+        :param targets:
+        :param tracking_features:
+        :return:
+        """
+        datapoints = []
+
+        mult_ind = self.tracking_keys.index('crystal_symmetry_multiplicity')
+        sg_ind_value_ind = self.tracking_keys.index('crystal_space_group_number')
+        mol_size_ind = self.tracking_keys.index('molecule_num_atoms')
+        mol_volume_ind = self.tracking_keys.index('molecule_volume')
+
+        tracking_features = torch.Tensor(tracking_features)
+        print("Generating crystal data objects")
+        for i in tqdm(range(self.dataset_length)):
+            datapoints.append(
+                CrystalData(x=torch.Tensor(atom_features_list[i]),
+                            pos=torch.Tensor(atom_coords[i])[0],
+                            y=targets[i],
+                            mol_x=torch.Tensor(mol_features[i, None, :]),
+                            smiles=smiles[i],
+                            tracking=tracking_features[i, None, :],
+                            ref_cell_pos=np.asarray(reference_cells[i]),  # won't collate properly as a torch tensor - must leave as np array
+                            mult=tracking_features[i, mult_ind].int(),
+                            sg_ind=tracking_features[i, sg_ind_value_ind].int(),
+                            cell_params=torch.Tensor(lattice_features[i, None, :]),
+                            T_fc=torch.Tensor(T_fc_list[i])[None, ...],
+                            mol_size=torch.Tensor(tracking_features[i, mol_size_ind]),
+                            mol_volume=torch.Tensor(tracking_features[i, mol_volume_ind]),
+                            csd_identifier=identifiers[i],
+                            asym_unit_handedness=torch.Tensor(np.asarray(asymmetric_unit_handedness[i])),
+                            symmetry_operators=crystal_symmetries[i]
+                            ))
+
+        return datapoints
 
     def rebuild_indices(self):
         self.dataset = self.dataset.reset_index().drop(columns='index')
@@ -89,9 +436,9 @@ class DataManager:
         self.get_dataset_standardization_statistics()
 
         misc_data_dict = {
-            'crystal_to_mol_dict': self.crystal_to_mol_dict,
-            'mol_to_crystal_dict': self.mol_to_crystal_dict,
-            'molecules_in_crystals_dict': self.molecules_in_crystals_dict,
+            # 'crystal_to_mol_dict': self.crystal_to_mol_dict,
+            # 'mol_to_crystal_dict': self.mol_to_crystal_dict,
+            # 'molecules_in_crystals_dict': self.molecules_in_crystals_dict,
             'standardization_dict': self.standardization_dict
         }
 
@@ -501,6 +848,11 @@ class DataManager:
 
         return bad_inds
 
+    def __getitem__(self, idx):
+        return self.datapoints[idx]
+
+    def __len__(self):
+        return len(self.datapoints)
 
 if __name__ == '__main__':
     # miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
