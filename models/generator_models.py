@@ -93,7 +93,7 @@ class crystal_generator(nn.Module):
         # return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
         return self.prior.sample((n_samples,)).to(self.device)
 
-    def forward(self, n_samples, molecule_data, z=None, return_condition=False, return_prior=False, target_packing=0):
+    def forward(self, n_samples, molecule_data, z=None, return_condition=False, return_prior=False, return_raw_samples=False, target_packing=0):
         if z is None:  # sample random numbers from prior distribution
             z = self.sample_latent(n_samples)
 
@@ -108,12 +108,14 @@ class crystal_generator(nn.Module):
         clean_samples = clean_cell_params(samples, molecule_data.sg_ind, self.lattice_means, self.lattice_stds,
                                           self.symmetries_dict, self.asym_unit_dict, destandardize=True, mode='soft')
 
-        if any((return_condition, return_prior)):
+        if any((return_condition, return_prior, return_raw_samples)):
             output = [clean_samples]
             if return_prior:
                 output.append(z)
             if return_condition:
                 output.append(molecule_encoding)
+            if return_raw_samples:
+                output.append(samples)
             return output
         else:
             return clean_samples

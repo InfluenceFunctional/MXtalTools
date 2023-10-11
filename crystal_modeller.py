@@ -467,8 +467,8 @@ class Modeller:
             self.init_models()
 
             '''initialize some training metrics'''
-            self.discriminator_hit_max_lr, self.generator_hit_max_lr, self.regressor_hit_max_lr, converged, epoch = \
-                (False, False, False, self.config.max_epochs == 0, 0)
+            self.discriminator_hit_max_lr, self.generator_hit_max_lr, self.regressor_hit_max_lr, converged, epoch, prev_epoch_failed = \
+                (False, False, False, self.config.max_epochs == 0, 0, False)
 
             # training loop
             with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
@@ -521,12 +521,25 @@ class Modeller:
                         train_loader, test_loader, extra_test_loader = \
                             self.increment_batch_size(train_loader, test_loader, extra_test_loader)
 
+                        prev_epoch_failed = False
+
                     except RuntimeError as e:  # if we do hit OOM, slash the batch size
                         if "CUDA out of memory" in str(e):
+                            if prev_epoch_failed:
+                                print(torch.cuda.memory_summary())
+                                import gc
+                                for obj in gc.get_objects():
+                                    try:
+                                        if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                                            print(type(obj), obj.size())
+                                    except:
+                                        pass
                             train_loader, test_loader = slash_batch(train_loader, test_loader, 0.05)  # shrink batch size
+                            torch.cuda.empty_cache()
                             self.config.grow_batch_size = False  # stop growing the batch for the rest of the run
+                            prev_epoch_failed = True
                         else:
-                            raise e
+                            raise e  # will simply raise error if training on CPU
                     epoch += 1
 
                     if self.config.device.lower() == 'cuda':
@@ -821,11 +834,12 @@ class Modeller:
         standardized_target_packing_coeff += torch.randn_like(standardized_target_packing_coeff) * self.config.generator.packing_target_noise
 
         # generate the samples
-        [generated_samples, prior, condition] = self.generator.forward(
+        [generated_samples, prior, condition, raw_samples] = self.generator.forward(
             n_samples=mol_data.num_graphs, molecule_data=mol_data.to(self.config.device).clone(),
-            return_condition=True, return_prior=True, target_packing=standardized_target_packing_coeff)
+            return_condition=True, return_prior=True, return_raw_samples=True,
+            target_packing=standardized_target_packing_coeff)
 
-        return generated_samples, prior, standardized_target_packing_coeff, mol_data
+        return generated_samples, prior, standardized_target_packing_coeff, mol_data, raw_samples
 
     def get_generator_losses(self, data):
         """
@@ -833,7 +847,7 @@ class Modeller:
         """
 
         """get crystals"""
-        generated_samples, prior, standardized_target_packing, generator_data = (
+        generated_samples, prior, standardized_target_packing, generator_data, raw_samples = (
             self.get_generator_samples(data))
 
         supercell_data, generated_cell_volumes = (
@@ -844,7 +858,7 @@ class Modeller:
             ))
 
         """get losses"""
-        similarity_penalty = self.compute_similarity_penalty(generated_samples, prior)
+        similarity_penalty = self.compute_similarity_penalty(generated_samples, prior, raw_samples)
         discriminator_raw_output, dist_dict = self.score_adversarially(supercell_data)
         h_bond_score = self.compute_h_bond_score(supercell_data)
         vdw_loss, vdw_score, _, _ = vdw_overlap(self.vdw_radii,
@@ -916,7 +930,7 @@ class Modeller:
         if (self.config.discriminator.train_adversarially or override_adversarial) and (generator_ind == 1):
             negative_type = 'generator'
             with torch.no_grad():
-                generated_samples, _, _, generator_data = self.get_generator_samples(real_data)
+                generated_samples, _, _, generator_data, _ = self.get_generator_samples(real_data)
 
                 self.logger.update_stats_dict(self.epoch_type, 'generator_sample_source', np.zeros(len(generated_samples)), mode='extend')
 
@@ -1083,7 +1097,7 @@ class Modeller:
 
         self.logger.log_epoch_analysis(test_loader)
 
-    def compute_similarity_penalty(self, generated_samples, prior):
+    def compute_similarity_penalty(self, generated_samples, prior, raw_samples):
         """
         punish batches in which the samples are too self-similar
         overally not really that good to be honest
@@ -1097,18 +1111,28 @@ class Modeller:
         """
         if len(generated_samples) >= 3:
             # enforce that the distance between samples is similar to the distance between priors
-            prior_dists = torch.cdist(prior, prior, p=2)
-            std_samples = (generated_samples - self.lattice_means) / self.lattice_stds
-            sample_dists = torch.cdist(std_samples, std_samples, p=2)
-            prior_distance_penalty = F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(1)  # align distances to all other samples
+            # prior_dists = torch.cdist(prior, prior, p=2)
+            # std_samples = (generated_samples - self.lattice_means) / self.lattice_stds
+            # sample_dists = torch.cdist(std_samples, std_samples, p=2)
+            # prior_distance_penalty = F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(1)  # align distances to all other samples
+            #
+            # prior_variance = prior.var(dim=0)
+            # sample_variance = std_samples.var(dim=0)
+            # variance_penalty = F.smooth_l1_loss(input=sample_variance, target=prior_variance, reduction='none').mean().tile(len(prior))
 
-            prior_variance = prior.var(dim=0)
-            sample_variance = std_samples.var(dim=0)
-            variance_penalty = F.smooth_l1_loss(input=sample_variance, target=prior_variance, reduction='none').mean().tile(len(prior))
+            #similarity_penalty = (prior_distance_penalty + variance_penalty)
+            sample_stds = generated_samples.std(0)
+            sample_means = generated_samples.mean(0)
 
-            similarity_penalty = (prior_distance_penalty + variance_penalty)
+            # enforce similar distribution
+            standardization_losses = F.smooth_l1_loss(sample_stds, self.lattice_stds) + F.smooth_l1_loss(sample_means, self.lattice_means)
+            # enforce similar range of fractional centroids
+            destandardized_raw_fracs = raw_samples[:,6:9] * self.lattice_stds[6:9] + self.lattice_means[6:9]
+            mins = destandardized_raw_fracs.amin(0)
+            maxs = destandardized_raw_fracs.amax(0)
+            frac_range_losses = F.smooth_l1_loss(mins, torch.zeros_like(mins)) + F.smooth_l1_loss(maxs, torch.ones_like(maxs))
 
-
+            similarity_penalty = (standardization_losses + frac_range_losses).tile(len(prior))
         else:
             similarity_penalty = None
 
