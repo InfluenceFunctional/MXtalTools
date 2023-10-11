@@ -105,7 +105,7 @@ class Modeller:
         hopefully does not overlap with any other workdirs
         :return:
         """
-        self.run_identifier = datetime.today().strftime("%d-%m-%H-%M-%S") + str(self.config.paths.yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace('/', '_')
+        self.run_identifier = str(self.config.paths.yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace('/', '_') +  datetime.today().strftime("%d-%m-%H-%M-%S")
         self.working_directory = self.config.workdir + self.run_identifier
         os.mkdir(self.working_directory)
 
