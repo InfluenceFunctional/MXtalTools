@@ -1041,7 +1041,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         assert False, f"Detailed reporting for {target_key} is not yet implemented"
 
     predicted_density = (mol_mass * multiplicity) / predicted_volume * 1.66
-
+    # todo add point density as pointwise colormap
     losses = ['normed_error', 'abs_normed_error', 'squared_error']
     loss_dict = {}
     fig_dict = {}
@@ -1059,8 +1059,8 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
             loss_dict[name + '_' + loss + '_std'] = np.std(loss_i)
 
         linreg_result = linregress(tgt_value, pred_value)
-        loss_dict[name + '_Regression R'] = linreg_result.rvalue
-        loss_dict[name + '_Regression slope'] = linreg_result.slope
+        loss_dict[name + '_regression_R_value'] = linreg_result.rvalue
+        loss_dict[name + '_regression_slope'] = linreg_result.slope
 
         # predictions vs target trace
         xline = np.linspace(max(min(tgt_value), min(pred_value)),
@@ -1084,7 +1084,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
                                    showlegend=False))
         fig_dict[name + '_Error Distribution'] = fig
 
-    # correlate losses with molecular features
+    # correlate losses with molecular features  # todo replace with BT-style reporting
     tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
     generator_loss_correlations = np.zeros(dataDims['num_tracking_features'])
     features = []

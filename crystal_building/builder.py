@@ -76,6 +76,8 @@ class SupercellBuilder:
         # apply symmetry ops to build unit cell
         unit_cell_coords_list = build_unit_cell(supercell_data.mult, canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
 
+        assert torch.sum(torch.isnan(torch.cat([elem.flatten() for elem in unit_cell_coords_list]))) == 0, f"{cell_parameters}, {coords_list}, {canonical_conformer_coords_list}"
+
         # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction
         _, mol_orientations, mol_handedness, _ = \
             batch_asymmetric_unit_pose_analysis_torch(

@@ -452,7 +452,7 @@ class Modeller:
                           tags=[self.config.logger.experiment_tag],
                           settings=wandb.Settings(code_dir=".")))):
 
-            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.config.logger.run_name + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
             # this means we also can't do wandb sweeps properly, as-is
 
@@ -1273,7 +1273,7 @@ class Modeller:
         max_iters = 10
         converged_samples_list = []
         opt_trajectories = []
-        for iter in range(max_iters):
+        for opt_iter in range(max_iters):
             crystaldata_batch = self.refresh_crystal_batch(crystaldata_batch, refresh_inds=refresh_inds)
 
             crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch, mode='discriminator', num_steps=num_discriminator_opt_steps)

@@ -21,7 +21,7 @@ extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analy
 logger:
   run_name: standard_discriminator
   mini_csp_frequency: 5
-  sample_reporting_frequency: 5
+  sample_reporting_frequency: 1
   log_figures: True
   experiment_tag: benchmarks
 
