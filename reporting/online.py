@@ -314,7 +314,8 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
     fig = px.scatter(df,
                      x='vdw_score', y='packing_coefficient',
                      color='model_score', symbol='sample_source',
-                     marginal_x='histogram', marginal_y='histogram'
+                     marginal_x='histogram', marginal_y='histogram',
+                     range_color=(np.amin(all_scores),np.amax(all_scores))
                      )
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_range=[-vdw_cutoff, 0.1], yaxis_range=[0, 1.1])
@@ -333,12 +334,12 @@ def functional_group_analysis_fig(scores_dict, tracking_features, layout, dataDi
     for ii, key in enumerate(tracking_features_names):
         if 'molecule' in key and 'fraction' in key:
             if np.average(tracking_features[:, ii] > 0) > 0.01:
-                fraction_dict[key.split()[1]] = np.average(tracking_features[:, ii] > 0)
-                functional_group_inds[key.split()[1]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
+                fraction_dict[key] = np.average(tracking_features[:, ii] > 0)
+                functional_group_inds[key] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
         elif 'molecule' in key and 'count' in key:
             if np.average(tracking_features[:, ii] > 0) > 0.01:
-                fraction_dict[key.split()[2]] = np.average(tracking_features[:, ii] > 0)
-                functional_group_inds[key.split()[2]] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
+                fraction_dict[key] = np.average(tracking_features[:, ii] > 0)
+                functional_group_inds[key] = np.argwhere(tracking_features[:, ii] > 0)[:, 0]
 
     sort_order = np.argsort(list(fraction_dict.values()))[-1::-1]
     sorted_functional_group_keys = [list(functional_group_inds.keys())[i] for i in sort_order]
@@ -443,7 +444,6 @@ def group_wise_analysis_fig(identifiers_list, crystals_for_targets, scores_dict,
 
 
 def score_correlates_fig(scores_dict, dataDims, tracking_features, layout):
-    # todo fix atom fractions
     # todo replace standard correlates fig with this one - much nicer
     # correlate losses with molecular features
     tracking_features = np.asarray(tracking_features)
@@ -469,9 +469,9 @@ def score_correlates_fig(scores_dict, dataDims, tracking_features, layout):
     g_sort_inds = np.argsort(g_loss_correlations)
     g_loss_correlations = g_loss_correlations[g_sort_inds]
     features_sorted = [features[i] for i in g_sort_inds]
-    features_sorted_cleaned_i = [feat.replace('molecule', 'mol') for feat in features_sorted]
-    features_sorted_cleaned_ii = [feat.replace('crystal', 'crys') for feat in features_sorted_cleaned_i]
-    features_sorted_cleaned = [feat.replace('molecule_atom_heavier_than', 'atomic # >') for feat in features_sorted_cleaned_ii]
+    #features_sorted_cleaned_i = [feat.replace('molecule', 'mol') for feat in features_sorted]
+    #features_sorted_cleaned_ii = [feat.replace('crystal', 'crys') for feat in features_sorted_cleaned_i]
+    features_sorted_cleaned = [feat.replace('molecule_atom_heavier_than', 'atomic # >') for feat in features_sorted]
 
     functional_group_dict = {
         'NH0': 'tert amine',
@@ -492,31 +492,35 @@ def score_correlates_fig(scores_dict, dataDims, tracking_features, layout):
 
     g_loss_dict = {feat: corr for feat, corr in zip(features_sorted, g_loss_correlations)}
 
-    fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=('a) Molecule & Crystal Features', 'b) Atom Fractions', 'c) Contains Functional Groups'), x_title='R Value')
+    fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=('a) Molecule & Crystal Features', 'b) Atom Fractions', 'c) Functional Groups Count'), x_title='R Value')
+
+    crystal_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' not in key]
+    atom_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' in key]
+    mol_keys = [key for key in features_sorted_cleaned if 'count' in key and 'fraction' not in key]
 
     fig.add_trace(go.Bar(
-        y=[feat for feat in features_sorted_cleaned if 'has' not in feat and 'fraction' not in feat],
-        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat],
+        y=crystal_keys,
+        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in crystal_keys],
         orientation='h',
-        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' not in feat]).astype('float16'),
+        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in crystal_keys]).astype('float16'),
         textposition='auto',
         texttemplate='%{text:.2}',
         marker=dict(color='rgba(100,0,0,1)')
     ), row=1, col=1)
     fig.add_trace(go.Bar(
-        y=[feat.replace('mol ', '').replace('fraction', '') for feat in features_sorted_cleaned if 'has' not in feat and 'fraction' in feat],
-        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat],
+        y=[feat.replace('molecule_', '') for feat in features_sorted_cleaned if feat in atom_keys],
+        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in atom_keys],
         orientation='h',
-        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' not in feat and 'fraction' in feat]).astype('float16'),
+        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in atom_keys]).astype('float16'),
         textposition='auto',
         texttemplate='%{text:.2}',
         marker=dict(color='rgba(0,0,100,1)')
     ), row=1, col=2)
     fig.add_trace(go.Bar(
-        y=[feat.replace('mol has ', '') for feat in features_sorted_cleaned if 'has' in feat and 'fraction' not in feat],
-        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat],
+        y=[feat.replace('molecule_', '').replace('_count','') for feat in features_sorted_cleaned if feat in mol_keys],
+        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in mol_keys],
         orientation='h',
-        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if 'has' in feat and 'fraction' not in feat]).astype('float16'),
+        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in mol_keys]).astype('float16'),
         textposition='auto',
         texttemplate='%{text:.2}',
         marker=dict(color='rgba(0,100,0,1)')

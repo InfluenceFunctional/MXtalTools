@@ -16,9 +16,12 @@ import tqdm
 from shutil import copy
 from distutils.dir_util import copy_tree
 from torch.nn import functional as F
+from torch_geometric.loader.dataloader import Collater
 
 from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
 from constants.asymmetric_units import asym_unit_dict
+from csp.SampleOptimization import gradient_descent_sampling
+from models.crystal_rdf import crystal_rdf
 
 from models.discriminator_models import crystal_discriminator
 from models.generator_models import crystal_generator, independent_gaussian_model
@@ -70,7 +73,7 @@ class Modeller:
 
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
-            self.config.generate_sgs = [self.space_groups[int(key)] for key in asym_unit_dict.keys()]
+            self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in asym_unit_dict.keys()]
 
     def prep_new_working_directory(self):
         """
@@ -193,6 +196,7 @@ class Modeller:
                 config=self.config.dataset,
                 dataset_name=self.config.extra_test_set_name,
                 misc_dataset_name=self.config.misc_dataset_name,
+                override_length=int(1e7),
                 filter_conditions=blind_test_conditions,  # standard filtration conditions
                 filter_polymorphs=False,  # do not filter duplicates - e.g., in Blind test they're almost all duplicates!
                 filter_duplicate_molecules=False,
@@ -1251,6 +1255,86 @@ class Modeller:
 
         return self.config
 
+    def crystal_search(self, molecule_data, batch_size, data_contains_ground_truth=True):
+        """
+        execute a search for a single crystal target
+        if the target is known, compare it to our best guesses
+        """
+        num_discriminator_opt_steps = 100
+        num_mcmc_opt_steps = 100
+        self.generator.eval()
+        self.regressor.eval()
+        self.discriminator.eval()
+
+        '''instantiate batch'''
+        collater = Collater(None, None)
+        crystaldata_batch = collater([molecule_data for _ in range(batch_size)]).to(self.device)
+        refresh_inds = torch.arange(batch_size)
+        max_iters = 10
+        converged_samples_list = []
+        opt_trajectories = []
+        for iter in range(max_iters):
+            crystaldata_batch = self.refresh_crystal_batch(crystaldata_batch, refresh_inds=refresh_inds)
+
+            crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch, mode='discriminator', num_steps=num_discriminator_opt_steps)
+            opt_trajectories.append(opt_traj)
+            crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch, mode='mcmc', num_steps=num_mcmc_opt_steps)
+            opt_trajectories.append(opt_traj)
+            crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch, mode='discriminator', num_steps=num_discriminator_opt_steps)
+            opt_trajectories.append(opt_traj)
+
+            crystaldata_batch, refresh_inds, converged_samples = self.prune_crystaldata_batch(crystaldata_batch)
+
+            converged_samples_list.append(converged_samples)
+
+            # add convergence flags based on completeness of sampling
+
+        '''compare samples to ground truth'''
+        if data_contains_ground_truth:
+            ground_truth_analysis = self.analyze_real_crystal(molecule_data)
+
+    def optimize_crystaldata_batch(self, batch, mode, num_steps):
+        """
+        method which takes a batch of crystaldata objects
+        and optimzies them according to a score model either
+        with MCMC or gradient descent
+        """
+        num_crystals = batch.num_graphs
+        traj_record = {'score': np.zeros((num_steps, num_crystals)),
+                       'vdw_score': np.zeros((num_steps, num_crystals)),
+                       'std_cell_params': np.zeros((num_steps, num_crystals, 12)),
+                       'space_groups': np.zeros((num_steps, num_crystals)),
+                       'rdf': [[] for _ in range(num_crystals)]
+                       }
+
+        if mode.lower() == 'mcmc':
+            # todo build a clean MCMC here
+            assert False
+        elif mode.lower() == 'discriminator':
+            batch, traj_record = gradient_descent_sampling(
+                self.discriminator, batch,
+                self.supercell_builder,
+                num_steps, 1e-3,
+                torch.optim.Rprop, self.vdw_radii,
+                supercell_size=5, cutoff=6)
+
+        traj_record['rdf'] = crystal_rdf(batch, mode='intermolecular', elementwise=True, cpu_detach=True, raw_density=True)
+
+        return batch, traj_record
+
+    def refresh_crystal_batch(self, batch, refresh_inds, generator='gaussian', mol_orientation='random', space_groups: torch.tensor = None):
+        batch = self.set_molecule_alignment(batch, right_handed=False, mode_override=mol_orientation)
+
+        if space_groups is not None:
+            batch.sg_ind = space_groups
+
+        if generator == 'gaussian':
+            samples = self.gaussian_generator.forward(batch.num_graphs, batch).to(self.config.device)
+            batch.cell_params = samples[refresh_inds]
+            # todo add option for generator here
+
+        return batch
+
     #
     # def batch_csp(self, data_loader):
     #     print('Starting Mini CSP')
@@ -1464,8 +1548,8 @@ class Modeller:
             for i in range(supercell_data.num_graphs):
                 if (mol_donors[i]) > 0 and (mol_acceptors[i] > 0):
                     h_bonds = compute_num_h_bonds(supercell_data,
-                                                  self.t_i_d['atom_is_H_bond_acceptor'],
-                                                  self.t_i_d['atom_is_H_bond_donor'], i)
+                                                  self.dataDims['atom_features'].index('atom_is_H_bond_acceptor'),
+                                                  self.dataDims['atom_features'].index('atom_is_H_bond_donor'), i)
 
                     bonds_per_possible_bond = h_bonds / min(mol_donors[i], mol_acceptors[i])
                     h_bond_loss = 1 - torch.tanh(2 * bonds_per_possible_bond)  # smoother gradient about 0
