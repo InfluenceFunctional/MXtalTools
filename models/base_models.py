@@ -170,6 +170,9 @@ class molecule_graph_model(nn.Module):
         if return_latent:
             extra_outputs['final_activation'] = x.cpu().detach().numpy()
 
+        assert torch.sum(torch.isnan(output)) == 0
+        assert torch.sum(torch.isfinite(output)) == len(output.flatten())
+
         if len(extra_outputs) > 0:
             return output, extra_outputs
         else:
