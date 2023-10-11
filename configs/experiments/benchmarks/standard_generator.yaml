@@ -37,7 +37,7 @@ generator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_gene
 regressor_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
 
 discriminator_positional_noise: 0
-generator_positional_noise: 0
+generator_positional_noise: 0.05
 regressor_positional_noise: 0
 
 generate_sgs: ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
@@ -72,8 +72,8 @@ generator:
     num_fc_layers: 4
     fc_depth: 256
     activation: 'gelu'
-    fc_dropout_probability: 0
-    fc_norm_mode: null
+    fc_dropout_probability: 0.1
+    fc_norm_mode: layer
     conditioning_mode: 'first_layer' # 'first_layer' only for now
 
     prior: multivariate normal
@@ -87,10 +87,10 @@ generator:
       activation: gelu
       num_fc_layers: 4
       fc_depth: 256
-      fc_norm_mode: null
-      fc_dropout_probability: 0
-      graph_node_norm: null
-      graph_node_dropout: 0
+      fc_norm_mode: layer
+      fc_dropout_probability: 0.1
+      graph_node_norm: 'graph layer'
+      graph_node_dropout: 0.1
       graph_message_norm: null
       graph_message_dropout: 0
       num_attention_heads: 4

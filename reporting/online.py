@@ -315,7 +315,7 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
                      x='vdw_score', y='packing_coefficient',
                      color='model_score', symbol='sample_source',
                      marginal_x='histogram', marginal_y='histogram',
-                     range_color=(np.amin(all_scores),np.amax(all_scores))
+                     range_color=(np.amin(all_scores), np.amax(all_scores))
                      )
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_range=[-vdw_cutoff, 0.1], yaxis_range=[0, 1.1])
@@ -469,8 +469,8 @@ def score_correlates_fig(scores_dict, dataDims, tracking_features, layout):
     g_sort_inds = np.argsort(g_loss_correlations)
     g_loss_correlations = g_loss_correlations[g_sort_inds]
     features_sorted = [features[i] for i in g_sort_inds]
-    #features_sorted_cleaned_i = [feat.replace('molecule', 'mol') for feat in features_sorted]
-    #features_sorted_cleaned_ii = [feat.replace('crystal', 'crys') for feat in features_sorted_cleaned_i]
+    # features_sorted_cleaned_i = [feat.replace('molecule', 'mol') for feat in features_sorted]
+    # features_sorted_cleaned_ii = [feat.replace('crystal', 'crys') for feat in features_sorted_cleaned_i]
     features_sorted_cleaned = [feat.replace('molecule_atom_heavier_than', 'atomic # >') for feat in features_sorted]
 
     functional_group_dict = {
@@ -517,7 +517,7 @@ def score_correlates_fig(scores_dict, dataDims, tracking_features, layout):
         marker=dict(color='rgba(0,0,100,1)')
     ), row=1, col=2)
     fig.add_trace(go.Bar(
-        y=[feat.replace('molecule_', '').replace('_count','') for feat in features_sorted_cleaned if feat in mol_keys],
+        y=[feat.replace('molecule_', '').replace('_count', '') for feat in features_sorted_cleaned if feat in mol_keys],
         x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in mol_keys],
         orientation='h',
         text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in mol_keys]).astype('float16'),
@@ -852,7 +852,7 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
     '''
     S2.  score correlates
     '''
-    fig = score_correlates_fig(scores_dict, dataDims, tracking_features, layout)
+    fig = make_correlates_plot(tracking_features, scores_dict['CSD'], dataDims, tracking_features)
     fig.write_image('scores_correlates.png', scale=4)
     wandb.log({"Score Correlates": fig})
 
@@ -1041,11 +1041,12 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         assert False, f"Detailed reporting for {target_key} is not yet implemented"
 
     predicted_density = (mol_mass * multiplicity) / predicted_volume * 1.66
-    # todo add point density as pointwise colormap
     losses = ['normed_error', 'abs_normed_error', 'squared_error']
     loss_dict = {}
     fig_dict = {}
-    for name, tgt_value, pred_value in zip(['asym_unit_volume', 'packing_coefficient', 'density'], [target_volume, target_packing_coefficient, target_density], [predicted_volume, predicted_packing_coefficient, predicted_density]):
+    fig = make_subplots(cols=3, rows=2, subplot_titles=['asym_unit_volume', 'packing_coefficient', 'density', 'asym_unit_volume error', 'packing_coefficient error', 'density error'])
+    for ind, (name, tgt_value, pred_value) in enumerate(zip(['asym_unit_volume', 'packing_coefficient', 'density'], [target_volume, target_packing_coefficient, target_density], [predicted_volume, predicted_packing_coefficient,
+                                                                                                                                                                                  predicted_density])):
         for loss in losses:
             if loss == 'normed_error':
                 loss_i = (tgt_value - pred_value) / np.abs(tgt_value)
@@ -1064,51 +1065,153 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
 
         # predictions vs target trace
         xline = np.linspace(max(min(tgt_value), min(pred_value)),
-                            min(max(tgt_value), max(pred_value)), 10)
-        fig = go.Figure()
-        fig.add_trace(go.Histogram2dContour(x=tgt_value, y=pred_value, ncontours=50, nbinsx=40, nbinsy=40,
-                                            showlegend=True))
-        fig.update_traces(contours_coloring="fill")
-        fig.update_traces(contours_showlines=False)
-        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', showlegend=True, opacity=0.5))
-        fig.add_trace(go.Scattergl(x=xline, y=xline))
-        fig.update_layout(xaxis_title='targets', yaxis_title='predictions')
-        fig.update_layout(showlegend=True)
-        fig_dict[name + "_scatter"] = fig
+                            min(max(tgt_value), max(pred_value)), 2)
 
-        fig = go.Figure()
+        xy = np.vstack([tgt_value, pred_value])
+        try:
+            z = gaussian_kde(xy)(xy)
+        except:
+            z = np.ones_like(tgt_value)
+
+        row = 1
+        col = ind % 3 + 1
+        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=0.1, showlegend=False),
+                      row=row, col=col)
+        fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                      row=row, col=col)
+
+        row = 2
         fig.add_trace(go.Histogram(x=pred_value - tgt_value,
                                    histnorm='probability density',
                                    nbinsx=100,
                                    name="Error Distribution",
-                                   showlegend=False))
-        fig_dict[name + '_Error Distribution'] = fig
+                                   showlegend=False,
+                                   marker_color='rgba(0,0,100,1)'),
+                      row=row, col=col)
+    #
+    fig.update_yaxes(title_text='Predicted AUnit Volume (A<sup>3</sup>)', row=1, col=1, dtick=2500, range=[0, 15000], tickformat=".0f")
+    fig.update_yaxes(title_text='Predicted Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4], tickformat=".1f")
+    fig.update_yaxes(title_text='Predicted Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
 
-    # correlate losses with molecular features  # todo replace with BT-style reporting
-    tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
-    generator_loss_correlations = np.zeros(dataDims['num_tracking_features'])
-    features = []
-    for i in range(dataDims['num_tracking_features']):  # not that interesting
-        features.append(dataDims['tracking_features'][i])
-        generator_loss_correlations[i] = \
-            np.corrcoef(np.abs((target - prediction) / np.abs(target)), tracking_features[:, i],
-                        rowvar=False)[0, 1]
+    fig.update_xaxes(title_text='True AUnit Volume (A<sup>3</sup>)', row=1, col=1, dtick=2500, range=[0, 15000], tickformat=".0f")
+    fig.update_xaxes(title_text='True Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4], tickformat=".1f")
+    fig.update_xaxes(title_text='True Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
 
-    generator_sort_inds = np.argsort(generator_loss_correlations)
-    generator_loss_correlations = generator_loss_correlations[generator_sort_inds]
+    fig.update_xaxes(title_text='Packing Coefficient Error', row=2, col=2, dtick=0.05, tickformat=".2f")
+    fig.update_xaxes(title_text='Density Error (g/cm<sup>3</sup>)', row=2, col=3, dtick=0.1, tickformat=".1f")
+    fig.update_xaxes(title_text='AUnit Volume (A<sup>3</sup>)', row=2, col=1, dtick=250, tickformat=".0f")
 
-    fig = go.Figure(go.Bar(
-        y=[dataDims['tracking_features'][i] for i in
-           range(dataDims['num_tracking_features'])],
-        x=[generator_loss_correlations[i] for i in range(dataDims['num_tracking_features'])],
-        orientation='h',
-    ))
+    fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
+    fig_dict['Regression Results'] = fig
+
+    """
+    correlate losses with molecular features
+    """  # todo convert the below to a function
+    fig = make_correlates_plot(np.asarray(epoch_stats_dict['tracking_features']),
+                               np.abs(target_packing_coefficient - predicted_packing_coefficient)/ target_packing_coefficient, dataDims)
     fig_dict['Regressor Loss Correlates'] = fig
 
     wandb.log(loss_dict)
     wandb.log(fig_dict)
 
     return None
+
+
+def make_correlates_plot(tracking_features, values, dataDims):
+    g_loss_correlations = np.zeros(dataDims['num_tracking_features'])
+    features = []
+    ind = 0
+    for i in range(dataDims['num_tracking_features']):  # not that interesting
+        if ('space_group' not in dataDims['tracking_features'][i]) and \
+                ('system' not in dataDims['tracking_features'][i]) and \
+                ('density' not in dataDims['tracking_features'][i]) and \
+                ('asymmetric_unit' not in dataDims['tracking_features'][i]):
+            if (np.average(tracking_features[:, i] != 0) > 0.05) and \
+                    (dataDims['tracking_features'][i] != 'crystal_z_prime') and \
+                    (dataDims['tracking_features'][i] != 'molecule_is_asymmetric_top'):  # if we have at least 1# relevance
+                corr = np.corrcoef(values, tracking_features[:, i], rowvar=False)[0, 1]
+                if np.abs(corr) > 0.05:
+                    features.append(dataDims['tracking_features'][i])
+                    g_loss_correlations[ind] = corr
+                    ind += 1
+
+    g_loss_correlations = g_loss_correlations[:ind]
+
+    g_sort_inds = np.argsort(g_loss_correlations)
+    g_loss_correlations = g_loss_correlations[g_sort_inds]
+    features_sorted = [features[i] for i in g_sort_inds]
+    # features_sorted_cleaned_i = [feat.replace('molecule', 'mol') for feat in features_sorted]
+    # features_sorted_cleaned_ii = [feat.replace('crystal', 'crys') for feat in features_sorted_cleaned_i]
+    features_sorted_cleaned = [feat.replace('molecule_atom_heavier_than', 'atomic # >') for feat in features_sorted]
+
+    functional_group_dict = {
+        'NH0': 'tert amine',
+        'para_hydroxylation': 'para-hydroxylation',
+        'Ar_N': 'aromatic N',
+        'aryl_methyl': 'aryl methyl',
+        'Al_OH_noTert': 'non-tert al-hydroxyl',
+        'C_O': 'carbonyl O',
+        'Al_OH': 'al-hydroxyl',
+    }
+    ff = []
+    for feat in features_sorted_cleaned:
+        for func in functional_group_dict.keys():
+            if func in feat:
+                feat = feat.replace(func, functional_group_dict[func])
+        ff.append(feat)
+    features_sorted_cleaned = ff
+
+    g_loss_dict = {feat: corr for feat, corr in zip(features_sorted, g_loss_correlations)}
+
+    fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=('a) Molecule & Crystal Features', 'b) Atom Fractions', 'c) Functional Groups Count'), x_title='R Value')
+
+    crystal_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' not in key]
+    atom_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' in key]
+    mol_keys = [key for key in features_sorted_cleaned if 'count' in key and 'fraction' not in key]
+
+    fig.add_trace(go.Bar(
+        y=crystal_keys,
+        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in crystal_keys],
+        orientation='h',
+        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in crystal_keys]).astype('float16'),
+        textposition='auto',
+        texttemplate='%{text:.2}',
+        marker=dict(color='rgba(100,0,0,1)')
+    ), row=1, col=1)
+    fig.add_trace(go.Bar(
+        y=[feat.replace('molecule_', '') for feat in features_sorted_cleaned if feat in atom_keys],
+        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in atom_keys],
+        orientation='h',
+        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in atom_keys]).astype('float16'),
+        textposition='auto',
+        texttemplate='%{text:.2}',
+        marker=dict(color='rgba(0,0,100,1)')
+    ), row=1, col=2)
+    fig.add_trace(go.Bar(
+        y=[feat.replace('molecule_', '').replace('_count', '') for feat in features_sorted_cleaned if feat in mol_keys],
+        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in mol_keys],
+        orientation='h',
+        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in mol_keys]).astype('float16'),
+        textposition='auto',
+        texttemplate='%{text:.2}',
+        marker=dict(color='rgba(0,100,0,1)')
+    ), row=1, col=3)
+
+    fig.update_yaxes(tickfont=dict(size=14), row=1, col=1)
+    fig.update_yaxes(tickfont=dict(size=14), row=1, col=2)
+    fig.update_yaxes(tickfont=dict(size=14), row=1, col=3)
+
+    fig.layout.annotations[0].update(x=0.12)
+    fig.layout.annotations[1].update(x=0.45)
+    fig.layout.annotations[2].update(x=0.88)
+
+    fig.update_xaxes(range=[np.amin(list(g_loss_dict.values())), np.amax(list(g_loss_dict.values()))])
+    #fig.update_layout(width=1200, height=400)
+    fig.update_layout(showlegend=False)
+
+    return fig
 
 
 def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, extra_test_dict=None):
