@@ -72,7 +72,7 @@ generator:
     num_fc_layers: 8
     fc_depth: 512
     activation: 'gelu'
-    fc_dropout_probability: 0
+    fc_dropout_probability: 0.25
     fc_norm_mode: batch
     conditioning_mode: 'first_layer' # 'first_layer' only for now
 
