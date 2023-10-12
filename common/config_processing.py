@@ -83,6 +83,8 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
         for model in ['discriminator', 'regressor', 'generator']:
             if config[model + '_name'] is not None:
                 config[model + '_path'] = user_config['paths']['local_checkpoints_path'] + config[model + '_name']
+            else:
+                config[model + '_path'] = None
 
     elif config['machine'] == 'cluster':
         config['workdir'] = user_config['paths']['cluster_workdir_path']
@@ -92,6 +94,8 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
         for model in ['discriminator', 'regressor', 'generator']:
             if config[model + '_name'] is not None:
                 config[model + '_path'] = user_config['paths']['cluster_checkpoints_path'] + config[model + '_name']
+            else:
+                config[model + '_path'] = None
 
         config['save_checkpoints'] = True  # always save checkpoints on cluster
 
