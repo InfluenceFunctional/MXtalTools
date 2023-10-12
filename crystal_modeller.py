@@ -527,7 +527,7 @@ class Modeller:
                     except RuntimeError as e:  # if we do hit OOM, slash the batch size
                         if "CUDA out of memory" in str(e):
                             if prev_epoch_failed:
-                                #print(torch.cuda.memory_summary())
+                                # print(torch.cuda.memory_summary())
                                 gc.collect()
                                 # for obj in gc.get_objects():
                                 #     try:
@@ -700,7 +700,7 @@ class Modeller:
         get sample losses, do reporting, update gradients
         """
         if self.train_generator:
-            discriminator_raw_output, generated_samples, packing_loss, packing_prediction, packing_target, \
+            discriminator_raw_output, generated_samples, raw_samples, packing_loss, packing_prediction, packing_target, \
                 vdw_loss, vdw_score, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score = \
                 self.get_generator_losses(data)
 
@@ -720,8 +720,8 @@ class Modeller:
                 generator_loss.backward()  # back-propagation
                 self.generator_optimizer.step()  # update parameters
 
-            self.logger.update_stats_dict(self.epoch_type, 'final_generated_cell_parameters',
-                                          supercell_examples.cell_params.cpu().detach().numpy(), mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, ['final_generated_cell_parameters', 'generated_space_group_numbers', 'raw_generated_cell_parameters'],
+                                          [supercell_examples.cell_params.cpu().detach().numpy(), supercell_examples.sg_ind.cpu().detach().numpy(), raw_samples], mode='extend')
 
             del supercell_examples
 
@@ -872,7 +872,7 @@ class Modeller:
                 standardized_target_packing, supercell_data, generated_samples,
                 precomputed_volumes=generated_cell_volumes, loss_func=self.config.generator.density_loss_func)
 
-        return discriminator_raw_output, generated_samples.cpu().detach().numpy(), \
+        return discriminator_raw_output, generated_samples.cpu().detach().numpy(), raw_samples.cpu().detach().numpy(), \
             packing_loss, packing_prediction.cpu().detach().numpy(), \
             packing_target.cpu().detach().numpy(), \
             vdw_loss, vdw_score, dist_dict, \
@@ -1098,10 +1098,12 @@ class Modeller:
 
         self.logger.log_epoch_analysis(test_loader)
 
+        return None
+
     def compute_similarity_penalty(self, generated_samples, prior, raw_samples):
         """
         punish batches in which the samples are too self-similar
-        overally not really that good to be honest
+        or on the basis of their statistics
         Parameters
         ----------
         generated_samples
@@ -1125,12 +1127,15 @@ class Modeller:
             sample_stds = generated_samples[:, [0, 1, 2, 6, 7, 8]].std(0)
             sample_means = generated_samples[:, [0, 1, 2, 6, 7, 8]].mean(0)
 
+            raw_sample_stds = raw_samples[:, [3, 4, 5, 9, 10, 11]].std(0)
+            raw_sample_means = raw_samples[:, [3, 4, 5, 9, 10, 11]].mean(0)
+
             # enforce similar distribution
-            standardization_losses = F.smooth_l1_loss(sample_stds, self.lattice_stds[[0, 1, 2, 6, 7, 8]]) + F.smooth_l1_loss(sample_means, self.lattice_means[[0, 1, 2, 6, 7, 8]])
+            standardization_losses = (F.smooth_l1_loss(sample_stds, self.lattice_stds[[0, 1, 2, 6, 7, 8]]) + F.smooth_l1_loss(sample_means, self.lattice_means[[0, 1, 2, 6, 7, 8]]) + \
+                                      F.smooth_l1_loss(raw_sample_stds, self.lattice_stds[[3, 4, 5, 9, 10, 11]]) + F.smooth_l1_loss(raw_sample_means, self.lattice_means[[3, 4, 5, 9, 10, 11]]))
             # enforce similar range of fractional centroids
-            destandardized_raw_fracs = raw_samples[:, 6:9] * self.lattice_stds[6:9] + self.lattice_means[6:9]
-            mins = destandardized_raw_fracs.amin(0)
-            maxs = destandardized_raw_fracs.amax(0)
+            mins = raw_samples[:, 6:9].amin(0)
+            maxs = raw_samples[:, 6:9].amax(0)
             frac_range_losses = F.smooth_l1_loss(mins, torch.zeros_like(mins)) + F.smooth_l1_loss(maxs, torch.ones_like(maxs))
 
             similarity_penalty = (standardization_losses + frac_range_losses).tile(len(prior))
@@ -1179,7 +1184,7 @@ class Modeller:
         if packing_loss is not None:
             packing_mae = np.abs(packing_prediction - packing_target) / packing_target
 
-            if packing_mae.mean() < (0.05 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
+            if packing_mae.mean() < (0.025 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
                 self.packing_loss_coefficient *= 0.99
             if (packing_mae.mean() > (0.05 + self.config.generator.packing_target_noise)) and (self.packing_loss_coefficient < 100):
                 self.packing_loss_coefficient *= 1.01

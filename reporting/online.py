@@ -6,18 +6,20 @@ from scipy.stats import gaussian_kde, linregress
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+import torch
 
 from common.geometry_calculations import cell_vol
-from models.utils import softmax_and_score, norm_scores
+from models.utils import softmax_and_score, norm_scores, clean_generator_output
 
 
-def cell_params_analysis(config, dataDims, wandb, train_loader, test_epoch_stats_dict):
+def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict):
     n_crystal_features = 12
     # slightly expensive to do this every time
     dataset_cell_distribution = np.asarray(
         [train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
 
-    cleaned_samples = test_epoch_stats_dict['final_generated_cell_parameters']
+    cleaned_samples = epoch_stats_dict['final_generated_cell_parameters']
+    raw_samples = epoch_stats_dict['raw_generated_cell_parameters']
 
     overlaps_1d = {}
     sample_means = {}
@@ -65,7 +67,8 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, test_epoch_stats
                 x=dataset_cell_distribution[:, i],
                 histnorm='probability density',
                 nbinsx=100,
-                name="Dataset samples",
+                legendgroup="Dataset Samples",
+                name="Dataset Samples",
                 showlegend=True if i == 0 else False,
                 marker_color='#1f77b4',
             ), row=row, col=col)
@@ -74,9 +77,20 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, test_epoch_stats
                 x=cleaned_samples[:, i],
                 histnorm='probability density',
                 nbinsx=100,
+                legendgroup="Generated Samples",
                 name="Generated Samples",
                 showlegend=True if i == 0 else False,
                 marker_color='#ff7f0e',
+            ), row=row, col=col)
+
+            fig.add_trace(go.Histogram(
+                x=raw_samples[:, i],
+                histnorm='probability density',
+                nbinsx=100,
+                legendgroup="Raw Generated Samples",
+                name="Raw Generated Samples",
+                showlegend=True if i == 0 else False,
+                marker_color='#ec0000',
             ), row=row, col=col)
         fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         fig.update_traces(opacity=0.5)
@@ -1012,22 +1026,40 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
     plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
-    cell_scatter(epoch_stats_dict, wandb, layout)
+    cell_scatter(epoch_stats_dict, wandb, layout, extra_category='generated_space_group_numbers')
 
     return None
 
 
-def cell_scatter(epoch_stats_dict, wandb, layout):
-    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'], 'model_score': softmax_and_score(epoch_stats_dict['generator adversarial score']),
+def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
+    model_scores = softmax_and_score(epoch_stats_dict['generator adversarial score'])
+    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'], 'model_score': model_scores,
                     'packing_coefficient': epoch_stats_dict['generator_packing_prediction'].clip(min=0, max=1)}
+    if extra_category is not None:
+        scatter_dict[extra_category] = epoch_stats_dict[extra_category]
+
+    vdw_cutoff = max(-1.5, np.amin(scatter_dict['vdw_score']))
     df = pd.DataFrame.from_dict(scatter_dict)
-    fig = px.scatter(df,
-                     x='vdw_score', y='packing_coefficient',
-                     color='model_score',
-                     marginal_x='histogram', marginal_y='histogram',
-                     opacity=0.5
-                     )
+    if extra_category is not None:
+        fig = px.scatter(df,
+                         x='vdw_score', y='packing_coefficient',
+                         color='model_score', symbol=extra_category,
+                         marginal_x='histogram', marginal_y='histogram',
+                         range_color=(np.amin(model_scores), np.amax(model_scores)),
+                         opacity=0.5
+                         )
+        fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
+
+    else:
+        fig = px.scatter(df,
+                         x='vdw_score', y='packing_coefficient',
+                         color='model_score',
+                         marginal_x='histogram', marginal_y='histogram',
+                         opacity=0.5
+                         )
     fig.layout.margin = layout.margin
+    fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
+    fig.update_layout(xaxis_range=[vdw_cutoff, 0.1], yaxis_range=[0, 1.1])
     fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
     wandb.log({'Generator Samples': fig})
 

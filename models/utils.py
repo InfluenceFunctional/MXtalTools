@@ -321,22 +321,27 @@ def clean_generator_output(samples, lattice_means, lattice_stds, destandardize=T
 
     if samples.shape[-1] == 15:
         theta, phi, r_i = decode_to_sph_rotvec(real_mol_orientations)
-    elif samples.shape[-1] == 12:  # already have angles, no need to decode
-        theta = enforce_1d_bound(real_mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4, mode=mode)[:, None]
-        phi = enforce_1d_bound(real_mol_orientations[:, 1], x_span=torch.pi, x_center=0, mode=mode)[:, None]
-        r_i = enforce_1d_bound(real_mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi, mode=mode)[:, None]
-
+    elif samples.shape[-1] == 12:  # already have angles, no need to decode  # todo deprecate - we will only use spherical components in future
+        if mode is not None:
+            theta = enforce_1d_bound(real_mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4, mode=mode)[:, None]
+            phi = enforce_1d_bound(real_mol_orientations[:, 1], x_span=torch.pi, x_center=0, mode=mode)[:, None]
+            r_i = enforce_1d_bound(real_mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi, mode=mode)[:, None]
+        else:
+            theta, phi, r_i = real_mol_orientations
     r = torch.maximum(r_i, torch.ones_like(r_i) * 0.01)  # MUST be nonzero
     clean_mol_orientations = torch.cat((theta, phi, r), dim=-1)
 
     '''enforce physical bounds'''
-    if mode == 'soft':
-        clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.1) + 0.1  # smoothly enforces positive nonzero
-    else:
-        clean_lattice_lengths = torch.maximum(F.relu(real_lattice_lengths), torch.ones_like(real_lattice_lengths))  # harshly enforces positive nonzero
+    if mode is not None:
+        if mode == 'soft':
+            clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.1) + 0.1  # smoothly enforces positive nonzero
+        elif mode == 'hard':
+            clean_lattice_lengths = torch.maximum(F.relu(real_lattice_lengths), torch.ones_like(real_lattice_lengths))  # harshly enforces positive nonzero
 
-    clean_lattice_angles = enforce_1d_bound(real_lattice_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode=mode)  # range from (0,pi) with 20% limit to prevent too-skinny cells
-    clean_mol_positions = enforce_1d_bound(real_mol_positions, 0.5, 0.5, mode=mode)  # enforce fractional centroids between 0 and 1
+        clean_lattice_angles = enforce_1d_bound(real_lattice_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode=mode)  # range from (0,pi) with 20% limit to prevent too-skinny cells
+        clean_mol_positions = enforce_1d_bound(real_mol_positions, 0.5, 0.5, mode=mode)  # enforce fractional centroids between 0 and 1
+    else:  # do nothing
+        clean_lattice_lengths, clean_lattice_angles, clean_mol_positions = real_lattice_lengths, real_lattice_angles, real_mol_positions
 
     return clean_lattice_lengths, clean_lattice_angles, clean_mol_positions, clean_mol_orientations
 

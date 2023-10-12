@@ -9,6 +9,7 @@ from crystal_building.utils import clean_cell_params
 from models.components import MLP
 from models.base_models import molecule_graph_model
 from constants.asymmetric_units import asym_unit_dict
+from models.utils import clean_generator_output
 
 
 class crystal_generator(nn.Module):
@@ -115,7 +116,11 @@ class crystal_generator(nn.Module):
             if return_condition:
                 output.append(molecule_encoding)
             if return_raw_samples:
-                output.append(samples)
+                output.append(
+                    torch.cat(
+                        clean_generator_output(samples, self.lattice_means, self.lattice_stds,
+                                               destandardize=True, mode=None),
+                        dim=-1))  # destandardize but don't clean up or normalize fractional outputs
             return output
         else:
             return clean_samples
