@@ -32,7 +32,7 @@ seeds:
   dataset: 0
 
 # for reloading prior checkpoints
-discriminator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
+discriminator_name: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
 generator_path: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_path: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
 

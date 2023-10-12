@@ -29,7 +29,20 @@ if __name__ == "__main__":
     xlo_bound xhi_bound xy
     ylo_bound yhi_bound xz
     zlo_bound zhi_bound yz
+    
+    a = xhi-xlo, 0, 0
+    b = xy, yhi-ylo, 0
+    c = xz, yz, zhi-zlo
+    
+    xlo = xlo_bound - MIN(0, xy, xz, xy+xz)
+    xhi = xhi_bound - MAX(0, xy, xz, xy+xz)
+    ylo = ylo_bound - MIN(0, yz)
+    yhi = yhi_bound - MAX(0, yz)
+    zlo = zlo_bound
+    zhi = zhi_bound
     '''
+
+    # T_fc_list = torch.cat((a,b,c),axis = 0)
 
     T_fc_list = 1
 
