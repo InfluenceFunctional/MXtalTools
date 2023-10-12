@@ -1184,9 +1184,9 @@ class Modeller:
         if packing_loss is not None:
             packing_mae = np.abs(packing_prediction - packing_target) / packing_target
 
-            if packing_mae.mean() < (0.025 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
+            if packing_mae.mean() < (0.02 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
                 self.packing_loss_coefficient *= 0.99
-            if (packing_mae.mean() > (0.05 + self.config.generator.packing_target_noise)) and (self.packing_loss_coefficient < 100):
+            if (packing_mae.mean() > (0.03 + self.config.generator.packing_target_noise)) and (self.packing_loss_coefficient < 100):
                 self.packing_loss_coefficient *= 1.01
 
             self.logger.packing_loss_coefficient = self.packing_loss_coefficient
