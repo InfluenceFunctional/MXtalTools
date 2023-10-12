@@ -224,7 +224,7 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
 
-    fig.add_trace(go.Histogram2d(x=all_scores,
+    fig.add_trace(go.Histogram2d(x=np.clip(all_scores, a_min=np.quantile(all_scores, 0.05), a_max=np.amax(all_scores)),
                                  y=-np.minimum(all_vdws, vdw_cutoff),
                                  showscale=False,
                                  nbinsy=50, nbinsx=200,
@@ -279,7 +279,7 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
 
-    fig.add_trace(go.Histogram2d(x=all_scores,
+    fig.add_trace(go.Histogram2d(x=np.clip(all_scores, a_min=np.quantile(all_scores, 0.05), a_max=np.amax(all_scores)),
                                  y=np.clip(all_coeffs, a_min=0, a_max=1),
                                  showscale=False,
                                  nbinsy=50, nbinsx=200,
@@ -315,7 +315,8 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
                      x='vdw_score', y='packing_coefficient',
                      color='model_score', symbol='sample_source',
                      marginal_x='histogram', marginal_y='histogram',
-                     range_color=(np.amin(all_scores), np.amax(all_scores))
+                     range_color=(np.amin(all_scores), np.amax(all_scores)),
+                     opacity=0.1
                      )
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_range=[-vdw_cutoff, 0.1], yaxis_range=[0, 1.1])
@@ -1110,7 +1111,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     correlate losses with molecular features
     """  # todo convert the below to a function
     fig = make_correlates_plot(np.asarray(epoch_stats_dict['tracking_features']),
-                               np.abs(target_packing_coefficient - predicted_packing_coefficient)/ target_packing_coefficient, dataDims)
+                               np.abs(target_packing_coefficient - predicted_packing_coefficient) / target_packing_coefficient, dataDims)
     fig_dict['Regressor Loss Correlates'] = fig
 
     wandb.log(loss_dict)
@@ -1208,7 +1209,7 @@ def make_correlates_plot(tracking_features, values, dataDims):
     fig.layout.annotations[2].update(x=0.88)
 
     fig.update_xaxes(range=[np.amin(list(g_loss_dict.values())), np.amax(list(g_loss_dict.values()))])
-    #fig.update_layout(width=1200, height=400)
+    # fig.update_layout(width=1200, height=400)
     fig.update_layout(showlegend=False)
 
     return fig

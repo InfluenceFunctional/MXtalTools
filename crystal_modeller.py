@@ -5,6 +5,7 @@ from argparse import Namespace
 # os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 import sys
+import gc
 
 import torch
 import torch.random
@@ -105,7 +106,7 @@ class Modeller:
         hopefully does not overlap with any other workdirs
         :return:
         """
-        self.run_identifier = str(self.config.paths.yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace('/', '_') +  datetime.today().strftime("%d-%m-%H-%M-%S")
+        self.run_identifier = str(self.config.paths.yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace('/', '_') + datetime.today().strftime("%d-%m-%H-%M-%S")
         self.working_directory = self.config.workdir + self.run_identifier
         os.mkdir(self.working_directory)
 
@@ -526,14 +527,14 @@ class Modeller:
                     except RuntimeError as e:  # if we do hit OOM, slash the batch size
                         if "CUDA out of memory" in str(e):
                             if prev_epoch_failed:
-                                print(torch.cuda.memory_summary())
-                                import gc
-                                for obj in gc.get_objects():
-                                    try:
-                                        if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
-                                            print(type(obj), obj.size())
-                                    except:
-                                        pass
+                                #print(torch.cuda.memory_summary())
+                                gc.collect()
+                                # for obj in gc.get_objects():
+                                #     try:
+                                #         if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                                #             print(type(obj), obj.size())
+                                #     except:
+                                #         pass
                             train_loader, test_loader = slash_batch(train_loader, test_loader, 0.05)  # shrink batch size
                             torch.cuda.empty_cache()
                             self.config.grow_batch_size = False  # stop growing the batch for the rest of the run
@@ -1120,14 +1121,14 @@ class Modeller:
             # sample_variance = std_samples.var(dim=0)
             # variance_penalty = F.smooth_l1_loss(input=sample_variance, target=prior_variance, reduction='none').mean().tile(len(prior))
 
-            #similarity_penalty = (prior_distance_penalty + variance_penalty)
-            sample_stds = generated_samples.std(0)
-            sample_means = generated_samples.mean(0)
+            # similarity_penalty = (prior_distance_penalty + variance_penalty)
+            sample_stds = generated_samples[:, [0, 1, 2, 6, 7, 8]].std(0)
+            sample_means = generated_samples[:, [0, 1, 2, 6, 7, 8]].mean(0)
 
             # enforce similar distribution
-            standardization_losses = F.smooth_l1_loss(sample_stds, self.lattice_stds) + F.smooth_l1_loss(sample_means, self.lattice_means)
+            standardization_losses = F.smooth_l1_loss(sample_stds, self.lattice_stds[[0, 1, 2, 6, 7, 8]]) + F.smooth_l1_loss(sample_means, self.lattice_means[[0, 1, 2, 6, 7, 8]])
             # enforce similar range of fractional centroids
-            destandardized_raw_fracs = raw_samples[:,6:9] * self.lattice_stds[6:9] + self.lattice_means[6:9]
+            destandardized_raw_fracs = raw_samples[:, 6:9] * self.lattice_stds[6:9] + self.lattice_means[6:9]
             mins = destandardized_raw_fracs.amin(0)
             maxs = destandardized_raw_fracs.amax(0)
             frac_range_losses = F.smooth_l1_loss(mins, torch.zeros_like(mins)) + F.smooth_l1_loss(maxs, torch.ones_like(maxs))

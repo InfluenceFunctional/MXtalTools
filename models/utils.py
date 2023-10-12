@@ -42,7 +42,7 @@ def check_convergence(record, history, convergence_eps):
         record = record.copy()
 
     if len(record) > (history + 2):
-        if all(record[-history:] >= np.amin(record)):
+        if all(record[-history:] >= np.quantile(record, 0.05)):
             converged = True
             print("Model converged, target diverging")
 
