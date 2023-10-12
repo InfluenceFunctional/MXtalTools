@@ -290,6 +290,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         rotvec_list.append(direction_vector / torch.linalg.norm(direction_vector) * r)
 
     rotvec_list = torch.stack(rotvec_list)
+    assert torch.sum(torch.isnan(rotvec_list)) == 0, f"{rotvec_list}"
 
     '''
     since the direction of the axis is arbitrary, (x,y,z) is the same rotation as (-x,-y,-z),
@@ -319,7 +320,8 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         print(f'{rotation_basis} is not a valid orientation parameterization!')
         sys.exit()
 
-    assert torch.sum(torch.isnan(torch.cat((mol_position_list, mol_orientation), dim=-1))) == 0
+    assert torch.sum(torch.isnan(mol_orientation)) == 0, f"{mol_orientation} {rotvec_list}"
+    assert torch.sum(torch.isnan(mol_position_list)) == 0, f"{mol_position_list}"
 
     if return_asym_unit_coords:
         return mol_position_list, mol_orientation, handedness_list, well_defined_asym_unit_list, canonical_conformer_coords_list

@@ -10,7 +10,7 @@ save_checkpoints: True # will do it always on cluster, only locally if True
 
 # batching & convergence
 grow_batch_size: True
-min_batch_size: 100
+min_batch_size: 50
 max_batch_size: 10000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
@@ -134,9 +134,9 @@ discriminator:
     num_fc_layers: 2
     fc_depth: 128
     fc_norm_mode: layer
-    fc_dropout_probability: 0.1
+    fc_dropout_probability: 0.25
     graph_node_norm: 'graph layer'
-    graph_node_dropout: 0.1
+    graph_node_dropout: 0.25
     graph_message_norm: null
     graph_message_dropout: 0
     num_attention_heads: 4
@@ -145,7 +145,7 @@ discriminator:
     num_graph_convolutions: 4
     graph_embedding_depth: 256
     nodewise_fc_layers: 1
-    num_radial: 12
+    num_radial: 32
     radial_function: bessel
     max_num_neighbors: 100
     convolution_cutoff: 6

@@ -933,7 +933,7 @@ class Modeller:
             with torch.no_grad():
                 generated_samples, _, _, generator_data, _ = self.get_generator_samples(real_data)
 
-                self.logger.update_stats_dict(self.epoch_type, 'generator_sample_source', np.zeros(len(generated_samples)), mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, 'generator_sample_source', np.zeros(len(generated_samples)), mode='extend')
 
         elif (self.config.discriminator.train_on_randn or override_randn) and (generator_ind == 2):
             generator_data = real_data  # no change to original
@@ -1012,7 +1012,7 @@ class Modeller:
                 print("Saving discriminator checkpoint")
                 self.logger.save_stats_dict(prefix='best_discriminator_')
                 save_checkpoint(epoch, self.discriminator, self.discriminator_optimizer, self.config.discriminator.__dict__,
-                                self.config.checkpoint_dir_path + 'best_discriminator_' + self.run_identifier)
+                                self.config.checkpoint_dir_path + 'best_discriminator' + self.run_identifier)
         if self.train_generator:
             model = 'generator'
             loss_record = self.logger.loss_record[model]['mean_test']
@@ -1021,7 +1021,7 @@ class Modeller:
                 print("Saving generator checkpoint")
                 self.logger.save_stats_dict(prefix='best_generator_')
                 save_checkpoint(epoch, self.generator, self.generator_optimizer, self.config.generator.__dict__,
-                                self.config.checkpoint_dir_path + 'best_generator_' + self.run_identifier)
+                                self.config.checkpoint_dir_path + 'best_generator' + self.run_identifier)
         if self.train_regressor:
             model = 'regressor'
             loss_record = self.logger.loss_record[model]['mean_test']
@@ -1030,7 +1030,7 @@ class Modeller:
                 print("Saving regressor checkpoint")
                 self.logger.save_stats_dict(prefix='best_regressor_')
                 save_checkpoint(epoch, self.regressor, self.regressor_optimizer, self.config.regressor.__dict__,
-                                self.config.checkpoint_dir_path + 'best_regressor_' + self.run_identifier)
+                                self.config.checkpoint_dir_path + 'best_regressor' + self.run_identifier)
 
     def update_lr(self):
         self.discriminator_optimizer, discriminator_lr = set_lr(self.discriminator_schedulers, self.discriminator_optimizer, self.config.discriminator.optimizer.lr_schedule, self.config.discriminator.optimizer.min_lr,
