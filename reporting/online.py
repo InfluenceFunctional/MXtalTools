@@ -19,7 +19,10 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
         [train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
 
     cleaned_samples = epoch_stats_dict['final_generated_cell_parameters']
-    raw_samples = epoch_stats_dict['raw_generated_cell_parameters']
+    if 'raw_generated_cell_parameters' in epoch_stats_dict.keys():
+        raw_samples = epoch_stats_dict['raw_generated_cell_parameters']
+    else:
+        raw_samples = None
 
     overlaps_1d = {}
     sample_means = {}
@@ -82,16 +85,16 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
                 showlegend=True if i == 0 else False,
                 marker_color='#ff7f0e',
             ), row=row, col=col)
-
-            fig.add_trace(go.Histogram(
-                x=raw_samples[:, i],
-                histnorm='probability density',
-                nbinsx=100,
-                legendgroup="Raw Generated Samples",
-                name="Raw Generated Samples",
-                showlegend=True if i == 0 else False,
-                marker_color='#ec0000',
-            ), row=row, col=col)
+            if raw_samples is not None:
+                fig.add_trace(go.Histogram(
+                    x=raw_samples[:, i],
+                    histnorm='probability density',
+                    nbinsx=100,
+                    legendgroup="Raw Generated Samples",
+                    name="Raw Generated Samples",
+                    showlegend=True if i == 0 else False,
+                    marker_color='#ec0000',
+                ), row=row, col=col)
         fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         fig.update_traces(opacity=0.5)
 
@@ -867,7 +870,7 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
     '''
     S2.  score correlates
     '''
-    fig = make_correlates_plot(tracking_features, scores_dict['CSD'], dataDims, tracking_features)
+    fig = make_correlates_plot(tracking_features, scores_dict['CSD'], dataDims)
     fig.write_image('scores_correlates.png', scale=4)
     wandb.log({"Score Correlates": fig})
 
@@ -1046,7 +1049,7 @@ def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
                          color='model_score', symbol=extra_category,
                          marginal_x='histogram', marginal_y='histogram',
                          range_color=(np.amin(model_scores), np.amax(model_scores)),
-                         opacity=0.5
+                         opacity=0.1
                          )
         fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
 
@@ -1055,7 +1058,7 @@ def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
                          x='vdw_score', y='packing_coefficient',
                          color='model_score',
                          marginal_x='histogram', marginal_y='histogram',
-                         opacity=0.5
+                         opacity=0.1
                          )
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
