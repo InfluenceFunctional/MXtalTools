@@ -1012,8 +1012,24 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
     plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
+    cell_scatter(epoch_stats_dict, wandb, layout)
 
     return None
+
+
+def cell_scatter(epoch_stats_dict, wandb, layout):
+    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'], 'model_score': softmax_and_score(epoch_stats_dict['generator adversarial score']),
+                    'packing_coefficient': epoch_stats_dict['generator_packing_prediction'].clip(min=0, max=1)}
+    df = pd.DataFrame.from_dict(scatter_dict)
+    fig = px.scatter(df,
+                     x='vdw_score', y='packing_coefficient',
+                     color='model_score',
+                     marginal_x='histogram', marginal_y='histogram',
+                     opacity=0.5
+                     )
+    fig.layout.margin = layout.margin
+    fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
+    wandb.log({'Generator Samples': fig})
 
 
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
