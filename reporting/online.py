@@ -1042,6 +1042,7 @@ def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
         scatter_dict[extra_category] = epoch_stats_dict[extra_category]
 
     vdw_cutoff = max(-1.5, np.amin(scatter_dict['vdw_score']))
+    opacity = max(0.1, 1 - len(model_scores) / 5e4)
     df = pd.DataFrame.from_dict(scatter_dict)
     if extra_category is not None:
         fig = px.scatter(df,
@@ -1049,7 +1050,7 @@ def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
                          color='model_score', symbol=extra_category,
                          marginal_x='histogram', marginal_y='histogram',
                          range_color=(np.amin(model_scores), np.amax(model_scores)),
-                         opacity=0.1
+                         opacity=opacity
                          )
         fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
 
@@ -1058,7 +1059,7 @@ def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
                          x='vdw_score', y='packing_coefficient',
                          color='model_score',
                          marginal_x='histogram', marginal_y='histogram',
-                         opacity=0.1
+                         opacity=opacity
                          )
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')

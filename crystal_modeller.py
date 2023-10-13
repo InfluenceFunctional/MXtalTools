@@ -106,7 +106,7 @@ class Modeller:
         hopefully does not overlap with any other workdirs
         :return:
         """
-        self.run_identifier = str(self.config.paths.yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace('/', '_') + datetime.today().strftime("%d-%m-%H-%M-%S")
+        self.run_identifier = str(self.config.paths.yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace('/', '_') + '_' + datetime.today().strftime("%d-%m-%H-%M-%S")
         self.working_directory = self.config.workdir + self.run_identifier
         os.mkdir(self.working_directory)
 
@@ -1273,15 +1273,21 @@ class Modeller:
     def reload_model_checkpoints(self):
         if self.config.generator_path is not None:
             generator_checkpoint = torch.load(self.config.generator_path)
-            self.config.generator = Namespace(**generator_checkpoint['config'])  # overwrite the settings for the model
+            generator_config = Namespace(**generator_checkpoint['config'])  # overwrite the settings for the model
+            self.config.generator.optimizer = generator_config.optimizer
+            self.config.generator.model = generator_config.model
 
         if self.config.discriminator_path is not None:
             discriminator_checkpoint = torch.load(self.config.discriminator_path)
-            self.config.discriminator = Namespace(**discriminator_checkpoint['config'])
+            discriminator_config = Namespace(**discriminator_checkpoint['config'])  # overwrite the settings for the model
+            self.config.discriminator.optimizer = discriminator_config.optimizer
+            self.config.discriminator.model = discriminator_config.model
 
         if self.config.regressor_path is not None:
             regressor_checkpoint = torch.load(self.config.regressor_path)
-            self.config.regressor = Namespace(**regressor_checkpoint['config'])  # overwrite the settings for the model
+            regressor_config = Namespace(**regressor_checkpoint['config'])  # overwrite the settings for the model
+            self.config.regressor.optimizer = regressor_config.optimizer
+            self.config.regressor.model = regressor_config.model
 
         return self.config
 

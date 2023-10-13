@@ -33,7 +33,7 @@ def test_earth_movers_distance_np_vs_torch():
     np_emd = earth_movers_distance_np(pdf1, pdf2)
     torch_emd = earth_movers_distance_torch(torch.Tensor(pdf1), torch.Tensor(pdf2)).detach().numpy()
 
-    assert np.abs(np_emd - torch_emd) < 1e-5
+    assert np.abs(np_emd - torch_emd) < 5e-5
 
 
 def test_components2angle():

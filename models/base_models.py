@@ -40,7 +40,7 @@ class molecule_graph_model(nn.Module):
                  atom_type_embedding_dims=5,
                  seed=5,
                  periodic_structure=False,
-                 periodic_convolution_type='none',
+                 outside_convolution_type='none',
                  ):
 
         super(molecule_graph_model, self).__init__()
@@ -83,7 +83,7 @@ class molecule_graph_model(nn.Module):
             radial_embedding=radial_function,
             attention_heads=num_attention_heads,
             periodize_inside_nodes=periodic_structure,
-            outside_convolution_type=periodic_convolution_type,
+            outside_convolution_type=outside_convolution_type,
         )
 
         # initialize global pooling operation

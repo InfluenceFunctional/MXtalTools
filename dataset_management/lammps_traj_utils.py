@@ -1,9 +1,12 @@
 import glob
 import os
 
-import numpy as np
 import pandas as pd
+import numpy as np
+import torch
 from tqdm import tqdm
+from dataset_management.CrystalData import CrystalData
+from dataset_management.utils import get_dataloaders
 
 
 def process_dump(path):
@@ -14,7 +17,7 @@ def process_dump(path):
     timestep = None  # todo add cell params extraction
     n_atoms = None
     frame_outputs = {}
-    for ind, line in enumerate(tqdm(lines)):
+    for ind, line in enumerate(lines):
         if "ITEM: TIMESTEP" in line:
             timestep = int(lines[ind + 1])
         elif "ITEM: NUMBER OF ATOMS" in line:
@@ -58,7 +61,7 @@ def generate_dataset_from_dumps():
             trajectory_dict = process_dump(path)
 
             for ts, (times, vals) in enumerate(tqdm(trajectory_dict.items())):
-                new_dict = {'atom_type': [vals['id']],
+                new_dict = {'atom_type': [vals['element'].astype(int)],
                             'mol_ind': [vals['mol']],
                             'coordinates': [np.concatenate((
                                 np.asarray(vals['x'][:, None]),
@@ -103,3 +106,79 @@ num2atomicnum = {
     9: 1,
     10: 1,
 }
+
+
+def convert_box_to_cell_params(box_params):
+    """
+    ITEM: BOX BOUNDS xy xz yz
+    xlo_bound xhi_bound xy
+    ylo_bound yhi_bound xz
+    zlo_bound zhi_bound yz
+
+    a = xhi-xlo, 0, 0
+    b = xy, yhi-ylo, 0
+    c = xz, yz, zhi-zlo
+
+    xlo = xlo_bound - MIN(0, xy, xz, xy+xz)
+    xhi = xhi_bound - MAX(0, xy, xz, xy+xz)
+    ylo = ylo_bound - MIN(0, yz)
+    yhi = yhi_bound - MAX(0, yz)
+    zlo = zlo_bound
+    zhi = zhi_bound
+    """
+    xlo_bound = box_params[:, 0, 0]
+    ylo_bound = box_params[:, 1, 0]
+    zlo_bound = box_params[:, 2, 0]
+    xhi_bound = box_params[:, 0, 1]
+    yhi_bound = box_params[:, 1, 1]
+    zhi_bound = box_params[:, 2, 1]
+    xy = box_params[:, 0, 2]
+    xz = box_params[:, 1, 2]
+    yz = box_params[:, 2, 2]
+
+    xlo = xlo_bound - np.stack((np.zeros_like(xy), xy, xz, xy + xz)).T.min(1)
+    xhi = xhi_bound - np.stack((np.zeros_like(xy), xy, xz, xy + xz)).T.max(1)
+    ylo = ylo_bound - np.stack((np.zeros_like(yz), yz)).T.min(1)
+    yhi = yhi_bound - np.stack((np.zeros_like(yz), yz)).T.max(1)
+    zlo = zlo_bound
+    zhi = zhi_bound
+
+    a = np.asarray([xhi - xlo, np.zeros_like(xhi), np.zeros_like(xhi)]).T
+    b = np.asarray([xy, yhi - ylo, np.zeros_like(xy)]).T
+    c = np.asarray([xz, yz, zhi - zlo]).T
+
+    return a, b, c
+
+
+def collect_to_traj_dataloaders(dataset_path):
+    dataset = pd.read_pickle(dataset_path)
+    dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
+
+    forms = np.unique(dataset['form'])
+    forms2tgt = {form: i for i, form in enumerate(forms)}
+    targets = np.asarray(
+        [forms2tgt[form] for form in dataset['form']]
+    )
+
+    a, b, c = convert_box_to_cell_params(np.stack(dataset['cell_params']))
+
+    T_fc_list = np.zeros((len(a), 3, 3))
+    for i in range(len(T_fc_list)):
+        T_fc_list[i] = np.stack((a[i], b[i], c[i]))
+
+    print('Generating training datapoints')
+    datapoints = []
+    for i in tqdm(range(len(dataset))):
+        datapoints.append(
+            CrystalData(
+                x=torch.tensor(dataset.loc[i]['atom_type'][0], dtype=torch.long),
+                pos=torch.Tensor(dataset.loc[i]['coordinates'][0]),
+                y=torch.tensor(targets[i], dtype=torch.long),
+                tracking=np.asarray(dataset.loc[i, ['temperature', 'time_step']]),
+                T_fc=torch.Tensor(T_fc_list[i]),
+                asym_unit_handedness=torch.ones(1),
+                symmetry_operators=torch.ones(1),
+            )
+        )
+    del dataset
+    return get_dataloaders(datapoints, machine='local', batch_size=1, test_fraction=0.2)

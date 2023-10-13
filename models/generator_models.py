@@ -73,7 +73,7 @@ class crystal_generator(nn.Module):
             convolution_cutoff=config.conditioner.convolution_cutoff,
             atom_type_embedding_dims=config.conditioner.atom_type_embedding_dims,
             periodic_structure=False,
-            periodic_convolution_type='none'
+            outside_convolution_type='none'
         )
 
         '''

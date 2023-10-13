@@ -251,6 +251,8 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
 
     mol_position_list = torch.stack(mol_position_list)
 
+    assert torch.sum(torch.isnan(mol_position_list)) == 0
+
     '''Pose Analysis'''
     # compute the inverse of the rotation required to align the molecule with the cartesian axes
     Ip_axes_list, _, _ = batch_molecule_principal_axes_torch(canonical_conformer_coords_list)
@@ -261,10 +263,12 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         alignment_list[:, 0, 0] = handedness_list
 
     # http://motion.pratt.duke.edu/RoboticSystems/3DRotations.html#:~:text=Another%20popular%20rotation%20representation%20is,be%20represented%20in%20this%20form!
+    assert torch.sum(torch.isnan(Ip_axes_list)) == 0, f"{Ip_axes_list}"
 
     rotvec_list = []
     for Ip_axes, alignment in zip(Ip_axes_list, alignment_list):
         rotation_matrix = Ip_axes.T @ torch.linalg.inv(alignment.T)
+        assert torch.sum(torch.isnan(rotation_matrix)) == 0, f"{Ip_axes} {alignment} {rotation_matrix}"
         if not enforce_right_handedness:
             assert torch.linalg.det(rotation_matrix) > 0  # negative determinant is an improper rotation, which we do not want - inverts the molecule
 
@@ -290,6 +294,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         rotvec_list.append(direction_vector / torch.linalg.norm(direction_vector) * r)
 
     rotvec_list = torch.stack(rotvec_list)
+
     assert torch.sum(torch.isnan(rotvec_list)) == 0, f"{rotvec_list}"
 
     '''

@@ -39,7 +39,7 @@ class molecule_regressor(nn.Module):
             convolution_cutoff=config.convolution_cutoff,
             atom_type_embedding_dims=config.atom_type_embedding_dims,
             periodic_structure=False,
-            periodic_convolution_type='none'
+            outside_convolution_type='none'
         )
 
     def forward(self, data, return_dists=False, return_latent=False):

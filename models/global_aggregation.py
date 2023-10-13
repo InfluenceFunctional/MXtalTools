@@ -54,6 +54,8 @@ class global_aggregation(nn.Module):
             output2 = [agg(x, batch, size=output_dim) for agg in self.agg_list2]
             # output3 = [agg(x, batch, 3, size = output_dim) for agg in self.agg_list3]
             return self.agg_fc(torch.cat((output1 + output2), dim=1))
+        elif self.agg_func is None:
+            return x  # do nothing
         else:
             return self.agg(x, batch, size=output_dim)
 

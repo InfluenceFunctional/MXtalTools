@@ -42,7 +42,7 @@ class crystal_discriminator(nn.Module):
             convolution_cutoff=config.convolution_cutoff,
             atom_type_embedding_dims=config.atom_type_embedding_dims,
             periodic_structure=True,
-            periodic_convolution_type=config.periodic_convolution_type
+            outside_convolution_type=config.periodic_convolution_type
         )
 
     def forward(self, data, return_dists=False, return_latent=False):
