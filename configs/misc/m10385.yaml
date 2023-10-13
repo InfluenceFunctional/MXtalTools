@@ -33,8 +33,8 @@ extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analy
 
 # for reloading pretrained models
 discriminator_name: null # '/scratch/mk8347/csd_runs/models/best_discriminator_10351'
-generator_path: null  #'C:\Users\mikem\crystals\CSP_runs\models\best_generator_1599'
-regressor_path: '/scratch/mk8347/csd_runs/models/best_regressor_10360'
+generator_name: null  #'C:\Users\mikem\crystals\CSP_runs\models\best_generator_1599'
+regressor_name: '/scratch/mk8347/csd_runs/models/best_regressor_10360'
 
 discriminator_positional_noise: 0  # scaling for the randn noise added to all atom positions
 generator_positional_noise: 0  # scaling for the randn noise added to all atom positions
