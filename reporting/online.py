@@ -9,7 +9,7 @@ import pandas as pd
 import torch
 
 from common.geometry_calculations import cell_vol
-from models.utils import softmax_and_score, norm_scores, clean_generator_output
+from models.utils import norm_scores
 
 
 def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict):
@@ -165,10 +165,10 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict):
     randn_inds = np.where(epoch_stats_dict['generator_sample_source'] == 1)[0]
     distorted_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0]
 
-    scores_dict['CSD'] = softmax_and_score(epoch_stats_dict['discriminator_real_score'])
-    scores_dict['Gaussian'] = softmax_and_score(epoch_stats_dict['discriminator_fake_score'][randn_inds])
-    scores_dict['Generator'] = softmax_and_score(epoch_stats_dict['discriminator_fake_score'][generator_inds])
-    scores_dict['Distorted'] = softmax_and_score(epoch_stats_dict['discriminator_fake_score'][distorted_inds])
+    scores_dict['CSD'] = epoch_stats_dict['discriminator_real_score']
+    scores_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_score'][randn_inds]
+    scores_dict['Generator'] = epoch_stats_dict['discriminator_fake_score'][generator_inds]
+    scores_dict['Distorted'] = epoch_stats_dict['discriminator_fake_score'][distorted_inds]
 
     tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
                                                                     epoch_stats_dict['tracking_features'].T)}
@@ -599,7 +599,7 @@ def plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_
 
 def plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout):
     correlates_dict = {}
-    real_scores = softmax_and_score(epoch_stats_dict['discriminator_real_score'])
+    real_scores = epoch_stats_dict['discriminator_real_score']
     tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
 
     for i in range(dataDims['num_tracking_features']):  # not that interesting
@@ -681,8 +681,7 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
         if target_identifiers_inds[target] != []:  # record target data
 
             target_index = target_identifiers_inds[target]
-            raw_scores = extra_test_dict['discriminator_real_score'][target_index]
-            scores = softmax_and_score(raw_scores[None, :])
+            scores = extra_test_dict['discriminator_real_score'][target_index]
             scores_dict[target + '_exp'] = scores
 
             tracking_features_dict[target + '_exp'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_index][None, :].T)}
@@ -696,8 +695,7 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
 
         if crystals_for_targets[target] != []:  # record sample data
             target_indices = crystals_for_targets[target]
-            raw_scores = extra_test_dict['discriminator_real_score'][target_indices]
-            scores = softmax_and_score(raw_scores, old_method=True, correct_discontinuity=True)
+            scores = extra_test_dict['discriminator_real_score'][target_indices]
             scores_dict[target] = scores
             tracking_features_dict[target] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_indices].T)}
 
@@ -728,7 +726,7 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
     bt_score_correlates['CSD'] = loss_correlations
 
     # collect all BT targets & submissions into single dicts
-    BT_target_scores = np.concatenate([scores_dict[key] for key in scores_dict.keys() if 'exp' in key])
+    BT_target_scores = np.asarray([scores_dict[key] for key in scores_dict.keys() if 'exp' in key])
     BT_submission_scores = np.concatenate([scores_dict[key] for key in scores_dict.keys() if key in crystals_for_targets.keys()])
     # BT_scores_dists = {key: np.histogram(scores_dict[key], bins=200, range=[-15, 15])[0] / len(scores_dict[key]) for key in scores_dict.keys() if key in crystals_for_targets.keys()}
     # BT_balanced_dist = np.average(np.stack(list(BT_scores_dists.values())), axis=0)
@@ -761,7 +759,7 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
             l=0,  # left margin
             r=0,  # right margin
             b=0,  # bottom margin
-            t=20,  # top margin
+            t=40,  # top margin
         )
     )
 
@@ -992,12 +990,12 @@ def log_cubic_defect(samples):
 
 def process_generator_losses(config, epoch_stats_dict):
     generator_loss_keys = ['generator_packing_prediction', 'generator_packing_target', 'generator_per_mol_vdw_loss',
-                           'generator adversarial loss', 'generator h bond loss']
+                           'generator_adversarial_loss', 'generator h bond loss']
     generator_losses = {}
     for key in generator_loss_keys:
         if key in epoch_stats_dict.keys():
             if epoch_stats_dict[key] is not None:
-                if key == 'generator adversarial loss':
+                if key == 'generator_adversarial_loss':
                     if config.generator.train_adversarially:
                         generator_losses[key[10:]] = epoch_stats_dict[key]
                     else:
@@ -1035,7 +1033,7 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
 
 
 def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
-    model_scores = softmax_and_score(epoch_stats_dict['generator adversarial score'])
+    model_scores = epoch_stats_dict['generator_adversarial_score']
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'], 'model_score': model_scores,
                     'packing_coefficient': epoch_stats_dict['generator_packing_prediction'].clip(min=0, max=1)}
     if extra_category is not None:

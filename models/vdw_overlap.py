@@ -47,7 +47,12 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
             torch.stack(
                 [torch.sum(torch.log(1 + normed_overlaps[ii])) for ii in range(num_graphs)]
             )) / mol_sizes
-    elif loss_func == 'inv':  # hard asymtote at 1, but we can't touch it
+    elif loss_func == 'max':  # cut the tallest dandelion
+        vdw_loss = torch.nan_to_num(
+            torch.stack(
+                [torch.amax(normed_overlaps[ii]) for ii in range(num_graphs)]
+            ))
+    elif loss_func == 'inv':  # hard asymptote at 1, but we can't touch it
         vdw_loss = torch.nan_to_num(
             torch.stack(
                 [torch.sum(
@@ -63,12 +68,18 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
             [torch.sum(normed_overlaps[ii]) for ii in range(num_graphs)]
         )) / mol_sizes
 
+    max_overlaps = torch.nan_to_num(
+        torch.stack(
+            [torch.amax(normed_overlaps[ii]) if len(normed_overlaps[ii] > 0) else
+             torch.amax(torch.zeros(1, device=normed_overlaps[ii].device)) for ii in range(num_graphs)]
+        ))
+
     if return_loss_only:
         return vdw_loss
     elif return_score_only:
         return vdw_score
     else:  # return everything
-        return vdw_loss, vdw_score, abs_overlaps, normed_overlaps
+        return vdw_loss, vdw_score, max_overlaps, abs_overlaps, normed_overlaps
 
 
 def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, num_graphs=None, crystaldata=None):

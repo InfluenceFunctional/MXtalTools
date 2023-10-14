@@ -156,14 +156,19 @@ class independent_gaussian_model(nn.Module):
         except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
             self.prior = MultivariateNormal(loc=means, covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(cov_mat).diagonal())
 
-    def forward(self, num_samples, data):
+    def forward(self, num_samples, data=None, sg_ind=None):
         """
         sample comes out in non-standardized basis, but with normalized cell lengths
         so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
         then standardize
         """
-        samples = self.prior.sample((num_samples,)).to(data.x.device)  # samples in the destandardied 'real' basis
-        final_samples = clean_cell_params(samples, data.sg_ind, self.means, self.stds,
+        if data is None:
+            pass
+        else:
+            sg_ind = data.sg_ind
+
+        samples = self.prior.sample((num_samples,)).to(self.device)  # samples in the destandardied 'real' basis
+        final_samples = clean_cell_params(samples, sg_ind, self.means, self.stds,
                                           self.symmetries_dict, self.asym_unit_dict,
                                           rescale_asymmetric_unit=False, destandardize=False, mode='hard')
 

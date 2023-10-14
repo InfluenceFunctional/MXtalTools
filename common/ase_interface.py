@@ -1,14 +1,15 @@
 import numpy as np
 import torch
 from ase import Atoms
+from ase.spacegroup import crystal as ase_crystal
 
 
-def crystals_to_ase_mols(crystaldata, max_ind=np.inf, highlight_aux=False, exclusion_level='distance', inclusion_distance=4):
-    return [ase_mol_from_crystaldata(crystaldata, ii, highlight_canonical_conformer=highlight_aux, exclusion_level=exclusion_level, inclusion_distance=inclusion_distance)
+def crystals_to_ase_mols(crystaldata, max_ind=np.inf, highlight_aux=False, exclusion_level='distance', inclusion_distance=4, return_crystal = False):
+    return [ase_mol_from_crystaldata(crystaldata, ii, highlight_canonical_conformer=highlight_aux, exclusion_level=exclusion_level, inclusion_distance=inclusion_distance, return_crystal = return_crystal)
             for ii in range(min(max_ind, crystaldata.num_graphs))]
 
 
-def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=False, exclusion_level=None, inclusion_distance=4):
+def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=False, exclusion_level=None, inclusion_distance=4, return_crystal=False):
     """
     generate an ASE Atoms object from a crystaldata object, up to certain exclusions
     optionally highlight atoms in the asymmetric unit
@@ -89,5 +90,8 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
         cell = data.T_fc[0].T.cpu().detach().numpy()
 
     mol = Atoms(symbols=numbers, positions=coords, cell=cell)
-
-    return mol
+    if return_crystal:
+        cry = ase_crystal(symbols=mol, cell=cell, setting=1, spacegroup=int(data.sg_ind[index]))
+        return mol, cry
+    else:
+        return mol

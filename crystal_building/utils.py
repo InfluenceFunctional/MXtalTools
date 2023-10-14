@@ -23,7 +23,6 @@ def generate_sorted_fractional_translations(supercell_size):
     return fractional_translations[torch.argsort(fractional_translations.abs().sum(1))]
 
 
-
 def unit_cell_to_convolution_cluster(reference_cell_list: list,
                                      cell_vector_list: list,
                                      T_fc_list,
@@ -45,7 +44,9 @@ def unit_cell_to_convolution_cluster(reference_cell_list: list,
     if sorted_fractional_translations is None:
         sorted_fractional_translations = generate_sorted_fractional_translations(supercell_scale).to(device)
 
-    max_num_cells = len(sorted_fractional_translations)
+    supercell_sizes = sorted_fractional_translations.abs().max(1)[0]
+    sorted_fractional_translations_f = sorted_fractional_translations[supercell_sizes <= supercell_scale]
+    max_num_cells = len(sorted_fractional_translations_f)
 
     supercell_coords_list = []
     supercell_atoms_list = []
@@ -56,7 +57,7 @@ def unit_cell_to_convolution_cluster(reference_cell_list: list,
             ref_cell = torch.tensor(ref_cell, device=device)
 
         ref_mol_radius = torch.max(torch.cdist(ref_cell[0].mean(0)[None, :], ref_cell[0]))
-        cart_translations_i = torch.mul(unit_cell_vectors.tile(max_num_cells, 1), sorted_fractional_translations.reshape(max_num_cells * 3, 1))  # 3 cell vectors
+        cart_translations_i = torch.mul(unit_cell_vectors.tile(max_num_cells, 1), sorted_fractional_translations_f.reshape(max_num_cells * 3, 1))  # 3 cell vectors
         supercell_coords = ref_cell.clone().reshape(sym_mult * ref_cell.shape[1], 3).tile(max_num_cells, 1)  # duplicate over XxXxX supercell
         cart_translations = cart_translations_i.reshape(max_num_cells, 3, 3).sum(1)  # faster
         full_supercell_coords = supercell_coords + torch.repeat_interleave(cart_translations, ref_cell.shape[1] * ref_cell.shape[0], dim=0)  # add translations throughout
@@ -290,6 +291,16 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
                                           dtype=torch.float32)
         else:  # calculate as normal
             r = torch.arccos(r_arg)
+            if torch.isnan(r):  # manual catch for edge cases
+                print(f"caught bad rotation from {rotation_matrix} with direction {direction_vector} and r_arg {r_arg}")
+                r = torch.pi
+
+        if torch.sum(torch.isnan(direction_vector)) > 0:
+            print(f"caught bad direction from {rotation_matrix} with direction {direction_vector} and r_arg {r_arg}")
+
+            r = torch.pi
+            direction_vector = torch.ones(3, device=rotation_matrix.device,
+                                          dtype=torch.float32)
 
         rotvec_list.append(direction_vector / torch.linalg.norm(direction_vector) * r)
 
@@ -411,7 +422,7 @@ def set_sym_ops(supercell_data):
     @param supercell_data:
     @return:
     """
-    sym_ops_list = [torch.tensor(supercell_data.symmetry_operators[n], device=supercell_data.x.device, dtype=supercell_data.x.dtype)
+    sym_ops_list = [torch.tensor(supercell_data.symmetry_operators[n], device=supercell_data.x.device, dtype=torch.float32)
                     for n in range(len(supercell_data.symmetry_operators))]
 
     return sym_ops_list, supercell_data

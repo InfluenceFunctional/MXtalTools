@@ -662,14 +662,25 @@ class Modeller:
         compute losses, do reporting, update gradients
         """
         if self.train_discriminator:
-            score_on_real, score_on_fake, generated_samples, \
+            discriminator_output_on_real, discriminator_output_on_fake, generated_samples, \
                 real_dist_dict, fake_dist_dict, real_vdw_score, fake_vdw_score, \
                 real_packing_coeffs, fake_packing_coeffs, generated_samples_i \
                 = self.get_discriminator_losses(data, i)
 
-            discriminator_scores = torch.cat((score_on_real, score_on_fake))
-            discriminator_target = torch.cat((torch.ones_like(score_on_real[:, 0]), torch.zeros_like(score_on_fake[:, 0])))
-            discriminator_losses = F.cross_entropy(discriminator_scores, discriminator_target.long(), reduction='none')  # works much better
+            if self.config.discriminator.loss_func == 'softmax':
+                combined_outputs = torch.cat((discriminator_output_on_real, discriminator_output_on_fake))
+                discriminator_target = torch.cat((torch.ones_like(discriminator_output_on_real[:, 0]),
+                                                  torch.zeros_like(discriminator_output_on_fake[:, 0])))
+                discriminator_losses = F.cross_entropy(combined_outputs, discriminator_target.long(), reduction='none')  # works much better
+                score_on_real = softmax_and_score(discriminator_output_on_real)
+                score_on_fake = softmax_and_score(discriminator_output_on_fake)
+            elif self.config.discriminator.loss_func == 'critic':
+                score_on_real = discriminator_output_on_real.sum(1)  # final layer has 2dim output, just sum it
+                score_on_fake = discriminator_output_on_fake.sum(1)
+                discriminator_losses = score_on_fake - score_on_real
+
+            else:
+                assert False, f"{self.config.discriminator.loss_func} is not implemented"
 
             discriminator_loss = discriminator_losses.mean()
 
@@ -753,7 +764,7 @@ class Modeller:
                 torch.randn_like(fake_supercell_data.pos) * self.config.discriminator_positional_noise
 
         '''score'''
-        score_on_real, real_distances_dict, real_latent = self.adversarial_score(real_supercell_data, return_latent=True)
+        discriminator_output_on_real, discriminator_output_on_fake, real_latent = self.adversarial_score(real_supercell_data, return_latent=True)
         score_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(fake_supercell_data, return_latent=True)
 
         '''recompute packing coeffs'''
@@ -764,8 +775,8 @@ class Modeller:
                                                           mol_volumes=fake_supercell_data.mol_volume,
                                                           crystal_multiplicity=fake_supercell_data.mult)
 
-        return score_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), \
-            real_distances_dict, fake_pairwise_distances_dict, \
+        return discriminator_output_on_real, score_on_fake, fake_supercell_data.cell_params.cpu().detach().numpy(), \
+            discriminator_output_on_fake, fake_pairwise_distances_dict, \
             vdw_overlap(self.vdw_radii, crystaldata=real_supercell_data, return_score_only=True), \
             vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data, return_score_only=True), \
             real_packing_coeffs, fake_packing_coeffs, \
@@ -862,7 +873,7 @@ class Modeller:
         similarity_penalty = self.compute_similarity_penalty(generated_samples, prior, raw_samples)
         discriminator_raw_output, dist_dict = self.score_adversarially(supercell_data)
         h_bond_score = self.compute_h_bond_score(supercell_data)
-        vdw_loss, vdw_score, _, _ = vdw_overlap(self.vdw_radii,
+        vdw_loss, vdw_score, _, _, _ = vdw_overlap(self.vdw_radii,
                                                 dist_dict=dist_dict,
                                                 num_graphs=generator_data.num_graphs,
                                                 graph_sizes=generator_data.mol_size,
@@ -1202,21 +1213,32 @@ class Modeller:
         if discriminator_raw_output is not None:
             if self.config.generator.adversarial_loss_func == 'hot softmax':
                 adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:, 1]  # high temp smears out the function over a wider range
+                adversarial_score = softmax_and_score(discriminator_raw_output)
+
             elif self.config.generator.adversarial_loss_func == 'minimax':
                 softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax
                 adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
+                adversarial_score = softmax_and_score(discriminator_raw_output)
+
             elif self.config.generator.adversarial_loss_func == 'score':
                 adversarial_loss = -softmax_and_score(discriminator_raw_output)  # linearized score
+                adversarial_score = softmax_and_score(discriminator_raw_output)
+
             elif self.config.generator.adversarial_loss_func == 'softmax':
                 adversarial_loss = 1 - F.softmax(discriminator_raw_output, dim=1)[:, 1]
+                adversarial_score = softmax_and_score(discriminator_raw_output)
+
+            elif self.config.generator.adversarial_loss_func == 'critic':
+                adversarial_loss = -discriminator_raw_output.sum(1)
+                adversarial_score = discriminator_raw_output.sum(1)
             else:
                 print(f'{self.config.generator.adversarial_loss_func} is not an implemented adversarial loss')
                 sys.exit()
 
-            stats_keys += ['generator adversarial loss']
+            stats_keys += ['generator_adversarial_loss']
             stats_values += [adversarial_loss.cpu().detach().numpy()]
-            stats_keys += ['generator adversarial score']
-            stats_values += [discriminator_raw_output.cpu().detach().numpy()]
+            stats_keys += ['generator_adversarial_score']
+            stats_values += [adversarial_score.cpu().detach().numpy()]
 
             if self.config.generator.train_adversarially:
                 generator_losses_list.append(adversarial_loss)

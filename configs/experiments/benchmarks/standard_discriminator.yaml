@@ -106,6 +106,7 @@ generator:
       atom_type_embedding_dims: 5
 
 discriminator:
+  loss_func: 'softmax'
   train_adversarially: False
   train_on_randn: True
   train_on_distorted: True

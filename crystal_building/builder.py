@@ -33,7 +33,8 @@ class SupercellBuilder:
                          graph_convolution_cutoff: float = 6,
                          target_handedness=None,
                          align_to_standardized_orientation=False,
-                         pare_to_convolution_cluster=True):
+                         pare_to_convolution_cluster=True,
+                         skip_refeaturization=False):
         """
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to "supercell" (in fact, it's truncated to an appropriate cluster size)
@@ -78,18 +79,19 @@ class SupercellBuilder:
 
         assert torch.sum(torch.isnan(torch.cat([elem.flatten() for elem in unit_cell_coords_list]))) == 0, f"{cell_parameters}, {coords_list}, {canonical_conformer_coords_list}"
 
-        # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction
-        _, mol_orientations, mol_handedness, _ = \
-            batch_asymmetric_unit_pose_analysis_torch(
-                unit_cell_coords_list,
-                supercell_data.sg_ind,
-                self.asym_unit_dict,
-                supercell_data.T_fc,
-                rotation_basis=self.rotation_basis,
-                enforce_right_handedness=False)
+        if not skip_refeaturization:
+            # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction
+            _, mol_orientations, mol_handedness, _ = \
+                batch_asymmetric_unit_pose_analysis_torch(
+                    unit_cell_coords_list,
+                    supercell_data.sg_ind,
+                    self.asym_unit_dict,
+                    supercell_data.T_fc,
+                    rotation_basis=self.rotation_basis,
+                    enforce_right_handedness=False)
 
-        supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
-        supercell_data.asym_unit_handedness = mol_handedness
+            supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
+            supercell_data.asym_unit_handedness = mol_handedness
 
         # get minimal supercell cluster for convolving about a given canonical conformer
         cell_vector_list = T_fc_list.permute(0, 2, 1)

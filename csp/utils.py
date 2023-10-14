@@ -161,7 +161,7 @@ def log_csp_summary_stats(wandb, generated_samples_dict, sym_info):
 
 def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supercells, sym_info, best_scores_dict, vdw_radii, mol_volume_ind):
     num_samples = min(num_crystals, 25)
-    _, vdw_score, _, normed_vdw_overlaps = \
+    _, vdw_score, _, _, normed_vdw_overlaps = \
         vdw_overlap(vdw_radii,
                     crystaldata=best_supercells,
                     loss_func=None)
