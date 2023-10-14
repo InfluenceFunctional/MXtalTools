@@ -682,7 +682,7 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
 
             target_index = target_identifiers_inds[target]
             scores = extra_test_dict['discriminator_real_score'][target_index]
-            scores_dict[target + '_exp'] = scores
+            scores_dict[target + '_exp'] = scores[None]
 
             tracking_features_dict[target + '_exp'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_index][None, :].T)}
 

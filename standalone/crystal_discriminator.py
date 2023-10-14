@@ -105,7 +105,7 @@ class StandaloneDiscriminator():
         # return self.rescaling_func(output)
 
         # for now, train on heuristic losses (simpler)
-        vdw_loss, vdw_score, _, _ = vdw_overlap(self.vdw_radii, crystaldata=supercell_data, loss_func=None)
+        vdw_loss, vdw_score, _, _, _ = vdw_overlap(self.vdw_radii, crystaldata=supercell_data, loss_func=None)
 
         packing_loss, packing_prediction, packing_target, packing_csd = \
             generator_density_matching_loss(

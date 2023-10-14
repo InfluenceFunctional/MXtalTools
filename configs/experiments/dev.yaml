@@ -5,7 +5,7 @@ mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/dataset/full_discriminator.yaml'
-extra_test_set_name: 'blind_test_dataset.pkl'
+extra_test_set_name: null #'test_blind_test_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 dataset:
@@ -19,7 +19,7 @@ batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
-extra_test_period: 3 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+extra_test_period: 2 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
   run_name: dev
@@ -49,8 +49,8 @@ supercell_size: 5
 generator:
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
-  train_vdw: False
-  train_adversarially: False
+  train_vdw: True
+  train_adversarially: True
   vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
   density_loss_func: l1  # 'l1' or 'mse'
   adversarial_loss_func: 'critic'  #
@@ -110,7 +110,7 @@ generator:
 
 discriminator:
   loss_func: 'critic'  # 'softmax'
-  train_adversarially: False
+  train_adversarially: True
   train_on_randn: True
   train_on_distorted: True
   distortion_magnitude: 0.1 # -1 for wide range test # noise for distorted generation

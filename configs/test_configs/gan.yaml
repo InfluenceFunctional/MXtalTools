@@ -5,7 +5,7 @@ mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/dataset/full_gan_for_tests.yaml'
-extra_test_set_name: null
+extra_test_set_name: 'test_blind_test_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 dataset:
@@ -19,6 +19,7 @@ batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 1 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
+extra_test_period: 1 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
   run_name: test
@@ -29,9 +30,6 @@ logger:
 
 sample_steps: 20 # now for mini csp
 sample_move_size: 0.001 # currently unused
-
-extra_test_set_path: null # not currently working
-extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 seeds:
   model: 0
