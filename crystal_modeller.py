@@ -643,13 +643,13 @@ class Modeller:
         if i > 0 and self.config.discriminator.train_adversarially:  # must skip first step since there will be no fake score to compare against
             generator_inds = np.argwhere(np.asarray(epoch_stats_dict['generator_sample_source']) == 0)[:, 0]
             if len(generator_inds > 0):
-                if self.config.generator.adversarial_loss_func == 'critic':
+                if self.config.generator.adversarial_loss_func == 'score':
                     avg_generator_score = np.stack(epoch_stats_dict['discriminator_fake_score'])[generator_inds].mean()
-                    if avg_generator_score < 0:
+                    if avg_generator_score > 0:
                         skip_discriminator_step = True
                 else:
                     avg_generator_score = softmax_np(np.stack(epoch_stats_dict['discriminator_fake_score'])[generator_inds])[:, 1].mean()
-                    if avg_generator_score < 0.5:
+                    if avg_generator_score > 0.5:
                         skip_discriminator_step = True
             else:
                 skip_discriminator_step = True
@@ -683,9 +683,9 @@ class Modeller:
                 discriminator_losses = F.cross_entropy(combined_outputs, discriminator_target.long(), reduction='none')  # works much better
                 score_on_real = softmax_and_score(discriminator_output_on_real)
                 score_on_fake = softmax_and_score(discriminator_output_on_fake)
-            elif self.config.discriminator.loss_func == 'critic':
-                score_on_real = discriminator_output_on_real.sum(1)  # final layer has 2dim output, just sum it
-                score_on_fake = discriminator_output_on_fake.sum(1)
+            elif self.config.discriminator.loss_func == 'score':  # NOTE often crashes
+                score_on_real = softmax_and_score(discriminator_output_on_real)
+                score_on_fake = softmax_and_score(discriminator_output_on_fake)
                 discriminator_losses = score_on_fake - score_on_real
 
             else:
@@ -705,7 +705,7 @@ class Modeller:
                 self.discriminator_optimizer.step()  # update parameters
 
             stats_keys = ['discriminator_real_score', 'discriminator_fake_score',
-                          'real vdw penalty', 'fake_vdw_penalty',
+                          'real_vdw_penalty', 'fake_vdw_penalty',
                           'generated_cell_parameters', 'final_generated_cell_parameters',
                           'real_packing_coefficients', 'generated_packing_coefficients']
             stats_values = [score_on_real.cpu().detach().numpy(), score_on_fake.cpu().detach().numpy(),
@@ -1237,9 +1237,6 @@ class Modeller:
                 adversarial_loss = 1 - F.softmax(discriminator_raw_output, dim=1)[:, 1]
                 adversarial_score = softmax_and_score(discriminator_raw_output)
 
-            elif self.config.generator.adversarial_loss_func == 'critic':
-                adversarial_loss = -discriminator_raw_output.sum(1)
-                adversarial_score = discriminator_raw_output.sum(1)
             else:
                 print(f'{self.config.generator.adversarial_loss_func} is not an implemented adversarial loss')
                 sys.exit()

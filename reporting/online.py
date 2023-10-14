@@ -182,7 +182,7 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict):
                                            zip(dataDims['tracking_features'],
                                                epoch_stats_dict['tracking_features'][generator_inds].T)}
 
-    vdw_penalty_dict['CSD'] = epoch_stats_dict['real vdw penalty']
+    vdw_penalty_dict['CSD'] = epoch_stats_dict['real_vdw_penalty']
     vdw_penalty_dict['Gaussian'] = epoch_stats_dict['fake_vdw_penalty'][randn_inds]
     vdw_penalty_dict['Generator'] = epoch_stats_dict['fake_vdw_penalty'][generator_inds]
     vdw_penalty_dict['Distorted'] = epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
@@ -689,7 +689,7 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
             if size_normed_score:
                 scores_dict[target + '_exp'] = norm_scores(scores_dict[target + '_exp'], extra_test_dict['tracking_features'][target_index][None, :], dataDims)
 
-            vdw_penalty_dict[target + '_exp'] = extra_test_dict['real vdw penalty'][target_index][None]
+            vdw_penalty_dict[target + '_exp'] = extra_test_dict['real_vdw_penalty'][target_index][None]
 
             wandb.log({f'Average_{target}_exp_score': np.average(scores)})
 
@@ -702,7 +702,7 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
             if size_normed_score:
                 scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking_features'][target_indices], dataDims)
 
-            vdw_penalty_dict[target] = extra_test_dict['real vdw penalty'][target_indices]
+            vdw_penalty_dict[target] = extra_test_dict['real_vdw_penalty'][target_indices]
 
             wandb.log({f'Average_{target}_score': np.average(scores)})
             wandb.log({f'Average_{target}_std': np.std(scores)})
