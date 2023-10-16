@@ -71,8 +71,8 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
     config['wandb'] = user_config['wandb']
 
     if override_args is not None:
-        for arg in override_args.__dict__.keys():  # todo not sure if this will work for nested args
-            if hasattr(config, arg):
+        for arg in override_args.__dict__.keys():  # todo this does not work for nested override_args
+            if arg in config.keys():
                 config[arg] = override_args.__dict__[arg]
 
     if config['machine'] == 'local':
