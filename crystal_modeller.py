@@ -645,11 +645,11 @@ class Modeller:
             if len(generator_inds > 0):
                 if self.config.generator.adversarial_loss_func == 'score':
                     avg_generator_score = np.stack(epoch_stats_dict['discriminator_fake_score'])[generator_inds].mean()
-                    if avg_generator_score > 0:
+                    if avg_generator_score < 0:
                         skip_discriminator_step = True
                 else:
                     avg_generator_score = softmax_np(np.stack(epoch_stats_dict['discriminator_fake_score'])[generator_inds])[:, 1].mean()
-                    if avg_generator_score > 0.5:
+                    if avg_generator_score < 0.5:
                         skip_discriminator_step = True
             else:
                 skip_discriminator_step = True

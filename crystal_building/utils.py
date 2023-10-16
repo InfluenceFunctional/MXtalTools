@@ -292,11 +292,11 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         else:  # calculate as normal
             r = torch.arccos(r_arg)
             if torch.isnan(r):  # manual catch for edge cases
-                print(f"caught bad rotation from {rotation_matrix} with direction {direction_vector} and r_arg {r_arg}")
+                # print(f"caught bad rotation from {rotation_matrix} with direction {direction_vector} and r_arg {r_arg}")
                 r = torch.pi
 
-        if torch.sum(torch.isnan(direction_vector)) > 0:
-            print(f"caught bad direction from {rotation_matrix} with direction {direction_vector} and r_arg {r_arg}")
+        if torch.sum(torch.isnan(direction_vector)) > 0 or (torch.sum(direction_vector) == 0):  # bad rotation or ~approx null rotation
+            # print(f"caught bad direction from {rotation_matrix} with direction {direction_vector} and r_arg {r_arg}")
 
             r = torch.pi
             direction_vector = torch.ones(3, device=rotation_matrix.device,
@@ -306,7 +306,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
 
     rotvec_list = torch.stack(rotvec_list)
 
-    assert torch.sum(torch.isnan(rotvec_list)) == 0, f"{rotvec_list}"
+    assert torch.sum(torch.isnan(rotvec_list)) == 0, f"{rotvec_list}"  # todo see how this could be possible
 
     '''
     since the direction of the axis is arbitrary, (x,y,z) is the same rotation as (-x,-y,-z),
