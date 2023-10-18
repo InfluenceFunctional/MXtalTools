@@ -116,7 +116,7 @@ discriminator:
   use_classification_loss: True
   use_rdf_distance_loss: True
   use_cell_distance_loss: True  # only meaninful when generating within the same space group
-  distortion_magnitude: 0.1 # -1 for wide range test # noise for distorted generation
+  distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
   # discriminator optimizer and model
   optimizer:

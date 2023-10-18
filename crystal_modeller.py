@@ -830,17 +830,17 @@ class Modeller:
 
         discriminator_target = torch.cat((torch.ones_like(discriminator_output_on_real[:, 0]),
                                           torch.zeros_like(discriminator_output_on_fake[:, 0])))
-        distortion_target = torch.cat((torch.zeros_like(discriminator_output_on_real[:, 0]),
-                                       cell_distortion_size))
+        distortion_target = torch.cat((-3 * torch.ones_like(discriminator_output_on_real[:, 0]),
+                                       torch.log(cell_distortion_size)))
 
         classification_losses = F.cross_entropy(combined_outputs[:, :2], discriminator_target.long(), reduction='none')  # works much better
         distortion_losses = F.smooth_l1_loss(combined_outputs[:, 2], distortion_target, reduction='none')
         if real_fake_rdf_distances is not None:
-            rdf_distance_target = torch.cat((torch.zeros_like(discriminator_output_on_real[:, 0]),
-                                             real_fake_rdf_distances))
+            rdf_distance_target = torch.cat((-3 * torch.ones_like(discriminator_output_on_real[:, 0]),
+                                             torch.log(cell_distortion_size)))  # target is log distance with zero set as -3
             rdf_distance_losses = F.smooth_l1_loss(combined_outputs[:, 3], rdf_distance_target, reduction='none')
         else:
-            rdf_distance_target = torch.randn_like(combined_outputs[:, 3]) * 0.001 # todo need this for lingress in analysis but fix it there
+            rdf_distance_target = torch.randn_like(combined_outputs[:, 3]) * 0.001  # todo need this for lingress in analysis but fix it there
             rdf_distance_losses = torch.randn_like(combined_outputs[:, 3]) * 0.001
 
         score_on_real = softmax_and_score(discriminator_output_on_real[:, :2])
@@ -961,7 +961,6 @@ class Modeller:
                 rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr)
         else:
             rdf_dists = None
-
 
         stats_keys = ['real_vdw_penalty',
                       'fake_vdw_penalty',
@@ -1182,7 +1181,7 @@ class Modeller:
             distortion = torch.randn_like(generated_samples_std) * distortion_override
         else:
             if self.config.discriminator.distortion_magnitude == -1:
-                distortion = torch.randn_like(generated_samples_std) * torch.logspace(-.5, 0.5, len(generated_samples_std)).to(generated_samples_std.device)[:, None]  # wider range
+                distortion = torch.randn_like(generated_samples_std) * torch.logspace(-3, 1, len(generated_samples_std)).to(generated_samples_std.device)[:, None]  # wider range
             else:
                 distortion = torch.randn_like(generated_samples_std) * self.config.discriminator.distortion_magnitude
 

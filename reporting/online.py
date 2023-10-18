@@ -1370,7 +1370,7 @@ def discriminator_distances_plots(wandb, epoch_stats_dict):
 
         fig = go.Figure()
         opacity = max(0.1, 1 - len(tgt_value) / 5e4)
-        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=True))
+        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=False))
         fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
                       )
 
@@ -1401,7 +1401,7 @@ def discriminator_distances_plots(wandb, epoch_stats_dict):
 
         fig = go.Figure()
         opacity = max(0.1, 1 - len(tgt_value) / 5e4)
-        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=True))
+        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=False))
         fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
                       )
 
