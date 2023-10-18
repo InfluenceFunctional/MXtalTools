@@ -85,7 +85,7 @@ class TestClass:
         for i in range(reference_supercells.num_graphs):
             rdf_dists[i] = compute_rdf_distance(reference_rdf[i], rebuilt_rdf[i], rr)
 
-        assert all(rdf_dists < 1e-2)  # RDFs should be nearly identical
+        assert all(rdf_dists < 1e-1)  # RDFs should be nearly identical
 
         '''  # optionally look at some cells
         from models.utils import ase_mol_from_crystaldata

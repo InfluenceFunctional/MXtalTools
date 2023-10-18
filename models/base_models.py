@@ -174,6 +174,11 @@ class molecule_graph_model(nn.Module):
         extra_outputs = {}
         if return_dists:
             extra_outputs['dists_dict'] = edges_dict
+            if 'edge_index_inter' in edges_dict.keys():
+                extra_outputs['dists_dict']['intermolecular_dist'] = (data.pos[edges_dict['edge_index_inter'][0]] - data.pos[edges_dict['edge_index_inter'][1]]).pow(2).sum(dim=-1).sqrt()
+                extra_outputs['dists_dict']['intermolecular_dist_batch'] = data.batch[edges_dict['edge_index_inter'][0]]
+                extra_outputs['dists_dict']['intermolecular_dist_atoms'] = [data.x[edges_dict['edge_index_inter'][0], 0].long(), data.x[edges_dict['edge_index_inter'][1], 0].long()]
+                extra_outputs['dists_dict']['intermolecular_dist_inds'] = edges_dict['edge_index_inter']
 
         if return_latent:
             extra_outputs['final_activation'] = x.cpu().detach().numpy()
