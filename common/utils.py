@@ -108,27 +108,20 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
     else:
         torch_range = rr
 
-    # TODO come up with a clever way to norm these
-    # emd_norm = (torch_rdf1.sum(-1) + torch_rdf2.sum(-1)) / 2  # sub-rdf-wise symmetrical norm sub-rdf-wise
-
     if n_parallel_rdf2 is not None:  # we can in parallel compare many rdf2's to a single rdf1
         torch_rdf1_f = torch_rdf1.tile(n_parallel_rdf2, 1, 1)
     else:
         torch_rdf1_f = torch_rdf1
 
-    normed_rdf1 = torch_rdf1_f  # / emd_norm[:, None]
-    normed_rdf2 = torch_rdf2  # / emd_norm[:, None]
+    emd = earth_movers_distance_torch(torch_rdf1_f, torch_rdf2)
 
-    emd = earth_movers_distance_torch(normed_rdf1, normed_rdf2)
+    range_normed_emd = emd * (torch_range[1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+    aggregation_weight = (rdf1.sum(1) + rdf2.sum(1)) / 2  # aggregate rdf components according to pairwise mean weight
+    distance = (range_normed_emd * aggregation_weight).mean()
 
-    range_normed_emd = emd * (torch_range[1] - torch_range[0]) ** 2  # rescale the distance from units of bins to the real physical range - hit twice for the two rdfs
-
+    assert torch.sum(torch.isnan(distance)) == 0
     if return_numpy:
-        distance = range_normed_emd.mean(-1).cpu().detach().numpy()
-        assert np.sum(np.isnan(distance)) == 0
-    else:
-        distance = range_normed_emd.mean(-1)
-        assert torch.sum(torch.isnan(distance)) == 0
+        distance = distance.cpu().detach().numpy()
 
     return distance
 

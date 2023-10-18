@@ -17,6 +17,7 @@ class molecule_graph_model(nn.Module):
                  concat_pos_to_atom_features=False,
                  concat_mol_to_atom_features=False,
                  concat_crystal_to_atom_features=False,
+                 concat_cell_params_to_atom_features=False,
                  activation='gelu',
                  num_mol_feats=0,
                  num_fc_layers=4,
@@ -50,6 +51,7 @@ class molecule_graph_model(nn.Module):
         self.concat_pos_to_atom_features = concat_pos_to_atom_features
         self.concat_mol_to_atom_features = concat_mol_to_atom_features
         self.concat_crystal_to_atom_features = concat_crystal_to_atom_features
+        self.concat_cell_params_to_atom_features = concat_cell_params_to_atom_features
         self.convolution_cutoff, self.max_num_neighbors = convolution_cutoff, max_num_neighbors
         self.num_fc_layers = num_fc_layers
 
@@ -62,6 +64,8 @@ class molecule_graph_model(nn.Module):
             input_node_depth += num_mol_feats
         if concat_crystal_to_atom_features:
             input_node_depth += SG_FEATURE_TENSOR.shape[1]
+        if concat_cell_params_to_atom_features:
+            input_node_depth += 12
 
         self.graph_net = GraphNeuralNetwork(
             input_node_depth=input_node_depth,
@@ -145,8 +149,17 @@ class molecule_graph_model(nn.Module):
                            torch.repeat_interleave(crystal_features, nodes_per_graph, 0)),
                           dim=-1)
 
+        if self.concat_cell_params_to_atom_features:
+            nodes_per_graph = torch.diff(data.ptr)
+            x = torch.cat((x,
+                           torch.repeat_interleave(data.cell_params, nodes_per_graph, 0)),
+                          dim=-1)
+
         x = self.graph_net(x, data.pos, data.batch, data.ptr, edges_dict)  # get graph encoding
-        x = self.global_pool(x, data.pos, agg_batch, output_dim=data.num_graphs)  # aggregate atoms to molecule
+        if self.global_pool.agg_func == 'molwise':
+            x = self.global_pool(x, agg_batch, cluster=data.mol_ind, output_dim=data.num_graphs)  # aggregate atoms to molecules
+        else:
+            x = self.global_pool(x, agg_batch, output_dim=data.num_graphs)  # aggregate atoms to molecule
 
         if self.mol_fc is not None:
             mol_feats = self.mol_fc(data.mol_x)  # molecule features are repeated, only need one per molecule (hence data.ptr)
@@ -160,12 +173,7 @@ class molecule_graph_model(nn.Module):
 
         extra_outputs = {}
         if return_dists:
-            extra_outputs['dists_dict'] = {}
-            if 'edge_index_inter' in edges_dict.keys():
-                extra_outputs['dists_dict']['intermolecular_dist'] = (data.pos[edges_dict['edge_index_inter'][0]] - data.pos[edges_dict['edge_index_inter'][1]]).pow(2).sum(dim=-1).sqrt()
-                extra_outputs['dists_dict']['intermolecular_dist_batch'] = data.batch[edges_dict['edge_index_inter'][0]]
-                extra_outputs['dists_dict']['intermolecular_dist_atoms'] = [data.x[edges_dict['edge_index_inter'][0], 0].long(), data.x[edges_dict['edge_index_inter'][1], 0].long()]
-                extra_outputs['dists_dict']['intermolecular_dist_inds'] = edges_dict['edge_index_inter']
+            extra_outputs['dists_dict'] = edges_dict
 
         if return_latent:
             extra_outputs['final_activation'] = x.cpu().detach().numpy()

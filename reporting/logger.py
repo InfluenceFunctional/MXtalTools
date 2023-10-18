@@ -15,22 +15,25 @@ class Logger:
         self.config = config
         self.dataDims = dataDims
         self.wandb = wandb
+        self.model_names = ['generator',
+                            'discriminator',
+                            'regressor',
+                            'proxy_discriminator']
         self.log_figs_to_self = config.logger.log_figures
         self.save_figs_to_local = False
         self.reset_stats_dicts()
         self.init_loss_records()
         self.sample_reporting_frequency = config.logger.sample_reporting_frequency
 
+
         self.packing_loss_coefficient = None
         self.epoch = None
-        self.learning_rates = {'generator': None,
-                               'discriminator': None,
-                               'regressor': None}
+        self.learning_rates = {name: None for name in self.model_names}
         self.batch_size = None
 
     def init_loss_records(self):
         self.current_losses = {}
-        for key in ['generator', 'discriminator', 'regressor']:
+        for key in self.model_names:
             self.current_losses[key] = {}
             for loss in ['mean_train', 'mean_test', 'all_train', 'all_test', 'mean_extra', 'all_extra']:
                 self.current_losses[key][loss] = []
@@ -105,8 +108,10 @@ class Logger:
                                                       self.config.discriminator.optimizer.convergence_eps)
         regressor_convergence = check_convergence(self.loss_record['regressor']['mean_test'], self.config.history,
                                                   self.config.regressor.optimizer.convergence_eps)
+        proxy_convergence = check_convergence(self.loss_record['proxy_discriminator']['mean_test'], self.config.history,
+                                              self.config.proxy_discriminator.optimizer.convergence_eps)
 
-        return generator_convergence, discriminator_convergence, regressor_convergence
+        return generator_convergence, discriminator_convergence, regressor_convergence, proxy_convergence
 
     def log_fig_dict(self, fig_dict):
         if self.log_figs_to_self:

@@ -10,7 +10,7 @@ class global_aggregation(nn.Module):
     NOTE - I believe PyG might have a new built-in method which does exactly this
     """
 
-    def __init__(self, agg_func, depth):
+    def __init__(self, agg_func, depth):  # todo rewrite this with new pyg aggr class
         super(global_aggregation, self).__init__()
         self.agg_func = agg_func
         if agg_func == 'mean':
@@ -44,8 +44,10 @@ class global_aggregation(nn.Module):
                 output_dim=depth,
                 norm=None,
                 dropout=0)  # condense to correct number of filters
+        elif agg_func == 'molwise':
+            self.agg = gnn.pool.max_pool_x
 
-    def forward(self, x, pos, batch, output_dim=None):
+    def forward(self, x, batch, cluster=None, output_dim=None):
         if self.agg_func == 'set2set':
             x = self.agg(x, batch, size=output_dim)
             return self.agg_fc(x)
@@ -56,7 +58,7 @@ class global_aggregation(nn.Module):
             return self.agg_fc(torch.cat((output1 + output2), dim=1))
         elif self.agg_func is None:
             return x  # do nothing
+        elif self.agg_func == 'molwise':
+            return self.agg(cluster=cluster, batch=batch, x=x)[0]
         else:
             return self.agg(x, batch, size=output_dim)
-
-

@@ -115,11 +115,11 @@ def process_discriminator_evaluation_data(config, wandb, extra_test_dict, test_e
             if size_normed_score:
                 scores_dict['Train Real'] = norm_scores(scores_dict['Train Real'], train_epoch_stats_dict['tracking_features'], config.dataDims)
 
-            vdw_penalty_dict['Train Real'] = train_epoch_stats_dict['real vdW penalty']
+            vdw_penalty_dict['Train Real'] = train_epoch_stats_dict['real_vdw_penalty']
             wandb.log({'Average Train score': np.average(scores_dict['Train Real'])})
             wandb.log({'Train score std': np.std(scores_dict['Train Real'])})
 
-        vdw_penalty_dict['Test Real'] = test_epoch_stats_dict['real vdW penalty']
+        vdw_penalty_dict['Test Real'] = test_epoch_stats_dict['real_vdw_penalty']
         vdw_penalty_dict['Test Randn'] = test_epoch_stats_dict['fake_vdw_penalty'][randn_inds]
         vdw_penalty_dict['Test Distorted'] = test_epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
 

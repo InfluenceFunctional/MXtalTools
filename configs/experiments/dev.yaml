@@ -35,25 +35,26 @@ seeds:
   dataset: 0
 
 # for reloading prior checkpoints
-discriminator_name: null #'cluster/best_discriminator_experiments_benchmarks_standard_discriminator12-10-20-09-14'
+discriminator_name: null  #'cluster/best_discriminator_experiments_benchmarks_standard_discriminator_16-10-09-08-28'
 generator_name: null #'cluster/best_generator_experiments_benchmarks_standard_generator12-10-12-00-37' #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_name: null # 'cluster/best_regressor__experiments_benchmarks_standard_regressor11-10-20-32-34'  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
+proxy_discriminator_name: null
 
 discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
 
-generate_sgs: ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
 # for GAN training
 generator:
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
-  train_vdw: True
-  train_adversarially: True
+  train_vdw: False
+  train_adversarially: False
   vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
   density_loss_func: l1  # 'l1' or 'mse'
-  adversarial_loss_func: 'critic'  #
+  adversarial_loss_func: 'score'  #
   train_h_bond: False # (non-directional)
   similarity_penalty: 0.5
 
@@ -109,16 +110,18 @@ generator:
       atom_type_embedding_dims: 5
 
 discriminator:
-  loss_func: 'critic'  # 'softmax'
-  train_adversarially: True
+  train_adversarially: False
   train_on_randn: True
   train_on_distorted: True
+  use_classification_loss: True
+  use_rdf_distance_loss: True
+  use_cell_distance_loss: True  # only meaninful when generating within the same space group
   distortion_magnitude: 0.1 # -1 for wide range test # noise for distorted generation
 
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 1.0E-4
+    init_lr: 1.0E-5
     max_lr: 2.0E-4
     min_lr: 1.0E-4
     lr_schedule: True
@@ -137,24 +140,68 @@ discriminator:
     activation: gelu
     num_fc_layers: 2
     fc_depth: 128
-    fc_norm_mode: 'layer'
-    fc_dropout_probability: 0.5
+    fc_norm_mode: layer
+    fc_dropout_probability: 0.25
     graph_node_norm: 'graph layer'
-    graph_node_dropout: 0.5
+    graph_node_dropout: 0.25
     graph_message_norm: null
-    graph_message_dropout: 0.5
+    graph_message_dropout: 0
     num_attention_heads: 4
     graph_message_depth: 128
     graph_node_dims: 256
     num_graph_convolutions: 4
     graph_embedding_depth: 256
     nodewise_fc_layers: 1
-    num_radial: 12
+    num_radial: 32
     radial_function: bessel
     max_num_neighbors: 100
     convolution_cutoff: 6
     atom_type_embedding_dims: 5
     periodic_convolution_type: 'all_layers'  # or 'last_layer'
+
+proxy_discriminator:
+  train: False
+
+  # discriminator optimizer and model
+  optimizer:
+    optimizer: adamw
+    init_lr: 1.0E-4
+    max_lr: 2.0E-4
+    min_lr: 1.0E-4
+    lr_schedule: True
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 0.001
+    convergence_eps: 0.00001
+    training_period: 1
+    lr_growth_lambda: 1.05
+    lr_shrink_lambda: 0.99
+
+  model:
+    graph_convolution_type: TransformerConv
+    graph_aggregator:  max
+    concat_mol_to_atom_features: True
+    activation: gelu
+    num_fc_layers: 4
+    fc_depth: 512
+    fc_norm_mode: 'layer'
+    fc_dropout_probability: 0.1
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0
+    graph_message_norm: null
+    graph_message_dropout: 0
+    num_attention_heads: 4
+    graph_message_depth: 128
+    graph_node_dims: 256
+    num_graph_convolutions: 4
+    graph_embedding_depth: 256
+    nodewise_fc_layers: 1
+    num_radial: 32
+    radial_function: bessel
+    max_num_neighbors: 100
+    convolution_cutoff: 6
+    atom_type_embedding_dims: 5
+
 
 regressor:
   optimizer:

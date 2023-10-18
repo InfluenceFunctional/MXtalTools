@@ -80,7 +80,7 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
         config['dataset_path'] = user_config['paths']['local_dataset_dir_path']
         config['checkpoint_dir_path'] = user_config['paths']['local_checkpoint_dir_path']
         config['config_path'] = user_config['paths']['local_config_path']
-        for model in ['discriminator', 'regressor', 'generator']:
+        for model in ['discriminator', 'regressor', 'generator', 'proxy_discriminator']:
             if config[model + '_name'] is not None:
                 config[model + '_path'] = user_config['paths']['local_checkpoints_path'] + config[model + '_name']
             else:
@@ -91,7 +91,7 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
         config['dataset_path'] = user_config['paths']['cluster_dataset_dir_path']
         config['checkpoint_dir_path'] = user_config['paths']['cluster_checkpoint_dir_path']
         config['config_path'] = user_config['paths']['cluster_config_path']
-        for model in ['discriminator', 'regressor', 'generator']:
+        for model in ['discriminator', 'regressor', 'generator', 'proxy_discriminator']:
             if config[model + '_name'] is not None:
                 config[model + '_path'] = user_config['paths']['cluster_checkpoints_path'] + config[model + '_name']
             else:

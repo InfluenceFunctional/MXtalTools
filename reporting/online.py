@@ -1279,6 +1279,9 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
         if config.discriminator.train_on_distorted or config.discriminator.train_on_randn or config.discriminator.train_adversarially:
             discriminator_analysis(config, dataDims, test_epoch_stats_dict)
 
+        if config.proxy_discriminator.train:
+            proxy_discriminator_analysis(test_epoch_stats_dict)
+
     elif config.mode == 'regression':
         log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
@@ -1286,6 +1289,47 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
         discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict)
 
     return None
+
+
+def proxy_discriminator_analysis(epoch_stats_dict):
+    tgt_value = np.concatenate((epoch_stats_dict['discriminator_real_score'], epoch_stats_dict['discriminator_fake_score']))
+    pred_value = np.concatenate((epoch_stats_dict['proxy_real_score'], epoch_stats_dict['proxy_fake_score']))
+
+    num_real_samples = len(epoch_stats_dict['discriminator_real_score'])
+    generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 0)[0] + num_real_samples
+    randn_inds = np.where(epoch_stats_dict['generator_sample_source'] == 1)[0] + num_real_samples
+    distorted_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0] + num_real_samples
+    csd_inds = np.arange(num_real_samples)
+
+    linreg_result = linregress(tgt_value, pred_value)
+
+    # predictions vs target trace
+    xline = np.linspace(max(min(tgt_value), min(pred_value)),
+                        min(max(tgt_value), max(pred_value)), 2)
+
+    xy = np.vstack([tgt_value, pred_value])
+    try:
+        z = gaussian_kde(xy)(xy)
+    except:
+        z = np.ones_like(tgt_value)
+
+    fig = go.Figure()
+    opacity = max(0.1, 1 - len(tgt_value) / 5e4)
+    for inds, name, symbol in zip([csd_inds, randn_inds, distorted_inds, generator_inds], ['CSD', 'Gaussian', 'Distorted', 'Generated'], ['circle', 'square', 'diamond', 'cross']):
+        fig.add_trace(go.Scattergl(x=tgt_value[inds], y=pred_value[inds], mode='markers', marker=dict(color=z[inds]), opacity=opacity, showlegend=True, name=name, marker_symbol=symbol),
+                      )
+
+    fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                  )
+
+    fig.update_layout(xaxis_title='Discriminator Score', yaxis_title='Proxy Score')
+
+    fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
+    wandb.log({"Proxy Results": fig,
+               "proxy_R_value": linreg_result.rvalue,
+               "proxy_slope": linreg_result.slope})
 
 
 def discriminator_analysis(config, dataDims, epoch_stats_dict):
@@ -1302,6 +1346,73 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict):
 
     discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
     plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout)
+    discriminator_distances_plots(wandb, epoch_stats_dict)
+
+    return None
+
+
+def discriminator_distances_plots(wandb, epoch_stats_dict):
+    if epoch_stats_dict['discriminator_predicted_distortion'] is not None:
+        tgt_value = epoch_stats_dict['discriminator_true_distortion']
+        pred_value = epoch_stats_dict['discriminator_predicted_distortion']
+
+        linreg_result = linregress(tgt_value, pred_value)
+
+        # predictions vs target trace
+        xline = np.linspace(max(min(tgt_value), min(pred_value)),
+                            min(max(tgt_value), max(pred_value)), 2)
+
+        xy = np.vstack([tgt_value, pred_value])
+        try:
+            z = gaussian_kde(xy)(xy)
+        except:
+            z = np.ones_like(tgt_value)
+
+        fig = go.Figure()
+        opacity = max(0.1, 1 - len(tgt_value) / 5e4)
+        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=True))
+        fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                      )
+
+        fig.update_layout(xaxis_title='Target Distortion', yaxis_title='Predicted Distortion')
+
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
+        wandb.log({"Distortion Results": fig,
+                   "distortion_R_value": linreg_result.rvalue,
+                   "distortion_slope": linreg_result.slope})
+
+    if epoch_stats_dict['discriminator_predicted_distance'] is not None:
+        tgt_value = epoch_stats_dict['discriminator_true_distance']
+        pred_value = epoch_stats_dict['discriminator_predicted_distance']
+
+        linreg_result = linregress(tgt_value, pred_value)
+
+        # predictions vs target trace
+        xline = np.linspace(max(min(tgt_value), min(pred_value)),
+                            min(max(tgt_value), max(pred_value)), 2)
+
+        xy = np.vstack([tgt_value, pred_value])
+        try:
+            z = gaussian_kde(xy)(xy)
+        except:
+            z = np.ones_like(tgt_value)
+
+        fig = go.Figure()
+        opacity = max(0.1, 1 - len(tgt_value) / 5e4)
+        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=True))
+        fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                      )
+
+        fig.update_layout(xaxis_title='Target Distance', yaxis_title='Predicted Distance')
+
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
+        wandb.log({"Distance Results": fig,
+                   "distance_R_value": linreg_result.rvalue,
+                   "distance_slope": linreg_result.slope})
 
     return None
 

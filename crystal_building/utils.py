@@ -142,36 +142,6 @@ def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords
     return supercell_data
 
 
-def compute_lattice_vector_overlap(coords_list: list, T_cf_list: list, normed_lattice_vectors=None):
-    """
-    compute overlap between molecule principal axes and the crystal lattice vectors
-    """  # do not deprecate - may be useful later
-    if normed_lattice_vectors is None:
-        # ideally precomputed and fed to the function
-        supercell_scale = 2  # t
-        n_cells = (2 * supercell_scale + 1) ** 3
-
-        fractional_translations = np.zeros((n_cells, 3))  # initialize the translations in fractional coords
-        i = 0
-        for xx in range(-supercell_scale, supercell_scale + 1):
-            for yy in range(-supercell_scale, supercell_scale + 1):
-                for zz in range(-supercell_scale, supercell_scale + 1):
-                    fractional_translations[i] = np.array((xx, yy, zz))
-                    i += 1
-        lattice_vectors = torch.Tensor(fractional_translations[np.argsort(np.abs(fractional_translations).sum(1))][1:])  # leave out the 0,0,0 element
-        normed_lattice_vectors = lattice_vectors / torch.linalg.norm(lattice_vectors, axis=1)[:, None]
-
-    # Ip_list = compute_principal_axes_list(coords_list)
-    Ip_list, _, _ = batch_molecule_principal_axes_torch(coords_list)
-
-    # get mol axes in fractional basis
-    vectors_f = torch.einsum('nij,nmj->nmi', (T_cf_list, Ip_list))
-
-    # compute overlaps
-    normed_vectors_f = vectors_f / torch.linalg.norm(vectors_f, axis=2)[:, :, None]
-    return torch.einsum('ij,nmj->nmi', (normed_lattice_vectors, normed_vectors_f))
-
-
 def fractional_transform(coords, T_mat):
     """
     input is the cartesian coordinates and the c-f or f-c fractional transformation matrix

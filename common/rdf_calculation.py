@@ -3,11 +3,11 @@ from common.utils import torch_ptp
 
 
 def parallel_compute_rdf_torch(dists_list, raw_density=True, rrange=None, bins=None, remove_radial_scaling=False):
-    '''
+    """
     compute the radial distribution for a single fixed point
     dists: array of pairwise distances of nearby particles from the reference
     some batching for speed
-    '''
+    """
     hist_range = [0.5, 10] if rrange is None else rrange
     hist_bins = 100 if bins is None else bins
 
@@ -23,7 +23,7 @@ def parallel_compute_rdf_torch(dists_list, raw_density=True, rrange=None, bins=N
             except:
                 rdf_density[i] = 1
     else:
-        rdf_density = torch.ones(len(dists_list),device=dists_list[0].device,dtype=torch.float32)
+        rdf_density = torch.ones(len(dists_list), device=dists_list[0].device, dtype=torch.float32)
 
     hh_list = torch.stack([torch.histc(dists, min=hist_range[0], max=hist_range[1], bins=hist_bins) for dists in dists_list])
     rr = torch.linspace(hist_range[0], hist_range[1], hist_bins + 1).to(hh_list.device)
@@ -34,5 +34,3 @@ def parallel_compute_rdf_torch(dists_list, raw_density=True, rrange=None, bins=N
         rdf = hh_list / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
 
     return rdf, (rr[:-1] + torch.diff(rr)).requires_grad_()  # rdf and x-axis
-
-
