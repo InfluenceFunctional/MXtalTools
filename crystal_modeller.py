@@ -831,13 +831,13 @@ class Modeller:
         discriminator_target = torch.cat((torch.ones_like(discriminator_output_on_real[:, 0]),
                                           torch.zeros_like(discriminator_output_on_fake[:, 0])))
         distortion_target = torch.cat((-3 * torch.ones_like(discriminator_output_on_real[:, 0]),
-                                       torch.log(cell_distortion_size)))
+                                       torch.log(cell_distortion_size).clip(min=-3)))
 
         classification_losses = F.cross_entropy(combined_outputs[:, :2], discriminator_target.long(), reduction='none')  # works much better
         distortion_losses = F.smooth_l1_loss(combined_outputs[:, 2], distortion_target, reduction='none')
         if real_fake_rdf_distances is not None:
             rdf_distance_target = torch.cat((-3 * torch.ones_like(discriminator_output_on_real[:, 0]),
-                                             torch.log(cell_distortion_size)))  # target is log distance with zero set as -3
+                                             torch.log(cell_distortion_size).clip(min=-3)))  # target is log distance with zero set as -3
             rdf_distance_losses = F.smooth_l1_loss(combined_outputs[:, 3], rdf_distance_target, reduction='none')
         else:
             rdf_distance_target = torch.randn_like(combined_outputs[:, 3]) * 0.001  # todo need this for lingress in analysis but fix it there
