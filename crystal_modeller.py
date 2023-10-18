@@ -840,8 +840,8 @@ class Modeller:
                                              real_fake_rdf_distances))
             rdf_distance_losses = F.smooth_l1_loss(combined_outputs[:, 3], rdf_distance_target, reduction='none')
         else:
-            rdf_distance_target = None
-            rdf_distance_losses = None
+            rdf_distance_target = torch.randn_like(combined_outputs[:, 3]) * 0.001 # todo need this for lingress in analysis but fix it there
+            rdf_distance_losses = torch.randn_like(combined_outputs[:, 3]) * 0.001
 
         score_on_real = softmax_and_score(discriminator_output_on_real[:, :2])
         score_on_fake = softmax_and_score(discriminator_output_on_fake[:, :2])
