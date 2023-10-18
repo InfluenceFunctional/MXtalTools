@@ -1181,7 +1181,7 @@ class Modeller:
             distortion = torch.randn_like(generated_samples_std) * distortion_override
         else:
             if self.config.discriminator.distortion_magnitude == -1:
-                distortion = torch.randn_like(generated_samples_std) * torch.logspace(-3, 1, len(generated_samples_std)).to(generated_samples_std.device)[:, None]  # wider range
+                distortion = torch.randn_like(generated_samples_std) * torch.logspace(-2, 1, len(generated_samples_std)).to(generated_samples_std.device)[:, None]  # wider range
             else:
                 distortion = torch.randn_like(generated_samples_std) * self.config.discriminator.distortion_magnitude
 
