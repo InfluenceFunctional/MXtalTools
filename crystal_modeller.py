@@ -467,7 +467,7 @@ class Modeller:
 
             self.train_discriminator = (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn))
             self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
-            self.train_regressor = self.config.mode == 'regression'
+            self.train_regressor = self.config. mode == 'regression'
             self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
 
             '''initialize datasets and useful classes'''
@@ -958,7 +958,7 @@ class Modeller:
 
             rdf_dists = torch.zeros(real_supercell_data.num_graphs, device=self.config.device, dtype=torch.float32)
             for i in range(real_supercell_data.num_graphs):
-                rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr)
+                rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr) / real_supercell_data.mol_size[i]
         else:
             rdf_dists = None
 

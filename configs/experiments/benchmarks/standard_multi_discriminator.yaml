@@ -21,7 +21,7 @@ extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analy
 logger:
   run_name: standard_multi_discriminator
   mini_csp_frequency: 3
-  sample_reporting_frequency: 3
+  sample_reporting_frequency: 1
   log_figures: True
   experiment_tag: benchmarks
 
@@ -112,7 +112,7 @@ discriminator:
   train_on_distorted: True
   use_classification_loss: True
   use_rdf_distance_loss: True
-  use_cell_distance_loss: True  # only meaninful when generating within the same space group
+  use_cell_distance_loss: False  # only meaninful when generating within the same space group
   distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
   # discriminator optimizer and model
