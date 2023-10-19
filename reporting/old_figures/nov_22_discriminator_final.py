@@ -347,7 +347,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
                         x_title='Distance from Target',
                         y_title='Model Score')  # + ['All'])
 
-    from scipy.stats import gaussian_kde
+    from common.utils import get_point_density
     for i, label in enumerate(rdf_full_distance_dict.keys()):
         row = i // 4 + 1
         col = i % 4 + 1
@@ -358,7 +358,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
         yline = xline * linreg_result.slope + linreg_result.intercept
 
         xy = np.vstack([dist, scores_dict[label]])
-        z = gaussian_kde(xy)(xy)
+        z = get_point_density(x, y)
 
         fig.add_trace(go.Scattergl(x=dist, y=scores_dict[label], showlegend=False,
                                    mode='markers', marker=dict(color=z), opacity=0.1),

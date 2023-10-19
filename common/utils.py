@@ -3,12 +3,26 @@ import numpy as np
 import torch
 import pandas as pd
 from torch.nn.functional import softmax
+from scipy.interpolate import interpn
 
 from constants.space_group_info import SYM_OPS, LATTICE_TYPE, POINT_GROUPS, SPACE_GROUPS
 
 '''
 general utilities
 '''
+
+
+def get_point_density(x, y, bins=1000):
+    """
+    Scatter plot colored by 2d histogram
+    """
+    data, x_e, y_e = np.histogram2d(x, y, bins=bins, density=True)
+    z = interpn((0.5 * (x_e[1:] + x_e[:-1]), 0.5 * (y_e[1:] + y_e[:-1])), data, np.vstack([x, y]).T, method="splinef2d", bounds_error=False)
+
+    # To be sure to plot all data
+    z[np.where(np.isnan(z))] = 0.0
+
+    return z / z.max()
 
 
 def chunkify(lst: list, n: int):
@@ -188,10 +202,11 @@ def init_sym_info():
 
     return sym_info
 
+
 def norm_circular_components(components: torch.tensor):
     """use softmax to norm the sum of squares, and multiply by the signs to keep all 4 quadrants"""
 
-    return components / torch.sqrt(torch.sum(components**2, dim=-1))[:, None]
+    return components / torch.sqrt(torch.sum(components ** 2, dim=-1))[:, None]
 
 
 def components2angle(components: torch.tensor, norm_components=True):

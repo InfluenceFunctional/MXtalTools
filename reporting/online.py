@@ -2,11 +2,11 @@ import numpy as np
 import wandb
 from _plotly_utils.colors import n_colors, sample_colorscale
 from plotly.subplots import make_subplots
-from scipy.stats import gaussian_kde, linregress
+from scipy.stats import linregress
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
-import torch
+from common.utils import get_point_density
 
 from common.geometry_calculations import cell_vol
 from models.utils import norm_scores
@@ -128,7 +128,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
 
         xy = np.vstack([x, y])
         try:
-            z = gaussian_kde(xy)(xy)
+            z = get_point_density(x, y)
         except:
             z = np.ones_like(x)
 
@@ -1120,7 +1120,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
 
         xy = np.vstack([tgt_value, pred_value])
         try:
-            z = gaussian_kde(xy)(xy)
+            z = get_point_density(x, y)
         except:
             z = np.ones_like(tgt_value)
 
@@ -1309,7 +1309,7 @@ def proxy_discriminator_analysis(epoch_stats_dict):
 
     xy = np.vstack([tgt_value, pred_value])
     try:
-        z = gaussian_kde(xy)(xy)
+        z = get_point_density(x, y)
     except:
         z = np.ones_like(tgt_value)
 
@@ -1364,7 +1364,7 @@ def discriminator_distances_plots(wandb, epoch_stats_dict):
 
         xy = np.vstack([tgt_value, pred_value])
         try:
-            z = gaussian_kde(xy)(xy)
+            z = get_point_density(x, y)
         except:
             z = np.ones_like(tgt_value)
 
@@ -1395,7 +1395,7 @@ def discriminator_distances_plots(wandb, epoch_stats_dict):
 
         xy = np.vstack([tgt_value, pred_value])
         try:
-            z = gaussian_kde(xy)(xy)
+            z = get_point_density(x, y)
         except:
             z = np.ones_like(tgt_value)
 

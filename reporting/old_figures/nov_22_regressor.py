@@ -2,7 +2,7 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import numpy as np
 from scipy.stats import linregress
-from scipy.stats import gaussian_kde
+from common.utils import get_point_density
 
 
 def nov_22_paper_regression_plots(config):
@@ -90,9 +90,9 @@ def nov_22_paper_regression_plots(config):
     4-panel error distribution
     '''
     xy = np.vstack([orig_target, orig_prediction])
-    z = gaussian_kde(xy)(xy)
+    z = get_point_density(x, y)
     xy2 = np.vstack([target_density, predicted_density])
-    z2 = gaussian_kde(xy)(xy)
+    z2 = get_point_density(x, y)
 
     fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)', 'd)'), vertical_spacing=0.12)
 
