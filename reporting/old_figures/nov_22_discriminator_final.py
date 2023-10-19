@@ -358,7 +358,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
         yline = xline * linreg_result.slope + linreg_result.intercept
 
         xy = np.vstack([dist, scores_dict[label]])
-        z = get_point_density(x, y)
+        z = get_point_density(xy)
 
         fig.add_trace(go.Scattergl(x=dist, y=scores_dict[label], showlegend=False,
                                    mode='markers', marker=dict(color=z), opacity=0.1),

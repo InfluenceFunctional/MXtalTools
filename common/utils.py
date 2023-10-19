@@ -12,10 +12,11 @@ general utilities
 '''
 
 
-def get_point_density(x, y, bins=1000):
+def get_point_density(xy, bins=1000):
     """
     Scatter plot colored by 2d histogram
     """
+    x, y = xy
     data, x_e, y_e = np.histogram2d(x, y, bins=bins, density=True)
     z = interpn((0.5 * (x_e[1:] + x_e[:-1]), 0.5 * (y_e[1:] + y_e[:-1])), data, np.vstack([x, y]).T, method="splinef2d", bounds_error=False)
 

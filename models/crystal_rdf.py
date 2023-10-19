@@ -5,7 +5,7 @@ from models.asymmetric_radius_graph import asymmetric_radius_graph
 from common.rdf_calculation import parallel_compute_rdf_torch
 
 
-def crystal_rdf(crystal_data, precomputed_distances_dict = None, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False, cpu_detach=False, remove_radial_scaling=False):
+def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False, cpu_detach=False, remove_radial_scaling=False):
     """
     compute the RDF for all the supercells in a CrystalData object
 
@@ -18,14 +18,14 @@ def crystal_rdf(crystal_data, precomputed_distances_dict = None, rrange=[0, 10],
     atomwise: compute a separate RDF for all pairs of unique atom indexes per molecule in each crystal (exclusive with elementwise)
     cpu_detach: True return outputs as numpy array on cpu. False return outputs as torch tensor on the same device as the input crystaldata
     """
-    device = crystal_data.pos.device
+    device = crystaldata.pos.device
     #  whether to include intramolecular edges
-    if crystal_data.aux_ind is not None:
-        in_inds = torch.where(crystal_data.aux_ind == 0)[0]
+    if crystaldata.aux_ind is not None:
+        in_inds = torch.where(crystaldata.aux_ind == 0)[0]
         if mode == 'intermolecular':
-            out_inds = torch.where(crystal_data.aux_ind == 1)[0].to(device)
+            out_inds = torch.where(crystaldata.aux_ind == 1)[0].to(device)
         elif mode == 'all':
-            out_inds = torch.arange(len(crystal_data.pos)).to(device)
+            out_inds = torch.arange(len(crystaldata.pos)).to(device)
         elif mode == 'intramolecular':
             out_inds = in_inds
         else:
@@ -33,42 +33,56 @@ def crystal_rdf(crystal_data, precomputed_distances_dict = None, rrange=[0, 10],
             assert False
     else:
         # if we have no inside/outside labels, just consider the whole thing one big molecule
-        in_inds = torch.arange(len(crystal_data.pos)).to(device)
+        in_inds = torch.arange(len(crystaldata.pos)).to(device)
         out_inds = in_inds
 
     if precomputed_distances_dict is not None and mode == 'intermolecular':
         edges = precomputed_distances_dict['edge_index_inter']
     else:
-        edges = asymmetric_radius_graph(crystal_data.pos,
-                                        batch=crystal_data.batch,
+        edges = asymmetric_radius_graph(crystaldata.pos,
+                                        batch=crystaldata.batch,
                                         inside_inds=in_inds,
                                         convolve_inds=out_inds,
                                         r=max(rrange), max_num_neighbors=500, flow='source_to_target')
 
     # track which edges go with which crystals
-    edge_in_crystal_number = crystal_data.batch[edges[0]]
+    edge_in_crystal_number = crystaldata.batch[edges[0]]
+    for i in range(crystaldata.num_graphs):
+        if i == 0:
+            edges_ptr = torch.zeros(crystaldata.num_graphs + 1, device=device, dtype = torch.long)
+            edges_ptr[1] = torch.sum(edge_in_crystal_number == i)
+        else:
+            edges_ptr[i + 1] = edges_ptr[i] + torch.sum(edge_in_crystal_number == i)
 
     # compute all the dists
-    dists = (crystal_data.pos[edges[0]] - crystal_data.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
+    dists = torch.linalg.norm(crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]], dim=1)
 
     assert not (elementwise and atomwise)
 
     if elementwise:  # todo this could also be sped up
         relevant_elements = [5, 6, 7, 8, 9, 15, 16, 17, 35]
         element_symbols = {5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F', 15: 'P', 16: 'S', 17: 'Cl', 35: 'Br'}
-        elements = [crystal_data.x[edges[0], 0], crystal_data.x[edges[1], 0]]
+        elements = [crystaldata.x[edges[0], 0], crystaldata.x[edges[1], 0]]
         rdfs_dict = {}
-        rdfs_array = torch.zeros((crystal_data.num_graphs, int((len(relevant_elements) ** 2 + len(relevant_elements)) / 2), bins), device=dists.device)
+        rdfs_array = torch.zeros((crystaldata.num_graphs, int((len(relevant_elements) ** 2 + len(relevant_elements)) / 2), bins), device=dists.device)
+
+        # prebuild pair lists
+        elem_pair_list = []
         ind = 0
         for i, element1 in enumerate(relevant_elements):
             for j, element2 in enumerate(relevant_elements):
                 if j >= i:
                     rdfs_dict[ind] = element_symbols[element1] + ' to ' + element_symbols[element2]
-                    rdfs_array[:, ind], rr = parallel_compute_rdf_torch([dists[(edge_in_crystal_number == n) * (elements[0] == element1) * (elements[1] == element2)] for n in range(crystal_data.num_graphs)],
-                                                                        rrange=rrange, bins=bins,
-                                                                        raw_density=raw_density,
-                                                                        remove_radial_scaling=remove_radial_scaling)
+                    elem_pair_list.append((elements[0] == element1) * (elements[1] == element2))
                     ind += 1
+
+        for i in range(len(elem_pair_list)):
+            rdfs_array[:, i], rr = parallel_compute_rdf_torch(
+                [dists[(edge_in_crystal_number == n) * elem_pair_list[i]] for n in range(crystaldata.num_graphs)],
+                rrange=rrange, bins=bins,
+                raw_density=raw_density,
+                remove_radial_scaling=remove_radial_scaling)
+
         if cpu_detach:
             rdfs_array = rdfs_array.cpu().detach().numpy()
             rr = rr.cpu().detach().numpy()
@@ -80,24 +94,23 @@ def crystal_rdf(crystal_data, precomputed_distances_dict = None, rrange=[0, 10],
         rdfs_dict_list = []
         all_atom_inds = []
         # abs_atom_inds = []
-        for i in range(crystal_data.num_graphs):
+        for i in range(crystaldata.num_graphs):
             # all_atom_inds.append(torch.arange(crystal_data.mol_size[i]).tile(int((crystal_data.batch == i).sum() // crystal_data.mol_size[i])))
             # assume only that the order of atoms is patterned in all images
-            canonical_conformer_coords = crystal_data.pos[crystal_data.ptr[i]:crystal_data.ptr[i] + int(crystal_data.mol_size[i])]
+            canonical_conformer_coords = crystaldata.pos[crystaldata.ptr[i]:crystaldata.ptr[i] + int(crystaldata.mol_size[i])]
             centroid = canonical_conformer_coords.mean(0)
             mol_dists = torch.linalg.norm(canonical_conformer_coords - centroid[None, :], dim=-1)
             inds = torch.argsort(mol_dists)
-            all_atom_inds.append(inds.tile(int((crystal_data.batch == i).sum() // crystal_data.mol_size[i])))
+            all_atom_inds.append(inds.tile(int((crystaldata.batch == i).sum() // crystaldata.mol_size[i])))
 
         atom_inds = torch.cat(all_atom_inds)
 
         atoms_in_edges = [atom_inds[edges[0]], atom_inds[edges[1]]]
 
         ind = 0
-        for n in range(crystal_data.num_graphs):
-            # this way is slightly faster than the above, and should scale well to larger batch sizes
+        for n in range(crystaldata.num_graphs):
             # all possible combinations of unique atoms on this graph
-            atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystal_data.mol_size[n])), 2)))
+            atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystaldata.mol_size[n])), 2)))
             rdfs_dict_list.append(atom_pairs)  # record the pairs for reporting purposes
 
             in_crystal_inds = torch.where(edge_in_crystal_number == n)[0]  # atom indices in this crystal
@@ -120,7 +133,7 @@ def crystal_rdf(crystal_data, precomputed_distances_dict = None, rrange=[0, 10],
 
         return rdfs_array_list, rr, rdfs_dict_list
     else:
-        rdfs_array, rr = parallel_compute_rdf_torch([dists[edge_in_crystal_number == n] for n in range(crystal_data.num_graphs)],
+        rdfs_array, rr = parallel_compute_rdf_torch([dists[edge_in_crystal_number == n] for n in range(crystaldata.num_graphs)],
                                                     rrange=rrange, bins=bins,
                                                     raw_density=raw_density, remove_radial_scaling=remove_radial_scaling)
         if cpu_detach:

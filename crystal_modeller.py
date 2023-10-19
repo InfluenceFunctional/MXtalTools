@@ -830,18 +830,18 @@ class Modeller:
 
         discriminator_target = torch.cat((torch.ones_like(discriminator_output_on_real[:, 0]),
                                           torch.zeros_like(discriminator_output_on_fake[:, 0])))
-        distortion_target = torch.cat((-3 * torch.ones_like(discriminator_output_on_real[:, 0]),
-                                       torch.log(cell_distortion_size).clip(min=-3)))
+        distortion_target = torch.log10(1 + torch.cat((torch.zeros_like(discriminator_output_on_real[:, 0]),
+                                                       cell_distortion_size)))  # rescale on log(1+x)
 
         classification_losses = F.cross_entropy(combined_outputs[:, :2], discriminator_target.long(), reduction='none')  # works much better
         distortion_losses = F.smooth_l1_loss(combined_outputs[:, 2], distortion_target, reduction='none')
         if real_fake_rdf_distances is not None:
-            rdf_distance_target = torch.cat((-3 * torch.ones_like(discriminator_output_on_real[:, 0]),
-                                             torch.log(cell_distortion_size).clip(min=-3)))  # target is log distance with zero set as -3
+            rdf_distance_target = torch.log10(1 + torch.cat((torch.zeros_like(discriminator_output_on_real[:, 0]),
+                                                             real_fake_rdf_distances)))  # rescale on log(1+x)
             rdf_distance_losses = F.smooth_l1_loss(combined_outputs[:, 3], rdf_distance_target, reduction='none')
         else:
-            rdf_distance_target = torch.randn_like(combined_outputs[:, 3]) * 0.001  # todo need this for lingress in analysis but fix it there
-            rdf_distance_losses = torch.randn_like(combined_outputs[:, 3]) * 0.001
+            rdf_distance_target = None
+            rdf_distance_losses = None
 
         score_on_real = softmax_and_score(discriminator_output_on_real[:, :2])
         score_on_fake = softmax_and_score(discriminator_output_on_fake[:, :2])

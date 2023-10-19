@@ -128,7 +128,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
 
         xy = np.vstack([x, y])
         try:
-            z = get_point_density(x, y)
+            z = get_point_density(xy)
         except:
             z = np.ones_like(x)
 
@@ -1120,7 +1120,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
 
         xy = np.vstack([tgt_value, pred_value])
         try:
-            z = get_point_density(x, y)
+            z = get_point_density(xy)
         except:
             z = np.ones_like(tgt_value)
 
@@ -1309,7 +1309,7 @@ def proxy_discriminator_analysis(epoch_stats_dict):
 
     xy = np.vstack([tgt_value, pred_value])
     try:
-        z = get_point_density(x, y)
+        z = get_point_density(xy)
     except:
         z = np.ones_like(tgt_value)
 
@@ -1356,17 +1356,19 @@ def discriminator_distances_plots(wandb, epoch_stats_dict):
         tgt_value = epoch_stats_dict['discriminator_true_distortion']
         pred_value = epoch_stats_dict['discriminator_predicted_distortion']
 
-        linreg_result = linregress(tgt_value, pred_value)
+        # filter out 'true' samples
+        good_inds = tgt_value != 0
+        tgt_value_0 = tgt_value[good_inds]
+        pred_value_0 = pred_value[good_inds]
+
+        linreg_result = linregress(tgt_value_0, pred_value_0)
 
         # predictions vs target trace
         xline = np.linspace(max(min(tgt_value), min(pred_value)),
                             min(max(tgt_value), max(pred_value)), 2)
 
         xy = np.vstack([tgt_value, pred_value])
-        try:
-            z = get_point_density(x, y)
-        except:
-            z = np.ones_like(tgt_value)
+        z = get_point_density(xy)
 
         fig = go.Figure()
         opacity = max(0.1, 1 - len(tgt_value) / 5e4)
@@ -1387,17 +1389,19 @@ def discriminator_distances_plots(wandb, epoch_stats_dict):
         tgt_value = epoch_stats_dict['discriminator_true_distance']
         pred_value = epoch_stats_dict['discriminator_predicted_distance']
 
-        linreg_result = linregress(tgt_value, pred_value)
+        # filter out 'true' samples
+        good_inds = tgt_value != 0
+        tgt_value_0 = tgt_value[good_inds]
+        pred_value_0 = pred_value[good_inds]
+
+        linreg_result = linregress(tgt_value_0, pred_value_0)
 
         # predictions vs target trace
         xline = np.linspace(max(min(tgt_value), min(pred_value)),
                             min(max(tgt_value), max(pred_value)), 2)
 
         xy = np.vstack([tgt_value, pred_value])
-        try:
-            z = get_point_density(x, y)
-        except:
-            z = np.ones_like(tgt_value)
+        z = get_point_density(xy)
 
         fig = go.Figure()
         opacity = max(0.1, 1 - len(tgt_value) / 5e4)

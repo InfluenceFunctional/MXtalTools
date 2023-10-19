@@ -90,9 +90,9 @@ def nov_22_paper_regression_plots(config):
     4-panel error distribution
     '''
     xy = np.vstack([orig_target, orig_prediction])
-    z = get_point_density(x, y)
+    z = get_point_density(xy)
     xy2 = np.vstack([target_density, predicted_density])
-    z2 = get_point_density(x, y)
+    z2 = get_point_density(xy)
 
     fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)', 'd)'), vertical_spacing=0.12)
 
