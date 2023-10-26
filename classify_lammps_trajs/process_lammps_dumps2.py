@@ -1,8 +1,9 @@
 import os
-
 import warnings
 import torch.optim as optim
 import wandb
+import argparse
+import test_configs
 
 from classify_lammps_trajs.utils import (generate_dataset_from_dumps, class_names,
                                          collect_to_traj_dataloaders, init_classifier,
@@ -11,48 +12,48 @@ from classify_lammps_trajs.utils import (generate_dataset_from_dumps, class_name
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore ovito error
 
-num_convs = 2
-num_epochs = 1000
-dataset_size = 100
-conv_cutoff = 6
-batch_size = 1
-reporting_frequency = 5
-train_model = True
-classifier_path = None
-
-dataset_name = 'nicotinamide_trajectories_dataset_full'
-dataset_path = f'C:/Users/mikem/crystals/clusters/cluster_structures/bulk_trajs1/{dataset_name}.pkl'
-
-dumps_dirs = [r'C:\Users\mikem\crystals\clusters\cluster_structures\bulk_trajs1\T_100',
-              r'C:\Users\mikem\crystals\clusters\cluster_structures\bulk_trajs1\T_350',
-              r'C:\Users\mikem\crystals\clusters\cluster_structures\hot_trajs/melted_trajs_T_950']
-
-device = 'cuda'
-
-# todo add config utility
+parser = argparse.ArgumentParser()
+args = parser.parse_known_args()[1]
+if '--config' in args:
+    config = getattr(test_configs, args[1])
+else:
+    config = test_configs.dev
 
 if __name__ == "__main__":
-    os.chdir(r'C:\Users\mikem\crystals\classifier_runs')
+    dataset_name = 'nicotinamide_trajectories_dataset_full'
+    datasets_path = config['datasets_path']
+    dataset_path = f'{datasets_path}{dataset_name}.pkl'
+    dumps_dirs = [config['dumps_path'] + r'bulk_trajs1\T_100',
+                  config['dumps_path'] + r'bulk_trajs1\T_350',
+                  config['dumps_path'] + r'hot_trajs/melted_trajs_T_950']
+
+    os.chdir(config['runs_path'])
+
     if not os.path.exists(dataset_path):
         generate_dataset_from_dumps(dumps_dirs, dataset_path)
 
-    # todo add data filter for early datapoints
-    train_loader, _ = collect_to_traj_dataloaders(dataset_path, dataset_size=dataset_size, batch_size=1, temperatures=[100, 950], test_fraction=0.01)
-    test_loader, _ = collect_to_traj_dataloaders(dataset_path, dataset_size=dataset_size, batch_size=1, temperatures=[350], test_fraction=0.01)
+    train_loader, _ = collect_to_traj_dataloaders(
+        dataset_path, config['dataset_size'], batch_size=1, temperatures=[100, 950], test_fraction=0.01)
+    test_loader, _ = collect_to_traj_dataloaders(
+        dataset_path, config['dataset_size'], batch_size=1, temperatures=[350], test_fraction=0.01)
 
-    classifier = init_classifier(conv_cutoff, num_convs)
-    optimizer = optim.Adam(classifier.parameters(), lr=1e-4)
+    classifier = init_classifier(config['conv_cutoff'], config['num_convs'],
+                                 config['embedding_depth'], config['dropout'],
+                                 config['graph_norm'], config['fc_norm'],
+                                 config['num_fcs'], config['message_depth'])
 
-    if classifier_path is not None:
-        reload_model(classifier, optimizer, classifier_path, reload_optimizer=True)
+    optimizer = optim.Adam(classifier.parameters(), lr=config['learning_rate'])
 
-    classifier.to(device)
-    if train_model:
+    if config['classifier_path'] is not None:
+        reload_model(classifier, optimizer, config['classifier_path'], reload_optimizer=True)
+
+    classifier.to(config['device'])
+    if config['train_model']:
         train_classifier(classifier, optimizer,
                          train_loader, test_loader,
-                         num_epochs, wandb,
-                         class_names, device,
-                         batch_size, reporting_frequency
+                         config['num_epochs'], wandb,
+                         class_names, config['device'],
+                         config['batch_size'], config['reporting_frequency']
                          )
 
     #  todo add evaluation utils & pretty graphs

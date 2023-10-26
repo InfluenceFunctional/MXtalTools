@@ -166,7 +166,7 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
     if temperatures is not None:
         good_inds = []
         for temperature in temperatures:
-            good_inds.append(np.argwhere(dataset['temperature'] == temperature)[:, 0])
+            good_inds.append(np.argwhere(np.asarray(dataset['temperature']) == temperature)[:, 0])
 
         good_inds = np.unique(np.concatenate(good_inds))
         bad_inds = np.asarray([ind for ind in np.arange(len(dataset)) if ind not in good_inds])
@@ -174,7 +174,9 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         dataset = dataset.reset_index().drop(columns='index')
 
     if filter_early:
-        aa = 1
+        bad_inds = np.argwhere(np.asarray(dataset['time_step']) <= int(1e5))[:, 0]  # filter first 100k steps for equilibration
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
 
     forms = np.unique(dataset['form'])
     forms2tgt = {form: i for i, form in enumerate(forms)}
@@ -248,7 +250,7 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
     return get_dataloaders(datapoints, machine='local', batch_size=batch_size, test_fraction=test_fraction)
 
 
-def init_classifier(conv_cutoff, num_convs):
+def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth):
     return molecule_graph_model(
         num_atom_feats=1,
         output_dimension=9 + 1,
@@ -258,20 +260,20 @@ def init_classifier(conv_cutoff, num_convs):
         concat_crystal_to_atom_features=False,
         activation='gelu',
         num_mol_feats=0,
-        num_fc_layers=4,
-        fc_depth=128,
-        fc_dropout_probability=0.25,
-        fc_norm_mode='layer',
-        graph_node_norm='graph layer',
-        graph_node_dropout=0.25,
+        num_fc_layers=num_fcs,
+        fc_depth=embedding_depth,
+        fc_dropout_probability=dropout,
+        fc_norm_mode=fc_norm,
+        graph_node_norm=graph_norm,
+        graph_node_dropout=dropout,
         graph_message_norm=None,
         graph_message_dropout=0,
         num_radial=32,
         num_attention_heads=4,
-        graph_message_depth=32,
-        graph_node_dims=128,
+        graph_message_depth=message_depth,
+        graph_node_dims=embedding_depth,
         num_graph_convolutions=num_convs,
-        graph_embedding_depth=128,
+        graph_embedding_depth=embedding_depth,
         nodewise_fc_layers=1,
         radial_function='bessel',
         max_num_neighbors=100,
