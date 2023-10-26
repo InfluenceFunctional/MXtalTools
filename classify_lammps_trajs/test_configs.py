@@ -65,4 +65,6 @@ config6 = copy(config1)
 config6['run_name'] = 'test6'
 config6['learning_rate'] = 1e-4
 
-
+config7 = copy(config1)
+config7['run_name'] = 'test7'
+config7['device'] = 'cuda'

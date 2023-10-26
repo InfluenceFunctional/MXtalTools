@@ -25,7 +25,7 @@ from models.vdw_overlap import vdw_overlap
 batch_size = 1000  # how many samples per batch
 num_iters = 100  # how many batches to try before giving up on this space group
 vdw_threshold = 0.25  # maximum allowed average normalized vdw overlap per-molecule
-SGS_TO_SEARCH = [i for i in range(1, 230 + 1)]
+SGS_TO_SEARCH = [i for i in range(3, 230 + 1)]
 
 os.chdir(r'C:\Users\mikem\crystals\toys')  # where you want everything to save
 config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/crystal_building.yaml'
@@ -38,6 +38,8 @@ coords = np.stack([[-1.27665, 0.04371, -1.09742],
                    [-1.87222, -1.60535, -1.32478],
                    [-1.92029, 1.17139, -2.54270],
                    [-1.95420, 0.78568, 0.72402]])
+
+coords -= coords.mean(0)  # subtract centroid
 
 # from ccdc.molecule import Molecule, Atom
 # mol = Molecule(identifier='my molecule')
@@ -72,7 +74,7 @@ modeller.misc_pre_training_items()  # initialize generator
 
 reasonable_cell_params = [[] for _ in SGS_TO_SEARCH]  # initialize record
 for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space groups
-    if not os.path.exists(f'good_params_for_{sg_ind}.npy'):
+    if True: #not os.path.exists(f'good_params_for_{sg_ind}.npy'):
         """retrieve and assign symmetry operations"""
         sym_ops = SYM_OPS[sg_ind] * 1
         mol_data.sg_ind = sg_ind
@@ -145,6 +147,15 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space grou
                     pare_to_convolution_cluster=False,
                     skip_refeaturization=True
                 )
+
+                cells = unit_cells.pos.reshape(len(unit_cells.pos) // 5, 5, 3)
+                dists = torch.stack([torch.cdist(cells[i], cells[i]) for i in range(len(cells))])
+                dmat = torch.zeros((len(dists), len(dists)))
+                for i in range(len(dists)):
+                    for j in range(len(dists)):
+                        dmat[i, j] = torch.abs(torch.sum(dists[i] - dists[j]))
+
+                assert dmat.max() < 1e-3
 
                 supercells, cell_volumes = modeller.supercell_builder.build_supercells(
                     molecule_data=mol_batch,

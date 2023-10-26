@@ -300,6 +300,7 @@ def train_classifier(config, classifier, optimizer,
                      batch_size, reporting_frequency,
                      runs_path, run_name):
     with wandb.init(project='cluster_classifier', entity='mkilgour'):
+        wandb.run_name = run_name
         wandb.log({'config': config})
         test_record = []
         for epoch in range(num_epochs):
