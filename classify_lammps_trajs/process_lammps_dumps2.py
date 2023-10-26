@@ -3,7 +3,7 @@ import warnings
 import torch.optim as optim
 import wandb
 import argparse
-import test_configs
+import classify_lammps_trajs.test_configs as test_configs
 
 from classify_lammps_trajs.utils import (generate_dataset_from_dumps, class_names,
                                          collect_to_traj_dataloaders, init_classifier,
