@@ -49,11 +49,12 @@ if __name__ == "__main__":
 
     classifier.to(config['device'])
     if config['train_model']:
-        train_classifier(classifier, optimizer,
+        train_classifier(config, classifier, optimizer,
                          train_loader, test_loader,
                          config['num_epochs'], wandb,
                          class_names, config['device'],
-                         config['batch_size'], config['reporting_frequency']
+                         config['batch_size'], config['reporting_frequency'],
+                         config['runs_path']
                          )
 
     #  todo add evaluation utils & pretty graphs

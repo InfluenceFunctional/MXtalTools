@@ -1,3 +1,5 @@
+from copy import copy
+
 dev = {'num_convs': 2,
        'embedding_depth': 128,
        'message_depth': 64,
@@ -26,7 +28,7 @@ config1 = {'num_convs': 2,
            'fc_norm': 'layer',
            'num_fcs': 2,
            'num_epochs': 1000,
-           'dataset_size': 100,
+           'dataset_size': 10,
            'conv_cutoff': 6,
            'batch_size': 1,
            'reporting_frequency': 5,
@@ -37,3 +39,23 @@ config1 = {'num_convs': 2,
            'dumps_path': r'/vast/mk8347/molecule_clusters/',
            'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
            'device': 'cpu'}
+
+config2 = copy(config1)
+config2['batch_size'] = 5
+
+config3 = copy(config1)
+config3['embedding_depth'] = 256
+config3['fc_depth'] = 256
+
+config4 = copy(config1)
+config4['dropout'] = 0
+config4['fc_norm'] = None
+config4['graph_norm'] = None
+
+config5 = copy(config1)
+config5['num_convs'] = 4
+
+config6 = copy(config1)
+config6['learning_rate'] = 1e-4
+
+

@@ -293,12 +293,13 @@ def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm
 # write_ovito_xyz(coords, atom_types, mol_flags)
 
 
-def train_classifier(classifier, optimizer,
+def train_classifier(config, classifier, optimizer,
                      train_loader, test_loader,
                      num_epochs, wandb,
                      class_names, device,
-                     batch_size, reporting_frequency):
+                     batch_size, reporting_frequency, runs_path):
     with wandb.init(project='cluster_classifier', entity='mkilgour'):
+        wandb.log({'config': config})
         test_record = []
         for epoch in range(num_epochs):
             print(f"starting epoch {epoch}")
@@ -343,7 +344,7 @@ def train_classifier(classifier, optimizer,
             test_record.append(np.mean(test_loss))
             if test_record[-1] == np.amin(test_record):
                 torch.save({'model_state_dict': classifier.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
-                           r'C:\Users\mikem\crystals\clusters\cluster_structures\bulk_trajs1/best_classifier_checkpoint')
+                           runs_path + 'best_classifier_checkpoint')
 
             print(f"Log Train Loss {np.log10(np.mean(np.array(train_loss))):.4f}")
             print(f"Log Test Loss {np.log10(np.mean(np.array(test_loss))):.4f}")
