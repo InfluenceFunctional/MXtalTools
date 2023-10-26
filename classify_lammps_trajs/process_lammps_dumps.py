@@ -28,7 +28,7 @@ if __name__ == "__main__":
     if not os.path.exists(dataset_path):
         generate_dataset_from_dumps()
 
-    train_loader, test_loader = collect_to_traj_dataloaders(dataset_path, dataset_size=dataset_size, batch_size=1)
+    train_loader, _ = collect_to_traj_dataloaders(dataset_path, dataset_size=dataset_size, batch_size=1)
 
     classifier = init_classifier(conv_cutoff, num_convs)
 

@@ -4,12 +4,18 @@ import os
 import pandas as pd
 import numpy as np
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
-from crystal_building.utils import generate_sorted_fractional_translations
+from common.utils import delete_from_dataframe
 from dataset_management.CrystalData import CrystalData
 from dataset_management.utils import get_dataloaders
 from models.base_models import molecule_graph_model
+
+from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
+import plotly.graph_objects as go
+
+class_names = ['V', 'VII', 'VIII', 'I', 'II', 'III', 'IV', 'IX', 'VI', 'Disordered']
 
 
 def process_dump(path):
@@ -17,7 +23,7 @@ def process_dump(path):
     lines = file.readlines()
     file.close()
 
-    timestep = None  # todo add cell params extraction
+    timestep = None
     n_atoms = None
     frame_outputs = {}
     for ind, line in enumerate(lines):
@@ -37,7 +43,8 @@ def process_dump(path):
             atom_data = np.zeros((n_atoms, len(headers)))
             for ind2 in range(n_atoms):
                 newline = lines[1 + ind + ind2].split()
-                newline[2] = type2num[newline[2]]
+                # newline[2] = type2num[newline[2]]
+                newline[2] = num2atomicnum[int(newline[2])]
 
                 atom_data[ind2] = np.asarray(newline[:-3]).astype(float)  # cut off velocity elements
 
@@ -50,8 +57,7 @@ def process_dump(path):
     return frame_outputs
 
 
-def generate_dataset_from_dumps():
-    dumps_dirs = [r'D:\crystal_datasets\bulk_crystal_trajs\bulk_crystal_trajs_100', r'D:\crystal_datasets\bulk_crystal_trajs\bulk_crystal_trajs_350']
+def generate_dataset_from_dumps(dumps_dirs, dataset_path):
     sample_df = pd.DataFrame()
     for dumps_dir in dumps_dirs:
         os.chdir(dumps_dir)
@@ -67,9 +73,9 @@ def generate_dataset_from_dumps():
                 new_dict = {'atom_type': [vals['element'].astype(int)],
                             'mol_ind': [vals['mol']],
                             'coordinates': [np.concatenate((
-                                np.asarray(vals['x'][:, None]),
-                                np.asarray(vals['y'][:, None]),
-                                np.asarray(vals['z'][:, None])), axis=-1)],
+                                np.asarray(vals['x'])[:, None],
+                                np.asarray(vals['y'])[:, None],
+                                np.asarray(vals['z'])[:, None]), axis=-1)],
                             'temperature': temperature,
                             'form': form,
                             'time_step': times,
@@ -82,7 +88,7 @@ def generate_dataset_from_dumps():
 
                 sample_df = pd.concat([sample_df, new_df])
 
-    sample_df.to_pickle("../nicotinamide_trajectory_dataset.pkl")
+    sample_df.to_pickle(dataset_path)
 
 
 type2num = {
@@ -153,15 +159,30 @@ def convert_box_to_cell_params(box_params):
     return a, b, c
 
 
-def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size):
+def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fraction=0.2, temperatures: list = None):
     dataset = pd.read_pickle(dataset_path)
     dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
+
+    if temperatures is not None:
+        good_inds = []
+        for temperature in temperatures:
+            good_inds.append(np.argwhere(dataset['temperature'] == temperature)[:, 0])
+
+        good_inds = np.unique(np.concatenate(good_inds))
+        bad_inds = np.asarray([ind for ind in np.arange(len(dataset)) if ind not in good_inds])
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
 
     forms = np.unique(dataset['form'])
     forms2tgt = {form: i for i, form in enumerate(forms)}
     targets = np.asarray(
         [forms2tgt[form] for form in dataset['form']]
     )
+
+    # set high temperature samples to 'melted' class
+    for i in range(len(dataset)):
+        if dataset.iloc[i]['temperature'] == 950:
+            targets[i] = 9
 
     a, b, c = convert_box_to_cell_params(np.stack(dataset['cell_params']))
 
@@ -171,35 +192,38 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size):
 
     print('Generating training datapoints')
     datapoints = []
-    rand_inds = np.random.choice(len(dataset), size=dataset_size, replace=False)
+    rand_inds = np.random.choice(len(dataset), size=min(dataset_size, len(dataset)), replace=False)
     for i in tqdm(rand_inds):
         ref_coords = torch.Tensor(dataset.loc[i]['coordinates'][0])
         atoms = dataset.loc[i]['atom_type'][0]
-        # cell_vectors = torch.Tensor(T_fc_list[i].T)
-        # cluster_coords = ref_coords.tile(num_cells, 1)  # duplicate over XxXxX supercell
-        # cart_translations_i = torch.mul(cell_vectors.tile(num_cells, 1), sorted_fractional_translations.reshape(num_cells * 3, 1))  # 3 cell vectors
-        # cart_translations = cart_translations_i.reshape(num_cells, 3, 3).sum(1)  # faster
 
-        atomic_numbers = np.asarray([num2atomicnum[atom] for atom in atoms])
+        atomic_numbers = torch.tensor([num2atomicnum[atom] for atom in atoms], dtype=torch.long)
         num_molecules = (len(ref_coords)) // 15
-        cluster_coords = ref_coords.reshape(num_molecules, 15, 3)  # add translations throughout
-        cluster_atoms = torch.tensor(atomic_numbers, dtype=torch.long).reshape(num_molecules, 15)
-        cluster_mol_ind = torch.tensor(dataset.loc[i]['mol_ind'][0], dtype=torch.long).reshape(num_molecules, 15)
+
+        mol_ind = torch.tensor(dataset.loc[i]['mol_ind'][0], dtype=torch.long)
+        assert num_molecules == torch.amax(mol_ind)
+
+        # we cannot trust the default indexing, so manually reindex according to the recorded molecule index
+        cluster_coords = torch.stack([ref_coords[mol_ind == ind] for ind in torch.unique(mol_ind)])
+        cluster_atoms = torch.stack([atomic_numbers[mol_ind == ind] for ind in torch.unique(mol_ind)])
         cluster_targets = torch.tensor(targets[i].repeat(num_molecules), dtype=torch.long)
 
         # pare off molecules which are fragmented
-        good_mols = torch.argwhere(cluster_coords.std(1).sum(1) < 5)[:, 0]
+        mol_centroids = cluster_coords.mean(1)
+        intramolecular_centroid_dists = torch.linalg.norm(mol_centroids[:, None, :] - cluster_coords, dim=2)
+        mol_radii = intramolecular_centroid_dists.amax(1)
+
+        good_mols = torch.argwhere(mol_radii < 4)[:, 0]
         cluster_coords = cluster_coords[good_mols]
         cluster_atoms = cluster_atoms[good_mols]
-        cluster_mol_ind = cluster_mol_ind[good_mols]
         cluster_targets = cluster_targets[good_mols]
 
         # identify surface mols
         centroids = cluster_coords.mean(1)
         dist = torch.cdist(centroids, centroids)
-        coordination_cutoff = 6
+        coordination_cutoff = 4 + 6
         coordination_number = (dist < coordination_cutoff).sum(1)
-        surface_mols_ind = torch.argwhere(coordination_number < 2)[:, 0]  # 4 is normal - this is quite permissive
+        surface_mols_ind = torch.argwhere(coordination_number < 20)[:, 0]  # 4 is normal - this is quite permissive
         cluster_targets[surface_mols_ind] = len(forms2tgt)  # label surface molecules
 
         # reindex mol_inds
@@ -218,7 +242,7 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size):
             )
         )
     del dataset
-    return get_dataloaders(datapoints, machine='local', batch_size=batch_size, test_fraction=0.2)
+    return get_dataloaders(datapoints, machine='local', batch_size=batch_size, test_fraction=test_fraction)
 
 
 def init_classifier(conv_cutoff, num_convs):
@@ -231,20 +255,20 @@ def init_classifier(conv_cutoff, num_convs):
         concat_crystal_to_atom_features=False,
         activation='gelu',
         num_mol_feats=0,
-        num_fc_layers=1,
-        fc_depth=32,
-        fc_dropout_probability=0,
-        fc_norm_mode=None,
+        num_fc_layers=4,
+        fc_depth=128,
+        fc_dropout_probability=0.25,
+        fc_norm_mode='layer',
         graph_node_norm='graph layer',
-        graph_node_dropout=0,
+        graph_node_dropout=0.25,
         graph_message_norm=None,
         graph_message_dropout=0,
         num_radial=32,
         num_attention_heads=4,
-        graph_message_depth=16,
-        graph_node_dims=32,
+        graph_message_depth=32,
+        graph_node_dims=128,
         num_graph_convolutions=num_convs,
-        graph_embedding_depth=32,
+        graph_embedding_depth=128,
         nodewise_fc_layers=1,
         radial_function='bessel',
         max_num_neighbors=100,
@@ -255,3 +279,98 @@ def init_classifier(conv_cutoff, num_convs):
         outside_convolution_type='none',
         graph_convolution_type='TransformerConv',
     )
+
+
+# coords = np.random.normal(size=(10, 3))
+# atom_types = np.random.randint(5, 8, size=len(coords)).astype(np.int32)
+# mol_flags = np.ones(len(coords)) * 3
+#
+# write_ovito_xyz(coords, atom_types, mol_flags)
+
+
+def train_classifier(classifier, optimizer,
+                     train_loader, test_loader,
+                     num_epochs, wandb,
+                     class_names, device,
+                     batch_size):
+    with wandb.init(project='cluster_classifier', entity='mkilgour'):
+        test_record = []
+        for epoch in range(num_epochs):
+            print(f"starting epoch {epoch}")
+            wandb.log({'epoch': epoch})
+
+            train_loss = []
+            train_true_labels = []
+            train_probs = []
+
+            classifier.train(True)
+            for step, data in enumerate(tqdm(train_loader)):
+                sample = data.to(device)
+
+                output = classifier(sample)
+                loss = F.cross_entropy(output, sample.y)
+
+                train_probs.append(F.softmax(output, dim=1).cpu().detach().numpy())
+                train_true_labels.append(sample.y.cpu().detach().numpy())
+
+                loss.backward()
+                if step % batch_size == 0:  # use gradient accumulation for synthetically larger batch sizes
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+                train_loss.append(loss.cpu().detach().numpy())
+
+            with torch.no_grad():
+                classifier.eval()
+                test_loss = []
+                test_probs = []
+                test_true_labels = []
+                for step, data in enumerate(tqdm(test_loader)):
+                    sample = data.to(device)
+
+                    output = classifier(sample)  # fix mini-batch behavior
+                    loss = F.cross_entropy(output, sample.y)
+
+                    test_loss.append(loss.cpu().detach().numpy())
+                    test_probs.append(F.softmax(output, dim=1).cpu().detach().numpy())
+                    test_true_labels.append(sample.y.cpu().detach().numpy())
+
+            test_record.append(np.mean(test_loss))
+            if test_record[-1] == np.amin(test_record):
+                torch.save({'model_state_dict': classifier.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
+                           r'C:\Users\mikem\crystals\clusters\cluster_structures\bulk_trajs1/best_classifier_checkpoint')
+
+            print(f"Log Train Loss {np.log10(np.mean(np.array(train_loss))):.4f}")
+            print(f"Log Test Loss {np.log10(np.mean(np.array(test_loss))):.4f}")
+
+            if epoch % 25 == 0:
+
+                train_true_labels = np.concatenate(train_true_labels)
+                train_probs = np.concatenate(train_probs)
+                test_true_labels = np.concatenate(test_true_labels)
+                test_probs = np.concatenate(test_probs)
+
+                classifier_reporting(train_true_labels, train_probs, class_names, wandb, 'Train')
+                classifier_reporting(test_true_labels, test_probs, class_names, wandb, 'Test')
+
+            wandb.log({
+                'train_loss': np.asarray(train_loss).mean(),
+                'test_loss': np.asarray(test_loss).mean()
+            })
+
+
+def classifier_reporting(true_labels, probs, class_names, wandb, epoch_type):
+    if len(np.unique(true_labels)) == 10:  # only if we have all classes represented
+        predicted_class = np.argmax(probs, axis=1)
+
+        train_score = roc_auc_score(true_labels, probs, multi_class='ovo')
+        train_f1_score = f1_score(true_labels, predicted_class, average='micro')
+        train_cmat = confusion_matrix(true_labels, predicted_class, normalize='true')
+        fig = go.Figure(go.Heatmap(z=train_cmat, x=class_names, y=class_names))
+        fig.update_layout(xaxis=dict(title="Predicted Forms"),
+                          yaxis=dict(title="True Forms")
+                          )
+
+        wandb.log({f"{epoch_type} ROC_AUC": train_score,
+                   f"{epoch_type} F1 Score": train_f1_score,
+                   f"{epoch_type} Confusion Matrix": fig})
