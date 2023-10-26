@@ -66,7 +66,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
         for path in tqdm(dump_files):
             print(f"Processing dump {path}")
             temperature = int(dumps_dir.split('_')[-1])
-            form = int(path.split('\\')[0])
+            form = int(path.split('/')[0])
             trajectory_dict = process_dump(path)
 
             for ts, (times, vals) in enumerate(tqdm(trajectory_dict.items())):
