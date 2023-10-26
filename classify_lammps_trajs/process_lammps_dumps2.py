@@ -23,8 +23,8 @@ if __name__ == "__main__":
     dataset_name = 'nicotinamide_trajectories_dataset_full'
     datasets_path = config['datasets_path']
     dataset_path = f'{datasets_path}{dataset_name}.pkl'
-    dumps_dirs = [config['dumps_path'] + r'bulk_trajs1\T_100',
-                  config['dumps_path'] + r'bulk_trajs1\T_350',
+    dumps_dirs = [config['dumps_path'] + r'bulk_trajs1/T_100',
+                  config['dumps_path'] + r'bulk_trajs1/T_350',
                   config['dumps_path'] + r'hot_trajs/melted_trajs_T_950']
 
     os.chdir(config['runs_path'])
