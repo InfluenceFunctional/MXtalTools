@@ -24,6 +24,11 @@ git clone git@github.com:InfluenceFunctional/MXtalTools.git MXtalTools
 conda env create -f mxtaltools-env.yaml
 ```
    on command line to create a conda virutal environment with the required packages.
+   Alternatively, do 
+```bash
+conda env create -f mxtaltools-env-simple-cpu.yaml
+```
+   for a more bare-bones environment e.g., for small local inference. 
    Activate the environment with 
 ```bash
 conda activate mxtaltools-env
