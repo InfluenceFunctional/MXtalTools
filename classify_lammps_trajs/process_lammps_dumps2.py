@@ -32,6 +32,7 @@ device = 'cuda'
 # todo add config utility
 
 if __name__ == "__main__":
+    os.chdir(r'C:\Users\mikem\crystals\classifier_runs')
     if not os.path.exists(dataset_path):
         generate_dataset_from_dumps(dumps_dirs, dataset_path)
 
@@ -54,4 +55,4 @@ if __name__ == "__main__":
                          batch_size, reporting_frequency
                          )
 
-    #  todo add evaluation utils
+    #  todo add evaluation utils & pretty graphs

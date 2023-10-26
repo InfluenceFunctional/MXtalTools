@@ -159,7 +159,7 @@ def convert_box_to_cell_params(box_params):
     return a, b, c
 
 
-def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fraction=0.2, temperatures: list = None):
+def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fraction=0.2, filter_early=True, temperatures: list = None):
     dataset = pd.read_pickle(dataset_path)
     dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
 
@@ -172,6 +172,9 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         bad_inds = np.asarray([ind for ind in np.arange(len(dataset)) if ind not in good_inds])
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
+
+    if filter_early:
+        aa = 1
 
     forms = np.unique(dataset['form'])
     forms2tgt = {form: i for i, form in enumerate(forms)}
