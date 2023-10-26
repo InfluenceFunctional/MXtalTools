@@ -14,7 +14,7 @@ class crystal_discriminator(nn.Module):
         self.model = molecule_graph_model(
             num_atom_feats=dataDims['num_atom_features'],
             num_mol_feats=dataDims['num_molecule_features'],
-            output_dimension=4,  # 2 for classification and 2 more for regression tasks
+            output_dimension=2 + 2,  # 2 for classification and 2 more for regression tasks
             seed=seed,
             graph_convolution_type=config.graph_convolution_type,
             graph_aggregator=config.graph_aggregator,

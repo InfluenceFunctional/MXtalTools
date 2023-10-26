@@ -90,6 +90,9 @@ class GraphNeuralNetwork(torch.nn.Module):
         return dist, self.rbf(dist)
 
     def forward(self, z, pos, batch, ptr, edges_dict: dict):
+        """
+        # todo write docstring
+        """
         # graph model starts here
 
         x = self.atom_embedding(z)  # embed atomic numbers & compute initial atom-wise feature vector #
@@ -127,6 +130,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                     x = x[inside_inds]  # reduce to inside image
 
         return self.output_layer(x)
+
 
 '''
 import networkx as nx
@@ -218,7 +222,6 @@ class GCBlock(torch.nn.Module):
 
         # reshape to node-wise
         return self.message_to_node(x)
-
 
 
 class ShiftedSoftplus(torch.nn.Module):
@@ -327,4 +330,3 @@ class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation
         x = self.linear(x).squeeze(-1).squeeze(-1)  # apply linear coefficients and sum
 
         return x
-

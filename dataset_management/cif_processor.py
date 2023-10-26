@@ -8,13 +8,13 @@ from dataset_management.featurization_utils import extract_crystal_data, featuri
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
 
-n_chunks = 1000  # too many chunks can cause problems e.g., if some have zero valid entries
+n_chunks = 2  # too many chunks can cause problems e.g., if some have zero valid entries
 use_filenames_for_identifiers = False  # for blind test submissions & other cases where the identifiers are in the filenames rather than in the .cif itself
 filter_by_targets = False
-chunks_path = r'D:/crystal_datasets/featurized_chunks/'  # where you would like processed dataset chunks to be stored before collation into final dataset
+chunks_path = r'D:/crystal_datasets/acridin_chunks/'  # where you would like processed dataset chunks to be stored before collation into final dataset
 
 chunk_prefix = ''
-cifs_path = r'D:\CSD_dump/'
+cifs_path = r'D:\crystal_datasets\ACRIDIN_STRUCTURES/'
 target_identifiers = None
 # target_identifiers = ['OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
 #     'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04']

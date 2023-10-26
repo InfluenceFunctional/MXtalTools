@@ -1,22 +1,35 @@
+import warnings
 import numpy as np
 import torch
 import os
+import pandas as pd
+
+warnings.filterwarnings("ignore", category=RuntimeWarning)  # ignore numpy error
+warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
+warnings.filterwarnings("ignore", category=UserWarning)  # ignore w&b error
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
+
 from common.config_processing import get_config
 from common.geometry_calculations import compute_fractional_transform_torch
 from crystal_modeller import Modeller
 from dataset_management.CrystalData import CrystalData
 from torch_geometric.loader.dataloader import Collater
 from constants.space_group_info import SYM_OPS
-from common.ase_interface import crystals_to_ase_mols, ase_mol_from_crystaldata
+from common.ase_interface import ase_mol_from_crystaldata
 from ase.visualize import view
 import ase
 from tqdm import tqdm
 from models.vdw_overlap import vdw_overlap
 
-batch_size = 1000
-num_iters = 1000
-SGS_TO_SEARCH = [i for i in range(1,21)]
-os.chdir(r'C:\Users\mikem\crystals\toys')
+batch_size = 1000  # how many samples per batch
+num_iters = 1000  # how many batches to try before giving up on this space group
+vdw_threshold = 0.35  # maximum allowed average normalized vdw overlap per-molecule
+SGS_TO_SEARCH = [i for i in range(210, 220 + 1)]
+
+os.chdir(r'C:\Users\mikem\crystals\toys')  # where you want everything to save
+config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/crystal_building.yaml'
+user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
 
 """get molecule"""
 atom_numbers = [6, 9, 17, 35, 53]
@@ -26,53 +39,55 @@ coords = np.stack([[-1.27665, 0.04371, -1.09742],
                    [-1.92029, 1.17139, -2.54270],
                    [-1.95420, 0.78568, 0.72402]])
 
+"""convert to molecular crystal data object"""
 mol_data = CrystalData(
     x=torch.tensor(atom_numbers, dtype=torch.long)[:, None],
     pos=torch.Tensor(coords),
     sg_ind=torch.ones(1),
     symmetry_operators=torch.ones(1),
-    mol_size=5
-)
+    mol_size=5)
 
-'''init cell generator'''
-config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/crystal_building.yaml'
-user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
+'''init cell generator - uses gaussian noise and dataset statistics to propose crystal parameters'''
 config = get_config(user_yaml_path=user_path, main_yaml_path=config_path)
 
 supercell_size = 5
 rotation_basis = 'spherical'
 
 modeller = Modeller(config)
-_, _, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)  # need to initialize statistics
+_, _, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)  # need this to initialize some statistics
 modeller.misc_pre_training_items()  # initialize generator
 
-"""propose cell parameters"""
-reasonable_cell_params = [[] for _ in SGS_TO_SEARCH]
-for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # search space groups
+
+reasonable_cell_params = [[] for _ in SGS_TO_SEARCH]  # initialize record
+for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space groups
+    """retrieve and assign symmetry operations"""
     sym_ops = SYM_OPS[sg_ind] * 1
     mol_data.sg_ind = sg_ind
     mol_data.symmetry_operators = sym_ops
     mol_data.mult = len(sym_ops)
+
+    "generate batch"
     collater = Collater(None, None)
     mol_batch = collater([mol_data for _ in range(batch_size)])
-    for ii in tqdm(range(num_iters)):
 
+    """over a certain number of batches / attempts"""
+    for ii in tqdm(range(num_iters)):
         '''rescale cell density'''
         cell_parameters = modeller.gaussian_generator(batch_size, sg_ind=torch.ones(batch_size))
         cell_lengths, cell_angles, mol_position, mol_rotation_i = (
             cell_parameters[:, :3], cell_parameters[:, 3:6], cell_parameters[:, 6:9], cell_parameters[:, 9:])
         T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform_torch(cell_lengths, cell_angles)
 
-        # mol volume of FC(Cl)(Br)I is approx 98.856
+        # mol volume of FC(Cl)(Br)I is approx 98.856 A^3
         # at 0.7 packing coefficient, the asymmetric unit volume should be ~141 cubic angstrom
 
-        asym_unit_volume = generated_cell_volumes / len(sym_ops)
+        asym_unit_volume = generated_cell_volumes / len(sym_ops)  # unit cell volume divided by number of asymmetric units
         generated_packing_coeff = 98.856 / asym_unit_volume
         target_packings = (torch.randn(batch_size) * 0.04257 + 0.6732).clip(min=0.5)  # real dataset statistics for packing coefficients
         scaling_factor = (generated_packing_coeff / target_packings) ** (1 / 3)
         cell_parameters[:, 0:3] *= scaling_factor[:, None]
 
-        '''build samples'''
+        '''build supercells'''
         supercells, cell_volumes = modeller.supercell_builder.build_supercells(
             molecule_data=mol_batch,
             cell_parameters=cell_parameters,
@@ -82,18 +97,25 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # search space groups
             skip_refeaturization=True
         )
 
+        '''get vdw clashes'''
         vdw_scores = vdw_overlap(modeller.vdw_radii, crystaldata=supercells, return_score_only=True)
 
-        good_samples = torch.argwhere(vdw_scores >= -0.1)
+        '''determine which samples are 'reasonable'''
+        good_samples = torch.argwhere(vdw_scores >= -vdw_threshold)
         if len(good_samples) > 0:
             reasonable_cell_params[sg_search_index].extend([cell_parameters[sample][0].tolist() + [sg_ind] for sample in good_samples])
             print(len(reasonable_cell_params[sg_search_index]))
 
-        if len(reasonable_cell_params[sg_search_index]) > 10 or (ii == num_iters - 1):
+        """
+        if we have 10 reasonable samples for this space group OR we have run out of attempts
+        save what we have and move on
+        """
+        if len(reasonable_cell_params[sg_search_index]) >= 10 or (ii == num_iters - 1):
+            '''rebuild good samples'''
             rebuild_samples_i = torch.Tensor(reasonable_cell_params[sg_search_index])
 
             rebuild_samples = rebuild_samples_i[:, :12]
-            rebuild_sg = int(rebuild_samples_i[0,-1])
+            rebuild_sg = int(rebuild_samples_i[0, -1])
 
             sym_ops = SYM_OPS[rebuild_sg] * 1
             mol_data.sg_ind = rebuild_sg
@@ -111,15 +133,17 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # search space groups
                 skip_refeaturization=True
             )
 
+            '''save supercells as cifs'''
+            print(f"Saving {sg_ind} structures")
             structures = [ase_mol_from_crystaldata(supercells, highlight_canonical_conformer=False,
-                                                 index=i, exclusion_level='none', inclusion_distance=4, return_crystal=True)
-                        for i in range(supercells.num_graphs)]
+                                                   index=i, exclusion_level='none', inclusion_distance=4, return_crystal=False)
+                          for i in range(supercells.num_graphs)]
 
             for i in range(len(structures)):
-                #ase.io.write(f'space_group_{sg_ind}_crystal_{i}.cif', structures[i][1])  # these are distorted
-                ase.io.write(f'space_group_{sg_ind}_cluster_{i}.cif', structures[i][0])
-
+                # ase.io.write(f'space_group_{sg_ind}_crystal_{i}.cif', structures[i][1])  # these are distorted
+                ase.io.write(f'space_group_{sg_ind}_cluster_{i}.cif', structures[i])
 
             break
+
+    '''save also the raw cell params in case we want them in the future'''
     np.save(f'good_params_for_{sg_ind}', good_samples.cpu().detach().numpy())
-aa = 0

@@ -292,7 +292,7 @@ def train_classifier(classifier, optimizer,
                      train_loader, test_loader,
                      num_epochs, wandb,
                      class_names, device,
-                     batch_size):
+                     batch_size, reporting_frequency):
     with wandb.init(project='cluster_classifier', entity='mkilgour'):
         test_record = []
         for epoch in range(num_epochs):
@@ -343,7 +343,7 @@ def train_classifier(classifier, optimizer,
             print(f"Log Train Loss {np.log10(np.mean(np.array(train_loss))):.4f}")
             print(f"Log Test Loss {np.log10(np.mean(np.array(test_loss))):.4f}")
 
-            if epoch % 25 == 0:
+            if epoch % reporting_frequency == 0:
 
                 train_true_labels = np.concatenate(train_true_labels)
                 train_probs = np.concatenate(train_probs)
@@ -360,6 +360,8 @@ def train_classifier(classifier, optimizer,
 
 
 def classifier_reporting(true_labels, probs, class_names, wandb, epoch_type):
+    # todo add raw numbers to confusion matrix
+    # todo add classwise accuracy
     if len(np.unique(true_labels)) == 10:  # only if we have all classes represented
         predicted_class = np.argmax(probs, axis=1)
 
@@ -374,3 +376,21 @@ def classifier_reporting(true_labels, probs, class_names, wandb, epoch_type):
         wandb.log({f"{epoch_type} ROC_AUC": train_score,
                    f"{epoch_type} F1 Score": train_f1_score,
                    f"{epoch_type} Confusion Matrix": fig})
+
+
+def reload_model(model, optimizer, path, reload_optimizer=False):
+    """
+    load model and state dict from path
+    includes fix for potential dataparallel issue
+    """
+    checkpoint = torch.load(path)
+    if list(checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+        for i in list(checkpoint['model_state_dict']):
+            checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
+
+    model.load_state_dict(checkpoint['model_state_dict'])
+    if optimizer is not None:
+        if reload_optimizer:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    return model, optimizer
