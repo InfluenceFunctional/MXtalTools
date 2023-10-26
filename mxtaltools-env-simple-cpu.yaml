@@ -11,8 +11,8 @@ dependencies:
   #- python=3.9
   #- csd-python-api  # comment out if not doing dataset construction
   - pyg
-  - pytorch
-  - cpuonly  # update with your CUDA version or 'cpuonly' if not on GPU
+  - pytorch==2.1.0 # update with your CUDA version uncomment 'cpuonly' if not on GPU
+  - cpuonly
   - plotly
   - wandb
   - pytest
@@ -25,7 +25,7 @@ dependencies:
   - ase
   #- rdkit  # comment out if not doing datase construction
   - pip:  # note torch_scatter and torch_cluster are extremely specific about versions when installing on Windows
-    #- --find-links https://data.pyg.org/whl/torch-2.0.1+cu118.htm  # update with your torch and cuda version
+    - --find-links https://data.pyg.org/whl/torch-2.1.0+cpu.htm  # update with your torch and cuda version
     - torch_scatter
     - torch_cluster
     - torch_sparse
