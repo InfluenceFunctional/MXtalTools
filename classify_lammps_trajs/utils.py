@@ -297,7 +297,8 @@ def train_classifier(config, classifier, optimizer,
                      train_loader, test_loader,
                      num_epochs, wandb,
                      class_names, device,
-                     batch_size, reporting_frequency, runs_path):
+                     batch_size, reporting_frequency,
+                     runs_path, run_name):
     with wandb.init(project='cluster_classifier', entity='mkilgour'):
         wandb.log({'config': config})
         test_record = []
@@ -344,7 +345,7 @@ def train_classifier(config, classifier, optimizer,
             test_record.append(np.mean(test_loss))
             if test_record[-1] == np.amin(test_record):
                 torch.save({'model_state_dict': classifier.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
-                           runs_path + 'best_classifier_checkpoint')
+                           runs_path + run_name + '_best_classifier_checkpoint')
 
             print(f"Log Train Loss {np.log10(np.mean(np.array(train_loss))):.4f}")
             print(f"Log Test Loss {np.log10(np.mean(np.array(test_loss))):.4f}")

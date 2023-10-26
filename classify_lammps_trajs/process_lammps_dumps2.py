@@ -54,7 +54,7 @@ if __name__ == "__main__":
                          config['num_epochs'], wandb,
                          class_names, config['device'],
                          config['batch_size'], config['reporting_frequency'],
-                         config['runs_path']
+                         config['runs_path'], config['run_name']
                          )
 
     #  todo add evaluation utils & pretty graphs

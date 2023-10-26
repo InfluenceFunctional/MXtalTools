@@ -1,6 +1,7 @@
 from copy import copy
 
-dev = {'num_convs': 2,
+dev = {'run_name': 'dev',
+       'num_convs': 2,
        'embedding_depth': 128,
        'message_depth': 64,
        'dropout': 0.25,
@@ -20,7 +21,8 @@ dev = {'num_convs': 2,
        'runs_path': r'C:\Users\mikem\crystals\classifier_runs',
        'device': 'cuda'}
 
-config1 = {'num_convs': 2,
+config1 = {'run_name': 'test1',
+           'num_convs': 2,
            'embedding_depth': 128,
            'message_depth': 64,
            'dropout': 0.25,
@@ -41,21 +43,26 @@ config1 = {'num_convs': 2,
            'device': 'cpu'}
 
 config2 = copy(config1)
+config2['run_name'] = 'test2'
 config2['batch_size'] = 5
 
 config3 = copy(config1)
+config3['run_name'] = 'test3'
 config3['embedding_depth'] = 256
 config3['fc_depth'] = 256
 
 config4 = copy(config1)
+config4['run_name'] = 'test4'
 config4['dropout'] = 0
 config4['fc_norm'] = None
 config4['graph_norm'] = None
 
 config5 = copy(config1)
+config5['run_name'] = 'test5'
 config5['num_convs'] = 4
 
 config6 = copy(config1)
+config6['run_name'] = 'test6'
 config6['learning_rate'] = 1e-4
 
 
