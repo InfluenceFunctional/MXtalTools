@@ -858,9 +858,11 @@ if __name__ == '__main__':
     # miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
     # miner.process_new_dataset('dataset')
 
-    miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
-    miner.process_new_dataset('dataset')
+    # miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
+    # miner.process_new_dataset('dataset')
 
+    miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/acridin_chunks/")
+    miner.process_new_dataset('acridin_dataset')
     # '''filtering test'''
     # test_conditions = [
     #     ['molecule_mass', 'range', [0, 300]],

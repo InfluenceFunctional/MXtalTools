@@ -11,6 +11,30 @@ from common.utils import get_point_density
 from common.geometry_calculations import cell_vol
 from models.utils import norm_scores
 
+blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
+    'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
+    'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', 'XXXI', 'XXXII']
+
+target_identifiers = {
+    'XVI': 'OBEQUJ',
+    'XVII': 'OBEQOD',
+    'XVIII': 'OBEQET',
+    'XIX': 'XATJOT',
+    'XX': 'OBEQIX',
+    'XXI': 'KONTIQ',
+    'XXII': 'NACJAF',
+    'XXIII': 'XAFPAY',
+    'XXIII_1': 'XAFPAY01',
+    'XXIII_2': 'XAFPAY02',
+    'XXXIII_3': 'XAFPAY03',
+    'XXXIII_4': 'XAFPAY04',
+    'XXIV': 'XAFQON',
+    'XXVI': 'XAFQIH',
+    'XXXI_1': '2199671_p10167_1_0',
+    'XXXI_2': '2199673_1_0',
+    # 'XXXI_3': '2199672_1_0',
+}
+
 
 def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict):
     n_crystal_features = 12
@@ -155,13 +179,15 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
             fig.show()
 
 
-def process_discriminator_outputs(dataDims, epoch_stats_dict):
+def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=None):
     scores_dict = {}
     vdw_penalty_dict = {}
     tracking_features_dict = {}
     packing_coeff_dict = {}
+    pred_distance_dict = {}
+    true_distance_dict = {}
 
-    generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 0)
+    generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 0)[0]
     randn_inds = np.where(epoch_stats_dict['generator_sample_source'] == 1)[0]
     distorted_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0]
 
@@ -192,26 +218,42 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict):
     packing_coeff_dict['Generator'] = epoch_stats_dict['generated_packing_coefficients'][generator_inds]
     packing_coeff_dict['Distorted'] = epoch_stats_dict['generated_packing_coefficients'][distorted_inds]
 
-    return scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict
+    pred_distance_dict['CSD'] = epoch_stats_dict['discriminator_real_predicted_distance']
+    pred_distance_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_predicted_distance'][randn_inds]
+    pred_distance_dict['Generator'] = epoch_stats_dict['discriminator_fake_predicted_distance'][generator_inds]
+    pred_distance_dict['Distorted'] = epoch_stats_dict['discriminator_fake_predicted_distance'][distorted_inds]
+
+    true_distance_dict['CSD'] = epoch_stats_dict['discriminator_real_true_distance']
+    true_distance_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_true_distance'][randn_inds]
+    true_distance_dict['Generator'] = epoch_stats_dict['discriminator_fake_true_distance'][generator_inds]
+    true_distance_dict['Distorted'] = epoch_stats_dict['discriminator_fake_true_distance'][distorted_inds]
+
+    if len(extra_test_dict) > 0:
+        scores_dict['extra_test'] = extra_test_dict['discriminator_real_score']
+        tracking_features_dict['extra_test'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
+                                                                               extra_test_dict['tracking_features'].T)}
+        vdw_penalty_dict['extra_test'] = extra_test_dict['real_vdw_penalty']
+        packing_coeff_dict['extra_test'] = extra_test_dict['real_packing_coefficients']
+        pred_distance_dict['extra_test'] = extra_test_dict['discriminator_real_predicted_distance']
+        true_distance_dict['extra_test'] = extra_test_dict['discriminator_real_true_distance']
+
+    return scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict, pred_distance_dict, true_distance_dict
 
 
 def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout):
     plot_color_dict = {'CSD': ('rgb(250,150,50)'),
                        'Generator': ('rgb(100,50,0)'),
                        'Gaussian': ('rgb(0,50,0)'),
-                       'Distorted': ('rgb(0,100,100)')}
+                       'Distorted': ('rgb(0,100,100)'),
+                       'extra_test': ('rgb(100, 25, 100)')}
 
-    all_vdws = np.concatenate((vdw_penalty_dict['CSD'], vdw_penalty_dict['Gaussian'], vdw_penalty_dict['Distorted'],
-                               vdw_penalty_dict['Generator']))
-    all_scores = np.concatenate(
-        (scores_dict['CSD'], scores_dict['Gaussian'], scores_dict['Distorted'], scores_dict['Generator']))
+    sample_types = list(scores_dict.keys())
 
-    sample_source = np.concatenate([
-        ['CSD' for _ in range(len(scores_dict['CSD']))],
-        ['Gaussian' for _ in range(len(scores_dict['Gaussian']))],
-        ['Distorted' for _ in range(len(scores_dict['Distorted']))],
-        ['Generator' for _ in range(len(scores_dict['Generator']))],
-    ])
+    all_vdws = np.concatenate([vdw_penalty_dict[stype] for stype in sample_types])
+    all_scores = np.concatenate([scores_dict[stype] for stype in sample_types])
+    all_coeffs = np.concatenate([packing_coeff_dict[stype] for stype in sample_types])
+
+    sample_source = np.concatenate([[stype for _ in range(len(scores_dict[stype]))] for stype in sample_types])
     scores_range = np.ptp(all_scores)
     bandwidth1 = scores_range / 200
 
@@ -219,7 +261,7 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
     bandwidth2 = vdw_cutoff / 200
     viridis = px.colors.sequential.Viridis
 
-    scores_labels = ['CSD', 'Gaussian', 'Distorted', 'Generator']
+    scores_labels = sample_types
     fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)'),
                         specs=[[{}, {}], [{"colspan": 2}, None]], vertical_spacing=0.14)
 
@@ -273,7 +315,7 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
     '''
     bandwidth2 = 0.01
 
-    scores_labels = ['CSD', 'Gaussian', 'Distorted', 'Generator']
+    scores_labels = sample_types
     fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)'),
                         specs=[[{}, {}], [{"colspan": 2}, None]], vertical_spacing=0.14)
 
@@ -288,9 +330,6 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
                                 side='positive', orientation='h', width=4, meanline_visible=True,
                                 bandwidth=bandwidth2, points=False),
                       row=1, col=2)
-
-    all_coeffs = np.concatenate((packing_coeff_dict['CSD'], packing_coeff_dict['Gaussian'],
-                                 packing_coeff_dict['Distorted'], packing_coeff_dict['Generator']))
 
     rrange = np.logspace(3, 0, len(viridis))
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
@@ -626,31 +665,7 @@ def plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layou
     wandb.log({'Discriminator Score Correlates': fig})
 
 
-def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_stats_dict, train_epoch_stats_dict, size_normed_score=False):
-    blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
-        'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
-        'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX', 'XXXI', 'XXXII']
-
-    target_identifiers = {
-        'XVI': 'OBEQUJ',
-        'XVII': 'OBEQOD',
-        'XVIII': 'OBEQET',
-        'XIX': 'XATJOT',
-        'XX': 'OBEQIX',
-        'XXI': 'KONTIQ',
-        'XXII': 'NACJAF',
-        'XXIII': 'XAFPAY',
-        'XXIII_1': 'XAFPAY01',
-        'XXIII_2': 'XAFPAY02',
-        'XXXIII_3': 'XAFPAY03',
-        'XXXIII_4': 'XAFPAY04',
-        'XXIV': 'XAFQON',
-        'XXVI': 'XAFQIH',
-        'XXXI_1': '2199671_p10167_1_0',
-        'XXXI_2': '2199673_1_0',
-        # 'XXXI_3': '2199672_1_0',
-    }
-
+def get_BT_identifiers_inds(extra_test_dict):
     # determine which samples go with which targets
     crystals_for_targets = {key: [] for key in blind_test_targets}
     for i in range(len(extra_test_dict['identifiers'])):
@@ -667,15 +682,10 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
             if item == target_identifiers[key]:
                 target_identifiers_inds[key] = i
 
-    '''
-    record all the stats for the CSD data
-    '''
-    scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict \
-        = process_discriminator_outputs(dataDims, test_epoch_stats_dict)
+    return crystals_for_targets, target_identifiers_inds
 
-    '''
-    build property dicts for the submissions and BT targets
-    '''
+
+def get_BT_scores(crystals_for_targets, target_identifiers_inds, extra_test_dict, tracking_features_dict, scores_dict, vdw_penalty_dict, distance_dict, dataDims, test_epoch_stats_dict):
     bt_score_correlates = {}
     for target in crystals_for_targets.keys():  # run the analysis for each target
         if target_identifiers_inds[target] != []:  # record target data
@@ -686,10 +696,9 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
 
             tracking_features_dict[target + '_exp'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_index][None, :].T)}
 
-            if size_normed_score:
-                scores_dict[target + '_exp'] = norm_scores(scores_dict[target + '_exp'], extra_test_dict['tracking_features'][target_index][None, :], dataDims)
-
             vdw_penalty_dict[target + '_exp'] = extra_test_dict['real_vdw_penalty'][target_index][None]
+
+            distance_dict[target + '_exp'] = extra_test_dict['discriminator_real_predicted_distance'][target_index][None]
 
             wandb.log({f'Average_{target}_exp_score': np.average(scores)})
 
@@ -699,10 +708,9 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
             scores_dict[target] = scores
             tracking_features_dict[target] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_indices].T)}
 
-            if size_normed_score:
-                scores_dict[target] = norm_scores(scores_dict[target], extra_test_dict['tracking_features'][target_indices], dataDims)
-
             vdw_penalty_dict[target] = extra_test_dict['real_vdw_penalty'][target_indices]
+
+            distance_dict[target] = extra_test_dict['discriminator_real_predicted_distance'][target_indices]
 
             wandb.log({f'Average_{target}_score': np.average(scores)})
             wandb.log({f'Average_{target}_std': np.std(scores)})
@@ -725,54 +733,54 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
         loss_correlations[j] = np.corrcoef(scores_dict['CSD'], test_epoch_stats_dict['tracking_features'][:, j], rowvar=False)[0, 1]
     bt_score_correlates['CSD'] = loss_correlations
 
+    return scores_dict, vdw_penalty_dict, distance_dict, bt_score_correlates
+
+
+def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_stats_dict):
+
+    crystals_for_targets, target_identifiers_inds = get_BT_identifiers_inds(extra_test_dict)
+
+    '''
+    record all the stats for the usual test dataset
+    '''
+    (scores_dict, vdw_penalty_dict,
+     tracking_features_dict, packing_coeff_dict,
+     pred_distance_dict, true_distance_dict) \
+        = process_discriminator_outputs(dataDims, test_epoch_stats_dict, extra_test_dict)
+
+    '''
+    build property dicts for the submissions and BT targets
+    '''
+    scores_dict, vdw_penalty_dict, pred_distance_dict, bt_score_correlates = (
+        get_BT_scores(
+            crystals_for_targets, target_identifiers_inds, extra_test_dict,
+            tracking_features_dict, scores_dict, vdw_penalty_dict,
+            pred_distance_dict, dataDims, test_epoch_stats_dict))
+
     # collect all BT targets & submissions into single dicts
     BT_target_scores = np.asarray([scores_dict[key] for key in scores_dict.keys() if 'exp' in key])
     BT_submission_scores = np.concatenate([scores_dict[key] for key in scores_dict.keys() if key in crystals_for_targets.keys()])
-    # BT_scores_dists = {key: np.histogram(scores_dict[key], bins=200, range=[-15, 15])[0] / len(scores_dict[key]) for key in scores_dict.keys() if key in crystals_for_targets.keys()}
-    # BT_balanced_dist = np.average(np.stack(list(BT_scores_dists.values())), axis=0)
+    BT_target_distances = np.asarray([pred_distance_dict[key] for key in pred_distance_dict.keys() if 'exp' in key])
+    BT_submission_distances = np.concatenate([pred_distance_dict[key] for key in pred_distance_dict.keys() if key in crystals_for_targets.keys()])
 
     wandb.log({'Average BT submission score': np.average(BT_submission_scores)})
     wandb.log({'Average BT target score': np.average(BT_target_scores)})
     wandb.log({'BT submission score std': np.std(BT_target_scores)})
     wandb.log({'BT target score std': np.std(BT_target_scores)})
 
-    return bt_score_correlates, scores_dict, \
+    wandb.log({'Average BT submission distance': np.average(BT_submission_distances)})
+    wandb.log({'Average BT target distance': np.average(BT_target_distances)})
+    wandb.log({'BT submission distance std': np.std(BT_target_distances)})
+    wandb.log({'BT target distance std': np.std(BT_target_distances)})
+
+    return bt_score_correlates, scores_dict, pred_distance_dict, \
         crystals_for_targets, blind_test_targets, target_identifiers, target_identifiers_inds, \
         BT_target_scores, BT_submission_scores, \
-        vdw_penalty_dict, tracking_features_dict
+        vdw_penalty_dict, tracking_features_dict, \
+        BT_target_distances, BT_submission_distances
 
 
-def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict):
-    # todo clean up the analysis here - it's a mess!
-    tracking_features = test_epoch_stats_dict['tracking_features']
-    identifiers_list = extra_test_dict['identifiers']
-
-    (bt_score_correlates, scores_dict, crystals_for_targets,
-     blind_test_targets, target_identifiers,
-     target_identifiers_inds, BT_target_scores, BT_submission_scores,
-     vdw_penalty_dict, tracking_features_dict) = \
-        process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict,
-                                      test_epoch_stats_dict, None, size_normed_score=False)
-
-    layout = go.Layout(  # todo increase upper margin - figure titles are getting cutoff
-        margin=go.layout.Margin(
-            l=0,  # left margin
-            r=0,  # right margin
-            b=0,  # bottom margin
-            t=40,  # top margin
-        )
-    )
-
-    fig, normed_scores_dict, normed_BT_submission_scores, normed_BT_target_scores = blind_test_scores_distributions_fig(
-        crystals_for_targets, target_identifiers_inds,
-        scores_dict, BT_target_scores, BT_submission_scores,
-        tracking_features_dict, layout)
-    fig.write_image('bt_submissions_distribution.png', scale=4)
-    wandb.log({"BT Submissions Distribution": fig})
-
-    '''
-    7. Table of BT separation statistics
-    '''
+def BT_separation_tables(layout, scores_dict, BT_submission_scores, crystals_for_targets, normed_scores_dict, normed_BT_submission_scores):
     vals = [0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.5]
     quantiles = np.quantile(scores_dict['CSD'], vals)
     submissions_fraction_below_csd_quantile = {value: np.average(BT_submission_scores < cutoff) for value, cutoff in zip(vals, quantiles)}
@@ -783,47 +791,65 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
     submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + '_exp']) for key in crystals_for_targets.keys() if key in scores_dict.keys()}
     submissions_average_below_target = np.average(list(submissions_fraction_below_target.values()))
 
-    fig = go.Figure(data=go.Table(
+    fig1 = go.Figure(data=go.Table(
         header=dict(values=['CSD Test Quantile', 'Fraction of Submissions']),
         cells=dict(values=[list(submissions_fraction_below_csd_quantile.keys()),
                            list(submissions_fraction_below_csd_quantile.values()),
                            ], format=[".3", ".3"])))
-    fig.update_layout(width=200)
-    fig.layout.margin = layout.margin
-    fig.write_image('scores_separation_table.png', scale=4)
-    wandb.log({"Nice Scores Separation Table": fig})
+    fig1.update_layout(width=200)
+    fig1.layout.margin = layout.margin
+    fig1.write_image('scores_separation_table.png', scale=4)
 
-    fig = go.Figure(data=go.Table(
+    fig2 = go.Figure(data=go.Table(
         header=dict(values=['CSD Test Quantile(normed)', 'Fraction of Submissions (normed)']),
         cells=dict(values=[list(normed_submissions_fraction_below_csd_quantile.keys()),
                            list(normed_submissions_fraction_below_csd_quantile.values()),
                            ], format=[".3", ".3"])))
-    fig.update_layout(width=200)
-    fig.layout.margin = layout.margin
-    fig.write_image('normed_scores_separation_table.png', scale=4)
-    wandb.log({"Nice Normed Scores Separation Table": fig})
+    fig2.update_layout(width=200)
+    fig2.layout.margin = layout.margin
+    fig2.write_image('normed_scores_separation_table.png', scale=4)
 
     wandb.log({"Scores Separation": submissions_fraction_below_csd_quantile})
     wandb.log({"Normed Scores Separation": normed_submissions_fraction_below_csd_quantile})
 
-    '''
-    8. Functional group analysis
-    '''
+    return fig1, fig2
+
+
+def make_and_plot_BT_figs(crystals_for_targets, target_identifiers_inds, identifiers_list,
+                          scores_dict, BT_target_scores, BT_submission_scores,
+                          tracking_features_dict, layout, tracking_features, dataDims, score_name):
+
+    fig, normed_scores_dict, normed_BT_submission_scores, normed_BT_target_scores = (
+        blind_test_scores_distributions_fig(
+            crystals_for_targets, target_identifiers_inds,
+            scores_dict, BT_target_scores, BT_submission_scores,
+            tracking_features_dict, layout))
+    fig.write_image(f'bt_submissions_{score_name}_distribution.png', scale=4)
+    wandb.log({f"BT Submissions {score_name} Distribution": fig})
+
+    fig1, fig2 = BT_separation_tables(layout, scores_dict, BT_submission_scores,
+                                      crystals_for_targets, normed_scores_dict, normed_BT_submission_scores)
+    wandb.log({f"{score_name} Separation Table": fig1,
+               f"Normed {score_name} Separation Table": fig2})
 
     fig = functional_group_analysis_fig(scores_dict, tracking_features, layout, dataDims)
     if fig is not None:
-        fig.write_image('functional_group_scores.png', scale=2)
-        wandb.log({"Functional Group Scores": fig})
+        fig.write_image(f'functional_group_{score_name}.png', scale=2)
+        wandb.log({f"Functional Group {score_name}": fig})
 
-    '''
-    10. Interesting Group-wise analysis
-    '''
     fig = group_wise_analysis_fig(identifiers_list, crystals_for_targets, scores_dict, normed_scores_dict, layout)
-    fig.write_image('interesting_groups.png', scale=4)
-    wandb.log({"Interesting Groups": fig})
+    fig.write_image(f'interesting_groups_{score_name}.png', scale=4)
+    wandb.log({f"Interesting Groups {score_name}": fig})
 
     '''
-    S1. All group-wise analysis
+    S2.  score correlates
+    '''
+    fig = make_correlates_plot(tracking_features, scores_dict['CSD'], dataDims)
+    fig.write_image(f'{score_name}_correlates.png', scale=4)
+    wandb.log({f"{score_name} Correlates": fig})
+
+    '''
+    S1. All group-wise analysis  # todo rebuild
     '''
     #
     # for i, label in enumerate(['XXII', 'XXIII', 'XXVI']):
@@ -865,12 +891,42 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
     #     fig.layout.margin.l = 60
     #     fig.write_image(f'groupwise_analysis_{i}.png', scale=4)
 
-    '''
-    S2.  score correlates
-    '''
-    fig = make_correlates_plot(tracking_features, scores_dict['CSD'], dataDims)
-    fig.write_image('scores_correlates.png', scale=4)
-    wandb.log({"Score Correlates": fig})
+
+def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict):
+    tracking_features = test_epoch_stats_dict['tracking_features']
+    identifiers_list = extra_test_dict['identifiers']
+
+    (bt_score_correlates, scores_dict, pred_distance_dict,
+     crystals_for_targets, blind_test_targets,
+     target_identifiers, target_identifiers_inds,
+     BT_target_scores, BT_submission_scores,
+     vdw_penalty_dict, tracking_features_dict,
+     BT_target_distances, BT_submission_distances) = \
+        process_BT_evaluation_outputs(
+            dataDims, wandb, extra_test_dict, test_epoch_stats_dict)
+
+    layout = go.Layout(  # todo increase upper margin - figure titles are getting cutoff
+        margin=go.layout.Margin(
+            l=0,  # left margin
+            r=0,  # right margin
+            b=0,  # bottom margin
+            t=80,  # top margin
+        )
+    )
+
+    make_and_plot_BT_figs(crystals_for_targets, target_identifiers_inds, identifiers_list,
+                          scores_dict, BT_target_scores, BT_submission_scores,
+                          tracking_features_dict, layout, tracking_features, dataDims, score_name='score')
+
+    min_value = np.concatenate(list(pred_distance_dict.values())).min()
+    dist2score = lambda x: np.exp(-x*10)
+    distance_score_dict = {key: dist2score(value) for key,value in pred_distance_dict.items()}
+    BT_target_dist_scores = dist2score(BT_target_scores)
+    BT_submission_dist_scores = dist2score(BT_submission_distances)
+
+    make_and_plot_BT_figs(crystals_for_targets, target_identifiers_inds, identifiers_list,
+                          distance_score_dict, BT_target_dist_scores, BT_submission_dist_scores,
+                          tracking_features_dict, layout, tracking_features, dataDims, score_name='distance')
 
     return None
 
@@ -884,7 +940,6 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
     plot_color_dict = {'Train Real': ('rgb(250,50,50)'),
                        'CSD': ('rgb(250,150,50)'),
                        'Gaussian': ('rgb(0,50,0)'),
-                       'Test NF': ('rgb(0,150,0)'),
                        'Distorted': ('rgb(0,100,100)')}
     ind = 0
     for target in crystals_for_targets.keys():
@@ -894,8 +949,8 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
             ind += 1
 
     # plot 1
-    scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
-    bandwidth = scores_range / 200
+    scores_range = np.ptp(scores_dict['CSD'])
+    bandwidth = scores_range / 100
 
     fig = make_subplots(cols=2, rows=2, horizontal_spacing=0.15, subplot_titles=('a)', 'b)', 'c)'),
                         specs=[[{"rowspan": 2}, {}], [None, {}]], vertical_spacing=0.12)
@@ -918,14 +973,18 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
                 fig.add_trace(go.Violin(x=scores_dict[label], name=name_label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False),
                               row=1, col=1)
 
+
+    good_scores = np.concatenate([score for i, (key, score) in enumerate(scores_dict.items()) if key not in ['Gaussian','Distorted']])
+    fig.update_xaxes(range=[np.amin(good_scores), np.amax(good_scores)],row=1, col=1)
+
     # plot2 inset
     plot_color_dict = {}
     plot_color_dict['CSD'] = ('rgb(200,0,50)')  # test
     plot_color_dict['BT Targets'] = ('rgb(50,0,50)')
     plot_color_dict['BT Submissions'] = ('rgb(50,150,250)')
 
-    scores_range = np.ptp(np.concatenate(list(scores_dict.values())))
-    bandwidth = scores_range / 200
+    scores_range = np.ptp(scores_dict['CSD'])
+    bandwidth = scores_range / 50
 
     # test data
     fig.add_trace(go.Violin(x=scores_dict['CSD'], name='CSD Test',
@@ -949,8 +1008,9 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
 
     normed_BT_target_scores = np.concatenate([normed_scores_dict[key] for key in normed_scores_dict.keys() if 'exp' in key])
     normed_BT_submission_scores = np.concatenate([normed_scores_dict[key] for key in normed_scores_dict.keys() if key in crystals_for_targets.keys()])
-    scores_range = np.ptp(np.concatenate(list(normed_scores_dict.values())))
-    bandwidth = scores_range / 200
+    scores_range = np.ptp(normed_scores_dict['CSD'])
+    bandwidth = scores_range / 50
+
     # test data
     fig.add_trace(go.Violin(x=normed_scores_dict['CSD'], name='CSD Test',
                             line_color=plot_color_dict['CSD'], side='positive', orientation='h', width=1.5, meanline_visible=True, bandwidth=bandwidth, points=False), row=2, col=2)
@@ -1277,7 +1337,7 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
             cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
 
         if config.discriminator.train_on_distorted or config.discriminator.train_on_randn or config.discriminator.train_adversarially:
-            discriminator_analysis(config, dataDims, test_epoch_stats_dict)
+            discriminator_analysis(config, dataDims, test_epoch_stats_dict, extra_test_dict)
 
         if config.proxy_discriminator.train:
             proxy_discriminator_analysis(test_epoch_stats_dict)
@@ -1285,7 +1345,7 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
     elif config.mode == 'regression':
         log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
-    if extra_test_dict is not None and len(extra_test_dict) > 0:
+    if extra_test_dict is not None and len(extra_test_dict) > 0 and 'blind_test' in config.extra_test_set_name:
         discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict)
 
     return None
@@ -1332,7 +1392,7 @@ def proxy_discriminator_analysis(epoch_stats_dict):
                "proxy_slope": linreg_result.slope})
 
 
-def discriminator_analysis(config, dataDims, epoch_stats_dict):
+def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=None):
     """
     do analysis and plotting for cell discriminator
 
@@ -1341,20 +1401,53 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict):
     """
     layout = plotly_setup(config)
 
-    scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict \
-        = process_discriminator_outputs(dataDims, epoch_stats_dict)
+    scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict, pred_distance_dict, true_distance_dict \
+        = process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict)
 
     discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
     plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout)
-    discriminator_distances_plots(wandb, epoch_stats_dict)
+    discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict, epoch_stats_dict, tracking_features_dict)
 
     return None
 
 
-def discriminator_distances_plots(wandb, epoch_stats_dict):
-    if epoch_stats_dict['discriminator_predicted_distortion'] is not None:
-        tgt_value = epoch_stats_dict['discriminator_true_distortion']
-        pred_value = epoch_stats_dict['discriminator_predicted_distortion']
+def discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict, epoch_stats_dict, tracking_features_dict):
+    # if epoch_stats_dict['discriminator_predicted_distortion'] is not None:
+    #     tgt_value = epoch_stats_dict['discriminator_true_distortion']
+    #     pred_value = epoch_stats_dict['discriminator_predicted_distortion']
+    #
+    #     # filter out 'true' samples
+    #     good_inds = tgt_value != 0
+    #     tgt_value_0 = tgt_value[good_inds]
+    #     pred_value_0 = pred_value[good_inds]
+    #
+    #     linreg_result = linregress(tgt_value_0, pred_value_0)
+    #
+    #     # predictions vs target trace
+    #     xline = np.linspace(max(min(tgt_value), min(pred_value)),
+    #                         min(max(tgt_value), max(pred_value)), 2)
+    #
+    #     xy = np.vstack([tgt_value, pred_value])
+    #     z = get_point_density(xy)
+    #
+    #     fig = go.Figure()
+    #     opacity = max(0.1, 1 - len(tgt_value) / 5e4)
+    #     fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=False))
+    #     fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+    #                   )
+    #
+    #     fig.update_layout(xaxis_title='Target Distortion', yaxis_title='Predicted Distortion')
+    #
+    #     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    #     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    #
+    #     wandb.log({"Distortion Results": fig,
+    #                "distortion_R_value": linreg_result.rvalue,
+    #                "distortion_slope": linreg_result.slope})
+
+    if epoch_stats_dict['discriminator_fake_predicted_distance'] is not None:  # todo switch this to a px.scatter
+        tgt_value = np.concatenate(list(true_distance_dict.values()))
+        pred_value = np.concatenate(list(pred_distance_dict.values()))
 
         # filter out 'true' samples
         good_inds = tgt_value != 0
@@ -1367,46 +1460,20 @@ def discriminator_distances_plots(wandb, epoch_stats_dict):
         xline = np.linspace(max(min(tgt_value), min(pred_value)),
                             min(max(tgt_value), max(pred_value)), 2)
 
-        xy = np.vstack([tgt_value, pred_value])
-        z = get_point_density(xy)
-
-        fig = go.Figure()
         opacity = max(0.1, 1 - len(tgt_value) / 5e4)
-        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=False))
-        fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
-                      )
 
-        fig.update_layout(xaxis_title='Target Distortion', yaxis_title='Predicted Distortion')
-
-        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
-        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
-
-        wandb.log({"Distortion Results": fig,
-                   "distortion_R_value": linreg_result.rvalue,
-                   "distortion_slope": linreg_result.slope})
-
-    if epoch_stats_dict['discriminator_predicted_distance'] is not None:
-        tgt_value = epoch_stats_dict['discriminator_true_distance']
-        pred_value = epoch_stats_dict['discriminator_predicted_distance']
-
-        # filter out 'true' samples
-        good_inds = tgt_value != 0
-        tgt_value_0 = tgt_value[good_inds]
-        pred_value_0 = pred_value[good_inds]
-
-        linreg_result = linregress(tgt_value_0, pred_value_0)
-
-        # predictions vs target trace
-        xline = np.linspace(max(min(tgt_value), min(pred_value)),
-                            min(max(tgt_value), max(pred_value)), 2)
-
-        xy = np.vstack([tgt_value, pred_value])
-        z = get_point_density(xy)
-
-        fig = go.Figure()
-        opacity = max(0.1, 1 - len(tgt_value) / 5e4)
-        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=False))
-        fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+        sample_sources = pred_distance_dict.keys()
+        sample_source = np.concatenate([[stype for _ in range(len(pred_distance_dict[stype]))] for stype in sample_sources])
+        scatter_dict = {'true_distance': tgt_value, 'predicted_distance': pred_value, 'sample_source': sample_source}
+        df = pd.DataFrame.from_dict(scatter_dict)
+        fig = px.scatter(df,
+                         x='true_distance', y='predicted_distance',
+                         symbol='sample_source', color='sample_source',
+                         marginal_x='histogram', marginal_y='histogram',
+                         range_color=(0, np.amax(pred_value)),
+                         opacity=opacity
+                         )
+        fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=True, name='Diagonal', marker_color='rgba(0,0,0,1)'),
                       )
 
         fig.update_layout(xaxis_title='Target Distance', yaxis_title='Predicted Distance')

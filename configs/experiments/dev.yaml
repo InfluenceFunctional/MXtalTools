@@ -5,26 +5,26 @@ mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/dataset/full_discriminator.yaml'
-extra_test_set_name: null #'test_blind_test_dataset.pkl'
+extra_test_set_name: 'blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 dataset:
-  max_dataset_length: 1000
+  max_dataset_length: 5000
 
 # batching & convergence
 grow_batch_size: True
-min_batch_size: 50
+min_batch_size: 25
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 0 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
-extra_test_period: 2 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
   run_name: dev
   mini_csp_frequency: 5
-  sample_reporting_frequency: 2
+  sample_reporting_frequency: 1
   log_figures: True
   experiment_tag: dev
 
@@ -35,7 +35,7 @@ seeds:
   dataset: 0
 
 # for reloading prior checkpoints
-discriminator_name: null  #'cluster/best_discriminator_experiments_benchmarks_standard_discriminator_16-10-09-08-28'
+discriminator_name: 'cluster/best_discriminator_experiments_benchmarks_standard_multi_discriminator_23-10-19-59-52' #'cluster/best_discriminator_experiments_benchmarks_standard_discriminator_16-10-09-08-28'
 generator_name: null #'cluster/best_generator_experiments_benchmarks_standard_generator12-10-12-00-37' #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_name: null # 'cluster/best_regressor__experiments_benchmarks_standard_regressor11-10-20-32-34'  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
 proxy_discriminator_name: null
@@ -115,7 +115,7 @@ discriminator:
   train_on_distorted: True
   use_classification_loss: True
   use_rdf_distance_loss: True
-  use_cell_distance_loss: True  # only meaninful when generating within the same space group
+  use_cell_distance_loss: False  # only meaningful when generating within the same space group
   distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
   # discriminator optimizer and model

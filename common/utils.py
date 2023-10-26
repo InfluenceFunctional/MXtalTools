@@ -2,7 +2,6 @@ import numpy as np
 
 import torch
 import pandas as pd
-from torch.nn.functional import softmax
 from scipy.interpolate import interpn
 
 from constants.space_group_info import SYM_OPS, LATTICE_TYPE, POINT_GROUPS, SPACE_GROUPS
@@ -23,7 +22,7 @@ def get_point_density(xy, bins=1000):
     # To be sure to plot all data
     z[np.where(np.isnan(z))] = 0.0
 
-    return z / z.max()
+    return np.sqrt(z / z.max())
 
 
 def chunkify(lst: list, n: int):
