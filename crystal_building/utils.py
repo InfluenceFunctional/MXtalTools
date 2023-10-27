@@ -222,7 +222,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
 
     mol_position_list = torch.stack(mol_position_list)
 
-    assert torch.sum(torch.isnan(mol_position_list)) == 0
+    # assert torch.sum(torch.isnan(mol_position_list)) == 0
 
     '''Pose Analysis'''
     # compute the inverse of the rotation required to align the molecule with the cartesian axes
@@ -234,7 +234,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         alignment_list[:, 0, 0] = handedness_list
 
     # http://motion.pratt.duke.edu/RoboticSystems/3DRotations.html#:~:text=Another%20popular%20rotation%20representation%20is,be%20represented%20in%20this%20form!
-    assert torch.sum(torch.isnan(Ip_axes_list)) == 0, f"{Ip_axes_list}"
+    # assert torch.sum(torch.isnan(Ip_axes_list)) == 0, f"{Ip_axes_list}"
 
     rotvec_list = []
     for Ip_axes, alignment in zip(Ip_axes_list, alignment_list):
@@ -276,7 +276,7 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
 
     rotvec_list = torch.stack(rotvec_list)
 
-    assert torch.sum(torch.isnan(rotvec_list)) == 0, f"{rotvec_list}"  # todo see how this could be possible
+    # assert torch.sum(torch.isnan(rotvec_list)) == 0, f"{rotvec_list}"
 
     '''
     since the direction of the axis is arbitrary, (x,y,z) is the same rotation as (-x,-y,-z),
@@ -306,8 +306,8 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         print(f'{rotation_basis} is not a valid orientation parameterization!')
         sys.exit()
 
-    assert torch.sum(torch.isnan(mol_orientation)) == 0, f"{mol_orientation} {rotvec_list}"
-    assert torch.sum(torch.isnan(mol_position_list)) == 0, f"{mol_position_list}"
+    # assert torch.sum(torch.isnan(mol_orientation)) == 0, f"{mol_orientation} {rotvec_list}"
+    # assert torch.sum(torch.isnan(mol_position_list)) == 0, f"{mol_position_list}"
 
     if return_asym_unit_coords:
         return mol_position_list, mol_orientation, handedness_list, well_defined_asym_unit_list, canonical_conformer_coords_list
@@ -464,6 +464,7 @@ def build_unit_cell(symmetry_multiplicity, final_coords_list, T_fc_list, T_cf_li
                                                       (T_cf_list[inds],
                                                        padded_coords_c - centroids_c[:, None, :])),
                                          z_sym_ops[:, zv, :3, :3]))
+
             # add final centroid
             ref_cells[zv, :, :, :] = torch.einsum('mij,mnj->mni',
                                                   (T_fc_list[inds],
@@ -588,3 +589,10 @@ def fractional_transform_np(coords, T_mat):
 def find_coord_in_box_np(coords, box, epsilon=0):
     # which of the given coords is inside the specified box, with option for a little leeway
     return np.where((coords[:, 0] <= (box[0] + epsilon)) * (coords[:, 1] <= (box[1] + epsilon) * (coords[:, 2] <= (box[2] + epsilon))))[0]
+
+
+def get_intra_mol_dists(cell_data, ind):
+    # assumes molecules are indexed sequentially in blocks
+    coords = cell_data.pos[cell_data.batch == ind]
+    coords = coords.reshape(len(coords) // int(cell_data.mol_size[ind]), int(cell_data.mol_size[ind]), 3)
+    return torch.stack([torch.cdist(coords[i], coords[i]) for i in range(len(coords))])

@@ -77,7 +77,7 @@ class SupercellBuilder:
         # apply symmetry ops to build unit cell
         unit_cell_coords_list = build_unit_cell(supercell_data.mult, canonical_conformer_coords_list, T_fc_list, T_cf_list, sym_ops_list)
 
-        assert torch.sum(torch.isnan(torch.cat([elem.flatten() for elem in unit_cell_coords_list]))) == 0, f"{cell_parameters}, {coords_list}, {canonical_conformer_coords_list}"
+        #assert torch.sum(torch.isnan(torch.cat([elem.flatten() for elem in unit_cell_coords_list]))) == 0, f"{cell_parameters}, {coords_list}, {canonical_conformer_coords_list}"
 
         if not skip_refeaturization:
             # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction

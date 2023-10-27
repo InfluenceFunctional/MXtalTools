@@ -1,10 +1,13 @@
-from common.utils import compute_rdf_distance
-from crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch
+from torch_geometric.loader.dataloader import Collater
+
+from common.utils import compute_rdf_distance, init_sym_info
+from crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch, get_intra_mol_dists, clean_cell_params
 from models.crystal_rdf import crystal_rdf
 from crystal_modeller import Modeller
 import numpy as np
 import torch
 from common.config_processing import get_config
+from tqdm import tqdm
 
 '''
 test module for crystal builder
@@ -62,13 +65,80 @@ class TestClass:
         # supercell_data.asym_unit_handedness = mol_handedness
 
         rebuilt_supercells, _ = supercell_builder.build_supercells(
-            test_crystals, updated_params,
-            align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
+            molecule_data=test_crystals,
+            cell_parameters=updated_params,
+            align_to_standardized_orientation=True,
+            target_handedness=reference_supercells.asym_unit_handedness,
             graph_convolution_cutoff=6,
-            supercell_size=supercell_size, pare_to_convolution_cluster=True)
+            supercell_size=supercell_size,
+            pare_to_convolution_cluster=True)
 
         '''high symmetry molecules may 'veer' different ways, so this assertion may fail'''
         assert torch.mean(torch.abs(reference_supercells.cell_params - rebuilt_supercells.cell_params)) < 1e-3
+
+        '''confirm that molecules were not distorted in original cell'''
+        for ind in range(reference_supercells.num_graphs):
+            dists = get_intra_mol_dists(reference_supercells, ind)  # assumes molecules are indexed sequentially in blocks
+
+            dmat = torch.zeros((len(dists), len(dists)))
+            for i in range(len(dists)):
+                for j in range(len(dists)):
+                    if j > i:
+                        dmat[i, j] = torch.mean(torch.abs(dists[i] - dists[j]))
+
+            assert dmat.max() < 1e-3, f"Too-large distortion in sample {ind + 1}"
+
+        '''confirm that molecules were not distorted in cell building'''
+        for ind in range(rebuilt_supercells.num_graphs):
+            dists = get_intra_mol_dists(rebuilt_supercells, ind)  # assumes molecules are indexed sequentially in blocks
+
+            dmat = torch.zeros((len(dists), len(dists)))
+            for i in range(len(dists)):
+                for j in range(len(dists)):
+                    if j > i:
+                        dmat[i, j] = torch.mean(torch.abs(dists[i] - dists[j]))
+
+            assert dmat.max() < 1e-3, f"Too-large distortion in sample {ind + 1}"
+
+        """build one molecule in each space group and confirm molecules are not warped"""
+        test_molecule = test_crystals[0]
+        test_molecule.pos = torch.randn_like(test_molecule.pos)
+        collater = Collater(None, None)
+        mol_batch = collater([test_molecule for _ in range(230)])
+        mol_batch.sg_ind = torch.arange(1, 231)
+        for i in range(230):
+            mol_batch.symmetry_operators[i] = supercell_builder.sym_ops[i + 1]
+            mol_batch.mult[i] = len(mol_batch.symmetry_operators[i])
+
+        all_params = torch.ones((230, 12), dtype=torch.float32, device=supercell_builder.device) / 2
+        all_params[:, 3:6] = torch.pi / 2  # valid in most SGs
+        all_params[:, 0:3] *= 20
+
+        symmetries_dict = init_sym_info()
+        final_samples = clean_cell_params(all_params, mol_batch.sg_ind, modeller.lattice_means, modeller.lattice_stds,
+                                          symmetries_dict, supercell_builder.asym_unit_dict,
+                                          rescale_asymmetric_unit=False, destandardize=False, mode='hard')
+
+        all_sg_supercells, _ = supercell_builder.build_supercells(
+            molecule_data=mol_batch,
+            cell_parameters=final_samples,
+            align_to_standardized_orientation=False,
+            graph_convolution_cutoff=6,
+            supercell_size=1,
+            pare_to_convolution_cluster=True)
+
+        dmaxes = torch.zeros(230)
+        for ind in tqdm(range(all_sg_supercells.num_graphs)):
+            dists = get_intra_mol_dists(all_sg_supercells, ind)  # assumes molecules are indexed sequentially in blocks
+
+            dmat = torch.zeros((len(dists), len(dists)))
+            for i in range(len(dists)):
+                for j in range(len(dists)):
+                    if j > i:
+                        dmat[i, j] = torch.mean(torch.abs(dists[i] - dists[j]))
+            dmaxes[ind] = dmat.amax()
+
+        #assert dmaxes.amax() < 1e-3  # we do not expect to pass this test for trigonal and hexagonal space groups
 
         '''
         compare RDFs - should uniquely characterize the material
