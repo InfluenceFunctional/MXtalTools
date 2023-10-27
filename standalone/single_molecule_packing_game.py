@@ -23,9 +23,9 @@ from tqdm import tqdm
 from models.vdw_overlap import vdw_overlap
 
 batch_size = 1000  # how many samples per batch
-num_iters = 100  # how many batches to try before giving up on this space group
+num_iters = 250  # how many batches to try before giving up on this space group
 vdw_threshold = 0.25  # maximum allowed average normalized vdw overlap per-molecule
-SGS_TO_SEARCH = [i for i in range(3, 230 + 1)]
+SGS_TO_SEARCH = [i for i in range(1, 230 + 1)]
 
 os.chdir(r'C:\Users\mikem\crystals\toys')  # where you want everything to save
 config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/crystal_building.yaml'
@@ -71,10 +71,9 @@ modeller = Modeller(config)
 _, _, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)  # need this to initialize some statistics
 modeller.misc_pre_training_items()  # initialize generator
 
-
 reasonable_cell_params = [[] for _ in SGS_TO_SEARCH]  # initialize record
 for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space groups
-    if True: #not os.path.exists(f'good_params_for_{sg_ind}.npy'):
+    if not os.path.exists(f'good_params_for_{sg_ind}.npy'):
         """retrieve and assign symmetry operations"""
         sym_ops = SYM_OPS[sg_ind] * 1
         mol_data.sg_ind = sg_ind
@@ -87,11 +86,12 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space grou
 
         """over a certain number of batches / attempts"""
         for ii in tqdm(range(num_iters)):
+            vdw_threshold_i = vdw_threshold + (0.15 * ii / num_iters)  # slowly increase over num_iters
             '''rescale cell density'''
-            cell_parameters = modeller.gaussian_generator(batch_size, sg_ind=torch.ones(batch_size))
+            cell_parameters = modeller.gaussian_generator(batch_size, sg_ind=torch.ones(batch_size) * sg_ind)
             cell_lengths, cell_angles, mol_position, mol_rotation_i = (
                 cell_parameters[:, :3], cell_parameters[:, 3:6], cell_parameters[:, 6:9], cell_parameters[:, 9:])
-            T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform_torch(cell_lengths, cell_angles)
+            _, _, generated_cell_volumes = compute_fractional_transform_torch(cell_lengths, cell_angles)
 
             # mol volume of FC(Cl)(Br)I is approx 98.856 A^3
             # at 0.7 packing coefficient, the asymmetric unit volume should be ~141 cubic angstrom
@@ -116,7 +116,7 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space grou
             vdw_scores = vdw_overlap(modeller.vdw_radii, crystaldata=supercells, return_score_only=True)
 
             '''determine which samples are 'reasonable'''
-            good_samples = torch.argwhere(vdw_scores >= -vdw_threshold)
+            good_samples = torch.argwhere(vdw_scores >= -vdw_threshold_i)
             if len(good_samples) > 0:
                 reasonable_cell_params[sg_search_index].extend([cell_parameters[sample][0].tolist() + [sg_ind] for sample in good_samples])
                 print(len(reasonable_cell_params[sg_search_index]))
@@ -149,36 +149,37 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space grou
                 )
 
                 cells = unit_cells.pos.reshape(len(unit_cells.pos) // 5, 5, 3)
-                dists = torch.stack([torch.cdist(cells[i], cells[i]) for i in range(len(cells))])
+                dists = torch.stack([torch.cdist(cells[i], cells[i]) for i in range(min(10, len(cells)))])
                 dmat = torch.zeros((len(dists), len(dists)))
                 for i in range(len(dists)):
                     for j in range(len(dists)):
-                        dmat[i, j] = torch.abs(torch.sum(dists[i] - dists[j]))
+                        dmat[i, j] = torch.mean(torch.abs(dists[i] - dists[j]))
 
-                assert dmat.max() < 1e-3
+                if dmat.max() > 1e-3:
+                    print(f"Warping {dmat.max():.3f} in space group {sg_ind}")
 
-                supercells, cell_volumes = modeller.supercell_builder.build_supercells(
-                    molecule_data=mol_batch,
-                    cell_parameters=rebuild_samples,
-                    supercell_size=1,
-                    graph_convolution_cutoff=6,
-                    pare_to_convolution_cluster=False,
-                    skip_refeaturization=True
-                )
+                # supercells, cell_volumes = modeller.supercell_builder.build_supercells(
+                #     molecule_data=mol_batch,
+                #     cell_parameters=rebuild_samples,
+                #     supercell_size=1,
+                #     graph_convolution_cutoff=6,
+                #     pare_to_convolution_cluster=False,
+                #     skip_refeaturization=True
+                # )
 
                 '''save supercells as cifs'''
                 print(f"Saving SG={sg_ind} structures")
                 cell_structures = [ase_mol_from_crystaldata(unit_cells, highlight_canonical_conformer=False,
-                                                       index=i, exclusion_level='none', inclusion_distance=4, return_crystal=False)
-                              for i in range(supercells.num_graphs)]
-                supercell_structures = [ase_mol_from_crystaldata(supercells, highlight_canonical_conformer=False,
-                                                       index=i, exclusion_level='none', inclusion_distance=4, return_crystal=False)
-                              for i in range(supercells.num_graphs)]
+                                                            index=i, exclusion_level='none', inclusion_distance=4, return_crystal=False)
+                                   for i in range(unit_cells.num_graphs)]
+                # supercell_structures = [ase_mol_from_crystaldata(supercells, highlight_canonical_conformer=False,
+                #                                                  index=i, exclusion_level='none', inclusion_distance=4, return_crystal=False)
+                #                         for i in range(supercells.num_graphs)]
 
                 for i in range(min(10, len(cell_structures))):
                     # ase.io.write(f'space_group_{sg_ind}_crystal_{i}.cif', structures[i][1])  # these are distorted
                     ase.io.write(f'space_group_{sg_ind}_unit_cell_{i}.cif', cell_structures[i])
-                    ase.io.write(f'space_group_{sg_ind}_supercell_{i}.cif', supercell_structures[i])
+                    #ase.io.write(f'space_group_{sg_ind}_supercell_{i}.cif', supercell_structures[i])
 
                 break
 

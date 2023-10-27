@@ -398,7 +398,7 @@ def enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_
             ), dim=- 1)
 
             fixed_angles[i] = torch.stack((
-                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() * 3 / 2,
+                pi_tensor.clone() / 2, pi_tensor.clone() / 2, pi_tensor.clone() * 2 / 3,
             ), dim=- 1)
 
         # elif lattice.lower()  == 'trigonal':

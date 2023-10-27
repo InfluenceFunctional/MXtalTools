@@ -138,7 +138,7 @@ class TestClass:
                         dmat[i, j] = torch.mean(torch.abs(dists[i] - dists[j]))
             dmaxes[ind] = dmat.amax()
 
-        #assert dmaxes.amax() < 1e-3  # we do not expect to pass this test for trigonal and hexagonal space groups
+        assert dmaxes.amax() < 1e-3
 
         '''
         compare RDFs - should uniquely characterize the material
