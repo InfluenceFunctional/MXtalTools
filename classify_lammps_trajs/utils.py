@@ -1,12 +1,13 @@
-import glob
-import os
-
 import pandas as pd
 import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+import os
 
+from classify_lammps_trajs.NICOAM_constants import num2atomicnum, identifier2form
+from classify_lammps_trajs.dump_data_processing import generate_dataset_from_dumps
+from classify_lammps_trajs.traj_analysis_figs import embedding_fig, classifier_accuracy_figs, classifier_trajectory_analysis_fig
 from common.utils import delete_from_dataframe
 from dataset_management.CrystalData import CrystalData
 from dataset_management.utils import get_dataloaders
@@ -14,107 +15,6 @@ from models.base_models import molecule_graph_model
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
-
-class_names = ['V', 'VII', 'VIII', 'I', 'II', 'III', 'IV', 'IX', 'VI', 'Disordered']
-
-
-def process_dump(path):
-    file = open(path, 'r')
-    lines = file.readlines()
-    file.close()
-
-    timestep = None
-    n_atoms = None
-    frame_outputs = {}
-    for ind, line in enumerate(lines):
-        if "ITEM: TIMESTEP" in line:
-            timestep = int(lines[ind + 1])
-        elif "ITEM: NUMBER OF ATOMS" in line:
-            n_atoms = int(lines[ind + 1])
-        elif "ITEM: BOX BOUNDS" in line:
-            cell_params = np.stack([
-                np.asarray(lines[ind + 1].split()).astype(float),
-                np.asarray(lines[ind + 2].split()).astype(float),
-                np.asarray(lines[ind + 3].split()).astype(float)
-            ]
-            )
-        elif "ITEM: ATOMS" in line:  # atoms header
-            headers = line.split()[2:-3]
-            atom_data = np.zeros((n_atoms, len(headers)))
-            for ind2 in range(n_atoms):
-                newline = lines[1 + ind + ind2].split()
-                # newline[2] = type2num[newline[2]]
-                newline[2] = num2atomicnum[int(newline[2])]
-
-                atom_data[ind2] = np.asarray(newline[:-3]).astype(float)  # cut off velocity elements
-
-            frame_data = pd.DataFrame(atom_data, columns=headers)
-            frame_data.attrs['cell_params'] = cell_params  # add attribute directly to dataframe
-            frame_outputs[timestep] = frame_data
-        else:
-            pass
-
-    return frame_outputs
-
-
-def generate_dataset_from_dumps(dumps_dirs, dataset_path):
-    sample_df = pd.DataFrame()
-    for dumps_dir in dumps_dirs:
-        os.chdir(dumps_dir)
-        dump_files = glob.glob(r'*/*.dump', recursive=True)
-
-        for path in tqdm(dump_files):
-            print(f"Processing dump {path}")
-            temperature = int(dumps_dir.split('_')[-1])
-            form = int(path.split('/')[0])
-            trajectory_dict = process_dump(path)
-
-            for ts, (times, vals) in enumerate(tqdm(trajectory_dict.items())):
-                new_dict = {'atom_type': [vals['element'].astype(int)],
-                            'mol_ind': [vals['mol']],
-                            'coordinates': [np.concatenate((
-                                np.asarray(vals['x'])[:, None],
-                                np.asarray(vals['y'])[:, None],
-                                np.asarray(vals['z'])[:, None]), axis=-1)],
-                            'temperature': temperature,
-                            'form': form,
-                            'time_step': times,
-                            'cell_params': vals.attrs['cell_params'],
-                            }
-
-                new_df = pd.DataFrame()
-                for key in new_dict.keys():
-                    new_df[key] = [new_dict[key]]
-
-                sample_df = pd.concat([sample_df, new_df])
-
-    sample_df.to_pickle(dataset_path)
-
-
-type2num = {
-    'Ca1': 1,
-    'Ca2': 2,
-    'Ca': 3,
-    'C': 4,
-    'Nb': 5,
-    'N': 6,
-    'O': 7,
-    'Hn': 8,
-    'H4': 9,
-    'Ha': 10,
-}
-num2atomicnum = {
-    1: 6,
-    2: 6,
-    3: 6,
-    4: 6,
-    5: 7,
-    6: 7,
-    7: 8,
-    8: 1,
-    9: 1,
-    10: 1,
-}
 
 
 def convert_box_to_cell_params(box_params):
@@ -141,9 +41,14 @@ def convert_box_to_cell_params(box_params):
     xhi_bound = box_params[:, 0, 1]
     yhi_bound = box_params[:, 1, 1]
     zhi_bound = box_params[:, 2, 1]
-    xy = box_params[:, 0, 2]
-    xz = box_params[:, 1, 2]
-    yz = box_params[:, 2, 2]
+    if box_params[0].shape == (3, 3):  # non-orthogonal box
+        xy = box_params[:, 0, 2]
+        xz = box_params[:, 1, 2]
+        yz = box_params[:, 2, 2]
+    else:
+        xy = np.zeros_like(xhi_bound)
+        xz = np.zeros_like(xy)
+        yz = np.zeros_like(xy)
 
     xlo = xlo_bound - np.stack((np.zeros_like(xy), xy, xz, xy + xz)).T.min(1)
     xhi = xhi_bound - np.stack((np.zeros_like(xy), xy, xz, xy + xz)).T.max(1)
@@ -159,7 +64,7 @@ def convert_box_to_cell_params(box_params):
     return a, b, c
 
 
-def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fraction=0.2, filter_early=True, temperatures: list = None):
+def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fraction=0.2, filter_early=True, temperatures: list = None, shuffle=True):
     dataset = pd.read_pickle(dataset_path)
     dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
 
@@ -189,15 +94,17 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         if dataset.iloc[i]['temperature'] == 950:
             targets[i] = 9
 
-    a, b, c = convert_box_to_cell_params(np.stack(dataset['cell_params']))
+    # a, b, c = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
+    #
+    # T_fc_list = np.zeros((len(a), 3, 3))
+    # for i in range(len(T_fc_list)):
+    #     T_fc_list[i] = np.stack((a[i], b[i], c[i]))
 
-    T_fc_list = np.zeros((len(a), 3, 3))
-    for i in range(len(T_fc_list)):
-        T_fc_list[i] = np.stack((a[i], b[i], c[i]))
+    T_fc_list = np.stack([np.eye(3) for _ in range(len(dataset['cell_params']))])  # placeholder
 
     print('Generating training datapoints')
     datapoints = []
-    rand_inds = np.random.choice(len(dataset), size=min(dataset_size, len(dataset)), replace=False)
+    rand_inds = np.random.choice(len(dataset), size=min(dataset_size, len(dataset)), replace=False)  # todo build indexing capability for defects
     for i in tqdm(rand_inds):
         ref_coords = torch.Tensor(dataset.loc[i]['coordinates'][0])
         atoms = dataset.loc[i]['atom_type'][0]
@@ -240,6 +147,8 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
                 mol_ind=cluster_mol_ind.reshape(len(good_mols) * 15),
                 pos=cluster_coords.reshape(len(good_mols) * 15, 3),
                 y=cluster_targets,
+                centroid_pos=(centroids - centroids.mean(0)).cpu().detach().numpy(),
+                coord_number=coordination_number.cpu().detach().numpy(),
                 tracking=np.asarray(dataset.loc[i, ['temperature', 'time_step']]),
                 T_fc=torch.Tensor(T_fc_list[i]),
                 asym_unit_handedness=torch.ones(1),
@@ -247,7 +156,7 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
             )
         )
     del dataset
-    return get_dataloaders(datapoints, machine='local', batch_size=batch_size, test_fraction=test_fraction)
+    return get_dataloaders(datapoints, machine='local', batch_size=batch_size, test_fraction=test_fraction, shuffle=shuffle)
 
 
 def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth):
@@ -284,13 +193,6 @@ def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm
         outside_convolution_type='none',
         graph_convolution_type='TransformerConv',
     )
-
-
-# coords = np.random.normal(size=(10, 3))
-# atom_types = np.random.randint(5, 8, size=len(coords)).astype(np.int32)
-# mol_flags = np.ones(len(coords)) * 3
-#
-# write_ovito_xyz(coords, atom_types, mol_flags)
 
 
 def train_classifier(config, classifier, optimizer,
@@ -402,3 +304,159 @@ def reload_model(model, optimizer, path, reload_optimizer=False):
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     return model, optimizer
+
+
+def record_step_results(results_dict, output, sample, data, latents_dict, step, index_offset=0):
+    if results_dict is None:
+        results_dict = {'Temperature': [],
+                        'Time_Step': [],
+                        'Loss': [],
+                        'Prediction': [],
+                        'Targets': [],
+                        'Latents': [],
+                        'Sample_Index': [],
+                        'Coordinates': [],
+                        'Atom_Types': [],
+                        'Molecule_Index': [],
+                        'Molecule_Centroids': [],
+                        'Coordination_Numbers': []}
+
+    results_dict['Loss'].append(F.cross_entropy(output, sample.y).cpu().detach().numpy())
+    results_dict['Prediction'].append(F.softmax(output, dim=1).cpu().detach().numpy())
+    results_dict['Targets'].append(sample.y.cpu().detach().numpy())
+    results_dict['Latents'].append(latents_dict['final_activation'])
+    results_dict['Temperature'].append(np.ones(len(sample.y)) * data.tracking[0][0])
+    results_dict['Time_Step'].append(np.ones(len(sample.y)) * data.tracking[0][1])
+    results_dict['Sample_Index'].append(np.ones(len(sample.y)) * step + index_offset)
+    results_dict['Coordinates'].append(sample.pos.cpu().detach().numpy())
+    results_dict['Atom_Types'].append(sample.x.cpu().detach().numpy())
+    results_dict['Molecule_Index'].append(sample.mol_ind.cpu().detach().numpy())
+    results_dict['Molecule_Centroids'].append(sample.centroid_pos[0])
+    results_dict['Coordination_Numbers'].append(sample.coord_number[0])
+
+    return results_dict
+
+
+def classifier_evaluation(config, classifier, optimizer,
+                          train_loader, test_loader,
+                          num_epochs, wandb,
+                          class_names, device,
+                          batch_size, reporting_frequency,
+                          runs_path, run_name):
+    with wandb.init(project='cluster_classifier', entity='mkilgour'):
+        wandb.run_name = run_name + '_evaluation'
+        wandb.log({'config': config})
+
+        results_dict = None
+        classifier.train(False)
+        with torch.no_grad():
+            classifier.eval()
+            for step, data in enumerate(tqdm(train_loader)):
+                sample = data.to(device)
+                output, latents_dict = classifier(sample, return_latent=True)
+                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step)
+
+            for step, data in enumerate(tqdm(test_loader)):
+                sample = data.to(device)
+                output, latents_dict = classifier(sample, return_latent=True)
+                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step, index_offset=len(train_loader))
+
+        for key in results_dict.keys():
+            try:
+                results_dict[key] = np.stack(results_dict[key])
+            except:
+                results_dict[key] = np.concatenate(results_dict[key], axis=0)
+
+        results_dict['Atomwise_Sample_Index'] = results_dict['Sample_Index'].repeat(15)
+        num_samples = len(results_dict['Targets'])
+
+        fig_dict = {}
+        '''embed train, test, melt'''
+        fig_dict['Embedding_Analysis'] = embedding_fig(results_dict, num_samples)
+
+        '''accuracy metrics'''
+        fig_dict['Confusion_Matrices'], accuracy_scores = classifier_accuracy_figs(results_dict)
+
+        '''model games'''
+
+        '''training curves'''
+
+        [fig_dict[key].write_image(f'Figure_{i}') for i, key in enumerate(fig_dict.keys())]
+        wandb.log(fig_dict)
+
+
+def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
+
+    from classify_lammps_trajs.ovito_utils import write_ovito_xyz
+    dataset_name = dumps_dir.split('/')[-2]
+    datasets_path = config['datasets_path']
+    dataset_path = f'{datasets_path}{dataset_name}.pkl'
+
+    if not os.path.exists(dataset_path):
+        made_dataset = generate_dataset_from_dumps([dumps_dir], dataset_path)
+
+        if not made_dataset:
+            print(f'{dumps_dir} does not contain valid dump to analyze')
+            return False
+
+    os.chdir(config['runs_path'])
+
+    _, loader = collect_to_traj_dataloaders(
+        dataset_path, int(1e7), batch_size=1, temperatures=None, test_fraction=1, shuffle=False)
+
+    results_dict = None
+    classifier.train(False)
+    with torch.no_grad():
+        classifier.eval()
+        for step, data in enumerate(tqdm(loader)):
+            sample = data.to(device)
+            output, latents_dict = classifier(sample, return_latent=True)
+            results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step)
+
+    for key in results_dict.keys():
+        try:
+            results_dict[key] = np.concatenate(results_dict[key], axis=0)
+        except:
+            results_dict[key] = np.stack(results_dict[key])
+
+    results_dict['Atomwise_Sample_Index'] = results_dict['Sample_Index'].repeat(15)
+    results_dict['Prediction'] = np.argmax(results_dict['Prediction'], axis=-1)  # argmax sample
+
+    sorted_molwise_results_dict, time_steps = process_trajectory_results_dict(results_dict, loader)
+
+    write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
+                    sorted_molwise_results_dict['Atom_Types'],
+                    sorted_molwise_results_dict['Prediction'], filename=dataset_name)  # write a trajectory
+
+    fig = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)
+
+    run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
+    fig.update_layout(title=f"Form {identifier2form[run_config['structure_identifier']]}, Cluster Radius {run_config['max_sphere_radius']}A, Temperature {run_config['temperature']}K")
+
+    wandb.log({f"{dataset_name} Trajectory Analysis": fig})
+
+
+def process_trajectory_results_dict(results_dict, loader):
+    num_atoms = len(results_dict['Atomwise_Sample_Index'])
+    num_mols = len(results_dict['Sample_Index'])
+    molwise_results_dict = {}
+    for key in results_dict.keys():
+        if len(results_dict[key]) == num_atoms:
+            index = results_dict['Atomwise_Sample_Index']
+            molwise_results_dict[key] = [results_dict[key][index == ind] for ind in range(len(loader))]
+
+        elif len(results_dict[key]) == num_mols:
+            index = results_dict['Sample_Index']
+            molwise_results_dict[key] = [results_dict[key][index == ind].repeat(15) for ind in range(len(loader))]
+            molwise_results_dict['Molecule_' + key] = [results_dict[key][index == ind] for ind in range(len(loader))]
+        else:
+            pass
+
+    time_inds = [time[0] for time in molwise_results_dict['Time_Step']]
+    sort_inds = np.argsort(np.asarray(time_inds))
+
+    sorted_molwise_results_dict = {}
+    for key in molwise_results_dict.keys():
+        sorted_molwise_results_dict[key] = [molwise_results_dict[key][ind] for ind in sort_inds]
+
+    return sorted_molwise_results_dict, np.asarray(time_inds)[sort_inds]

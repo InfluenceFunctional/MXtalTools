@@ -10,7 +10,6 @@ channels:
 dependencies:
   #- python=3.9
   #- csd-python-api  # comment out if not doing dataset construction
-  - pyg
   - pytorch==2.1.0 # update with your CUDA version uncomment 'cpuonly' if not on GPU
   - cpuonly
   - plotly

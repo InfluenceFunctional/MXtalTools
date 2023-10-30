@@ -5,9 +5,10 @@ import wandb
 import argparse
 import classify_lammps_trajs.test_configs as test_configs
 
-from classify_lammps_trajs.utils import (generate_dataset_from_dumps, class_names,
-                                         collect_to_traj_dataloaders, init_classifier,
-                                         train_classifier, reload_model)
+from classify_lammps_trajs.utils import (collect_to_traj_dataloaders, init_classifier,
+                                         train_classifier, reload_model, classifier_evaluation, trajectory_analysis)
+from classify_lammps_trajs.NICOAM_constants import class_names
+from classify_lammps_trajs.dump_data_processing import generate_dataset_from_dumps
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore ovito error
@@ -20,23 +21,7 @@ else:
     config = test_configs.dev
 
 if __name__ == "__main__":
-    dataset_name = 'nicotinamide_trajectories_dataset_full'
-    datasets_path = config['datasets_path']
-    dataset_path = f'{datasets_path}{dataset_name}.pkl'
-    dumps_dirs = [config['dumps_path'] + r'bulk_trajs1/T_100',
-                  config['dumps_path'] + r'bulk_trajs1/T_350',
-                  config['dumps_path'] + r'hot_trajs/melted_trajs_T_950']
-
-    os.chdir(config['runs_path'])
-
-    if not os.path.exists(dataset_path):
-        generate_dataset_from_dumps(dumps_dirs, dataset_path)
-
-    train_loader, _ = collect_to_traj_dataloaders(
-        dataset_path, config['dataset_size'], batch_size=1, temperatures=[100, 950], test_fraction=0.01)
-    test_loader, _ = collect_to_traj_dataloaders(
-        dataset_path, config['dataset_size'], batch_size=1, temperatures=[350], test_fraction=0.01)
-
+    """init model"""
     classifier = init_classifier(config['conv_cutoff'], config['num_convs'],
                                  config['embedding_depth'], config['dropout'],
                                  config['graph_norm'], config['fc_norm'],
@@ -48,6 +33,28 @@ if __name__ == "__main__":
         reload_model(classifier, optimizer, config['classifier_path'], reload_optimizer=True)
 
     classifier.to(config['device'])
+    os.chdir(config['runs_path'])
+
+    """get dataset"""
+    if config['train_model'] or config['do_classifier_evaluation']:
+        dataset_name = 'nicotinamide_trajectories_dataset_full'
+        datasets_path = config['datasets_path']
+        dataset_path = f'{datasets_path}{dataset_name}.pkl'
+        dumps_dirs = [config['dumps_path'] + r'bulk_trajs1/T_100',
+                      config['dumps_path'] + r'bulk_trajs1/T_350',
+                      config['dumps_path'] + r'hot_trajs/melted_trajs_T_950']
+
+        if not os.path.exists(dataset_path):
+            generate_dataset_from_dumps(dumps_dirs, dataset_path)
+
+        _, train_loader = collect_to_traj_dataloaders(
+            dataset_path, config['dataset_size'], batch_size=1, temperatures=[100, 950], test_fraction=1)
+        _, test_loader = collect_to_traj_dataloaders(
+            dataset_path, config['dataset_size'], batch_size=1, temperatures=[350], test_fraction=1)
+
+    """
+    training
+    """
     if config['train_model']:
         train_classifier(config, classifier, optimizer,
                          train_loader, test_loader,
@@ -57,4 +64,25 @@ if __name__ == "__main__":
                          config['runs_path'], config['run_name']
                          )
 
-    #  todo add evaluation utils & pretty graphs
+    """
+    Evaluation & analysis
+    """
+    if config['do_classifier_evaluation']:
+        classifier_evaluation(config, classifier, optimizer,
+                              train_loader, test_loader,
+                              config['num_epochs'], wandb,
+                              class_names, config['device'],
+                              config['batch_size'], config['reporting_frequency'],
+                              config['runs_path'], config['run_name'])
+
+    """
+    Trajectory Classification & Analysis
+    """
+    if config['trajs_to_analyze_list'] is not None:
+        with wandb.init(project='cluster_classifier', entity='mkilgour'):
+            wandb.run_name = config['run_name'] + '_trajectory_analysis'
+            wandb.log({'config': config})
+            for dump_dir in config['trajs_to_analyze_list']:
+                trajectory_analysis(config, classifier, config['run_name'],
+                                    wandb, config['device'],
+                                    dumps_dir=dump_dir)

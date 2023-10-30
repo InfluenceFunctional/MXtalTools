@@ -23,8 +23,8 @@ from tqdm import tqdm
 from models.vdw_overlap import vdw_overlap
 
 batch_size = 1000  # how many samples per batch
-num_iters = 250  # how many batches to try before giving up on this space group
-vdw_threshold = 0.25  # maximum allowed average normalized vdw overlap per-molecule
+num_iters = 50  # how many batches to try before giving up on this space group
+vdw_threshold = 0.35  # maximum allowed average normalized vdw overlap per-molecule
 SGS_TO_SEARCH = [i for i in range(1, 230 + 1)]
 
 os.chdir(r'C:\Users\mikem\crystals\toys')  # where you want everything to save
