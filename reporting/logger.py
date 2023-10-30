@@ -25,11 +25,15 @@ class Logger:
         self.init_loss_records()
         self.sample_reporting_frequency = config.logger.sample_reporting_frequency
 
-
         self.packing_loss_coefficient = None
         self.epoch = None
         self.learning_rates = {name: None for name in self.model_names}
         self.batch_size = None
+
+        self.generator_converged = False
+        self.discriminator_converged = False
+        self.regressor_converged = False
+        self.proxy_converged = False
 
     def init_loss_records(self):
         self.current_losses = {}
@@ -102,16 +106,14 @@ class Logger:
         np.save(save_path, self.test_stats)
 
     def check_model_convergence(self):
-        generator_convergence = check_convergence(self.loss_record['generator']['mean_test'], self.config.history,
-                                                  self.config.generator.optimizer.convergence_eps)
-        discriminator_convergence = check_convergence(self.loss_record['discriminator']['mean_test'], self.config.history,
-                                                      self.config.discriminator.optimizer.convergence_eps)
-        regressor_convergence = check_convergence(self.loss_record['regressor']['mean_test'], self.config.history,
-                                                  self.config.regressor.optimizer.convergence_eps)
-        proxy_convergence = check_convergence(self.loss_record['proxy_discriminator']['mean_test'], self.config.history,
-                                              self.config.proxy_discriminator.optimizer.convergence_eps)
-
-        return generator_convergence, discriminator_convergence, regressor_convergence, proxy_convergence
+        self.generator_converged = check_convergence(self.loss_record['generator']['mean_test'], self.config.history,
+                                                     self.config.generator.optimizer.convergence_eps)
+        self.discriminator_converged = check_convergence(self.loss_record['discriminator']['mean_test'], self.config.history,
+                                                         self.config.discriminator.optimizer.convergence_eps)
+        self.regressor_converged = check_convergence(self.loss_record['regressor']['mean_test'], self.config.history,
+                                                     self.config.regressor.optimizer.convergence_eps)
+        self.proxy_converged = check_convergence(self.loss_record['proxy_discriminator']['mean_test'], self.config.history,
+                                                 self.config.proxy_discriminator.optimizer.convergence_eps)
 
     def log_fig_dict(self, fig_dict):
         if self.log_figs_to_self:

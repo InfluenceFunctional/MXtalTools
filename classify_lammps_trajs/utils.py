@@ -352,7 +352,7 @@ def classifier_evaluation(config, classifier, optimizer,
                           batch_size, reporting_frequency,
                           runs_path, run_name):
     with wandb.init(project='cluster_classifier', entity='mkilgour'):
-        wandb.run_name = run_name + '_evaluation'
+        wandb.run.name = run_name + '_evaluation'
         wandb.log({'config': config})
 
         results_dict = None
@@ -389,59 +389,75 @@ def classifier_evaluation(config, classifier, optimizer,
 
         '''training curves'''
 
-        [fig_dict[key].write_image(f'Figure_{i}') for i, key in enumerate(fig_dict.keys())]
+        os.chdir(config['runs_path'])
+        # [fig_dict[key].write_image(f'Figure_{i}') for i, key in enumerate(fig_dict.keys())]
         wandb.log(fig_dict)
 
 
 def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
+
+    # if not os.path.exists('traj_analysis_outputs.npy'):
+    #     traj_analysis = {}
+    # else:
+    #     traj_analysis = np.load('traj_analysis_outputs.npy', allow_pickle=True).item()
 
     from classify_lammps_trajs.ovito_utils import write_ovito_xyz
     dataset_name = dumps_dir.split('/')[-2]
     datasets_path = config['datasets_path']
     dataset_path = f'{datasets_path}{dataset_name}.pkl'
 
-    if not os.path.exists(dataset_path):
-        made_dataset = generate_dataset_from_dumps([dumps_dir], dataset_path)
+    if True: #dataset_path not in traj_analysis.keys():
 
-        if not made_dataset:
-            print(f'{dumps_dir} does not contain valid dump to analyze')
-            return False
+        if not os.path.exists(dataset_path):
+            made_dataset = generate_dataset_from_dumps([dumps_dir], dataset_path)
 
-    os.chdir(config['runs_path'])
+            if not made_dataset:
+                print(f'{dumps_dir} does not contain valid dump to analyze')
+                return False
 
-    _, loader = collect_to_traj_dataloaders(
-        dataset_path, int(1e7), batch_size=1, temperatures=None, test_fraction=1, shuffle=False)
+        os.chdir(config['runs_path'])
 
-    results_dict = None
-    classifier.train(False)
-    with torch.no_grad():
-        classifier.eval()
-        for step, data in enumerate(tqdm(loader)):
-            sample = data.to(device)
-            output, latents_dict = classifier(sample, return_latent=True)
-            results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step)
+        _, loader = collect_to_traj_dataloaders(
+            dataset_path, int(1e7), batch_size=1, temperatures=None, test_fraction=1, shuffle=False)
 
-    for key in results_dict.keys():
-        try:
-            results_dict[key] = np.concatenate(results_dict[key], axis=0)
-        except:
-            results_dict[key] = np.stack(results_dict[key])
+        results_dict = None
+        classifier.train(False)
+        with torch.no_grad():
+            classifier.eval()
+            for step, data in enumerate(tqdm(loader)):
+                sample = data.to(device)
+                output, latents_dict = classifier(sample, return_latent=True)
+                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step)
 
-    results_dict['Atomwise_Sample_Index'] = results_dict['Sample_Index'].repeat(15)
-    results_dict['Prediction'] = np.argmax(results_dict['Prediction'], axis=-1)  # argmax sample
+        for key in results_dict.keys():
+            try:
+                results_dict[key] = np.concatenate(results_dict[key], axis=0)
+            except:
+                results_dict[key] = np.stack(results_dict[key])
 
-    sorted_molwise_results_dict, time_steps = process_trajectory_results_dict(results_dict, loader)
+        results_dict['Atomwise_Sample_Index'] = results_dict['Sample_Index'].repeat(15)
+        results_dict['Prediction'] = np.argmax(results_dict['Prediction'], axis=-1)  # argmax sample
 
-    write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
-                    sorted_molwise_results_dict['Atom_Types'],
-                    sorted_molwise_results_dict['Prediction'], filename=dataset_name)  # write a trajectory
+        sorted_molwise_results_dict, time_steps = process_trajectory_results_dict(results_dict, loader)
 
-    fig = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)
+        write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
+                        sorted_molwise_results_dict['Atom_Types'],
+                        sorted_molwise_results_dict['Prediction'], filename=dataset_name)  # write a trajectory
 
-    run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
-    fig.update_layout(title=f"Form {identifier2form[run_config['structure_identifier']]}, Cluster Radius {run_config['max_sphere_radius']}A, Temperature {run_config['temperature']}K")
+        fig = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)
 
-    wandb.log({f"{dataset_name} Trajectory Analysis": fig})
+        run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
+        fig.update_layout(title=f"Form {identifier2form[run_config['structure_identifier']]}, Cluster Radius {run_config['max_sphere_radius']}A, Temperature {run_config['temperature']}K")
+
+        # if not os.path.exists('traj_analysis_outputs.npy'):
+        #     traj_analysis = {}
+        # else:
+        #     traj_analysis = np.load('traj_analysis_outputs.npy',allow_pickle=True).item()
+
+        #traj_analysis[dataset_path] = sorted_molwise_results_dict
+        #np.save('traj_analysis_outputs', traj_analysis)
+
+        wandb.log({f"{dataset_name} Trajectory Analysis": fig})
 
 
 def process_trajectory_results_dict(results_dict, loader):

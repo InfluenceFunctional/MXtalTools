@@ -488,17 +488,22 @@ class Modeller:
                     print("Starting Epoch {}".format(epoch))  # index from 0
                     self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
 
+                    if epoch < self.config.num_early_epochs:
+                        early_epochs_step_override = self.config.early_epochs_step_override
+                    else:
+                        early_epochs_step_override = None
+
                     try:  # try this batch size
                         self.run_epoch(epoch_type='train', data_loader=train_loader,
-                                       update_gradients=True)
+                                       update_gradients=True, iteration_override=early_epochs_step_override)
 
                         with torch.no_grad():
                             self.run_epoch(epoch_type='test', data_loader=test_loader,
-                                           update_gradients=False)
+                                           update_gradients=False, iteration_override=early_epochs_step_override)
 
                             if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0) and (epoch > 0):
                                 self.run_epoch(epoch_type='extra', data_loader=extra_test_loader,
-                                               update_gradients=False)  # compute loss on test set
+                                               update_gradients=False, iteration_override=early_epochs_step_override)  # compute loss on test set
 
                         self.logger.numpyize_current_losses()
                         self.logger.update_loss_record()
@@ -511,8 +516,7 @@ class Modeller:
                             self.model_checkpointing(epoch)
 
                         '''check convergence status'''
-                        generator_converged, discriminator_converged, regressor_converged, proxy_discriminator_converged = \
-                            self.logger.check_model_convergence()
+                        self.logger.check_model_convergence()
 
                         '''sometimes test the generator on a mini CSP problem'''
                         if (self.config.mode == 'gan') and (epoch % self.config.logger.mini_csp_frequency == 0) and \
@@ -523,7 +527,7 @@ class Modeller:
                         self.logger.log_training_metrics()
                         self.logger.log_epoch_analysis(test_loader)
 
-                        if (generator_converged and discriminator_converged and regressor_converged) \
+                        if (self.logger.generator_converged and self.logger.discriminator_converged and self.logger.regressor_converged) \
                                 and (epoch > self.config.history + 2):
                             print('Training has converged!')
                             break

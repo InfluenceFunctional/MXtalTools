@@ -9,6 +9,8 @@ extra_test_set_name: null #'blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 
 # batching & convergence
+early_epochs_step_override: 100
+num_early_epochs: 10
 grow_batch_size: True
 min_batch_size: 100
 max_batch_size: 10000

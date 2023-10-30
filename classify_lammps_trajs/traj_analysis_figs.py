@@ -47,10 +47,11 @@ def classifier_accuracy_figs(results_dict):
 
         if temperature == 950:
             true_labels = np.ones_like(true_labels)
-            predicted_class = np.asarray(predicted_class == 9).astype(int)
+            predicted_class = np.asarray(predicted_class != 9).astype(int)
             probs_0 = probs[:, -2:]
             probs_0[:, 0] = probs[:, :-1].sum(1)
             probs = probs_0
+
         cmat = confusion_matrix(true_labels, predicted_class, normalize='true')
 
         try:

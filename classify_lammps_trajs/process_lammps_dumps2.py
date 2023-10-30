@@ -44,6 +44,12 @@ if __name__ == "__main__":
                       config['dumps_path'] + r'bulk_trajs1/T_350',
                       config['dumps_path'] + r'hot_trajs/melted_trajs_T_950']
 
+
+
+    """
+    training
+    """
+    if config['train_model']:
         if not os.path.exists(dataset_path):
             generate_dataset_from_dumps(dumps_dirs, dataset_path)
 
@@ -52,10 +58,6 @@ if __name__ == "__main__":
         _, test_loader = collect_to_traj_dataloaders(
             dataset_path, config['dataset_size'], batch_size=1, temperatures=[350], test_fraction=1)
 
-    """
-    training
-    """
-    if config['train_model']:
         train_classifier(config, classifier, optimizer,
                          train_loader, test_loader,
                          config['num_epochs'], wandb,
@@ -68,6 +70,14 @@ if __name__ == "__main__":
     Evaluation & analysis
     """
     if config['do_classifier_evaluation']:
+        if not os.path.exists(dataset_path):
+            generate_dataset_from_dumps(dumps_dirs, dataset_path)
+
+        _, train_loader = collect_to_traj_dataloaders(
+            dataset_path, config['dataset_size'], batch_size=1, temperatures=[100, 950], test_fraction=1)
+        _, test_loader = collect_to_traj_dataloaders(
+            dataset_path, config['dataset_size'], batch_size=1, temperatures=[350], test_fraction=1)
+
         classifier_evaluation(config, classifier, optimizer,
                               train_loader, test_loader,
                               config['num_epochs'], wandb,
@@ -80,9 +90,10 @@ if __name__ == "__main__":
     """
     if config['trajs_to_analyze_list'] is not None:
         with wandb.init(project='cluster_classifier', entity='mkilgour'):
-            wandb.run_name = config['run_name'] + '_trajectory_analysis'
+            wandb.run.name = config['run_name'] + '_trajectory_analysis'
             wandb.log({'config': config})
             for dump_dir in config['trajs_to_analyze_list']:
+                print(f"Processing dump {dump_dir}")
                 trajectory_analysis(config, classifier, config['run_name'],
                                     wandb, config['device'],
                                     dumps_dir=dump_dir)
