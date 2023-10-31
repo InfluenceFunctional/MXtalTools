@@ -59,7 +59,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
         for path in tqdm(dump_files):
             print(f"Processing dump {path}")
             if os.path.exists('run_config.npy'):
-                run_config = np.load('run_config.npy',allow_pickle=True).item()
+                run_config = np.load('run_config.npy', allow_pickle=True).item()
                 temperature = run_config['temperature']
                 form = identifier2form[run_config['structure_identifier']]
             else:

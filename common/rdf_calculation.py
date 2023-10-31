@@ -26,7 +26,7 @@ def parallel_compute_rdf_torch(dists_list, raw_density=True, rrange=None, bins=N
         rdf_density = torch.ones(len(dists_list), device=dists_list[0].device, dtype=torch.float32)
 
     hh_list = torch.stack([torch.histc(dists, min=hist_range[0], max=hist_range[1], bins=hist_bins) for dists in dists_list])
-    rr = torch.linspace(hist_range[0], hist_range[1], hist_bins + 1).to(hh_list.device)
+    rr = torch.linspace(hist_range[0], hist_range[1], hist_bins + 1, device=hh_list.device)
     if remove_radial_scaling:
         rdf = hh_list / rdf_density[:, None]  # un-smoothed radial density
     else:

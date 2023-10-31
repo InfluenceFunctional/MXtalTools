@@ -22,7 +22,7 @@ from torch_geometric.loader.dataloader import Collater
 from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
 from constants.asymmetric_units import asym_unit_dict
 from csp.SampleOptimization import gradient_descent_sampling
-from models.crystal_rdf import crystal_rdf
+from models.crystal_rdf import crystal_rdf, new_crystal_rdf
 
 from models.discriminator_models import crystal_discriminator, crystal_proxy_discriminator
 from models.generator_models import crystal_generator, independent_gaussian_model
@@ -467,7 +467,7 @@ class Modeller:
 
             self.train_discriminator = (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn))
             self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
-            self.train_regressor = self.config. mode == 'regression'
+            self.train_regressor = self.config.mode == 'regression'
             self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
 
             '''initialize datasets and useful classes'''
@@ -858,7 +858,7 @@ class Modeller:
                       'discriminator_classification_loss', 'discriminator_distortion_loss',
                       'discriminator_distance_loss']
         stats_values = [score_on_real.cpu().detach().numpy(), score_on_fake.cpu().detach().numpy(),
-                        torch.log10(1+real_fake_rdf_distances).cpu().detach().numpy(), discriminator_output_on_fake[:, 3].cpu().detach().numpy(),
+                        torch.log10(1 + real_fake_rdf_distances).cpu().detach().numpy(), discriminator_output_on_fake[:, 3].cpu().detach().numpy(),
                         torch.zeros_like(discriminator_output_on_real[:, 0]).cpu().detach().numpy(), discriminator_output_on_real[:, 3].cpu().detach().numpy(),
                         rdf_distance_target.cpu().detach().numpy(), combined_outputs[:, 3].cpu().detach().numpy(),
                         classification_losses.cpu().detach().numpy(), distortion_losses.cpu().detach().numpy(),
@@ -958,10 +958,12 @@ class Modeller:
 
         '''distances'''
         if self.config.discriminator.use_rdf_distance_loss:
-            real_rdf, rr, _ = crystal_rdf(real_supercell_data, real_pairwise_distances_dict,
-                                          rrange=[0, self.config.discriminator.model.convolution_cutoff], bins=100, raw_density=True, elementwise=True, mode='intermolecular', cpu_detach=False)
-            fake_rdf, _, _ = crystal_rdf(fake_supercell_data, fake_pairwise_distances_dict,
-                                         rrange=[0, self.config.discriminator.model.convolution_cutoff], bins=100, raw_density=True, elementwise=True, mode='intermolecular', cpu_detach=False)
+            real_rdf, rr, _ = new_crystal_rdf(real_supercell_data, real_pairwise_distances_dict,
+                                              rrange=[0, self.config.discriminator.model.convolution_cutoff],
+                                              bins=2000, raw_density=True, elementwise=True, mode='intermolecular', cpu_detach=False)
+            fake_rdf, _, _ = new_crystal_rdf(fake_supercell_data, fake_pairwise_distances_dict,
+                                             rrange=[0, self.config.discriminator.model.convolution_cutoff],
+                                             bins=2000, raw_density=True, elementwise=True, mode='intermolecular', cpu_detach=False)
 
             rdf_dists = torch.zeros(real_supercell_data.num_graphs, device=self.config.device, dtype=torch.float32)
             for i in range(real_supercell_data.num_graphs):

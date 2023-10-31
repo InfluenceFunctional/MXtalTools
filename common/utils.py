@@ -129,7 +129,8 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
 
     emd = earth_movers_distance_torch(torch_rdf1_f, torch_rdf2)
 
-    range_normed_emd = emd * (torch_range[1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+    range_normed_emd = emd / len(torch_range)**2 * (torch_range[-1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+    # do not adjust the above - distance is extensive weirdly extensive in bin scaling
     aggregation_weight = (rdf1.sum(1) + rdf2.sum(1)) / 2  # aggregate rdf components according to pairwise mean weight
     distance = (range_normed_emd * aggregation_weight).mean()
 

@@ -402,14 +402,14 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
     #     traj_analysis = np.load('traj_analysis_outputs.npy', allow_pickle=True).item()
 
     from classify_lammps_trajs.ovito_utils import write_ovito_xyz
-    dataset_name = dumps_dir.split('/')[-2]
+    dataset_name = ''.join(dumps_dir.split('/')[-3:])
     datasets_path = config['datasets_path']
     dataset_path = f'{datasets_path}{dataset_name}.pkl'
 
     if True: #dataset_path not in traj_analysis.keys():
 
         if not os.path.exists(dataset_path):
-            made_dataset = generate_dataset_from_dumps([dumps_dir], dataset_path)
+            made_dataset = generate_dataset_from_dumps([dumps_dir], dataset_path)  # todo add more expressive dataset name
 
             if not made_dataset:
                 print(f'{dumps_dir} does not contain valid dump to analyze')
@@ -418,7 +418,7 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
         os.chdir(config['runs_path'])
 
         _, loader = collect_to_traj_dataloaders(
-            dataset_path, int(1e7), batch_size=1, temperatures=None, test_fraction=1, shuffle=False)
+            dataset_path, int(1e7), batch_size=1, temperatures=None, test_fraction=1, shuffle=False, filter_early=False)
 
         results_dict = None
         classifier.train(False)
@@ -442,12 +442,15 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
 
         write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
                         sorted_molwise_results_dict['Atom_Types'],
-                        sorted_molwise_results_dict['Prediction'], filename=dataset_name)  # write a trajectory
+                        sorted_molwise_results_dict['Prediction'], filename=dataset_name)  # write a trajectory  # todo give more descriptive title
 
-        fig = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)
+        fig = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)  # todo add confidence to prediction
 
         run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
-        fig.update_layout(title=f"Form {identifier2form[run_config['structure_identifier']]}, Cluster Radius {run_config['max_sphere_radius']}A, Temperature {run_config['temperature']}K")
+        fig.update_layout(
+            title=f"Form {identifier2form[run_config['structure_identifier']]}, "
+                  f"Cluster Radius {run_config['max_sphere_radius']}A, "
+                  f"Temperature {run_config['temperature']}K")
 
         # if not os.path.exists('traj_analysis_outputs.npy'):
         #     traj_analysis = {}
