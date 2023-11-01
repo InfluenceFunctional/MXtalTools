@@ -37,6 +37,7 @@ seeds:
 discriminator_name: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'
 generator_name: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_name: null  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
+proxy_discriminator_name: null
 
 discriminator_positional_noise: 0
 generator_positional_noise: 0
