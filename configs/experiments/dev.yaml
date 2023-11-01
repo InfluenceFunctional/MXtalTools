@@ -5,11 +5,11 @@ mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/dataset/full_discriminator.yaml'
-extra_test_set_name: null #'blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
+extra_test_set_name: 'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 dataset:
-  max_dataset_length: 5000
+  max_dataset_length: 1000
 
 # batching & convergence
 early_epochs_step_override: 100

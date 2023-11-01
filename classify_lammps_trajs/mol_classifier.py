@@ -6,7 +6,8 @@ import argparse
 import classify_lammps_trajs.test_configs as test_configs
 
 from classify_lammps_trajs.utils import (collect_to_traj_dataloaders, init_classifier,
-                                         train_classifier, reload_model, classifier_evaluation, trajectory_analysis)
+                                         train_classifier, reload_model,
+                                         classifier_evaluation, trajectory_analysis)
 from classify_lammps_trajs.NICOAM_constants import class_names
 from classify_lammps_trajs.dump_data_processing import generate_dataset_from_dumps
 
@@ -43,20 +44,28 @@ if __name__ == "__main__":
         dumps_dirs = [config['dumps_path'] + r'bulk_trajs1/T_100',
                       config['dumps_path'] + r'bulk_trajs1/T_350',
                       config['dumps_path'] + r'hot_trajs/melted_trajs_T_950']
-
-
+                      #config['dumps_path'] + r'gap_trajs1']
 
     """
     training
     """
     if config['train_model']:
+        os.chdir(config['runs_path'])
+
         if not os.path.exists(dataset_path):
             generate_dataset_from_dumps(dumps_dirs, dataset_path)
 
         _, train_loader = collect_to_traj_dataloaders(
-            dataset_path, config['dataset_size'], batch_size=1, temperatures=[100, 950], test_fraction=1)
+            dataset_path, config['dataset_size'], batch_size=1, temperatures=[100], test_fraction=1)
         _, test_loader = collect_to_traj_dataloaders(
-            dataset_path, config['dataset_size'], batch_size=1, temperatures=[350], test_fraction=1)
+            dataset_path, int(config['dataset_size'] * 0.2), batch_size=1, temperatures=[350], test_fraction=1)
+        _, hot_loader = collect_to_traj_dataloaders(
+            dataset_path, int(config['dataset_size'] * 0.11), batch_size=1, temperatures=[950], test_fraction=1)
+
+        # split the hot trajs equally
+        hot_length = len(hot_loader)
+        train_loader.dataset.extend(hot_loader.dataset[:hot_length // 2])
+        test_loader.dataset.extend(hot_loader.dataset[hot_length // 2:])
 
         train_classifier(config, classifier, optimizer,
                          train_loader, test_loader,
@@ -74,10 +83,16 @@ if __name__ == "__main__":
             generate_dataset_from_dumps(dumps_dirs, dataset_path)
 
         _, train_loader = collect_to_traj_dataloaders(
-            dataset_path, config['dataset_size'], batch_size=1, temperatures=[100, 950], test_fraction=1)
+            dataset_path, config['dataset_size'], batch_size=1, temperatures=[100], test_fraction=1)
         _, test_loader = collect_to_traj_dataloaders(
             dataset_path, config['dataset_size'], batch_size=1, temperatures=[350], test_fraction=1)
+        _, hot_loader = collect_to_traj_dataloaders(
+            dataset_path, config['dataset_size'], batch_size=1, temperatures=[950], test_fraction=1)
 
+        # split the hot trajs equally
+        hot_length = len(hot_loader)
+        train_loader.dataset.extend(hot_loader.dataset[:hot_length // 2])
+        test_loader.dataset.extend(hot_loader.dataset[hot_length // 2:])
         classifier_evaluation(config, classifier, optimizer,
                               train_loader, test_loader,
                               config['num_epochs'], wandb,

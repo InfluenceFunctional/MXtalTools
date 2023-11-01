@@ -355,7 +355,7 @@ def cell_vol(v, a):
 
 def coor_trans_matrix(opt, v, a, return_vol=False):
     """ Calculate cos and sin of cell angles """  # todo test - enforce this agrees with the torch version
-    if max(a) > np.pi:
+    if np.amax(a) > np.pi:
         print('Warning - large angles! Remember to convert to natural units!')
 
     cos_a = np.cos(a)

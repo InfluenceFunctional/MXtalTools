@@ -16,7 +16,7 @@ def process_dump(path):
     timestep = None
     n_atoms = None
     frame_outputs = {}
-    for ind, line in enumerate(lines):
+    for ind, line in enumerate(tqdm(lines)):
         if "ITEM: TIMESTEP" in line:
             timestep = int(lines[ind + 1])
         elif "ITEM: NUMBER OF ATOMS" in line:
@@ -60,11 +60,17 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
             print(f"Processing dump {path}")
             if os.path.exists('run_config.npy'):
                 run_config = np.load('run_config.npy', allow_pickle=True).item()
-                temperature = run_config['temperature']
-                form = identifier2form[run_config['structure_identifier']]
+
+            elif os.path.exists(path.split('\\')[0] + '/' + 'run_config.npy'):
+                run_config = np.load(path.split('\\')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
+            elif os.path.exists(path.split('/')[0] + '/' + 'run_config.npy'):
+                run_config = np.load(path.split('/')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
             else:
-                temperature = int(dumps_dir.split('_')[-1])
-                form = int(path.split('/')[0])
+                assert False, "Trajectory directory is missing config file"
+
+            temperature = run_config['temperature']
+            form = identifier2form[run_config['structure_identifier']]
+            gap_rate = run_config['gap_rate']
 
             trajectory_dict = process_dump(path)
 
@@ -79,6 +85,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
                             'form': form,
                             'time_step': times,
                             'cell_params': vals.attrs['cell_params'],
+                            'gap_rate': gap_rate,
                             }
 
                 new_df = pd.DataFrame()

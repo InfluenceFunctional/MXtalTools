@@ -7,11 +7,14 @@ import os
 
 from classify_lammps_trajs.NICOAM_constants import num2atomicnum, identifier2form
 from classify_lammps_trajs.dump_data_processing import generate_dataset_from_dumps
-from classify_lammps_trajs.traj_analysis_figs import embedding_fig, classifier_accuracy_figs, classifier_trajectory_analysis_fig
-from common.utils import delete_from_dataframe
+from classify_lammps_trajs.traj_analysis_figs import embedding_fig, form_accuracy_fig, classifier_trajectory_analysis_fig, defect_accuracy_fig
+from common.utils import delete_from_dataframe, softmax_np
+from crystal_building.utils import fractional_transform
 from dataset_management.CrystalData import CrystalData
 from dataset_management.utils import get_dataloaders
 from models.base_models import molecule_graph_model
+from common.geometry_calculations import coor_trans_matrix
+from classify_lammps_trajs.NICOAM_constants import defect_names
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
@@ -57,11 +60,31 @@ def convert_box_to_cell_params(box_params):
     zlo = zlo_bound
     zhi = zhi_bound
 
-    a = np.asarray([xhi - xlo, np.zeros_like(xhi), np.zeros_like(xhi)]).T
-    b = np.asarray([xy, yhi - ylo, np.zeros_like(xy)]).T
-    c = np.asarray([xz, yz, zhi - zlo]).T
+    av = np.asarray([xhi - xlo, np.zeros_like(xhi), np.zeros_like(xhi)]).T
+    bv = np.asarray([xy, yhi - ylo, np.zeros_like(xy)]).T
+    cv = np.asarray([xz, yz, zhi - zlo]).T
 
-    return a, b, c
+    T_fc_list = np.zeros((len(av), 3, 3))
+    for i in range(len(T_fc_list)):  # warning dubious
+        T_fc_list[i] = np.stack((av[i], bv[i], cv[i])).T
+
+    a = xhi - xlo
+    b = np.sqrt((yhi - ylo) ** 2 + xy ** 2)
+    c = np.sqrt((zhi - zlo) ** 2 + xz ** 2 + yz ** 2)
+    alpha = np.arccos((xy * xz + (yhi - ylo) * yz) / (b * c))
+    beta = np.arccos(xz / c)
+    gamma = np.arccos(xy / b)
+    lengths = np.stack([a, b, c]).T
+    angles = np.stack([alpha, beta, gamma]).T
+
+    T_fc_list2 = []  # double check the answer
+    for i in range(len(lengths)):
+        T_fc_list2.append(coor_trans_matrix('f_to_c', lengths[i], angles[i]))
+    T_fc_list2 = np.stack(T_fc_list2)
+
+    assert np.sum(np.abs(T_fc_list - T_fc_list2)) < 1e-3
+
+    return T_fc_list
 
 
 def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fraction=0.2, filter_early=True, temperatures: list = None, shuffle=True):
@@ -79,7 +102,12 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         dataset = dataset.reset_index().drop(columns='index')
 
     if filter_early:
-        bad_inds = np.argwhere(np.asarray(dataset['time_step']) <= int(1e5))[:, 0]  # filter first 100k steps for equilibration
+        bad_inds = np.argwhere(np.asarray(dataset['time_step']) <= int(1e4))[:, 0]  # filter first 10ps steps for equilibration
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
+
+    if False:
+        bad_inds = np.argwhere(np.asarray(dataset['gap_rate']) > 0)[:, 0]  # cannot process gaps right now
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
 
@@ -94,13 +122,7 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         if dataset.iloc[i]['temperature'] == 950:
             targets[i] = 9
 
-    # a, b, c = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
-    #
-    # T_fc_list = np.zeros((len(a), 3, 3))
-    # for i in range(len(T_fc_list)):
-    #     T_fc_list[i] = np.stack((a[i], b[i], c[i]))
-
-    T_fc_list = np.stack([np.eye(3) for _ in range(len(dataset['cell_params']))])  # placeholder
+    T_fc_list = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
 
     print('Generating training datapoints')
     datapoints = []
@@ -136,10 +158,36 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         coordination_cutoff = 4 + 6
         coordination_number = (dist < coordination_cutoff).sum(1)
         surface_mols_ind = torch.argwhere(coordination_number < 20)[:, 0]  # 4 is normal - this is quite permissive
-        cluster_targets[surface_mols_ind] = len(forms2tgt)  # label surface molecules
 
-        # reindex mol_inds
+        defect_type = torch.zeros_like(cluster_targets)
+        defect_type[surface_mols_ind] = 1  # defect type 1 is surfaces
+
+        #cluster_targets[surface_mols_ind] = len(forms2tgt)  # label surface molecules as 'disordered'
         cluster_mol_ind = torch.arange(len(good_mols)).repeat(15, 1).T
+
+        if dataset.loc[i]['gap_rate'] > 0:
+            # find gaps and any neighboring molecules
+            aa = 1
+            from scipy.stats import gaussian_kde
+            transform = gaussian_kde(cluster_coords.reshape(np.prod(cluster_coords.shape[:2]), 3).T, bw_method=0.1)
+            refrac = fractional_transform(cluster_coords.reshape(np.prod(cluster_coords.shape[:2]), 3), torch.linalg.inv(torch.Tensor(T_fc_list[i])))
+            frac_lin_list = [torch.linspace(0.25, 0.75, 25) for ind in range(3)]  # look only well within the structure
+            frac_grid = torch.cartesian_prod(*frac_lin_list)
+            cart_grid = fractional_transform(frac_grid, torch.Tensor(T_fc_list[i]))
+
+            density = transform(cart_grid.T)
+            point_density = transform(centroids.T)
+            x, y, z = cart_grid.T
+
+            normed_density = density / density.sum()
+            void = 1 / normed_density
+
+            fig = go.Figure()
+            fig.add_scatter3d(x=x, y=y, z=z, mode='markers', marker_color=void, marker_opacity=0.1)
+            # fig.add_scatter3d(x=x, y=y, z=z, mode='markers', marker_color=density, marker_opacity=0.1)
+            # fig.add_scatter3d(x=centroids[:,0], y=centroids[:,1], z=centroids[:,2], mode='markers', marker_color=point_density, marker_opacity=0.5)
+            fig.show()
+
 
         datapoints.append(
             CrystalData(
@@ -147,10 +195,10 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
                 mol_ind=cluster_mol_ind.reshape(len(good_mols) * 15),
                 pos=cluster_coords.reshape(len(good_mols) * 15, 3),
                 y=cluster_targets,
+                defect=defect_type,
                 centroid_pos=(centroids - centroids.mean(0)).cpu().detach().numpy(),
                 coord_number=coordination_number.cpu().detach().numpy(),
                 tracking=np.asarray(dataset.loc[i, ['temperature', 'time_step']]),
-                T_fc=torch.Tensor(T_fc_list[i]),
                 asym_unit_handedness=torch.ones(1),
                 symmetry_operators=torch.ones(1),
             )
@@ -162,7 +210,7 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
 def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth):
     return molecule_graph_model(
         num_atom_feats=1,
-        output_dimension=9 + 1,
+        output_dimension=9 + 1 + 2,  # 9 forms + disordered: bulk or surface
         graph_aggregator='molwise',
         concat_pos_to_atom_features=False,
         concat_mol_to_atom_features=False,
@@ -213,16 +261,20 @@ def train_classifier(config, classifier, optimizer,
             train_loss = []
             train_true_labels = []
             train_probs = []
-
+            train_true_defects = []
+            test_loss = []
+            test_probs = []
+            test_true_labels = []
+            test_true_defects = []
             classifier.train(True)
             for step, data in enumerate(tqdm(train_loader)):
                 sample = data.to(device)
 
                 output = classifier(sample)
-                loss = F.cross_entropy(output, sample.y)
-
-                train_probs.append(F.softmax(output, dim=1).cpu().detach().numpy())
+                loss = get_loss(output, sample)
+                train_probs.append(output.cpu().detach().numpy())
                 train_true_labels.append(sample.y.cpu().detach().numpy())
+                train_true_defects.append(sample.defect.cpu().detach().numpy())
 
                 loss.backward()
                 if step % batch_size == 0:  # use gradient accumulation for synthetically larger batch sizes
@@ -233,18 +285,18 @@ def train_classifier(config, classifier, optimizer,
 
             with torch.no_grad():
                 classifier.eval()
-                test_loss = []
-                test_probs = []
-                test_true_labels = []
+
                 for step, data in enumerate(tqdm(test_loader)):
                     sample = data.to(device)
 
                     output = classifier(sample)  # fix mini-batch behavior
-                    loss = F.cross_entropy(output, sample.y)
+                    loss = get_loss(output, sample)
 
                     test_loss.append(loss.cpu().detach().numpy())
-                    test_probs.append(F.softmax(output, dim=1).cpu().detach().numpy())
+                    test_probs.append(output.cpu().detach().numpy())
                     test_true_labels.append(sample.y.cpu().detach().numpy())
+                    test_true_defects.append(sample.defect.cpu().detach().numpy())
+
 
             test_record.append(np.mean(test_loss))
             if test_record[-1] == np.amin(test_record):
@@ -262,14 +314,15 @@ def train_classifier(config, classifier, optimizer,
             print(f"Log Test Loss {np.log10(np.mean(np.array(test_loss))):.4f}")
 
             if epoch % reporting_frequency == 0:
-
                 train_true_labels = np.concatenate(train_true_labels)
+                train_true_defects = np.concatenate(train_true_defects)
                 train_probs = np.concatenate(train_probs)
                 test_true_labels = np.concatenate(test_true_labels)
+                test_true_defects = np.concatenate(test_true_defects)
                 test_probs = np.concatenate(test_probs)
 
-                classifier_reporting(train_true_labels, train_probs, class_names, wandb, 'Train')
-                classifier_reporting(test_true_labels, test_probs, class_names, wandb, 'Test')
+                classifier_reporting(train_true_labels, train_true_defects, train_probs, class_names, wandb, 'Train')
+                classifier_reporting(test_true_labels, test_true_defects, test_probs, class_names, wandb, 'Test')
 
             wandb.log({
                 'train_loss': np.asarray(train_loss).mean(),
@@ -277,13 +330,15 @@ def train_classifier(config, classifier, optimizer,
             })
 
 
-def classifier_reporting(true_labels, probs, class_names, wandb, epoch_type):
-    # todo add raw numbers to confusion matrix
-    # todo add classwise accuracy
+def classifier_reporting(true_labels, true_defects, probs, class_names, wandb, epoch_type):
     if len(np.unique(true_labels)) == 10:  # only if we have all classes represented
-        predicted_class = np.argmax(probs, axis=1)
+        type_probs = softmax_np(probs[:, :10])
+        predicted_class = np.argmax(type_probs, axis=1)
 
-        train_score = roc_auc_score(true_labels, probs, multi_class='ovo')
+        defect_probs = softmax_np(probs[:, 10:])
+        predicted_defect = np.argmax(defect_probs, axis=-1)
+
+        train_score = roc_auc_score(true_labels, type_probs, multi_class='ovo')
         train_f1_score = f1_score(true_labels, predicted_class, average='micro')
         train_cmat = confusion_matrix(true_labels, predicted_class, normalize='true')
         fig = go.Figure(go.Heatmap(z=train_cmat, x=class_names, y=class_names))
@@ -294,6 +349,18 @@ def classifier_reporting(true_labels, probs, class_names, wandb, epoch_type):
         wandb.log({f"{epoch_type} ROC_AUC": train_score,
                    f"{epoch_type} F1 Score": train_f1_score,
                    f"{epoch_type} Confusion Matrix": fig})
+
+        train_score = roc_auc_score(true_defects, defect_probs[:,1], multi_class='ovo')
+        train_f1_score = f1_score(true_defects, predicted_defect, average='micro')
+        train_cmat = confusion_matrix(true_defects, predicted_defect, normalize='true')
+        fig = go.Figure(go.Heatmap(z=train_cmat, x=defect_names, y=defect_names))
+        fig.update_layout(xaxis=dict(title="Predicted Defect"),
+                          yaxis=dict(title="True Defect")
+                          )
+
+        wandb.log({f"{epoch_type} Defect ROC_AUC": train_score,
+                   f"{epoch_type} Defect F1 Score": train_f1_score,
+                   f"{epoch_type} Defect Confusion Matrix": fig})
 
 
 def reload_model(model, optimizer, path, reload_optimizer=False):
@@ -319,8 +386,10 @@ def record_step_results(results_dict, output, sample, data, latents_dict, step, 
         results_dict = {'Temperature': [],
                         'Time_Step': [],
                         'Loss': [],
-                        'Prediction': [],
+                        'Type_Prediction': [],
+                        'Defect_Prediction': [],
                         'Targets': [],
+                        'Defects': [],
                         'Latents': [],
                         'Sample_Index': [],
                         'Coordinates': [],
@@ -329,9 +398,11 @@ def record_step_results(results_dict, output, sample, data, latents_dict, step, 
                         'Molecule_Centroids': [],
                         'Coordination_Numbers': []}
 
-    results_dict['Loss'].append(F.cross_entropy(output, sample.y).cpu().detach().numpy())
-    results_dict['Prediction'].append(F.softmax(output, dim=1).cpu().detach().numpy())
+    results_dict['Loss'].append(get_loss(output, sample).cpu().detach().numpy())
+    results_dict['Type_Prediction'].append(F.softmax(output[:, :10], dim=1).cpu().detach().numpy())
+    results_dict['Defect_Prediction'].append(F.softmax(output[:, 10:], dim=1).cpu().detach().numpy())
     results_dict['Targets'].append(sample.y.cpu().detach().numpy())
+    results_dict['Defects'].append(sample.defect.cpu().detach().numpy())
     results_dict['Latents'].append(latents_dict['final_activation'])
     results_dict['Temperature'].append(np.ones(len(sample.y)) * data.tracking[0][0])
     results_dict['Time_Step'].append(np.ones(len(sample.y)) * data.tracking[0][1])
@@ -383,7 +454,9 @@ def classifier_evaluation(config, classifier, optimizer,
         fig_dict['Embedding_Analysis'] = embedding_fig(results_dict, num_samples)
 
         '''accuracy metrics'''
-        fig_dict['Confusion_Matrices'], accuracy_scores = classifier_accuracy_figs(results_dict)
+        fig_dict['Form_Confusion_Matrices'], accuracy_scores = form_accuracy_fig(results_dict)
+        fig_dict['Defect_Confusion_Matrices'], accuracy_scores = defect_accuracy_fig(results_dict)
+        fig_dict['All_Confusion_Matrices'], accuracy_scores = all_accuracy_fig(results_dict)
 
         '''model games'''
 
@@ -406,7 +479,7 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
     datasets_path = config['datasets_path']
     dataset_path = f'{datasets_path}{dataset_name}.pkl'
 
-    if True: #dataset_path not in traj_analysis.keys():
+    if True:  # dataset_path not in traj_analysis.keys():
 
         if not os.path.exists(dataset_path):
             made_dataset = generate_dataset_from_dumps([dumps_dir], dataset_path)  # todo add more expressive dataset name
@@ -436,31 +509,42 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
                 results_dict[key] = np.stack(results_dict[key])
 
         results_dict['Atomwise_Sample_Index'] = results_dict['Sample_Index'].repeat(15)
-        results_dict['Prediction'] = np.argmax(results_dict['Prediction'], axis=-1)  # argmax sample
+        results_dict['Type_Prediction_Choice'] = np.argmax(results_dict['Type_Prediction'], axis=-1)  # argmax sample
+        results_dict['Type_Prediction_Confidence'] = np.amax(results_dict['Type_Prediction'], axis=-1)  # argmax sample
 
         sorted_molwise_results_dict, time_steps = process_trajectory_results_dict(results_dict, loader)
 
         write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
                         sorted_molwise_results_dict['Atom_Types'],
-                        sorted_molwise_results_dict['Prediction'], filename=dataset_name)  # write a trajectory  # todo give more descriptive title
+                        sorted_molwise_results_dict['Type_Prediction_Choice'], filename=dataset_name + '_prediction')  # write a trajectory  # todo give more descriptive title
 
-        fig = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)  # todo add confidence to prediction
+        write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
+                        sorted_molwise_results_dict['Atom_Types'],
+                        sorted_molwise_results_dict['Type_Prediction_Confidence'], filename=dataset_name + '_confidence')  # write a trajectory  # todo give more descriptive title
+
+        fig, fig2 = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)  # todo add confidence to prediction
 
         run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
         fig.update_layout(
             title=f"Form {identifier2form[run_config['structure_identifier']]}, "
                   f"Cluster Radius {run_config['max_sphere_radius']}A, "
                   f"Temperature {run_config['temperature']}K")
+        fig2.update_layout(
+            title=f"Form {identifier2form[run_config['structure_identifier']]}, "
+                  f"Cluster Radius {run_config['max_sphere_radius']}A, "
+                  f"Temperature {run_config['temperature']}K")
+
 
         # if not os.path.exists('traj_analysis_outputs.npy'):
         #     traj_analysis = {}
         # else:
         #     traj_analysis = np.load('traj_analysis_outputs.npy',allow_pickle=True).item()
 
-        #traj_analysis[dataset_path] = sorted_molwise_results_dict
-        #np.save('traj_analysis_outputs', traj_analysis)
+        # traj_analysis[dataset_path] = sorted_molwise_results_dict
+        # np.save('traj_analysis_outputs', traj_analysis)
 
-        wandb.log({f"{dataset_name} Trajectory Analysis": fig})
+        wandb.log({f"{dataset_name} Trajectory Analysis": fig,
+                   f"{dataset_name} Confidence Analysis": fig2})
 
 
 def process_trajectory_results_dict(results_dict, loader):
@@ -487,3 +571,7 @@ def process_trajectory_results_dict(results_dict, loader):
         sorted_molwise_results_dict[key] = [molwise_results_dict[key][ind] for ind in sort_inds]
 
     return sorted_molwise_results_dict, np.asarray(time_inds)[sort_inds]
+
+
+def get_loss(output, sample):
+    return F.cross_entropy(output[:, :10], sample.y) + F.cross_entropy(output[:, 10:], sample.defect)

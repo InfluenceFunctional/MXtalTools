@@ -1,4 +1,5 @@
 class_names = ['V', 'VII', 'VIII', 'I', 'II', 'III', 'IV', 'IX', 'VI', 'Disordered']
+defect_names = ['Bulk', 'Surface']
 identifier2form = {'NICOAM07': 5,
                    'NICOAM08': 7,
                    'NICOAM09': 8,
@@ -8,6 +9,8 @@ identifier2form = {'NICOAM07': 5,
                    'NICOAM16': 4,
                    'NICOAM17': 9,
                    'NICOAM18': 6}
+form2index = {ind: list(identifier2form.values())[ind] - 1 for ind in range(len(identifier2form.keys()))}
+form2index[9] = 9
 type2num = {
     'Ca1': 1,
     'Ca2': 2,
