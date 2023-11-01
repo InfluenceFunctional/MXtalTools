@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import pandas as pd
 from scipy.interpolate import interpn
+from typing import List, Optional
 
 from constants.space_group_info import SYM_OPS, LATTICE_TYPE, POINT_GROUPS, SPACE_GROUPS
 
@@ -265,3 +266,15 @@ def angle2components(angle: torch.tensor):
 #         'space_group_indices': space_group_indices}
 #
 #     np.save('symmetry_info', sym_info)
+
+
+def repeat_interleave(
+    repeats: List[int],
+    device: Optional[torch.device] = None,
+):
+    """
+    borrowed from torch_geometric.data.collate
+    """
+    outs = [torch.full((n, ), i, device=device) for i, n in enumerate(repeats)]
+    return torch.cat(outs, dim=0)
+

@@ -18,7 +18,7 @@ grow_batch_size: True
 min_batch_size: 25
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 0 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
@@ -30,7 +30,7 @@ logger:
   log_figures: True
   experiment_tag: dev
 
-sample_steps: 100 # now for mini csp
+sample_steps: 100 
 
 seeds:
   model: 0
@@ -117,7 +117,7 @@ discriminator:
   train_on_distorted: True
   use_classification_loss: True
   use_rdf_distance_loss: True
-  use_cell_distance_loss: False  # only meaningful when generating within the same space group
+  use_cell_distance_loss: False  # DO NOT USE only meaningful when generating within the same space group
   distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
   # discriminator optimizer and model

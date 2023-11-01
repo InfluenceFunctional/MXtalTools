@@ -30,7 +30,7 @@ logger:
   log_figures: True
   experiment_tag: test
 
-sample_steps: 20 # now for mini csp
+sample_steps: 20 
 sample_move_size: 0.001 # currently unused
 
 seeds:

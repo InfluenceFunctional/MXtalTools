@@ -4,7 +4,7 @@ import torch
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from common.rdf_calculation import parallel_compute_rdf_torch
 from torch_scatter import scatter
-from torch_geometric.data.collate import repeat_interleave
+from common.utils import repeat_interleave
 
 
 def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False, cpu_detach=False, remove_radial_scaling=False):
@@ -177,7 +177,7 @@ def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10]
     if elementwise:
         dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_crystal_number)
         num_pairs = len(rdfs_dict.keys())
-        batch = repeat_interleave(dists_per_hist, device=device)  # todo faster but still the 10x slow step
+        batch = repeat_interleave(dists_per_hist, device='cpu').to(device)  # todo faster on cpu but still slow
         hist, bin_edges = batch_histogram(sorted_dists, batch, num_graphs * num_pairs, rrange=rrange, nbins=bins)
         rdf_density = torch.ones(num_graphs * num_pairs, device=device, dtype=torch.float32)
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)  # volume of the shell at radius r+dr
@@ -189,7 +189,7 @@ def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10]
         dists_per_hist = [torch.sum(edge_in_crystal_number == n) for n in range(num_graphs)]
         sorted_dists = torch.cat([dists[edge_in_crystal_number == n] for n in range(num_graphs)])
         rdfs_dict = {}
-        batch = repeat_interleave(dists_per_hist, device=device)
+        batch = repeat_interleave(dists_per_hist, device='cpu').to(device)
         hist, bin_edges = batch_histogram(sorted_dists, batch, num_graphs, rrange=rrange, nbins=bins)
         rdf_density = torch.ones(num_graphs, device=device, dtype=torch.float32)
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)  # volume of the shell at radius r+dr

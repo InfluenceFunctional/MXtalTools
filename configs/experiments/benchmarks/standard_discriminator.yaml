@@ -23,11 +23,11 @@ extra_test_period: 5 # how often to evaluate on extra test sets (hardcoded analy
 logger:
   run_name: standard_discriminator
   mini_csp_frequency: 3
-  sample_reporting_frequency: 3
+  sample_reporting_frequency: 1
   log_figures: True
   experiment_tag: benchmarks
 
-sample_steps: 100 # now for mini csp
+sample_steps: 100 
 
 seeds:
   model: 0
@@ -108,10 +108,12 @@ generator:
       atom_type_embedding_dims: 5
 
 discriminator:
-  loss_func: 'softmax'
   train_adversarially: False
   train_on_randn: True
   train_on_distorted: True
+  use_classification_loss: True
+  use_rdf_distance_loss: False
+  use_cell_distance_loss: False  # only meaninful when generating within the same space group
   distortion_magnitude: 0.1 # -1 for wide range test # noise for distorted generation
 
   # discriminator optimizer and model

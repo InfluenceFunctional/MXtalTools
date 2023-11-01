@@ -27,7 +27,7 @@ logger:
   log_figures: True
   experiment_tag: benchmarks
 
-sample_steps: 100 # now for mini csp
+sample_steps: 100 
 
 seeds:
   model: 0

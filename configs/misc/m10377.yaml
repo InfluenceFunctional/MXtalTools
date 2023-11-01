@@ -53,7 +53,7 @@ wandb:
   experiment_tag: dev
   log_figures: True
 
-sample_steps: 10 # now for mini csp
+sample_steps: 10 
 sample_move_size: 0.001 # currently unused
 
 # batching & convergence
