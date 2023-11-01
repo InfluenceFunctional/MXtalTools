@@ -852,16 +852,23 @@ class Modeller:
         score_on_real = softmax_and_score(discriminator_output_on_real[:, :2])
         score_on_fake = softmax_and_score(discriminator_output_on_fake[:, :2])
 
-        stats_keys = ['discriminator_real_score', 'discriminator_fake_score',
-                      'discriminator_fake_true_distance', 'discriminator_fake_predicted_distance',
-                      'discriminator_real_true_distance', 'discriminator_real_predicted_distance',
-                      'discriminator_classification_loss', 'discriminator_distortion_loss',
+        stats_keys = ['discriminator_real_score',
+                      'discriminator_fake_score',
+                      'discriminator_fake_true_distance',
+                      'discriminator_fake_predicted_distance',
+                      'discriminator_real_true_distance',
+                      'discriminator_real_predicted_distance',
+                      'discriminator_classification_loss',
+                      'discriminator_distortion_loss',
                       'discriminator_distance_loss']
-        stats_values = [score_on_real.cpu().detach().numpy(), score_on_fake.cpu().detach().numpy(),
-                        torch.log10(1 + real_fake_rdf_distances).cpu().detach().numpy(), discriminator_output_on_fake[:, 3].cpu().detach().numpy(),
-                        torch.zeros_like(discriminator_output_on_real[:, 0]).cpu().detach().numpy(), discriminator_output_on_real[:, 3].cpu().detach().numpy(),
-                        rdf_distance_target.cpu().detach().numpy(), combined_outputs[:, 3].cpu().detach().numpy(),
-                        classification_losses.cpu().detach().numpy(), distortion_losses.cpu().detach().numpy(),
+        stats_values = [score_on_real.cpu().detach().numpy(),
+                        score_on_fake.cpu().detach().numpy(),
+                        torch.log10(1 + real_fake_rdf_distances).cpu().detach().numpy(),
+                        discriminator_output_on_fake[:, 3].cpu().detach().numpy(),
+                        torch.zeros_like(discriminator_output_on_real[:, 0]).cpu().detach().numpy(),
+                        discriminator_output_on_real[:, 3].cpu().detach().numpy(),
+                        classification_losses.cpu().detach().numpy(),
+                        distortion_losses.cpu().detach().numpy(),
                         rdf_distance_losses.cpu().detach().numpy()]
 
         discriminator_losses_list = []
