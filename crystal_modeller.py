@@ -969,7 +969,7 @@ class Modeller:
             for i in range(real_supercell_data.num_graphs):
                 rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr) / real_supercell_data.mol_size[i]  # divides out the trivial size correlation
         else:
-            rdf_dists = torch.ones(real_supercell_data.num_graphs, device=self.config.device, dtype=torch.float32)  # dummy
+            rdf_dists = torch.randn(real_supercell_data.num_graphs, device=self.config.device, dtype=torch.float32).abs()  # dummy
 
         stats_keys = ['real_vdw_penalty',
                       'fake_vdw_penalty',
