@@ -31,7 +31,7 @@ sample_steps: 100
 
 seeds:
   model: 0
-  dataset: 0
+  dataset: 1
 
 # for reloading prior checkpoints
 discriminator_name: null #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_discriminator_10413'

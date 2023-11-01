@@ -5,7 +5,7 @@ mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/dataset/full_discriminator.yaml'
-extra_test_set_name: 'blind_test_dataset.pkl'
+extra_test_set_name: null #'blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 
 # batching & convergence
@@ -27,7 +27,7 @@ logger:
   log_figures: True
   experiment_tag: benchmarks
 
-sample_steps: 100 
+sample_steps: 100
 
 seeds:
   model: 0
@@ -43,7 +43,7 @@ discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
 
-generate_sgs: ["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
 # for GAN training
 generator:
@@ -72,11 +72,11 @@ generator:
     lr_shrink_lambda: 0.99
 
   model:
-    num_fc_layers: 4
-    fc_depth: 256
+    num_fc_layers: 2
+    fc_depth: 128
     activation: 'gelu'
-    fc_dropout_probability: 0
-    fc_norm_mode: null
+    fc_dropout_probability: 0.1
+    fc_norm_mode: layer
     conditioning_mode: 'first_layer' # 'first_layer' only for now
 
     prior: multivariate normal
@@ -90,10 +90,10 @@ generator:
       activation: gelu
       num_fc_layers: 4
       fc_depth: 256
-      fc_norm_mode: null
-      fc_dropout_probability: 0
-      graph_node_norm: null
-      graph_node_dropout: 0
+      fc_norm_mode: layer
+      fc_dropout_probability: 0.1
+      graph_node_norm: 'graph layer'
+      graph_node_dropout: 0.1
       graph_message_norm: null
       graph_message_dropout: 0
       num_attention_heads: 4
@@ -157,6 +157,50 @@ discriminator:
     convolution_cutoff: 6
     atom_type_embedding_dims: 5
     periodic_convolution_type: 'all_layers'  # or 'last_layer'
+
+proxy_discriminator:
+  train: False
+
+  # discriminator optimizer and model
+  optimizer:
+    optimizer: adamw
+    init_lr: 1.0E-4
+    max_lr: 2.0E-4
+    min_lr: 1.0E-4
+    lr_schedule: True
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 0.001
+    convergence_eps: 0.00001
+    training_period: 1
+    lr_growth_lambda: 1.05
+    lr_shrink_lambda: 0.99
+
+  model:
+    graph_convolution_type: TransformerConv
+    graph_aggregator:  max
+    concat_mol_to_atom_features: True
+    activation: gelu
+    num_fc_layers: 4
+    fc_depth: 512
+    fc_norm_mode: 'layer'
+    fc_dropout_probability: 0.1
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0
+    graph_message_norm: null
+    graph_message_dropout: 0
+    num_attention_heads: 4
+    graph_message_depth: 128
+    graph_node_dims: 256
+    num_graph_convolutions: 4
+    graph_embedding_depth: 256
+    nodewise_fc_layers: 1
+    num_radial: 32
+    radial_function: bessel
+    max_num_neighbors: 100
+    convolution_cutoff: 6
+    atom_type_embedding_dims: 5
+
 
 regressor:
   optimizer:
