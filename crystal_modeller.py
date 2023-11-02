@@ -503,7 +503,7 @@ class Modeller:
 
                             if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0) and (epoch > 0):
                                 self.run_epoch(epoch_type='extra', data_loader=extra_test_loader,
-                                               update_gradients=False, iteration_override=early_epochs_step_override)  # compute loss on test set
+                                               update_gradients=False, iteration_override=None)  # compute loss on test set
 
                         self.logger.numpyize_current_losses()
                         self.logger.update_loss_record()
