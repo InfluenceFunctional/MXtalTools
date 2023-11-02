@@ -88,3 +88,11 @@ config8 = copy(config1)
 config8['run_name'] = 'test8'
 config8['embedding_depth'] = 32
 config8['message_depth'] = 16
+
+config9 = copy(config1)
+config9['run_name'] = 'test9'
+config9['learning_rate'] = 1e-5
+
+config10 = copy(config1)
+config10['run_name'] = 'test10'
+config10['batch_size'] = 5
