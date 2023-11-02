@@ -106,10 +106,10 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
 
-    if False:
-        bad_inds = np.argwhere(np.asarray(dataset['gap_rate']) > 0)[:, 0]  # cannot process gaps right now
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
+    # if True:
+    #     bad_inds = np.argwhere(np.asarray(dataset['gap_rate']) > 0)[:, 0]  # cannot process gaps right now
+    #     dataset = delete_from_dataframe(dataset, bad_inds)
+    #     dataset = dataset.reset_index().drop(columns='index')
 
     forms = np.unique(dataset['form'])
     forms2tgt = {form: i for i, form in enumerate(forms)}
@@ -165,29 +165,30 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         #cluster_targets[surface_mols_ind] = len(forms2tgt)  # label surface molecules as 'disordered'
         cluster_mol_ind = torch.arange(len(good_mols)).repeat(15, 1).T
 
-        if dataset.loc[i]['gap_rate'] > 0:
-            # find gaps and any neighboring molecules
-            aa = 1
-            from scipy.stats import gaussian_kde
-            transform = gaussian_kde(cluster_coords.reshape(np.prod(cluster_coords.shape[:2]), 3).T, bw_method=0.1)
-            refrac = fractional_transform(cluster_coords.reshape(np.prod(cluster_coords.shape[:2]), 3), torch.linalg.inv(torch.Tensor(T_fc_list[i])))
-            frac_lin_list = [torch.linspace(0.25, 0.75, 25) for ind in range(3)]  # look only well within the structure
-            frac_grid = torch.cartesian_prod(*frac_lin_list)
-            cart_grid = fractional_transform(frac_grid, torch.Tensor(T_fc_list[i]))
-
-            density = transform(cart_grid.T)
-            point_density = transform(centroids.T)
-            x, y, z = cart_grid.T
-
-            normed_density = density / density.sum()
-            void = 1 / normed_density
-
-            fig = go.Figure()
-            fig.add_scatter3d(x=x, y=y, z=z, mode='markers', marker_color=void, marker_opacity=0.1)
-            # fig.add_scatter3d(x=x, y=y, z=z, mode='markers', marker_color=density, marker_opacity=0.1)
-            # fig.add_scatter3d(x=centroids[:,0], y=centroids[:,1], z=centroids[:,2], mode='markers', marker_color=point_density, marker_opacity=0.5)
-            fig.show()
-
+        #
+        # if dataset.loc[i]['gap_rate'] > 0:
+        #     # find gaps and any neighboring molecules
+        #     aa = 1
+        #     from scipy.stats import gaussian_kde
+        #     transform = gaussian_kde(cluster_coords.reshape(np.prod(cluster_coords.shape[:2]), 3).T, bw_method=0.1)
+        #     refrac = fractional_transform(cluster_coords.reshape(np.prod(cluster_coords.shape[:2]), 3), torch.linalg.inv(torch.Tensor(T_fc_list[i])))
+        #     frac_lin_list = [torch.linspace(0.25, 0.75, 25) for ind in range(3)]  # look only well within the structure
+        #     frac_grid = torch.cartesian_prod(*frac_lin_list)
+        #     cart_grid = fractional_transform(frac_grid, torch.Tensor(T_fc_list[i]))
+        #
+        #     density = transform(cart_grid.T)
+        #     point_density = transform(centroids.T)
+        #     x, y, z = cart_grid.T
+        #
+        #     normed_density = density / density.sum()
+        #     void = 1 / normed_density
+        #
+        #     fig = go.Figure()
+        #     fig.add_scatter3d(x=x, y=y, z=z, mode='markers', marker_color=void, marker_opacity=0.1)
+        #     # fig.add_scatter3d(x=x, y=y, z=z, mode='markers', marker_color=density, marker_opacity=0.1)
+        #     # fig.add_scatter3d(x=centroids[:,0], y=centroids[:,1], z=centroids[:,2], mode='markers', marker_color=point_density, marker_opacity=0.5)
+        #     fig.show()
+        #
 
         datapoints.append(
             CrystalData(
