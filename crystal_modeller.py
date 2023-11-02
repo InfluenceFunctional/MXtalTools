@@ -1232,29 +1232,34 @@ class Modeller:
             model = 'discriminator'
             loss_record = self.logger.loss_record[model]['mean_test']
             past_mean_losses = [np.mean(record) for record in loss_record]
-            if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
+            if np.average(self.logger.current_losses[model]['mean_test']) == np.amin(past_mean_losses):
                 print("Saving discriminator checkpoint")
                 self.logger.save_stats_dict(prefix='best_discriminator_')
                 save_checkpoint(epoch, self.discriminator, self.discriminator_optimizer, self.config.discriminator.__dict__,
                                 self.config.checkpoint_dir_path + 'best_discriminator' + self.run_identifier)
+
         if self.train_generator:
             model = 'generator'
             loss_record = self.logger.loss_record[model]['mean_test']
             past_mean_losses = [np.mean(record) for record in loss_record]
-            if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
+            if np.average(self.logger.current_losses[model]['mean_test']) == np.amin(past_mean_losses):
                 print("Saving generator checkpoint")
                 self.logger.save_stats_dict(prefix='best_generator_')
                 save_checkpoint(epoch, self.generator, self.generator_optimizer, self.config.generator.__dict__,
                                 self.config.checkpoint_dir_path + 'best_generator' + self.run_identifier)
+
         if self.train_regressor:
             model = 'regressor'
             loss_record = self.logger.loss_record[model]['mean_test']
             past_mean_losses = [np.mean(record) for record in loss_record]
-            if np.average(self.logger.current_losses[model]['mean_test']) < np.amin(past_mean_losses[:-1]):
+            if np.average(self.logger.current_losses[model]['mean_test']) == np.amin(past_mean_losses):
                 print("Saving regressor checkpoint")
                 self.logger.save_stats_dict(prefix='best_regressor_')
                 save_checkpoint(epoch, self.regressor, self.regressor_optimizer, self.config.regressor.__dict__,
                                 self.config.checkpoint_dir_path + 'best_regressor' + self.run_identifier)
+
+        # todo checkpointing for proxy discriminator
+
 
     def update_lr(self):
         self.discriminator_optimizer, discriminator_lr = set_lr(self.discriminator_schedulers, self.discriminator_optimizer, self.config.discriminator.optimizer.lr_schedule, self.config.discriminator.optimizer.min_lr,
