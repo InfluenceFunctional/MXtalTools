@@ -6,8 +6,8 @@ import argparse
 import classify_lammps_trajs.test_configs as test_configs
 
 from classify_lammps_trajs.utils import (collect_to_traj_dataloaders, init_classifier,
-                                         train_classifier, reload_model,
-                                         classifier_evaluation, trajectory_analysis)
+                                         reload_model)
+from classify_lammps_trajs.workflows import train_classifier, classifier_evaluation, trajectory_analysis
 from classify_lammps_trajs.NICOAM_constants import class_names
 from classify_lammps_trajs.dump_data_processing import generate_dataset_from_dumps
 
