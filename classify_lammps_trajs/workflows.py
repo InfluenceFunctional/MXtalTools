@@ -17,9 +17,8 @@ def train_classifier(config, classifier, optimizer,
                      class_names, device,
                      batch_size, reporting_frequency,
                      runs_path, run_name):
-    with wandb.init(project='cluster_classifier', entity='mkilgour'):
+    with wandb.init(project='cluster_classifier', entity='mkilgour', config=config):
         wandb.run.name = run_name
-        wandb.log({'config': config})
         wandb.log({key: value for key, value in config.items()})
         test_record = []
         time_since_best = 0
@@ -150,12 +149,6 @@ def classifier_evaluation(config, classifier, optimizer,
 
 
 def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
-
-    # if not os.path.exists('traj_analysis_outputs.npy'):
-    #     traj_analysis = {}
-    # else:
-    #     traj_analysis = np.load('traj_analysis_outputs.npy', allow_pickle=True).item()
-
     from classify_lammps_trajs.ovito_utils import write_ovito_xyz
     dataset_name = ''.join(dumps_dir.split('/')[-3:])
     datasets_path = config['datasets_path']
@@ -164,7 +157,7 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
     if True:  # dataset_path not in traj_analysis.keys():
 
         if not os.path.exists(dataset_path):
-            made_dataset = generate_dataset_from_dumps([dumps_dir], dataset_path)  # todo add more expressive dataset name
+            made_dataset = generate_dataset_from_dumps([dumps_dir], dataset_path)
 
             if not made_dataset:
                 print(f'{dumps_dir} does not contain valid dump to analyze')

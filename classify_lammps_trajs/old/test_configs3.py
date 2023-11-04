@@ -47,7 +47,7 @@ config1 = {'run_name': 'test1',
            'num_epochs': 1000,
            'dataset_size': 100000,
            'conv_cutoff': 6,
-           'batch_size': 1,
+           'batch_size': 5,
            'reporting_frequency': 1,
            'train_model': True,
            'classifier_path': None,
@@ -59,7 +59,7 @@ config1 = {'run_name': 'test1',
 
 config2 = copy(config1)
 config2['run_name'] = 'test2'
-config2['batch_size'] = 2
+config2['batch_size'] = 10
 
 config3 = copy(config1)
 config3['run_name'] = 'test3'
