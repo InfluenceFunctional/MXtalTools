@@ -119,7 +119,7 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         if dataset.iloc[i]['temperature'] == 950:
             targets[i] = 9
 
-    T_fc_list = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
+    #T_fc_list = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
 
     print('Generating training datapoints')
     datapoints = []

@@ -109,7 +109,7 @@ if __name__ == "__main__":
             wandb.run.name = config['run_name'] + '_trajectory_analysis'
             wandb.log({'config': config})
             dumps_list = config['trajs_to_analyze_list']
-            shuffle(dumps_list)  # this speeds up lazy parallel evaluation
+            #shuffle(dumps_list)  # this speeds up lazy parallel evaluation
             for dump_dir in config['trajs_to_analyze_list']:
                 print(f"Processing dump {dump_dir}")
                 trajectory_analysis(config, classifier, config['run_name'],
