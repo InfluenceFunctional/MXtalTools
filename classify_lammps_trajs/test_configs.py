@@ -24,7 +24,7 @@ dev = {'run_name': 'dev',
        'batch_size': 5,
        'reporting_frequency': 1,
        'train_model': False,
-       'trajs_to_analyze_list':  [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs[:25]], # + [f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(2)] +
+       'trajs_to_analyze_list': [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs[:25]],  # + [f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(2)] +
        # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs[:25]],
        'do_classifier_evaluation': True,
        'classifier_path': 'C:/Users/mikem/crystals/classifier_runs/dev_best_classifier_checkpoint',
@@ -51,22 +51,22 @@ config1 = {'run_name': 'test1',
            'reporting_frequency': 1,
            'train_model': True,
            'do_classifier_evaluation': True,
-           'classifier_path': None, #r'/vast/mk8347/molecule_clusters/classifier_ckpts/test1_best_classifier_checkpoint',
+           'classifier_path': None,  # r'/vast/mk8347/molecule_clusters/classifier_ckpts/test1_best_classifier_checkpoint',
            'trajs_to_analyze_list': None,
            'learning_rate': 1e-4,
            'datasets_path': r'/vast/mk8347/molecule_clusters/bulk_trajs1/',
            'dumps_path': r'/vast/mk8347/molecule_clusters/',
            'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
-           'device': 'cuda'}
+           'device': 'cpu'}
 
-config2=copy(config1)
+config2 = copy(config1)
 config2['run_name'] = 'test2'
 
-config3=copy(config1)
+config3 = copy(config1)
 config3['run_name'] = 'test3'
 
-config4=copy(config1)
+config4 = copy(config1)
 config4['run_name'] = 'test4'
 
-config5=copy(config1)
+config5 = copy(config1)
 config5['run_name'] = 'test5'
