@@ -57,7 +57,7 @@ config1 = {'run_name': 'test1',
            'datasets_path': r'/vast/mk8347/molecule_clusters/bulk_trajs1/',
            'dumps_path': r'/vast/mk8347/molecule_clusters/',
            'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
-           'device': 'cpu'}
+           'device': 'cuda'}
 
 config2 = copy(config1)
 config2['run_name'] = 'test2'
