@@ -61,12 +61,16 @@ config1 = {'run_name': 'test1',
 
 config2 = copy(config1)
 config2['run_name'] = 'test2'
+config2['classifier_path'] = r'/vast/mk8347/molecule_clusters/classifier_ckpts/test2_best_classifier_checkpoint'
 
 config3 = copy(config1)
 config3['run_name'] = 'test3'
+config3['classifier_path'] = r'/vast/mk8347/molecule_clusters/classifier_ckpts/test3_best_classifier_checkpoint'
 
 config4 = copy(config1)
 config4['run_name'] = 'test4'
+config4['classifier_path'] = r'/vast/mk8347/molecule_clusters/classifier_ckpts/test4_best_classifier_checkpoint'
 
 config5 = copy(config1)
 config5['run_name'] = 'test5'
+config5['classifier_path'] = r'/vast/mk8347/molecule_clusters/classifier_ckpts/test5_best_classifier_checkpoint'
