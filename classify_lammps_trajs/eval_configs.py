@@ -35,7 +35,7 @@ dev = {'run_name': 'dev',
        'runs_path': r'C:/Users/mikem/crystals/classifier_runs/',
        'device': 'cuda'}
 
-config1 = {'run_name': 'test1',
+config1 = {'run_name': 'eval1',
            'convergence_history': 50,
            'num_convs': 1,
            'embedding_depth': 256,
@@ -52,7 +52,8 @@ config1 = {'run_name': 'test1',
            'train_model': False,
            'do_classifier_evaluation': True,
            'classifier_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/test1_best_classifier_checkpoint',
-           'trajs_to_analyze_list': None,
+           'trajs_to_analyze_list': [f'/vast/mk8347/molecule_clusters/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs[:30]],  # + [f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(2)] +
+           # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs[:25]],
            'learning_rate': 1e-4,
            'datasets_path': r'/vast/mk8347/molecule_clusters/bulk_trajs1/',
            'dumps_path': r'/vast/mk8347/molecule_clusters/',
@@ -60,17 +61,21 @@ config1 = {'run_name': 'test1',
            'device': 'cuda'}
 
 config2 = copy(config1)
-config2['run_name'] = 'test2'
-config2['classifier_path'] = r'/vast/mk8347/molecule_clusters/classifier_ckpts/test2_best_classifier_checkpoint'
+config2['run_name'] = 'eval2'
+config2['trajs_to_analyze_list'] = [f'/vast/mk8347/molecule_clusters/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs[30:]]
 
 config3 = copy(config1)
-config3['run_name'] = 'test3'
-config3['classifier_path'] = r'/vast/mk8347/molecule_clusters/classifier_ckpts/test3_best_classifier_checkpoint'
+config3['run_name'] = 'eval3'
+config3['trajs_to_analyze_list'] = [f'/vast/mk8347/molecule_clusters/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs[30:]]
 
 config4 = copy(config1)
-config4['run_name'] = 'test4'
-config4['classifier_path'] = r'/vast/mk8347/molecule_clusters/classifier_ckpts/test4_best_classifier_checkpoint'
+config4['run_name'] = 'eval4'
+config4['trajs_to_analyze_list'] = [f'/vast/mk8347/molecule_clusters/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs[30:]]
 
 config5 = copy(config1)
-config5['run_name'] = 'test5'
-config5['classifier_path'] = r'/vast/mk8347/molecule_clusters/classifier_ckpts/test5_best_classifier_checkpoint'
+config5['run_name'] = 'eval5'
+config5['trajs_to_analyze_list'] = [f'/vast/mk8347/molecule_clusters/melt_trajs2/{num}/' for num in range(4)]
+
+config6 = copy(config1)
+config6['run_name'] = 'eval6'
+config6['trajs_to_analyze_list'] = [f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(4, 9)]
