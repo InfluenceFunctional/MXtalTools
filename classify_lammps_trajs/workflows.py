@@ -191,14 +191,16 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
         results_dict['Type_Prediction_Confidence'] = np.amax(results_dict['Type_Prediction'], axis=-1)  # argmax sample
 
         sorted_molwise_results_dict, time_steps = process_trajectory_results_dict(results_dict, loader)
+        try:
+            write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
+                            sorted_molwise_results_dict['Atom_Types'],
+                            sorted_molwise_results_dict['Type_Prediction_Choice'], filename=dataset_name + '_prediction')  # write a trajectory
 
-        write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
-                        sorted_molwise_results_dict['Atom_Types'],
-                        sorted_molwise_results_dict['Type_Prediction_Choice'], filename=dataset_name + '_prediction')  # write a trajectory
-
-        write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
-                        sorted_molwise_results_dict['Atom_Types'],
-                        sorted_molwise_results_dict['Type_Prediction_Confidence'], filename=dataset_name + '_confidence')  # write a trajectory
+            write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
+                            sorted_molwise_results_dict['Atom_Types'],
+                            sorted_molwise_results_dict['Type_Prediction_Confidence'], filename=dataset_name + '_confidence')  # write a trajectory
+        except RuntimeError:
+            print('Ovito trajectory writing failed')
 
         fig, traj_dict = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)
 
