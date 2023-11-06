@@ -32,7 +32,7 @@ if __name__ == "__main__":
     optimizer = optim.Adam(classifier.parameters(), lr=config['learning_rate'])
 
     if config['classifier_path'] is not None:
-        reload_model(classifier, optimizer, config['classifier_path'], reload_optimizer=True)
+        reload_model(classifier, config['device'], optimizer, config['classifier_path'], reload_optimizer=True)
 
     classifier.to(config['device'])
     os.chdir(config['runs_path'])
