@@ -4,6 +4,7 @@ import torch.optim as optim
 import wandb
 import argparse
 import classify_lammps_trajs.test_configs as test_configs
+from random import shuffle
 
 from classify_lammps_trajs.utils import (collect_to_traj_dataloaders, init_classifier,
                                          reload_model)
@@ -107,6 +108,8 @@ if __name__ == "__main__":
         with wandb.init(project='cluster_classifier', entity='mkilgour'):
             wandb.run.name = config['run_name'] + '_trajectory_analysis'
             wandb.log({'config': config})
+            dumps_list = config['trajs_to_analyze_list']
+            shuffle(dumps_list)  # this speeds up lazy parallel evaluation
             for dump_dir in config['trajs_to_analyze_list']:
                 print(f"Processing dump {dump_dir}")
                 trajectory_analysis(config, classifier, config['run_name'],

@@ -197,6 +197,13 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps):
         for thing, count in zip(uniques, counts):
             pred_frac_traj_out[ind, thing] = count / count_sum
 
+    traj_dict = {'overall_fraction': pred_frac_traj,
+                 'inside_fraction': pred_frac_traj_in,
+                 'outside_fraction': pred_frac_traj_out,
+                 'overall_confidence': pred_confidence_traj,
+                 'inside_confidence': pred_confidence_traj_in,
+                 'outside_confidence': pred_confidence_traj_out}
+
     colors = plotly.colors.DEFAULT_PLOTLY_COLORS
     sigma = 5
     fig = make_subplots(cols=3, rows=1, subplot_titles=['All Molecules', 'Core', 'Surface'], x_title="Time (ns)", y_title="Form Fraction")
@@ -222,28 +229,22 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps):
                                    marker_color=colors[ind]),
                       row=1, col=3)
 
-        colors = plotly.colors.DEFAULT_PLOTLY_COLORS
-        sigma = 5
-        fig2 = make_subplots(cols=3, rows=1, subplot_titles=['All Molecules', 'Core', 'Surface'], x_title="Time (ns)", y_title="Prediction ")
-        fig2.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                    y=gaussian_filter1d(pred_confidence_traj[:], sigma),
-                                    name=ordered_class_names[ind],
-                                    legendgroup=ordered_class_names[ind],
-                                    marker_color=colors[ind]),
-                       row=1, col=1)
-        fig2.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                    y=gaussian_filter1d(pred_confidence_traj_in[:], sigma),
-                                    name=ordered_class_names[ind],
-                                    legendgroup=ordered_class_names[ind],
-                                    showlegend=False,
-                                    marker_color=colors[ind]),
-                       row=1, col=2)
-        fig2.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                    y=gaussian_filter1d(pred_confidence_traj_out[:], sigma),
-                                    name=ordered_class_names[ind],
-                                    legendgroup=ordered_class_names[ind],
-                                    showlegend=False,
-                                    marker_color=colors[ind]),
-                       row=1, col=3)
+    fig.add_trace(go.Scattergl(x=time_steps / 1000000,
+                                y=gaussian_filter1d(pred_confidence_traj[:], sigma),
+                                name="Confidence",
+                                marker_color='Grey'),
+                   row=1, col=1)
+    fig.add_trace(go.Scattergl(x=time_steps / 1000000,
+                                y=gaussian_filter1d(pred_confidence_traj_in[:], sigma),
+                                name="Confidence",
+                                showlegend=False,
+                                marker_color='Grey'),
+                   row=1, col=2)
+    fig.add_trace(go.Scattergl(x=time_steps / 1000000,
+                                y=gaussian_filter1d(pred_confidence_traj_out[:], sigma),
+                                name="Confidence",
+                                showlegend=False,
+                                marker_color='Grey'),
+                   row=1, col=3)
 
-    return fig, fig2
+    return fig, traj_dict

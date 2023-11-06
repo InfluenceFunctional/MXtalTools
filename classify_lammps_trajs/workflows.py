@@ -149,13 +149,15 @@ def classifier_evaluation(config, classifier, optimizer,
 
 
 def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
+
+
     from classify_lammps_trajs.ovito_utils import write_ovito_xyz
-    dataset_name = ''.join(dumps_dir.split('/')[-3:])
+    dataset_name = '_'.join(dumps_dir.split('/')[-3:])
     datasets_path = config['datasets_path']
     dataset_path = f'{datasets_path}{dataset_name}.pkl'
+    output_dict_path = config['runs_path'] + dataset_name + '_analysis'
 
-    if True:  # dataset_path not in traj_analysis.keys():
-
+    if not os.path.exists(output_dict_path + '.npy'):
         if not os.path.exists(dataset_path):
             made_dataset = generate_dataset_from_dumps([dumps_dir], dataset_path)
 
@@ -198,26 +200,20 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
                         sorted_molwise_results_dict['Atom_Types'],
                         sorted_molwise_results_dict['Type_Prediction_Confidence'], filename=dataset_name + '_confidence')  # write a trajectory
 
-        fig, fig2 = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)
+        fig, traj_dict = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps)
 
         run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
         fig.update_layout(
             title=f"Form {identifier2form[run_config['structure_identifier']]}, "
                   f"Cluster Radius {run_config['max_sphere_radius']}A, "
                   f"Temperature {run_config['temperature']}K")
-        fig2.update_layout(
-            title=f"Form {identifier2form[run_config['structure_identifier']]}, "
-                  f"Cluster Radius {run_config['max_sphere_radius']}A, "
-                  f"Temperature {run_config['temperature']}K")
-        fig2.update_yaxes(range=[0, 1])
 
-        # if not os.path.exists('traj_analysis_outputs.npy'):
-        #     traj_analysis = {}
-        # else:
-        #     traj_analysis = np.load('traj_analysis_outputs.npy',allow_pickle=True).item()
+        fig.update_yaxes(range=[0, 1])
 
-        # traj_analysis[dataset_path] = sorted_molwise_results_dict
-        # np.save('traj_analysis_outputs', traj_analysis)
+        traj_analysis = traj_dict
+        traj_analysis['run_config'] = run_config
+        traj_analysis['eval_config'] = config
 
-        wandb.log({f"{dataset_name} Trajectory Analysis": fig,
-                   f"{dataset_name} Confidence Analysis": fig2})
+        np.save(output_dict_path, traj_analysis)
+
+        wandb.log({f"{dataset_name} Trajectory Analysis": fig})
