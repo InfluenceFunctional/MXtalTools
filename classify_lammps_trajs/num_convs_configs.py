@@ -34,40 +34,41 @@ dev = {'run_name': 'dev',
        'datasets_path': r'D:/crystals_extra/classifier_training/',
        'dumps_path': r'D:/crystals_extra/classifier_training/',
        'runs_path': r'C:/Users/mikem/crystals/classifier_runs/',
-       'device': 'cuda'}
+       'device': 'cuda',
+       'seed': 1}
 
-config1 = {'run_name': 'test1',
-           'convergence_history': 50,
-           'num_convs': 1,
-           'embedding_depth': 256,
-           'message_depth': 128,
-           'dropout': 0.25,
-           'graph_norm': 'graph layer',
-           'fc_norm': 'layer',
-           'num_fcs': 2,
-           'num_epochs': 1000,
-           'dataset_size': 100000,
-           'conv_cutoff': 6,
-           'batch_size': 1,
-           'reporting_frequency': 1,
-           'train_model': True,
-           'do_classifier_evaluation': False,
-           'classifier_path': None,  # r'/vast/mk8347/molecule_clusters/classifier_ckpts/test1_best_classifier_checkpoint',
-           'trajs_to_analyze_list': None,
-           'learning_rate': 1e-4,
-           'datasets_path': r'/vast/mk8347/molecule_clusters/bulk_trajs1/',
-           'dumps_path': r'/vast/mk8347/molecule_clusters/',
-           'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
-           'device': 'cuda'}
+configs = []
+base_config = {'run_name': 'test1',
+               'convergence_history': 50,
+               'num_convs': 1,
+               'embedding_depth': 256,
+               'message_depth': 128,
+               'dropout': 0.25,
+               'graph_norm': 'graph layer',
+               'fc_norm': 'layer',
+               'num_fcs': 2,
+               'num_epochs': 1000,
+               'dataset_size': 100000,
+               'conv_cutoff': 6,
+               'batch_size': 1,
+               'reporting_frequency': 1,
+               'train_model': True,
+               'do_classifier_evaluation': False,
+               'classifier_path': None,  # r'/vast/mk8347/molecule_clusters/classifier_ckpts/test1_best_classifier_checkpoint',
+               'trajs_to_analyze_list': None,
+               'learning_rate': 1e-4,
+               'datasets_path': r'/vast/mk8347/molecule_clusters/bulk_trajs1/',
+               'dumps_path': r'/vast/mk8347/molecule_clusters/',
+               'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
+               'device': 'cuda',
+               'seed': 1
+               }
 
-config2 = copy(config1)
-config2['run_name'] = 'test2'
-
-config3 = copy(config1)
-config3['run_name'] = 'test3'
-
-config4 = copy(config1)
-config4['run_name'] = 'test4'
-
-config5 = copy(config1)
-config5['run_name'] = 'test5'
+ind = 1
+for i in [1, 2, 4, 6]:
+    for j in [1, 2, 3, 4, 5]:
+        configs.append(copy(base_config))
+        configs[-1]['run_name'] = f'test{ind}'
+        configs[-1]['num_convs'] = i
+        configs[-1]['seed'] = j
+        ind += 1

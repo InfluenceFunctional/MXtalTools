@@ -205,7 +205,7 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
     return get_dataloaders(datapoints, machine='local', batch_size=batch_size, test_fraction=test_fraction, shuffle=shuffle)
 
 
-def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth):
+def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth, seed):
     return molecule_graph_model(
         num_atom_feats=1,
         output_dimension=9 + 1 + 2,  # 9 forms + disordered: bulk or surface
@@ -234,7 +234,7 @@ def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm
         max_num_neighbors=100,
         convolution_cutoff=conv_cutoff,
         atom_type_embedding_dims=5,
-        seed=0,
+        seed=seed,
         periodic_structure=False,
         outside_convolution_type='none',
         graph_convolution_type='TransformerConv',

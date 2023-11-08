@@ -230,21 +230,123 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps):
                       row=1, col=3)
 
     fig.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                y=gaussian_filter1d(pred_confidence_traj[:], sigma),
-                                name="Confidence",
-                                marker_color='Grey'),
-                   row=1, col=1)
+                               y=gaussian_filter1d(pred_confidence_traj[:], sigma),
+                               name="Confidence",
+                               marker_color='Grey'),
+                  row=1, col=1)
     fig.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                y=gaussian_filter1d(pred_confidence_traj_in[:], sigma),
-                                name="Confidence",
-                                showlegend=False,
-                                marker_color='Grey'),
-                   row=1, col=2)
+                               y=gaussian_filter1d(pred_confidence_traj_in[:], sigma),
+                               name="Confidence",
+                               showlegend=False,
+                               marker_color='Grey'),
+                  row=1, col=2)
     fig.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                y=gaussian_filter1d(pred_confidence_traj_out[:], sigma),
-                                name="Confidence",
-                                showlegend=False,
-                                marker_color='Grey'),
-                   row=1, col=3)
+                               y=gaussian_filter1d(pred_confidence_traj_out[:], sigma),
+                               name="Confidence",
+                               showlegend=False,
+                               marker_color='Grey'),
+                  row=1, col=3)
 
     return fig, traj_dict
+
+
+def check_for_extra_values(row, extra_axes, extra_values):
+    if extra_axes is not None:
+        bools = []
+        for iv, axis in enumerate(extra_axes):
+            bools.append(extra_values[iv] == row[axis])
+        return all(bools)
+    else:
+        return True
+
+
+def collate_property_over_multiple_runs(target_property, results_df, xaxis, xaxis_title, yaxis, yaxis_title, unique_structures, extra_axes=None, extra_axes_values=None, take_mean=False):
+    n_samples = np.zeros((len(unique_structures), len(xaxis), len(yaxis)))
+
+    for iX, xval in enumerate(xaxis):
+        for iC, struct in enumerate(unique_structures):
+            for iY, yval in enumerate(yaxis):
+                for ii, row in results_df.iterrows():
+                    if row['structure_identifier'] == struct:
+                        if row[xaxis_title] == xval:
+                            if row[yaxis_title] == yval:
+                                if check_for_extra_values(row, extra_axes, extra_axes_values):
+                                    try:
+                                        aa = row[target_property]  # see if it's non-empty
+                                        n_samples[iC, iX, iY] += 1
+                                    except:
+                                        pass
+
+    shift_heatmap = np.zeros((len(unique_structures), len(xaxis), len(yaxis)))
+    for iX, xval in enumerate(xaxis):
+        for iC, struct in enumerate(unique_structures):
+            for iY, yval in enumerate(yaxis):
+                for ii, row in results_df.iterrows():
+                    if row['structure_identifier'] == struct:
+                        if row[xaxis_title] == xval:
+                            if row[yaxis_title] == yval:
+                                if check_for_extra_values(row, extra_axes, extra_axes_values):
+                                    try:
+                                        if take_mean:
+                                            shift_heatmap[iC, iX, iY] += row[target_property].mean() / n_samples[iC, iX, iY]  # take mean over seeds
+                                        else:
+                                            shift_heatmap[iC, iX, iY] += row[target_property] / n_samples[iC, iX, iY]
+                                    except:
+                                        shift_heatmap[iC, iX, iY] = 0
+
+    return shift_heatmap, n_samples
+
+
+def plot_classifier_pies(results_df, xaxis_title, yaxis_title, class_names, extra_axes=None, extra_axes_values=None):
+    xaxis = np.unique(results_df[xaxis_title])
+    yaxis = np.unique(results_df[yaxis_title])
+    unique_structures = np.unique(results_df['structure_identifier'])
+    heatmaps, samples = [], []
+
+    for classo in class_names:
+        shift_heatmap, n_samples = collate_property_over_multiple_runs(
+            classo, results_df, xaxis, xaxis_title, yaxis, yaxis_title, unique_structures,
+            extra_axes=extra_axes, extra_axes_values=extra_axes_values, take_mean=False)
+        heatmaps.append(shift_heatmap)
+        samples.append(n_samples)
+    heatmaps = np.stack(heatmaps)
+    heatmaps = np.transpose(heatmaps, axes=(0, 1, 3, 2))
+    samples = np.stack(samples)
+
+    xlen = len(xaxis)
+    ylen = len(yaxis)
+
+    for form_ind, form in enumerate(unique_structures):
+        titles = []
+        ind = 0
+        for i in range(ylen):
+            for j in range(xlen):
+                row = xlen - ind // ylen - 1
+                col = ind % xlen
+                titles.append(f"{xaxis_title}={xaxis[j]} <br> {yaxis_title}={yaxis[i]}")
+                ind += 1
+
+        fig = make_subplots(rows=ylen, cols=xlen, subplot_titles=titles,
+                            specs=[[{"type": "domain"} for _ in range(xlen)] for _ in range(ylen)])
+
+        ind = 0
+        for i in range(xlen):
+            for j in range(ylen):
+                row = j + 1
+                col = i + 1
+                fig.add_trace(go.Pie(labels=class_names, values=heatmaps[:, form_ind, j, i], sort=False
+                                     ),
+                              row=row, col=col)
+                ind += 1
+        fig.update_traces(hoverinfo='label+percent+name', textinfo='none', hole=0.4)
+        fig.layout.legend.traceorder = 'normal'
+        fig.update_layout(title=form + " Clusters Classifier Outputs")
+        fig.update_annotations(font_size=10)
+
+        if extra_axes is not None:
+            property_name = form + ' ' + str(extra_axes) + ' ' + str(extra_axes_values)
+        else:
+            property_name = form
+        fig.update_layout(title=property_name)
+        fig.show(renderer="browser")
+        fig.write_image(form + "_classifier_pies.png")

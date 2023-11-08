@@ -3,8 +3,11 @@ import warnings
 import torch.optim as optim
 import wandb
 import argparse
-import classify_lammps_trajs.test_configs as test_configs
+#import classify_lammps_trajs.test_configs as test_configs
+from classify_lammps_trajs.num_convs_configs import configs, dev
 from random import shuffle
+import torch
+import numpy as np
 
 from classify_lammps_trajs.utils import (collect_to_traj_dataloaders, init_classifier,
                                          reload_model)
@@ -17,17 +20,26 @@ warnings.filterwarnings("ignore", category=UserWarning)  # ignore ovito error
 
 parser = argparse.ArgumentParser()
 args = parser.parse_known_args()[1]
-if '--config' in args:
-    config = getattr(test_configs, args[1])
+# if '--config' in args:
+#     config = getattr(test_configs, args[1])
+# else:
+#     config = test_configs.dev
+
+if '--config' in args:  # new format
+    config = configs[args[1]]
 else:
-    config = test_configs.dev
+    config = dev
+
 
 if __name__ == "__main__":
     """init model"""
+    np.random.seed(config['seed'])
+    torch.manual_seed(config['seed'])
     classifier = init_classifier(config['conv_cutoff'], config['num_convs'],
                                  config['embedding_depth'], config['dropout'],
                                  config['graph_norm'], config['fc_norm'],
-                                 config['num_fcs'], config['message_depth'])
+                                 config['num_fcs'], config['message_depth'],
+                                 config['seed'])
 
     optimizer = optim.Adam(classifier.parameters(), lr=config['learning_rate'])
 
