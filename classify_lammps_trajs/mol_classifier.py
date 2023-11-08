@@ -26,10 +26,9 @@ args = parser.parse_known_args()[1]
 #     config = test_configs.dev
 
 if '--config' in args:  # new format
-    config = configs[args[1]]
+    config = configs[int(args[1])]
 else:
     config = dev
-
 
 if __name__ == "__main__":
     """init model"""
