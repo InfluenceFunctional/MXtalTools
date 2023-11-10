@@ -116,7 +116,7 @@ class GraphNeuralNetwork(torch.nn.Module):
             if n == (len(self.interaction_blocks) - 1) and self.outside_convolution_type == 'last_layer':
                 x = convolution(x, rbf_inter, torch.cat((edge_index, edge_index_inter), dim=1), batch)  # return only the results of the intermolecular convolution, omitting intramolecular features
             else:
-                x = convolution(x, rbf, edge_index, batch)  # graph convolution - residual is already inside the conv operator
+                x = convolution(x, rbf, edge_index, batch)  # graph convolution - residual is already inside the conv operator  # todo in next revision add back a residual here - it's not a clean highway through the GC
 
             if not self.periodize_inside_nodes:
                 x = fc(x, batch=batch)  # feature-wise 1D convolution, residual is already inside

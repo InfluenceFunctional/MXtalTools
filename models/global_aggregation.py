@@ -46,6 +46,8 @@ class global_aggregation(nn.Module):
                 dropout=0)  # condense to correct number of filters
         elif agg_func == 'molwise':
             self.agg = gnn.pool.max_pool_x
+        elif agg_func is None:
+            self.agg = nn.Identity()
 
     def forward(self, x, batch, cluster=None, output_dim=None):
         if self.agg_func == 'set2set':
