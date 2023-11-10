@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 os.environ["WANDB_START_METHOD"] = 'thread'
 
-from autoencoder_crystaldata import CrystalData
+from dataset_management.CrystalData import CrystalData
 from torch_geometric.loader.dataloader import Collater
 from torch.optim import Adam
 import wandb
