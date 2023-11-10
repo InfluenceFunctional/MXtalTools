@@ -1274,55 +1274,61 @@ def make_correlates_plot(tracking_features, values, dataDims):
         ff.append(feat)
     features_sorted_cleaned = ff
 
-    g_loss_dict = {feat: corr for feat, corr in zip(features_sorted, g_loss_correlations)}
+    loss_correlates_dict = {feat: corr for feat, corr in zip(features_sorted, g_loss_correlations)}
 
-    fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=('a) Molecule & Crystal Features', 'b) Atom Fractions', 'c) Functional Groups Count'), x_title='R Value')
+    if len(loss_correlates_dict) != 0:
 
-    crystal_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' not in key]
-    atom_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' in key]
-    mol_keys = [key for key in features_sorted_cleaned if 'count' in key and 'fraction' not in key]
+        fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=('a) Molecule & Crystal Features', 'b) Atom Fractions', 'c) Functional Groups Count'), x_title='R Value')
 
-    fig.add_trace(go.Bar(
-        y=crystal_keys,
-        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in crystal_keys],
-        orientation='h',
-        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in crystal_keys]).astype('float16'),
-        textposition='auto',
-        texttemplate='%{text:.2}',
-        marker=dict(color='rgba(100,0,0,1)')
-    ), row=1, col=1)
-    fig.add_trace(go.Bar(
-        y=[feat.replace('molecule_', '') for feat in features_sorted_cleaned if feat in atom_keys],
-        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in atom_keys],
-        orientation='h',
-        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in atom_keys]).astype('float16'),
-        textposition='auto',
-        texttemplate='%{text:.2}',
-        marker=dict(color='rgba(0,0,100,1)')
-    ), row=1, col=2)
-    fig.add_trace(go.Bar(
-        y=[feat.replace('molecule_', '').replace('_count', '') for feat in features_sorted_cleaned if feat in mol_keys],
-        x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in mol_keys],
-        orientation='h',
-        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in mol_keys]).astype('float16'),
-        textposition='auto',
-        texttemplate='%{text:.2}',
-        marker=dict(color='rgba(0,100,0,1)')
-    ), row=1, col=3)
+        crystal_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' not in key]
+        atom_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' in key]
+        mol_keys = [key for key in features_sorted_cleaned if 'count' in key and 'fraction' not in key]
 
-    fig.update_yaxes(tickfont=dict(size=14), row=1, col=1)
-    fig.update_yaxes(tickfont=dict(size=14), row=1, col=2)
-    fig.update_yaxes(tickfont=dict(size=14), row=1, col=3)
+        fig.add_trace(go.Bar(
+            y=crystal_keys,
+            x=[g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in crystal_keys],
+            orientation='h',
+            text=np.asarray([g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in crystal_keys]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}',
+            marker=dict(color='rgba(100,0,0,1)')
+        ), row=1, col=1)
+        fig.add_trace(go.Bar(
+            y=[feat.replace('molecule_', '') for feat in features_sorted_cleaned if feat in atom_keys],
+            x=[g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in atom_keys],
+            orientation='h',
+            text=np.asarray([g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in atom_keys]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}',
+            marker=dict(color='rgba(0,0,100,1)')
+        ), row=1, col=2)
+        fig.add_trace(go.Bar(
+            y=[feat.replace('molecule_', '').replace('_count', '') for feat in features_sorted_cleaned if feat in mol_keys],
+            x=[g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in mol_keys],
+            orientation='h',
+            text=np.asarray([g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in mol_keys]).astype('float16'),
+            textposition='auto',
+            texttemplate='%{text:.2}',
+            marker=dict(color='rgba(0,100,0,1)')
+        ), row=1, col=3)
 
-    fig.layout.annotations[0].update(x=0.12)
-    fig.layout.annotations[1].update(x=0.45)
-    fig.layout.annotations[2].update(x=0.88)
+        fig.update_yaxes(tickfont=dict(size=14), row=1, col=1)
+        fig.update_yaxes(tickfont=dict(size=14), row=1, col=2)
+        fig.update_yaxes(tickfont=dict(size=14), row=1, col=3)
 
-    fig.update_xaxes(range=[np.amin(list(g_loss_dict.values())), np.amax(list(g_loss_dict.values()))])
-    # fig.update_layout(width=1200, height=400)
-    fig.update_layout(showlegend=False)
+        fig.layout.annotations[0].update(x=0.12)
+        fig.layout.annotations[1].update(x=0.45)
+        fig.layout.annotations[2].update(x=0.88)
+
+        fig.update_xaxes(range=[np.amin(list(loss_correlates_dict.values())), np.amax(list(loss_correlates_dict.values()))])
+        # fig.update_layout(width=1200, height=400)
+        fig.update_layout(showlegend=False)
+
+    else:
+        fig = go.Figure()  # empty figure
 
     return fig
+
 
 
 def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, extra_test_dict=None):
