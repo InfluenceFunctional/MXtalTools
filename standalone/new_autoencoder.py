@@ -34,7 +34,8 @@ config = {'training_iterations': 1000000,
           'sigma': 0.05,
           }
 
-os.chdir(r'C:\Users\mikem\crystals\CSP_runs')
+#os.chdir(r'C:\Users\mikem\crystals\CSP_runs')
+os.chdir('/scratch/mk8347/csd_runs')
 
 config = Namespace(**config)
 
