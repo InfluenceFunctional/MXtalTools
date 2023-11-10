@@ -143,9 +143,9 @@ with wandb.init(
                        'step': step,
                        'best_reconstruction_loss': np.amin(losses['reconstruction_loss']),
                        })
-            if losses['reconstruction_loss'][-1] == np.amin(losses['reconstruction_loss']):
-                torch.save({'encoder_state_dict': encoder.state_dict(), 'decoder_state_dict': decoder.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
-                           'D:/crystals_extra/autoencoder_ckpt')
+            # if losses['reconstruction_loss'][-1] == np.amin(losses['reconstruction_loss']):
+            #     torch.save({'encoder_state_dict': encoder.state_dict(), 'decoder_state_dict': decoder.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
+            #                'D:/crystals_extra/autoencoder_ckpt')
 
         if step % config.lr_timescale == 0 and step != 0 and optimizer.param_groups[0]['lr'] > 1e-5:
             scheduler.step()
