@@ -17,9 +17,10 @@ import wandb
 from standalone.new_autoencoder_utils import (
     point_cloud_encoder, point_cloud_decoder, get_reconstruction_likelihood)
 
-config = {'training_iterations': 1000000,
+config = {'run_name': 'dev',
+          'training_iterations': 1000000,
           'batch_size_min': 2,
-          'batch_size_max': 1000,
+          'batch_size_max': 5000,
           'mean_num_points': 5,
           'num_points_spread': 1,
           'points_spread': 1,
@@ -27,17 +28,23 @@ config = {'training_iterations': 1000000,
           'device': 'cuda',
           'seed': 12345,
           'learning_rate': 1e-4,
-          'lr_lambda': 0.95,
+          'lr_lambda': 0.975,
           'lr_timescale': 500,
-          'embedding_depth': 512,
-          'num_layers': 4,
+          'encoder_embedding_depth': 512,
+          'decoder_embedding_depth': 512,
+          'encoder_num_layers': 4,
+          'decoder_num_layers': 4,
           'sigma': 0.05,
+          'run_directory': r'C:\Users\mikem\crystals\CSP_runs',
+          #'run_directory': '/scratch/mk8347/csd_runs/',
+          'save_directory': 'D:/crystals_extra/',
+          #'save_directory': '/sratch/mk8347/csd_runs/',
           }
 
-#os.chdir(r'C:\Users\mikem\crystals\CSP_runs')
-os.chdir('/scratch/mk8347/csd_runs')
 
 config = Namespace(**config)
+
+os.chdir(config.run_directory)
 
 with wandb.init(
         config=config.__dict__,
@@ -46,13 +53,13 @@ with wandb.init(
 ):
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
-    encoder = point_cloud_encoder(embedding_depth=config.embedding_depth,
-                                  num_layers=config.num_layers,
-                                  cutoff=config.points_spread,
+    encoder = point_cloud_encoder(embedding_depth=config.encoder_embedding_depth,
+                                  num_layers=config.encoder_num_layers,
+                                  cutoff=config.points_spread * 2,
                                   seed=config.seed, device=config.device,
                                   num_classes=config.point_types_max).to(config.device)
-    decoder = point_cloud_decoder(embedding_depth=config.embedding_depth,
-                                  num_layers=config.num_layers,
+    decoder = point_cloud_decoder(embedding_depth=config.decoder_embedding_depth,
+                                  num_layers=config.decoder_num_layers,
                                   cutoff=config.points_spread * 2,
                                   max_ntypes=config.point_types_max,
                                   seed=config.seed, device=config.device).to(config.device)
@@ -68,6 +75,7 @@ with wandb.init(
               }
 
     batch_size = config.batch_size_min
+    working_sigma = config.sigma
 
     for step in tqdm(range(config.training_iterations)):
 
@@ -96,7 +104,7 @@ with wandb.init(
         num_points_loss = F.smooth_l1_loss(torch.Tensor(point_num_rands).to(config.device), num_points_prediction[:, 0])
         per_graph_true_types = torch.stack([F.one_hot(data.x[data.batch == i, 0], num_classes=config.point_types_max).float().mean(0) for i in range(data.num_graphs)])
 
-        reconstruction_loss = get_reconstruction_likelihood(data, decoded_data, config.sigma)
+        reconstruction_loss = get_reconstruction_likelihood(data, decoded_data, working_sigma)
 
         overall_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
 
@@ -142,10 +150,15 @@ with wandb.init(
                        'learning_rate': optimizer.param_groups[0]['lr'],
                        'step': step,
                        'best_reconstruction_loss': np.amin(losses['reconstruction_loss']),
+                       'sigma': working_sigma,
                        })
-            # if losses['reconstruction_loss'][-1] == np.amin(losses['reconstruction_loss']):
-            #     torch.save({'encoder_state_dict': encoder.state_dict(), 'decoder_state_dict': decoder.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
-            #                'D:/crystals_extra/autoencoder_ckpt')
+            if losses['reconstruction_loss'][-1] == np.amin(losses['reconstruction_loss']):
+                torch.save({'encoder_state_dict': encoder.state_dict(), 'decoder_state_dict': decoder.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
+                           config.save_directory + config.run_name + '_' + 'autoencoder_ckpt')
+
+        if step % 50 == 0:
+            if np.mean(losses['reconstruction_loss'][-50:]) < 1 and working_sigma > 0.01:
+                working_sigma *= 0.99
 
         if step % config.lr_timescale == 0 and step != 0 and optimizer.param_groups[0]['lr'] > 1e-5:
             scheduler.step()
