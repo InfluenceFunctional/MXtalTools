@@ -7,7 +7,7 @@ paths:
   cluster_config_path: '/scratch/mk8347/mcrygan/configs/'
 
   local_checkpoints_path: 'C:\Users\mikem\crystals\CSP_runs\models/'
-  cluster_checkpoints_path: '/scaratch/mk8347/csd_runs/models/'
+  cluster_checkpoints_path: '/scratch/mk8347/csd_runs/models/'
 
   local_dataset_dir_path: "D:/crystal_datasets/"
   cluster_dataset_dir_path: '/scratch/mk8347/csd_runs/datasets/'
