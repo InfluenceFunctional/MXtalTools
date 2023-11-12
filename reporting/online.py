@@ -919,8 +919,8 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
                           tracking_features_dict, layout, tracking_features, dataDims, score_name='score')
 
     min_value = np.concatenate(list(pred_distance_dict.values())).min()
-    dist2score = lambda x: np.exp(-x*10)
-    distance_score_dict = {key: dist2score(value) for key,value in pred_distance_dict.items()}
+    dist2score = lambda x: np.exp(-x * 10)
+    distance_score_dict = {key: dist2score(value) for key, value in pred_distance_dict.items()}
     BT_target_dist_scores = dist2score(BT_target_scores)
     BT_submission_dist_scores = dist2score(BT_submission_distances)
 
@@ -973,9 +973,8 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
                 fig.add_trace(go.Violin(x=scores_dict[label], name=name_label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False),
                               row=1, col=1)
 
-
-    good_scores = np.concatenate([score for i, (key, score) in enumerate(scores_dict.items()) if key not in ['Gaussian','Distorted']])
-    fig.update_xaxes(range=[np.amin(good_scores), np.amax(good_scores)],row=1, col=1)
+    good_scores = np.concatenate([score for i, (key, score) in enumerate(scores_dict.items()) if key not in ['Gaussian', 'Distorted']])
+    fig.update_xaxes(range=[np.amin(good_scores), np.amax(good_scores)], row=1, col=1)
 
     # plot2 inset
     plot_color_dict = {}
@@ -1330,7 +1329,6 @@ def make_correlates_plot(tracking_features, values, dataDims):
     return fig
 
 
-
 def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, extra_test_dict=None):
     """
     Do analysis and upload results to w&b
@@ -1451,7 +1449,7 @@ def discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict,
     #                "distortion_R_value": linreg_result.rvalue,
     #                "distortion_slope": linreg_result.slope})
 
-    if epoch_stats_dict['discriminator_fake_predicted_distance'] is not None:  # todo switch this to a px.scatter
+    if epoch_stats_dict['discriminator_fake_predicted_distance'] is not None:
         tgt_value = np.concatenate(list(true_distance_dict.values()))
         pred_value = np.concatenate(list(pred_distance_dict.values()))
 

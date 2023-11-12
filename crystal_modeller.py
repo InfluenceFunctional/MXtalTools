@@ -539,10 +539,10 @@ class Modeller:
                         prev_epoch_failed = False
 
                     except RuntimeError as e:  # if we do hit OOM, slash the batch size
-                        if "CUDA out of memory" in str(e):
+                        if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
                             if prev_epoch_failed:
                                 # print(torch.cuda.memory_summary())
-                                gc.collect()
+                                gc.collect()  # TODO not clear to me that this is necessary. Really not sure what's going on in general.
                                 # for obj in gc.get_objects():
                                 #     try:
                                 #         if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
@@ -1259,7 +1259,6 @@ class Modeller:
                                 self.config.checkpoint_dir_path + 'best_regressor' + self.run_identifier)
 
         # todo checkpointing for proxy discriminator
-
 
     def update_lr(self):
         self.discriminator_optimizer, discriminator_lr = set_lr(self.discriminator_schedulers, self.discriminator_optimizer, self.config.discriminator.optimizer.lr_schedule, self.config.discriminator.optimizer.min_lr,

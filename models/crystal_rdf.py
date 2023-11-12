@@ -144,7 +144,9 @@ def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bi
         return rdfs_array, rr
 
 
-def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False, cpu_detach=False, remove_radial_scaling=False):
+def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bins=100, mode='all',
+                    elementwise=False, raw_density=False, atomwise=False, cpu_detach=False,
+                    remove_radial_scaling=False, atomic_numbers_override=None):
     """
     faster rdf calculation
     """
@@ -175,11 +177,14 @@ def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10]
     efficiently gather the relevant distances
     '''
     if elementwise:
-        dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_crystal_number)
+        dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_crystal_number, atomic_numbers_override)
         num_pairs = len(rdfs_dict.keys())
         batch = repeat_interleave(dists_per_hist, device='cpu').to(device)  # todo faster on cpu but still slow
         hist, bin_edges = batch_histogram(sorted_dists, batch, num_graphs * num_pairs, rrange=rrange, nbins=bins)
-        rdf_density = torch.ones(num_graphs * num_pairs, device=device, dtype=torch.float32)
+        if raw_density:  # todo reimplement
+            rdf_density = torch.ones(num_graphs * num_pairs, device=device, dtype=torch.float32)
+        else:
+            assert False, "non-raw density not implemented"
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)  # volume of the shell at radius r+dr
         rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
         rdf = rdf.reshape(num_graphs, num_pairs, -1)  # sample-wise indexing
@@ -239,17 +244,23 @@ def get_atomwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_cr
     return [len(thing) for thing in relevant_atoms_dists_list], relevant_atoms_dists_list, rdfs_dict_list
 
 
-def get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_crystal_number):
-    relevant_elements = torch.tensor([5, 6, 7, 8, 9, 15, 16, 17, 35], dtype=torch.long, device=device)
-    element_symbols = {5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F', 15: 'P', 16: 'S', 17: 'Cl', 35: 'Br'}
+def get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_crystal_number, atomic_numbers_override=None):
+    if atomic_numbers_override is None:
+        relevant_elements = torch.tensor([5, 6, 7, 8, 9, 15, 16, 17, 35], dtype=torch.long, device=device)
+        element_symbols = {5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F', 15: 'P', 16: 'S', 17: 'Cl', 35: 'Br'}
+    else:
+        relevant_elements = atomic_numbers_override
+        element_symbols = {int(i): str(int(i)) for i in relevant_elements}
+    num_relevant_elements = len(relevant_elements)
+
     elements = [crystaldata.x[edges[0], 0].long(), crystaldata.x[edges[1], 0].long()]
     rdfs_dict = {}
     num_pairs = int((len(relevant_elements) ** 2 + len(relevant_elements)) / 2)
 
     # prebuild pair lists
     elem_pair_list = torch.zeros((num_pairs, len(elements[0])), dtype=torch.bool, device=elements[0].device)
-    elem1 = elements[0].repeat(9, 1) == torch.Tensor(relevant_elements)[:, None].cuda()
-    elem2 = elements[1].repeat(9, 1) == torch.Tensor(relevant_elements)[:, None].cuda()
+    elem1 = elements[0].repeat(num_relevant_elements, 1) == torch.Tensor(relevant_elements)[:, None].cuda()
+    elem2 = elements[1].repeat(num_relevant_elements, 1) == torch.Tensor(relevant_elements)[:, None].cuda()
     ind = 0
     for i, element1 in enumerate(relevant_elements):
         for j, element2 in enumerate(relevant_elements):

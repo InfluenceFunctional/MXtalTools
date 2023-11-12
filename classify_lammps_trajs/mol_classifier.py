@@ -4,7 +4,7 @@ import torch.optim as optim
 import wandb
 import argparse
 #import classify_lammps_trajs.test_configs as test_configs
-from classify_lammps_trajs.num_convs_configs import configs, dev
+from classify_lammps_trajs.dev_configs import configs, dev
 from random import shuffle
 import torch
 import numpy as np

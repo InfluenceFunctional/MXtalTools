@@ -259,6 +259,8 @@ def classifier_reporting(true_labels, true_defects, probs, class_names, wandb, e
 
         wandb.log({f"{epoch_type} ROC_AUC": train_score,
                    f"{epoch_type} F1 Score": train_f1_score,
+                   f"{epoch_type} 1-ROC_AUC": 1-train_score,
+                   f"{epoch_type} 1-F1 Score": 1-train_f1_score,
                    f"{epoch_type} Confusion Matrix": fig})
 
         train_score = roc_auc_score(true_defects, defect_probs[:, 1], multi_class='ovo')
@@ -271,6 +273,8 @@ def classifier_reporting(true_labels, true_defects, probs, class_names, wandb, e
 
         wandb.log({f"{epoch_type} Defect ROC_AUC": train_score,
                    f"{epoch_type} Defect F1 Score": train_f1_score,
+                   f"{epoch_type} 1-Defect ROC_AUC": 1-train_score,
+                   f"{epoch_type} 1-Defect F1 Score": 1-train_f1_score,
                    f"{epoch_type} Defect Confusion Matrix": fig})
 
 

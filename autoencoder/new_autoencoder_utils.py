@@ -80,7 +80,7 @@ class GaussianSmoothing(nn.Module):
         return self.conv(input, weight=self.weight, groups=self.groups)
 
 
-def get_reconstruction_likelihood(data, decoded_data, sigma):
+def get_reconstruction_likelihood(data, decoded_data, sigma, dist_to_self = False):
     """
     compute the overlap of 3D gaussians centered on points in the target data
     with those in the predicted data. Each gaussian in the target should have an overlap totalling 1.
@@ -91,24 +91,26 @@ def get_reconstruction_likelihood(data, decoded_data, sigma):
 
     sigma must be significantly smaller than inter-particle distances in the target data
     """
-
-    dists = torch.cdist(data.pos, decoded_data.pos, p=2)  # n_targets x n_guesses
-    overlap = torch.exp(-dists ** 2 / sigma)
-
     target_types = data.x[:, 0]
-    target_probs = decoded_data.x[:, target_types].diag()
+
+    if dist_to_self:
+        target_probs = F.one_hot(data.x[:, 0], num_classes=5)[:, target_types].diag()
+        dists = torch.cdist(data.pos, data.pos, p=2)  # n_targets x n_guesses
+
+    else:
+        dists = torch.cdist(data.pos, decoded_data.pos, p=2)  # n_targets x n_guesses
+        target_probs = decoded_data.x[:, target_types].diag()
+
+    overlap = torch.exp(-dists ** 2 / sigma)
 
     # scale all overlaps by the predicted confidence in each particle type
     scaled_overlap = overlap * target_probs
 
     # did this for all graphs combined, now split into graphwise components
     # todo accelerate with scatter
-    filtered_scaled_overlap = torch.cat([
+    return torch.cat([
         scaled_overlap[data.batch == ind][:, data.batch == ind].sum(1) for ind in range(data.num_graphs)
     ])
-
-    loss = 10 * F.smooth_l1_loss(filtered_scaled_overlap, torch.ones_like(filtered_scaled_overlap))  # overlaps should all be exactly 1
-    return loss
 
 
 def get_reconstruction_likelihood_discrete(smoother, data, decoded_data, num_particle_types, num_bins=100, hist_range=[-1, 1]):
@@ -242,7 +244,7 @@ def test_get_reconstruction_loss_old(data, decoding):
 
 
 class point_cloud_encoder(nn.Module):
-    def __init__(self, embedding_depth, num_layers, cutoff, seed, device, num_classes):
+    def __init__(self, embedding_depth, num_layers, num_nodewise_fcs, fc_norm, graph_norm, message_norm, dropout, cutoff, seed, device, num_classes):
         super(point_cloud_encoder, self).__init__()
 
         self.device = device
@@ -262,18 +264,18 @@ class point_cloud_encoder(nn.Module):
             activation='gelu',
             num_fc_layers=num_layers,
             fc_depth=embedding_depth,
-            fc_norm_mode='layer',
-            fc_dropout_probability=0,
-            graph_node_norm='graph layer',
-            graph_node_dropout=0,
-            graph_message_norm=None,
-            graph_message_dropout=0,
+            fc_norm_mode=fc_norm,
+            fc_dropout_probability=dropout,
+            graph_node_norm=graph_norm,
+            graph_node_dropout=dropout,
+            graph_message_norm=message_norm,
+            graph_message_dropout=dropout,
             num_attention_heads=num_layers,
             graph_message_depth=embedding_depth // 2,
             graph_node_dims=embedding_depth,
             num_graph_convolutions=num_layers,
             graph_embedding_depth=embedding_depth,
-            nodewise_fc_layers=1,
+            nodewise_fc_layers=num_nodewise_fcs,
             num_radial=50,
             radial_function='gaussian',
             max_num_neighbors=100,
@@ -315,7 +317,7 @@ class point_cloud_encoder(nn.Module):
 
 
 class point_cloud_decoder(nn.Module):
-    def __init__(self, embedding_depth, num_layers, cutoff, max_ntypes, seed, device):
+    def __init__(self, embedding_depth, num_layers, num_nodewise_fcs, graph_norm, message_norm, dropout, cutoff, max_ntypes, seed, device):
         super(point_cloud_decoder, self).__init__()
 
         self.device = device
@@ -332,16 +334,16 @@ class point_cloud_decoder(nn.Module):
             concat_crystal_to_atom_features=False,
             activation='gelu',
             num_fc_layers=0,
-            graph_node_norm='graph layer',
-            graph_node_dropout=0,
-            graph_message_norm=None,
-            graph_message_dropout=0,
+            graph_node_norm=graph_norm,
+            graph_node_dropout=dropout,
+            graph_message_norm=message_norm,
+            graph_message_dropout=dropout,
             num_attention_heads=num_layers,
             graph_message_depth=embedding_depth // 2,
             graph_node_dims=embedding_depth,
             num_graph_convolutions=num_layers,
             graph_embedding_depth=embedding_depth,
-            nodewise_fc_layers=1,
+            nodewise_fc_layers=num_nodewise_fcs,
             num_radial=50,
             radial_function='gaussian',
             max_num_neighbors=100,
