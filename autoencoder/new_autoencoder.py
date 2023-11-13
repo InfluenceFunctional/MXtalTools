@@ -12,6 +12,7 @@ from dataset_management.CrystalData import CrystalData
 from torch_geometric.loader.dataloader import Collater
 from torch.optim import Adam
 import argparse
+from torch_scatter import scatter
 
 os.environ["WANDB_START_METHOD"] = 'thread'
 
@@ -33,11 +34,11 @@ config = Namespace(**config)
 
 os.chdir(config.run_directory)
 
-with wandb.init(
+with (wandb.init(
         config=config.__dict__,
         project='MXtalTools',
         entity='mkilgour'
-):
+)):
     wandb.run.name = config.run_name
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
@@ -52,7 +53,8 @@ with wandb.init(
                                   seed=config.seed, device=config.device,
                                   num_classes=config.point_types_max).to(config.device)
 
-    decoder = point_cloud_decoder(embedding_depth=config.decoder_embedding_depth,
+    decoder = point_cloud_decoder(input_depth=config.encoder_embedding_depth,
+                                  embedding_depth=config.decoder_embedding_depth,
                                   num_layers=config.decoder_num_layers,
                                   num_nodewise_fcs=config.decoder_num_nodewise_fcs,
                                   graph_norm=config.decoder_graph_norm,
@@ -125,20 +127,20 @@ with wandb.init(
         decoded_data.pos = decoding[:, :3]
         decoded_data.x = F.softmax(decoding[:, 3:], dim=1)
 
-        num_points_loss = F.smooth_l1_loss(torch.Tensor(point_num_rands).to(config.device), num_points_prediction[:, 0])
+        num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(config.device), num_points_prediction[:, 0])
         per_graph_true_types = torch.stack([F.one_hot(data.x[data.batch == i, 0], num_classes=config.point_types_max).float().mean(0) for i in range(data.num_graphs)])
 
         decoder_likelihoods = get_reconstruction_likelihood(data, decoded_data, working_sigma)
         self_likelihoods = get_reconstruction_likelihood(data, decoded_data, working_sigma, dist_to_self=True)  # if sigma is too large, these can be > 1
 
-        reconstruction_loss = 10 * F.smooth_l1_loss(decoder_likelihoods, self_likelihoods)  # overlaps should all be exactly 1
+        reconstruction_loss = 10 * torch.mean(scatter(F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none'), data.batch, reduce='mean')) # overlaps should all be exactly 1
 
         overall_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
 
         type_confidence_loss = torch.mean(-torch.log10(torch.amax(decoded_data.x, dim=1)))
 
         loss = reconstruction_loss + num_points_loss + overall_type_loss + type_confidence_loss
-        loss = loss.clip(max=20)
+        #loss = loss.clip(max=20)
 
         optimizer.zero_grad()
         if config.do_training:
@@ -164,6 +166,7 @@ with wandb.init(
                        'step': step,
                        'mean_type_confidence': np.mean(np.amax(decoded_data.x.cpu().detach().numpy(), axis=1)),
                        'sigma': working_sigma,
+                       'mean_num_points': config.mean_num_points,
                        })
 
             if losses['scaled_reconstruction_loss'][-1] == np.amin(losses['scaled_reconstruction_loss']):
@@ -171,8 +174,11 @@ with wandb.init(
                            config.save_directory + config.run_name + '_' + 'autoencoder_ckpt' + '_' + str(step))
 
         if step % 50 == 0:
-            if np.mean(losses['reconstruction_loss'][-50:]) < 1 and working_sigma > 0.01:
-                working_sigma *= config.sigma_lambda
+            if np.mean(losses['reconstruction_loss'][-50:]) < 1:
+                if working_sigma > 0.01:  # make the problem harder
+                    working_sigma *= config.sigma_lambda
+                elif working_sigma <= 0.01:
+                    config.mean_num_points += 1  # make the problem harder
 
             rmsds = np.zeros(data.num_graphs)
             for g_ind in range(data.num_graphs):
