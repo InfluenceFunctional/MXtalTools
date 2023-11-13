@@ -20,7 +20,7 @@ import wandb
 from autoencoder.new_autoencoder_utils import (
     point_cloud_encoder, point_cloud_decoder, get_reconstruction_likelihood)
 
-from dev_configs import dev, configs
+from autoencoder.dev_configs import dev, configs
 
 parser = argparse.ArgumentParser()
 args = parser.parse_known_args()[1]
