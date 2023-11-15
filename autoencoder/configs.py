@@ -1,39 +1,46 @@
 from copy import copy
+import numpy as np
 
 dev = {'run_name': 'dev',
        'training_iterations': 1000000,
+       'min_num_training_steps': 2000,
        'do_training': True,
+       'train_nodewise_type_loss': True,
+       'train_reconstruction_loss': True,
+       'train_type_confidence_loss': True,
+       'train_num_points_loss': True,
+       'train_encoding_type_loss': True,
        'batch_size_min': 2,
        'batch_size_max': 1000,
        'batch_size_increment': 1,
        'mean_num_points': 10,
        'num_points_spread': 1,  # more like a sigma
-       'max_num_points': 1,
-       'min_num_points': 1,
+       'max_num_points': 2,
+       'min_num_points': 2,
        'points_spread': 1,
        'point_types_max': 5,
        'device': 'cuda',
        'seed': 12344,
-       'encoder_lr': 1e-3,
+       'encoder_lr': 1e-4,
        'decoder_lr': 1e-4,
        'lr_lambda': 0.975,
        'lr_timescale': 500,
        'encoder_aggregator': 'combo',
        'encoder_num_layers': 2,
-       'encoder_num_fc_layers': 4,
+       'encoder_num_fc_layers': 2,
        'encoder_embedding_depth': 512,
-       'encoder_num_nodewise_fcs': 4,
-       'encoder_fc_norm': 'layer',
-       'encoder_graph_norm': 'graph layer',
+       'encoder_num_nodewise_fcs': 1,
+       'encoder_fc_norm': None,
+       'encoder_graph_norm': None,
        'encoder_message_norm': None,
        'encoder_dropout': 0,
-       'decoder_num_layers': 1,
-       'decoder_embedding_depth': 128,
-       'decoder_num_nodewise_fcs': 16,
+       'decoder_num_layers': 2,
+       'decoder_embedding_depth': 512,
+       'decoder_num_nodewise_fcs': 1,
        'decoder_graph_norm': None,
        'decoder_message_norm': None,
        'decoder_dropout': 0,
-       'sigma': 0.25,
+       'sigma': 0.1,
        'sigma_lambda': 0.95,
        'run_directory': r'C:\Users\mikem\crystals\CSP_runs',
        # 'run_directory': '/scratch/mk8347/csd_runs/',
@@ -45,51 +52,84 @@ dev = {'run_name': 'dev',
 configs = []
 base_config = {'run_name': 'base',
                'training_iterations': 1000000,
+               'min_num_training_steps': 2000,
                'do_training': True,
-               'batch_size_min': 10,
-               'batch_size_max': 5000,
-               'batch_size_increment': 5,
-               'mean_num_points': 3,
-               'num_points_spread': 1,
+               'train_nodewise_type_loss': True,
+               'train_reconstruction_loss': True,
+               'train_type_confidence_loss': True,
+               'train_num_points_loss': True,
+               'train_encoding_type_loss': True,
+               'batch_size_min': 2,
+               'batch_size_max': 1000,
+               'batch_size_increment': 1,
+               'mean_num_points': 10,
+               'num_points_spread': 1,  # more like a sigma
+               'max_num_points': 2,
+               'min_num_points': 2,
                'points_spread': 1,
-               'point_types_max': 2,
+               'point_types_max': 5,
                'device': 'cuda',
                'seed': 12345,
-               'learning_rate': 1e-4,
+               'encoder_lr': 1e-4,
+               'decoder_lr': 1e-4,
                'lr_lambda': 0.975,
                'lr_timescale': 500,
+               'encoder_aggregator': 'combo',
                'encoder_num_layers': 2,
-               'encoder_embedding_depth': 256,
+               'encoder_num_fc_layers': 2,
+               'encoder_embedding_depth': 128,
                'encoder_num_nodewise_fcs': 1,
                'encoder_fc_norm': None,
                'encoder_graph_norm': None,
                'encoder_message_norm': None,
                'encoder_dropout': 0,
                'decoder_num_layers': 2,
-               'decoder_embedding_depth': 256,
+               'decoder_embedding_depth': 128,
                'decoder_num_nodewise_fcs': 1,
                'decoder_graph_norm': None,
                'decoder_message_norm': None,
                'decoder_dropout': 0,
-               'sigma': 0.05,
+               'sigma': 0.1,
                'sigma_lambda': 0.95,
                # 'run_directory': r'C:\Users\mikem\crystals\CSP_runs',
                'run_directory': '/scratch/mk8347/csd_runs/',
                # 'save_directory': 'D:/crystals_extra/',
                'save_directory': '/scratch/mk8347/csd_runs/',
-               'checkpoint_path': None,  # r'C:\Users\mikem\crystals\CSP_runs\models\cluster/test1_autoencoder_ckpt_11_12',
+               'checkpoint_path': None,
                }
 
-ind = 1
-for e_embed in [128, 512]:
-    for e_convs in [1, 2]:
-        for d_embed in [128, 512]:
-            for d_convs in [1, 2]:
-                configs.append(copy(base_config))
-                configs[-1]['run_name'] = f'test{ind}'
-                configs[-1]['encoder_embedding_depth'] = e_embed
-                configs[-1]['decoder_embedding_depth'] = d_embed
-                configs[-1]['encoder_num_layers'] = e_convs
-                configs[-1]['decoder_num_layers'] = d_convs
+search_space = {
+    'encoder_embedding_depth': [64, 128, 256, 512, 1024],
+    'decoder_embedding_depth': [64, 128, 256, 512, 1024],
+    'encoder_dropout': [0, 0.1, 0.25],
+    'decoder_dropout': [0, 0.1, 0.25],
+    'encoder_graph_norm': [None, 'graph layer'],
+    'decoder_graph_norm': [None, 'graph layer'],
+    'encoder_fc_norm': [None, 'layer'],
+    'encoder_num_layers': [1, 2, 3, 4],
+    'decoder_num_layers': [1, 2, 3, 4],
+    'encoder_num_fc_layers': [1, 2, 4, 8],
+    'encoder_num_nodewise_fcs': [1, 2, 4, 8],
+    'decoder_num_nodewise_fcs': [1, 2, 4, 8],
+    'encoder_lr': [1e-3, 1e-4, 1e-5],
+    'decoder_lr': [1e-3, 1e-4, 1e-5],
+    'encoder_aggregator': ['max', 'sum', 'combo'],
+}
 
-                ind += 1
+
+np.random.seed(0)
+num_tests = 1000
+randints = np.stack(
+    [np.concatenate(
+        [np.random.randint(0, len(values), size=1) for values in search_space.values()]
+    ) for _ in range(num_tests)]
+)
+
+for i in range(num_tests):
+    new_config = copy(base_config)
+    new_config['run_name'] = f'block_1_test_{i}'
+
+    for ind, (key, values) in enumerate(search_space.items()):
+        new_config[key] = values[randints[i, ind]]
+
+    configs.append(new_config)

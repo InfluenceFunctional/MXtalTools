@@ -124,7 +124,7 @@ class GraphNeuralNetwork(torch.nn.Module):
 
             if not self.periodize_inside_nodes:
                 x = fc(x, batch=batch)  # feature-wise 1D convolution, residual is already inside
-            else:
+            else:  # todo note the below has an extra residue
                 x[inside_inds] = x[inside_inds] + fc(x[inside_inds], batch=batch[inside_inds])  # update only the inside inds
 
                 for ii in range(len(ptr) - 1):  # enforce periodicity for each crystal, assuming invariant node features
