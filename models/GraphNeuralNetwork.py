@@ -48,7 +48,11 @@ class GraphNeuralNetwork(torch.nn.Module):
         elif radial_embedding == 'gaussian':
             self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
 
-        self.atom_embedding = EmbeddingBlock(node_embedding_depth, num_embedding_types, input_node_depth, embedding_hidden_dimension)
+        # todo variable names here are quite confusing
+        self.atom_embedding = EmbeddingBlock(node_embedding_depth,
+                                             num_embedding_types,
+                                             input_node_depth,
+                                             embedding_hidden_dimension)
 
         self.interaction_blocks = torch.nn.ModuleList([
             GCBlock(message_depth,

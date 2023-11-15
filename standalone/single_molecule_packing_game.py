@@ -69,7 +69,7 @@ rotation_basis = 'spherical'
 
 modeller = Modeller(config)
 _, _, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)  # need this to initialize some statistics
-modeller.misc_pre_training_items()  # initialize generator
+modeller.init_gaussian_generator()  # initialize generator
 
 reasonable_cell_params = [[] for _ in SGS_TO_SEARCH]  # initialize record
 for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space groups

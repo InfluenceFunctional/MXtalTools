@@ -1333,6 +1333,10 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
     """
     Do analysis and upload results to w&b
     """
+    rec = np.load(r'C:\Users\mikem\crystals\CSP_runs\_experiments_dev_12-11-13-36-50/multi_discriminator_stats_dicts.npy', allow_pickle=True)
+    test_epoch_stats_dict = rec[1]
+    extra_test_dict = rec[2]
+    dataDims = rec[0]
     if (test_epoch_stats_dict is not None) and config.mode == 'gan':
         if 'final_generated_cell_parameters' in test_epoch_stats_dict.keys():
             cell_params_analysis(config, dataDims, wandb, test_loader, test_epoch_stats_dict)
@@ -1411,8 +1415,34 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=N
     discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
     plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout)
     discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict, epoch_stats_dict, tracking_features_dict)
+    score_vs_distance_plot(wandb, pred_distance_dict, scores_dict)
 
     return None
+
+
+def score_vs_distance_plot(wandb, pred_distance_dict, scores_dict):
+    sample_types = list(scores_dict.keys())
+
+    fig = make_subplots(cols=2, rows=1)
+    x = np.concatenate([scores_dict[stype] for stype in sample_types])
+    y = np.concatenate([pred_distance_dict[stype] for stype in sample_types])
+    xy = np.vstack([x, y])
+    z = get_point_density(xy, bins=200)
+    fig.add_trace(go.Scattergl(x=x, y=y, mode='markers', opacity=0.2, marker_color=z, showlegend=False), row=1, col=1)
+
+    x = np.concatenate([scores_dict[stype] for stype in sample_types])
+    y = np.log(np.abs(np.concatenate([pred_distance_dict[stype] for stype in sample_types])))
+    xy = np.vstack([x, y])
+    z = get_point_density(xy, bins=200)
+    fig.add_trace(go.Scattergl(x=x, y=y, mode='markers', opacity=0.2, marker_color=z, showlegend=False), row=1, col=2)
+
+    fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    fig.update_xaxes(title_text='Model Score')
+    fig.update_yaxes(title_text='log(abs(predicted distance))', row=1, col=2)
+    fig.update_yaxes(title_text='predicted distance', row=1, col=1)
+
+    wandb.log({'Score vs. Distance': fig})
 
 
 def discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict, epoch_stats_dict, tracking_features_dict):
@@ -1484,6 +1514,7 @@ def discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict,
 
         fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
         fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
 
         wandb.log({"Distance Results": fig,
                    "distance_R_value": linreg_result.rvalue,

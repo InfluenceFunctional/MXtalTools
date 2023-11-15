@@ -3,6 +3,7 @@ import tqdm
 from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 import torch.optim as optim
+import torch
 
 
 def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
@@ -57,13 +58,13 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
         supercell_data, _, _ = \
             supercell_builder.build_supercells(
                 crystal_batch, sample,
-                supercell_size,cutoff,
+                supercell_size, cutoff,
                 align_to_standardized_orientation=False,
                 target_handedness=crystal_batch.asym_unit_handedness)
 
         output, dist_dict = discriminator(supercell_data.clone().cuda(), return_dists=True)
 
-        score = softmax_and_score(output)
+        score = softmax_and_score(output[:, :2])
         # loss = 1 - F.softmax(output, dim=-1)[:, 1]
         loss = -score
         loss.mean().backward()  # compute gradients
@@ -88,6 +89,94 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
             scheduler1.step()  # grow
 
     sampling_dict = {'std_cell_params': samples_record, 'score': scores_record,
-                     'vdw_score': vdw_record, 'space_groups': supercell_data.sg_ind}
+                     'vdw_score': vdw_record, 'space_group': supercell_data.sg_ind}
 
     return crystal_batch, sampling_dict
+
+
+def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii, supercell_size, cutoff, sampling_temperature, lattice_means, lattice_stds, step_size):
+    samples_record = np.zeros((num_steps, crystal_batch.num_graphs, 12))
+    scores_record = np.zeros((num_steps, crystal_batch.num_graphs))
+    vdw_record = np.zeros_like(scores_record)
+    space_group_record = np.zeros_like(scores_record)
+
+    alpha_randoms = np.random.uniform(0, 1, size=(num_steps, crystal_batch.num_graphs))
+    propose_randoms = step_size * (np.random.randn(num_steps, crystal_batch.num_graphs, 12) * lattice_stds + lattice_means)
+
+    with torch.no_grad():
+        for s_ind in tqdm.tqdm(range(num_steps)):  # sample for a certain number of iterations
+            if s_ind != 0:
+                proposed_samples = torch.tensor(np.copy(samples_record[s_ind - 1]) + propose_randoms[s_ind],
+                                                dtype=torch.float32, device=crystal_batch.x.device)
+
+                proposed_crystals, _ = \
+                    supercell_builder.build_supercells(
+                        crystal_batch, proposed_samples,
+                        supercell_size, cutoff,
+                        align_to_standardized_orientation=True,
+                        target_handedness=crystal_batch.asym_unit_handedness)
+
+                output, proposed_dist_dict = model(proposed_crystals.clone().cuda(), return_dists=True)
+
+                proposed_sample_scores = softmax_and_score(output[:, :2]).cpu().detach().numpy()
+
+                proposed_sample_vdws = vdw_overlap(vdw_radii,
+                                                   crystaldata=crystal_batch,
+                                                   dists=proposed_dist_dict['dists_dict']['intermolecular_dist'],
+                                                   atomic_numbers=proposed_dist_dict['dists_dict']['intermolecular_dist_atoms'],
+                                                   batch_numbers=proposed_dist_dict['dists_dict']['intermolecular_dist_batch'],
+                                                   num_graphs=crystal_batch.num_graphs,
+                                                   return_score_only=True).cpu().detach().numpy()
+
+                score_difference = scores_record[s_ind - 1] - proposed_sample_scores
+                acceptance_ratio = np.minimum(
+                    1,
+                    np.exp(-score_difference / sampling_temperature)
+                )
+                accept_flags = alpha_randoms[s_ind] < acceptance_ratio
+
+                samples_record[s_ind] = samples_record[s_ind - 1]
+                samples_record[s_ind, accept_flags] = proposed_samples[accept_flags].cpu().detach().numpy()
+                scores_record[s_ind] = scores_record[s_ind - 1]
+                scores_record[s_ind, accept_flags] = proposed_sample_scores[accept_flags]
+                vdw_record[s_ind] = vdw_record[s_ind - 1]
+                vdw_record[s_ind, accept_flags] = proposed_sample_vdws[accept_flags]
+                space_group_record[s_ind] = crystal_batch.sg_ind.cpu().detach().numpy()
+            else:
+                proposed_samples = crystal_batch.cell_params
+                proposed_crystals, _ = \
+                    supercell_builder.build_supercells(
+                        crystal_batch, proposed_samples,
+                        supercell_size, cutoff,
+                        align_to_standardized_orientation=True,
+                        target_handedness=crystal_batch.asym_unit_handedness)
+
+                output, proposed_dist_dict = model(proposed_crystals.clone().cuda(), return_dists=True)
+
+                proposed_sample_scores = softmax_and_score(output[:, :2]).cpu().detach().numpy()
+
+                proposed_sample_vdws = vdw_overlap(vdw_radii,
+                                                   crystaldata=crystal_batch,
+                                                   dists=proposed_dist_dict['dists_dict']['intermolecular_dist'],
+                                                   atomic_numbers=proposed_dist_dict['dists_dict']['intermolecular_dist_atoms'],
+                                                   batch_numbers=proposed_dist_dict['dists_dict']['intermolecular_dist_batch'],
+                                                   num_graphs=crystal_batch.num_graphs,
+                                                   return_score_only=True).cpu().detach().numpy()
+
+                samples_record[s_ind] = proposed_samples.cpu().detach().numpy()
+                scores_record[s_ind] = proposed_sample_scores
+                vdw_record[s_ind] = proposed_sample_vdws
+                space_group_record[s_ind] = crystal_batch.sg_ind.cpu().detach().numpy()
+
+    sampling_dict = {'std_cell_params': samples_record, 'score': scores_record,
+                     'vdw_score': vdw_record, 'space_group': space_group_record}
+
+    '''return final sample'''
+    supercell_data, _, _ = \
+        supercell_builder.build_supercells(
+            crystal_batch, torch.Tensor(samples_record[-1], dtype=torch.float32, device=crystal_batch.x.device),
+            supercell_size, cutoff,
+            align_to_standardized_orientation=True,
+            target_handedness=crystal_batch.asym_unit_handedness)
+
+    return supercell_data, sampling_dict

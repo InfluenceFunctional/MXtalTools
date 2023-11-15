@@ -3,16 +3,16 @@ from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.graphgym.models import gnn
 
+from models.GraphNeuralNetwork import EmbeddingBlock, GCBlock
 from models.base_models import molecule_graph_model
+from models.basis_functions import GaussianEmbedding, BesselBasisLayer
 from models.components import MLP
-from scipy.spatial.distance import cdist
-from scipy.optimize import linear_sum_assignment
-import math
-import numbers
+import torch_geometric.nn as gnn
 
 
-def get_reconstruction_likelihood(data, decoded_data, sigma, dist_to_self = False):
+def get_reconstruction_likelihood(data, decoded_data, sigma, dist_to_self=False):
     """
     compute the overlap of 3D gaussians centered on points in the target data
     with those in the predicted data. Each gaussian in the target should have an overlap totalling 1.
@@ -176,7 +176,7 @@ def test_get_reconstruction_loss_old(data, decoding):
 
 
 class point_cloud_encoder(nn.Module):
-    def __init__(self, embedding_depth, num_layers, num_nodewise_fcs, fc_norm, graph_norm, message_norm, dropout, cutoff, seed, device, num_classes):
+    def __init__(self, aggregator, embedding_depth, num_layers, num_fc_layers, num_nodewise_fcs, fc_norm, graph_norm, message_norm, dropout, cutoff, seed, device, num_classes):
         super(point_cloud_encoder, self).__init__()
 
         self.device = device
@@ -189,12 +189,12 @@ class point_cloud_encoder(nn.Module):
             output_dimension=embedding_depth,
             seed=seed,
             graph_convolution_type='TransformerConv',
-            graph_aggregator='combo',
+            graph_aggregator=aggregator,
             concat_pos_to_atom_features=True,
             concat_mol_to_atom_features=False,
             concat_crystal_to_atom_features=False,
             activation='gelu',
-            num_fc_layers=num_layers,
+            num_fc_layers=num_fc_layers,
             fc_depth=embedding_depth,
             fc_norm_mode=fc_norm,
             fc_dropout_probability=dropout,
@@ -248,7 +248,145 @@ class point_cloud_encoder(nn.Module):
         return encoding, num_atoms_prediction, composition_prediction
 
 
+class fc_decoder(nn.Module):
+    def __init__(self, input_depth, embedding_depth, num_layers, num_nodewise_fcs, graph_norm, message_norm, dropout, cutoff, max_ntypes, seed, device):
+        super(fc_decoder, self).__init__()
+
+        self.device = device
+        self.max_num_nodes = 10
+        self.output_dim = max_ntypes + 3
+
+        self.fc = MLP(
+                layers=num_layers,
+                filters=embedding_depth * self.max_num_nodes,
+                input_dim=input_depth * self.max_num_nodes,
+                output_dim=embedding_depth * self.max_num_nodes,
+                activation='gelu',
+                norm=graph_norm,
+                dropout=dropout,
+            )
+
+        self.output_layer = nn.Linear(embedding_depth * self.max_num_nodes, (self.output_dim) * self.max_num_nodes)
+
+    def forward(self, encoding, data, points_per_graph):
+        """
+        initialize nodes on randn with uniform embedding
+        decode
+        """
+
+        x = encoding.repeat_interleave(self.max_num_nodes, 1)
+
+        x = self.fc(x)
+
+        x = self.output_layer(x)
+
+        out = torch.cat([torch.stack([x[j, self.output_dim * i: self.output_dim * (i + 1)] for i in range(points_per_graph[j])]) for j in range(data.num_graphs)])
+        return out
+
+
 class point_cloud_decoder(nn.Module):
+    def __init__(self, input_depth, embedding_depth, num_layers, num_nodewise_fcs, graph_norm, message_norm, dropout, cutoff, max_ntypes, seed, device):
+        super(point_cloud_decoder, self).__init__()
+
+        self.device = device
+        self.max_num_neighbors = 100
+        self.cutoff = cutoff
+        output_depth = max_ntypes
+        torch.manual_seed(seed)
+
+        radial_embedding = 'gaussian'
+        num_radial = 50
+        envelope_exponent: int = 5
+
+        if radial_embedding == 'bessel':
+            self.rbf = BesselBasisLayer(num_radial, cutoff, envelope_exponent)
+        elif radial_embedding == 'gaussian':
+            self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
+
+        if input_depth != embedding_depth:
+            self.init_layer = nn.Linear(input_depth, embedding_depth)
+        else:
+            self.init_layer = nn.Identity()
+
+        self.upscale = nn.Linear(input_depth, input_depth * 27)
+        self.init_norm1 = nn.LayerNorm(input_depth)
+        self.init_norm2 = nn.LayerNorm(input_depth)
+
+        self.interaction_blocks = torch.nn.ModuleList([
+            GCBlock(embedding_depth,
+                    embedding_depth,
+                    'TransformerConv',
+                    num_radial,
+                    norm=message_norm,
+                    dropout=dropout,
+                    heads=4,
+                    )
+            for _ in range(num_layers)
+        ])
+
+        self.fc_blocks = torch.nn.ModuleList([
+            MLP(
+                layers=num_nodewise_fcs,
+                filters=embedding_depth,
+                input_dim=embedding_depth,
+                output_dim=embedding_depth,
+                activation='gelu',
+                norm=graph_norm,
+                dropout=dropout,
+            )
+            for _ in range(num_layers)
+        ])
+
+        self.output_layer = nn.Linear(embedding_depth, output_depth)
+
+        self.grid_positions = torch.zeros((27, 3))  # initialize the translations in fractional coords
+        i = 0
+        for xx in range(-1, 1 + 1):
+            for yy in range(-1, 1 + 1):
+                for zz in range(-1, 1 + 1):
+                    self.grid_positions[i] = torch.tensor((xx, yy, zz))
+                    i += 1
+
+    def get_geom_embedding(self, edge_index, pos):
+        """
+        compute elements for radial & spherical embeddings
+        """
+        i, j = edge_index  # i->j source-to-target
+        dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
+
+        return dist, self.rbf(dist)
+
+    def forward(self, encoding, data, graph_sizes):
+        """
+        initialize nodes on randn with uniform embedding
+        decode
+        """
+
+        batch = data.batch
+        data.pos = torch.randn_like(data.pos)
+        grid = F.gelu(self.init_norm1(self.upscale(encoding).reshape(data.num_graphs, encoding.shape[1], 27).permute(0, 2, 1)))
+
+        grid = grid.cpu()
+        data.x = torch.cat([gnn.knn_interpolate(grid[ind], self.grid_positions.cpu(), data.pos[data.batch == ind].cpu())
+                            for ind in range(data.num_graphs)]).to(encoding.device)
+
+        x = F.gelu(self.init_norm2(self.init_layer(data.x)))
+        for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
+            edge_index = gnn.radius_graph(data.pos, r=self.cutoff, batch=batch,
+                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target')
+
+            dist, rbf = self.get_geom_embedding(edge_index, data.pos)
+
+            x = convolution(x, rbf, edge_index, batch)
+            x = fc(x, batch=batch)
+
+            data.pos += x[:, :3]  # update positions with convolution results
+            x[:, -3:] = data.pos  # update position in note embedding
+
+        return torch.cat((data.pos, self.output_layer(x)), dim=1)
+
+
+class old_point_cloud_decoder(nn.Module):
     def __init__(self, input_depth, embedding_depth, num_layers, num_nodewise_fcs, graph_norm, message_norm, dropout, cutoff, max_ntypes, seed, device):
         super(point_cloud_decoder, self).__init__()
 
@@ -297,7 +435,19 @@ class point_cloud_decoder(nn.Module):
         return self.conditioner(data)
 
 
-def emd(x1, x2):
-    d = cdist(x1, x2)
-    assignment = linear_sum_assignment(d)  # min_weight_full_bipartite_matching(d)
-    return d[assignment].sum() / min(len(x1), len(x2))
+def load_checkpoint(path, encoder, decoder, optimizer):
+    checkpoint = torch.load(path)
+    if list(checkpoint['encoder_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+        for i in list(checkpoint['encoder_state_dict']):
+            checkpoint['encoder_state_dict'][i[7:]] = checkpoint['encoder_state_dict'].pop(i)
+    if list(checkpoint['decoder_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+        for i in list(checkpoint['decoder_state_dict']):
+            checkpoint['decoder_state_dict'][i[7:]] = checkpoint['decoder_state_dict'].pop(i)
+
+    encoder.load_state_dict(checkpoint['encoder_state_dict'])
+    decoder.load_state_dict(checkpoint['decoder_state_dict'])
+
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+    return encoder, decoder, optimizer

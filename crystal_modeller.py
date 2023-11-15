@@ -21,7 +21,7 @@ from torch_geometric.loader.dataloader import Collater
 
 from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
 from constants.asymmetric_units import asym_unit_dict
-from csp.SampleOptimization import gradient_descent_sampling
+from csp.SampleOptimization import gradient_descent_sampling, mcmc_sampling
 from models.crystal_rdf import crystal_rdf, new_crystal_rdf
 
 from models.discriminator_models import crystal_discriminator, crystal_proxy_discriminator
@@ -120,7 +120,7 @@ class Modeller:
 
         self.generator, self.discriminator, self.regressor, self.proxy_discriminator = [nn.Linear(1, 1) for _ in range(4)]
         print("Initializing model(s) for " + self.config.mode)
-        if self.config.mode == 'gan' or self.config.mode == 'sampling' or self.config.mode == 'embedding':
+        if self.config.mode == 'gan' or self.config.mode == 'search' or self.config.mode == 'embedding':
             self.generator = crystal_generator(self.config.seeds.model, self.device, self.config.generator.model, self.dataDims, self.sym_info)
             self.discriminator = crystal_discriminator(self.config.seeds.model, self.config.discriminator.model, self.dataDims)
             self.proxy_discriminator = crystal_proxy_discriminator(self.config.seeds.model, self.config.proxy_discriminator.model, self.dataDims)
@@ -472,7 +472,7 @@ class Modeller:
 
             '''initialize datasets and useful classes'''
             train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
-            self.misc_pre_training_items()
+            self.init_gaussian_generator()
             self.logger = Logger(self.config, self.dataDims, wandb)
             self.init_models()
 
@@ -1101,7 +1101,7 @@ class Modeller:
             vdw_loss, vdw_score, dist_dict, \
             supercell_data, similarity_penalty, h_bond_score
 
-    def misc_pre_training_items(self):
+    def init_gaussian_generator(self):
         """
         dataset_builder: for going from database to trainable dataset
         dataDims: contains key information about the dataset
@@ -1533,70 +1533,96 @@ class Modeller:
 
         return self.config
 
-    def crystal_search(self, molecule_data, batch_size, data_contains_ground_truth=True):
+    def crystal_search(self, molecule_data, batch_size=None, data_contains_ground_truth=True):
         """
         execute a search for a single crystal target
         if the target is known, compare it to our best guesses
         """
-        num_discriminator_opt_steps = 100
-        num_mcmc_opt_steps = 100
-        self.generator.eval()
-        self.regressor.eval()
-        self.discriminator.eval()
+        self.source_directory = os.getcwd()
+        self.prep_new_working_directory()
 
-        '''instantiate batch'''
-        collater = Collater(None, None)
-        crystaldata_batch = collater([molecule_data for _ in range(batch_size)]).to(self.device)
-        refresh_inds = torch.arange(batch_size)
-        max_iters = 10
-        converged_samples_list = []
-        opt_trajectories = []
-        for opt_iter in range(max_iters):
-            crystaldata_batch = self.refresh_crystal_batch(crystaldata_batch, refresh_inds=refresh_inds)
+        with wandb.init(config=self.config,
+                        project=self.config.wandb.project_name,
+                        entity=self.config.wandb.username,
+                        tags=[self.config.logger.experiment_tag],
+                        settings=wandb.Settings(code_dir=".")):
 
-            crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch, mode='discriminator', num_steps=num_discriminator_opt_steps)
-            opt_trajectories.append(opt_traj)
-            crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch, mode='mcmc', num_steps=num_mcmc_opt_steps)
-            opt_trajectories.append(opt_traj)
-            crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch, mode='discriminator', num_steps=num_discriminator_opt_steps)
-            opt_trajectories.append(opt_traj)
+            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
 
-            crystaldata_batch, refresh_inds, converged_samples = self.prune_crystaldata_batch(crystaldata_batch)
+            if batch_size is None:
+                batch_size = self.config.min_batch_size
 
-            converged_samples_list.append(converged_samples)
+            num_discriminator_opt_steps = 100
+            num_mcmc_opt_steps = 100
+            max_iters = 10
 
-            # add convergence flags based on completeness of sampling
+            self.init_gaussian_generator()
+            self.init_models()
 
-        '''compare samples to ground truth'''
-        if data_contains_ground_truth:
-            ground_truth_analysis = self.analyze_real_crystal(molecule_data)
+            self.generator.eval()
+            self.regressor.eval()
+            self.discriminator.eval()
+
+            '''instantiate batch'''
+            collater = Collater(None, None)
+            crystaldata_batch = collater([molecule_data for _ in range(batch_size)]).to(self.device)
+            refresh_inds = torch.arange(batch_size)
+            converged_samples_list = []
+            opt_trajectories = []
+
+            for opt_iter in range(max_iters):
+                crystaldata_batch = self.refresh_crystal_batch(crystaldata_batch, refresh_inds=refresh_inds)
+
+                crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch,
+                                                                              mode='mcmc', num_steps=num_mcmc_opt_steps)
+                opt_trajectories.append(opt_traj)
+                crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch,
+                                                                              mode='discriminator', num_steps=num_discriminator_opt_steps)
+                opt_trajectories.append(opt_traj)
+
+                crystaldata_batch, refresh_inds, converged_samples = self.prune_crystaldata_batch(crystaldata_batch)
+
+                converged_samples_list.append(converged_samples)
+
+                # add convergence flags based on completeness of sampling
+
+            # '''compare samples to ground truth'''
+            # if data_contains_ground_truth:
+            #     ground_truth_analysis = self.analyze_real_crystal(molecule_data)
+            #
+
+    def prune_crystaldata_batch(self, crystaldata_batch):
+        refresh_inds = np.zeros(len(crystaldata_batch))
+        converged_samples = np.zeros_like(refresh_inds)
+        assert False
+        return crystaldata_batch, refresh_inds, converged_samples
 
     def optimize_crystaldata_batch(self, batch, mode, num_steps):
         """
         method which takes a batch of crystaldata objects
         and optimzies them according to a score model either
         with MCMC or gradient descent
-        """
+        """  # todo test
         num_crystals = batch.num_graphs
-        traj_record = {'score': np.zeros((num_steps, num_crystals)),
-                       'vdw_score': np.zeros((num_steps, num_crystals)),
-                       'std_cell_params': np.zeros((num_steps, num_crystals, 12)),
-                       'space_groups': np.zeros((num_steps, num_crystals)),
-                       'rdf': [[] for _ in range(num_crystals)]
-                       }
-
         if mode.lower() == 'mcmc':
-            # todo build a clean MCMC here
-            assert False
+            batch, traj_record = mcmc_sampling(
+                self.discriminator, batch,
+                self.supercell_builder,
+                num_steps, self.vdw_radii,
+                supercell_size=5, cutoff=6,
+                sampling_temperature=1,
+                lattice_means=self.dataDims['lattice_means'],
+                lattice_stds=self.dataDims['lattice_stds'],
+                step_size=0.1
+            )
         elif mode.lower() == 'discriminator':
             batch, traj_record = gradient_descent_sampling(
                 self.discriminator, batch,
                 self.supercell_builder,
                 num_steps, 1e-3,
                 torch.optim.Rprop, self.vdw_radii,
-                supercell_size=5, cutoff=6)
-
-        traj_record['rdf'] = crystal_rdf(batch, mode='intermolecular', elementwise=True, cpu_detach=True, raw_density=True)
+                supercell_size=5, cutoff=6
+            )
 
         return batch, traj_record
 

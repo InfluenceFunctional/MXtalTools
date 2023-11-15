@@ -90,7 +90,7 @@ class DataManager:
         '''
         self.datapoints = self.generate_training_datapoints()
 
-        if config.single_molecule_dataset_identifier is not None:  # make dataset a bunch of the same molecule
+        if self.single_molecule_dataset_identifier is not None:  # make dataset a bunch of the same molecule
             identifiers = [item.csd_identifier for item in self.datapoints]
             index = identifiers.index(self.single_molecule_dataset_identifier)  # PIQTOY # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
             new_datapoints = [self.datapoints[index] for i in range(self.dataset_length)]
