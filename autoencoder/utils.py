@@ -71,7 +71,7 @@ class point_cloud_encoder(nn.Module):
             graph_message_norm=message_norm,
             graph_message_dropout=dropout,
             num_attention_heads=num_layers,
-            graph_message_depth=embedding_depth // 2,
+            graph_message_depth=embedding_depth,
             graph_node_dims=embedding_depth,
             num_graph_convolutions=num_layers,
             graph_embedding_depth=embedding_depth,
