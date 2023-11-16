@@ -7,9 +7,9 @@ import torch
 
 
 def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
-                              n_iter, lr, optimizer_func, vdw_radii,
+                              num_steps, lr, optimizer_func, vdw_radii,
                               supercell_size=5, cutoff=6):
-    ''' DEPRECATED
+    """
     for a given sample
     1) generate a score from a discriminator model
     2) backpropagate the score as a loss to the original cell parameters
@@ -23,7 +23,7 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
     init_samples
     single_mol_data
     supercell_builder
-    n_iter
+    num_steps
     supercell_size
     cutoff
     generate_sgs
@@ -32,12 +32,12 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
     -------
     sampling dict containing scores and samples
 
-    '''
+    """
 
-    sample = crystal_batch.cell_params.clone()
+    sample = torch.tensor(crystal_batch.cell_params.clone(), device=crystal_batch.x.device, requires_grad=True, dtype=torch.float32)
     optimizer = optimizer_func([sample], lr=lr)
 
-    max_lr_target_time = n_iter // 10
+    max_lr_target_time = num_steps // 10
     max_lr = 1e-2
     grow_lambda = (max_lr / lr) ** (1 / max_lr_target_time)
 
@@ -47,69 +47,97 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
 
     n_samples = len(sample)
 
-    scores_record = np.zeros((n_iter, n_samples))
-    samples_record = np.zeros((n_iter, n_samples, 12))
+    scores_record = np.zeros((num_steps, n_samples))
+    samples_record = np.zeros((num_steps, n_samples, 12))
     loss_record = np.zeros_like(scores_record)
     vdw_record = np.zeros_like(scores_record)
+    lr_record = np.zeros(num_steps)
+    packing_record = np.zeros_like(scores_record)
 
-    for i in tqdm.tqdm(range(n_iter), miniters=int(n_iter / 25)):
+    discriminator.eval()
+    with torch.enable_grad():
+        for s_ind in tqdm.tqdm(range(num_steps), miniters=int(num_steps / 25)):
+            optimizer.zero_grad()
+            supercell_data, cell_volumes = \
+                supercell_builder.build_supercells(
+                    crystal_batch, sample,
+                    supercell_size, cutoff,
+                    align_to_standardized_orientation=True,
+                    target_handedness=crystal_batch.asym_unit_handedness)
 
-        optimizer.zero_grad()
-        supercell_data, _, _ = \
-            supercell_builder.build_supercells(
-                crystal_batch, sample,
-                supercell_size, cutoff,
-                align_to_standardized_orientation=False,
-                target_handedness=crystal_batch.asym_unit_handedness)
+            output, dist_dict = discriminator(supercell_data.clone().cuda(), return_dists=True)
 
-        output, dist_dict = discriminator(supercell_data.clone().cuda(), return_dists=True)
+            score = softmax_and_score(output[:, :2])
+            loss = -score
+            loss.mean().backward()  # compute gradients
+            optimizer.step()  # apply grad
 
-        score = softmax_and_score(output[:, :2])
-        # loss = 1 - F.softmax(output, dim=-1)[:, 1]
-        loss = -score
-        loss.mean().backward()  # compute gradients
-        optimizer.step()  # apply grad
+            vdw_record[s_ind] = vdw_overlap(vdw_radii,
+                                            dist_dict=dist_dict['dists_dict'],
+                                            num_graphs=crystal_batch.num_graphs,
+                                            return_score_only=True,
+                                            graph_sizes=supercell_data.mol_size).cpu().detach().numpy()
 
-        vdw_record[i] = vdw_overlap(vdw_radii,
-                                    dists=dist_dict['dists_dict']['intermolecular_dist'],
-                                    atomic_numbers=dist_dict['dists_dict']['intermolecular_dist_atoms'],
-                                    batch_numbers=dist_dict['dists_dict']['intermolecular_dist_batch'],
-                                    num_graphs=crystal_batch.num_graphs).cpu().detach().numpy()
-        scores_record[i] = score.cpu().detach().numpy()
-        samples_record[i] = supercell_data.cell_params.cpu().detach().numpy()
-        loss_record[i] = loss.cpu().detach().numpy()
+            scores_record[s_ind] = score.cpu().detach().numpy()
+            samples_record[s_ind] = sample.cpu().detach().numpy() #supercell_data.cell_params.cpu().detach().numpy()
+            loss_record[s_ind] = loss.cpu().detach().numpy()
+            packing_record[s_ind] = (supercell_data.mult * supercell_data.mol_volume / cell_volumes).cpu().detach().numpy()
 
-        lr = optimizer.param_groups[0]['lr']
-        if lr >= max_lr:
-            hit_max_lr = True
-        if hit_max_lr:
-            if lr > 1e-5:
-                scheduler2.step()  # shrink
-        else:
-            scheduler1.step()  # grow
+            lr = optimizer.param_groups[0]['lr']
+            lr_record[s_ind] = lr
+            if lr >= max_lr:
+                hit_max_lr = True
+            if hit_max_lr:
+                if lr > 1e-5:
+                    scheduler1.step()  # shrink
+            else:
+                scheduler2.step()  # grow
 
     sampling_dict = {'std_cell_params': samples_record, 'score': scores_record,
-                     'vdw_score': vdw_record, 'space_group': supercell_data.sg_ind}
+                     'vdw_score': vdw_record, 'space_group': supercell_data.sg_ind.cpu().detach().numpy(),
+                     'packing_coeff': packing_record}
 
-    return crystal_batch, sampling_dict
+    return sampling_dict
+
+
+"""
+
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+
+fig = make_subplots(cols=2,rows=2,subplot_titles=['score','vdw','packing_coeff','lr'])
+fig.add_scattergl(y=scores_record.mean(1), line_width=8, line_color='black', showlegend=False,row=1,col=1)
+fig.add_scattergl(y=vdw_record.mean(1), line_width=8, line_color='black', showlegend=False,row=1,col=2)
+fig.add_scattergl(y=packing_record.mean(1), line_width=8, line_color='black', showlegend=False,row=2,col=1)
+fig.add_scattergl(y=np.log10(lr_record), line_width=8, line_color='black', showlegend=False,row=2,col=2)
+for i in range(scores_record.shape[1]):
+    fig.add_scattergl(y=scores_record[:,i], name=i, legendgroup=i, showlegend=True,row=1,col=1)
+    fig.add_scattergl(y=vdw_record[:,i], name=i, legendgroup=i, showlegend=False,row=1,col=2)
+    fig.add_scattergl(y=packing_record[:,i], name=i, legendgroup=i, showlegend=False,row=2,col=1)
+
+fig.show()
+
+
+"""
 
 
 def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii, supercell_size, cutoff, sampling_temperature, lattice_means, lattice_stds, step_size):
     samples_record = np.zeros((num_steps, crystal_batch.num_graphs, 12))
     scores_record = np.zeros((num_steps, crystal_batch.num_graphs))
     vdw_record = np.zeros_like(scores_record)
-    space_group_record = np.zeros_like(scores_record)
+    packing_record = np.zeros_like(scores_record)
 
     alpha_randoms = np.random.uniform(0, 1, size=(num_steps, crystal_batch.num_graphs))
     propose_randoms = step_size * (np.random.randn(num_steps, crystal_batch.num_graphs, 12) * lattice_stds + lattice_means)
 
     with torch.no_grad():
-        for s_ind in tqdm.tqdm(range(num_steps)):  # sample for a certain number of iterations
+        for s_ind in tqdm.tqdm(range(num_steps), miniters=int(num_steps / 25)):  # sample for a certain number of iterations
             if s_ind != 0:
                 proposed_samples = torch.tensor(np.copy(samples_record[s_ind - 1]) + propose_randoms[s_ind],
                                                 dtype=torch.float32, device=crystal_batch.x.device)
 
-                proposed_crystals, _ = \
+                proposed_crystals, cell_volumes = \
                     supercell_builder.build_supercells(
                         crystal_batch, proposed_samples,
                         supercell_size, cutoff,
@@ -121,12 +149,10 @@ def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii,
                 proposed_sample_scores = softmax_and_score(output[:, :2]).cpu().detach().numpy()
 
                 proposed_sample_vdws = vdw_overlap(vdw_radii,
-                                                   crystaldata=crystal_batch,
-                                                   dists=proposed_dist_dict['dists_dict']['intermolecular_dist'],
-                                                   atomic_numbers=proposed_dist_dict['dists_dict']['intermolecular_dist_atoms'],
-                                                   batch_numbers=proposed_dist_dict['dists_dict']['intermolecular_dist_batch'],
+                                                   dist_dict=proposed_dist_dict['dists_dict'],
                                                    num_graphs=crystal_batch.num_graphs,
-                                                   return_score_only=True).cpu().detach().numpy()
+                                                   return_score_only=True,
+                                                   graph_sizes=proposed_crystals.mol_size).cpu().detach().numpy()
 
                 score_difference = scores_record[s_ind - 1] - proposed_sample_scores
                 acceptance_ratio = np.minimum(
@@ -135,16 +161,19 @@ def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii,
                 )
                 accept_flags = alpha_randoms[s_ind] < acceptance_ratio
 
+                packing_coeffs = (proposed_crystals.mult * proposed_crystals.mol_volume / cell_volumes).cpu().detach().numpy()
+
                 samples_record[s_ind] = samples_record[s_ind - 1]
                 samples_record[s_ind, accept_flags] = proposed_samples[accept_flags].cpu().detach().numpy()
                 scores_record[s_ind] = scores_record[s_ind - 1]
                 scores_record[s_ind, accept_flags] = proposed_sample_scores[accept_flags]
                 vdw_record[s_ind] = vdw_record[s_ind - 1]
                 vdw_record[s_ind, accept_flags] = proposed_sample_vdws[accept_flags]
-                space_group_record[s_ind] = crystal_batch.sg_ind.cpu().detach().numpy()
+                packing_record[s_ind] = packing_record[s_ind - 1]
+                packing_record[s_ind, accept_flags] = packing_coeffs[accept_flags]
             else:
                 proposed_samples = crystal_batch.cell_params
-                proposed_crystals, _ = \
+                proposed_crystals, cell_volumes = \
                     supercell_builder.build_supercells(
                         crystal_batch, proposed_samples,
                         supercell_size, cutoff,
@@ -156,27 +185,40 @@ def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii,
                 proposed_sample_scores = softmax_and_score(output[:, :2]).cpu().detach().numpy()
 
                 proposed_sample_vdws = vdw_overlap(vdw_radii,
-                                                   crystaldata=crystal_batch,
-                                                   dists=proposed_dist_dict['dists_dict']['intermolecular_dist'],
-                                                   atomic_numbers=proposed_dist_dict['dists_dict']['intermolecular_dist_atoms'],
-                                                   batch_numbers=proposed_dist_dict['dists_dict']['intermolecular_dist_batch'],
+                                                   dist_dict=proposed_dist_dict['dists_dict'],
                                                    num_graphs=crystal_batch.num_graphs,
-                                                   return_score_only=True).cpu().detach().numpy()
+                                                   return_score_only=True,
+                                                   graph_sizes=proposed_crystals.mol_size).cpu().detach().numpy()
+
+                packing_coeffs = (proposed_crystals.mult * proposed_crystals.mol_volume / cell_volumes).cpu().detach().numpy()
 
                 samples_record[s_ind] = proposed_samples.cpu().detach().numpy()
                 scores_record[s_ind] = proposed_sample_scores
                 vdw_record[s_ind] = proposed_sample_vdws
-                space_group_record[s_ind] = crystal_batch.sg_ind.cpu().detach().numpy()
+                packing_record[s_ind] = packing_coeffs
 
     sampling_dict = {'std_cell_params': samples_record, 'score': scores_record,
-                     'vdw_score': vdw_record, 'space_group': space_group_record}
+                     'vdw_score': vdw_record, 'space_group': crystal_batch.sg_ind.cpu().detach().numpy(),
+                     'packing_coeff': packing_record}
 
-    '''return final sample'''
-    supercell_data, _, _ = \
-        supercell_builder.build_supercells(
-            crystal_batch, torch.Tensor(samples_record[-1], dtype=torch.float32, device=crystal_batch.x.device),
-            supercell_size, cutoff,
-            align_to_standardized_orientation=True,
-            target_handedness=crystal_batch.asym_unit_handedness)
+    return sampling_dict
 
-    return supercell_data, sampling_dict
+
+"""
+
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+fig = make_subplots(cols=2,rows=2,subplot_titles=['score','vdw','packing_coeff','lr'])
+fig.add_scattergl(y=scores_record.mean(1), line_width=8, line_color='black', showlegend=False,row=1,col=1)
+fig.add_scattergl(y=vdw_record.mean(1), line_width=8, line_color='black', showlegend=False,row=1,col=2)
+fig.add_scattergl(y=packing_record.mean(1), line_width=8, line_color='black', showlegend=False,row=2,col=1)
+for i in range(scores_record.shape[1]):
+    fig.add_scattergl(y=scores_record[:,i], name=i, legendgroup=i, showlegend=True,row=1,col=1)
+    fig.add_scattergl(y=vdw_record[:,i], name=i, legendgroup=i, showlegend=False,row=1,col=2)
+    fig.add_scattergl(y=packing_record[:,i], name=i, legendgroup=i, showlegend=False,row=2,col=1)
+
+fig.show()
+
+
+"""

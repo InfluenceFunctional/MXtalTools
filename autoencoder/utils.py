@@ -10,7 +10,7 @@ from models.components import MLP
 import torch_geometric.nn as gnn
 
 
-def get_reconstruction_likelihood(data, decoded_data, sigma, dist_to_self=False):
+def get_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, dist_to_self=False):
     """
     compute the overlap of 3D gaussians centered on points in the target data
     with those in the predicted data. Each gaussian in the target should have an overlap totalling 1.
@@ -24,14 +24,17 @@ def get_reconstruction_likelihood(data, decoded_data, sigma, dist_to_self=False)
     target_types = data.x[:, 0]
 
     if dist_to_self:
-        target_probs = F.one_hot(data.x[:, 0], num_classes=5)[:, target_types].diag()
         dists = torch.cdist(data.pos, data.pos, p=2)  # n_targets x n_guesses
+        target_probs = F.one_hot(data.x[:, 0], num_classes=decoded_data.x.shape[1])[:, target_types].diag()
 
     else:
         dists = torch.cdist(data.pos, decoded_data.pos, p=2)  # n_targets x n_guesses
         target_probs = decoded_data.x[:, target_types].diag()
 
-    overlap = torch.exp(-dists ** 2 / sigma)
+    if overlap_type == 'gaussian':
+        overlap = torch.exp(-dists ** 2 / sigma)
+    elif overlap_type == 'inverse':
+        overlap = 1/(dists/sigma + 1)
 
     # scale all overlaps by the predicted confidence in each particle type
     scaled_overlap = overlap * target_probs
@@ -70,7 +73,7 @@ class point_cloud_encoder(nn.Module):
             graph_node_dropout=dropout,
             graph_message_norm=message_norm,
             graph_message_dropout=dropout,
-            num_attention_heads=num_layers,
+            num_attention_heads=4,
             graph_message_depth=embedding_depth,
             graph_node_dims=embedding_depth,
             num_graph_convolutions=num_layers,
@@ -235,3 +238,4 @@ def load_checkpoint(path, encoder, decoder, optimizer):
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
     return encoder, decoder, optimizer
+

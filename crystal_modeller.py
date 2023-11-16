@@ -140,10 +140,10 @@ class Modeller:
         self.regressor_optimizer = init_optimizer(self.config.regressor.optimizer, self.regressor)
         self.proxy_discriminator_optimizer = init_optimizer(self.config.regressor.optimizer, self.proxy_discriminator)
 
-        if self.config.generator_path is not None and (self.config.mode == 'gan' or self.config.mode == 'embedding'):
+        if self.config.generator_path is not None and (self.config.mode == 'gan' or self.config.mode == 'embedding' or self.config.mode == 'search'):
             self.generator, self.generator_optimizer = reload_model(self.generator, self.generator_optimizer,
                                                                     self.config.generator_path)
-        if self.config.discriminator_path is not None and (self.config.mode == 'gan' or self.config.mode == 'embedding'):
+        if self.config.discriminator_path is not None and (self.config.mode == 'gan' or self.config.mode == 'embedding' or self.config.mode == 'search'):
             self.discriminator, self.discriminator_optimizer = reload_model(self.discriminator, self.discriminator_optimizer,
                                                                             self.config.discriminator_path)
         if self.config.regressor_path is not None:
@@ -1568,19 +1568,21 @@ class Modeller:
             crystaldata_batch = collater([molecule_data for _ in range(batch_size)]).to(self.device)
             refresh_inds = torch.arange(batch_size)
             converged_samples_list = []
-            opt_trajectories = []
+            optimization_trajectories = []
 
             for opt_iter in range(max_iters):
                 crystaldata_batch = self.refresh_crystal_batch(crystaldata_batch, refresh_inds=refresh_inds)
 
                 crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch,
-                                                                              mode='mcmc', num_steps=num_mcmc_opt_steps)
-                opt_trajectories.append(opt_traj)
+                                                                              mode='mcmc',
+                                                                              num_steps=num_mcmc_opt_steps)
+                optimization_trajectories.append(opt_traj)
                 crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch,
-                                                                              mode='discriminator', num_steps=num_discriminator_opt_steps)
-                opt_trajectories.append(opt_traj)
+                                                                              mode='discriminator',
+                                                                              num_steps=num_discriminator_opt_steps)
+                optimization_trajectories.append(opt_traj)
 
-                crystaldata_batch, refresh_inds, converged_samples = self.prune_crystaldata_batch(crystaldata_batch)
+                crystaldata_batch, refresh_inds, converged_samples = self.prune_crystaldata_batch(crystaldata_batch, optimization_trajectories)
 
                 converged_samples_list.append(converged_samples)
 
@@ -1591,7 +1593,33 @@ class Modeller:
             #     ground_truth_analysis = self.analyze_real_crystal(molecule_data)
             #
 
-    def prune_crystaldata_batch(self, crystaldata_batch):
+    def prune_crystaldata_batch(self, crystaldata_batch, optimization_trajectories):
+        """
+        Identify trajectories which have converged.
+        """
+
+        combined_traj_dict = {key: np.concatenate(
+            [traj[key] for traj in optimization_trajectories], axis=0)
+            for key in optimization_trajectories[1].keys()}
+
+        """
+        
+        from plotly.subplots import make_subplots
+        import plotly.graph_objects as go
+
+        fig = make_subplots(cols=4, rows=2, subplot_titles=list(combined_traj_dict.keys()))
+
+        for i in range(crystaldata_batch.num_graphs):
+            for j, key in enumerate(combined_traj_dict.keys()):
+                if 'std' not in key and 'space_group' not in key and 'best' not in key:
+                    col = j % 4 + 1
+                    row = j // 4 + 1
+                    fig.add_scattergl(y=combined_traj_dict[key][:, i], name=i, legendgroup=i, showlegend=True, row=row, col=col)
+
+        fig.show()
+        
+        """
+
         refresh_inds = np.zeros(len(crystaldata_batch))
         converged_samples = np.zeros_like(refresh_inds)
         assert False
@@ -1602,29 +1630,53 @@ class Modeller:
         method which takes a batch of crystaldata objects
         and optimzies them according to a score model either
         with MCMC or gradient descent
-        """  # todo test
-        num_crystals = batch.num_graphs
+        """  # todo combine below into a single trajectory to improve merging
         if mode.lower() == 'mcmc':
-            batch, traj_record = mcmc_sampling(
+            sampling_dict = mcmc_sampling(
                 self.discriminator, batch,
                 self.supercell_builder,
                 num_steps, self.vdw_radii,
                 supercell_size=5, cutoff=6,
-                sampling_temperature=1,
+                sampling_temperature=0.05,
                 lattice_means=self.dataDims['lattice_means'],
                 lattice_stds=self.dataDims['lattice_stds'],
-                step_size=0.1
+                step_size=0.05
             )
         elif mode.lower() == 'discriminator':
-            batch, traj_record = gradient_descent_sampling(
+            sampling_dict = gradient_descent_sampling(
                 self.discriminator, batch,
                 self.supercell_builder,
                 num_steps, 1e-3,
                 torch.optim.Rprop, self.vdw_radii,
                 supercell_size=5, cutoff=6
             )
+        else:
+            assert False, f"{mode.lower()} is not a valid sampling mode!"
 
-        return batch, traj_record
+        '''return best sample'''
+        best_inds = np.argmax(sampling_dict['score'], axis=0)
+        best_samples = sampling_dict['std_cell_params'][best_inds, np.arange(batch.num_graphs), :]
+        supercell_data, _ = \
+            self.supercell_builder.build_supercells(
+                batch, torch.tensor(best_samples, dtype=torch.float32, device=batch.x.device),
+                5, 6,
+                align_to_standardized_orientation=True,
+                target_handedness=batch.asym_unit_handedness)
+
+        output, proposed_dist_dict = self.discriminator(supercell_data.clone().cuda(), return_dists=True)
+
+        rebuilt_sample_scores = softmax_and_score(output[:, :2]).cpu().detach().numpy()
+
+        assert np.mean(np.abs(rebuilt_sample_scores - sampling_dict['score'].max(0))) < 1e-1  # confirm we rebuilt the cells correctly
+
+        sampling_dict['best_samples'] = best_samples
+        sampling_dict['best_scores'] = sampling_dict['score'].max(0)
+        sampling_dict['best_vdws'] = np.diag(sampling_dict['vdw_score'][best_inds, :])
+
+        best_batch = batch.clone()
+        best_batch.cell_params = torch.tensor(best_samples, dtype=torch.float32, device=supercell_data.x.device)
+
+        return batch, sampling_dict
 
     def refresh_crystal_batch(self, batch, refresh_inds, generator='gaussian', mol_orientation='random', space_groups: torch.tensor = None):
         batch = self.set_molecule_alignment(batch, right_handed=False, mode_override=mol_orientation)

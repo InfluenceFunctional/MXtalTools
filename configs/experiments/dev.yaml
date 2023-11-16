@@ -1,24 +1,24 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
+mode: search  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'test_dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
-dataset_yaml_path: '/dataset/full_discriminator.yaml'
-extra_test_set_name: 'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
+dataset_yaml_path: '/dataset/test_optim.yaml'
+extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 dataset:
-  max_dataset_length: 1000
+  max_dataset_length: 10000000
 
 # batching & convergence
 early_epochs_step_override: 100
 num_early_epochs: 10
 grow_batch_size: True
-min_batch_size: 25
+min_batch_size: 10
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 0 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
@@ -37,7 +37,7 @@ seeds:
   dataset: 0
 
 # for reloading prior checkpoints
-discriminator_name: 'cluster/best_discriminator_experiments_benchmarks_standard_multi_discriminator_23-10-19-59-52' #'cluster/best_discriminator_experiments_benchmarks_standard_discriminator_16-10-09-08-28'
+discriminator_name: 'cluster/best_discriminator_experiments_benchmarks_large_distortion_multi_discriminator_11-11-10-36-57' #'cluster/best_discriminator_experiments_benchmarks_standard_discriminator_16-10-09-08-28'
 generator_name: null #'cluster/best_generator_experiments_benchmarks_standard_generator12-10-12-00-37' #'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_generator_10440'
 regressor_name: null # 'cluster/best_regressor__experiments_benchmarks_standard_regressor11-10-20-32-34'  # 'C:\Users\mikem\crystals\CSP_runs\models\cluster\best_regressor_431'
 proxy_discriminator_name: null

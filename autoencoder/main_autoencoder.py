@@ -1,14 +1,15 @@
 import os
 from argparse import Namespace
 import warnings
+
+from autoencoder.reporting import log_rmsd_loss, log_losses, save_checkpoint, update_losses
+
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore numpy error
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import MultiplicativeLR
 from tqdm import tqdm
-from scipy.spatial.distance import cdist
-from scipy.optimize import linear_sum_assignment
 from dataset_management.CrystalData import CrystalData
 from torch_geometric.loader.dataloader import Collater
 from torch.optim import Adam
@@ -30,6 +31,8 @@ if '--config' in args:
 else:
     config = dev
 
+config = configs[26]
+
 config = Namespace(**config)
 batch_size = config.batch_size_min
 working_sigma = config.sigma
@@ -41,7 +44,8 @@ converged = False
 with (wandb.init(
         config=config.__dict__,
         project='PointAutoencoder',
-        entity='mkilgour'
+        entity='mkilgour',
+        tags=config.experiment_tag
 )):
     wandb.run.name = config.run_name
     torch.manual_seed(config.seed)
@@ -91,8 +95,10 @@ with (wandb.init(
               'type_confidence_loss': [],
               'combined_loss': [],
               'nodewise_type_loss': [],
+              'adjusted_nodewise_type_loss': [],
+              'centroid_mean_loss': [],
+              'centroid_std_loss': [],
               }
-    # todo add convergence flag
 
     for step in tqdm(range(config.training_iterations)):
         if converged:
@@ -126,8 +132,8 @@ with (wandb.init(
         per_graph_true_types = torch.stack([true_nodes[data.batch == i].float().mean(0) for i in range(data.num_graphs)])
         per_graph_pred_types = torch.stack([decoded_data.x[data.batch == i].mean(0) for i in range(data.num_graphs)])
 
-        decoder_likelihoods = get_reconstruction_likelihood(data, decoded_data, working_sigma)
-        self_likelihoods = get_reconstruction_likelihood(data, decoded_data, working_sigma, dist_to_self=True)  # if sigma is too large, these can be > 1
+        decoder_likelihoods = get_reconstruction_likelihood(data, decoded_data, working_sigma, overlap_type=config.overlap_type)
+        self_likelihoods = get_reconstruction_likelihood(data, decoded_data, working_sigma, overlap_type=config.overlap_type, dist_to_self=True)  # if sigma is too large, these can be > 1
 
         encoding_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
         num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(config.device), num_points_prediction[:, 0])
@@ -136,6 +142,17 @@ with (wandb.init(
         type_confidence_loss = torch.mean(-torch.log(torch.amax(decoded_data.x, dim=1)))
         # type_confidence_loss = torch.prod(decoded_data.x, dim=1).mean()  # probably better but sometimes unstable
         reconstruction_loss = 10 * torch.mean(scatter(F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none'), data.batch, reduce='mean'))  # overlaps should all be exactly 1
+
+        centroid_dists = torch.linalg.norm(data.pos, dim=1)
+        centroid_dists_means = torch.stack([centroid_dists[data.batch == i].mean() for i in range(data.num_graphs)])
+        centroid_dists_stds = torch.stack([centroid_dists[data.batch == i].std() for i in range(data.num_graphs)])
+
+        decoded_centroid_dists = torch.linalg.norm(decoded_data.pos, dim=1)
+        decoded_centroid_dists_means = torch.stack([decoded_centroid_dists[data.batch == i].mean() for i in range(data.num_graphs)])
+        decoded_centroid_dists_stds = torch.stack([decoded_centroid_dists[data.batch == i].std() for i in range(data.num_graphs)])
+
+        centroid_dist_loss = F.smooth_l1_loss(decoded_centroid_dists_means, centroid_dists_means)
+        centroid_std_loss = F.smooth_l1_loss(decoded_centroid_dists_stds, centroid_dists_stds)
 
         loss_list = []
         if config.train_nodewise_type_loss:
@@ -148,6 +165,9 @@ with (wandb.init(
             loss_list.append(num_points_loss)
         if config.train_encoding_type_loss:
             loss_list.append(encoding_type_loss)
+        if config.train_centroids_loss:
+            loss_list.append(centroid_dist_loss)
+            loss_list.append(centroid_std_loss)
 
         loss = torch.sum(torch.stack(loss_list))
 
@@ -156,34 +176,16 @@ with (wandb.init(
             loss.backward()
             optimizer.step()
 
-        losses['num_points_loss'].append(num_points_loss.mean().cpu().detach().numpy())
-        losses['reconstruction_loss'].append(reconstruction_loss.cpu().detach().numpy())
-        losses['overall_type_loss'].append(encoding_type_loss.cpu().detach().numpy())
-        losses['scaled_reconstruction_loss'].append(reconstruction_loss.cpu().detach().numpy() * working_sigma)  # as sigma decreases, credit the reconstruction loss
-        losses['type_confidence_loss'].append(type_confidence_loss.cpu().detach().numpy())
-        losses['combined_loss'].append(loss.cpu().detach().numpy())
-        losses['nodewise_type_loss'].append(nodewise_type_loss.cpu().detach().numpy())
+        losses = update_losses(losses, num_points_loss, reconstruction_loss, encoding_type_loss,
+                               working_sigma, type_confidence_loss, loss, nodewise_type_loss,
+                               centroid_dist_loss, centroid_std_loss)
 
         if step % 10 == 0:
-            losses_dict = {ltype: np.mean(lval[-10:]) for ltype, lval in losses.items()}
-            best_losses_dict = {'best_' + ltype: np.amin(lval) for ltype, lval in losses.items()}
+            log_losses(wandb, losses, step, optimizer, data, batch_size, working_sigma, decoded_data, mean_num_points)
+            save_checkpoint(encoder, decoder, optimizer, config, step, losses)
 
-            wandb.log(losses_dict)
-            wandb.log(best_losses_dict)
-
-            wandb.log({'batch_size': batch_size,
-                       'encoder_learning_rate': optimizer.param_groups[0]['lr'],
-                       'decoder_learning_rate': optimizer.param_groups[1]['lr'],
-                       'step': step,
-                       'mean_type_confidence': np.mean(np.amax(decoded_data.x.cpu().detach().numpy(), axis=1)),
-                       'sigma': working_sigma,
-                       'mean_num_points_setting': mean_num_points,
-                       'mean_num_points_actual': data.num_nodes / data.num_graphs,
-                       })
-
-            if losses['scaled_reconstruction_loss'][-1] == np.amin(losses['scaled_reconstruction_loss']):
-                torch.save({'encoder_state_dict': encoder.state_dict(), 'decoder_state_dict': decoder.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
-                           config.save_directory + config.run_name + '_' + 'autoencoder_ckpt' + '_' + str(step))
+        if step % 25 == 0:
+            log_rmsd_loss(wandb, data, decoded_data)
 
         if step % 50 == 0:
             if np.mean(losses['reconstruction_loss'][-50:]) < 1:
@@ -193,49 +195,9 @@ with (wandb.init(
                     mean_num_points += 1  # make the problem harder
 
             if step > config.min_num_training_steps:
-                converged = check_convergence(np.asarray(losses['scaled_reconstruction_loss']),
-                                              50,
-                                              1e-3)
-
-        if step % 25 == 0:
-            rmsds = np.zeros(data.num_graphs)
-            general_rmsds = np.zeros_like(rmsds)
-            for g_ind in range(data.num_graphs):
-                inds = data.batch == g_ind
-
-                ref_coords = data.pos[inds]
-                ref_types = data.x[inds, 0]
-
-                pred_coords = decoded_data.pos[inds]
-                pred_types = torch.argmax(decoded_data.x[inds], dim=1)
-
-                dists = cdist(ref_coords.cpu().detach().numpy(), pred_coords.cpu().detach().numpy())
-                assignment = linear_sum_assignment(dists)
-                general_rmsds[g_ind] = dists[assignment].sum() / len(ref_coords)
-
-                a, b = torch.unique(ref_types, return_counts=True)
-                c, d = torch.unique(pred_types, return_counts=True)
-                if len(a) == len(c):
-                    if all(a == c) and all(b == d):
-                        typewise_rmsds = np.zeros(len(a))
-
-                        for it, type_ind in enumerate(a):
-                            ref_type_pos = ref_coords[ref_types == type_ind]
-                            pred_type_pos = pred_coords[ref_types == type_ind]
-
-                            dists = cdist(ref_type_pos.cpu().detach().numpy(), pred_type_pos.cpu().detach().numpy())
-                            assignment = linear_sum_assignment(dists)
-                            typewise_rmsds[it] = dists[assignment].sum() / len(ref_type_pos)
-
-                        rmsds[g_ind] = np.mean(typewise_rmsds)
-                    else:
-                        rmsds[g_ind] = np.nan
-                else:
-                    rmsds[g_ind] = np.nan
-
-            wandb.log({'Matching Clouds Fraction': np.mean(np.isfinite(rmsds)),
-                       'Matching Clouds RMSDs': np.mean(rmsds[np.isfinite(rmsds)]),
-                       'All Points RMSDs': np.mean(general_rmsds)})
+                converged1 = check_convergence(np.asarray(losses['scaled_reconstruction_loss']), 50, 1e-3)
+                converged2 = check_convergence(np.asarray(losses['combined_loss']), 50, 1e-3)
+                converged = converged1 and converged2
 
         if step % config.lr_timescale == 0 and step != 0 and optimizer.param_groups[0]['lr'] > 1e-5:
             scheduler.step()
