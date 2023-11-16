@@ -31,8 +31,6 @@ if '--config' in args:
 else:
     config = dev
 
-config = configs[26]
-
 config = Namespace(**config)
 batch_size = config.batch_size_min
 working_sigma = config.sigma
