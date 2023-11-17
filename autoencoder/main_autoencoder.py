@@ -4,7 +4,7 @@ import warnings
 
 from autoencoder.reporting import log_rmsd_loss, log_losses, save_checkpoint, update_losses
 
-warnings.filterwarnings("ignore", category=UserWarning)  # ignore numpy error
+warnings.filterwarnings("ignore", category=UserWarning)
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -193,9 +193,9 @@ with (wandb.init(
                     mean_num_points += 1  # make the problem harder
 
             if step > config.min_num_training_steps:
-                converged1 = check_convergence(np.asarray(losses['scaled_reconstruction_loss']), 50, 1e-3)
-                converged2 = check_convergence(np.asarray(losses['combined_loss']), 50, 1e-3)
-                converged = converged1 and converged2
+                #converged1 = check_convergence(np.asarray(losses['scaled_reconstruction_loss']), 50, 1e-3)
+                converged = check_convergence(np.asarray(losses['combined_loss']), 50, 1e-3)
+                #converged = converged1 and converged2
 
         if step % config.lr_timescale == 0 and step != 0 and optimizer.param_groups[0]['lr'] > 1e-5:
             scheduler.step()
