@@ -3,6 +3,7 @@ import torch
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 import torch.nn.functional as F
+from plotly.subplots import make_subplots
 
 
 def log_rmsd_loss(wandb, data, decoded_data):
@@ -79,8 +80,36 @@ def update_losses(losses, num_points_loss, reconstruction_loss, encoding_type_lo
     losses['type_confidence_loss'].append(type_confidence_loss.cpu().detach().numpy())
     losses['combined_loss'].append(loss.cpu().detach().numpy())
     losses['nodewise_type_loss'].append(nodewise_type_loss.cpu().detach().numpy())
-    losses['adjusted_nodewise_type_loss'].append((nodewise_type_loss * type_confidence_loss).cpu().detach().numpy())
+    losses['adjusted_nodewise_type_loss'].append((nodewise_type_loss + type_confidence_loss).cpu().detach().numpy())
     losses['centroid_mean_loss'].append(centroid_dist_loss.cpu().detach().numpy())
     losses['centroid_std_loss'].append(centroid_std_loss.cpu().detach().numpy())
 
     return losses
+
+
+def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weights):
+
+    if config.cart_dimension == 1:
+        sigma = working_sigma
+        fig = make_subplots(rows=config.max_point_types, cols=min(4, data.num_graphs))
+
+        x = np.linspace(-config.points_spread, config.points_spread, 1001)
+
+        for j in range(config.max_point_types):
+            for graph_ind in range(min(4, data.num_graphs)):
+                row = j + 1
+                col = graph_ind + 1
+
+                points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+                points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+
+                ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+                pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+
+                fig.add_scattergl(x=x, y=np.sum(np.exp(-(x - points_true[ref_type_inds]) ** 2 / sigma), axis=0), line_color='blue', showlegend=True if graph_ind == 0 else False, name='True', row=row, col=col)
+                fig.add_scattergl(x=x, y=np.sum(pred_type_weights * np.exp(-(x - points_pred) ** 2 / sigma), axis=0), line_color='red', showlegend=True if graph_ind == 0 else False, name='Predicted', row=row, col=col)
+
+                fig.add_scattergl(x=x, y=np.sum(np.exp(-(x - points_true[ref_type_inds]) ** 2 / 0.00001), axis=0), line_color='blue', showlegend=False, name='True', row=row, col=col)
+                fig.add_scattergl(x=x, y=np.sum(pred_type_weights * np.exp(-(x - points_pred) ** 2 / 0.00001), axis=0), line_color='red', showlegend=False, name='Predicted', row=row, col=col)
+
+        wandb.log({"Sample Distributions": fig})

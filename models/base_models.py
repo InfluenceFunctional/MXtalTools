@@ -42,6 +42,7 @@ class molecule_graph_model(nn.Module):
                  seed=5,
                  periodic_structure=False,
                  outside_convolution_type='none',
+                 cartesian_dimension=3,
                  ):
 
         super(molecule_graph_model, self).__init__()
@@ -59,7 +60,7 @@ class molecule_graph_model(nn.Module):
 
         input_node_depth = num_atom_feats
         if concat_pos_to_atom_features:
-            input_node_depth += 3
+            input_node_depth += cartesian_dimension
         if concat_mol_to_atom_features:
             input_node_depth += num_mol_feats
         if concat_crystal_to_atom_features:
