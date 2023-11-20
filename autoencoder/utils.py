@@ -1,33 +1,33 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.graphgym.models import gnn
 
 from autoencoder.reporting import update_losses
-from models.GraphNeuralNetwork import GCBlock
-from models.base_models import molecule_graph_model
-from models.basis_functions import GaussianEmbedding, BesselBasisLayer
-from models.components import MLP
-import torch_geometric.nn as gnn
 from torch_scatter import scatter
+from math import sqrt
 
 
-def compute_loss(losses, config, working_sigma, num_points_prediction, composition_prediction, decoding, data, point_num_rands):
+def compute_loss(wandb, step, losses, config, working_sigma, num_points_prediction, composition_prediction, decoding, data, point_num_rands):
 
     graph_weights = point_num_rands / config.num_fc_nodes
     nodewise_weights = graph_weights.repeat(config.num_fc_nodes)
+    nodewise_weights_tensor = torch.tensor(nodewise_weights, dtype=torch.float32, device=config.device)
 
     decoded_data = data.clone()
     decoded_data.pos = decoding[:, :config.cart_dimension]
-    decoded_data.x = F.softmax(decoding[:, config.cart_dimension:], dim=1) * torch.tensor(nodewise_weights, dtype=torch.float32, device=config.device)[:, None]
+    decoded_data.x = F.softmax(decoding[:, config.cart_dimension:], dim=1) * nodewise_weights_tensor[:, None]
     decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(config.num_fc_nodes).to(config.device)
 
     true_nodes = torch.cat([F.one_hot(data.x[data.batch == i, 0], num_classes=config.max_point_types).float() for i in range(data.num_graphs)])
     per_graph_true_types = torch.stack([true_nodes[data.batch == i].float().mean(0) for i in range(data.num_graphs)])
     per_graph_pred_types = torch.stack([decoded_data.x[decoded_data.batch == i].sum(0) for i in range(data.num_graphs)]) / torch.tensor(point_num_rands, dtype=torch.float32, device=config.device)[:, None]
 
-    decoder_likelihoods = get_reconstruction_likelihood(data, decoded_data, working_sigma, overlap_type=config.overlap_type, num_classes=config.max_point_types, log_scale=config.log_reconstruction)
-    self_likelihoods = get_reconstruction_likelihood(data, data, working_sigma, overlap_type=config.overlap_type, num_classes=config.max_point_types, log_scale=config.log_reconstruction, dist_to_self=True)  # if sigma is too large, these can be > 1
+    decoder_likelihoods = high_dim_reconstruction_likelihood(data, decoded_data, working_sigma, nodewise_weights=nodewise_weights_tensor,
+                                                             overlap_type=config.overlap_type, num_classes=config.max_point_types,
+                                                             log_scale=config.log_reconstruction, type_distance_scaling=config.type_distance_scaling)
+    self_likelihoods = high_dim_reconstruction_likelihood(data, data, working_sigma, nodewise_weights=torch.ones_like(data.x),
+                                                          overlap_type=config.overlap_type, num_classes=config.max_point_types,
+                                                          log_scale=config.log_reconstruction, type_distance_scaling=config.type_distance_scaling,
+                                                          dist_to_self=True)  # if sigma is too large, these can be > 1
 
     encoding_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
     num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(config.device), num_points_prediction[:, 0])
@@ -47,15 +47,11 @@ def compute_loss(losses, config, working_sigma, num_points_prediction, compositi
     centroid_dist_loss = F.smooth_l1_loss(decoded_centroid_dists_means, centroid_dists_means)
     centroid_std_loss = F.smooth_l1_loss(decoded_centroid_dists_stds, centroid_dists_stds)
 
-    type_confidence_loss = torch.mean(-torch.log(torch.amax(decoded_data.x, dim=1)))
-
     loss_list = []
     if config.train_nodewise_type_loss:
         loss_list.append(nodewise_type_loss)
     if config.train_reconstruction_loss:
         loss_list.append(reconstruction_loss)
-    if config.train_type_confidence_loss:
-        loss_list.append(type_confidence_loss)
     if config.train_num_points_loss:
         loss_list.append(num_points_loss)
     if config.train_encoding_type_loss:
@@ -67,10 +63,20 @@ def compute_loss(losses, config, working_sigma, num_points_prediction, compositi
     loss = torch.sum(torch.stack(loss_list))
 
     losses = update_losses(losses, num_points_loss, reconstruction_loss, encoding_type_loss,
-                           working_sigma, type_confidence_loss, loss, nodewise_type_loss,
+                           working_sigma, loss, nodewise_type_loss,
                            centroid_dist_loss, centroid_std_loss)
 
-    return loss, losses, decoded_data, nodewise_weights
+    if step % 100 == 0:
+        coord_overlap, type_overlap = split_reconstruction_likelihood(data, decoded_data, working_sigma, nodewise_weights=nodewise_weights_tensor,
+                                                                      overlap_type=config.overlap_type, num_classes=config.max_point_types,
+                                                                      type_distance_scaling=config.type_distance_scaling)
+        self_coord_overlap, self_type_overlap = split_reconstruction_likelihood(data, data, working_sigma, nodewise_weights=torch.ones_like(data.x),
+                                                                                overlap_type=config.overlap_type, num_classes=config.max_point_types,
+                                                                                type_distance_scaling=config.type_distance_scaling, dist_to_self=True)
+        wandb.log({"positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
+                   "typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy()})
+
+    return loss, losses, decoded_data, nodewise_weights, (decoder_likelihoods/self_likelihoods).mean().cpu().detach().numpy()
 
 
 def get_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, num_classes, dist_to_self=False, log_scale=False):
@@ -83,12 +89,16 @@ def get_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, num_c
     scale predicted points gaussian heights by their confidence in each class
 
     sigma must be significantly smaller than inter-particle distances in the target data
+
+    currently punishes distance issues much more severely than atom type issues
     """
     target_types = data.x[:, 0]
 
     if dist_to_self:
         dists = torch.cdist(data.pos, data.pos, p=2)  # n_targets x n_guesses
-        target_probs = F.one_hot(data.x[:, 0], num_classes=num_classes)[:, target_types].diag()
+        target_probs = F.one_hot(data.x[:, 0], num_classes=num_classes)[:, target_types].float()
+
+        # random_probs = F.softmax(torch.randn(len(data.x), num_classes, dtype=torch.float32, device=data.x.device))[:, target_types]
 
     else:
         dists = torch.cdist(data.pos, decoded_data.pos, p=2)  # n_targets x n_guesses
@@ -120,236 +130,93 @@ def get_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, num_c
         return nodewise_overlap
 
 
-class point_cloud_encoder(nn.Module):
-    def __init__(self, cart_dimension, aggregator, embedding_depth, num_layers, num_fc_layers, num_nodewise_fcs, fc_norm, graph_norm, message_norm, dropout, cutoff, seed, device, num_classes):
-        super(point_cloud_encoder, self).__init__()
+def high_dim_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, nodewise_weights, num_classes,
+                                       dist_to_self=False, log_scale=False, type_distance_scaling=0.1):
+    """
+    same as previous version
+    except atom type differences are treated as high dimensional distances
+    """
+    # num_types_scale_factor = sqrt(num_classes)  # should help rescale typewise distances to be more comparable in higher dimension
+    ref_types = F.one_hot(data.x[:, 0], num_classes=num_classes) * type_distance_scaling  # / num_types_scale_factor  # rescale typewise distances to be smaller
+    ref_points = torch.cat((data.pos, ref_types), dim=1)
 
-        self.device = device
-        '''conditioning model'''
-        torch.manual_seed(seed)
+    if dist_to_self:
+        pred_points = ref_points
+    else:
+        pred_types = decoded_data.x / nodewise_weights[:, None] * type_distance_scaling  # / num_types_scale_factor
+        pred_points = torch.cat((decoded_data.pos, pred_types), dim=1)  # assume input x has already been normalized
 
-        self.conditioner = molecule_graph_model(
-            num_atom_feats=1,
-            num_mol_feats=0,
-            output_dimension=embedding_depth,
-            seed=seed,
-            graph_convolution_type='TransformerConv',
-            graph_aggregator=aggregator,
-            concat_pos_to_atom_features=True,
-            concat_mol_to_atom_features=False,
-            concat_crystal_to_atom_features=False,
-            activation='gelu',
-            num_fc_layers=num_fc_layers,
-            fc_depth=embedding_depth,
-            fc_norm_mode=fc_norm,
-            fc_dropout_probability=dropout,
-            graph_node_norm=graph_norm,
-            graph_node_dropout=dropout,
-            graph_message_norm=message_norm,
-            graph_message_dropout=dropout,
-            num_attention_heads=4,
-            graph_message_depth=embedding_depth,
-            graph_node_dims=embedding_depth,
-            num_graph_convolutions=num_layers,
-            graph_embedding_depth=embedding_depth,
-            nodewise_fc_layers=num_nodewise_fcs,
-            num_radial=50,
-            radial_function='gaussian',
-            max_num_neighbors=100,
-            convolution_cutoff=cutoff,
-            atom_type_embedding_dims=5,
-            periodic_structure=False,
-            outside_convolution_type='none',
-            cartesian_dimension=cart_dimension,
-        )
+    dists = torch.cdist(ref_points, pred_points, p=2)  # n_targets x n_guesses
 
-        # graph size model
-        self.num_atoms_prediction = MLP(layers=1,
-                                        filters=32,
-                                        norm=None,
-                                        dropout=0,
-                                        input_dim=embedding_depth,
-                                        output_dim=1,
-                                        conditioning_dim=0,
-                                        seed=seed,
-                                        conditioning_mode=None,
-                                        )
+    if overlap_type == 'gaussian':
+        overlap = torch.exp(-(dists / sigma) ** 2)
+    elif overlap_type == 'inverse':
+        overlap = 1 / (dists / sigma + 1)
+    elif overlap_type == 'exponential':
+        overlap = torch.exp(-dists / sigma)
+    else:
+        assert False, f"{overlap_type} is not an implemented overlap function"
 
-        self.composition_prediction = MLP(layers=1,
-                                          filters=32,
-                                          norm=None,
-                                          dropout=0,
-                                          input_dim=embedding_depth,
-                                          output_dim=num_classes,
-                                          conditioning_dim=0,
-                                          seed=seed,
-                                          conditioning_mode=None,
-                                          )
+    # scale all overlaps by the predicted confidence in each particle type
+    scaled_overlap = overlap * nodewise_weights.T
 
-    def forward(self, data):
-        encoding = self.conditioner(data)
-        num_atoms_prediction = self.num_atoms_prediction(encoding)
-        composition_prediction = self.composition_prediction(encoding)
+    # did this for all graphs combined, now split into graphwise components
+    # todo accelerate with scatter
 
-        return encoding, num_atoms_prediction, composition_prediction
+    nodewise_overlap = torch.cat([
+        scaled_overlap[data.batch == ind][:, decoded_data.batch == ind].sum(1) for ind in range(data.num_graphs)
+    ])
+
+    if log_scale:
+        return torch.log(nodewise_overlap)
+    else:
+        return nodewise_overlap
 
 
-class point_cloud_decoder(nn.Module):
-    def __init__(self, cart_dimension, input_depth, embedding_depth, num_layers, num_nodewise_fcs, graph_norm, message_norm, dropout, cutoff, max_ntypes, seed, device):
-        super(point_cloud_decoder, self).__init__()
-        self.cart_dimension = cart_dimension
-        self.device = device
-        self.max_num_neighbors = 100
-        self.cutoff = cutoff
-        output_depth = max_ntypes
-        torch.manual_seed(seed)
+def split_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, nodewise_weights, num_classes,
+                                    dist_to_self=False, type_distance_scaling=0.1):
+    """
+    same as previous version
+    except atom type differences are treated as high dimensional distances
+    """
+    # num_types_scale_factor = sqrt(num_classes)  # should help rescale typewise distances to be more comparable in higher dimension
+    ref_types = F.one_hot(data.x[:, 0], num_classes=num_classes) * type_distance_scaling  # / num_types_scale_factor  # rescale typewise distances to be smaller
 
-        radial_embedding = 'gaussian'
-        num_radial = 50
-        envelope_exponent: int = 5
+    if dist_to_self:
+        pred_types = ref_types
+    else:
+        pred_types = decoded_data.x / nodewise_weights[:, None] * type_distance_scaling  # / num_types_scale_factor
 
-        if radial_embedding == 'bessel':
-            self.rbf = BesselBasisLayer(num_radial, cutoff, envelope_exponent)
-        elif radial_embedding == 'gaussian':
-            self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
+    d1 = torch.cdist(data.pos, decoded_data.pos, p=2)  # n_targets x n_guesses
+    d2 = torch.cdist(ref_types, pred_types, p=2)
 
-        if input_depth != embedding_depth:
-            self.init_layer = nn.Linear(input_depth, embedding_depth)
-        else:
-            self.init_layer = nn.Identity()
+    if overlap_type == 'gaussian':
+        o1 = torch.exp(-(d1 / sigma) ** 2)
+        o2 = torch.exp(-(d2 / sigma) ** 2)
+    elif overlap_type == 'inverse':
+        o1 = 1 / (d1 / sigma + 1)
+        o2 = 1 / (d2 / sigma + 1)
 
-        grid_radius = 1
-        self.num_gridpoints = (2 * grid_radius + 1) ** cart_dimension
-        self.grid_positions = torch.zeros((self.num_gridpoints, cart_dimension))  # initialize the translations in fractional coords
-        i = 0
-        if cart_dimension == 3:
-            for xx in range(-grid_radius, grid_radius + 1):
-                for yy in range(-grid_radius, grid_radius + 1):
-                    for zz in range(-grid_radius, grid_radius + 1):
-                        self.grid_positions[i] = torch.tensor((xx, yy, zz))
-                        i += 1
-        elif cart_dimension == 2:
-            for xx in range(-grid_radius, grid_radius + 1):
-                for yy in range(-grid_radius, grid_radius + 1):
-                    self.grid_positions[i] = torch.tensor((xx, yy))
-                    i += 1
-        elif cart_dimension == 1:
-            for xx in range(-grid_radius, grid_radius + 1):
-                self.grid_positions[i] = torch.tensor((xx))
-                i += 1
+    elif overlap_type == 'exponential':
+        o1 = torch.exp(-d1 / sigma)
+        o2 = torch.exp(-d2 / sigma)
 
-        self.upscale = nn.Linear(input_depth, input_depth * self.num_gridpoints)
-        self.init_norm1 = nn.Identity()  # nn.LayerNorm(input_depth)
-        self.init_norm2 = nn.Identity()  # nn.LayerNorm(embedding_depth)
+    else:
+        assert False, f"{overlap_type} is not an implemented overlap function"
 
-        self.interaction_blocks = torch.nn.ModuleList([
-            GCBlock(embedding_depth,
-                    embedding_depth,
-                    'TransformerConv',
-                    num_radial,
-                    norm=message_norm,
-                    dropout=dropout,
-                    heads=4,
-                    )
-            for _ in range(num_layers)
-        ])
+    # scale all overlaps by the predicted confidence in each particle type
+    so1 = o1 * nodewise_weights.T
+    so2 = o2 * nodewise_weights.T
 
-        self.fc_blocks = torch.nn.ModuleList([
-            MLP(
-                layers=num_nodewise_fcs,
-                filters=embedding_depth,
-                input_dim=embedding_depth,
-                output_dim=embedding_depth,
-                activation='gelu',
-                norm=graph_norm,
-                dropout=dropout,
-            )
-            for _ in range(num_layers)
-        ])
+    no1 = torch.cat([
+        so1[data.batch == ind][:, decoded_data.batch == ind].sum(1) for ind in range(data.num_graphs)
+    ])
 
-        self.output_layer = nn.Linear(embedding_depth, output_depth)
+    no2 = torch.cat([
+        so2[data.batch == ind][:, decoded_data.batch == ind].sum(1) for ind in range(data.num_graphs)
+    ])
 
-    def get_geom_embedding(self, edge_index, pos):
-        """
-        compute elements for radial & spherical embeddings
-        """
-        i, j = edge_index  # i->j source-to-target
-        dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
-
-        return dist, self.rbf(dist)
-
-    def forward(self, encoding, data, graph_sizes):
-        """
-        initialize nodes on randn with uniform embedding
-        decode
-        """
-
-        batch = data.batch
-        data.pos = torch.randn_like(data.pos)
-        grid = F.gelu(self.init_norm1(self.upscale(encoding).reshape(data.num_graphs, encoding.shape[1], self.num_gridpoints).permute(0, 2, 1)))
-
-        grid = grid.cpu()
-        data.x = torch.cat([gnn.knn_interpolate(grid[ind], self.grid_positions.cpu(), data.pos[data.batch == ind].cpu())
-                            for ind in range(data.num_graphs)]).to(encoding.device)
-
-        x = F.gelu(self.init_norm2(self.init_layer(data.x)))
-        for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
-            edge_index = gnn.radius_graph(data.pos, r=self.cutoff, batch=batch,
-                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target')
-            dist, rbf = self.get_geom_embedding(edge_index, data.pos)
-
-            res = x.clone()
-            x = convolution(x, rbf, edge_index, batch)
-            x = fc(x, batch=batch)
-            x = res + x
-
-            data.pos += x[:, :self.cart_dimension]  # update positions with convolution results
-            x[:, -self.cart_dimension:] = data.pos  # update position in note embedding
-
-        return torch.cat((data.pos, self.output_layer(x)), dim=1)
-
-
-class fc_decoder(nn.Module):
-    def __init__(self, num_nodes, cart_dimension, input_depth, embedding_depth, num_layers, num_nodewise_fcs, graph_norm, message_norm, dropout, cutoff, max_ntypes, seed, device):
-        super(fc_decoder, self).__init__()
-        self.cart_dimension = cart_dimension
-        self.device = device
-        self.max_num_neighbors = 100
-        self.cutoff = cutoff
-        output_depth = max_ntypes + cart_dimension
-        torch.manual_seed(seed)
-        self.num_nodes = num_nodes
-        self.embedding_depth = embedding_depth
-
-        self.init_layer = nn.Linear(input_depth, embedding_depth * num_nodes)
-
-        self.fc_blocks = torch.nn.ModuleList([
-            MLP(
-                layers=num_nodewise_fcs,
-                filters=embedding_depth,
-                input_dim=embedding_depth,
-                output_dim=embedding_depth,
-                activation='gelu',
-                norm=graph_norm,
-                dropout=dropout,
-            )
-            for _ in range(num_layers)
-        ])
-
-        self.output_layer = nn.Linear(embedding_depth, output_depth)
-
-    def forward(self, encoding, data, num_points):
-        """
-        initialize nodes on randn with uniform embedding
-        decode
-        """
-
-        x = self.init_layer(encoding).reshape(data.num_graphs * self.num_nodes, self.embedding_depth)
-
-        for block in self.fc_blocks:
-            x = block(x)
-
-        return self.output_layer(x)
+    return no1, no2
 
 
 def load_checkpoint(path, encoder, decoder, optimizer):

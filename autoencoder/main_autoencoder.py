@@ -1,6 +1,8 @@
 import os
 from argparse import Namespace
 import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning)
 from autoencoder.reporting import log_losses, save_checkpoint, overlap_plot
 import numpy as np
 import torch
@@ -12,11 +14,12 @@ from torch.optim import Adam
 import argparse
 import wandb
 from autoencoder.utils import (
-    point_cloud_encoder, load_checkpoint, fc_decoder, compute_loss)
+    load_checkpoint, compute_loss)
+from autoencoder.ae_models import point_cloud_encoder, fc_decoder
 from autoencoder.configs import dev, configs
 from models.utils import check_convergence
+from datetime import datetime
 
-warnings.filterwarnings("ignore", category=UserWarning)
 os.environ["WANDB_START_METHOD"] = 'thread'
 
 parser = argparse.ArgumentParser()
@@ -41,35 +44,34 @@ with (wandb.init(
         entity='mkilgour',
         tags=config.experiment_tag
 )):
-    wandb.run.name = config.run_name
+    wandb.run.name = config.run_name + '_' + datetime.today().strftime("%d-%m-%H-%M-%S")
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
-    encoder = point_cloud_encoder(cart_dimension=config.cart_dimension,
-                                  aggregator=config.encoder_aggregator,
-                                  embedding_depth=config.encoder_embedding_depth,
-                                  num_fc_layers=config.encoder_num_fc_layers,
-                                  num_layers=config.encoder_num_layers,
-                                  num_nodewise_fcs=config.encoder_num_nodewise_fcs,
-                                  fc_norm=config.encoder_fc_norm,
-                                  graph_norm=config.encoder_graph_norm,
-                                  message_norm=config.encoder_message_norm,
-                                  dropout=config.encoder_dropout,
-                                  cutoff=config.points_spread * 2,
-                                  seed=config.seed, device=config.device,
-                                  num_classes=config.max_point_types).to(config.device)
+    encoder = point_cloud_encoder(
+        cart_dimension=config.cart_dimension,
+        aggregator=config.encoder_aggregator,
+        embedding_depth=config.encoder_embedding_depth,
+        num_fc_layers=config.encoder_num_fc_layers,
+        num_layers=config.encoder_num_layers,
+        num_nodewise_fcs=config.encoder_num_nodewise_fcs,
+        fc_norm=config.encoder_fc_norm,
+        graph_norm=config.encoder_graph_norm,
+        dropout=config.encoder_dropout,
+        cutoff=config.points_spread * 2,
+        seed=config.seed, device=config.device,
+        num_classes=config.max_point_types).to(config.device)
 
-    decoder = fc_decoder(num_nodes=config.num_fc_nodes,
-                         cart_dimension=config.cart_dimension,
-                         input_depth=config.encoder_embedding_depth,
-                         embedding_depth=config.decoder_embedding_depth,
-                         num_layers=config.decoder_num_layers,
-                         num_nodewise_fcs=config.decoder_num_nodewise_fcs,
-                         graph_norm=config.decoder_graph_norm,
-                         message_norm=config.decoder_message_norm,
-                         dropout=config.decoder_dropout,
-                         cutoff=config.points_spread * 2,
-                         max_ntypes=config.max_point_types,
-                         seed=config.seed, device=config.device).to(config.device)
+    decoder = fc_decoder(
+        num_nodes=config.num_fc_nodes,
+        cart_dimension=config.cart_dimension,
+        input_depth=config.encoder_embedding_depth,
+        embedding_depth=config.decoder_embedding_depth,
+        num_layers=config.decoder_num_layers,
+        fc_norm=config.decoder_fc_norm,
+        dropout=config.decoder_dropout,
+        cutoff=config.points_spread * 2,
+        max_ntypes=config.max_point_types,
+        seed=config.seed, device=config.device).to(config.device)
 
     collater = Collater(0, 0)
     optimizer = Adam([{'params': encoder.parameters(), 'lr': config.encoder_lr},
@@ -89,10 +91,8 @@ with (wandb.init(
               'num_points_loss': [],
               'overall_type_loss': [],
               'scaled_reconstruction_loss': [],
-              'type_confidence_loss': [],
               'combined_loss': [],
               'nodewise_type_loss': [],
-              'adjusted_nodewise_type_loss': [],
               'centroid_mean_loss': [],
               'centroid_std_loss': [],
               }
@@ -121,8 +121,10 @@ with (wandb.init(
         encoding, num_points_prediction, composition_prediction = encoder(data.clone())
         decoding = decoder(encoding, data.clone(), point_num_rands)
 
-        loss, losses, decoded_data, nodewise_weights = compute_loss(
-            losses, config, working_sigma, num_points_prediction, composition_prediction, decoding, data, point_num_rands)
+        loss, losses, decoded_data, nodewise_weights, mean_sample_likelihood = compute_loss(
+            wandb, step,
+            losses, config, working_sigma, num_points_prediction,
+            composition_prediction, decoding, data, point_num_rands)
 
         optimizer.zero_grad()
         if config.do_training:
@@ -130,13 +132,15 @@ with (wandb.init(
             optimizer.step()
 
         if step % 10 == 0:
-            log_losses(wandb, losses, step, optimizer, data, batch_size, working_sigma, decoded_data, mean_num_points)
+            log_losses(
+                wandb, losses, step, optimizer, data, batch_size,
+                working_sigma, decoded_data, mean_num_points, mean_sample_likelihood)
 
         if step % 50 == 0:
             save_checkpoint(encoder, decoder, optimizer, config, step, losses)
 
         if step % 100 == 0:
-            if np.mean(losses['reconstruction_loss'][-100:]) < 0.15:
+            if np.mean(losses['reconstruction_loss'][-100:]) < config.sigma_threshold:
                 if working_sigma > 0.0001:  # make the problem harder
                     working_sigma *= config.sigma_lambda
                 # elif working_sigma <= 0.01:
