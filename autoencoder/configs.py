@@ -7,19 +7,19 @@ dev = {'run_name': 'dev',
        'seed': 1234,
        'training_iterations': int(1e8),
        'min_num_training_steps': 10000,
-       'convergence_history': 50,
+       'convergence_history': 200,
        'convergence_eps': 1e-3,
 
        # loss settings
-       'sigma': 0.1,  # larger increases overlaps
+       'sigma': 0.2,  # larger increases overlaps
        'sigma_lambda': 0.95,
        'sigma_threshold': 0.1,
-       'type_distance_scaling': 0.1,  # larger decreases overlaps
+       'type_distance_scaling': 2,  # larger decreases overlaps
        'overlap_type': 'gaussian',
        'log_reconstruction': False,
        'do_training': True,
        'cart_dimension': 3,
-       'train_nodewise_type_loss': False,
+       'train_nodewise_type_loss': True,
        'train_reconstruction_loss': True,
        'train_centroids_loss': True,
        'train_type_confidence_loss': False,
@@ -28,15 +28,15 @@ dev = {'run_name': 'dev',
 
        # dataset & dataloading
        'batch_size_min': 2,
-       'batch_size_max': 200,
+       'batch_size_max': 400,
        'num_fc_nodes': 100,
        'batch_size_increment': 1,
-       'mean_num_points': 5,
+       'mean_num_points': 3,
        'num_points_spread': 1,  # more like a sigma
        'max_num_points': 2,
        'min_num_points': 2,
        'points_spread': 1,  # max value
-       'max_point_types': 2,
+       'max_point_types': 6,
 
        # lrs
        'encoder_lr': 1e-4,
@@ -45,19 +45,19 @@ dev = {'run_name': 'dev',
        'lr_timescale': 500,
 
        # encoder
-       'encoder_aggregator': 'combo',
+       'encoder_aggregator': 'max',
        'encoder_num_layers': 1,
        'encoder_num_fc_layers': 4,
-       'encoder_embedding_depth': 128,
+       'encoder_embedding_depth': 256,
        'encoder_num_nodewise_fcs': 4,
-       'encoder_fc_norm': None,
-       'encoder_graph_norm': None,
+       'encoder_fc_norm': 'layer',
+       'encoder_graph_norm': 'graph layer',
        'encoder_dropout': 0,
 
        # decoder
        'decoder_num_layers': 1,
-       'decoder_embedding_depth': 32,
-       'decoder_fc_norm': None,
+       'decoder_embedding_depth': 128,
+       'decoder_fc_norm': 'layer',
        'decoder_dropout': 0,
 
        # paths
@@ -71,19 +71,19 @@ dev = {'run_name': 'dev',
 configs = []
 
 base_config = {'run_name': 'base',
-               'experiment_tag': ['battery_2'],
+               'experiment_tag': ['battery_3'],
                'device': 'cuda',
                'seed': 1234,
                'training_iterations': int(1e8),
                'min_num_training_steps': 10000,
-               'convergence_history': 50,
+               'convergence_history': 200,
                'convergence_eps': 1e-3,
 
                # loss settings
-               'sigma': 0.1,  # larger increases overlaps
+               'sigma': 0.2,  # larger increases overlaps
                'sigma_lambda': 0.95,
                'sigma_threshold': 0.1,
-               'type_distance_scaling': 0.25,  # larger decreases overlaps
+               'type_distance_scaling': 2,  # larger decreases overlaps
                'overlap_type': 'gaussian',
                'log_reconstruction': False,
                'do_training': True,
@@ -97,7 +97,7 @@ base_config = {'run_name': 'base',
 
                # dataset & dataloading
                'batch_size_min': 2,
-               'batch_size_max': 400,
+               'batch_size_max': 200,
                'num_fc_nodes': 100,
                'batch_size_increment': 1,
                'mean_num_points': 5,
@@ -114,47 +114,41 @@ base_config = {'run_name': 'base',
                'lr_timescale': 500,
 
                # encoder
-               'encoder_aggregator': 'combo',
+               'encoder_aggregator': 'max',
                'encoder_num_layers': 1,
                'encoder_num_fc_layers': 4,
-               'encoder_embedding_depth': 128,
+               'encoder_embedding_depth': 256,
                'encoder_num_nodewise_fcs': 4,
-               'encoder_fc_norm': None,
-               'encoder_graph_norm': None,
+               'encoder_fc_norm': 'layer',
+               'encoder_graph_norm': 'graph layer',
                'encoder_dropout': 0,
 
                # decoder
                'decoder_num_layers': 1,
-               'decoder_embedding_depth': 32,
-               'decoder_fc_norm': None,
+               'decoder_embedding_depth': 128,
+               'decoder_fc_norm': 'layer',
                'decoder_dropout': 0,
 
                # paths
-               #'run_directory': r'C:\Users\mikem\crystals\CSP_runs',
+               # 'run_directory': r'C:\Users\mikem\crystals\CSP_runs',
                'run_directory': '/scratch/mk8347/csd_runs/',
-               #'save_directory': 'D:/crystals_extra/',
+               # 'save_directory': 'D:/crystals_extra/',
                'save_directory': '/scratch/mk8347/csd_runs/',
                'checkpoint_path': None,  # r'C:\Users\mikem\crystals\CSP_runs\models\cluster/test1_autoencoder_ckpt_11_12',
                }
 
 search_space = {
-    'encoder_embedding_depth': [256, 512],
-    'decoder_embedding_depth': [16, 32, 64],
-    'num_fc_nodes': [50, 100, 200],
-    'encoder_dropout': [0, 0.1],
-    'decoder_dropout': [0, 0.1],
-    'encoder_graph_norm': [None, 'graph layer'],
-    'decoder_graph_norm': [None, 'layer'],
-    'encoder_fc_norm': [None, 'layer'],
-    'encoder_num_layers': [1, 2],
-    'decoder_num_layers': [1, 2],
-    'encoder_num_fc_layers': [1, 2, 4],
-    'encoder_num_nodewise_fcs': [1, 2, 4],
-    'encoder_lr': [1e-4, 1e-5],
-    'decoder_lr': [1e-4, 1e-5],
-    'encoder_aggregator': ['max', 'combo'],
-    'overlap_type': ['gaussian'],
-    'train_typewise_node_loss': [True, False],
+    'encoder_embedding_depth': [256, 512, 1024],
+    'decoder_embedding_depth': [32, 64, 128],
+    'num_fc_nodes': [64, 128, 256],
+    'encoder_dropout': [0.1, 0.25],
+    'decoder_dropout': [0.1, 0.25],
+    'encoder_num_layers': [1, 2, 4],
+    'decoder_num_layers': [1, 2, 4],
+    'encoder_num_fc_layers': [2, 4],
+    'encoder_num_nodewise_fcs': [2, 4],
+    'encoder_lr': [5e-4, 1e-4, 1e-5],
+    'decoder_lr': [5e-4, 1e-4, 1e-5],
 }
 
 np.random.seed(0)
@@ -516,3 +510,91 @@ aa = 1
 #         new_config[key] = values[randints[i, ind]]
 #
 #     configs.append(new_config)
+
+#
+# base_config = {'run_name': 'base',
+#                'experiment_tag': ['battery_2'],
+#                'device': 'cuda',
+#                'seed': 1234,
+#                'training_iterations': int(1e8),
+#                'min_num_training_steps': 10000,
+#                'convergence_history': 50,
+#                'convergence_eps': 1e-3,
+#
+#                # loss settings
+#                'sigma': 0.1,  # larger increases overlaps
+#                'sigma_lambda': 0.95,
+#                'sigma_threshold': 0.1,
+#                'type_distance_scaling': 0.25,  # larger decreases overlaps
+#                'overlap_type': 'gaussian',
+#                'log_reconstruction': False,
+#                'do_training': True,
+#                'cart_dimension': 3,
+#                'train_nodewise_type_loss': True,
+#                'train_reconstruction_loss': True,
+#                'train_centroids_loss': True,
+#                'train_type_confidence_loss': False,
+#                'train_num_points_loss': False,
+#                'train_encoding_type_loss': False,
+#
+#                # dataset & dataloading
+#                'batch_size_min': 2,
+#                'batch_size_max': 400,
+#                'num_fc_nodes': 100,
+#                'batch_size_increment': 1,
+#                'mean_num_points': 5,
+#                'num_points_spread': 1,  # more like a sigma
+#                'max_num_points': 10,
+#                'min_num_points': 2,
+#                'points_spread': 1,  # max value
+#                'max_point_types': 5,
+#
+#                # lrs
+#                'encoder_lr': 1e-4,
+#                'decoder_lr': 1e-4,
+#                'lr_lambda': 0.975,
+#                'lr_timescale': 500,
+#
+#                # encoder
+#                'encoder_aggregator': 'combo',
+#                'encoder_num_layers': 1,
+#                'encoder_num_fc_layers': 4,
+#                'encoder_embedding_depth': 128,
+#                'encoder_num_nodewise_fcs': 4,
+#                'encoder_fc_norm': None,
+#                'encoder_graph_norm': None,
+#                'encoder_dropout': 0,
+#
+#                # decoder
+#                'decoder_num_layers': 1,
+#                'decoder_embedding_depth': 32,
+#                'decoder_fc_norm': None,
+#                'decoder_dropout': 0,
+#
+#                # paths
+#                #'run_directory': r'C:\Users\mikem\crystals\CSP_runs',
+#                'run_directory': '/scratch/mk8347/csd_runs/',
+#                #'save_directory': 'D:/crystals_extra/',
+#                'save_directory': '/scratch/mk8347/csd_runs/',
+#                'checkpoint_path': None,  # r'C:\Users\mikem\crystals\CSP_runs\models\cluster/test1_autoencoder_ckpt_11_12',
+#                }
+#
+# search_space = {
+#     'encoder_embedding_depth': [256, 512],
+#     'decoder_embedding_depth': [16, 32, 64],
+#     'num_fc_nodes': [50, 100, 200],
+#     'encoder_dropout': [0, 0.1],
+#     'decoder_dropout': [0, 0.1],
+#     'encoder_graph_norm': [None, 'graph layer'],
+#     'decoder_graph_norm': [None, 'layer'],  #TODO FIX
+#     'encoder_fc_norm': [None, 'layer'],
+#     'encoder_num_layers': [1, 2],
+#     'decoder_num_layers': [1, 2],
+#     'encoder_num_fc_layers': [1, 2, 4],
+#     'encoder_num_nodewise_fcs': [1, 2, 4],
+#     'encoder_lr': [1e-4, 1e-5],
+#     'decoder_lr': [1e-4, 1e-5],
+#     'encoder_aggregator': ['max', 'combo'],
+#     'overlap_type': ['gaussian'],
+#     'train_typewise_node_loss': [True, False],
+# }

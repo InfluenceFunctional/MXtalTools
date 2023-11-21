@@ -36,7 +36,7 @@ def check_convergence(record, history, convergence_eps):
     """
 
     converged = False
-    if type(record) == list:
+    if type(record) is list:
         try:
             record = np.concatenate(record)
         except ValueError:
@@ -45,11 +45,12 @@ def check_convergence(record, history, convergence_eps):
         record = record.copy()
 
     if len(record) > 2 * history:
+        #  all of last :history: points are above the 5% quantile of the training record
         if all(record[-history:] >= np.quantile(record, 0.05)):
             converged = True
             print("Model converged, target diverging")
 
-        criteria = np.abs(np.mean(record[-history:]) / np.mean(record[-2*history:-history]))  # change in mean over 2 periods of history
+        criteria = np.abs(np.mean(record[-history:]) / np.mean(record[-2 * history:-history]))  # change in mean over 2 periods of history
         print('Convergence criteria at {:.3f}'.format(np.log10(criteria)))  # todo better rolling metric here - trailing exponential something
         if criteria < convergence_eps:
             converged = True

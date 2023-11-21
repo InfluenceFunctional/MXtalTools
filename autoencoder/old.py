@@ -2,7 +2,7 @@ import torch
 from torch import nn as nn
 from torch.nn import functional as F
 
-from autoencoder.utils import point_cloud_decoder
+from autoencoder.ae_models import point_cloud_decoder
 from models.base_models import molecule_graph_model
 
 from models.components import MLP

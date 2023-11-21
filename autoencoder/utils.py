@@ -180,7 +180,7 @@ def split_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, nod
     except atom type differences are treated as high dimensional distances
     """
     # num_types_scale_factor = sqrt(num_classes)  # should help rescale typewise distances to be more comparable in higher dimension
-    ref_types = F.one_hot(data.x[:, 0], num_classes=num_classes) * type_distance_scaling  # / num_types_scale_factor  # rescale typewise distances to be smaller
+    ref_types = F.one_hot(data.x[:, 0], num_classes=num_classes).float() * type_distance_scaling  # / num_types_scale_factor  # rescale typewise distances to be smaller
 
     if dist_to_self:
         pred_types = ref_types

@@ -95,7 +95,7 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weig
 
     max_xval = max(decoded_data.pos.amax(), data.pos.amax()).cpu().detach().numpy()
     min_xval = min(decoded_data.pos.amax(), data.pos.amin()).cpu().detach().numpy()
-    ymax = int(torch.diff(data.ptr).amax())  # max graph height
+    ymax = 1.1  # int(torch.diff(data.ptr).amax())  # max graph height
 
     if config.cart_dimension == 1:
         fig = make_subplots(rows=config.max_point_types, cols=min(4, data.num_graphs))
@@ -167,9 +167,13 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weig
         wandb.log({"Sample Distributions": fig})
 
     elif config.cart_dimension == 3:
+
+        num_types = config.max_point_types
+        cols = 3
+        rows = num_types // cols + ((num_types % cols) != 0)
         fig = make_subplots(
-            rows=config.max_point_types, cols=min(4, data.num_graphs),
-            specs=[[{'type': 'scene'} for _ in range(min(4, data.num_graphs))] for _ in range(config.max_point_types)])
+            rows=rows, cols=cols,
+            specs=[[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)])
 
         num_gridpoints = 15
         x = np.linspace(min(-config.points_spread, min_xval), max(config.points_spread, max_xval), num_gridpoints)
@@ -180,32 +184,61 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weig
         grid_array = np.stack((xx.flatten(), yy.flatten(), zz.flatten())).T
 
         for j in range(config.max_point_types):
-            for graph_ind in range(min(4, data.num_graphs)):
-                row = j + 1
-                col = graph_ind + 1
+            graph_ind = 0
+            row = j // cols + 1
+            col = j % cols + 1
 
-                points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
-                points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+            points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+            points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
 
-                ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
-                pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+            ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+            pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
 
-                pred_dist = np.sum(pred_type_weights.mean() * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
+            pred_dist = np.sum(pred_type_weights.mean() * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
-                fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
-                                        showlegend=True if (j == 0 and graph_ind == 0) else False,
-                                        name=f'Predicted type', legendgroup=f'Predicted type',
-                                        coloraxis="coloraxis",
-                                        isomin=0.001, isomax=ymax, opacity=.05,
-                                        cmin=0, cmax=ymax,
-                                        surface_count=25,
-                                        ), row=row, col=col)
+            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                    name=f'Predicted type', legendgroup=f'Predicted type',
+                                    coloraxis="coloraxis",
+                                    isomin=0.001, isomax=ymax, opacity=.05,
+                                    cmin=0, cmax=ymax,
+                                    surface_count=50,
+                                    ), row=row, col=col)
 
-                fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
-                                           mode='markers', marker_color='white', marker_size=10, marker_line_width=2, marker_line_color='green',
-                                           showlegend=True if (j == 0 and graph_ind == 0) else False,
-                                           name=f'True type', legendgroup=f'True type'
-                                           ), row=row, col=col)
+            fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+                                       mode='markers', marker_color='white', marker_size=10, marker_line_width=2, marker_line_color='green',
+                                       showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                       name=f'True type', legendgroup=f'True type'
+                                       ), row=row, col=col)
+
+        #
+        # for j in range(config.max_point_types):
+        #     for graph_ind in range(min(4, data.num_graphs)):
+        #         row = j + 1
+        #         col = graph_ind + 1
+        #
+        #         points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+        #         points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+        #
+        #         ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+        #         pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+        #
+        #         pred_dist = np.sum(pred_type_weights.mean() * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
+        #
+        #         fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+        #                                 showlegend=True if (j == 0 and graph_ind == 0) else False,
+        #                                 name=f'Predicted type', legendgroup=f'Predicted type',
+        #                                 coloraxis="coloraxis",
+        #                                 isomin=0.001, isomax=ymax, opacity=.05,
+        #                                 cmin=0, cmax=ymax,
+        #                                 surface_count=25,
+        #                                 ), row=row, col=col)
+        #
+        #         fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+        #                                    mode='markers', marker_color='white', marker_size=10, marker_line_width=2, marker_line_color='green',
+        #                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
+        #                                    name=f'True type', legendgroup=f'True type'
+        #                                    ), row=row, col=col)
 
         fig.update_coloraxes(cmin=0, cmax=ymax, autocolorscale=False, colorscale='Jet')
         wandb.log({"Sample Distributions": fig})

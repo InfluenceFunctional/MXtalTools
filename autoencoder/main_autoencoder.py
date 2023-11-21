@@ -108,7 +108,7 @@ with (wandb.init(
             np.round((np.random.randn(batch_size) * config.num_points_spread + mean_num_points)),
             a_min=config.min_num_points, a_max=config.max_num_points).astype(int)
 
-        coords_list = [torch.rand(rand, config.cart_dimension) * config.points_spread for rand in point_num_rands]
+        coords_list = [torch.rand(rand, config.cart_dimension) * 2 * config.points_spread for rand in point_num_rands]
         centered_coords_list = [coords - coords.mean(0) for coords in coords_list]
         types_list = [torch.randint(config.max_point_types, size=(rand,)) for rand in point_num_rands]
 
@@ -131,20 +131,17 @@ with (wandb.init(
             loss.backward()
             optimizer.step()
 
-        if step % 10 == 0:
+        if step % 50 == 0:
             log_losses(
                 wandb, losses, step, optimizer, data, batch_size,
                 working_sigma, decoded_data, mean_num_points, mean_sample_likelihood)
 
-        if step % 50 == 0:
             save_checkpoint(encoder, decoder, optimizer, config, step, losses)
 
         if step % 100 == 0:
             if np.mean(losses['reconstruction_loss'][-100:]) < config.sigma_threshold:
                 if working_sigma > 0.0001:  # make the problem harder
                     working_sigma *= config.sigma_lambda
-                # elif working_sigma <= 0.01:
-                #     mean_num_points += 1  # make the problem harder
 
             if step > config.min_num_training_steps:
                 converged1 = check_convergence(np.asarray(losses['scaled_reconstruction_loss']), config.convergence_history, config.convergence_eps)
