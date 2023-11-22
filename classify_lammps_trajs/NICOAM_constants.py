@@ -1,6 +1,7 @@
-class_names = ['V', 'VII', 'VIII', 'I', 'II', 'III', 'IV', 'IX', 'VI', 'Disordered']
-
-ordered_class_names = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'Melt']
+nic_class_names = ['V', 'VII', 'VIII', 'I', 'II', 'III', 'IV', 'IX', 'VI', 'Disordered']
+nic_ordered_class_names = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'Melt']
+urea_class_names = ['A', 'B', 'C', 'I', 'III', 'IV', 'Melt']
+urea_ordered_class_names = ['A', 'B', 'C', 'I', 'III', 'IV', 'Melt']
 
 defect_names = ['Bulk', 'Surface']
 
@@ -12,7 +13,15 @@ identifier2form = {'NICOAM07': 5,
                    'NICOAM15': 3,
                    'NICOAM16': 4,
                    'NICOAM17': 9,
-                   'NICOAM18': 6}
+                   'NICOAM18': 6,
+                   'ureaA': 1,
+                   'ureaB': 2,
+                   'ureaC': 3,
+                   'ureaI': 4,
+                   'ureaIII': 5,
+                   'ureaIV': 6,
+                   'Melt': 7,
+                   }
 
 form2index = {0: 4,
               1: 6,
@@ -38,9 +47,12 @@ type2num = {
     'Hn': 8,
     'H4': 9,
     'Ha': 10,
+    'H': 11,
+    'N1': 12,
+    'N2': 13,
 }
 
-num2atomicnum = {
+num2atomicnum = {  # for nicotinamide
     1: 6,
     2: 6,
     3: 6,
@@ -51,4 +63,7 @@ num2atomicnum = {
     8: 1,
     9: 1,
     10: 1,
+    11: 1,
+    12: 7,
+    13: 7
 }

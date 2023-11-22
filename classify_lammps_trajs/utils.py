@@ -10,7 +10,7 @@ from dataset_management.CrystalData import CrystalData
 from dataset_management.utils import get_dataloaders
 from models.base_models import molecule_graph_model
 from common.geometry_calculations import coor_trans_matrix
-from classify_lammps_trajs.NICOAM_constants import defect_names, ordered_class_names
+from classify_lammps_trajs.NICOAM_constants import defect_names, nic_ordered_class_names
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
@@ -83,7 +83,7 @@ def convert_box_to_cell_params(box_params):
     return T_fc_list
 
 
-def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fraction=0.2, filter_early=True, temperatures: list = None, shuffle=True):
+def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch_size, conv_cutoff, test_fraction=0.2, filter_early=True, temperatures: list = None, shuffle=True):
     dataset = pd.read_pickle(dataset_path)
     dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
 
@@ -115,21 +115,26 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
     )
 
     # set high temperature samples to 'melted' class
+    if 'urea' in dataset_path:
+        melt_class_num = 6
+    else:
+        melt_class_num = 9 # nicotinamide
+
     for i in range(len(dataset)):
-        if dataset.iloc[i]['temperature'] == 950:
-            targets[i] = 9
+        if dataset.iloc[i]['temperature'] >= 500:
+            targets[i] = melt_class_num
 
     #T_fc_list = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
 
     print('Generating training datapoints')
     datapoints = []
-    rand_inds = np.random.choice(len(dataset), size=min(dataset_size, len(dataset)), replace=False)  # todo build indexing capability for defects
+    rand_inds = np.random.choice(len(dataset), size=min(dataset_size, len(dataset)), replace=False)
     for i in tqdm(rand_inds):
         ref_coords = torch.Tensor(dataset.loc[i]['coordinates'][0])
         atoms = dataset.loc[i]['atom_type'][0]
 
         atomic_numbers = torch.tensor([num2atomicnum[atom] for atom in atoms], dtype=torch.long)
-        num_molecules = (len(ref_coords)) // 15
+        num_molecules = (len(ref_coords)) // mol_num_atoms
 
         mol_ind = torch.tensor(dataset.loc[i]['mol_ind'][0], dtype=torch.long)
         assert num_molecules == torch.amax(mol_ind)
@@ -144,15 +149,18 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         intramolecular_centroid_dists = torch.linalg.norm(mol_centroids[:, None, :] - cluster_coords, dim=2)
         mol_radii = intramolecular_centroid_dists.amax(1)
 
-        good_mols = torch.argwhere(mol_radii < 4)[:, 0]
+        max_mol_radius = torch.quantile(mol_radii, 0.05) * 1.25  # 25% leniency on the 5% quantile
+
+        good_mols = torch.argwhere(mol_radii < max_mol_radius)[:, 0]
         cluster_coords = cluster_coords[good_mols]
         cluster_atoms = cluster_atoms[good_mols]
         cluster_targets = cluster_targets[good_mols]
 
         # identify surface mols
+        true_max_mol_radius = torch.amax(mol_radii[good_mols])
         centroids = cluster_coords.mean(1)
         dist = torch.cdist(centroids, centroids)
-        coordination_cutoff = 4 + 6
+        coordination_cutoff = true_max_mol_radius + conv_cutoff
         coordination_number = (dist < coordination_cutoff).sum(1)
         surface_mols_ind = torch.argwhere(coordination_number < 20)[:, 0]  # 4 is normal - this is quite permissive
 
@@ -160,7 +168,7 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
         defect_type[surface_mols_ind] = 1  # defect type 1 is surfaces
 
         # cluster_targets[surface_mols_ind] = len(forms2tgt)  # label surface molecules as 'disordered'
-        cluster_mol_ind = torch.arange(len(good_mols)).repeat(15, 1).T
+        cluster_mol_ind = torch.arange(len(good_mols)).repeat(mol_num_atoms, 1).T
 
         #
         # if dataset.loc[i]['gap_rate'] > 0:
@@ -189,9 +197,9 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
 
         datapoints.append(
             CrystalData(
-                x=cluster_atoms.reshape(len(good_mols) * 15),
-                mol_ind=cluster_mol_ind.reshape(len(good_mols) * 15),
-                pos=cluster_coords.reshape(len(good_mols) * 15, 3),
+                x=cluster_atoms.reshape(len(good_mols) * mol_num_atoms),
+                mol_ind=cluster_mol_ind.reshape(len(good_mols) * mol_num_atoms),
+                pos=cluster_coords.reshape(len(good_mols) * mol_num_atoms, 3),
                 y=cluster_targets,
                 defect=defect_type,
                 centroid_pos=(centroids - centroids.mean(0)).cpu().detach().numpy(),
@@ -205,10 +213,10 @@ def collect_to_traj_dataloaders(dataset_path, dataset_size, batch_size, test_fra
     return get_dataloaders(datapoints, machine='local', batch_size=batch_size, test_fraction=test_fraction, shuffle=shuffle)
 
 
-def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth, seed):
+def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth, num_forms, num_topologies, seed):
     return molecule_graph_model(
         num_atom_feats=1,
-        output_dimension=9 + 1 + 2,  # 9 forms + disordered: bulk or surface
+        output_dimension=num_forms + num_topologies,
         graph_aggregator='molwise',
         concat_pos_to_atom_features=False,
         concat_mol_to_atom_features=False,
@@ -241,12 +249,12 @@ def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm
     )
 
 
-def classifier_reporting(true_labels, true_defects, probs, class_names, wandb, epoch_type):
-    if len(np.unique(true_labels)) == 10:  # only if we have all classes represented
-        type_probs = softmax_np(probs[:, :10])
+def classifier_reporting(true_labels, true_defects, probs, class_names, ordered_class_names, wandb, epoch_type):
+    if len(np.unique(true_labels)) == len(class_names):  # only if we have all classes represented
+        type_probs = softmax_np(probs[:, :len(class_names)])
         predicted_class = np.argmax(type_probs, axis=1)
 
-        defect_probs = softmax_np(probs[:, 10:])
+        defect_probs = softmax_np(probs[:, len(class_names):])
         predicted_defect = np.argmax(defect_probs, axis=-1)
 
         train_score = roc_auc_score(true_labels, type_probs, multi_class='ovo')
@@ -296,7 +304,7 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
     return model, optimizer
 
 
-def record_step_results(results_dict, output, sample, data, latents_dict, step, index_offset=0):
+def record_step_results(results_dict, output, sample, data, latents_dict, step, config, index_offset=0):
     if results_dict is None:
         results_dict = {'Temperature': [],
                         'Time_Step': [],
@@ -313,9 +321,9 @@ def record_step_results(results_dict, output, sample, data, latents_dict, step, 
                         'Molecule_Centroids': [],
                         'Coordination_Numbers': []}
 
-    results_dict['Loss'].append(get_loss(output, sample).cpu().detach().numpy())
-    results_dict['Type_Prediction'].append(F.softmax(output[:, :10], dim=1).cpu().detach().numpy())
-    results_dict['Defect_Prediction'].append(F.softmax(output[:, 10:], dim=1).cpu().detach().numpy())
+    results_dict['Loss'].append(get_loss(output, sample, config['num_forms']).cpu().detach().numpy())
+    results_dict['Type_Prediction'].append(F.softmax(output[:, :config['num_forms']], dim=1).cpu().detach().numpy())
+    results_dict['Defect_Prediction'].append(F.softmax(output[:, config['num_forms']:], dim=1).cpu().detach().numpy())
     results_dict['Targets'].append(sample.y.cpu().detach().numpy())
     results_dict['Defects'].append(sample.defect.cpu().detach().numpy())
     results_dict['Latents'].append(latents_dict['final_activation'])
@@ -331,7 +339,7 @@ def record_step_results(results_dict, output, sample, data, latents_dict, step, 
     return results_dict
 
 
-def process_trajectory_results_dict(results_dict, loader):
+def process_trajectory_results_dict(results_dict, loader, mol_num_atoms):
     num_atoms = len(results_dict['Atomwise_Sample_Index'])
     num_mols = len(results_dict['Sample_Index'])
     molwise_results_dict = {}
@@ -342,7 +350,7 @@ def process_trajectory_results_dict(results_dict, loader):
 
         elif len(results_dict[key]) == num_mols:
             index = results_dict['Sample_Index']
-            molwise_results_dict[key] = [results_dict[key][index == ind].repeat(15) for ind in range(len(loader))]
+            molwise_results_dict[key] = [results_dict[key][index == ind].repeat(mol_num_atoms) for ind in range(len(loader))]
             molwise_results_dict['Molecule_' + key] = [results_dict[key][index == ind] for ind in range(len(loader))]
         else:
             pass
@@ -357,5 +365,5 @@ def process_trajectory_results_dict(results_dict, loader):
     return sorted_molwise_results_dict, np.asarray(time_inds)[sort_inds]
 
 
-def get_loss(output, sample):
-    return F.cross_entropy(output[:, :10], sample.y) + F.cross_entropy(output[:, 10:], sample.defect)
+def get_loss(output, sample, num_forms):
+    return F.cross_entropy(output[:, :num_forms], sample.y) + F.cross_entropy(output[:, num_forms:], sample.defect)

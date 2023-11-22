@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from classify_lammps_trajs.NICOAM_constants import identifier2form, num2atomicnum
+from classify_lammps_trajs.NICOAM_constants import identifier2form, num2atomicnum, type2num
 
 
 def process_dump(path):
@@ -33,8 +33,12 @@ def process_dump(path):
             atom_data = np.zeros((n_atoms, len(headers)))
             for ind2 in range(n_atoms):
                 newline = lines[1 + ind + ind2].split()
-                # newline[2] = type2num[newline[2]]
-                newline[2] = num2atomicnum[int(newline[2])]
+                try:
+                    atom_ind =int(newline[2])
+                except ValueError:
+                    atom_ind = int(type2num[newline[2]])
+
+                newline[2] = num2atomicnum[atom_ind]
 
                 atom_data[ind2] = np.asarray(newline[:-3]).astype(float)  # cut off velocity elements
 
@@ -60,11 +64,17 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
             print(f"Processing dump {path}")
             if os.path.exists('run_config.npy'):
                 run_config = np.load('run_config.npy', allow_pickle=True).item()
-
             elif os.path.exists(path.split('\\')[0] + '/' + 'run_config.npy'):
                 run_config = np.load(path.split('\\')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
             elif os.path.exists(path.split('/')[0] + '/' + 'run_config.npy'):
                 run_config = np.load(path.split('/')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
+            elif 'urea' in dumps_dir:
+                run_config = {'temperature': float(dumps_dir.split('T')[-1]),
+                              'gap_rate': 0}
+                if 'liq' in dumps_dir:
+                    run_config['structure_identifier'] = 'Melt'
+                else:
+                    run_config['structure_identifier'] = path.split('\\')[0]
             else:
                 assert False, "Trajectory directory is missing config file"
 
@@ -94,5 +104,6 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
 
                 sample_df = pd.concat([sample_df, new_df])
 
-    sample_df.to_pickle(dataset_path)
-    return True
+        sample_df.to_pickle(dataset_path)
+
+    return None

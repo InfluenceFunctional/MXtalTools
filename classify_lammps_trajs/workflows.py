@@ -14,7 +14,7 @@ from classify_lammps_trajs.utils import get_loss, classifier_reporting, record_s
 def train_classifier(config, classifier, optimizer,
                      train_loader, test_loader,
                      num_epochs, wandb,
-                     class_names, device,
+                     class_names, ordered_class_names, device,
                      batch_size, reporting_frequency,
                      runs_path, run_name):
     with wandb.init(project='cluster_classifier', entity='mkilgour', config=config):
@@ -39,7 +39,7 @@ def train_classifier(config, classifier, optimizer,
                 sample = data.to(device)
 
                 output = classifier(sample)
-                loss = get_loss(output, sample)
+                loss = get_loss(output, sample, config['num_forms'])
                 train_probs.append(output.cpu().detach().numpy())
                 train_true_labels.append(sample.y.cpu().detach().numpy())
                 train_true_defects.append(sample.defect.cpu().detach().numpy())
@@ -58,7 +58,7 @@ def train_classifier(config, classifier, optimizer,
                     sample = data.to(device)
 
                     output = classifier(sample)  # fix mini-batch behavior
-                    loss = get_loss(output, sample)
+                    loss = get_loss(output, sample, config['num_forms'])
 
                     test_loss.append(loss.cpu().detach().numpy())
                     test_probs.append(output.cpu().detach().numpy())
@@ -67,7 +67,8 @@ def train_classifier(config, classifier, optimizer,
 
             test_record.append(np.mean(test_loss))
             if test_record[-1] == np.amin(test_record):
-                torch.save({'model_state_dict': classifier.state_dict(), 'optimizer_state_dict': optimizer.state_dict()},
+                torch.save({'model_state_dict': classifier.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict()},
                            runs_path + run_name + '_best_classifier_checkpoint')
 
                 time_since_best = 0
@@ -88,8 +89,8 @@ def train_classifier(config, classifier, optimizer,
                 test_true_defects = np.concatenate(test_true_defects)
                 test_probs = np.concatenate(test_probs)
 
-                classifier_reporting(train_true_labels, train_true_defects, train_probs, class_names, wandb, 'Train')
-                classifier_reporting(test_true_labels, test_true_defects, test_probs, class_names, wandb, 'Test')
+                classifier_reporting(train_true_labels, train_true_defects, train_probs, class_names, ordered_class_names, wandb, 'Train')
+                classifier_reporting(test_true_labels, test_true_defects, test_probs, class_names, ordered_class_names, wandb, 'Test')
 
             wandb.log({
                 'train_loss': np.asarray(train_loss).mean(),
@@ -114,12 +115,12 @@ def classifier_evaluation(config, classifier, optimizer,
             for step, data in enumerate(tqdm(train_loader)):
                 sample = data.to(device)
                 output, latents_dict = classifier(sample, return_latent=True)
-                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step)
+                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step, config)
 
             for step, data in enumerate(tqdm(test_loader)):
                 sample = data.to(device)
                 output, latents_dict = classifier(sample, return_latent=True)
-                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step, index_offset=len(train_loader))
+                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step, config, index_offset=len(train_loader))
 
         for key in results_dict.keys():
             try:
@@ -150,7 +151,6 @@ def classifier_evaluation(config, classifier, optimizer,
 
 def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
 
-
     from classify_lammps_trajs.ovito_utils import write_ovito_xyz
     dataset_name = '_'.join(dumps_dir.split('/')[-3:])
     datasets_path = config['datasets_path']
@@ -167,8 +167,10 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
 
         os.chdir(config['runs_path'])
 
-        _, loader = collect_to_traj_dataloaders(
-            dataset_path, int(250), batch_size=1, temperatures=None, test_fraction=1, shuffle=False, filter_early=False)
+        _, loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
+                                                dataset_path, int(250), batch_size=1, temperatures=None,
+                                                conv_cutoff = config['conv_cutoff'],
+                                                test_fraction=1, shuffle=False, filter_early=False)
 
         results_dict = None
         classifier.train(False)
@@ -177,7 +179,7 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
             for step, data in enumerate(tqdm(loader)):
                 sample = data.to(device)
                 output, latents_dict = classifier(sample, return_latent=True)
-                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step)
+                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step, config)
 
         for key in results_dict.keys():
             try:
@@ -190,7 +192,7 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
         results_dict['Type_Prediction_Choice'] = np.asarray([form2index[tgt] for tgt in results_dict['Type_Prediction_Choice']])
         results_dict['Type_Prediction_Confidence'] = np.amax(results_dict['Type_Prediction'], axis=-1)  # argmax sample
 
-        sorted_molwise_results_dict, time_steps = process_trajectory_results_dict(results_dict, loader)
+        sorted_molwise_results_dict, time_steps = process_trajectory_results_dict(results_dict, loader, config['mol_num_atoms'])
         try:
             write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
                             sorted_molwise_results_dict['Atom_Types'],

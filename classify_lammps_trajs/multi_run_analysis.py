@@ -7,7 +7,7 @@ import warnings
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
-from classify_lammps_trajs.NICOAM_constants import ordered_class_names
+from classify_lammps_trajs.NICOAM_constants import nic_ordered_class_names
 from classify_lammps_trajs.traj_analysis_figs import plot_classifier_pies
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
@@ -36,45 +36,45 @@ del (dfs)
 
 
 """NN output analysis"""
-classes = ordered_class_names
+classes = nic_ordered_class_names
 NNout_means = np.zeros((len(results_df), 10))
 for i in range(len(results_df)):
     for j in range(len(classes)):
         # trailing frames (pre-smoothed)
         NNout_means[i, j] = np.mean(results_df['overall_fraction'][i][-10:, j])
 
-for i, label in enumerate(ordered_class_names):
+for i, label in enumerate(nic_ordered_class_names):
     results_df[label] = NNout_means[:, i]
 
 """classifier outputs"""
-plot_classifier_pies(results_df, 'max_sphere_radius', 'temperature', ordered_class_names)
+plot_classifier_pies(results_df, 'max_sphere_radius', 'temperature', nic_ordered_class_names)
 
 """NN output analysis"""
-classes = ordered_class_names
+classes = nic_ordered_class_names
 NNout_means = np.zeros((len(results_df), 10))
 for i in range(len(results_df)):
     for j in range(len(classes)):
         # trailing frames (pre-smoothed)
         NNout_means[i, j] = np.mean(results_df['outside_fraction'][i][-10:, j])
 
-for i, label in enumerate(ordered_class_names):
+for i, label in enumerate(nic_ordered_class_names):
     results_df[label] = NNout_means[:, i]
 
 """classifier outputs"""
-plot_classifier_pies(results_df, 'max_sphere_radius', 'temperature', ordered_class_names)
+plot_classifier_pies(results_df, 'max_sphere_radius', 'temperature', nic_ordered_class_names)
 
 """NN output analysis"""
-classes = ordered_class_names
+classes = nic_ordered_class_names
 NNout_means = np.zeros((len(results_df), 10))
 for i in range(len(results_df)):
     for j in range(len(classes)):
         # trailing frames (pre-smoothed)
         NNout_means[i, j] = np.mean(results_df['inside_fraction'][i][-10:, j])
 
-for i, label in enumerate(ordered_class_names):
+for i, label in enumerate(nic_ordered_class_names):
     results_df[label] = NNout_means[:, i]
 
 """classifier outputs"""
-plot_classifier_pies(results_df, 'max_sphere_radius', 'temperature', ordered_class_names)
+plot_classifier_pies(results_df, 'max_sphere_radius', 'temperature', nic_ordered_class_names)
 
 aa = 1

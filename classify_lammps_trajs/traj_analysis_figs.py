@@ -4,7 +4,7 @@ from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
-from classify_lammps_trajs.NICOAM_constants import defect_names, ordered_class_names, form2index, index2form
+from classify_lammps_trajs.NICOAM_constants import defect_names, nic_ordered_class_names, form2index, index2form
 import plotly
 from scipy.ndimage import gaussian_filter1d
 
@@ -26,7 +26,7 @@ def embedding_fig(results_dict, num_samples):
 
     fig = go.Figure()
     for temp_ind, temperature in enumerate([100, 350, 950]):
-        for t_ind in range(10):
+        for t_ind in range(10):  # todo switch to sum over forms
             for d_ind in range(len(defect_names)):
                 inds = np.argwhere((results_dict['Temperature'][sample_inds] == temperature) *
                                    (results_dict['Targets'][sample_inds] == t_ind) *
@@ -39,8 +39,8 @@ def embedding_fig(results_dict, num_samples):
                                            marker_symbol=symbols[temp_ind],
                                            marker_line_width=linewidths[d_ind],
                                            marker_line_color=linecolors[d_ind],
-                                           legendgroup=ordered_class_names[t_ind],
-                                           name=ordered_class_names[t_ind],  # + ', ' + defect_names[d_ind],# + ', ' + str(temperature) + 'K',
+                                           legendgroup=nic_ordered_class_names[t_ind],
+                                           name=nic_ordered_class_names[t_ind],  # + ', ' + defect_names[d_ind],# + ', ' + str(temperature) + 'K',
                                            showlegend=True if (temperature == 100 or temperature == 950) and d_ind == 0 else False,
                                            opacity=0.75))
 
@@ -77,7 +77,7 @@ def form_accuracy_fig(results_dict):
                                      text=np.round(cmat, 2), texttemplate="%{text:.2g}", showscale=False),
                           row=1, col=temp_ind + 1)
         else:
-            fig.add_trace(go.Heatmap(z=cmat, x=ordered_class_names, y=ordered_class_names,
+            fig.add_trace(go.Heatmap(z=cmat, x=nic_ordered_class_names, y=nic_ordered_class_names,
                                      text=np.round(cmat, 2), texttemplate="%{text:.2g}", showscale=False),
                           row=1, col=temp_ind + 1)
 
@@ -126,7 +126,7 @@ def all_accuracy_fig(results_dict):  # todo fix class ordering
         inds = np.argwhere(results_dict['Temperature'] == temperature)[:, 0]
         defect_probs = results_dict['Defect_Prediction'][inds]
         form_probs = results_dict['Type_Prediction'][inds]
-        probs = np.stack([np.outer(defect_probs[ind], form_probs[ind]).T.reshape(len(ordered_class_names) * len(defect_names)) for ind in range(len(form_probs))])
+        probs = np.stack([np.outer(defect_probs[ind], form_probs[ind]).T.reshape(len(nic_ordered_class_names) * len(defect_names)) for ind in range(len(form_probs))])
 
         predicted_class = np.argmax(probs, axis=1)
         true_defects = results_dict['Defects'][inds]
@@ -134,7 +134,7 @@ def all_accuracy_fig(results_dict):  # todo fix class ordering
 
         true_labels = np.asarray([target * 2 + defect for target, defect in zip(true_forms, true_defects)])
 
-        combined_names = [class_name + ' ' + defect_name for class_name in ordered_class_names for defect_name in defect_names]
+        combined_names = [class_name + ' ' + defect_name for class_name in nic_ordered_class_names for defect_name in defect_names]
 
         cmat = confusion_matrix(true_labels, predicted_class, normalize='true')
 
@@ -210,21 +210,21 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps):
     for ind in range(10):
         fig.add_trace(go.Scattergl(x=time_steps / 1000000,
                                    y=gaussian_filter1d(pred_frac_traj[:, ind], sigma),
-                                   name=ordered_class_names[ind],
-                                   legendgroup=ordered_class_names[ind],
+                                   name=nic_ordered_class_names[ind],
+                                   legendgroup=nic_ordered_class_names[ind],
                                    marker_color=colors[ind]),
                       row=1, col=1)
         fig.add_trace(go.Scattergl(x=time_steps / 1000000,
                                    y=gaussian_filter1d(pred_frac_traj_in[:, ind], sigma),
-                                   name=ordered_class_names[ind],
-                                   legendgroup=ordered_class_names[ind],
+                                   name=nic_ordered_class_names[ind],
+                                   legendgroup=nic_ordered_class_names[ind],
                                    showlegend=False,
                                    marker_color=colors[ind]),
                       row=1, col=2)
         fig.add_trace(go.Scattergl(x=time_steps / 1000000,
                                    y=gaussian_filter1d(pred_frac_traj_out[:, ind], sigma),
-                                   name=ordered_class_names[ind],
-                                   legendgroup=ordered_class_names[ind],
+                                   name=nic_ordered_class_names[ind],
+                                   legendgroup=nic_ordered_class_names[ind],
                                    showlegend=False,
                                    marker_color=colors[ind]),
                       row=1, col=3)
