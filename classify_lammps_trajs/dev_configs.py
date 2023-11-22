@@ -35,7 +35,7 @@ dev = {'run_name': 'dev',
        'learning_rate': 1e-4,
        'datasets_path': r'D:/crystals_extra/classifier_training/',
        'dumps_path': r'D:/crystals_extra/classifier_training/',
-       'dumps_dirs': ['melt_trajs2', 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
+       'dumps_dirs': ['bulk_trajs2'],  # , 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
        'dataset_name': 'nicotinamide_trajectories_dataset',
        'runs_path': r'C:/Users/mikem/crystals/classifier_runs/',
        'device': 'cuda',
@@ -55,7 +55,7 @@ base_config = {'run_name': 'dev',
                'fc_norm': 'layer',
                'num_fcs': 2,
                'num_epochs': 1000,
-               'dataset_size': 1000,
+               'dataset_size': 10000,
                'conv_cutoff': 6,
                'batch_size': 5,
                'reporting_frequency': 1,
@@ -72,9 +72,8 @@ base_config = {'run_name': 'dev',
                'device': 'cpu',
                'seed': 1}
 
-
-for i in range(1):
-    for mol in range(2):
+for i in range(4):
+    for mol in range(1, 2):
         configs.append(copy(base_config))
         configs[-1]['run_name'] = f'mol {mol} test{i}'
         configs[-1]['seed'] = i
@@ -83,7 +82,6 @@ for i in range(1):
             configs[-1]['mol_num_atoms'] = 8
             configs[-1]['dumps_dirs'] = ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700']
             configs[-1]['dataset_name'] = 'urea_trajectories_dataset'
-
 
 '''
 configs = []

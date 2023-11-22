@@ -52,7 +52,7 @@ def process_dump(path):
 
 
 def generate_dataset_from_dumps(dumps_dirs, dataset_path):
-    sample_df = pd.DataFrame()
+    sample_df = pd.DataFrame()  # todo add capability to grow this object iteratively in case it crashes midway through generation
     for dumps_dir in dumps_dirs:
         os.chdir(dumps_dir)
         dump_files = glob.glob(r'*/*.dump', recursive=True) + glob.glob('*.dump')  # plus any free dumps directly in this dir
@@ -104,6 +104,6 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
 
                 sample_df = pd.concat([sample_df, new_df])
 
-        sample_df.to_pickle(dataset_path)
+    sample_df.to_pickle(dataset_path)
 
     return None
