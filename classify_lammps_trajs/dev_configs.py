@@ -69,7 +69,7 @@ base_config = {'run_name': 'dev',
                'dumps_dirs': ['melt_trajs2', 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
                'dataset_name': 'nicotinamide_trajectories_dataset',
                'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
-               'device': 'cuda',
+               'device': 'cpu',
                'seed': 1}
 
 
