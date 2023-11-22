@@ -34,7 +34,7 @@ def process_dump(path):
             for ind2 in range(n_atoms):
                 newline = lines[1 + ind + ind2].split()
                 try:
-                    atom_ind =int(newline[2])
+                    atom_ind = int(newline[2])
                 except ValueError:
                     atom_ind = int(type2num[newline[2]])
 
@@ -74,7 +74,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
                 if 'liq' in dumps_dir:
                     run_config['structure_identifier'] = 'Melt'
                 else:
-                    run_config['structure_identifier'] = path.split('\\')[0]
+                    run_config['structure_identifier'] = path.replace('\\', '/').split('/')[0]
             else:
                 assert False, "Trajectory directory is missing config file"
 
