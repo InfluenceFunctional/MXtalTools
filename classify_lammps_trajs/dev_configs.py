@@ -9,10 +9,7 @@ defect_clusters_5_rerun_pure_nic_runs = [0, 1, 10, 100, 101, 102, 103, 104, 105,
                                          18, 19, 2, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209,
                                          210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 3, 4, 5, 6, 7, 8, 9]
 
-dev = {'run_name': 'dev',
-       'num_forms': 10,
-       'num_topologies': 2,
-       'mol_num_atoms': 15,  # 8 for Urea 15 for Nicotinamide
+dev = {'run_name': 'dev_urea',
        'convergence_history': 50,
        'num_convs': 2,
        'embedding_depth': 256,
@@ -22,21 +19,25 @@ dev = {'run_name': 'dev',
        'fc_norm': 'layer',
        'num_fcs': 2,
        'num_epochs': 1000,
-       'dataset_size': 1000,
+       'dataset_size': 500,
        'conv_cutoff': 6,
        'batch_size': 5,
        'reporting_frequency': 1,
-       'train_model': True,
-       'trajs_to_analyze_list': None,  # [f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(9)] +
-       # [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
-       # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
-       'do_classifier_evaluation': False,
-       'classifier_path': None,  # 'C:/Users/mikem/crystals/classifier_runs/test10_best_classifier_checkpoint',
+       'train_model': False,
+       'trajs_to_analyze_list': None,#[f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(9)] +
+        #[f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
+        #[f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
+       'do_classifier_evaluation': True,
+       'classifier_path': 'C:/Users/mikem/crystals/classifier_runs/dev_urea0_best_classifier_checkpoint',
        'learning_rate': 1e-4,
        'datasets_path': r'D:/crystals_extra/classifier_training/',
        'dumps_path': r'D:/crystals_extra/classifier_training/',
-       'dumps_dirs': ['bulk_trajs3'],  # , 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
-       'dataset_name': 'nicotinamide_trajectories_dataset_100_350_800',
+       'dumps_dirs':  ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T200', 'urea_bulk_trajs/liqT700'],
+       #'dumps_dirs': ['bulk_trajs3'],
+       'training_temps': [100, 200, 700],
+       #'training_temps': [100, 350, 800],
+       'dataset_name': 'urea_trajectories_dataset_100_200_700',
+       #'dataset_name': 'nicotinamide_trajectories_dataset_100_350_800',
        'runs_path': r'C:/Users/mikem/crystals/classifier_runs/',
        'device': 'cuda',
        'seed': 1}
@@ -55,7 +56,7 @@ base_config = {'run_name': 'dev',
                'fc_norm': 'layer',
                'num_fcs': 2,
                'num_epochs': 1000,
-               'dataset_size': 10000,
+               'dataset_size': 100,
                'conv_cutoff': 6,
                'batch_size': 5,
                'reporting_frequency': 1,
@@ -66,14 +67,14 @@ base_config = {'run_name': 'dev',
                'learning_rate': 1e-4,
                'datasets_path': r'/vast/mk8347/molecule_clusters/bulk_trajs1/',
                'dumps_path': r'/vast/mk8347/molecule_clusters/',
-               'dumps_dirs': ['melt_trajs2', 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
-               'dataset_name': 'nicotinamide_trajectories_dataset',
+               'dumps_dirs': None, #['melt_trajs2', 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
+               'dataset_name': None, #'nicotinamide_trajectories_dataset',
                'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
                'device': 'cuda',
                'seed': 1}
 
 for i in range(4):
-    for mol in range(1, 2):
+    for mol in range(0, 2):
         configs.append(copy(base_config))
         configs[-1]['run_name'] = f'mol {mol} test{i}'
         configs[-1]['seed'] = i
@@ -82,6 +83,11 @@ for i in range(4):
             configs[-1]['mol_num_atoms'] = 8
             configs[-1]['dumps_dirs'] = ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T200', 'urea_bulk_trajs/liqT700']
             configs[-1]['dataset_name'] = 'urea_trajectories_dataset_100_200_700'
+        elif mol == 0:
+            configs[-1]['num_forms'] = 10
+            configs[-1]['mol_num_atoms'] = 15
+            configs[-1]['dumps_dirs'] = ['bulk_trajs3']
+            configs[-1]['dataset_name'] = 'nic_trajectories_dataset_100_350_800'
 
 '''
 configs = []
