@@ -68,7 +68,7 @@ dev = {'run_name': 'dev',
 configs = []
 
 base_config = {'run_name': 'dev',
-               'experiment_tag': ['battery_5'],
+               'experiment_tag': ['battery_6'],
                'device': 'cuda',
                'seed': 1234,
                'training_iterations': int(1e8),
@@ -135,12 +135,12 @@ search_space = {
     'embedding_depth': [256, 512, 1024],
     'num_decoder_points': [64, 128, 256],
     'encoder_num_layers': [1, 4],
-    'decoder_num_layers': [1, 4],
-    'encoder_num_nodewise_fcs': [2, 4],
+    'decoder_num_layers': [4, 8, 12],
+    'encoder_num_nodewise_fcs': [4, 8],
     'encoder_graph_norm': [None, 'graph layer'],
     'decoder_fc_norm': [None, 'layer', 'batch'],
-    'encoder_lr': [1e-3, 1e-4, 1e-5],
-    'decoder_lr': [1e-3, 1e-4, 1e-5],
+    'encoder_lr': [1e-3, 1e-4],
+    'decoder_lr': [1e-3],
 }
 
 np.random.seed(0)
@@ -759,4 +759,82 @@ aa = 1
 #     'encoder_num_nodewise_fcs': [2, 4],
 #     'encoder_lr': [5e-4, 1e-4, 1e-5],
 #     'decoder_lr': [5e-4, 1e-4, 1e-5],
+# }
+
+#
+#
+# base_config = {'run_name': 'dev',
+#                'experiment_tag': ['battery_5'],
+#                'device': 'cuda',
+#                'seed': 1234,
+#                'training_iterations': int(1e8),
+#                'min_num_training_steps': 50000,
+#                'convergence_history': 1000,
+#                'convergence_eps': 1e-3,
+#
+#                # loss settings
+#                'sigma': 0.25,  # larger increases overlaps
+#                'sigma_lambda': 0.9,
+#                'sigma_threshold': 0.025,
+#                'type_distance_scaling': 0.5,  # larger decreases overlaps
+#                'overlap_type': 'gaussian',
+#                'log_reconstruction': False,
+#                'do_training': True,
+#                'cart_dimension': 3,
+#                'train_reconstruction_loss': True,
+#                'train_constraining_loss': True,
+#                'train_nodewise_type_loss': False,
+#                'train_centroids_loss': False,
+#                'train_type_confidence_loss': False,
+#                'train_num_points_loss': False,
+#                'train_encoding_type_loss': False,
+#
+#                # dataset & dataloading
+#                'batch_size_min': 2,
+#                'batch_size_max': 400,
+#                'batch_size_increment': 1,
+#                'max_num_points': 4,
+#                'min_num_points': 2,
+#                'points_spread': 1,  # max cloud radius
+#                'max_point_types': 3,
+#
+#                # lrs
+#                'encoder_lr': 1e-4,
+#                'decoder_lr': 1e-3,
+#                'lr_lambda': 0.975,
+#                'lr_timescale': 2000,
+#
+#                # encoder
+#                'encoder_aggregator': 'max',
+#                'encoder_num_layers': 1,
+#                'encoder_embedding_depth': 1024,
+#                'encoder_num_nodewise_fcs': 2,
+#                'encoder_graph_norm': 'graph layer',
+#                'encoder_dropout': 0,
+#
+#                # decoder
+#                'decoder_num_layers': 2,
+#                'decoder_embedding_depth': 1024,
+#                'decoder_fc_norm': 'layer',
+#                'decoder_dropout': 0,
+#                'num_decoder_points': 100,
+#
+#                # paths
+#                # 'run_directory': r'C:\Users\mikem\crystals\CSP_runs',
+#                'run_directory': '/scratch/mk8347/csd_runs/',
+#                # 'save_directory': 'D:/crystals_extra/',
+#                'save_directory': '/scratch/mk8347/csd_runs/',
+#                'checkpoint_path': None,  # r'C:\Users\mikem\crystals\CSP_runs\models\cluster/test1_autoencoder_ckpt_11_12',
+#                }
+#
+# search_space = {
+#     'embedding_depth': [256, 512, 1024],
+#     'num_decoder_points': [64, 128, 256],
+#     'encoder_num_layers': [1, 4],
+#     'decoder_num_layers': [1, 4],
+#     'encoder_num_nodewise_fcs': [2, 4],
+#     'encoder_graph_norm': [None, 'graph layer'],
+#     'decoder_fc_norm': [None, 'layer', 'batch'],
+#     'encoder_lr': [1e-3, 1e-4, 1e-5],
+#     'decoder_lr': [1e-3, 1e-4, 1e-5],
 # }

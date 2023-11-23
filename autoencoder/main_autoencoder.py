@@ -148,8 +148,9 @@ with (wandb.init(
                 if np.mean(losses['reconstruction_loss'][-100:]) < config.sigma_threshold:
                     if working_sigma > 0.001:  # make the problem harder
                         working_sigma *= config.sigma_lambda
-                    else:  # if it's solved, add more points
+                    else:  # if it's solved, add more points, but soften the loss
                         working_max_points += 1
+                        working_sigma *= 10
 
                 if step > config.min_num_training_steps:
                     converged1 = check_convergence(np.asarray(losses['scaled_reconstruction_loss']), config.convergence_history, config.convergence_eps)

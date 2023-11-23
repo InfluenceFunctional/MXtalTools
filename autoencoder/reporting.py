@@ -199,13 +199,13 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weig
 
             pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
-            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist, # todo investigate the very small sigma regime - scale surface count vs sigma
                                     showlegend=True if (j == 0 and graph_ind == 0) else False,
                                     name=f'Predicted type', legendgroup=f'Predicted type',
                                     coloraxis="coloraxis",
-                                    isomin=0.001, isomax=ymax, opacity=.025,
+                                    isomin=0.0001, isomax=ymax, opacity=.01,
                                     cmin=0, cmax=ymax,
-                                    surface_count=50,
+                                    surface_count=100,
                                     ), row=row, col=col)
 
             fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
