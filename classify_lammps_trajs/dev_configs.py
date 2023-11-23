@@ -35,8 +35,8 @@ dev = {'run_name': 'dev',
        'learning_rate': 1e-4,
        'datasets_path': r'D:/crystals_extra/classifier_training/',
        'dumps_path': r'D:/crystals_extra/classifier_training/',
-       'dumps_dirs': ['bulk_trajs2'],  # , 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
-       'dataset_name': 'nicotinamide_trajectories_dataset',
+       'dumps_dirs': ['bulk_trajs3'],  # , 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
+       'dataset_name': 'nicotinamide_trajectories_dataset_100_350_800',
        'runs_path': r'C:/Users/mikem/crystals/classifier_runs/',
        'device': 'cuda',
        'seed': 1}
@@ -80,8 +80,8 @@ for i in range(4):
         if mol == 1:
             configs[-1]['num_forms'] = 7
             configs[-1]['mol_num_atoms'] = 8
-            configs[-1]['dumps_dirs'] = ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700']
-            configs[-1]['dataset_name'] = 'urea_trajectories_dataset'
+            configs[-1]['dumps_dirs'] = ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T200', 'urea_bulk_trajs/liqT700']
+            configs[-1]['dataset_name'] = 'urea_trajectories_dataset_100_200_700'
 
 '''
 configs = []
