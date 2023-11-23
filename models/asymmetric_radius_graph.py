@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 import torch_cluster
 
+
 # @torch.jit.script  # todo see if we can JIT these again
 def radius(x: torch.Tensor, y: torch.Tensor, r: float,
            batch_x: Optional[torch.Tensor] = None,
@@ -74,8 +75,7 @@ def radius(x: torch.Tensor, y: torch.Tensor, r: float,
         torch.cumsum(deg, 0, out=ptr_y[1:])
 
     return torch.ops.torch_cluster.radius(x, y, ptr_x, ptr_y, r,
-                                         max_num_neighbors, num_workers)
-
+                                          max_num_neighbors, num_workers)
 
 
 # @torch.jit.script

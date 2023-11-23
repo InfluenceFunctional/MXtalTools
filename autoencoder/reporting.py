@@ -52,7 +52,7 @@ def log_rmsd_loss(wandb, data, decoded_data):
 
 
 def log_losses(wandb, losses, step, optimizer, data, batch_size, working_sigma,
-               decoded_data, mean_num_points, mean_sample_likelihood):
+               decoded_data, mean_sample_likelihood, min_points, max_points):
     losses_dict = {ltype: np.mean(lval[-10:]) for ltype, lval in losses.items()}
     best_losses_dict = {'best_' + ltype: np.amin(lval) for ltype, lval in losses.items()}
 
@@ -64,7 +64,8 @@ def log_losses(wandb, losses, step, optimizer, data, batch_size, working_sigma,
                'decoder_learning_rate': optimizer.param_groups[1]['lr'],
                'step': step,
                'sigma': working_sigma,
-               'mean_num_points_setting': mean_num_points,
+               'min_num_points': min_points,
+               'max_num_points': max_points,
                'mean_num_points_actual': data.num_nodes / data.num_graphs,
                'mean_sample_likelihood': mean_sample_likelihood,
                })
@@ -76,7 +77,9 @@ def save_checkpoint(encoder, decoder, optimizer, config, step, losses):
                    config.save_directory + config.run_name + '_' + 'autoencoder_ckpt' + '_' + str(step))
 
 
-def update_losses(losses, num_points_loss, reconstruction_loss, encoding_type_loss, working_sigma, loss, nodewise_type_loss, centroid_dist_loss, centroid_std_loss):
+def update_losses(losses, num_points_loss, reconstruction_loss, encoding_type_loss, working_sigma, loss,
+                  nodewise_type_loss, centroid_dist_loss,
+                  constraining_loss):
     losses['num_points_loss'].append(num_points_loss.mean().cpu().detach().numpy())
     losses['reconstruction_loss'].append(reconstruction_loss.cpu().detach().numpy())
     losses['overall_type_loss'].append(encoding_type_loss.cpu().detach().numpy())
@@ -84,7 +87,7 @@ def update_losses(losses, num_points_loss, reconstruction_loss, encoding_type_lo
     losses['combined_loss'].append(loss.cpu().detach().numpy())
     losses['nodewise_type_loss'].append(nodewise_type_loss.cpu().detach().numpy())
     losses['centroid_mean_loss'].append(centroid_dist_loss.cpu().detach().numpy())
-    losses['centroid_std_loss'].append(centroid_std_loss.cpu().detach().numpy())
+    losses['constraining_loss'].append(constraining_loss.cpu().detach().numpy())
 
     return losses
 
@@ -194,13 +197,13 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weig
             ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
             pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
 
-            pred_dist = np.sum(pred_type_weights.mean() * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
+            pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
             fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
                                     showlegend=True if (j == 0 and graph_ind == 0) else False,
                                     name=f'Predicted type', legendgroup=f'Predicted type',
                                     coloraxis="coloraxis",
-                                    isomin=0.001, isomax=ymax, opacity=.05,
+                                    isomin=0.001, isomax=ymax, opacity=.025,
                                     cmin=0, cmax=ymax,
                                     surface_count=50,
                                     ), row=row, col=col)
@@ -211,36 +214,7 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weig
                                        name=f'True type', legendgroup=f'True type'
                                        ), row=row, col=col)
 
-        #
-        # for j in range(config.max_point_types):
-        #     for graph_ind in range(min(4, data.num_graphs)):
-        #         row = j + 1
-        #         col = graph_ind + 1
-        #
-        #         points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
-        #         points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
-        #
-        #         ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
-        #         pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
-        #
-        #         pred_dist = np.sum(pred_type_weights.mean() * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
-        #
-        #         fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
-        #                                 showlegend=True if (j == 0 and graph_ind == 0) else False,
-        #                                 name=f'Predicted type', legendgroup=f'Predicted type',
-        #                                 coloraxis="coloraxis",
-        #                                 isomin=0.001, isomax=ymax, opacity=.05,
-        #                                 cmin=0, cmax=ymax,
-        #                                 surface_count=25,
-        #                                 ), row=row, col=col)
-        #
-        #         fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
-        #                                    mode='markers', marker_color='white', marker_size=10, marker_line_width=2, marker_line_color='green',
-        #                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
-        #                                    name=f'True type', legendgroup=f'True type'
-        #                                    ), row=row, col=col)
-
-        fig.update_coloraxes(cmin=0, cmax=ymax, autocolorscale=False, colorscale='Jet')
+        fig.update_coloraxes(autocolorscale=False, colorscale='Jet')
         wandb.log({"Sample Distributions": fig})
 
     return None

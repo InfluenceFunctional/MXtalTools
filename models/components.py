@@ -48,23 +48,18 @@ class MLP(nn.Module):
             nn.Linear(self.n_filters[i], self.n_filters[i + 1], bias=bias)
             for i in range(self.n_layers)
         ])
+        self.fc_activations = torch.nn.ModuleList([
+            Activation(activation, self.n_filters[i + 1])
+            for i in range(self.n_layers)
+        ])
         if norm_after_linear:
             self.fc_norms = torch.nn.ModuleList([
                 Normalization(self.norm_mode, self.n_filters[i + 1])
                 for i in range(self.n_layers)
             ])
-            self.fc_activations = torch.nn.ModuleList([
-                Activation(activation, self.n_filters[i + 1])
-                for i in range(self.n_layers)
-            ])
-
         else:
             self.fc_norms = torch.nn.ModuleList([
                 Normalization(self.norm_mode, self.n_filters[i])
-                for i in range(self.n_layers)
-            ])
-            self.fc_activations = torch.nn.ModuleList([
-                Activation(activation, self.n_filters[i])
                 for i in range(self.n_layers)
             ])
 

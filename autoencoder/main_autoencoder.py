@@ -33,7 +33,8 @@ else:
 config = Namespace(**config)
 batch_size = config.batch_size_min
 working_sigma = config.sigma
-mean_num_points = config.mean_num_points
+working_min_points = config.min_num_points
+working_max_points = config.max_num_points
 os.chdir(config.run_directory)
 
 converged = False
@@ -51,10 +52,10 @@ with (wandb.init(
         cart_dimension=config.cart_dimension,
         aggregator=config.encoder_aggregator,
         embedding_depth=config.encoder_embedding_depth,
-        num_fc_layers=config.encoder_num_fc_layers,
+        num_fc_layers=0,
         num_layers=config.encoder_num_layers,
         num_nodewise_fcs=config.encoder_num_nodewise_fcs,
-        fc_norm=config.encoder_fc_norm,
+        fc_norm=None,
         graph_norm=config.encoder_graph_norm,
         dropout=config.encoder_dropout,
         cutoff=config.points_spread * 2,
@@ -62,14 +63,13 @@ with (wandb.init(
         num_classes=config.max_point_types).to(config.device)
 
     decoder = fc_decoder(
-        num_nodes=config.num_fc_nodes,
+        num_nodes=config.num_decoder_points,
         cart_dimension=config.cart_dimension,
         input_depth=config.encoder_embedding_depth,
         embedding_depth=config.decoder_embedding_depth,
         num_layers=config.decoder_num_layers,
         fc_norm=config.decoder_fc_norm,
         dropout=config.decoder_dropout,
-        cutoff=config.points_spread * 2,
         max_ntypes=config.max_point_types,
         seed=config.seed, device=config.device).to(config.device)
 
@@ -87,6 +87,7 @@ with (wandb.init(
     scheduler = MultiplicativeLR(optimizer, lr_lambda=lambda epoch: config.lr_lambda)
     wandb.watch((encoder, decoder), log_graph=True, log_freq=100)
 
+    sigma_record = []
     losses = {'reconstruction_loss': [],
               'num_points_loss': [],
               'overall_type_loss': [],
@@ -94,63 +95,77 @@ with (wandb.init(
               'combined_loss': [],
               'nodewise_type_loss': [],
               'centroid_mean_loss': [],
-              'centroid_std_loss': [],
+              'constraining_loss': [],
               }
 
     for step in tqdm(range(config.training_iterations)):
         if converged:
             break
+        try:
+            if step % 10 == 0 and batch_size < config.batch_size_max:
+                batch_size += config.batch_size_increment
 
-        if step % 10 == 0 and batch_size < config.batch_size_max:
-            batch_size += config.batch_size_increment
+            point_num_rands = np.random.randint(low=working_min_points, high=working_max_points + 1, size=batch_size)
 
-        point_num_rands = np.clip(
-            np.round((np.random.randn(batch_size) * config.num_points_spread + mean_num_points)),
-            a_min=config.min_num_points, a_max=config.max_num_points).astype(int)
+            # truly random point clouds within a sphere of fixed maximum volume
+            vectors = torch.rand(point_num_rands.sum(), config.cart_dimension, dtype=torch.float32, device=config.device)
+            norms = torch.linalg.norm(vectors, dim=1)[:, None]
+            lengths = torch.rand(point_num_rands.sum(), 1, dtype=torch.float32, device=config.device)
+            coords_list = (vectors / norms * lengths).split(point_num_rands.tolist())
 
-        coords_list = [torch.rand(rand, config.cart_dimension) * 2 * config.points_spread for rand in point_num_rands]
-        centered_coords_list = [coords - coords.mean(0) for coords in coords_list]
-        types_list = [torch.randint(config.max_point_types, size=(rand,)) for rand in point_num_rands]
+            #centered_coords_list = [coords - coords.mean(0) for coords in coords_list]
+            types_list = torch.randint(config.max_point_types, size=(point_num_rands.sum(),), device=config.device).split(point_num_rands.tolist())
 
-        data = collater([CrystalData(
-            x=types_list[n][:, None],
-            pos=centered_coords_list[n],
-            mol_size=torch.tensor(point_num_rands[n], dtype=torch.long),
-        ) for n in range(batch_size)]).to(config.device)
+            data = collater([CrystalData(
+                x=types_list[n][:, None],
+                pos=coords_list[n],
+                mol_size=torch.tensor(point_num_rands[n], dtype=torch.long, device=config.device),
+            ) for n in range(batch_size)]).to(config.device)  # todo this is now one of the slower steps
 
-        encoding, num_points_prediction, composition_prediction = encoder(data.clone())
-        decoding = decoder(encoding, data.clone(), point_num_rands)
+            encoding, num_points_prediction, composition_prediction = encoder(data.clone())
+            decoding = decoder(encoding, data.clone(), point_num_rands)
 
-        loss, losses, decoded_data, nodewise_weights, mean_sample_likelihood = compute_loss(
-            wandb, step,
-            losses, config, working_sigma, num_points_prediction,
-            composition_prediction, decoding, data, point_num_rands)
+            sigma_record.append(working_sigma)
+            loss, losses, decoded_data, nodewise_weights, mean_sample_likelihood = compute_loss(
+                wandb, step,
+                losses, config, working_sigma, num_points_prediction,
+                composition_prediction, decoding, data, point_num_rands)
 
-        optimizer.zero_grad()
-        if config.do_training:
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad()
+            if config.do_training:
+                loss.backward()
+                optimizer.step()
 
-        if step % 50 == 0:
-            log_losses(
-                wandb, losses, step, optimizer, data, batch_size,
-                working_sigma, decoded_data, mean_num_points, mean_sample_likelihood)
+            if step % 50 == 0:
+                log_losses(
+                    wandb, losses, step, optimizer, data, batch_size,
+                    working_sigma, decoded_data, mean_sample_likelihood,
+                working_min_points, working_max_points)
 
-            save_checkpoint(encoder, decoder, optimizer, config, step, losses)
+                save_checkpoint(encoder, decoder, optimizer, config, step, losses)
 
-        if step % 100 == 0:
-            if np.mean(losses['reconstruction_loss'][-100:]) < config.sigma_threshold:
-                if working_sigma > 0.0001:  # make the problem harder
-                    working_sigma *= config.sigma_lambda
+            if step % 100 == 0:
+                if np.mean(losses['reconstruction_loss'][-100:]) < config.sigma_threshold:
+                    if working_sigma > 0.001:  # make the problem harder
+                        working_sigma *= config.sigma_lambda
+                    else:  # if it's solved, add more points
+                        working_max_points += 1
 
-            if step > config.min_num_training_steps:
-                converged1 = check_convergence(np.asarray(losses['scaled_reconstruction_loss']), config.convergence_history, config.convergence_eps)
-                converged2 = check_convergence(np.asarray(losses['combined_loss']), config.convergence_history, config.convergence_eps)
-                converged = converged1 and converged2
+                if step > config.min_num_training_steps:
+                    converged1 = check_convergence(np.asarray(losses['scaled_reconstruction_loss']), config.convergence_history, config.convergence_eps)
+                    converged2 = check_convergence(np.asarray(losses['combined_loss']), config.convergence_history, config.convergence_eps)
+                    converged3 = check_convergence(np.asarray(sigma_record), config.convergence_history, config.convergence_eps)
+                    converged = converged1 and converged2 and converged3
 
-            overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weights)
+            if step % 250 == 0:
+                overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weights)
 
-        if step % config.lr_timescale == 0 and step != 0 and optimizer.param_groups[0]['lr'] > 1e-5:
-            scheduler.step()
+            if step % config.lr_timescale == 0 and step != 0 and optimizer.param_groups[0]['lr'] > 1e-5:
+                scheduler.step()
+        except RuntimeError as e:
+            if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
+                batch_size = batch_size - max(1, int(batch_size * 0.1))
+            else:
+                raise e
 
 aa = 1

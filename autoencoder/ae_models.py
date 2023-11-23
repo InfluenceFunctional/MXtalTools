@@ -83,149 +83,25 @@ class point_cloud_encoder(nn.Module):
         return encoding, num_atoms_prediction, composition_prediction
 
 
-class point_cloud_decoder(nn.Module):
-    def __init__(self, cart_dimension, input_depth, embedding_depth, num_layers, num_nodewise_fcs, graph_norm, message_norm, dropout, cutoff, max_ntypes, seed, device):
-        super(point_cloud_decoder, self).__init__()
-        self.cart_dimension = cart_dimension
-        self.device = device
-        self.max_num_neighbors = 100
-        self.cutoff = cutoff
-        output_depth = max_ntypes
-        torch.manual_seed(seed)
-
-        radial_embedding = 'gaussian'
-        num_radial = 50
-        envelope_exponent: int = 5
-
-        if radial_embedding == 'bessel':
-            self.rbf = BesselBasisLayer(num_radial, cutoff, envelope_exponent)
-        elif radial_embedding == 'gaussian':
-            self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
-
-        if input_depth != embedding_depth:
-            self.init_layer = nn.Linear(input_depth, embedding_depth)
-        else:
-            self.init_layer = nn.Identity()
-
-        grid_radius = 1
-        self.num_gridpoints = (2 * grid_radius + 1) ** cart_dimension
-        self.grid_positions = torch.zeros((self.num_gridpoints, cart_dimension))  # initialize the translations in fractional coords
-        i = 0
-        if cart_dimension == 3:
-            for xx in range(-grid_radius, grid_radius + 1):
-                for yy in range(-grid_radius, grid_radius + 1):
-                    for zz in range(-grid_radius, grid_radius + 1):
-                        self.grid_positions[i] = torch.tensor((xx, yy, zz))
-                        i += 1
-        elif cart_dimension == 2:
-            for xx in range(-grid_radius, grid_radius + 1):
-                for yy in range(-grid_radius, grid_radius + 1):
-                    self.grid_positions[i] = torch.tensor((xx, yy))
-                    i += 1
-        elif cart_dimension == 1:
-            for xx in range(-grid_radius, grid_radius + 1):
-                self.grid_positions[i] = torch.tensor((xx))
-                i += 1
-
-        self.upscale = nn.Linear(input_depth, input_depth * self.num_gridpoints)
-        self.init_norm1 = nn.Identity()  # nn.LayerNorm(input_depth)
-        self.init_norm2 = nn.Identity()  # nn.LayerNorm(embedding_depth)
-
-        self.interaction_blocks = torch.nn.ModuleList([
-            GCBlock(embedding_depth,
-                    embedding_depth,
-                    'TransformerConv',
-                    num_radial,
-                    norm=message_norm,
-                    dropout=dropout,
-                    heads=4,
-                    )
-            for _ in range(num_layers)
-        ])
-
-        self.fc_blocks = torch.nn.ModuleList([
-            MLP(
-                layers=num_nodewise_fcs,
-                filters=embedding_depth,
-                input_dim=embedding_depth,
-                output_dim=embedding_depth,
-                activation='gelu',
-                norm=graph_norm,
-                dropout=dropout,
-            )
-            for _ in range(num_layers)
-        ])
-
-        self.output_layer = nn.Linear(embedding_depth, output_depth)
-
-    def get_geom_embedding(self, edge_index, pos):
-        """
-        compute elements for radial & spherical embeddings
-        """
-        i, j = edge_index  # i->j source-to-target
-        dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
-
-        return dist, self.rbf(dist)
-
-    def forward(self, encoding, data, graph_sizes):
-        """
-        initialize nodes on randn with uniform embedding
-        decode
-        """
-
-        batch = data.batch
-        data.pos = torch.randn_like(data.pos)
-        grid = F.gelu(self.init_norm1(self.upscale(encoding).reshape(data.num_graphs, encoding.shape[1], self.num_gridpoints).permute(0, 2, 1)))
-
-        grid = grid.cpu()
-        data.x = torch.cat([gnn.knn_interpolate(grid[ind], self.grid_positions.cpu(), data.pos[data.batch == ind].cpu())
-                            for ind in range(data.num_graphs)]).to(encoding.device)
-
-        x = F.gelu(self.init_norm2(self.init_layer(data.x)))
-        for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
-            edge_index = gnn.radius_graph(data.pos, r=self.cutoff, batch=batch,
-                                          max_num_neighbors=self.max_num_neighbors, flow='source_to_target')
-            dist, rbf = self.get_geom_embedding(edge_index, data.pos)
-
-            res = x.clone()
-            x = convolution(x, rbf, edge_index, batch)
-            x = fc(x, batch=batch)
-            x = res + x
-
-            data.pos += x[:, :self.cart_dimension]  # update positions with convolution results
-            x[:, -self.cart_dimension:] = data.pos  # update position in note embedding
-
-        return torch.cat((data.pos, self.output_layer(x)), dim=1)
-
-
 class fc_decoder(nn.Module):
-    def __init__(self, num_nodes, cart_dimension, input_depth, embedding_depth, num_layers, fc_norm, dropout, cutoff, max_ntypes, seed, device):
+    def __init__(self, num_nodes, cart_dimension, input_depth, embedding_depth, num_layers, fc_norm, dropout, max_ntypes, seed, device):
         super(fc_decoder, self).__init__()
         self.cart_dimension = cart_dimension
         self.device = device
-        self.max_num_neighbors = 100
-        self.cutoff = cutoff
-        output_depth = max_ntypes + cart_dimension
+        self.output_depth = max_ntypes + cart_dimension
         torch.manual_seed(seed)
         self.num_nodes = num_nodes
         self.embedding_depth = embedding_depth
 
-        self.init_layer = nn.Linear(input_depth, embedding_depth * num_nodes)
-
-        self.fc_blocks = torch.nn.ModuleList([
-            MLP(
-                layers=num_layers,
-                filters=embedding_depth,
-                input_dim=embedding_depth,
-                output_dim=embedding_depth,
-                activation='gelu',
-                norm=fc_norm,
-                dropout=dropout,
-            )
-            for _ in range(num_layers)
-        ])
-
-        self.output_layer = nn.Linear(embedding_depth, output_depth)
+        self.MLP = MLP(
+            layers=num_layers,
+            filters=embedding_depth,
+            input_dim=input_depth,
+            output_dim=self.output_depth * self.num_nodes,
+            activation='gelu',
+            norm=fc_norm,
+            dropout=dropout,
+        )
 
     def forward(self, encoding, data, num_points):
         """
@@ -233,9 +109,6 @@ class fc_decoder(nn.Module):
         decode
         """
 
-        x = self.init_layer(encoding).reshape(data.num_graphs * self.num_nodes, self.embedding_depth)
+        x = self.MLP(encoding)
 
-        for block in self.fc_blocks:
-            x = block(x)
-
-        return self.output_layer(x)
+        return x.reshape(self.num_nodes * data.num_graphs, self.output_depth)
