@@ -36,6 +36,7 @@ working_sigma = config.sigma
 working_min_points = config.min_num_points
 working_max_points = config.max_num_points
 os.chdir(config.run_directory)
+hit_max_batch = False
 
 converged = False
 
@@ -98,11 +99,11 @@ with (wandb.init(
               'constraining_loss': [],
               }
 
-    for step in tqdm(range(config.training_iterations)):
+    for step in tqdm(range(config.training_iterations), miniters=100):
         if converged:
             break
         try:
-            if step % 10 == 0 and batch_size < config.batch_size_max:
+            if step % 10 == 0 and batch_size < config.batch_size_max and not hit_max_batch:
                 batch_size += config.batch_size_increment
 
             point_num_rands = np.random.randint(low=working_min_points, high=working_max_points + 1, size=batch_size)
@@ -113,7 +114,7 @@ with (wandb.init(
             lengths = torch.rand(point_num_rands.sum(), 1, dtype=torch.float32, device=config.device)
             coords_list = (vectors / norms * lengths).split(point_num_rands.tolist())
 
-            #centered_coords_list = [coords - coords.mean(0) for coords in coords_list]
+            # centered_coords_list = [coords - coords.mean(0) for coords in coords_list]
             types_list = torch.randint(config.max_point_types, size=(point_num_rands.sum(),), device=config.device).split(point_num_rands.tolist())
 
             data = collater([CrystalData(
@@ -136,21 +137,17 @@ with (wandb.init(
                 loss.backward()
                 optimizer.step()
 
-            if step % 50 == 0:
+            if step % 100 == 0:
                 log_losses(
                     wandb, losses, step, optimizer, data, batch_size,
                     working_sigma, decoded_data, mean_sample_likelihood,
-                working_min_points, working_max_points)
+                    working_min_points, working_max_points)
 
                 save_checkpoint(encoder, decoder, optimizer, config, step, losses)
 
-            if step % 100 == 0:
                 if np.mean(losses['reconstruction_loss'][-100:]) < config.sigma_threshold:
                     if working_sigma > 0.001:  # make the problem harder
                         working_sigma *= config.sigma_lambda
-                    else:  # if it's solved, add more points, but soften the loss
-                        working_max_points += 1
-                        working_sigma *= 10
 
                 if step > config.min_num_training_steps:
                     converged1 = check_convergence(np.asarray(losses['scaled_reconstruction_loss']), config.convergence_history, config.convergence_eps)
@@ -158,14 +155,17 @@ with (wandb.init(
                     converged3 = check_convergence(np.asarray(sigma_record), config.convergence_history, config.convergence_eps)
                     converged = converged1 and converged2 and converged3
 
-            if step % 250 == 0:
+            if step % 1000 == 0:
                 overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weights)
 
             if step % config.lr_timescale == 0 and step != 0 and optimizer.param_groups[0]['lr'] > 1e-5:
                 scheduler.step()
+
         except RuntimeError as e:
             if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
                 batch_size = batch_size - max(1, int(batch_size * 0.1))
+                hit_max_batch = True
+                print('Hit Max Batch Size!')
             else:
                 raise e
 

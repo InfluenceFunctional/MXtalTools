@@ -26,7 +26,8 @@ def compute_loss(wandb, step, losses, config, working_sigma, num_points_predicti
     decoder_likelihoods = high_dim_reconstruction_likelihood(true_nodes, data, decoded_data, working_sigma, nodewise_weights=nodewise_weights_tensor,
                                                              overlap_type=config.overlap_type, log_scale=config.log_reconstruction,
                                                              type_distance_scaling=config.type_distance_scaling)
-    self_likelihoods = high_dim_reconstruction_likelihood(true_nodes, data, data, working_sigma, nodewise_weights=torch.ones_like(data.x),
+
+    self_likelihoods = high_dim_reconstruction_likelihood(true_nodes, data, data, working_sigma, nodewise_weights=torch.ones(data.num_nodes, dtype=torch.float32, device=config.device),
                                                           overlap_type=config.overlap_type, log_scale=config.log_reconstruction,
                                                           type_distance_scaling=config.type_distance_scaling, dist_to_self=True)  # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
 
@@ -34,6 +35,7 @@ def compute_loss(wandb, step, losses, config, working_sigma, num_points_predicti
     num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(config.device), num_points_prediction[:, 0])
 
     nodewise_type_loss = F.binary_cross_entropy(per_graph_pred_types, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)
+
     reconstruction_loss = torch.mean(scatter(F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none'), data.batch, reduce='mean'))  # overlaps should all be exactly 1
 
     true_dists = torch.linalg.norm(data.pos, dim=1)
@@ -160,7 +162,7 @@ def high_dim_reconstruction_likelihood(ref_types, data, decoded_data, sigma, ove
         assert False, f"{overlap_type} is not an implemented overlap function"
 
     scaled_overlap = overlap * nodewise_weights[edges[0]]  # reweight appropriately
-    nodewise_overlap = scatter(scaled_overlap, edges[1], reduce='sum')  # this one is much, much faster
+    nodewise_overlap = scatter(scaled_overlap, edges[1], reduce='sum', dim_size=data.num_nodes)  # this one is much, much faster
 
     if log_scale:
         return torch.log(nodewise_overlap)

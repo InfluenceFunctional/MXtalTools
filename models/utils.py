@@ -46,7 +46,7 @@ def check_convergence(record, history, convergence_eps):
 
     if len(record) > 2 * history:
         #  all of last :history: points are above the 5% quantile of the training record
-        if all(record[-history:] >= np.quantile(record, 0.05)):
+        if all(record[-history:] > np.quantile(record, 0.05)):
             converged = True
             print("Model converged, target diverging")
 
