@@ -88,7 +88,7 @@ class fc_decoder(nn.Module):
         super(fc_decoder, self).__init__()
         self.cart_dimension = cart_dimension
         self.device = device
-        self.output_depth = max_ntypes + cart_dimension
+        self.output_depth = max_ntypes + cart_dimension + 1
         torch.manual_seed(seed)
         self.num_nodes = num_nodes
         self.embedding_depth = embedding_depth

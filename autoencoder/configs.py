@@ -9,8 +9,11 @@ dev = {'run_name': 'dev',
        'min_num_training_steps': 50000,
        'convergence_history': 1000,
        'convergence_eps': 1e-3,
+       'self_overlap_eps': 1e-3,
 
        # loss settings
+       'independent_node_weights': False,  # made node weight a learnable function - doesn't really train
+       'node_weight_temperature': 100,
        'sigma': 0.25,  # larger increases overlaps
        'sigma_lambda': 0.99,
        'sigma_threshold': 0.01,
@@ -29,7 +32,7 @@ dev = {'run_name': 'dev',
 
        # dataset & dataloading
        'batch_size_min': 2,
-       'batch_size_max': 50,
+       'batch_size_max': 500,
        'batch_size_increment': 1,
        'max_num_points': 5,
        'min_num_points': 3,
@@ -37,17 +40,17 @@ dev = {'run_name': 'dev',
        'max_point_types': 3,
 
        # lrs
-       'encoder_lr': 1e-3,
+       'encoder_lr': 1e-4,
        'decoder_lr': 1e-3,
-       'lr_lambda': 1,  # 0.975,
+       'lr_lambda': 0.985,
        'lr_timescale': 500,
 
        # encoder
        'encoder_aggregator': 'max',
-       'encoder_num_layers': 1,
-       'encoder_embedding_depth': 512,
+       'encoder_num_layers': 4,
        'encoder_num_nodewise_fcs': 4,
-       'encoder_graph_norm': 'graph layer',
+       'encoder_embedding_depth': 512,
+       'encoder_graph_norm': None,
        'encoder_dropout': 0,
 
        # decoder

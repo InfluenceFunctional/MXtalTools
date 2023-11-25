@@ -8,16 +8,22 @@ from models.asymmetric_radius_graph import radius
 
 
 def compute_loss(wandb, step, losses, config, working_sigma, num_points_prediction, composition_prediction, decoding, data, point_num_rands):
-
-    graph_weights = point_num_rands / config.num_decoder_points
-    nodewise_weights = graph_weights.repeat(config.num_decoder_points)
-    nodewise_weights_tensor = torch.tensor(nodewise_weights, dtype=torch.float32, device=config.device)
     point_num_rands_tensor = torch.tensor(point_num_rands, dtype=torch.float32, device=config.device)[:, None]
 
     decoded_data = data.clone()
     decoded_data.pos = decoding[:, :config.cart_dimension]
-    decoded_data.x = F.softmax(decoding[:, config.cart_dimension:], dim=1) * nodewise_weights_tensor[:, None]
     decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(config.num_decoder_points).to(config.device)
+    if config.independent_node_weights:
+        nodewise_weights_tensor = (torch.exp(decoding[:, -1]/config.node_weight_temperature) /
+                                   scatter(torch.exp(decoding[:, -1]/config.node_weight_temperature), decoded_data.batch
+                                           ).repeat_interleave(config.num_decoder_points))  # fast graph-wise softmax with high temperature
+    else:
+        graph_weights = point_num_rands / config.num_decoder_points
+        nodewise_weights = graph_weights.repeat(config.num_decoder_points)
+        nodewise_weights_tensor = torch.tensor(nodewise_weights, dtype=torch.float32, device=config.device)
+
+    # low T causes instability in backprop
+    decoded_data.x = F.softmax(decoding[:, config.cart_dimension:-1], dim=1) * nodewise_weights_tensor[:, None]
 
     true_nodes = F.one_hot(data.x[:, 0], num_classes=config.max_point_types).float()
     per_graph_true_types = scatter(true_nodes, data.batch[:, None], dim=0, reduce='mean')
@@ -65,7 +71,7 @@ def compute_loss(wandb, step, losses, config, working_sigma, num_points_predicti
 
     losses = update_losses(losses, num_points_loss, reconstruction_loss, encoding_type_loss,
                            working_sigma, loss, nodewise_type_loss,
-                           mean_dist_loss, constraining_loss)
+                           mean_dist_loss, constraining_loss, self_likelihoods)
 
     if step % 500 == 0:
         coord_overlap, type_overlap = split_reconstruction_likelihood(
@@ -81,7 +87,7 @@ def compute_loss(wandb, step, losses, config, working_sigma, num_points_predicti
         wandb.log({"positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
                    "typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy()})
 
-    return loss, losses, decoded_data, nodewise_weights, (decoder_likelihoods / self_likelihoods).mean().cpu().detach().numpy()
+    return loss, losses, decoded_data, nodewise_weights_tensor.cpu().detach().numpy(), (decoder_likelihoods / self_likelihoods).mean().cpu().detach().numpy()
 
 
 def get_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, num_classes, dist_to_self=False, log_scale=False):

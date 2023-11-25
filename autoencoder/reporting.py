@@ -2,11 +2,8 @@ import numpy as np
 import torch
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
-import torch.nn.functional as F
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
-import plotly.express as px
-from _plotly_utils.colors import n_colors, sample_colorscale
 
 
 def log_rmsd_loss(wandb, data, decoded_data):
@@ -79,7 +76,7 @@ def save_checkpoint(encoder, decoder, optimizer, config, step, losses):
 
 def update_losses(losses, num_points_loss, reconstruction_loss, encoding_type_loss, working_sigma, loss,
                   nodewise_type_loss, centroid_dist_loss,
-                  constraining_loss):
+                  constraining_loss, self_likelihood):
     losses['num_points_loss'].append(num_points_loss.mean().cpu().detach().numpy())
     losses['reconstruction_loss'].append(reconstruction_loss.cpu().detach().numpy())
     losses['overall_type_loss'].append(encoding_type_loss.cpu().detach().numpy())
@@ -88,6 +85,7 @@ def update_losses(losses, num_points_loss, reconstruction_loss, encoding_type_lo
     losses['nodewise_type_loss'].append(nodewise_type_loss.cpu().detach().numpy())
     losses['centroid_mean_loss'].append(centroid_dist_loss.cpu().detach().numpy())
     losses['constraining_loss'].append(constraining_loss.cpu().detach().numpy())
+    losses['mean_self_overlap'].append(self_likelihood.mean().cpu().detach().numpy())
 
     return losses
 
@@ -178,7 +176,13 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weig
             rows=rows, cols=cols,
             specs=[[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)])
 
-        num_gridpoints = 15
+        if sigma > 0.1:
+            num_gridpoints = 15
+        elif 0.1 > sigma > 0.005:
+            num_gridpoints = 25
+        else:
+            num_gridpoints = 50
+
         x = np.linspace(min(-config.points_spread, min_xval), max(config.points_spread, max_xval), num_gridpoints)
         y = np.copy(x)
         z = np.copy(x)
@@ -199,11 +203,11 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weig
 
             pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
-            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist, # todo investigate the very small sigma regime - scale surface count vs sigma
+            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
                                     showlegend=True if (j == 0 and graph_ind == 0) else False,
                                     name=f'Predicted type', legendgroup=f'Predicted type',
                                     coloraxis="coloraxis",
-                                    isomin=0.0001, isomax=ymax, opacity=.01,
+                                    isomin=0, isomax=ymax, opacity=.01,
                                     cmin=0, cmax=ymax,
                                     surface_count=100,
                                     ), row=row, col=col)
@@ -216,5 +220,38 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weig
 
         fig.update_coloraxes(autocolorscale=False, colorscale='Jet')
         wandb.log({"Sample Distributions": fig})
+
+        fig = go.Figure()
+        colors = (
+        'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)', 'rgb(165, 170, 153)')
+        colorscales = [[[0, 'rgb(0,0,0)', ], [1, color]] for color in colors]
+        grid_array = np.stack((xx.flatten(), yy.flatten(), zz.flatten())).T
+
+        for j in range(config.max_point_types):
+            graph_ind = 0
+
+            points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+            points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+
+            ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+            pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+
+            pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
+
+            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                    name=f'Predicted type', legendgroup=f'Predicted type',
+                                    colorscale=colorscales[j],
+                                    showscale=False,
+                                    isomin=0, isomax=ymax, opacity=.05,
+                                    cmin=0, cmax=ymax,
+                                    surface_count=100,
+                                    ))
+            fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+                                       mode='markers', marker_color=colors[j], marker_size=10, marker_line_width=5, marker_line_color='black',
+                                       showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                       name=f'True type', legendgroup=f'True type'
+                                       ))
+        wandb.log({"Combined Sample": fig})
 
     return None

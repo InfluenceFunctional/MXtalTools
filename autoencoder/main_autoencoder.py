@@ -21,6 +21,7 @@ from models.utils import check_convergence
 from datetime import datetime
 
 os.environ["WANDB_START_METHOD"] = 'thread'
+#os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 parser = argparse.ArgumentParser()
 args = parser.parse_known_args()[1]
@@ -97,6 +98,7 @@ with (wandb.init(
               'nodewise_type_loss': [],
               'centroid_mean_loss': [],
               'constraining_loss': [],
+              'mean_self_overlap': [],
               }
 
     for step in tqdm(range(config.training_iterations), miniters=100):
@@ -146,7 +148,7 @@ with (wandb.init(
                 save_checkpoint(encoder, decoder, optimizer, config, step, losses)
 
                 if np.mean(losses['reconstruction_loss'][-100:]) < config.sigma_threshold:
-                    if working_sigma > 0.001:  # make the problem harder
+                    if np.abs(1 - np.mean(losses['mean_self_overlap'][-100:])) > config.self_overlap_eps:  # if points are insufficiently well separated, make the problem harder
                         working_sigma *= config.sigma_lambda
 
                 if step > config.min_num_training_steps:
