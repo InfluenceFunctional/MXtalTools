@@ -180,7 +180,7 @@ def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10]
         dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_crystal_number, atomic_numbers_override)
         num_pairs = len(rdfs_dict.keys())
         batch = repeat_interleave(dists_per_hist, device='cpu').to(device)  # todo faster on cpu but still slow
-        hist, bin_edges = batch_histogram(sorted_dists, batch, num_graphs * num_pairs, rrange=rrange, nbins=bins)
+        hist, bin_edges = batch_histogram_1d(sorted_dists, batch, num_graphs * num_pairs, rrange=rrange, nbins=bins)
         if raw_density:  # todo reimplement
             rdf_density = torch.ones(num_graphs * num_pairs, device=device, dtype=torch.float32)
         else:
@@ -189,13 +189,13 @@ def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10]
         rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
         rdf = rdf.reshape(num_graphs, num_pairs, -1)  # sample-wise indexing
     elif atomwise:
-        assert False  # dists_per_hist, sorted_dists, rdfs_dict = get_atomwise_dists()  # not yet fixed
+        assert False, "atomwise rdf not reimplemented for fast algorithm"  # dists_per_hist, sorted_dists, rdfs_dict = get_atomwise_dists()  # not yet fixed
     else:  # average over all atom types
         dists_per_hist = [torch.sum(edge_in_crystal_number == n) for n in range(num_graphs)]
         sorted_dists = torch.cat([dists[edge_in_crystal_number == n] for n in range(num_graphs)])
         rdfs_dict = {}
         batch = repeat_interleave(dists_per_hist, device='cpu').to(device)
-        hist, bin_edges = batch_histogram(sorted_dists, batch, num_graphs, rrange=rrange, nbins=bins)
+        hist, bin_edges = batch_histogram_1d(sorted_dists, batch, num_graphs, rrange=rrange, nbins=bins)
         rdf_density = torch.ones(num_graphs, device=device, dtype=torch.float32)
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)  # volume of the shell at radius r+dr
         rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
@@ -258,9 +258,9 @@ def get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in
     num_pairs = int((len(relevant_elements) ** 2 + len(relevant_elements)) / 2)
 
     # prebuild pair lists
-    elem_pair_list = torch.zeros((num_pairs, len(elements[0])), dtype=torch.bool, device=elements[0].device)
-    elem1 = elements[0].repeat(num_relevant_elements, 1) == torch.Tensor(relevant_elements)[:, None].cuda()
-    elem2 = elements[1].repeat(num_relevant_elements, 1) == torch.Tensor(relevant_elements)[:, None].cuda()
+    elem_pair_list = torch.zeros((num_pairs, len(elements[0])), dtype=torch.bool, device=device)
+    elem1 = elements[0].repeat(num_relevant_elements, 1) == torch.Tensor(relevant_elements)[:, None].to(device)
+    elem2 = elements[1].repeat(num_relevant_elements, 1) == torch.Tensor(relevant_elements)[:, None].to(device)
     ind = 0
     for i, element1 in enumerate(relevant_elements):
         for j, element2 in enumerate(relevant_elements):
@@ -303,7 +303,7 @@ def get_rdf_inds(crystaldata, mode, device):
 
 
 # inspired by https://github.com/pytorch/pytorch/issues/99719#issuecomment-1664135524
-def batch_histogram(data_tensor, batch, num_hists, rrange=[0, 10], nbins=100):
+def batch_histogram_1d(data_tensor, batch, num_hists, rrange=[0, 10], nbins=100):
     """
     very fast approximate batch histogram accurate up to n digits where n is log10(nbins)
 
@@ -325,3 +325,4 @@ def batch_histogram(data_tensor, batch, num_hists, rrange=[0, 10], nbins=100):
     # a,b = torch.unique(batch, return_counts = True)  # test
     # for i, num in enumerate(a):
     #     assert hists[int(num)].sum() == b[i], f'{i} {num}'
+

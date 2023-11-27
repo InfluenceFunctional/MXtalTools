@@ -101,7 +101,7 @@ def train_classifier(config, classifier, optimizer,
 def classifier_evaluation(config, classifier, optimizer,
                           train_loader, test_loader,
                           num_epochs, wandb,
-                          class_names, device,
+                          class_names, ordered_class_names, device,
                           batch_size, reporting_frequency,
                           runs_path, run_name):
     with wandb.init(project='cluster_classifier', entity='mkilgour'):
@@ -133,16 +133,12 @@ def classifier_evaluation(config, classifier, optimizer,
 
         fig_dict = {}
         '''embed train, test, melt'''
-        fig_dict['Embedding_Analysis'] = embedding_fig(results_dict, num_samples)
+        fig_dict['Embedding_Analysis'] = embedding_fig(results_dict, num_samples, class_names, ordered_class_names, config['training_temps'])
 
         '''accuracy metrics'''
-        fig_dict['Form_Confusion_Matrices'], accuracy_scores = form_accuracy_fig(results_dict)
-        fig_dict['Defect_Confusion_Matrices'], accuracy_scores = defect_accuracy_fig(results_dict)
-        fig_dict['All_Confusion_Matrices'], accuracy_scores = all_accuracy_fig(results_dict)
-
-        '''model games'''
-
-        '''training curves'''
+        fig_dict['Form_Confusion_Matrices'], accuracy_scores = form_accuracy_fig(results_dict, class_names, ordered_class_names, config['training_temps'])
+        fig_dict['Defect_Confusion_Matrices'], accuracy_scores = defect_accuracy_fig(results_dict, config['training_temps'])
+        fig_dict['All_Confusion_Matrices'], accuracy_scores = all_accuracy_fig(results_dict, class_names, ordered_class_names, config['training_temps'])
 
         os.chdir(config['runs_path'])
         # [fig_dict[key].write_image(f'Figure_{i}') for i, key in enumerate(fig_dict.keys())]

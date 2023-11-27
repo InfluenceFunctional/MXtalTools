@@ -116,6 +116,9 @@ class Modeller:
         for models we will not use, just set them as nn.Linear(1,1)
         :return:
         """
+        self.model_names = ['generator', 'discriminator', 'proxy_discriminator', 'regressor', 'autoencoder']
+        self.models = {name: nn.Linear(1,1) for name in self.model_names}  # initialize null models
+
         self.config = self.reload_model_checkpoints()
 
         self.generator, self.discriminator, self.regressor, self.proxy_discriminator = [nn.Linear(1, 1) for _ in range(4)]
@@ -249,201 +252,6 @@ class Modeller:
             extra_test_loader = None
 
         return train_loader, test_loader, extra_test_loader
-
-    #
-    # def crystal_embedding_analysis(self):
-    #     """
-    #     analyze the embeddings of a given crystal dataset
-    #     embeddings provided by pretrained model
-    #     """
-    #     """
-    #             train and/or evaluate one or more models
-    #             regressor
-    #             GAN (generator and/or discriminator)
-    #             """
-    #     with wandb.init(config=self.config,
-    #                     project=self.config.wandb.project_name,
-    #                     entity=self.config.wandb.username,
-    #                     tags=[self.config.logger.experiment_tag],
-    #                     settings=wandb.Settings(code_dir=".")):
-    #
-    #         wandb.run.name = wandb.config.machine + '_' + str(self.config.mode) + '_' + str(wandb.config.run_num)  # overwrite procedurally generated run name with our run name
-    #
-    #         '''miscellaneous setup'''
-    #         dataset_builder = self.misc_pre_training_items()
-    #
-    #         '''prep dataloaders'''
-    #         from torch_geometric.loader import DataLoader
-    #         test_dataset = []
-    #         for i in range(len(dataset_builder)):
-    #             test_dataset.append(dataset_builder[i])
-    #
-    #         self.config.current_batch_size = self.config.min_batch_size
-    #         print("Training batch size set to {}".format(self.config.current_batch_size))
-    #         del dataset_builder
-    #         test_loader = DataLoader(test_dataset, batch_size=self.config.current_batch_size, shuffle=True, num_workers=0, pin_memory=True)
-    #
-    #         '''instantiate models'''
-    #         self.init_models()
-    #
-    #         '''initialize some training metrics'''
-    #         with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
-    #             # very cool
-    #             print("  .--.      .-'.      .--.      .--.      .--.      .--.      .`-.      .--.")
-    #             print(":::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.")
-    #             print("'      `--'      `.-'      `--'      `--'      `--'      `-.'      `--'      `")
-    #             # very cool
-    #             print("Starting Embedding Analysis")
-    #
-    #             with torch.no_grad():
-    #                 # compute test loss & save evaluation statistics on test samples
-    #                 embedding_dict = self.embed_dataset(
-    #                     data_loader=test_loader, generator=generator, discriminator=discriminator, regressor=regressor)
-    #
-    #                 np.save('embedding_dict', embedding_dict) #
-    #
-    # def embed_dataset(self, data_loader):
-    #     t0 = time.time()
-    #     discriminator.eval()
-    #
-    #     embedding_dict = {
-    #         'tracking_features': [],
-    #         'identifiers': [],
-    #         'scores': [],
-    #         'source': [],
-    #         'final_activation': [],
-    #     }
-    #
-    #     for i, data in enumerate(tqdm.tqdm(data_loader)):
-    #         '''
-    #         get discriminator embeddings
-    #         '''
-    #
-    #         '''real data'''
-    #         real_supercell_data = self.supercell_builder.prebuilt_unit_cell_to_supercell(
-    #             data, self.config.supercell_size, self.config.discriminator.model.convolution_cutoff)
-    #
-    #         score_on_real, real_distances_dict, latent = \
-    #             self.adversarial_score(real_supercell_data, return_latent=True)
-    #
-    #         embedding_dict['tracking_features'].extend(data.tracking.cpu().detach().numpy())
-    #         embedding_dict['identifiers'].extend(data.csd_identifier)
-    #         embedding_dict['scores'].extend(score_on_real.cpu().detach().numpy())
-    #         embedding_dict['final_activation'].extend(latent)
-    #         embedding_dict['source'].extend(['real' for _ in range(len(latent))])
-    #
-    #         '''fake data'''
-    #         for j in tqdm.tqdm(range(100)):
-    #             real_data = data.clone()
-    #             generated_samples_i, negative_type, real_data = \
-    #                 self.generate_discriminator_negatives(real_data, i, override_randn=True, override_distorted=True)
-    #
-    #             fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
-    #                 real_data, generated_samples_i, self.config.supercell_size,
-    #                 self.config.discriminator.model.convolution_cutoff,
-    #                 align_to_standardized_orientation=(negative_type != 'generated'),
-    #                 target_handedness=real_data.asym_unit_handedness,
-    #             )
-    #
-    #             score_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(fake_supercell_data, return_latent=True)
-    #
-    #             embedding_dict['tracking_features'].extend(real_data.tracking.cpu().detach().numpy())
-    #             embedding_dict['identifiers'].extend(real_data.csd_identifier)
-    #             embedding_dict['scores'].extend(score_on_fake.cpu().detach().numpy())
-    #             embedding_dict['final_activation'].extend(fake_latent)
-    #             embedding_dict['source'].extend([negative_type for _ in range(len(latent))])
-    #
-    #     embedding_dict['scores'] = np.stack(embedding_dict['scores'])
-    #     embedding_dict['tracking_features'] = np.stack(embedding_dict['tracking_features'])
-    #     embedding_dict['final_activation'] = np.stack(embedding_dict['final_activation'])
-    #
-    #     total_time = time.time() - t0
-    #     print(f"Embedding took {total_time:.1f} Seconds")
-    #
-    #     '''distance matrix'''
-    #     scores = softmax_and_score(embedding_dict['scores'])
-    #     latents = torch.Tensor(embedding_dict['final_activation'])
-    #     overlaps = torch.inner(latents, latents) / torch.outer(torch.linalg.norm(latents, dim=-1), torch.linalg.norm(latents, dim=-1))
-    #     distmat = torch.cdist(latents, latents)
-    #
-    #     sample_types = list(set(embedding_dict['source']))
-    #     inds_dict = {}
-    #     for source in sample_types:
-    #         inds_dict[source] = np.argwhere(np.asarray(embedding_dict['source']) == source)[:, 0]
-    #
-    #     mean_overlap_to_real = {}
-    #     mean_dist_to_real = {}
-    #     mean_score = {}
-    #     for source in sample_types:
-    #         sample_dists = distmat[inds_dict[source]]
-    #         sample_scores = scores[inds_dict[source]]
-    #         sample_overlaps = overlaps[inds_dict[source]]
-    #
-    #         mean_dist_to_real[source] = sample_dists[:, inds_dict['real']].mean()
-    #         mean_overlap_to_real[source] = sample_overlaps[:, inds_dict['real']].mean()
-    #         mean_score[source] = sample_scores.mean()
-    #
-    #     import plotly.graph_objects as go
-    #     from plotly.subplots import make_subplots
-    #     from plotly.colors import n_colors
-    #
-    #     # '''distances'''
-    #     # fig = make_subplots(rows=1, cols=2, subplot_titles=('distances', 'dot overlaps'))
-    #     # fig.add_trace(go.Heatmap(z=distmat), row=1, col=1)
-    #     # fig.add_trace(go.Heatmap(z=overlaps), row=1, col=2)
-    #     # fig.show()
-    #
-    #     '''distance to real vs score'''
-    #     colors = n_colors('rgb(250,0,5)', 'rgb(5,150,250)', len(inds_dict.keys()), colortype='rgb')
-    #
-    #     fig = make_subplots(rows=1, cols=2)
-    #     for ii, source in enumerate(sample_types):
-    #         fig.add_trace(go.Scattergl(
-    #             x=distmat[inds_dict[source]][:, inds_dict['real']].mean(-1), y=scores[inds_dict[source]],
-    #             mode='markers', marker=dict(color=colors[ii]), name=source), row=1, col=1
-    #         )
-    #
-    #         fig.add_trace(go.Scattergl(
-    #             x=overlaps[inds_dict[source]][:, inds_dict['real']].mean(-1), y=scores[inds_dict[source]],
-    #             mode='markers', marker=dict(color=colors[ii]), showlegend=False), row=1, col=2
-    #         )
-    #
-    #     fig.update_xaxes(title_text='mean distance to real', row=1, col=1)
-    #     fig.update_yaxes(title_text='discriminator score', row=1, col=1)
-    #
-    #     fig.update_xaxes(title_text='mean overlap to real', row=1, col=2)
-    #     fig.update_yaxes(title_text='discriminator score', row=1, col=2)
-    #     fig.show()
-    #
-    #     return embedding_dict
-
-    #
-    # def prep_standalone_modelling_tools(self, batch_size, machine='local'):
-    #     """
-    #     to pass tools to another training pipeline
-    #     """
-    #     '''miscellaneous setup'''
-    #     if machine == 'local':
-    #         std_dataDims_path = '/home/mkilgour/mcrygan/old_dataset_management/standard_dataDims.npy'
-    #     elif machine == 'cluster':
-    #         std_dataDims_path = '/scratch/mk8347/mcrygan/old_dataset_management/standard_dataDims.npy'
-    #
-    #     standard_dataDims = np.load(std_dataDims_path, allow_pickle=True).item()  # maintain constant standardizations between runs
-    #
-    #     '''note this standard datadims construction will only work between runs with
-    #     identical choice of features - there is a flag for this in the datasetbuilder'''
-    #     dataset_builder = TrainingDataBuilder(self.config.dataset,
-    #                                           preloaded_dataset=self.prepped_dataset,
-    #                                           data_std_dict=self.std_dict,
-    #                                           override_length=self.config.dataset.max_dataset_length)
-    #
-    #     self.dataDims = dataset_builder.dataDims
-    #     del self.prepped_dataset  # we don't actually want this huge thing floating around
-    #
-    #     train_loader, test_loader, extra_test_loader = (
-    #         self.prep_dataloaders(dataset_builder, test_fraction=0.2, override_batch_size=batch_size))
-    #
-    #     return train_loader, test_loader
 
     def train_crystal_models(self):
         """
@@ -1513,6 +1321,12 @@ class Modeller:
         return generator, discriminator, regressor
 
     def reload_model_checkpoints(self):
+        # for model_name, model_path in self.config.model_paths.items():
+        #     checkpoint = torch.load(model_path)
+        #     model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
+        #     self.config..optimizer = generator_config.optimizer
+        #     self.config.generator.model = generator_config.model
+
         if self.config.generator_path is not None:
             generator_checkpoint = torch.load(self.config.generator_path)
             generator_config = Namespace(**generator_checkpoint['config'])  # overwrite the settings for the model
@@ -1573,20 +1387,29 @@ class Modeller:
             for opt_iter in range(max_iters):
                 crystaldata_batch = self.refresh_crystal_batch(crystaldata_batch, refresh_inds=refresh_inds)
 
-                crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch,
-                                                                              mode='mcmc',
-                                                                              num_steps=num_mcmc_opt_steps)
+                crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(
+                    crystaldata_batch,
+                    mode='mcmc',
+                    num_steps=num_mcmc_opt_steps,
+                    temperature=0.05,
+                    step_size=0.01)
                 optimization_trajectories.append(opt_traj)
-                crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(crystaldata_batch,
-                                                                              mode='discriminator',
-                                                                              num_steps=num_discriminator_opt_steps)
+
+                crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(
+                    crystaldata_batch,
+                    mode='discriminator',
+                    num_steps=num_discriminator_opt_steps)
                 optimization_trajectories.append(opt_traj)
 
                 crystaldata_batch, refresh_inds, converged_samples = self.prune_crystaldata_batch(crystaldata_batch, optimization_trajectories)
 
-                converged_samples_list.append(converged_samples)
+                converged_samples_list.extend(converged_samples)
 
-                # add convergence flags based on completeness of sampling
+            aa = 1
+            # do clustering
+
+            # compare to ground truth
+            # add convergence flags based on completeness of sampling
 
             # '''compare samples to ground truth'''
             # if data_contains_ground_truth:
@@ -1598,49 +1421,47 @@ class Modeller:
         Identify trajectories which have converged.
         """
 
+        """
         combined_traj_dict = {key: np.concatenate(
             [traj[key] for traj in optimization_trajectories], axis=0)
             for key in optimization_trajectories[1].keys()}
 
-        """
-        
         from plotly.subplots import make_subplots
         import plotly.graph_objects as go
 
-        fig = make_subplots(cols=4, rows=2, subplot_titles=list(combined_traj_dict.keys()))
-
+        from plotly.subplots import make_subplots
+        import plotly.graph_objects as go
+        fig = make_subplots(cols=3, rows=1, subplot_titles=['score','vdw_score','packing_coeff'])
         for i in range(crystaldata_batch.num_graphs):
-            for j, key in enumerate(combined_traj_dict.keys()):
-                if 'std' not in key and 'space_group' not in key and 'best' not in key:
-                    col = j % 4 + 1
-                    row = j // 4 + 1
-                    fig.add_scattergl(y=combined_traj_dict[key][:, i], name=i, legendgroup=i, showlegend=True, row=row, col=col)
-
+            for j, key in enumerate(['score','vdw_score','packing_coeff']):
+                col = j % 3 + 1
+                row = j // 3 + 1
+                fig.add_scattergl(y=combined_traj_dict[key][:, i], name=i, legendgroup=i, showlegend=True if j == 0 else False, row=row, col=col)
         fig.show()
-        
+
         """
 
-        refresh_inds = np.zeros(len(crystaldata_batch))
-        converged_samples = np.zeros_like(refresh_inds)
-        assert False
+        refresh_inds = np.arange(crystaldata_batch.num_graphs)  # todo write a function that actually checks for this
+        converged_samples = [crystaldata_batch[i] for i in refresh_inds.tolist()]
+
         return crystaldata_batch, refresh_inds, converged_samples
 
-    def optimize_crystaldata_batch(self, batch, mode, num_steps):
+    def optimize_crystaldata_batch(self, batch, mode, num_steps, temperature=None, step_size=None):
         """
         method which takes a batch of crystaldata objects
         and optimzies them according to a score model either
         with MCMC or gradient descent
-        """  # todo combine below into a single trajectory to improve merging
+        """
         if mode.lower() == 'mcmc':
             sampling_dict = mcmc_sampling(
                 self.discriminator, batch,
                 self.supercell_builder,
                 num_steps, self.vdw_radii,
                 supercell_size=5, cutoff=6,
-                sampling_temperature=0.05,
+                sampling_temperature=temperature,
                 lattice_means=self.dataDims['lattice_means'],
                 lattice_stds=self.dataDims['lattice_stds'],
-                step_size=0.05
+                step_size=step_size,
             )
         elif mode.lower() == 'discriminator':
             sampling_dict = gradient_descent_sampling(
@@ -1648,7 +1469,9 @@ class Modeller:
                 self.supercell_builder,
                 num_steps, 1e-3,
                 torch.optim.Rprop, self.vdw_radii,
-                supercell_size=5, cutoff=6
+                lattice_means=self.dataDims['lattice_means'],
+                lattice_stds=self.dataDims['lattice_stds'],
+                supercell_size=5, cutoff=6,
             )
         else:
             assert False, f"{mode.lower()} is not a valid sampling mode!"
@@ -1667,7 +1490,12 @@ class Modeller:
 
         rebuilt_sample_scores = softmax_and_score(output[:, :2]).cpu().detach().numpy()
 
-        assert np.mean(np.abs(rebuilt_sample_scores - sampling_dict['score'].max(0))) < 1e-1  # confirm we rebuilt the cells correctly
+        cell_params_difference = np.amax(np.sum(np.abs(supercell_data.cell_params.cpu().detach().numpy() - best_samples), axis=1))
+        rebuilt_scores_difference = np.amax(np.abs(rebuilt_sample_scores - sampling_dict['score'].max(0)))
+
+        if rebuilt_scores_difference > 1e-2 or cell_params_difference > 1e-2:
+            aa = 1
+            assert False, "Best cell rebuilding failed!"  # confirm we rebuilt the cells correctly
 
         sampling_dict['best_samples'] = best_samples
         sampling_dict['best_scores'] = sampling_dict['score'].max(0)
@@ -1676,20 +1504,20 @@ class Modeller:
         best_batch = batch.clone()
         best_batch.cell_params = torch.tensor(best_samples, dtype=torch.float32, device=supercell_data.x.device)
 
-        return batch, sampling_dict
+        return best_batch, sampling_dict
 
-    def refresh_crystal_batch(self, batch, refresh_inds, generator='gaussian', mol_orientation='random', space_groups: torch.tensor = None):
-        batch = self.set_molecule_alignment(batch, right_handed=False, mode_override=mol_orientation)
+    def refresh_crystal_batch(self, crystaldata, refresh_inds, generator='gaussian', space_groups: torch.tensor = None):
+        # crystaldata = self.set_molecule_alignment(crystaldata, right_handed=False, mode_override=mol_orientation)
 
         if space_groups is not None:
-            batch.sg_ind = space_groups
+            crystaldata.sg_ind = space_groups
 
         if generator == 'gaussian':
-            samples = self.gaussian_generator.forward(batch.num_graphs, batch).to(self.config.device)
-            batch.cell_params = samples[refresh_inds]
+            samples = self.gaussian_generator.forward(crystaldata.num_graphs, crystaldata).to(self.config.device)
+            crystaldata.cell_params = samples[refresh_inds]
             # todo add option for generator here
 
-        return batch
+        return crystaldata
 
     #
     # def batch_csp(self, data_loader):

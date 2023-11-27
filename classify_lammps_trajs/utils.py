@@ -118,13 +118,14 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
     if 'urea' in dataset_path:
         melt_class_num = 6
     else:
-        melt_class_num = 9 # nicotinamide
+        melt_class_num = 9  # nicotinamide
 
     for i in range(len(dataset)):
         if dataset.iloc[i]['temperature'] >= 500:
             targets[i] = melt_class_num
 
-    #T_fc_list = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
+
+    # T_fc_list = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
 
     print('Generating training datapoints')
     datapoints = []
@@ -157,12 +158,17 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
         cluster_targets = cluster_targets[good_mols]
 
         # identify surface mols
+        if False: #dataset.loc[i]['temperature'] > 500:
+            coord_shell_num = 10
+        else:
+            coord_shell_num = 20
+
         true_max_mol_radius = torch.amax(mol_radii[good_mols])
         centroids = cluster_coords.mean(1)
         dist = torch.cdist(centroids, centroids)
         coordination_cutoff = true_max_mol_radius + conv_cutoff
         coordination_number = (dist < coordination_cutoff).sum(1)
-        surface_mols_ind = torch.argwhere(coordination_number < 20)[:, 0]  # 4 is normal - this is quite permissive
+        surface_mols_ind = torch.argwhere(coordination_number < coord_shell_num)[:, 0]
 
         defect_type = torch.zeros_like(cluster_targets)
         defect_type[surface_mols_ind] = 1  # defect type 1 is surfaces
@@ -267,8 +273,8 @@ def classifier_reporting(true_labels, true_defects, probs, class_names, ordered_
 
         wandb.log({f"{epoch_type} ROC_AUC": train_score,
                    f"{epoch_type} F1 Score": train_f1_score,
-                   f"{epoch_type} 1-ROC_AUC": 1-train_score,
-                   f"{epoch_type} 1-F1 Score": 1-train_f1_score,
+                   f"{epoch_type} 1-ROC_AUC": 1 - train_score,
+                   f"{epoch_type} 1-F1 Score": 1 - train_f1_score,
                    f"{epoch_type} Confusion Matrix": fig})
 
         train_score = roc_auc_score(true_defects, defect_probs[:, 1], multi_class='ovo')
@@ -281,8 +287,8 @@ def classifier_reporting(true_labels, true_defects, probs, class_names, ordered_
 
         wandb.log({f"{epoch_type} Defect ROC_AUC": train_score,
                    f"{epoch_type} Defect F1 Score": train_f1_score,
-                   f"{epoch_type} 1-Defect ROC_AUC": 1-train_score,
-                   f"{epoch_type} 1-Defect F1 Score": 1-train_f1_score,
+                   f"{epoch_type} 1-Defect ROC_AUC": 1 - train_score,
+                   f"{epoch_type} 1-Defect F1 Score": 1 - train_f1_score,
                    f"{epoch_type} Defect Confusion Matrix": fig})
 
 

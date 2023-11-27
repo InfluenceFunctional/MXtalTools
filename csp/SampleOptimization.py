@@ -1,5 +1,7 @@
 import numpy as np
 import tqdm
+
+from crystal_building.utils import clean_cell_params
 from models.utils import softmax_and_score
 from models.vdw_overlap import vdw_overlap
 import torch.optim as optim
@@ -8,6 +10,7 @@ import torch
 
 def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
                               num_steps, lr, optimizer_func, vdw_radii,
+                              lattice_means, lattice_stds,
                               supercell_size=5, cutoff=6):
     """
     for a given sample
@@ -58,9 +61,17 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
     with torch.enable_grad():
         for s_ind in tqdm.tqdm(range(num_steps), miniters=int(num_steps / 25)):
             optimizer.zero_grad()
+
+            cleaned_sample = clean_cell_params(sample, crystal_batch.sg_ind,
+                                               lattice_means, lattice_stds,
+                                               supercell_builder.symmetries_dict, supercell_builder.asym_unit_dict,
+                                               rescale_asymmetric_unit=True, destandardize=False, mode='hard' if s_ind == 0 else 'soft',
+                                               fractional_basis='unit_cell'
+                                               )
+
             supercell_data, cell_volumes = \
                 supercell_builder.build_supercells(
-                    crystal_batch, sample,
+                    crystal_batch, cleaned_sample,
                     supercell_size, cutoff,
                     align_to_standardized_orientation=True,
                     target_handedness=crystal_batch.asym_unit_handedness)
@@ -69,8 +80,6 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
 
             score = softmax_and_score(output[:, :2])
             loss = -score
-            loss.mean().backward()  # compute gradients
-            optimizer.step()  # apply grad
 
             vdw_record[s_ind] = vdw_overlap(vdw_radii,
                                             dist_dict=dist_dict['dists_dict'],
@@ -79,9 +88,12 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
                                             graph_sizes=supercell_data.mol_size).cpu().detach().numpy()
 
             scores_record[s_ind] = score.cpu().detach().numpy()
-            samples_record[s_ind] = sample.cpu().detach().numpy() #supercell_data.cell_params.cpu().detach().numpy()
+            samples_record[s_ind] = supercell_data.cell_params.cpu().detach().numpy()
             loss_record[s_ind] = loss.cpu().detach().numpy()
             packing_record[s_ind] = (supercell_data.mult * supercell_data.mol_volume / cell_volumes).cpu().detach().numpy()
+
+            loss.mean().backward()  # compute gradients
+            optimizer.step()  # apply grad
 
             lr = optimizer.param_groups[0]['lr']
             lr_record[s_ind] = lr
@@ -122,7 +134,11 @@ fig.show()
 """
 
 
-def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii, supercell_size, cutoff, sampling_temperature, lattice_means, lattice_stds, step_size):
+def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
+                  num_steps, vdw_radii, supercell_size, cutoff,
+                  sampling_temperature, lattice_means, lattice_stds, step_size,
+                  ):
+
     samples_record = np.zeros((num_steps, crystal_batch.num_graphs, 12))
     scores_record = np.zeros((num_steps, crystal_batch.num_graphs))
     vdw_record = np.zeros_like(scores_record)
@@ -137,14 +153,21 @@ def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii,
                 proposed_samples = torch.tensor(np.copy(samples_record[s_ind - 1]) + propose_randoms[s_ind],
                                                 dtype=torch.float32, device=crystal_batch.x.device)
 
+                cleaned_proposed_samples = clean_cell_params(proposed_samples, crystal_batch.sg_ind,
+                                                             lattice_means, lattice_stds,
+                                                             supercell_builder.symmetries_dict, supercell_builder.asym_unit_dict,
+                                                             rescale_asymmetric_unit=True, destandardize=False, mode='soft',
+                                                             fractional_basis='unit_cell'
+                                                             )
+
                 proposed_crystals, cell_volumes = \
                     supercell_builder.build_supercells(
-                        crystal_batch, proposed_samples,
+                        crystal_batch, cleaned_proposed_samples,
                         supercell_size, cutoff,
                         align_to_standardized_orientation=True,
                         target_handedness=crystal_batch.asym_unit_handedness)
 
-                output, proposed_dist_dict = model(proposed_crystals.clone().cuda(), return_dists=True)
+                output, proposed_dist_dict = discriminator(proposed_crystals.clone().cuda(), return_dists=True)
 
                 proposed_sample_scores = softmax_and_score(output[:, :2]).cpu().detach().numpy()
 
@@ -164,7 +187,7 @@ def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii,
                 packing_coeffs = (proposed_crystals.mult * proposed_crystals.mol_volume / cell_volumes).cpu().detach().numpy()
 
                 samples_record[s_ind] = samples_record[s_ind - 1]
-                samples_record[s_ind, accept_flags] = proposed_samples[accept_flags].cpu().detach().numpy()
+                samples_record[s_ind, accept_flags] = proposed_crystals.cell_params[accept_flags].cpu().detach().numpy()
                 scores_record[s_ind] = scores_record[s_ind - 1]
                 scores_record[s_ind, accept_flags] = proposed_sample_scores[accept_flags]
                 vdw_record[s_ind] = vdw_record[s_ind - 1]
@@ -173,6 +196,14 @@ def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii,
                 packing_record[s_ind, accept_flags] = packing_coeffs[accept_flags]
             else:
                 proposed_samples = crystal_batch.cell_params
+
+                proposed_samples = clean_cell_params(proposed_samples, crystal_batch.sg_ind,
+                                                     lattice_means, lattice_stds,
+                                                     supercell_builder.symmetries_dict, supercell_builder.asym_unit_dict,
+                                                     rescale_asymmetric_unit=True, destandardize=False, mode='hard',
+                                                     fractional_basis='unit_cell'
+                                                     )
+
                 proposed_crystals, cell_volumes = \
                     supercell_builder.build_supercells(
                         crystal_batch, proposed_samples,
@@ -180,7 +211,7 @@ def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii,
                         align_to_standardized_orientation=True,
                         target_handedness=crystal_batch.asym_unit_handedness)
 
-                output, proposed_dist_dict = model(proposed_crystals.clone().cuda(), return_dists=True)
+                output, proposed_dist_dict = discriminator(proposed_crystals.clone().cuda(), return_dists=True)
 
                 proposed_sample_scores = softmax_and_score(output[:, :2]).cpu().detach().numpy()
 
@@ -192,7 +223,7 @@ def mcmc_sampling(model, crystal_batch, supercell_builder, num_steps, vdw_radii,
 
                 packing_coeffs = (proposed_crystals.mult * proposed_crystals.mol_volume / cell_volumes).cpu().detach().numpy()
 
-                samples_record[s_ind] = proposed_samples.cpu().detach().numpy()
+                samples_record[s_ind] = proposed_crystals.cell_params.cpu().detach().numpy()
                 scores_record[s_ind] = proposed_sample_scores
                 vdw_record[s_ind] = proposed_sample_vdws
                 packing_record[s_ind] = packing_coeffs

@@ -35,6 +35,7 @@ class SupercellBuilder:
                          align_to_standardized_orientation=False,
                          pare_to_convolution_cluster=True,
                          skip_refeaturization=False):
+
         """
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to "supercell" (in fact, it's truncated to an appropriate cluster size)
@@ -79,19 +80,30 @@ class SupercellBuilder:
 
         #assert torch.sum(torch.isnan(torch.cat([elem.flatten() for elem in unit_cell_coords_list]))) == 0, f"{cell_parameters}, {coords_list}, {canonical_conformer_coords_list}"
 
-        if not skip_refeaturization:
+        if not skip_refeaturization:  # if the mol position is outside the asym unit, the below params will not correspond to the inputs
             # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction
-            _, mol_orientations, mol_handedness, _ = \
+            (mol_positions, mol_orientations,
+             mol_handedness, asym_unit_is_well_defined,
+             canonical_conformer_rebuild_list) = \
                 batch_asymmetric_unit_pose_analysis_torch(
                     unit_cell_coords_list,
                     supercell_data.sg_ind,
                     self.asym_unit_dict,
                     supercell_data.T_fc,
                     rotation_basis=self.rotation_basis,
-                    enforce_right_handedness=False)
+                    enforce_right_handedness=False,
+                    return_asym_unit_coords=True)
+
+            if not all(asym_unit_is_well_defined):
+                print("Warning: Some built crystals have ill defined asymmetric units")
 
             supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
             supercell_data.asym_unit_handedness = mol_handedness
+
+            if align_to_standardized_orientation:  # typically issue of handedness of the asymmetric unit
+                if (torch.amax(torch.sum(torch.abs(mol_orientations - mol_rotation_i), dim=1)) > 1e-2 or
+                        torch.amax(torch.sum(torch.abs(mol_positions - mol_position), dim=1)) > 1e-2):  # in the spherical basis
+                    print("Warning: Rebuilt standardized crystal was not identical.")
 
         # get minimal supercell cluster for convolving about a given canonical conformer
         cell_vector_list = T_fc_list.permute(0, 2, 1)

@@ -118,7 +118,9 @@ class crystal_generator(nn.Module):
             if return_raw_samples:
                 output.append(
                     torch.cat(
-                        clean_generator_output(samples, self.lattice_means, self.lattice_stds,
+                        clean_generator_output(samples=samples,
+                                               lattice_means=self.lattice_means,
+                                               lattice_stds=self.lattice_stds,
                                                destandardize=True, mode=None),
                         dim=-1))  # destandardize but don't clean up or normalize fractional outputs
             return output
@@ -167,10 +169,10 @@ class independent_gaussian_model(nn.Module):
         else:
             sg_ind = data.sg_ind
 
-        samples = self.prior.sample((num_samples,)).to(self.device)  # samples in the destandardied 'real' basis
+        samples = self.prior.sample((num_samples,)) # samples in the destandardied 'real' basis
         final_samples = clean_cell_params(samples, sg_ind, self.means, self.stds,
                                           self.symmetries_dict, self.asym_unit_dict,
-                                          rescale_asymmetric_unit=False, destandardize=False, mode='hard')
+                                          rescale_asymmetric_unit=True, destandardize=False, mode='soft').to(self.device)
 
         return final_samples
 

@@ -296,24 +296,25 @@ def get_n_config(model):
     return pp
 
 
-def clean_generator_output(samples, lattice_means, lattice_stds, destandardize=True, mode='soft'):
+def clean_generator_output(samples=None, lattice_lengths=None, lattice_angles=None, mol_positions=None, mol_orientations=None, lattice_means=None, lattice_stds=None, destandardize=True, mode='soft'):
     """
     convert from raw model output to the actual cell parameters with appropriate bounds
     considering raw outputs to be in the standardized basis, we destandardize, then enforce bounds
     """
 
     '''separate components'''
-    lattice_lengths = samples[:, :3]
-    lattice_angles = samples[:, 3:6]
-    mol_positions = samples[:, 6:9]
-    mol_orientations = samples[:, 9:]
+    if samples is not None:
+        lattice_lengths = samples[:, :3]
+        lattice_angles = samples[:, 3:6]
+        mol_positions = samples[:, 6:9]
+        mol_orientations = samples[:, 9:]
 
     '''destandardize & decode angles'''
     if destandardize:
         real_lattice_lengths = lattice_lengths * lattice_stds[:3] + lattice_means[:3]
         real_lattice_angles = lattice_angles * lattice_stds[3:6] + lattice_means[3:6]  # not bothering to encode as an angle
         real_mol_positions = mol_positions * lattice_stds[6:9] + lattice_means[6:9]
-        if samples.shape[-1] == 12:
+        if mol_orientations.shape[-1] == 3:
             real_mol_orientations = mol_orientations * lattice_stds[9:] + lattice_means[9:]
         else:
             real_mol_orientations = mol_orientations * 1
@@ -323,9 +324,9 @@ def clean_generator_output(samples, lattice_means, lattice_stds, destandardize=T
         real_mol_positions = mol_positions * 1
         real_mol_orientations = mol_orientations * 1
 
-    if samples.shape[-1] == 15:
+    if mol_orientations.shape[-1] == 6:
         theta, phi, r_i = decode_to_sph_rotvec(real_mol_orientations)
-    elif samples.shape[-1] == 12:  # already have angles, no need to decode  # todo deprecate - we will only use spherical components in future
+    elif mol_orientations.shape[-1] == 3:  # already have angles, no need to decode  # todo deprecate - we will only use spherical components in future
         if mode is not None:
             theta = enforce_1d_bound(real_mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4, mode=mode)[:, None]
             phi = enforce_1d_bound(real_mol_orientations[:, 1], x_span=torch.pi, x_center=0, mode=mode)[:, None]

@@ -230,7 +230,7 @@ def sph2rotvec(angles):
 def rotvec2sph(rotvec):
     """
     transform rotation vector with axis rotvec/norm(rotvec) and angle ||rotvec||
-    to spherical coordinates theta, phi and r ||rotvec||
+    to spherical coordinates theta, phi and r=||rotvec||
     """
     if isinstance(rotvec, np.ndarray):
         r = np.linalg.norm(rotvec, axis=-1)

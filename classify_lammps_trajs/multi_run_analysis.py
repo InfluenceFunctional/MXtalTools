@@ -12,16 +12,15 @@ from classify_lammps_trajs.traj_analysis_figs import plot_classifier_pies
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 
-
 os.chdir(r'C:\Users\mikem\crystals\classifier_runs')
 
 files = os.listdir()
 results_dicts = [file for file in files if 'analysis' in file]
 
 dfs = []
-for ind,dict_path in enumerate(results_dicts):
-    results_dict = np.load(dict_path,allow_pickle=True).item()
-    ldict = {key:[value] for key,value in results_dict.items()}
+for ind, dict_path in enumerate(results_dicts):
+    results_dict = np.load(dict_path, allow_pickle=True).item()
+    ldict = {key: [value] for key, value in results_dict.items()}
     for key, value in results_dict['run_config'].items():
         ldict[key] = [value]
 
@@ -33,7 +32,6 @@ for ind,dict_path in enumerate(results_dicts):
 results_df = pd.concat(dfs)
 results_df.reset_index(drop=True, inplace=True)
 del (dfs)
-
 
 """NN output analysis"""
 classes = nic_ordered_class_names

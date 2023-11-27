@@ -42,7 +42,7 @@ dev = {'run_name': 'dev',
        # lrs
        'encoder_lr': 1e-4,
        'decoder_lr': 1e-3,
-       'lr_lambda': 0.985,
+       'lr_lambda': 0.99,
        'lr_timescale': 500,
 
        # encoder

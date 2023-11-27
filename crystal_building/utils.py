@@ -480,10 +480,28 @@ def build_unit_cell(symmetry_multiplicity, final_coords_list, T_fc_list, T_cf_li
 
 
 def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_dict, asym_unit_dict,
-                      rescale_asymmetric_unit=True, destandardize=False, mode='soft'):
+                      rescale_asymmetric_unit=True, destandardize=False, mode='soft', fractional_basis='asymmetric_unit'):
+
+    lattice_lengths = samples[:, :3]
+    lattice_angles = samples[:, 3:6]
+    mol_orientations = samples[:, 9:]
+
+    if fractional_basis == 'asymmetric_unit':  # basis is 0-1 within the asymmetric unit
+        mol_positions = samples[:, 6:9]
+
+    elif fractional_basis == 'unit_cell':  # basis is 0-1 within the unit cell
+        mol_positions = descale_asymmetric_unit(asym_unit_dict, samples[:, 6:9], sg_inds)
+
+    else:
+        assert False, f"{fractional_basis} is not an implemented fractional basis"
 
     lattice_lengths, lattice_angles, mol_positions, mol_orientations \
-        = clean_generator_output(samples, lattice_means, lattice_stds, destandardize=destandardize, mode=mode)
+        = clean_generator_output(lattice_lengths=lattice_lengths,
+                                 lattice_angles=lattice_angles,
+                                 mol_positions=mol_positions,
+                                 mol_orientations=mol_orientations,
+                                 lattice_means=lattice_means, lattice_stds=lattice_stds,
+                                 destandardize=destandardize, mode=mode)
 
     fixed_lengths, fixed_angles = (
         enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_dict))
@@ -492,6 +510,7 @@ def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_
         fixed_positions = scale_asymmetric_unit(asym_unit_dict, mol_positions, sg_inds)
     else:
         fixed_positions = mol_positions * 1
+
 
     '''collect'''
     final_samples = torch.cat((
@@ -529,6 +548,31 @@ def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
 
     return mol_position * torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
 
+
+def descale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
+    """
+    input fractional coordinates are scaled on 0-1
+    rescale these for the specific ranges according to each space group
+    only space groups in asym_unit_dict will work - not all have been manually encoded
+    this approach will not work for asymmetric units which are not parallelpipeds
+    Parameters
+    ----------
+    asym_unit_dict
+    mol_position
+    sg_inds
+
+    Returns
+    -------
+    """
+    # scaled_mol_position = mol_position.clone()
+    # for i, ind in enumerate(sg_ind):
+    #     scaled_mol_position[i, :] = mol_position[i, :] * asym_unit_dict[str(int(ind))]
+
+    # vectorized for speed
+    # asym_units = torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_ind])
+    # scaled_mol_position = mol_position * asym_units
+
+    return mol_position / torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
 
 def DEPRECATED_write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
     # todo rewrite or deprecate when we update sampling
