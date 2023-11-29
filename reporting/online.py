@@ -1751,6 +1751,7 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
     elif cart_dimension == 3:
 
         num_types = max_point_types
+        num_surface = 25
         cols = 3
         rows = num_types // cols + ((num_types % cols) != 0)
         fig = make_subplots(
@@ -1784,20 +1785,20 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
 
             pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
-            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
-                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
-                                    name=f'Predicted type', legendgroup=f'Predicted type',
-                                    coloraxis="coloraxis",
-                                    isomin=0, isomax=ymax, opacity=.01,
-                                    cmin=0, cmax=ymax,
-                                    surface_count=25,
-                                    ), row=row, col=col)
-
             fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
                                        mode='markers', marker_color='white', marker_size=10, marker_line_width=2, marker_line_color='green',
                                        showlegend=True if (j == 0 and graph_ind == 0) else False,
                                        name=f'True type', legendgroup=f'True type'
                                        ), row=row, col=col)
+
+            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                    name=f'Predicted type', legendgroup=f'Predicted type',
+                                    coloraxis="coloraxis",
+                                    isomin=0, isomax=ymax, opacity=.05,
+                                    cmin=0, cmax=ymax,
+                                    surface_count=num_surface,
+                                    ), row=row, col=col)
 
         fig.update_coloraxes(autocolorscale=False, colorscale='Jet')
         wandb.log({"Sample Distributions": fig})
@@ -1821,20 +1822,22 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
 
             pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
-            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
-                                    showlegend=True,
-                                    name=f'Predicted type {j}',
-                                    colorscale=colorscales[j],
-                                    showscale=False,
-                                    isomin=0, isomax=ymax, opacity=.05,
-                                    cmin=0, cmax=ymax,
-                                    surface_count=25,
-                                    ))
             fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
                                        mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
                                        showlegend=True if (j == 0 and graph_ind == 0) else False,
                                        name=f'True type', legendgroup=f'True type'
                                        ))
+
+            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+                                    showlegend=True,
+                                    name=f'Predicted type {j}',
+                                    colorscale=colorscales[j],
+                                    showscale=False,
+                                    isomin=0.01, isomax=ymax, opacity=.025,
+                                    cmin=0, cmax=ymax,
+                                    surface_count=num_surface,
+                                    ))
+
         wandb.log({"Combined Sample": fig})
 
     return None
