@@ -1822,7 +1822,7 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
             pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
             fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
-                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                    showlegend=True,
                                     name=f'Predicted type {j}',
                                     colorscale=colorscales[j],
                                     showscale=False,
