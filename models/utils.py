@@ -65,7 +65,7 @@ def save_model(model, optimizer):
     torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, 'ckpts/model_ckpt')
 
 
-def init_optimizer(optim_config, model, freeze_params=False):
+def init_optimizer(model_name, optim_config, model, freeze_params=False):
     """
     initialize optimizers
     @param optim_config: config for a given optimizer
@@ -89,20 +89,39 @@ def init_optimizer(optim_config, model, freeze_params=False):
 
     amsgrad = True
 
-    if freeze_params:
-        model_params = [param for param in model.parameters() if param.requires_grad == True]
-    else:
-        model_params = model.parameters()
+    if model_name == 'autoencoder':
+        if freeze_params:
+            assert False, "params freezing not implemented for autoencoder"
 
-    if optimizer == 'adam':
-        optimizer = optim.Adam(model_params, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-    elif optimizer == 'adamw':
-        optimizer = optim.AdamW(model_params, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-    elif optimizer == 'sgd':
-        optimizer = optim.SGD(model_params, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
+        params_dict = [
+            {'params': model.encoder.parameters(), 'lr': optim_config.encoder_init_lr},
+            {'params': model.decoder.parameters(), 'lr': optim_config.decoder_init_lr}
+        ]
+        if optimizer == 'adam':
+            optimizer = optim.Adam(params_dict, amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif optimizer == 'adamw':
+            optimizer = optim.AdamW(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif optimizer == 'sgd':
+            optimizer = optim.SGD(params_dict, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
+        else:
+            print(optim_config.optimizer + ' is not a valid optimizer')
+            sys.exit()
+
     else:
-        print(optim_config.optimizer + ' is not a valid optimizer')
-        sys.exit()
+        if freeze_params:
+            model_params = [param for param in model.parameters() if param.requires_grad == True]
+        else:
+            model_params = model.parameters()
+
+        if optimizer == 'adam':
+            optimizer = optim.Adam(model_params, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif optimizer == 'adamw':
+            optimizer = optim.AdamW(model_params, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif optimizer == 'sgd':
+            optimizer = optim.SGD(model_params, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
+        else:
+            print(optim_config.optimizer + ' is not a valid optimizer')
+            sys.exit()
 
     return optimizer
 

@@ -143,7 +143,7 @@ class Modeller:
             for model in self.models_dict.values():
                 model.cuda()
 
-        self.optimizers_dict = {model_name: init_optimizer(self.config.__dict__[model_name].optimizer, model) for model_name, model in self.models_dict.items()}
+        self.optimizers_dict = {model_name: init_optimizer(model_name, self.config.__dict__[model_name].optimizer, model) for model_name, model in self.models_dict.items()}
 
         for model_name, model_path in self.config.model_paths.__dict__.items():
             if model_path is not None:
@@ -155,8 +155,8 @@ class Modeller:
             self.optimizers_dict[model_name], self.config.__dict__[model_name].optimizer)
             for model_name in self.model_names}
 
-        num_params_dict = {model_name: get_n_config(model) for model_name, model in self.models_dict.items()}
-        [print(f'{model_name} has {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters') for model_name in self.model_names]
+        num_params_dict = {model_name + "_num_params": get_n_config(model) for model_name, model in self.models_dict.items()}
+        [print(f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters') for model_name in num_params_dict.keys()]
 
         wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
         wandb.log(num_params_dict)
@@ -471,8 +471,6 @@ class Modeller:
             nodewise_weights_tensor = (torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature) /
                                        scatter(torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature), decoded_data.batch
                                                ).repeat_interleave(self.config.autoencoder.model.num_decoder_points))  # fast graph-wise softmax with high temperature
-            nodewise_weights = nodewise_weights_tensor.cpu().detach().numpy()
-
         else:
             graph_weights = data.mol_size / self.config.autoencoder.model.num_decoder_points
             nodewise_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
@@ -485,7 +483,7 @@ class Modeller:
         per_graph_true_types = scatter(true_nodes, data.batch[:, None], dim=0, reduce='mean')
         per_graph_pred_types = scatter(decoded_data.x, decoded_data.batch[:, None], dim=0, reduce='sum') / data.mol_size[:, None]
 
-        # assert torch.sum(per_graph_pred_types) = len(per_graph_pred_types
+        # assert torch.sum(per_graph_pred_types) = len(per_graph_pred_types)
 
         decoder_likelihoods = high_dim_reconstruction_likelihood(true_nodes, data, decoded_data, self.config.autoencoder_sigma,
                                                                  nodewise_weights=nodewise_weights_tensor,
@@ -502,7 +500,6 @@ class Modeller:
         # num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(self.config.device), num_points_prediction[:, 0])
 
         nodewise_type_loss = F.binary_cross_entropy(per_graph_pred_types, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)
-
         reconstruction_loss = scatter(F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none'), data.batch, reduce='mean')  # overlaps should all be exactly 1
 
         true_dists = torch.linalg.norm(data.pos, dim=1)
