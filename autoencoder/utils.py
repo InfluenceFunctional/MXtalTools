@@ -3,8 +3,7 @@ import torch.nn.functional as F
 
 from autoencoder.reporting import update_losses
 from torch_scatter import scatter
-from math import sqrt
-from models.asymmetric_radius_graph import radius
+from models.utils import high_dim_reconstruction_likelihood, split_reconstruction_likelihood
 
 
 def compute_loss(wandb, step, losses, config, working_sigma, num_points_prediction, composition_prediction, decoding, data, point_num_rands):
@@ -19,7 +18,7 @@ def compute_loss(wandb, step, losses, config, working_sigma, num_points_predicti
                                            ).repeat_interleave(config.num_decoder_points))  # fast graph-wise softmax with high temperature
     else:
         graph_weights = point_num_rands / config.num_decoder_points
-        nodewise_weights = graph_weights.repeat(config.num_decoder_points)
+        nodewise_weights = graph_weights.repeat(config.num_decoder_points)  # should be repeat_interleave?
         nodewise_weights_tensor = torch.tensor(nodewise_weights, dtype=torch.float32, device=config.device)
 
     # low T causes instability in backprop
@@ -42,6 +41,7 @@ def compute_loss(wandb, step, losses, config, working_sigma, num_points_predicti
 
     nodewise_type_loss = F.binary_cross_entropy(per_graph_pred_types, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)
 
+    # todo check this reduces to a number
     reconstruction_loss = torch.mean(scatter(F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none'), data.batch, reduce='mean'))  # overlaps should all be exactly 1
 
     true_dists = torch.linalg.norm(data.pos, dim=1)
@@ -139,84 +139,6 @@ def get_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, num_c
         return torch.log(nodewise_overlap)
     else:
         return nodewise_overlap
-
-
-def high_dim_reconstruction_likelihood(ref_types, data, decoded_data, sigma, overlap_type, nodewise_weights,
-                                       dist_to_self=False, log_scale=False, type_distance_scaling=0.1):
-    """
-    same as previous version
-    except atom type differences are treated as high dimensional distances
-    """
-    ref_points = torch.cat((data.pos, ref_types * type_distance_scaling), dim=1)
-
-    if dist_to_self:
-        pred_points = ref_points
-    else:
-        pred_types = decoded_data.x / nodewise_weights[:, None] * type_distance_scaling
-        pred_points = torch.cat((decoded_data.pos, pred_types), dim=1)  # assume input x has already been normalized
-
-    edges = radius(ref_points, pred_points, 2, max_num_neighbors=100, batch_x=data.batch, batch_y=decoded_data.batch)  # this step is slower than before
-    dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
-
-    if overlap_type == 'gaussian':
-        overlap = torch.exp(-(dists / sigma) ** 2)
-    elif overlap_type == 'inverse':
-        overlap = 1 / (dists / sigma + 1)
-    elif overlap_type == 'exponential':
-        overlap = torch.exp(-dists / sigma)
-    else:
-        assert False, f"{overlap_type} is not an implemented overlap function"
-
-    scaled_overlap = overlap * nodewise_weights[edges[0]]  # reweight appropriately
-    nodewise_overlap = scatter(scaled_overlap, edges[1], reduce='sum', dim_size=data.num_nodes)  # this one is much, much faster
-
-    if log_scale:
-        return torch.log(nodewise_overlap)
-    else:
-        return nodewise_overlap
-
-
-def split_reconstruction_likelihood(data, decoded_data, sigma, overlap_type, nodewise_weights, num_classes,
-                                    dist_to_self=False, type_distance_scaling=0.1):
-    """
-    same as previous version
-    except atom type differences are treated as high dimensional distances
-    """
-    ref_types = F.one_hot(data.x[:, 0], num_classes=num_classes).float()
-
-    if dist_to_self:
-        pred_types = ref_types
-    else:
-        pred_types = decoded_data.x / nodewise_weights[:, None]
-
-    d1 = torch.cdist(data.pos, decoded_data.pos, p=2)  # n_targets x n_guesses
-    d2 = torch.cdist(ref_types, pred_types, p=2) * type_distance_scaling
-
-    if overlap_type == 'gaussian':
-        o1 = torch.exp(-(d1 / sigma) ** 2)
-        o2 = torch.exp(-(d2 / sigma) ** 2)
-    elif overlap_type == 'inverse':
-        o1 = 1 / (d1 / sigma + 1)
-        o2 = 1 / (d2 / sigma + 1)
-    elif overlap_type == 'exponential':
-        o1 = torch.exp(-d1 / sigma)
-        o2 = torch.exp(-d2 / sigma)
-    else:
-        assert False, f"{overlap_type} is not an implemented overlap function"
-
-    # scale all overlaps by the predicted confidence in each particle type
-    so1 = o1 * nodewise_weights.T
-    so2 = o2 * nodewise_weights.T
-
-    no1 = torch.cat([
-        so1[data.batch == ind][:, decoded_data.batch == ind].sum(1) for ind in range(data.num_graphs)
-    ])
-
-    no2 = torch.cat([
-        so2[data.batch == ind][:, decoded_data.batch == ind].sum(1) for ind in range(data.num_graphs)
-    ])
-
-    return no1, no2
 
 
 def load_checkpoint(path, encoder, decoder, optimizer):

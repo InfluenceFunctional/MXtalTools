@@ -1,15 +1,20 @@
 import numpy as np
+import torch
 import wandb
 from _plotly_utils.colors import n_colors, sample_colorscale
+from plotly import graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.spatial.distance import cdist
 from scipy.stats import linregress
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+from torch_geometric.loader.dataloader import Collater
+
 from common.utils import get_point_density
 
 from common.geometry_calculations import cell_vol
-from models.utils import norm_scores
+from models.utils import norm_scores, split_reconstruction_likelihood
 
 blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
     'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
@@ -1333,10 +1338,11 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
     """
     Do analysis and upload results to w&b
     """
-    rec = np.load(r'C:\Users\mikem\crystals\CSP_runs\_experiments_dev_12-11-13-36-50/multi_discriminator_stats_dicts.npy', allow_pickle=True)
-    test_epoch_stats_dict = rec[1]
-    extra_test_dict = rec[2]
-    dataDims = rec[0]
+    # rec = np.load(r'C:\Users\mikem\crystals\CSP_runs\_experiments_dev_12-11-13-36-50/multi_discriminator_stats_dicts.npy', allow_pickle=True)
+    # test_epoch_stats_dict = rec[1]
+    # extra_test_dict = rec[2]
+    # dataDims = rec[0]
+
     if (test_epoch_stats_dict is not None) and config.mode == 'gan':
         if 'final_generated_cell_parameters' in test_epoch_stats_dict.keys():
             cell_params_analysis(config, dataDims, wandb, test_loader, test_epoch_stats_dict)
@@ -1353,8 +1359,37 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
     elif config.mode == 'regression':
         log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
+    elif config.mode == 'autoencoder':
+        log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict)
+
     if extra_test_dict is not None and len(extra_test_dict) > 0 and 'blind_test' in config.extra_test_set_name:
         discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict)
+
+    return None
+
+
+def log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict):
+    if 'sample' in test_epoch_stats_dict.keys():
+        collater = Collater(None, None)
+        data = collater(test_epoch_stats_dict['sample'])
+        decoded_data = collater(test_epoch_stats_dict['decoded_sample'])
+        nodewise_weights_tensor = torch.Tensor(test_epoch_stats_dict['nodewise_weights']).flatten()
+
+        coord_overlap, type_overlap = split_reconstruction_likelihood(
+            data, decoded_data, config.autoencoder_sigma, nodewise_weights=nodewise_weights_tensor,
+            overlap_type='gaussian', num_classes=dataDims['num_atom_types'],
+            type_distance_scaling=config.autoencoder.type_distance_scaling)
+
+        self_coord_overlap, self_type_overlap = split_reconstruction_likelihood(
+            data, data, config.autoencoder_sigma, nodewise_weights=torch.ones_like(data.x),
+            overlap_type='gaussian', num_classes=dataDims['num_atom_types'],
+            type_distance_scaling=config.autoencoder.type_distance_scaling, dist_to_self=True)
+
+        wandb.log({"positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
+                   "typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy()})
+
+        if config.logger.log_figures:
+            overlap_plot(wandb, data, decoded_data, config.autoencoder_sigma, dataDims['num_atom_types'], 3, nodewise_weights_tensor)
 
     return None
 
@@ -1515,7 +1550,6 @@ def discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict,
         fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
         fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
 
-
         wandb.log({"Distance Results": fig,
                    "distance_R_value": linreg_result.rvalue,
                    "distance_slope": linreg_result.slope})
@@ -1636,4 +1670,173 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
     fig.update_layout(title=crystal_name)
 
     wandb.log({"Mini-CSP Cell Parameters": fig})
+    return None
+
+
+def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart_dimension, nodewise_weights):
+
+    sigma = working_sigma
+
+    max_xval = max(decoded_data.pos.amax(), data.pos.amax()).cpu().detach().numpy()
+    min_xval = min(decoded_data.pos.amax(), data.pos.amin()).cpu().detach().numpy()
+    ymax = 1.1  # int(torch.diff(data.ptr).amax())  # max graph height
+
+    if cart_dimension == 1:
+        fig = make_subplots(rows=max_point_types, cols=min(4, data.num_graphs))
+
+        x = np.linspace(min(-1, min_xval), max(1, max_xval), 1001)
+
+        for j in range(max_point_types):
+            for graph_ind in range(min(4, data.num_graphs)):
+                row = j + 1
+                col = graph_ind + 1
+
+                points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+                points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+
+                ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+                pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+
+                fig.add_scattergl(x=x, y=np.sum(np.exp(-(x - points_true[ref_type_inds]) ** 2 / sigma), axis=0),
+                                  line_color='blue', showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                  name=f'True type {j}', legendgroup=f'Predicted type {j}', row=row, col=col)
+
+                fig.add_scattergl(x=x, y=np.sum(pred_type_weights * np.exp(-(x - points_pred) ** 2 / sigma), axis=0),
+                                  line_color='red', showlegend=True if j == 0 and graph_ind == 0 else False,
+                                  name=f'Predicted type {j}', legendgroup=f'Predicted type {j}', row=row, col=col)
+
+                # fig.add_scattergl(x=x, y=np.sum(np.exp(-(x - points_true[ref_type_inds]) ** 2 / 0.00001), axis=0), line_color='blue', showlegend=False, name='True', row=row, col=col)
+                # fig.add_scattergl(x=x, y=np.sum(pred_type_weights * np.exp(-(x - points_pred) ** 2 / 0.00001), axis=0), line_color='red', showlegend=False, name='Predicted', row=row, col=col)
+
+        fig.update_yaxes(range=[0, ymax])
+        wandb.log({"Sample Distributions": fig})
+
+    elif cart_dimension == 2:
+        fig = make_subplots(rows=max_point_types, cols=min(4, data.num_graphs))
+
+        num_gridpoints = 25
+        x = np.linspace(min(-1, min_xval), max(1, max_xval), num_gridpoints)
+        y = np.copy(x)
+        xx, yy = np.meshgrid(x, y)
+
+        grid_array = np.stack((xx.flatten(), yy.flatten())).T
+
+        for j in range(max_point_types):
+            for graph_ind in range(min(4, data.num_graphs)):
+                row = j + 1
+                col = graph_ind + 1
+
+                points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+                points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+
+                ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+                pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+
+                pred_dist = np.sum(pred_type_weights.mean() * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1).reshape(num_gridpoints, num_gridpoints)
+
+                fig.add_trace(go.Contour(x=x, y=y, z=pred_dist,
+                                         showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                         name=f'Predicted type', legendgroup=f'Predicted type',
+                                         coloraxis="coloraxis",
+                                         contours=dict(start=0, end=ymax, size=ymax / 50)
+                                         ), row=row, col=col)
+
+                fig.add_trace(go.Scattergl(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1],
+                                           mode='markers', marker_color='white', marker_size=10, marker_line_width=2, marker_line_color='green',
+                                           showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                           name=f'True type', legendgroup=f'True type'
+                                           ), row=row, col=col)
+
+        fig.update_coloraxes(cmin=0, cmax=ymax, autocolorscale=False, colorscale='viridis')
+        wandb.log({"Sample Distributions": fig})
+
+    elif cart_dimension == 3:
+
+        num_types = max_point_types
+        cols = 3
+        rows = num_types // cols + ((num_types % cols) != 0)
+        fig = make_subplots(
+            rows=rows, cols=cols,
+            specs=[[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)])
+
+        if sigma > 0.1:
+            num_gridpoints = 15
+        elif 0.1 > sigma > 0.005:
+            num_gridpoints = 25
+        else:
+            num_gridpoints = 50
+
+        x = np.linspace(min(-1, min_xval), max(1, max_xval), num_gridpoints)
+        y = np.copy(x)
+        z = np.copy(x)
+        xx, yy, zz = np.meshgrid(x, y, z)
+
+        grid_array = np.stack((xx.flatten(), yy.flatten(), zz.flatten())).T
+
+        for j in range(max_point_types):
+            graph_ind = 0
+            row = j // cols + 1
+            col = j % cols + 1
+
+            points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+            points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+
+            ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+            pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+
+            pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
+
+            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                    name=f'Predicted type', legendgroup=f'Predicted type',
+                                    coloraxis="coloraxis",
+                                    isomin=0, isomax=ymax, opacity=.01,
+                                    cmin=0, cmax=ymax,
+                                    surface_count=100,
+                                    ), row=row, col=col)
+
+            fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+                                       mode='markers', marker_color='white', marker_size=10, marker_line_width=2, marker_line_color='green',
+                                       showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                       name=f'True type', legendgroup=f'True type'
+                                       ), row=row, col=col)
+
+        fig.update_coloraxes(autocolorscale=False, colorscale='Jet')
+        wandb.log({"Sample Distributions": fig})
+
+        fig = go.Figure()
+        colors = (
+            'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+            'rgb(165, 170, 153)')
+        colorscales = [[[0, 'rgb(0,0,0)', ], [1, color]] for color in colors]
+        grid_array = np.stack((xx.flatten(), yy.flatten(), zz.flatten())).T
+
+        for j in range(max_point_types):
+            graph_ind = 0
+
+            points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+            points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+
+            ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+
+            pred_type_weights = nodewise_weights[decoded_data.batch == graph_ind].cpu().detach().numpy()[:, None]  # decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+
+            pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
+
+            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                    name=f'Predicted type', legendgroup=f'Predicted type',
+                                    colorscale=colorscales[j],
+                                    showscale=False,
+                                    isomin=0, isomax=ymax, opacity=.05,
+                                    cmin=0, cmax=ymax,
+                                    surface_count=100,
+                                    ))
+            fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+                                       mode='markers', marker_color=colors[j], marker_size=10, marker_line_width=5, marker_line_color='black',
+                                       showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                       name=f'True type', legendgroup=f'True type'
+                                       ))
+        wandb.log({"Combined Sample": fig})
+
     return None
