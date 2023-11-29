@@ -174,8 +174,8 @@ autoencoder:
   max_num_atoms: 20
   init_sigma: 0.25
   sigma_lambda: 0.95
-  sigma_threshold: 0.01
-  overlap_eps: 1e-2
+  sigma_threshold: 0.02
+  overlap_eps: 1e-3
   independent_node_weights: False
   node_weight_temperature: 10
   type_distance_scaling: 0.5
@@ -184,8 +184,8 @@ autoencoder:
   optimizer:
     optimizer: adamw
     init_lr: 1.0E-4
-    max_lr: 5.0E-4
-    min_lr: 1.0E-5
+    max_lr: 1.0E-3
+    min_lr: 5.0E-4
     lr_schedule: True
     beta1: 0.9
     beta2: 0.999
