@@ -133,19 +133,33 @@ def init_schedulers(optimizer, optimizer_config):
     if optimizer_config is not None:
         lr_shrink_lambda = optimizer_config.lr_shrink_lambda
         lr_growth_lambda = optimizer_config.lr_growth_lambda
+        use_plateau_scheduler = optimizer_config.use_plateau_scheduler
     else:
         lr_shrink_lambda = 1  # no change
         lr_growth_lambda = 1
+        use_plateau_scheduler = False
 
-    scheduler1 = lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode='min',
-        factor=0.5,
-        patience=500,
-        threshold=1e-4,
-        threshold_mode='rel',
-        cooldown=500
-    )
+    if use_plateau_scheduler:
+        scheduler1 = lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.5,
+            patience=500,
+            threshold=1e-4,
+            threshold_mode='rel',
+            cooldown=500
+        )
+    else:
+        scheduler1 = lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.00001,
+            patience=5000000,
+            threshold=1e-8,
+            threshold_mode='rel',
+            cooldown=5000000,
+            min_lr=1
+        )
     scheduler2 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: lr_growth_lambda)
     scheduler3 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: lr_shrink_lambda)
 

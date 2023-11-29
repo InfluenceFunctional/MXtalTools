@@ -1674,9 +1674,7 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
 
 
 def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart_dimension, nodewise_weights):
-
     sigma = working_sigma
-
     max_xval = max(decoded_data.pos.amax(), data.pos.amax()).cpu().detach().numpy()
     min_xval = min(decoded_data.pos.amax(), data.pos.amin()).cpu().detach().numpy()
     ymax = 1.1  # int(torch.diff(data.ptr).amax())  # max graph height
@@ -1792,7 +1790,7 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
                                     coloraxis="coloraxis",
                                     isomin=0, isomax=ymax, opacity=.01,
                                     cmin=0, cmax=ymax,
-                                    surface_count=100,
+                                    surface_count=25,
                                     ), row=row, col=col)
 
             fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
@@ -1830,10 +1828,10 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
                                     showscale=False,
                                     isomin=0, isomax=ymax, opacity=.05,
                                     cmin=0, cmax=ymax,
-                                    surface_count=100,
+                                    surface_count=25,
                                     ))
             fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
-                                       mode='markers', marker_color=colors[j], marker_size=10, marker_line_width=5, marker_line_color='black',
+                                       mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
                                        showlegend=True if (j == 0 and graph_ind == 0) else False,
                                        name=f'True type', legendgroup=f'True type'
                                        ))

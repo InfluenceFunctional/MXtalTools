@@ -14,11 +14,9 @@ test_fraction: 0.2
 filter_polymorphs: True
 filter_duplicate_molecules: True
 filter_conditions: [['crystal_z_prime','in',[1]],
-                    ['molecule_is_spherical_top','in',[False]],
-                    ['crystal_packing_coefficient','range',[0.55, 0.85]],
                     ['molecule_num_atoms','range',[3,100]],
-                    ['molecule_radius','range',[1,5]],
-                    ['atom_atomic_numbers','range',[6, 8]]
+                    ['molecule_radius','range',[0.1,10]],
+                    ['atom_atomic_numbers','range', [6, 8]]
                     ]
 
 

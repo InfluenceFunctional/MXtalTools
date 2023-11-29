@@ -5,39 +5,6 @@ from models.base_models import molecule_graph_model
 from models.components import MLP
 
 
-class fc_decoder(nn.Module):
-    def __init__(self, num_nodes, cart_dimension,
-                 input_depth, embedding_depth,
-                 num_layers, fc_norm,
-                 dropout, max_ntypes, seed):
-        super(fc_decoder, self).__init__()
-        self.cart_dimension = cart_dimension
-        self.output_depth = max_ntypes + cart_dimension + 1
-        torch.manual_seed(seed)
-        self.num_nodes = num_nodes
-        self.embedding_depth = embedding_depth
-
-        self.MLP = MLP(
-            layers=num_layers,
-            filters=embedding_depth,
-            input_dim=input_depth,
-            output_dim=self.output_depth * self.num_nodes,
-            activation='gelu',
-            norm=fc_norm,
-            dropout=dropout,
-        )
-
-    def forward(self, encoding, num_graphs):
-        """
-        initialize nodes on randn with uniform embedding
-        decode
-        """
-
-        x = self.MLP(encoding)
-
-        return x.reshape(self.num_nodes * num_graphs, self.output_depth)
-
-
 class point_autoencoder(nn.Module):
     def __init__(self, seed, config, dataDims):
         super(point_autoencoder, self).__init__()

@@ -169,13 +169,13 @@ discriminator:
 
 autoencoder:
   molecule_radius_normalization: 5
-  random_fraction: 1
+  random_fraction: 0.5
   min_num_atoms: 2
-  max_num_atoms: 20
+  max_num_atoms: 5
   init_sigma: 0.25
-  sigma_lambda: 0.95
-  sigma_threshold: 0.02
-  overlap_eps: 1e-3
+  sigma_lambda: 0.99
+  sigma_threshold: 0.01
+  overlap_eps: 1.0E-3
   independent_node_weights: False
   node_weight_temperature: 10
   type_distance_scaling: 0.5

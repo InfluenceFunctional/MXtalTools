@@ -2,7 +2,7 @@ machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
-dataset_name: 'dataset.pkl'
+dataset_name: 'test_dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/dataset/small_autoencoder.yaml'
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
@@ -16,7 +16,7 @@ early_epochs_step_override: 100
 num_early_epochs: 5
 grow_batch_size: True
 min_batch_size: 100
-max_batch_size: 10000
+max_batch_size: 500
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
@@ -26,7 +26,7 @@ extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 logger:
   run_name: dev
   mini_csp_frequency: 5
-  sample_reporting_frequency: 10
+  sample_reporting_frequency: 20
   log_figures: True
   experiment_tag: dev
 
@@ -51,6 +51,7 @@ autoencoder_positional_noise: 0.1
 
 generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
+
 # for GAN training
 generator:
   # settings
@@ -77,6 +78,7 @@ generator:
     convergence_eps: 0.00001
     lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.99
+    use_plateau_scheduler: True
 
   model:
     num_fc_layers: 2
@@ -139,6 +141,7 @@ discriminator:
     training_period: 1
     lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.99
+    use_plateau_scheduler: True
 
   model:
     graph_convolution_type: TransformerConv
@@ -169,13 +172,13 @@ discriminator:
 
 autoencoder:
   molecule_radius_normalization: 5
-  random_fraction: 0.75
+  random_fraction: 0
   min_num_atoms: 2
-  max_num_atoms: 20
+  max_num_atoms: 5
   init_sigma: 0.25
-  sigma_lambda: 0.9
+  sigma_lambda: 0.99
   sigma_threshold: 0.01
-  overlap_eps: 1e-3
+  overlap_eps: 1.0E-3
   independent_node_weights: False
   node_weight_temperature: 10
   type_distance_scaling: 0.5
@@ -183,17 +186,20 @@ autoencoder:
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 1.0E-5
-    max_lr: 2.0E-4
-    min_lr: 1.0E-4
-    lr_schedule: True
+    init_lr: 1.0E-4
+    encoder_init_lr: 1.0E-4
+    decoder_init_lr: 1.0E-3
+    max_lr: 1.0E-5
+    min_lr: 1.0E-5
+    lr_schedule: False
     beta1: 0.9
     beta2: 0.999
     weight_decay: 0.001
     convergence_eps: 0.00001
     training_period: 1
-    lr_growth_lambda: 1.05
-    lr_shrink_lambda: 0.99
+    lr_growth_lambda: 1.00
+    lr_shrink_lambda: 0.995
+    use_plateau_scheduler: False
 
   model:
     graph_convolution_type: TransformerConv

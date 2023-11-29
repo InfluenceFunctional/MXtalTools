@@ -157,11 +157,7 @@ class Modeller:
 
         num_params_dict = {model_name + "_num_params": get_n_config(model) for model_name, model in self.models_dict.items()}
         [print(f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters') for model_name in num_params_dict.keys()]
-
-        wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
-        wandb.log(num_params_dict)
-        wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
-                   "Initial Batch Size": self.config.current_batch_size})
+        return num_params_dict
 
     def load_dataset_and_dataloaders(self, override_test_fraction=None):
         """
@@ -255,111 +251,116 @@ class Modeller:
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
 
-        with ((wandb.init(config=self.config,
-                          project=self.config.wandb.project_name,
-                          entity=self.config.wandb.username,
-                          tags=[self.config.logger.experiment_tag],
-                          settings=wandb.Settings(code_dir=".")))):
+        self.train_discriminator = (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn))
+        self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
+        self.train_regressor = self.config.mode == 'regression'
+        self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
+        self.train_autoencoder = self.config.mode == 'autoencoder'
+
+        '''initialize datasets and useful classes'''
+        train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
+        self.init_gaussian_generator()
+        num_params_dict = self.init_models()
+
+        self.config.autoencoder_sigma = self.config.autoencoder.init_sigma if self.config.autoencoder.init_sigma else None
+        if self.train_autoencoder:
+            allowed_types = self.dataDims['allowed_atom_types']
+            type_translation_index = np.zeros(allowed_types.max()) - 1
+            for ind, atype in enumerate(allowed_types):
+                type_translation_index[atype - 1] = ind
+
+            self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device=self.config.device)
+
+        '''initialize some training metrics'''
+        self.hit_max_lr_dict = {model_name: False for model_name in self.model_names}
+        converged, epoch, prev_epoch_failed = self.config.max_epochs == 0, 0, False
+
+        with (wandb.init(config=self.config,
+                         project=self.config.wandb.project_name,
+                         entity=self.config.wandb.username,
+                         tags=[self.config.logger.experiment_tag],
+                         settings=wandb.Settings(code_dir="."))):
 
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
             # this means we also can't do wandb sweeps properly, as-is
 
-            self.train_discriminator = (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn))
-            self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
-            self.train_regressor = self.config.mode == 'regression'
-            self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
-            self.train_autoencoder = self.config.mode == 'autoencoder'
-
-            '''initialize datasets and useful classes'''
-            train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
-            self.init_gaussian_generator()
-            self.init_models()
+            wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
+            wandb.log(num_params_dict)
+            wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
+                       "Initial Batch Size": self.config.current_batch_size})
             self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
-            self.config.autoencoder_sigma = self.config.autoencoder.init_sigma if self.config.autoencoder.init_sigma else None
-            if self.train_autoencoder:
-                allowed_types = self.dataDims['allowed_atom_types']
-                type_translation_index = np.zeros(allowed_types.max()) - 1
-                for ind, atype in enumerate(allowed_types):
-                    type_translation_index[atype - 1] = ind
-
-                self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device=self.config.device)
-
-            '''initialize some training metrics'''
-            self.hit_max_lr_dict = {model_name: False for model_name in self.model_names}
-            converged, epoch, prev_epoch_failed = self.config.max_epochs == 0, 0, False
-
             # training loop
-            with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
-                while (epoch < self.config.max_epochs) and not converged:
-                    print("⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅")
-                    print("Starting Epoch {}".format(epoch))  # index from 0
-                    self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
+            # with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
+            while (epoch < self.config.max_epochs) and not converged:
+                print("⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅")
+                print("Starting Epoch {}".format(epoch))  # index from 0
+                self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
 
-                    if epoch < self.config.num_early_epochs:
-                        early_epochs_step_override = self.config.early_epochs_step_override
+                if epoch < self.config.num_early_epochs:
+                    early_epochs_step_override = self.config.early_epochs_step_override
+                else:
+                    early_epochs_step_override = None
+
+                try:  # try this batch size
+                    self.run_epoch(epoch_type='train', data_loader=train_loader,
+                                   update_gradients=True, iteration_override=early_epochs_step_override)
+
+                    with torch.no_grad():
+                        self.run_epoch(epoch_type='test', data_loader=test_loader,
+                                       update_gradients=False, iteration_override=early_epochs_step_override)
+
+                        if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0) and (epoch > 0):
+                            self.run_epoch(epoch_type='extra', data_loader=extra_test_loader,
+                                           update_gradients=False, iteration_override=None)  # compute loss on test set
+
+                    self.logger.numpyize_current_losses()
+                    self.logger.update_loss_record()
+
+                    '''update learning rates'''
+                    self.update_lr()
+
+                    '''save checkpoints'''
+                    if self.config.save_checkpoints and epoch > 0:
+                        self.model_checkpointing(epoch)
+
+                    '''check convergence status'''
+                    self.logger.check_model_convergence()
+
+                    '''sometimes test the generator on a mini CSP problem'''
+                    if (self.config.mode == 'gan') and (epoch % self.config.logger.mini_csp_frequency == 0) and \
+                            self.train_generator and (epoch > 0):
+                        pass  # todo finish search module
+
+                    '''record metrics and analysis'''
+                    self.logger.log_training_metrics()
+                    self.logger.log_epoch_analysis(test_loader)
+
+                    if all(list(self.logger.converged_flags.values())):  # todo confirm this works
+                        print('Training has converged!')
+                        break
+
+                    '''increment batch size'''
+                    train_loader, test_loader, extra_test_loader = \
+                        self.increment_batch_size(train_loader, test_loader, extra_test_loader)
+
+                    prev_epoch_failed = False
+
+                except RuntimeError as e:  # if we do hit OOM, slash the batch size
+                    if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
+                        if prev_epoch_failed:
+                            gc.collect()  # TODO not clear to me that this is effective
+
+                        train_loader, test_loader = slash_batch(train_loader, test_loader, 0.05)  # shrink batch size
+                        torch.cuda.empty_cache()
+                        self.config.grow_batch_size = False  # stop growing the batch for the rest of the run
+                        prev_epoch_failed = True
                     else:
-                        early_epochs_step_override = None
+                        raise e  # will simply raise error if training on CPU
+                epoch += 1
 
-                    try:  # try this batch size
-                        self.run_epoch(epoch_type='train', data_loader=train_loader,
-                                       update_gradients=True, iteration_override=early_epochs_step_override)
-
-                        with torch.no_grad():
-                            self.run_epoch(epoch_type='test', data_loader=test_loader,
-                                           update_gradients=False, iteration_override=early_epochs_step_override)
-
-                            if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0) and (epoch > 0):
-                                self.run_epoch(epoch_type='extra', data_loader=extra_test_loader,
-                                               update_gradients=False, iteration_override=None)  # compute loss on test set
-
-                        self.logger.numpyize_current_losses()
-                        self.logger.update_loss_record()
-
-                        '''update learning rates'''
-                        self.update_lr()
-
-                        '''save checkpoints'''
-                        if self.config.save_checkpoints and epoch > 0:
-                            self.model_checkpointing(epoch)
-
-                        '''check convergence status'''
-                        self.logger.check_model_convergence()
-
-                        '''sometimes test the generator on a mini CSP problem'''
-                        if (self.config.mode == 'gan') and (epoch % self.config.logger.mini_csp_frequency == 0) and \
-                                self.train_generator and (epoch > 0):
-                            pass  # todo finish search module
-
-                        '''record metrics and analysis'''
-                        self.logger.log_training_metrics()
-                        self.logger.log_epoch_analysis(test_loader)
-
-                        if all(list(self.logger.converged_flags.values())):  # todo confirm this works
-                            print('Training has converged!')
-                            break
-
-                        '''increment batch size'''
-                        train_loader, test_loader, extra_test_loader = \
-                            self.increment_batch_size(train_loader, test_loader, extra_test_loader)
-
-                        prev_epoch_failed = False
-
-                    except RuntimeError as e:  # if we do hit OOM, slash the batch size
-                        if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
-                            if prev_epoch_failed:
-                                gc.collect()  # TODO not clear to me that this is effective
-
-                            train_loader, test_loader = slash_batch(train_loader, test_loader, 0.05)  # shrink batch size
-                            torch.cuda.empty_cache()
-                            self.config.grow_batch_size = False  # stop growing the batch for the rest of the run
-                            prev_epoch_failed = True
-                        else:
-                            raise e  # will simply raise error if training on CPU
-                    epoch += 1
-
-                self.post_run_evaluation(epoch, test_loader, extra_test_loader)
+            self.post_run_evaluation(epoch, test_loader, extra_test_loader)
 
     def post_run_evaluation(self, epoch, test_loader, extra_test_loader):
         if self.config.mode == 'gan':  # evaluation on test metrics
@@ -417,7 +418,7 @@ class Modeller:
         for i, data in enumerate(tqdm.tqdm(data_loader, miniters=int(len(data_loader) / 25))):
             if (np.random.uniform(0, 1, 1) < self.config.autoencoder.random_fraction or
                     data.num_graphs == 1):
-                data = self.generate_random_point_cloud_batch(max(data.num_graphs, 2)) # must always be at least two graphs per batch
+                data = self.generate_random_point_cloud_batch(max(data.num_graphs, 2))  # must always be at least two graphs per batch
             else:
                 if self.config.autoencoder_positional_noise > 0:
                     data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
@@ -457,10 +458,11 @@ class Modeller:
                     break  # stop training early - for debugging purposes
 
         self.logger.numpyize_stats_dict(self.epoch_type)
+
         if self.epoch_type == 'train':
             if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:
-                if (1 - self.logger.train_stats['mean_self_overlap'][-100:].mean()) > self.config.autoencoder.overlap_eps:
-                    self.config.autoencoder_sigma *= self.config.autoencoder.sigma_threshold
+                if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps:
+                    self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
     def compute_autoencoder_loss(self, decoding, data, step):
 
@@ -1209,14 +1211,13 @@ class Modeller:
     def update_lr(self):
         for model_name in self.model_names:
             if self.config.__dict__[model_name].optimizer is not None:
-                self.optimizers_dict[model_name], _ = set_lr(
+                self.optimizers_dict[model_name], learning_rate = set_lr(
                     self.schedulers_dict[model_name],
                     self.optimizers_dict[model_name],
                     self.config.__dict__[model_name].optimizer,
                     self.logger.current_losses[model_name]['mean_train'],
                     self.hit_max_lr_dict[model_name])
 
-                learning_rate = self.optimizers_dict[model_name].param_groups[0]['lr']
                 if learning_rate >= self.config.__dict__[model_name].optimizer.max_lr:
                     self.hit_max_lr_dict[model_name] = True
 
