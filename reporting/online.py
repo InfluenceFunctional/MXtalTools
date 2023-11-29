@@ -1823,7 +1823,7 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
 
             fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
                                     showlegend=True if (j == 0 and graph_ind == 0) else False,
-                                    name=f'Predicted type', legendgroup=f'Predicted type',
+                                    name=f'Predicted type {j}',
                                     colorscale=colorscales[j],
                                     showscale=False,
                                     isomin=0, isomax=ymax, opacity=.05,
