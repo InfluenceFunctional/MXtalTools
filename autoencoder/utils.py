@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 from autoencoder.reporting import update_losses
 from torch_scatter import scatter
-from models.utils import high_dim_reconstruction_likelihood, split_reconstruction_likelihood
+from models.utils import compute_gaussian_overlap, split_reconstruction_likelihood
 
 
 def compute_loss(wandb, step, losses, config, working_sigma, num_points_prediction, composition_prediction, decoding, data, point_num_rands):
@@ -28,13 +28,13 @@ def compute_loss(wandb, step, losses, config, working_sigma, num_points_predicti
     per_graph_true_types = scatter(true_nodes, data.batch[:, None], dim=0, reduce='mean')
     per_graph_pred_types = scatter(decoded_data.x, decoded_data.batch[:, None], dim=0, reduce='sum') / point_num_rands_tensor
 
-    decoder_likelihoods = high_dim_reconstruction_likelihood(true_nodes, data, decoded_data, working_sigma, nodewise_weights=nodewise_weights_tensor,
-                                                             overlap_type=config.overlap_type, log_scale=config.log_reconstruction,
-                                                             type_distance_scaling=config.type_distance_scaling)
+    decoder_likelihoods = compute_gaussian_overlap(true_nodes, data, decoded_data, working_sigma, nodewise_weights=nodewise_weights_tensor,
+                                                   overlap_type=config.overlap_type, log_scale=config.log_reconstruction,
+                                                   type_distance_scaling=config.type_distance_scaling)
 
-    self_likelihoods = high_dim_reconstruction_likelihood(true_nodes, data, data, working_sigma, nodewise_weights=torch.ones(data.num_nodes, dtype=torch.float32, device=config.device),
-                                                          overlap_type=config.overlap_type, log_scale=config.log_reconstruction,
-                                                          type_distance_scaling=config.type_distance_scaling, dist_to_self=True)  # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
+    self_likelihoods = compute_gaussian_overlap(true_nodes, data, data, working_sigma, nodewise_weights=torch.ones(data.num_nodes, dtype=torch.float32, device=config.device),
+                                                overlap_type=config.overlap_type, log_scale=config.log_reconstruction,
+                                                type_distance_scaling=config.type_distance_scaling, dist_to_self=True)  # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
 
     encoding_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
     num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(config.device), num_points_prediction[:, 0])

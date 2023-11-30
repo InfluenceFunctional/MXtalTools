@@ -31,7 +31,7 @@ from models.discriminator_models import crystal_discriminator, crystal_proxy_dis
 from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
-                          save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss, compute_num_h_bonds, slash_batch, high_dim_reconstruction_likelihood, split_reconstruction_likelihood)
+                          save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss, compute_num_h_bonds, slash_batch, compute_gaussian_overlap)
 from models.utils import (weight_reset, get_n_config)
 from models.vdw_overlap import vdw_overlap
 
@@ -460,7 +460,7 @@ class Modeller:
         self.logger.numpyize_stats_dict(self.epoch_type)
 
         if self.epoch_type == 'train':
-            if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:
+            if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:  # todo switch this to record over prior epochs
                 if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps:
                     self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
@@ -487,16 +487,16 @@ class Modeller:
 
         # assert torch.sum(per_graph_pred_types) = len(per_graph_pred_types)
 
-        decoder_likelihoods = high_dim_reconstruction_likelihood(true_nodes, data, decoded_data, self.config.autoencoder_sigma,
-                                                                 nodewise_weights=nodewise_weights_tensor,
-                                                                 overlap_type='gaussian', log_scale=False,
-                                                                 type_distance_scaling=self.config.autoencoder.type_distance_scaling)
+        decoder_likelihoods = compute_gaussian_overlap(true_nodes, data, decoded_data, self.config.autoencoder_sigma,
+                                                       nodewise_weights=nodewise_weights_tensor,
+                                                       overlap_type='gaussian', log_scale=False,
+                                                       type_distance_scaling=self.config.autoencoder.type_distance_scaling)
 
-        self_likelihoods = high_dim_reconstruction_likelihood(true_nodes, data, data, self.config.autoencoder_sigma,
-                                                              nodewise_weights=torch.ones(data.num_nodes, dtype=torch.float32, device=self.config.device),
-                                                              overlap_type='gaussian', log_scale=False,
-                                                              type_distance_scaling=self.config.autoencoder.type_distance_scaling,
-                                                              dist_to_self=True)  # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
+        self_likelihoods = compute_gaussian_overlap(true_nodes, data, data, self.config.autoencoder_sigma,
+                                                    nodewise_weights=torch.ones(data.num_nodes, dtype=torch.float32, device=self.config.device),
+                                                    overlap_type='gaussian', log_scale=False,
+                                                    type_distance_scaling=self.config.autoencoder.type_distance_scaling,
+                                                    dist_to_self=True)  # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
 
         # encoding_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
         # num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(self.config.device), num_points_prediction[:, 0])

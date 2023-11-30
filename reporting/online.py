@@ -10,11 +10,12 @@ import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
 from torch_geometric.loader.dataloader import Collater
+import torch.nn.functional as F
 
 from common.utils import get_point_density
 
 from common.geometry_calculations import cell_vol
-from models.utils import norm_scores, split_reconstruction_likelihood
+from models.utils import compute_gaussian_overlap
 
 blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
     'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
@@ -1375,15 +1376,29 @@ def log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict):
         decoded_data = collater(test_epoch_stats_dict['decoded_sample'])
         nodewise_weights_tensor = torch.Tensor(test_epoch_stats_dict['nodewise_weights']).flatten()
 
-        coord_overlap, type_overlap = split_reconstruction_likelihood(
-            data, decoded_data, config.autoencoder_sigma, nodewise_weights=nodewise_weights_tensor,
-            overlap_type='gaussian', num_classes=dataDims['num_atom_types'],
-            type_distance_scaling=config.autoencoder.type_distance_scaling)
+        true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=dataDims['num_atom_types']).float()
 
-        self_coord_overlap, self_type_overlap = split_reconstruction_likelihood(
-            data, data, config.autoencoder_sigma, nodewise_weights=torch.ones_like(data.x),
-            overlap_type='gaussian', num_classes=dataDims['num_atom_types'],
-            type_distance_scaling=config.autoencoder.type_distance_scaling, dist_to_self=True)
+        coord_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder_sigma,
+                                                 nodewise_weights=nodewise_weights_tensor,
+                                                 overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
+                                                 type_distance_scaling=config.autoencoder.type_distance_scaling)
+
+        self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder_sigma,
+                                                      nodewise_weights=nodewise_weights_tensor,
+                                                      overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
+                                                      type_distance_scaling=config.autoencoder.type_distance_scaling,
+                                                      dist_to_self=True)
+
+        type_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder_sigma,
+                                                nodewise_weights=nodewise_weights_tensor,
+                                                overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
+                                                type_distance_scaling=config.autoencoder.type_distance_scaling)
+
+        self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder_sigma,
+                                                     nodewise_weights=nodewise_weights_tensor,
+                                                     overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
+                                                     type_distance_scaling=config.autoencoder.type_distance_scaling,
+                                                     dist_to_self=True)
 
         wandb.log({"positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
                    "typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy()})
