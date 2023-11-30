@@ -2,7 +2,7 @@ machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
-dataset_name: 'test_dataset.pkl'
+dataset_name: 'dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/dataset/small_autoencoder.yaml'
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
@@ -185,7 +185,7 @@ autoencoder:
 
   # discriminator optimizer and model
   optimizer:
-    optimizer: adamw
+    optimizer: adam
     init_lr: 1.0E-4
     encoder_init_lr: 1.0E-4
     decoder_init_lr: 1.0E-3

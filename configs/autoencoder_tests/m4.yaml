@@ -182,18 +182,21 @@ autoencoder:
 
   # discriminator optimizer and model
   optimizer:
-    optimizer: adamw
+    optimizer: adam
     init_lr: 1.0E-4
-    max_lr: 1.0E-3
-    min_lr: 5.0E-4
-    lr_schedule: True
+    encoder_init_lr: 1.0E-4
+    decoder_init_lr: 1.0E-3
+    max_lr: 1.0E-5
+    min_lr: 1.0E-5
+    lr_schedule: False
     beta1: 0.9
     beta2: 0.999
     weight_decay: 0.001
     convergence_eps: 0.00001
     training_period: 1
-    lr_growth_lambda: 1.01
+    lr_growth_lambda: 1.00
     lr_shrink_lambda: 0.995
+    use_plateau_scheduler: False
 
   model:
     graph_convolution_type: TransformerConv
