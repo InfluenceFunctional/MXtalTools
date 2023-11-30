@@ -51,6 +51,7 @@ autoencoder_positional_noise: 0.1
 
 generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
+
 # for GAN training
 generator:
   # settings
@@ -77,6 +78,7 @@ generator:
     convergence_eps: 0.00001
     lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.99
+    use_plateau_scheduler: True
 
   model:
     num_fc_layers: 2
@@ -139,6 +141,7 @@ discriminator:
     training_period: 1
     lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.99
+    use_plateau_scheduler: True
 
   model:
     graph_convolution_type: TransformerConv
