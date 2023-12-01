@@ -171,11 +171,11 @@ discriminator:
 
 
 autoencoder:
-  molecule_radius_normalization: 5
+  molecule_radius_normalization: 10
   random_fraction: 0
   min_num_atoms: 2
   max_num_atoms: 5
-  init_sigma: 0.25
+  init_sigma: 0.125
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   overlap_eps: 1.0E-3

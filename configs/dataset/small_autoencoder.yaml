@@ -14,8 +14,8 @@ test_fraction: 0.2
 filter_polymorphs: True
 filter_duplicate_molecules: True
 filter_conditions: [['crystal_z_prime','in',[1]],
-                    ['molecule_num_atoms','range',[3,100]],
-                    ['molecule_radius','range',[0.1,10]],
+                    ['molecule_num_atoms','range',[3, 20]],
+                    ['molecule_radius','range',[0.1, 10]],
                     ['atom_atomic_numbers','range', [6, 8]]
                     ]
 
