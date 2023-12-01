@@ -1,7 +1,7 @@
 machine: "cluster"  # "local" or "cluster"
 device: "cuda"  # "cuda" or "cpu"
 anomaly_detection: False  # DEPRECATED slows down the code
-mode: autoencoder  # 'gan' for crystal generator AND/OR discriminator or 'regression' for molecule property prediction or 'figures' or 'autoencoder' or 'search' WIP
+mode: autoencoder_standalone_dev  # 'gan' for crystal generator AND/OR discriminator or 'regression' for molecule property prediction or 'figures' or 'autoencoder_standalone_dev' or 'search' WIP
 dataset_name: 'test_dataset.pkl'  # dataset.pkl is large test_dataset.pkl is slow for faster prototyping
 misc_dataset_name: 'misc_data_for_dataset.npy'  # contains necessary standardizations. Leave as-is in general
 dataset_yaml_path: '/dataset/small_autoencoder.yaml'  # path within configs to .yaml which defines dataset filtering
@@ -19,7 +19,7 @@ min_batch_size: 2
 max_batch_size: 1000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 2.0E2  # tail for convergence checks
+history: 200 # tail for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 

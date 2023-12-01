@@ -120,7 +120,7 @@ class Modeller:
         for models we will not use, just set them as nn.Linear(1,1)
         :return:
         """
-        self.model_names = ['generator', 'discriminator', 'regressor', 'autoencoder']
+        self.model_names = ['generator', 'discriminator', 'regressor', 'autoencoder_standalone_dev']
         self.models_dict = {name: nn.Linear(1, 1) for name in self.model_names}  # initialize null models
 
         self.reload_model_checkpoint_configs()
@@ -132,8 +132,8 @@ class Modeller:
             #self.models_dict['proxy_discriminator'] = crystal_proxy_discriminator(self.config.seeds.model, self.config.proxy_discriminator.model, self.dataDims)
         if self.config.mode == 'regression' or self.config.model_paths.regressor is not None:
             self.models_dict['regressor'] = molecule_regressor(self.config.seeds.model, self.config.regressor.model, self.dataDims)
-        if self.config.mode == 'autoencoder' or self.config.model_paths.autoencoder is not None:
-            self.models_dict['autoencoder'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims)
+        if self.config.mode == 'autoencoder_standalone_dev' or self.config.model_paths.autoencoder is not None:
+            self.models_dict['autoencoder_standalone_dev'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims)
 
         if self.config.device.lower() == 'cuda':
             torch.backends.cudnn.benchmark = True
@@ -253,7 +253,7 @@ class Modeller:
         self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
         self.train_regressor = self.config.mode == 'regression'
         #self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
-        self.train_autoencoder = self.config.mode == 'autoencoder'
+        self.train_autoencoder = self.config.mode == 'autoencoder_standalone_dev'
 
         '''initialize datasets and useful classes'''
         train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
@@ -383,7 +383,7 @@ class Modeller:
         elif self.config.mode == 'regression':
             self.regression_epoch(data_loader, update_weights, iteration_override)
 
-        elif self.config.mode == 'autoencoder':
+        elif self.config.mode == 'autoencoder_standalone_dev':
             self.autoencoder_epoch(data_loader, update_weights, iteration_override)
 
     def generate_random_point_cloud_batch(self, batch_size):
@@ -417,18 +417,18 @@ class Modeller:
     def autoencoder_step(self, data, update_weights, step):
 
         data = data.to(self.device)
-        decoding = self.models_dict['autoencoder'](data.clone())
+        decoding = self.models_dict['autoencoder_standalone_dev'](data.clone())
 
         autoencoder_losses, stats, decoded_data, nodewise_weights_tensor = self.compute_autoencoder_loss(decoding, data)
         autoencoder_loss = autoencoder_losses.mean()
 
         if update_weights:
-            self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+            self.optimizers_dict['autoencoder_standalone_dev'].zero_grad(set_to_none=True)  # reset gradients from previous passes
             autoencoder_loss.backward()  # back-propagation
-            self.optimizers_dict['autoencoder'].step()  # update parameters
+            self.optimizers_dict['autoencoder_standalone_dev'].step()  # update parameters
 
         '''log losses and other tracking values'''
-        self.logger.update_current_losses('autoencoder', self.epoch_type,
+        self.logger.update_current_losses('autoencoder_standalone_dev', self.epoch_type,
                                           autoencoder_loss.cpu().detach().numpy(),
                                           autoencoder_losses.cpu().detach().numpy())
 
@@ -441,9 +441,9 @@ class Modeller:
 
     def autoencoder_epoch(self, data_loader, update_weights, iteration_override=None):
         if update_weights:
-            self.models_dict['autoencoder'].train(True)
+            self.models_dict['autoencoder_standalone_dev'].train(True)
         else:
-            self.models_dict['autoencoder'].eval()
+            self.models_dict['autoencoder_standalone_dev'].eval()
 
         if self.config.autoencoder.random_fraction == 1:
             if self.epoch_type == 'train':

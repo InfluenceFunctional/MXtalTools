@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from autoencoder.reporting import update_losses
+from autoencoder_standalone_dev.reporting import update_losses
 from torch_scatter import scatter
 from models.utils import compute_gaussian_overlap, split_reconstruction_likelihood
 

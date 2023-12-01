@@ -1370,7 +1370,7 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
     elif config.mode == 'regression':
         log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
-    elif config.mode == 'autoencoder':
+    elif config.mode == 'autoencoder_standalone_dev':
         log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict)
 
     if extra_test_dict is not None and len(extra_test_dict) > 0 and 'blind_test' in config.extra_test_set_name:

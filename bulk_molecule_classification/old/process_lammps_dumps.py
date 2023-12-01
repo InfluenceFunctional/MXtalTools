@@ -10,9 +10,9 @@ import wandb
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
 
-from classify_lammps_trajs.utils import convert_box_to_cell_params, collect_to_traj_dataloaders, init_classifier
-from classify_lammps_trajs.NICOAM_constants import type2num, num2atomicnum
-from classify_lammps_trajs.dump_data_processing import generate_dataset_from_dumps
+from bulk_molecule_classification.utils import convert_box_to_cell_params, collect_to_traj_dataloaders, init_classifier
+from bulk_molecule_classification.NICOAM_constants import type2num, num2atomicnum
+from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 

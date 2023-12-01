@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from classify_lammps_trajs.NICOAM_constants import identifier2form, num2atomicnum, type2num
+from bulk_molecule_classification.NICOAM_constants import identifier2form, num2atomicnum, type2num
 
 
 def process_dump(path):

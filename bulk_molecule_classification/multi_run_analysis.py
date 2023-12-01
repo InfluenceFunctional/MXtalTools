@@ -7,8 +7,8 @@ import warnings
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
-from classify_lammps_trajs.NICOAM_constants import nic_ordered_class_names
-from classify_lammps_trajs.traj_analysis_figs import plot_classifier_pies
+from bulk_molecule_classification.NICOAM_constants import nic_ordered_class_names
+from bulk_molecule_classification.traj_analysis_figs import plot_classifier_pies
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 

@@ -3,7 +3,7 @@ from argparse import Namespace
 import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning)
-from autoencoder.reporting import log_losses, save_checkpoint
+from autoencoder_standalone_dev.reporting import log_losses, save_checkpoint
 from reporting.online import overlap_plot
 import numpy as np
 import torch
@@ -14,10 +14,10 @@ from torch_geometric.loader.dataloader import Collater
 from torch.optim import Adam
 import argparse
 import wandb
-from autoencoder.utils import (
+from autoencoder_standalone_dev.utils import (
     load_checkpoint, compute_loss)
-from autoencoder.ae_models import point_cloud_encoder, fc_decoder
-from autoencoder.configs import dev, configs
+from autoencoder_standalone_dev.ae_models import point_cloud_encoder, fc_decoder
+from autoencoder_standalone_dev.configs import dev, configs
 from models.utils import check_convergence
 from datetime import datetime
 

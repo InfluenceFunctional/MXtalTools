@@ -4,11 +4,11 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from classify_lammps_trajs.NICOAM_constants import form2index, identifier2form
-from classify_lammps_trajs.dump_data_processing import generate_dataset_from_dumps
+from bulk_molecule_classification.NICOAM_constants import form2index, identifier2form
+from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
 
-from classify_lammps_trajs.traj_analysis_figs import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig
-from classify_lammps_trajs.utils import get_loss, classifier_reporting, record_step_results, collect_to_traj_dataloaders, process_trajectory_results_dict
+from bulk_molecule_classification.traj_analysis_figs import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig
+from bulk_molecule_classification.utils import get_loss, classifier_reporting, record_step_results, collect_to_traj_dataloaders, process_trajectory_results_dict
 
 
 def train_classifier(config, classifier, optimizer,
@@ -147,7 +147,7 @@ def classifier_evaluation(config, classifier, optimizer,
 
 def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
 
-    from classify_lammps_trajs.ovito_utils import write_ovito_xyz
+    from bulk_molecule_classification.ovito_utils import write_ovito_xyz
     dataset_name = '_'.join(dumps_dir.split('/')[-3:])
     datasets_path = config['datasets_path']
     dataset_path = f'{datasets_path}{dataset_name}.pkl'

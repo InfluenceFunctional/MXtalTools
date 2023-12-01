@@ -4,7 +4,7 @@ from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
-from classify_lammps_trajs.NICOAM_constants import defect_names, nic_ordered_class_names, form2index, index2form
+from bulk_molecule_classification.NICOAM_constants import defect_names, nic_ordered_class_names, form2index, index2form
 import plotly
 from scipy.ndimage import gaussian_filter1d
 

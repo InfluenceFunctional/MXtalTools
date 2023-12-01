@@ -4,13 +4,13 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from classify_lammps_trajs.NICOAM_constants import num2atomicnum
+from bulk_molecule_classification.NICOAM_constants import num2atomicnum
 from common.utils import delete_from_dataframe, softmax_np
 from dataset_management.CrystalData import CrystalData
 from dataset_management.utils import get_dataloaders
 from models.base_models import molecule_graph_model
 from common.geometry_calculations import coor_trans_matrix
-from classify_lammps_trajs.NICOAM_constants import defect_names, nic_ordered_class_names
+from bulk_molecule_classification.NICOAM_constants import defect_names, nic_ordered_class_names
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go

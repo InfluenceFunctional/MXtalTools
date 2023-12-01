@@ -3,16 +3,16 @@ import warnings
 import torch.optim as optim
 import wandb
 import argparse
-from classify_lammps_trajs.dev_configs import configs, dev
+from bulk_molecule_classification.dev_configs import configs, dev
 from random import shuffle
 import torch
 import numpy as np
 
-from classify_lammps_trajs.utils import (collect_to_traj_dataloaders, init_classifier,
-                                         reload_model)
-from classify_lammps_trajs.workflows import train_classifier, classifier_evaluation, trajectory_analysis
-from classify_lammps_trajs.NICOAM_constants import nic_class_names, nic_ordered_class_names, urea_class_names, urea_ordered_class_names
-from classify_lammps_trajs.dump_data_processing import generate_dataset_from_dumps
+from bulk_molecule_classification.utils import (collect_to_traj_dataloaders, init_classifier,
+                                                reload_model)
+from bulk_molecule_classification.workflows import train_classifier, classifier_evaluation, trajectory_analysis
+from bulk_molecule_classification.NICOAM_constants import nic_class_names, nic_ordered_class_names, urea_class_names, urea_ordered_class_names
+from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore ovito error
