@@ -94,16 +94,16 @@ class SupercellBuilder:
                     enforce_right_handedness=False,
                     return_asym_unit_coords=True)
 
-            if not all(asym_unit_is_well_defined):
-                print("Warning: Some built crystals have ill defined asymmetric units")
+            # if not all(asym_unit_is_well_defined):  # todo solve this
+            #     print("Warning: Some built crystals have ill defined asymmetric units")
 
             supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
             supercell_data.asym_unit_handedness = mol_handedness
 
-            if align_to_standardized_orientation:  # typically issue of handedness of the asymmetric unit
-                if (torch.amax(torch.sum(torch.abs(mol_orientations - mol_rotation_i), dim=1)) > 1e-2 or
-                        torch.amax(torch.sum(torch.abs(mol_positions - mol_position), dim=1)) > 1e-2):  # in the spherical basis
-                    print("Warning: Rebuilt standardized crystal was not identical.")
+            # if align_to_standardized_orientation:  # typically issue of handedness of the asymmetric unit
+            #     if (torch.amax(torch.sum(torch.abs(mol_orientations - mol_rotation_i), dim=1)) > 1e-2 or
+            #             torch.amax(torch.sum(torch.abs(mol_positions - mol_position), dim=1)) > 1e-2):  # in the spherical basis
+            #         print("Warning: Rebuilt standardized crystal was not identical.")
 
         # get minimal supercell cluster for convolving about a given canonical conformer
         cell_vector_list = T_fc_list.permute(0, 2, 1)

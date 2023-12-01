@@ -1,40 +1,39 @@
-machine: "local"  # or "cluster"
-device: "cpu"  # or "cpu"
+machine: "cluster"  # or "cluster"
+device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: gan  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
-dataset_name: 'test_dataset.pkl'
+mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
+dataset_name: 'dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
-base_config_path: '/experiments/base.yaml'
-dataset_yaml_path: '/dataset/full_gan_for_tests.yaml'
+dataset_yaml_path: '/dataset/small_autoencoder.yaml'
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
-save_checkpoints: False # will do it always on cluster, only locally if True
+save_checkpoints: True # will do it always on cluster, only locally if True
 
 dataset:
-  max_dataset_length: 100
+  max_dataset_length: 1000000
 
 # batching & convergence
 early_epochs_step_override: 100
-num_early_epochs: 5
+num_early_epochs: 10
 grow_batch_size: True
-min_batch_size: 2
+min_batch_size: 100
 max_batch_size: 500
-batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-max_epochs: 1 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
+max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  run_name: gan_test
+  run_name: autoencoder_m2
   mini_csp_frequency: 5
-  sample_reporting_frequency: 1
+  sample_reporting_frequency: 5
   log_figures: True
-  experiment_tag: test
+  experiment_tag: autoencoder_battery1
 
-sample_steps: 100
+sample_steps: 100 
 
 seeds:
-  model: 0
+  model: 1
   dataset: 0
 
 # for reloading prior checkpoints
@@ -42,15 +41,15 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
+  proxy_discriminator: null
   autoencoder: null
-
 
 discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
-autoencoder_positional_noise: 0
+autoencoder_positional_noise: 0.1
 
-generate_sgs: 'all'  #'["P21/c"] #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
 
 # for GAN training
@@ -58,14 +57,15 @@ generator:
   # settings
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
-  train_vdw: True
-  train_adversarially: True
+  train_vdw: False
+  train_adversarially: False
   vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
   density_loss_func: l1  # 'l1' or 'mse'
   adversarial_loss_func: 'score'  #
   train_h_bond: False # (non-directional)
   similarity_penalty: 0.5
 
+  #generator optimizer and model
   optimizer:
     optimizer: adamw
     init_lr: 1.0E-4
@@ -119,7 +119,7 @@ generator:
 
 discriminator:
   # settings
-  train_adversarially: True
+  train_adversarially: False
   train_on_randn: True
   train_on_distorted: True
   use_classification_loss: True
@@ -169,10 +169,72 @@ discriminator:
     atom_type_embedding_dims: 5
     periodic_convolution_type: 'all_layers'  # or 'last_layer'
 
-regressor:
+
+autoencoder:
+  molecule_radius_normalization: 10
+  random_fraction: 0
+  min_num_atoms: 2
+  max_num_atoms: 5
+  init_sigma: 0.125
+  sigma_lambda: 0.99
+  sigma_threshold: 0.01
+  overlap_eps: 1.0E-3
+  independent_node_weights: False
+  node_weight_temperature: 10
+  type_distance_scaling: 0.5
+
+  # discriminator optimizer and model
+  optimizer:
+    optimizer: adam
+    init_lr: 1.0E-4
+    encoder_init_lr: 1.0E-4
+    decoder_init_lr: 1.0E-3
+    max_lr: 1.0E-5
+    min_lr: 1.0E-5
+    lr_schedule: False
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 0.001
+    convergence_eps: 0.00001
+    training_period: 1
+    lr_growth_lambda: 1.00
+    lr_shrink_lambda: 0.995
+    use_plateau_scheduler: False
+
+  model:
+    graph_convolution_type: TransformerConv
+    graph_aggregator:  max
+    embedding_depth: 512
+    concat_mol_to_atom_features: True
+    activation: gelu
+    num_decoder_layers: 2
+    decoder_norm_mode: batch
+    decoder_dropout_probability: 0
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0
+    graph_message_dropout: 0
+    num_attention_heads: 4
+    graph_message_depth: 128
+    graph_node_dims: 256
+    num_graph_convolutions: 4
+    graph_embedding_depth: 256
+    nodewise_fc_layers: 1
+    num_radial: 50
+    radial_function: gaussian
+    max_num_neighbors: 100
+    convolution_cutoff: 2
+    atom_type_embedding_dims: 5
+    num_decoder_points: 256
+
+proxy_discriminator:
+  #settings
+  train: False
+
+  # discriminator optimizer and model
   optimizer: null
   model: null
 
-autoencoder:
+regressor:
+  # settings
   optimizer: null
   model: null

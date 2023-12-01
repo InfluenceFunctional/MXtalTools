@@ -64,12 +64,18 @@ class DataManager:
         self.single_molecule_dataset_identifier = config.single_molecule_dataset_identifier
         np.random.seed(self.dataset_seed)
 
+        self.allowed_atom_types = np.unique(np.concatenate([atoms for atoms_lists in self.dataset['atom_atomic_numbers'] for atoms in atoms_lists]))
+
         if override_length is not None:
             self.max_dataset_length = override_length
         else:
             self.max_dataset_length = config.max_dataset_length
 
         self.dataset_length = min(len(self.dataset), self.max_dataset_length)
+
+        self.max_molecule_radius = np.amax(self.dataset['molecule_radius'])[0]
+        self.min_num_atoms = np.amin(self.dataset['molecule_num_atoms'])[0]
+        self.max_num_atoms = np.amax(self.dataset['molecule_num_atoms'])[0]
 
         # shuffle and cut up dataset before processing
         self.dataset = self.dataset.loc[np.random.choice(len(self.dataset), self.dataset_length, replace=False)]
@@ -125,6 +131,11 @@ class DataManager:
             'crystal_generation features': self.crystal_generation_features,
             'num crystal generation features': len(self.crystal_generation_features),
 
+            'allowed_atom_types': self.allowed_atom_types,
+            'num_atom_types': len(self.allowed_atom_types),
+            'max_molecule_radius': self.max_molecule_radius,
+            'min_molecule_num_atoms': self.min_num_atoms,
+            'max_molecule_num_atoms': self.max_num_atoms,
         }
 
         return dim
@@ -160,6 +171,9 @@ class DataManager:
             if 'fraction' in key and 'fractional' not in key:
                 composition_keys.append(key)
         self.tracking_keys.extend(composition_keys)
+
+        self.tracking_keys.append('molecule_num_atoms')
+        self.tracking_keys.append('molecule_volume')
 
         self.tracking_keys = list(set(self.tracking_keys))  # remove duplicates
 
@@ -781,9 +795,10 @@ class DataManager:
                     cond not in mol for mol in self.dataset[condition_key] for cond in condition_range
                 ])[:, 0]
             elif condition_key[:4] == 'atom':
-                bad_inds = np.argwhere([
-                    cond not in np.concatenate(atoms) for atoms in self.dataset[condition_key] for cond in condition_range
-                ])[:, 0]
+                bad_inds = np.concatenate([
+                    np.argwhere([cond not in np.concatenate(atoms) for atoms in self.dataset[condition_key]])[:, 0]
+                    for cond in condition_range]
+                )
 
         elif condition_type == 'not_in':
             # check for where the data is equal to the explicitly enumerated elements to be excluded
@@ -796,9 +811,10 @@ class DataManager:
                     cond in mol for mol in self.dataset[condition_key] for cond in condition_range
                 ])[:, 0]
             elif condition_key[:4] == 'atom':
-                bad_inds = np.argwhere([
-                    cond in np.concatenate(atoms) for atoms in self.dataset[condition_key] for cond in condition_range
-                ])[:, 0]
+                bad_inds = np.concatenate([
+                    np.argwhere([cond in np.concatenate(atoms) for atoms in self.dataset[condition_key]])[:, 0]
+                    for cond in condition_range]
+                )
         else:
             assert False, f"{condition_type} is not an implemented dataset filter condition"
 
@@ -853,6 +869,7 @@ class DataManager:
 
     def __len__(self):
         return len(self.datapoints)
+
 
 if __name__ == '__main__':
     # miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")

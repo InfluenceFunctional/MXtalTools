@@ -29,19 +29,9 @@ def dict2namespace(data_dict: dict):
     return data_namespace
 
 
-def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
-    """
-    Combines YAML configuration file, command line arguments and default arguments into
-    a single configuration dictionary.
-
-    # todo confirm behavior of nested command line overrides
-
-    Returns
-    -------
-        Namespace
-    """
+def get_user_config(override_args=None, user_yaml_path=None):
     if user_yaml_path is None:
-        assert override_args is not None
+        assert override_args is not None, "Must provide a user yaml path on command line if not directly to get_config"
         '''get user-specific configs'''
         override_keys = [
             arg.strip("--").split("=")[0] for arg in override_args if "--" in arg
@@ -55,9 +45,11 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
     else:
         user_path = user_yaml_path
 
-    user_config = load_yaml(user_path)
+    return load_yaml(user_path), override_args
 
-    # Read YAML config
+
+def get_main_config(user_config, override_args=None, main_yaml_path=None):
+    # Read main YAML config
     if hasattr(override_args, 'yaml_config'):
         yaml_path = Path(override_args.yaml_config)
     elif main_yaml_path is not None:
@@ -65,51 +57,99 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
     else:
         yaml_path = Path(user_config['paths']['yaml_path'])
 
-    config = load_yaml(yaml_path)
-    config['paths'] = user_config['paths']
-    config['paths']['yaml_path'] = yaml_path  # overwrite here
-    config['wandb'] = user_config['wandb']
+    return load_yaml(yaml_path), yaml_path
 
+
+def print_dict(v, prefix='', keys_list=[]):
+    """
+    https://stackoverflow.com/questions/10756427/loop-through-all-nested-dictionary-values
+    """
+    if isinstance(v, dict):
+        for k, v2 in v.items():
+            p2 = "{}['{}']".format(prefix, k)
+            keys_list = print_dict(v2, p2, keys_list)
+    elif isinstance(v, list):
+        for i, v2 in enumerate(v):
+            p2 = "{}[{}]".format(prefix, i)
+            keys_list = print_dict(v2, p2, keys_list)
+    else:
+        keys_list.append(prefix)
+        # print('{} = {}'.format(prefix, repr(v)))
+
+    return keys_list
+
+
+def write_non_overlapping_configs(c1, c2):
+    """
+    write any items in c2 onto c1 if they are not already there
+    """
+    for key in c2.keys():
+        if key in c1.keys():
+            if isinstance(c1[key], dict):
+                c1[key] = write_non_overlapping_configs(c1[key], c2[key])
+
+        elif key not in c1.keys():
+            c1[key] = c2[key]
+
+    return c1
+
+
+def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
+    """
+    Combines YAML configuration file, command line arguments and default arguments into
+    a single configuration dictionary.
+
+    Returns
+    -------
+        Namespace
+    """
+    # load user and main configs
+    user_config, override_args = get_user_config(override_args, user_yaml_path)
+    main_config, main_config_path = get_main_config(user_config, override_args, main_yaml_path)
+
+    # combine main and user configs
+    main_config['paths'] = user_config['paths']
+    main_config['paths']['yaml_path'] = main_config_path  # overwrite here
+    main_config['wandb'] = user_config['wandb']
+
+    # apply command line override args # todo this does not work for nested override_args
     if override_args is not None:
-        for arg in override_args.__dict__.keys():  # todo this does not work for nested override_args
-            if arg in config.keys():
-                config[arg] = override_args.__dict__[arg]
+        for arg in override_args.__dict__.keys():
+            if arg in main_config.keys():
+                main_config[arg] = override_args.__dict__[arg]
 
-    if config['machine'] == 'local':
-        config['workdir'] = user_config['paths']['local_workdir_path']
-        config['dataset_path'] = user_config['paths']['local_dataset_dir_path']
-        config['checkpoint_dir_path'] = user_config['paths']['local_checkpoint_dir_path']
-        config['config_path'] = user_config['paths']['local_config_path']
-        for model in ['discriminator', 'regressor', 'generator', 'proxy_discriminator']:
-            if config[model + '_name'] is not None:
-                config[model + '_path'] = user_config['paths']['local_checkpoints_path'] + config[model + '_name']
-            else:
-                config[model + '_path'] = None
+    # generate machine-appropriate paths
+    machine_type = main_config['machine']
+    main_config['workdir'] = user_config['paths'][machine_type + '_workdir_path']
+    main_config['dataset_path'] = user_config['paths'][machine_type + '_dataset_dir_path']
+    main_config['checkpoint_dir_path'] = user_config['paths'][machine_type + '_checkpoint_dir_path']
+    main_config['config_path'] = user_config['paths'][machine_type + '_config_path']
+    for model in main_config['model_paths'].keys():
+        if main_config['model_paths'][model] is not None:
+            main_config['model_paths'][model] = user_config['paths'][machine_type + '_checkpoints_path'] + main_config['model_paths'][model]
 
-    elif config['machine'] == 'cluster':
-        config['workdir'] = user_config['paths']['cluster_workdir_path']
-        config['dataset_path'] = user_config['paths']['cluster_dataset_dir_path']
-        config['checkpoint_dir_path'] = user_config['paths']['cluster_checkpoint_dir_path']
-        config['config_path'] = user_config['paths']['cluster_config_path']
-        for model in ['discriminator', 'regressor', 'generator', 'proxy_discriminator']:
-            if config[model + '_name'] is not None:
-                config[model + '_path'] = user_config['paths']['cluster_checkpoints_path'] + config[model + '_name']
-            else:
-                config[model + '_path'] = None
+    # update any missing values from base config
+    if 'base_config_path' in main_config.keys():
+        if main_config['base_config_path'] is not None:
+            base_config_path = main_config['config_path'] + main_config['base_config_path']
+            base_config = load_yaml(base_config_path)
+            main_config = write_non_overlapping_configs(main_config, base_config)
 
-        config['save_checkpoints'] = True  # always save checkpoints on cluster
+    # always save checkpoints on cluster
+    if machine_type == 'cluster':
+        main_config['save_checkpoints'] = True
 
     # load dataset config - but do not overwrite any settings from main config
-    dataset_yaml_path = Path(config['config_path'] + config['dataset_yaml_path'])
+    dataset_yaml_path = Path(main_config['config_path'] + main_config['dataset_yaml_path'])
     dataset_config = load_yaml(dataset_yaml_path)
-    if 'dataset' in config.keys():
+    if 'dataset' in main_config.keys():
         for key in dataset_config.keys():
-            if key not in config['dataset']:
-                config['dataset'][key] = dataset_config[key]
+            if key not in main_config['dataset']:
+                main_config['dataset'][key] = dataset_config[key]
     else:
-        config['dataset'] = dataset_config
+        main_config['dataset'] = dataset_config
 
-    return dict2namespace(config)
+    return dict2namespace(main_config)
 
 
 def load_yaml(path):

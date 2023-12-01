@@ -3,7 +3,8 @@ from argparse import Namespace
 import warnings
 
 warnings.filterwarnings("ignore", category=UserWarning)
-from autoencoder.reporting import log_losses, save_checkpoint, overlap_plot
+from autoencoder.reporting import log_losses, save_checkpoint
+from reporting.online import overlap_plot
 import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiplicativeLR
@@ -142,7 +143,7 @@ with (wandb.init(
             if step % 100 == 0:
                 log_losses(
                     wandb, losses, step, optimizer, data, batch_size,
-                    working_sigma, decoded_data, mean_sample_likelihood,
+                    working_sigma, mean_sample_likelihood,
                     working_min_points, working_max_points)
 
                 save_checkpoint(encoder, decoder, optimizer, config, step, losses)
@@ -158,7 +159,7 @@ with (wandb.init(
                     converged = converged1 and converged2 and converged3
 
             if step % 1000 == 0:
-                overlap_plot(wandb, data, decoded_data, working_sigma, config, nodewise_weights)
+                overlap_plot(wandb, data, decoded_data, working_sigma, config.max_point_types, config.cart_dimension, nodewise_weights)
 
             if step % config.lr_timescale == 0 and step != 0 and optimizer.param_groups[0]['lr'] > 1e-5:
                 scheduler.step()

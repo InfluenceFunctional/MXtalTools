@@ -1,4 +1,4 @@
-name: mxtaltools_train_env
+name: mxtaltools_train_env_312
 channels:
   - pytorch  # check on PyTorch installation instructions for your system
   - nvidia
@@ -8,7 +8,7 @@ channels:
   #- https://conda.ccdc.cam.ac.uk  # comment out if not doing dataset construction
 
 dependencies:
-  - python=3.11
+  - python=3.10
   #- csd-python-api  # comment out if not doing dataset construction
   - pyg
   - pytorch
@@ -16,7 +16,6 @@ dependencies:
   #- cpuonly
   - plotly
   - wandb
-  - polars
   - pytest
   - numba
   - scipy

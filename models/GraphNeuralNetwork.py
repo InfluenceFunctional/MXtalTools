@@ -154,10 +154,10 @@ edge_cmap=plt.cm.RdYlGn, node_color = node_weights, cmap=plt.cm.RdYlGn)
 
 
 class EmbeddingBlock(torch.nn.Module):
-    def __init__(self, hidden_channels, num_atom_types, num_atom_features, atom_type_embedding_dimension):
+    def __init__(self, node_embedding_depth, num_discrete_types, num_scalar_input_features, atom_type_embedding_dimension):
         super(EmbeddingBlock, self).__init__()
-        self.embeddings = nn.Embedding(num_atom_types + 1, atom_type_embedding_dimension)
-        self.linear = nn.Linear(atom_type_embedding_dimension + num_atom_features - 1, hidden_channels)
+        self.embeddings = nn.Embedding(num_discrete_types + 1, atom_type_embedding_dimension)
+        self.linear = nn.Linear(atom_type_embedding_dimension + num_scalar_input_features - 1, node_embedding_depth)
 
     def forward(self, x):
         if x.dim() == 1:

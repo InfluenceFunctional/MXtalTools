@@ -6,22 +6,24 @@ import wandb
 from torch import optim, nn as nn
 from torch.nn import functional as F
 from torch.optim import lr_scheduler as lr_scheduler
+from torch_scatter import scatter
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import softmax_np, components2angle
 from dataset_management.utils import update_dataloader_batch_size
+from models.asymmetric_radius_graph import radius
 
 
-def set_lr(schedulers, optimizer, lr_schedule, min_lr, err_tr, hit_max_lr):
-    if lr_schedule:
+def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr):
+    if optimizer_config.lr_schedule:
         lr = optimizer.param_groups[0]['lr']
-        if lr > min_lr:
+        if lr > optimizer_config.min_lr:
             schedulers[0].step(np.mean(np.asarray(err_tr)))  # plateau scheduler
 
         if not hit_max_lr:
             schedulers[1].step()
         elif hit_max_lr:
-            if lr > min_lr:
+            if lr > optimizer_config.min_lr:
                 schedulers[2].step()  # start reducing lr
 
     lr = optimizer.param_groups[0]['lr']
@@ -63,7 +65,7 @@ def save_model(model, optimizer):
     torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, 'ckpts/model_ckpt')
 
 
-def init_optimizer(optim_config, model, freeze_params=False):
+def init_optimizer(model_name, optim_config, model, freeze_params=False):
     """
     initialize optimizers
     @param optim_config: config for a given optimizer
@@ -71,48 +73,95 @@ def init_optimizer(optim_config, model, freeze_params=False):
     @param freeze_params: whether parameters without requires_grad should be frozen
     @return: optimizer
     """
+    if optim_config is None:
+        beta1 = 0.9
+        beta2 = 0.99
+        weight_decay = 0.01
+        momentum = 0
+        optimizer = 'adam'
+        init_lr = 1e-3
+    else:
+        beta1 = optim_config.beta1  # 0.9
+        beta2 = optim_config.beta2  # 0.999
+        weight_decay = optim_config.weight_decay  # 0.01
+        optimizer = optim_config.optimizer
+        init_lr = optim_config.init_lr
 
     amsgrad = True
-    beta1 = optim_config.beta1  # 0.9
-    beta2 = optim_config.beta2  # 0.999
-    weight_decay = optim_config.weight_decay  # 0.01
-    momentum = 0
 
-    if freeze_params:
-        model_params = [param for param in model.parameters() if param.requires_grad == True]
-    else:
-        model_params = model.parameters()
+    if model_name == 'autoencoder' and hasattr(model, 'encoder'):
+        if freeze_params:
+            assert False, "params freezing not implemented for autoencoder"
 
-    if optim_config.optimizer == 'adam':
-        optimizer = optim.Adam(model_params, amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-    elif optim_config.optimizer == 'adamw':
-        optimizer = optim.AdamW(model_params, amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-    elif optim_config.optimizer == 'sgd':
-        optimizer = optim.SGD(model_params, lr=optim_config.init_lr, momentum=momentum, weight_decay=weight_decay)
+        params_dict = [
+            {'params': model.encoder.parameters(), 'lr': optim_config.encoder_init_lr},
+            {'params': model.decoder.parameters(), 'lr': optim_config.decoder_init_lr}
+        ]
+        if optimizer == 'adam':
+            optimizer = optim.Adam(params_dict, amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif optimizer == 'adamw':
+            optimizer = optim.AdamW(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif optimizer == 'sgd':
+            optimizer = optim.SGD(params_dict, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
+        else:
+            print(optim_config.optimizer + ' is not a valid optimizer')
+            sys.exit()
+
     else:
-        print(optim_config.optimizer + ' is not a valid optimizer')
-        sys.exit()
+        if freeze_params:
+            model_params = [param for param in model.parameters() if param.requires_grad == True]
+        else:
+            model_params = model.parameters()
+
+        if optimizer == 'adam':
+            optimizer = optim.Adam(model_params, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif optimizer == 'adamw':
+            optimizer = optim.AdamW(model_params, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        elif optimizer == 'sgd':
+            optimizer = optim.SGD(model_params, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
+        else:
+            print(optim_config.optimizer + ' is not a valid optimizer')
+            sys.exit()
 
     return optimizer
 
 
-def init_schedulers(optimizer, lr_shrink_lambda, lr_growth_lambda):
+def init_schedulers(optimizer, optimizer_config):
     """
     initialize a series of LR schedulers
     """
-    scheduler1 = lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode='min',
-        factor=0.5,
-        patience=500,
-        threshold=1e-4,
-        threshold_mode='rel',
-        cooldown=500
-    )
-    lr_lambda = lambda epoch: lr_growth_lambda
-    scheduler2 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda)
-    lr_lambda2 = lambda epoch: lr_shrink_lambda
-    scheduler3 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lr_lambda2)
+    if optimizer_config is not None:
+        lr_shrink_lambda = optimizer_config.lr_shrink_lambda
+        lr_growth_lambda = optimizer_config.lr_growth_lambda
+        use_plateau_scheduler = optimizer_config.use_plateau_scheduler
+    else:
+        lr_shrink_lambda = 1  # no change
+        lr_growth_lambda = 1
+        use_plateau_scheduler = False
+
+    if use_plateau_scheduler:
+        scheduler1 = lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.5,
+            patience=500,
+            threshold=1e-4,
+            threshold_mode='rel',
+            cooldown=500
+        )
+    else:
+        scheduler1 = lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.00001,
+            patience=5000000,
+            threshold=1e-8,
+            threshold_mode='rel',
+            cooldown=5000000,
+            min_lr=1
+        )
+    scheduler2 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: lr_growth_lambda)
+    scheduler3 = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: lr_shrink_lambda)
 
     return [scheduler1, scheduler2, scheduler3]
 
@@ -474,3 +523,43 @@ def slash_batch(train_loader, test_loader, slash_fraction):
     wandb.log({'batch size': train_loader.batch_size})
 
     return train_loader, test_loader
+
+
+def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type, nodewise_weights,
+                             dist_to_self=False, log_scale=False, isolate_dimensions: list = None, type_distance_scaling=0.1):
+    """
+    same as previous version
+    except atom type differences are treated as high dimensional distances
+    """
+    ref_points = torch.cat((data.pos, ref_types * type_distance_scaling), dim=1)
+
+    if dist_to_self:
+        pred_points = ref_points
+    else:
+        pred_types = decoded_data.x / nodewise_weights[:, None] * type_distance_scaling
+        pred_points = torch.cat((decoded_data.pos, pred_types), dim=1)  # assume input x has already been normalized
+
+    if isolate_dimensions is not None:  # only compute distances over certain dimensions
+        ref_points = ref_points[:, isolate_dimensions[0]:isolate_dimensions[1]]
+        pred_points = pred_points[:, isolate_dimensions[0]:isolate_dimensions[1]]
+
+    edges = radius(ref_points, pred_points, 2, max_num_neighbors=100, batch_x=data.batch, batch_y=decoded_data.batch)  # this step is slower than before
+    dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
+
+    if overlap_type == 'gaussian':
+        overlap = torch.exp(-(dists / sigma) ** 2)
+    elif overlap_type == 'inverse':
+        overlap = 1 / (dists / sigma + 1)
+    elif overlap_type == 'exponential':
+        overlap = torch.exp(-dists / sigma)
+    else:
+        assert False, f"{overlap_type} is not an implemented overlap function"
+
+    scaled_overlap = overlap * nodewise_weights[edges[0]]  # reweight appropriately
+    nodewise_overlap = scatter(scaled_overlap, edges[1], reduce='sum', dim_size=data.num_nodes)  # this one is much, much faster
+
+    if log_scale:
+        return torch.log(nodewise_overlap)
+    else:
+        return nodewise_overlap
+

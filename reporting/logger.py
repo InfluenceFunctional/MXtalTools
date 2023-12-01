@@ -11,14 +11,11 @@ class Logger:
     interface to external reporters e.g., self.wandb
     """
 
-    def __init__(self, config, dataDims, wandb):
+    def __init__(self, config, dataDims, wandb, model_names):
         self.config = config
         self.dataDims = dataDims
         self.wandb = wandb
-        self.model_names = ['generator',
-                            'discriminator',
-                            'regressor',
-                            'proxy_discriminator']
+        self.model_names = model_names
         self.log_figs_to_self = config.logger.log_figures
         self.save_figs_to_local = False
         self.reset_stats_dicts()
@@ -30,10 +27,7 @@ class Logger:
         self.learning_rates = {name: None for name in self.model_names}
         self.batch_size = None
 
-        self.generator_converged = False
-        self.discriminator_converged = False
-        self.regressor_converged = False
-        self.proxy_converged = False
+        self.converged_flags = {model_name: False for model_name in self.model_names}
 
     def init_loss_records(self):
         self.current_losses = {}
@@ -96,8 +90,13 @@ class Logger:
                 if isinstance(value[0], np.ndarray):
                     if value[0].ndim > 1:
                         stat_dict[key] = np.concatenate(value)
+                    elif len(value) > 1 and value[0].ndim > 0:
+                        if len(value[0]) != len(value[1]):
+                            stat_dict[key] = np.concatenate(value)
                     else:
                         stat_dict[key] = np.asarray(value)
+                elif 'crystaldata' in str(type(value[0])).lower():
+                    pass
                 else:  # just a list
                     stat_dict[key] = np.asarray(value)
 
@@ -106,14 +105,9 @@ class Logger:
         np.save(save_path, self.test_stats)
 
     def check_model_convergence(self):
-        self.generator_converged = check_convergence(self.loss_record['generator']['mean_test'], self.config.history,
-                                                     self.config.generator.optimizer.convergence_eps)
-        self.discriminator_converged = check_convergence(self.loss_record['discriminator']['mean_test'], self.config.history,
-                                                         self.config.discriminator.optimizer.convergence_eps)
-        self.regressor_converged = check_convergence(self.loss_record['regressor']['mean_test'], self.config.history,
-                                                     self.config.regressor.optimizer.convergence_eps)
-        self.proxy_converged = check_convergence(self.loss_record['proxy_discriminator']['mean_test'], self.config.history,
-                                                 self.config.proxy_discriminator.optimizer.convergence_eps)
+        self.converged_flags = {model_name: check_convergence(self.loss_record[model_name]['mean_test'], self.config.history,
+                                                              self.config.__dict__[model_name].optimizer.convergence_eps)
+                                for model_name in self.model_names if self.config.__dict__[model_name].optimizer is not None}
 
     def log_fig_dict(self, fig_dict):
         if self.log_figs_to_self:
@@ -128,13 +122,14 @@ class Logger:
             self.wandb.log(self.collate_current_metrics())
 
     def collate_current_metrics(self):
-        metrics_to_log = {}
         # general metrics
-        metrics_to_log['epoch'] = self.epoch
-        metrics_to_log['packing_loss_coefficient'] = self.packing_loss_coefficient
+
+        metrics_to_log = {'epoch': self.epoch,
+                          'packing_loss_coefficient': self.packing_loss_coefficient,
+                          'batch size': self.batch_size}
+
         for key in self.learning_rates.keys():
             metrics_to_log[f'{key} learning rate'] = self.learning_rates[key]
-        metrics_to_log['batch size'] = self.batch_size
 
         # losses
         for key in self.current_losses.keys():
@@ -165,6 +160,8 @@ class Logger:
                         if stats_dict[key].ndim == 1:
                             if '<U' not in str(stats_dict[key].dtype):  # if it is not a list of strings
                                 metrics_to_log[f'{name}_{key}'] = np.average(stats_dict[key])
+                    else:  # ignore other objects
+                        pass
 
         return metrics_to_log
 
