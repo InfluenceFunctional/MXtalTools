@@ -1,5 +1,5 @@
+![image](https://github.com/InfluenceFunctional/MXtalTools/assets/30198118/ecc49717-b9b4-4901-9b59-8e4c8b919813)
 # MXtalTools
-
 # Toolbox for machine learning on molecular crystals
 
 ## Development from archived public [version](https://github.com/InfluenceFunctional/mcrytools_Nov_2022)
