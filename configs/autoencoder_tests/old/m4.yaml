@@ -1,7 +1,7 @@
 machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: autoencoder_standalone_dev  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
+mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
 dataset_yaml_path: '/dataset/small_autoencoder.yaml'

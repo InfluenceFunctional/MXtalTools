@@ -113,7 +113,7 @@ max_batch_size: 1000
 max_epochs: 100000
 min_batch_size: 2
 misc_dataset_name: misc_data_for_dataset.npy
-mode: autoencoder_standalone_dev
+mode: autoencoder
 model_paths:
   autoencoder: null
   discriminator: null

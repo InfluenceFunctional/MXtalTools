@@ -89,9 +89,9 @@ def init_optimizer(model_name, optim_config, model, freeze_params=False):
 
     amsgrad = True
 
-    if model_name == 'autoencoder_standalone_dev' and hasattr(model, 'encoder'):
+    if model_name == 'autoencoder' and hasattr(model, 'encoder'):
         if freeze_params:
-            assert False, "params freezing not implemented for autoencoder_standalone_dev"
+            assert False, "params freezing not implemented for autoencoder"
 
         params_dict = [
             {'params': model.encoder.parameters(), 'lr': optim_config.encoder_init_lr},
