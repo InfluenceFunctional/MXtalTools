@@ -50,7 +50,7 @@ class point_autoencoder(nn.Module):
         )
 
         # graph size model
-        self.num_atoms_prediction = MLP(layers=1,
+        self.num_atoms_prediction = MLP(layers=2,
                                         filters=32,
                                         norm=None,
                                         dropout=0,
@@ -61,7 +61,7 @@ class point_autoencoder(nn.Module):
                                         conditioning_mode=None,
                                         )
 
-        self.composition_prediction = MLP(layers=1,
+        self.composition_prediction = MLP(layers=2,
                                           filters=32,
                                           norm=None,
                                           dropout=0,

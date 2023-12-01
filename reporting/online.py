@@ -54,6 +54,12 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
     else:
         raw_samples = None
 
+    if isinstance(cleaned_samples, list):
+        cleaned_samples = np.stack(cleaned_samples)
+
+    if isinstance(raw_samples,list):
+        raw_samples = np.stack(raw_samples)
+
     overlaps_1d = {}
     sample_means = {}
     sample_stds = {}
@@ -1085,8 +1091,12 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     do analysis and plotting for cell generator
     """
     layout = plotly_setup(config)
-    log_cubic_defect(epoch_stats_dict['final_generated_cell_parameters'])
-    wandb.log({"Generated cell parameter variation": epoch_stats_dict['final_generated_cell_parameters'].std(0).mean()})
+    if isinstance(epoch_stats_dict['final_generated_cell_parameters'], list):
+        cell_parameters = np.stack(epoch_stats_dict['final_generated_cell_parameters'])
+    else:
+        cell_parameters = epoch_stats_dict['final_generated_cell_parameters']
+    log_cubic_defect(cell_parameters)
+    wandb.log({"Generated cell parameter variation": cell_parameters.std(0).mean()})
     generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
     wandb.log(average_losses_dict)
 
@@ -1354,8 +1364,8 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
         if config.discriminator.train_on_distorted or config.discriminator.train_on_randn or config.discriminator.train_adversarially:
             discriminator_analysis(config, dataDims, test_epoch_stats_dict, extra_test_dict)
 
-        if config.proxy_discriminator.train:
-            proxy_discriminator_analysis(test_epoch_stats_dict)
+        # if config.proxy_discriminator.train:
+        #     proxy_discriminator_analysis(test_epoch_stats_dict)
 
     elif config.mode == 'regression':
         log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
@@ -1384,7 +1394,7 @@ def log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict):
                                                  type_distance_scaling=config.autoencoder.type_distance_scaling)
 
         self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder_sigma,
-                                                      nodewise_weights=nodewise_weights_tensor,
+                                                      nodewise_weights=torch.ones_like(data.x)[:, 0],
                                                       overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
                                                       type_distance_scaling=config.autoencoder.type_distance_scaling,
                                                       dist_to_self=True)
@@ -1395,7 +1405,7 @@ def log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict):
                                                 type_distance_scaling=config.autoencoder.type_distance_scaling)
 
         self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder_sigma,
-                                                     nodewise_weights=nodewise_weights_tensor,
+                                                     nodewise_weights=torch.ones_like(data.x)[:, 0],
                                                      overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
                                                      type_distance_scaling=config.autoencoder.type_distance_scaling,
                                                      dist_to_self=True)

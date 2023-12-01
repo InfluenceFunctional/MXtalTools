@@ -13,7 +13,7 @@ import wandb
 from torch import backends
 import torch.nn as nn
 import numpy as np
-import tqdm
+from tqdm import tqdm
 from shutil import copy
 from distutils.dir_util import copy_tree
 from torch.nn import functional as F
@@ -25,9 +25,9 @@ from constants.asymmetric_units import asym_unit_dict
 from csp.SampleOptimization import gradient_descent_sampling, mcmc_sampling
 from dataset_management.CrystalData import CrystalData
 from models.autoencoder_models import point_autoencoder
-from models.crystal_rdf import crystal_rdf, new_crystal_rdf
+from models.crystal_rdf import new_crystal_rdf
 
-from models.discriminator_models import crystal_discriminator, crystal_proxy_discriminator
+from models.discriminator_models import crystal_discriminator#, crystal_proxy_discriminator
 from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
@@ -45,8 +45,6 @@ from dataset_management.utils import (get_dataloaders, update_dataloader_batch_s
 from reporting.logger import Logger
 
 from common.utils import softmax_np, init_sym_info, compute_rdf_distance
-from reporting.online import overlap_plot
-
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
 # https://dictionary.iucr.org/Sohncke_groups#:~:text=Sohncke%20groups%20are%20the%20three,in%20the%20chiral%20space%20groups.
@@ -122,7 +120,7 @@ class Modeller:
         for models we will not use, just set them as nn.Linear(1,1)
         :return:
         """
-        self.model_names = ['generator', 'discriminator', 'proxy_discriminator', 'regressor', 'autoencoder']
+        self.model_names = ['generator', 'discriminator', 'regressor', 'autoencoder']
         self.models_dict = {name: nn.Linear(1, 1) for name in self.model_names}  # initialize null models
 
         self.reload_model_checkpoint_configs()
@@ -131,7 +129,7 @@ class Modeller:
         if self.config.mode == 'gan' or self.config.mode == 'search':
             self.models_dict['generator'] = crystal_generator(self.config.seeds.model, self.device, self.config.generator.model, self.dataDims, self.sym_info)
             self.models_dict['discriminator'] = crystal_discriminator(self.config.seeds.model, self.config.discriminator.model, self.dataDims)
-            self.models_dict['proxy_discriminator'] = crystal_proxy_discriminator(self.config.seeds.model, self.config.proxy_discriminator.model, self.dataDims)
+            #self.models_dict['proxy_discriminator'] = crystal_proxy_discriminator(self.config.seeds.model, self.config.proxy_discriminator.model, self.dataDims)
         if self.config.mode == 'regression' or self.config.model_paths.regressor is not None:
             self.models_dict['regressor'] = molecule_regressor(self.config.seeds.model, self.config.regressor.model, self.dataDims)
         if self.config.mode == 'autoencoder' or self.config.model_paths.autoencoder is not None:
@@ -254,7 +252,7 @@ class Modeller:
         self.train_discriminator = (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn))
         self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
         self.train_regressor = self.config.mode == 'regression'
-        self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
+        #self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
         self.train_autoencoder = self.config.mode == 'autoencoder'
 
         '''initialize datasets and useful classes'''
@@ -262,8 +260,12 @@ class Modeller:
         self.init_gaussian_generator()
         num_params_dict = self.init_models()
 
-        self.config.autoencoder_sigma = self.config.autoencoder.init_sigma if self.config.autoencoder.init_sigma else None
         if self.train_autoencoder:
+            self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
+            self.config.autoencoder.max_num_atoms = self.dataDims['max_molecule_radius']
+            self.config.autoencoder.min_num_atoms = self.dataDims['min_molecule_num_atoms']
+            self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_num_atoms']
+
             allowed_types = self.dataDims['allowed_atom_types']
             type_translation_index = np.zeros(allowed_types.max()) - 1
             for ind, atype in enumerate(allowed_types):
@@ -305,15 +307,15 @@ class Modeller:
 
                 try:  # try this batch size
                     self.run_epoch(epoch_type='train', data_loader=train_loader,
-                                   update_gradients=True, iteration_override=early_epochs_step_override)
+                                   update_weights=True, iteration_override=early_epochs_step_override)
 
                     with torch.no_grad():
                         self.run_epoch(epoch_type='test', data_loader=test_loader,
-                                       update_gradients=False, iteration_override=early_epochs_step_override)
+                                       update_weights=False, iteration_override=early_epochs_step_override)
 
                         if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0) and (epoch > 0):
                             self.run_epoch(epoch_type='extra', data_loader=extra_test_loader,
-                                           update_gradients=False, iteration_override=None)  # compute loss on test set
+                                           update_weights=False, iteration_override=None)  # compute loss on test set
 
                     self.logger.numpyize_current_losses()
                     self.logger.update_loss_record()
@@ -366,23 +368,23 @@ class Modeller:
         if self.config.mode == 'gan':  # evaluation on test metrics
             self.gan_evaluation(epoch, test_loader, extra_test_loader)
 
-    def run_epoch(self, epoch_type, data_loader=None, update_gradients=True, iteration_override=None):
+    def run_epoch(self, epoch_type, data_loader=None, update_weights=True, iteration_override=None):
         self.epoch_type = epoch_type
         if self.config.mode == 'gan':
             if self.config.model_paths.regressor is not None:
                 self.models_dict['regressor'].eval()  # just using this to suggest densities to the generator
 
             if self.train_discriminator or self.train_generator:
-                self.gan_epoch(data_loader, update_gradients, iteration_override)
-
-            if self.train_proxy_discriminator:
-                self.proxy_discriminator_epoch(data_loader, update_gradients, iteration_override)
+                self.gan_epoch(data_loader, update_weights, iteration_override)
+            #
+            # if self.train_proxy_discriminator:
+            #     self.proxy_discriminator_epoch(data_loader, update_weights, iteration_override)
 
         elif self.config.mode == 'regression':
-            self.regression_epoch(data_loader, update_gradients, iteration_override)
+            self.regression_epoch(data_loader, update_weights, iteration_override)
 
         elif self.config.mode == 'autoencoder':
-            self.autoencoder_epoch(data_loader, update_gradients, iteration_override)
+            self.autoencoder_epoch(data_loader, update_weights, iteration_override)
 
     def generate_random_point_cloud_batch(self, batch_size):
         """
@@ -390,7 +392,8 @@ class Modeller:
         """
 
         point_num_rands = np.random.randint(low=self.config.autoencoder.min_num_atoms,
-                                            high=self.config.autoencoder.min_num_atoms + 1, size=batch_size)
+                                            high=self.config.autoencoder.min_num_atoms + 1,
+                                            size=batch_size)
 
         # truly random point clouds within a sphere of fixed maximum radius of 1
         vectors = torch.rand(point_num_rands.sum(), 3, dtype=torch.float32, device=self.config.device)
@@ -398,8 +401,10 @@ class Modeller:
         lengths = torch.rand(point_num_rands.sum(), 1, dtype=torch.float32, device=self.config.device)
         coords_list = (vectors / norms * lengths).split(point_num_rands.tolist())
 
-        # centered_coords_list = [coords - coords.mean(0) for coords in coords_list]
-        types_list = torch.randint(self.dataDims['num_atom_types'], size=(point_num_rands.sum(),), device=self.config.device).split(point_num_rands.tolist())
+        #coords_list = [coords - coords.mean(0) for coords in coords_list]
+        types_list = torch.randint(self.dataDims['num_atom_types'],
+                                   size=(point_num_rands.sum(),),
+                                   device=self.config.device).split(point_num_rands.tolist())
 
         data = self.collater([CrystalData(
             x=types_list[n][:, None],
@@ -409,54 +414,66 @@ class Modeller:
 
         return data
 
-    def autoencoder_epoch(self, data_loader, update_gradients, iteration_override=None):
-        if update_gradients:
+    def autoencoder_step(self, data, update_weights, step):
+
+        data = data.to(self.device)
+        decoding = self.models_dict['autoencoder'](data.clone())
+
+        autoencoder_losses, stats, decoded_data, nodewise_weights_tensor = self.compute_autoencoder_loss(decoding, data)
+        autoencoder_loss = autoencoder_losses.mean()
+
+        if update_weights:
+            self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+            autoencoder_loss.backward()  # back-propagation
+            self.optimizers_dict['autoencoder'].step()  # update parameters
+
+        '''log losses and other tracking values'''
+        self.logger.update_current_losses('autoencoder', self.epoch_type,
+                                          autoencoder_loss.cpu().detach().numpy(),
+                                          autoencoder_losses.cpu().detach().numpy())
+
+        if step == 0:  # save the complete final samples
+            self.logger.update_stats_dict(self.epoch_type, ['sample', 'decoded_sample', 'nodewise_weights'],
+                                          [data.cpu().detach(),
+                                           decoded_data.cpu().detach(),
+                                           nodewise_weights_tensor.cpu().detach().numpy()], mode='append')
+        self.logger.update_stats_dict(self.epoch_type, list(stats.keys()), list(stats.values()), mode='append')
+
+    def autoencoder_epoch(self, data_loader, update_weights, iteration_override=None):
+        if update_weights:
             self.models_dict['autoencoder'].train(True)
         else:
             self.models_dict['autoencoder'].eval()
 
-        for i, data in enumerate(tqdm.tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            if (np.random.uniform(0, 1, 1) < self.config.autoencoder.random_fraction or
-                    data.num_graphs == 1):
-                data = self.generate_random_point_cloud_batch(max(data.num_graphs, 2))  # must always be at least two graphs per batch
+        if self.config.autoencoder.random_fraction == 1:
+            if self.epoch_type == 'train':
+                num_steps = 100
             else:
-                if self.config.autoencoder_positional_noise > 0:
-                    data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
+                num_steps = 10
 
-                data = self.set_molecule_alignment(data, right_handed=False, mode_override='random')
-                data.pos /= self.config.autoencoder.molecule_radius_normalization
-                data.x[:, 0] = self.autoencoder_type_index[data.x[:, 0].long() - 1].float()  # reindex atom types
+            for i in tqdm(range(num_steps)):  # xx steps per epoch
+                data = self.generate_random_point_cloud_batch(max(data_loader.batch_size, 2))  # must always be at least two graphs per batch
+                self.autoencoder_step(data, update_weights, step=i)
 
-            data = data.to(self.device)
+        else:
+            for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+                if np.random.uniform(0, 1, 1) < self.config.autoencoder.random_fraction or data.num_graphs == 1:
+                    data = self.generate_random_point_cloud_batch(max(data_loader.batch_size, 2))  # must always be at least two graphs per batch
+                else:
+                    if self.config.autoencoder_positional_noise > 0:
+                        data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
 
-            decoding = self.models_dict['autoencoder'](data.clone())
+                    data = self.set_molecule_alignment(data, right_handed=False, mode_override='random')
+                    data.pos /= self.config.autoencoder.molecule_radius_normalization
+                    data.x[:, 0] = self.autoencoder_type_index[data.x[:, 0].long() - 1].float()  # reindex atom types
 
-            autoencoder_losses, stats, decoded_data, nodewise_weights_tensor = self.compute_autoencoder_loss(
-                decoding, data, i)
+                self.autoencoder_step(data, update_weights, step=i)
 
-            autoencoder_loss = autoencoder_losses.mean()
+                if iteration_override is not None:
+                    if i >= iteration_override:
+                        break  # stop training early - for debugging purposes
 
-            if update_gradients:
-                self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-                autoencoder_loss.backward()  # back-propagation
-                self.optimizers_dict['autoencoder'].step()  # update parameters
-
-            '''log losses and other tracking values'''
-            self.logger.update_current_losses('autoencoder', self.epoch_type,
-                                              autoencoder_loss.cpu().detach().numpy(),
-                                              autoencoder_losses.cpu().detach().numpy())
-
-            if i == 0:  # save the complete final samples
-                self.logger.update_stats_dict(self.epoch_type, ['sample', 'decoded_sample', 'nodewise_weights'],
-                                              [data.cpu().detach(),
-                                               decoded_data.cpu().detach(),
-                                               nodewise_weights_tensor.cpu().detach().numpy()], mode='append')
-            self.logger.update_stats_dict(self.epoch_type, list(stats.keys()), list(stats.values()), mode='append')
-
-            if iteration_override is not None:
-                if i >= iteration_override:
-                    break  # stop training early - for debugging purposes
-
+        # post epoch processing
         self.logger.numpyize_stats_dict(self.epoch_type)
 
         if self.epoch_type == 'train':
@@ -464,7 +481,10 @@ class Modeller:
                 if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps:
                     self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
-    def compute_autoencoder_loss(self, decoding, data, step):
+            if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:  # if the overlap is too large, anneal
+                self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
+
+    def compute_autoencoder_loss(self, decoding, data):
 
         decoded_data = data.clone()
         decoded_data.pos = decoding[:, :3]
@@ -526,15 +546,15 @@ class Modeller:
 
         return losses, stats, decoded_data, nodewise_weights_tensor
 
-    def regression_epoch(self, data_loader, update_gradients=True, iteration_override=None):
-        if update_gradients:
+    def regression_epoch(self, data_loader, update_weights=True, iteration_override=None):
+        if update_weights:
             self.models_dict['regressor'].train(True)
         else:
             self.models_dict['regressor'].eval()
 
         stats_keys = ['regressor_prediction', 'regressor_target', 'tracking_features']
 
-        for i, data in enumerate(tqdm.tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
             if self.config.regressor_positional_noise > 0:
                 data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
 
@@ -543,7 +563,7 @@ class Modeller:
             regression_losses_list, predictions, targets = get_regression_loss(self.models_dict['regressor'], data, self.dataDims['target_mean'], self.dataDims['target_std'])
             regression_loss = regression_losses_list.mean()
 
-            if update_gradients:
+            if update_weights:
                 self.optimizers_dict['regressor'].zero_grad(set_to_none=True)  # reset gradients from previous passes
                 regression_loss.backward()  # back-propagation
                 self.optimizers_dict['regressor'].step()  # update parameters
@@ -563,17 +583,17 @@ class Modeller:
 
         self.logger.numpyize_stats_dict(self.epoch_type)
 
-    def gan_epoch(self, data_loader=None, update_gradients=True,
+    def gan_epoch(self, data_loader=None, update_weights=True,
                   iteration_override=None):
 
-        if update_gradients:
+        if update_weights:
             self.models_dict['generator'].train(True)
             self.models_dict['discriminator'].train(True)
         else:
             self.models_dict['generator'].eval()
             self.models_dict['discriminator'].eval()
 
-        for i, data in enumerate(tqdm.tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
             data = data.to(self.config.device)
 
             '''
@@ -581,11 +601,11 @@ class Modeller:
             '''
             skip_discriminator_step = self.decide_whether_to_skip_discriminator(i, self.logger.get_stat_dict(self.epoch_type))
 
-            self.discriminator_step(data, i, update_gradients, skip_step=skip_discriminator_step)
+            self.discriminator_step(data, i, update_weights, skip_step=skip_discriminator_step)
             '''
             train_generator
             '''
-            self.generator_step(data, i, update_gradients)
+            self.generator_step(data, i, update_weights)
             '''
             record some stats
             '''
@@ -597,122 +617,122 @@ class Modeller:
                     break  # stop training early - for debugging purposes
 
         self.logger.numpyize_stats_dict(self.epoch_type)
-
-    def proxy_discriminator_epoch(self, data_loader=None, update_gradients=True,
-                                  iteration_override=None):
-
-        if update_gradients:
-            self.models_dict['proxy_discriminator'].train(True)
-            self.models_dict['discriminator'].train(True)
-        else:
-            self.models_dict['proxy_discriminator'].eval()
-            self.models_dict['discriminator'].eval()
-
-        for i, data in enumerate(tqdm.tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
-            data = data.to(self.config.device)
-
-            self.proxy_discriminator_step(data, i, update_gradients)
-            '''
-            record some stats
-            '''
-            self.logger.update_stats_dict(self.epoch_type, 'tracking_features', data.tracking.cpu().detach().numpy(), mode='append')
-            self.logger.update_stats_dict(self.epoch_type, 'identifiers', data.csd_identifier, mode='extend')
-
-            if iteration_override is not None:
-                if i >= iteration_override:
-                    break  # stop training early - for debugging purposes
-
-        self.logger.numpyize_stats_dict(self.epoch_type)
-
-    def proxy_discriminator_step(self, data, i, update_gradients):
-        """
-         execute a complete training step for the discriminator
-         compute losses, do reporting, update gradients
-         """
-        '''get real supercells'''
-        real_supercell_data = self.supercell_builder.prebuilt_unit_cell_to_supercell(
-            data, self.config.supercell_size, self.config.discriminator.model.convolution_cutoff)
-
-        '''get fake supercells'''
-        generated_samples_i, negative_type, generator_data = \
-            self.generate_discriminator_negatives(data, i, override_distorted=True, override_randn=True, orientation='as is')
-
-        fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
-            generator_data, generated_samples_i, self.config.supercell_size,
-            self.config.discriminator.model.convolution_cutoff,
-            align_to_standardized_orientation=False,  # take generator samples as-given
-            target_handedness=generator_data.asym_unit_handedness,
-        )
-
-        generated_samples = fake_supercell_data.cell_params
-
-        '''apply noise'''
-        if self.config.discriminator_positional_noise > 0:
-            real_supercell_data.pos += \
-                torch.randn_like(real_supercell_data.pos) * self.config.discriminator_positional_noise
-            fake_supercell_data.pos += \
-                torch.randn_like(fake_supercell_data.pos) * self.config.discriminator_positional_noise
-
-        '''score'''
-        discriminator_output_on_real, real_pairwise_distances_dict, real_latent = self.adversarial_score(real_supercell_data, return_latent=True)
-        discriminator_output_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(fake_supercell_data, return_latent=True)
-
-        real_asym_unit_coords = torch.cat([real_supercell_data.pos[real_supercell_data.batch == ii, :][:int(data.mol_size[ii])] for ii in range(data.num_graphs)])
-        data.pos = real_asym_unit_coords
-        proxy_output_on_real = self.models_dict['proxy_discriminator'](data)
-        proxy_output_on_fake = self.models_dict['proxy_discriminator'](generator_data)
-
-        if False:  # test
-            assert torch.sum(torch.abs(data.x - generator_data.x)) == 0
-            assert torch.sum(torch.abs(data.pos - generator_data.pos)) == 0
-            assert torch.sum(torch.abs(data.mol_x - generator_data.mol_x)) == 0
-
-        '''recompute packing coeffs'''
-        real_packing_coeffs = compute_packing_coefficient(cell_params=real_supercell_data.cell_params,
-                                                          mol_volumes=real_supercell_data.mol_volume,
-                                                          crystal_multiplicity=real_supercell_data.mult)
-        fake_packing_coeffs = compute_packing_coefficient(cell_params=fake_supercell_data.cell_params,
-                                                          mol_volumes=fake_supercell_data.mol_volume,
-                                                          crystal_multiplicity=fake_supercell_data.mult)
-
-        real_vdw_score = vdw_overlap(self.vdw_radii, crystaldata=real_supercell_data, return_score_only=True)
-        fake_vdw_score = vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data, return_score_only=True)
-
-        combined_outputs = torch.cat((proxy_output_on_real, proxy_output_on_fake))
-        discriminator_target = torch.cat((torch.ones_like(proxy_output_on_real[:, 0]),
-                                          torch.zeros_like(proxy_output_on_fake[:, 0])))
-
-        score_on_real = softmax_and_score(discriminator_output_on_real)
-        proxy_on_real = softmax_and_score(proxy_output_on_real)
-        score_on_fake = softmax_and_score(discriminator_output_on_fake)
-        proxy_on_fake = softmax_and_score(proxy_output_on_fake)
-        proxy_losses = F.cross_entropy(combined_outputs, discriminator_target.long(), reduction='none') \
-                       + F.smooth_l1_loss(torch.cat((score_on_real, score_on_fake)), torch.cat((proxy_on_real, proxy_on_fake)), reduction='none')
-
-        proxy_loss = proxy_losses.mean()
-
-        self.logger.update_current_losses('proxy_discriminator', self.epoch_type,
-                                          proxy_loss.data.cpu().detach().numpy(),
-                                          proxy_losses.cpu().detach().numpy())
-
-        if update_gradients:
-            self.optimizers_dict['proxy_discriminator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-            torch.nn.utils.clip_grad_norm_(self.models_dict['proxy_discriminator'].parameters(),
-                                           self.config.gradient_norm_clip)  # gradient clipping
-            proxy_loss.backward()  # back-propagation
-            self.optimizers_dict['proxy_discriminator'].step()  # update parameters
-
-        stats_keys = ['discriminator_real_score', 'discriminator_fake_score',
-                      'proxy_real_score', 'proxy_fake_score',
-                      'real_vdw_penalty', 'fake_vdw_penalty',
-                      'generated_cell_parameters', 'final_generated_cell_parameters',
-                      'real_packing_coefficients', 'generated_packing_coefficients']
-        stats_values = [score_on_real.cpu().detach().numpy(), score_on_fake.cpu().detach().numpy(),
-                        proxy_on_real.cpu().detach().numpy(), proxy_on_fake.cpu().detach().numpy(),
-                        -real_vdw_score.cpu().detach().numpy(), -fake_vdw_score.cpu().detach().numpy(),
-                        generated_samples_i.cpu().detach().numpy(), generated_samples.cpu().detach().numpy(),
-                        real_packing_coeffs.cpu().detach().numpy(), fake_packing_coeffs.cpu().detach().numpy()]
-        self.logger.update_stats_dict(self.epoch_type, stats_keys, stats_values, mode='extend')
+    #
+    # def proxy_discriminator_epoch(self, data_loader=None, update_weights=True,
+    #                               iteration_override=None):
+    #
+    #     if update_weights:
+    #         self.models_dict['proxy_discriminator'].train(True)
+    #         self.models_dict['discriminator'].train(True)
+    #     else:
+    #         self.models_dict['proxy_discriminator'].eval()
+    #         self.models_dict['discriminator'].eval()
+    #
+    #     for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+    #         data = data.to(self.config.device)
+    #
+    #         self.proxy_discriminator_step(data, i, update_weights)
+    #         '''
+    #         record some stats
+    #         '''
+    #         self.logger.update_stats_dict(self.epoch_type, 'tracking_features', data.tracking.cpu().detach().numpy(), mode='append')
+    #         self.logger.update_stats_dict(self.epoch_type, 'identifiers', data.csd_identifier, mode='extend')
+    #
+    #         if iteration_override is not None:
+    #             if i >= iteration_override:
+    #                 break  # stop training early - for debugging purposes
+    #
+    #     self.logger.numpyize_stats_dict(self.epoch_type)
+    #
+    # def proxy_discriminator_step(self, data, i, update_weights):
+    #     """
+    #      execute a complete training step for the discriminator
+    #      compute losses, do reporting, update gradients
+    #      """
+    #     '''get real supercells'''
+    #     real_supercell_data = self.supercell_builder.prebuilt_unit_cell_to_supercell(
+    #         data, self.config.supercell_size, self.config.discriminator.model.convolution_cutoff)
+    #
+    #     '''get fake supercells'''
+    #     generated_samples_i, negative_type, generator_data = \
+    #         self.generate_discriminator_negatives(data, i, override_distorted=True, override_randn=True, orientation='as is')
+    #
+    #     fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
+    #         generator_data, generated_samples_i, self.config.supercell_size,
+    #         self.config.discriminator.model.convolution_cutoff,
+    #         align_to_standardized_orientation=False,  # take generator samples as-given
+    #         target_handedness=generator_data.asym_unit_handedness,
+    #     )
+    #
+    #     generated_samples = fake_supercell_data.cell_params
+    #
+    #     '''apply noise'''
+    #     if self.config.discriminator_positional_noise > 0:
+    #         real_supercell_data.pos += \
+    #             torch.randn_like(real_supercell_data.pos) * self.config.discriminator_positional_noise
+    #         fake_supercell_data.pos += \
+    #             torch.randn_like(fake_supercell_data.pos) * self.config.discriminator_positional_noise
+    #
+    #     '''score'''
+    #     discriminator_output_on_real, real_pairwise_distances_dict, real_latent = self.adversarial_score(real_supercell_data, return_latent=True)
+    #     discriminator_output_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(fake_supercell_data, return_latent=True)
+    #
+    #     real_asym_unit_coords = torch.cat([real_supercell_data.pos[real_supercell_data.batch == ii, :][:int(data.mol_size[ii])] for ii in range(data.num_graphs)])
+    #     data.pos = real_asym_unit_coords
+    #     proxy_output_on_real = self.models_dict['proxy_discriminator'](data)
+    #     proxy_output_on_fake = self.models_dict['proxy_discriminator'](generator_data)
+    #
+    #     if False:  # test
+    #         assert torch.sum(torch.abs(data.x - generator_data.x)) == 0
+    #         assert torch.sum(torch.abs(data.pos - generator_data.pos)) == 0
+    #         assert torch.sum(torch.abs(data.mol_x - generator_data.mol_x)) == 0
+    #
+    #     '''recompute packing coeffs'''
+    #     real_packing_coeffs = compute_packing_coefficient(cell_params=real_supercell_data.cell_params,
+    #                                                       mol_volumes=real_supercell_data.mol_volume,
+    #                                                       crystal_multiplicity=real_supercell_data.mult)
+    #     fake_packing_coeffs = compute_packing_coefficient(cell_params=fake_supercell_data.cell_params,
+    #                                                       mol_volumes=fake_supercell_data.mol_volume,
+    #                                                       crystal_multiplicity=fake_supercell_data.mult)
+    #
+    #     real_vdw_score = vdw_overlap(self.vdw_radii, crystaldata=real_supercell_data, return_score_only=True)
+    #     fake_vdw_score = vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data, return_score_only=True)
+    #
+    #     combined_outputs = torch.cat((proxy_output_on_real, proxy_output_on_fake))
+    #     discriminator_target = torch.cat((torch.ones_like(proxy_output_on_real[:, 0]),
+    #                                       torch.zeros_like(proxy_output_on_fake[:, 0])))
+    #
+    #     score_on_real = softmax_and_score(discriminator_output_on_real)
+    #     proxy_on_real = softmax_and_score(proxy_output_on_real)
+    #     score_on_fake = softmax_and_score(discriminator_output_on_fake)
+    #     proxy_on_fake = softmax_and_score(proxy_output_on_fake)
+    #     proxy_losses = F.cross_entropy(combined_outputs, discriminator_target.long(), reduction='none') \
+    #                    + F.smooth_l1_loss(torch.cat((score_on_real, score_on_fake)), torch.cat((proxy_on_real, proxy_on_fake)), reduction='none')
+    #
+    #     proxy_loss = proxy_losses.mean()
+    #
+    #     self.logger.update_current_losses('proxy_discriminator', self.epoch_type,
+    #                                       proxy_loss.data.cpu().detach().numpy(),
+    #                                       proxy_losses.cpu().detach().numpy())
+    #
+    #     if update_weights:
+    #         self.optimizers_dict['proxy_discriminator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+    #         torch.nn.utils.clip_grad_norm_(self.models_dict['proxy_discriminator'].parameters(),
+    #                                        self.config.gradient_norm_clip)  # gradient clipping
+    #         proxy_loss.backward()  # back-propagation
+    #         self.optimizers_dict['proxy_discriminator'].step()  # update parameters
+    #
+    #     stats_keys = ['discriminator_real_score', 'discriminator_fake_score',
+    #                   'proxy_real_score', 'proxy_fake_score',
+    #                   'real_vdw_penalty', 'fake_vdw_penalty',
+    #                   'generated_cell_parameters', 'final_generated_cell_parameters',
+    #                   'real_packing_coefficients', 'generated_packing_coefficients']
+    #     stats_values = [score_on_real.cpu().detach().numpy(), score_on_fake.cpu().detach().numpy(),
+    #                     proxy_on_real.cpu().detach().numpy(), proxy_on_fake.cpu().detach().numpy(),
+    #                     -real_vdw_score.cpu().detach().numpy(), -fake_vdw_score.cpu().detach().numpy(),
+    #                     generated_samples_i.cpu().detach().numpy(), generated_samples.cpu().detach().numpy(),
+    #                     real_packing_coeffs.cpu().detach().numpy(), fake_packing_coeffs.cpu().detach().numpy()]
+    #     self.logger.update_stats_dict(self.epoch_type, stats_keys, stats_values, mode='extend')
 
     def decide_whether_to_skip_discriminator(self, i, epoch_stats_dict):
         """
@@ -747,7 +767,7 @@ class Modeller:
         else:
             return output, extra_outputs['dists_dict']
 
-    def discriminator_step(self, data, i, update_gradients, skip_step):
+    def discriminator_step(self, data, i, update_weights, skip_step):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
@@ -765,7 +785,7 @@ class Modeller:
 
             discriminator_loss = discriminator_losses.mean()
 
-            if update_gradients and (not skip_step):
+            if update_weights and (not skip_step):
                 self.optimizers_dict['discriminator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
                 torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(),
                                                self.config.gradient_norm_clip)  # gradient clipping
@@ -838,7 +858,7 @@ class Modeller:
 
         return discriminator_losses
 
-    def generator_step(self, data, i, update_gradients):
+    def generator_step(self, data, i, update_weights):
         """
         execute a complete training step for the generator
         get sample losses, do reporting, update gradients
@@ -857,7 +877,7 @@ class Modeller:
                                               generator_loss.data.cpu().detach().numpy(),
                                               generator_losses.cpu().detach().numpy())
 
-            if update_gradients:
+            if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
                 torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
                                                self.config.gradient_norm_clip)  # gradient clipping
@@ -1161,8 +1181,9 @@ class Modeller:
 
     def increment_batch_size(self, train_loader, test_loader, extra_test_loader):
         if self.config.grow_batch_size:
-            if (train_loader.batch_size < len(train_loader.dataset)) and (
-                    train_loader.batch_size < self.config.max_batch_size):  # if the batch is smaller than the dataset
+            if (((train_loader.batch_size < len(train_loader.dataset)) and (
+                    train_loader.batch_size < self.config.max_batch_size))
+                    or self.config.autoencoder.random_fraction == 1):  # if the batch is smaller than the dataset
                 increment = max(4,
                                 int(train_loader.batch_size * self.config.batch_growth_increment))  # increment batch size
                 train_loader = update_dataloader_batch_size(train_loader, train_loader.batch_size + increment)
@@ -1255,10 +1276,10 @@ class Modeller:
         self.models_dict['discriminator'].eval()
         with torch.no_grad():
             if self.train_discriminator:
-                self.run_epoch(epoch_type='test', data_loader=test_loader, update_gradients=False)  # compute loss on test set
+                self.run_epoch(epoch_type='test', data_loader=test_loader, update_weights=False)  # compute loss on test set
 
                 if extra_test_loader is not None:
-                    self.run_epoch(epoch_type='extra', data_loader=extra_test_loader, update_gradients=False)  # compute loss on test set
+                    self.run_epoch(epoch_type='extra', data_loader=extra_test_loader, update_weights=False)  # compute loss on test set
 
             # sometimes test the generator on a mini CSP problem
             if (self.config.mode == 'gan') and self.train_generator:

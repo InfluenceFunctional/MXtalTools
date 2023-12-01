@@ -73,6 +73,10 @@ class DataManager:
 
         self.dataset_length = min(len(self.dataset), self.max_dataset_length)
 
+        self.max_molecule_radius = np.amax(self.dataset['molecule_radius'])[0]
+        self.min_num_atoms = np.amin(self.dataset['molecule_num_atoms'])[0]
+        self.max_num_atoms = np.amax(self.dataset['molecule_num_atoms'])[0]
+
         # shuffle and cut up dataset before processing
         self.dataset = self.dataset.loc[np.random.choice(len(self.dataset), self.dataset_length, replace=False)]
         self.dataset = self.dataset.reset_index().drop(columns='index')  # reindexing is crucial here
@@ -129,6 +133,9 @@ class DataManager:
 
             'allowed_atom_types': self.allowed_atom_types,
             'num_atom_types': len(self.allowed_atom_types),
+            'max_molecule_radius': self.max_molecule_radius,
+            'min_molecule_num_atoms': self.min_num_atoms,
+            'max_molecule_num_atoms': self.max_num_atoms,
         }
 
         return dim
@@ -862,6 +869,7 @@ class DataManager:
 
     def __len__(self):
         return len(self.datapoints)
+
 
 if __name__ == '__main__':
     # miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
