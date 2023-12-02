@@ -99,7 +99,7 @@ generator:
 generator_positional_noise: 0
 gradient_norm_clip: 1
 grow_batch_size: false
-history: 200
+history: 10000
 logger:
   experiment_tag: autoencoder_battery2
   log_figures: true
