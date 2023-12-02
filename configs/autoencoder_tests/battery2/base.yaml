@@ -84,7 +84,7 @@ discriminator:
   model: null
 
 autoencoder:
-  random_fraction: 1
+  random_fraction: 0
   type_distance_scaling: 0.5
   init_sigma: 0.25
   sigma_lambda: 0.99

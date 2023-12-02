@@ -40,7 +40,7 @@ autoencoder:
     use_plateau_scheduler: false
     weight_decay: 0
   overlap_eps: 0.001
-  random_fraction: 1
+  random_fraction: 0
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   type_distance_scaling: 0.5
