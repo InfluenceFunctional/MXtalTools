@@ -2,7 +2,7 @@ anomaly_detection: false
 autoencoder:
   independent_node_weights: false
   init_sigma: 0.25
-  max_overlap_threshold: 0.18
+  max_overlap_threshold: 0.1
   model:
     activation: gelu
     atom_type_embedding_dims: 5
@@ -46,7 +46,7 @@ autoencoder:
   overlap_eps: 0.001
   random_fraction: 1
   sigma_lambda: 0.99
-  sigma_threshold: 0.01
+  sigma_threshold: 0.025
   type_distance_scaling: 0.5
 autoencoder_positional_noise: 0
 batch_growth_increment: 0.05
@@ -109,7 +109,7 @@ logger:
   run_name: base_0
   sample_reporting_frequency: 5
 machine: cluster
-max_batch_size: 1000
+max_batch_size: 500
 max_epochs: 100000
 min_batch_size: 2
 misc_dataset_name: misc_data_for_dataset.npy

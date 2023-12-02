@@ -388,7 +388,7 @@ class Modeller:
 
     def generate_random_point_cloud_batch(self, batch_size):
         """
-        generates a uniform random point cloud with radius 1
+        generates a uniform random point cloud with maximum radius 1
         """
 
         point_num_rands = np.random.randint(low=self.config.autoencoder.min_num_atoms,
