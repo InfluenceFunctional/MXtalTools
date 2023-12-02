@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import wandb
 from _plotly_utils.colors import n_colors, sample_colorscale
-from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.spatial.distance import cdist
 from scipy.stats import linregress
@@ -1345,7 +1344,7 @@ def make_correlates_plot(tracking_features, values, dataDims):
     return fig
 
 
-def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, extra_test_dict=None):
+def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict=None):
     """
     Do analysis and upload results to w&b
     """
@@ -1371,7 +1370,8 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
         log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
     elif config.mode == 'autoencoder':
-        log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict)
+        log_autoencoder_analysis(config, dataDims, train_epoch_stats_dict, epoch_type='train')
+        log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict, epoch_type='test')
 
     if extra_test_dict is not None and len(extra_test_dict) > 0 and 'blind_test' in config.extra_test_set_name:
         discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict)
@@ -1379,12 +1379,12 @@ def detailed_reporting(config, dataDims, test_loader, test_epoch_stats_dict, ext
     return None
 
 
-def log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict):
-    if 'sample' in test_epoch_stats_dict.keys():
+def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
+    if 'sample' in epoch_stats_dict.keys():
         collater = Collater(None, None)
-        data = collater(test_epoch_stats_dict['sample'])
-        decoded_data = collater(test_epoch_stats_dict['decoded_sample'])
-        nodewise_weights_tensor = torch.Tensor(test_epoch_stats_dict['nodewise_weights']).flatten()
+        data = collater(epoch_stats_dict['sample'])
+        decoded_data = collater(epoch_stats_dict['decoded_sample'])
+        nodewise_weights_tensor = decoded_data.aux_ind
 
         true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=dataDims['num_atom_types']).float()
 
@@ -1410,12 +1410,15 @@ def log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict):
                                                      type_distance_scaling=config.autoencoder.type_distance_scaling,
                                                      dist_to_self=True)
 
-        wandb.log({"positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
-                   "typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy()})
+        wandb.log({epoch_type + "_positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
+                   epoch_type +"_typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy()})
 
         if config.logger.log_figures:
-            overlap_plot(wandb, data, decoded_data, config.autoencoder_sigma, dataDims['num_atom_types'], 3, nodewise_weights_tensor)
-
+            fig1, fig2 = overlap_plot(wandb, data, decoded_data, config.autoencoder_sigma, dataDims['num_atom_types'], 3)
+            wandb.log({
+                epoch_type + "_typewise_sample_distribution": fig1,
+                epoch_type + "_combined_sample_distribution": fig2,
+            })
     return None
 
 
@@ -1698,11 +1701,12 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
     return None
 
 
-def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart_dimension, nodewise_weights):
+def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart_dimension):
     sigma = working_sigma
     max_xval = max(decoded_data.pos.amax(), data.pos.amax()).cpu().detach().numpy()
     min_xval = min(decoded_data.pos.amax(), data.pos.amin()).cpu().detach().numpy()
     ymax = 1.1  # int(torch.diff(data.ptr).amax())  # max graph height
+    fig, fig2 = None, None
 
     if cart_dimension == 1:
         fig = make_subplots(rows=max_point_types, cols=min(4, data.num_graphs))
@@ -1732,7 +1736,6 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
                 # fig.add_scattergl(x=x, y=np.sum(pred_type_weights * np.exp(-(x - points_pred) ** 2 / 0.00001), axis=0), line_color='red', showlegend=False, name='Predicted', row=row, col=col)
 
         fig.update_yaxes(range=[0, ymax])
-        wandb.log({"Sample Distributions": fig})
 
     elif cart_dimension == 2:
         fig = make_subplots(rows=max_point_types, cols=min(4, data.num_graphs))
@@ -1771,7 +1774,6 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
                                            ), row=row, col=col)
 
         fig.update_coloraxes(cmin=0, cmax=ymax, autocolorscale=False, colorscale='viridis')
-        wandb.log({"Sample Distributions": fig})
 
     elif cart_dimension == 3:
 
@@ -1783,7 +1785,7 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
             rows=rows, cols=cols,
             specs=[[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)])
 
-        if sigma > 0.1:
+        if sigma >= 0.1:
             num_gridpoints = 15
         elif 0.1 > sigma > 0.005:
             num_gridpoints = 25
@@ -1797,16 +1799,17 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
 
         grid_array = np.stack((xx.flatten(), yy.flatten(), zz.flatten())).T
 
+        graph_ind = 0
+
+        points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+        points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+
         for j in range(max_point_types):
-            graph_ind = 0
             row = j // cols + 1
             col = j % cols + 1
 
-            points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
-            points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
-
             ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
-            pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+            pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
 
             pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
@@ -1826,43 +1829,37 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
                                     ), row=row, col=col)
 
         fig.update_coloraxes(autocolorscale=False, colorscale='Jet')
-        wandb.log({"Sample Distributions": fig})
 
-        fig = go.Figure()
+        fig2 = go.Figure()
         colors = (
             'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
             'rgb(165, 170, 153)')
-        colorscales = [[[0, 'rgb(0,0,0)', ], [1, color]] for color in colors]
-        grid_array = np.stack((xx.flatten(), yy.flatten(), zz.flatten())).T
+        colorscales = [[[0, 'rgba(255, 255, 255, 0)', ], [1, color]] for color in colors]
 
         for j in range(max_point_types):
-            graph_ind = 0
-
-            points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
-            points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
 
             ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
 
-            pred_type_weights = nodewise_weights[decoded_data.batch == graph_ind].cpu().detach().numpy()[:, None]  # decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
+            pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
 
             pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
-            fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+            #pred_dist = np.sum(np.exp(-(cdist(grid_array, points_true[ref_type_inds]) ** 2 / sigma)), axis=-1)  # self-overlap, for debugging
+
+            fig2.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
                                        mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
                                        showlegend=True if (j == 0 and graph_ind == 0) else False,
                                        name=f'True type', legendgroup=f'True type'
                                        ))
 
-            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+            fig2.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
                                     showlegend=True,
                                     name=f'Predicted type {j}',
                                     colorscale=colorscales[j],
                                     showscale=False,
-                                    isomin=0.01, isomax=ymax, opacity=.025,
+                                    isomin=0.01, isomax=ymax, opacity=.25,
                                     cmin=0, cmax=ymax,
                                     surface_count=num_surface,
                                     ))
 
-        wandb.log({"Combined Sample": fig})
-
-    return None
+    return fig, fig2

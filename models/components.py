@@ -106,13 +106,13 @@ class Normalization(nn.Module):
         super().__init__()
         self.norm_type = norm
         if norm == 'batch':
-            self.norm = gnn.BatchNorm(filters)
+            self.norm = nn.BatchNorm1d(filters)
         elif norm == 'graph layer':
             self.norm = gnn.LayerNorm(filters)
         elif norm == 'layer':
             self.norm = nn.LayerNorm(filters)
         elif norm == 'instance':
-            self.norm = gnn.InstanceNorm(filters)  # not tested
+            self.norm = nn.InstanceNorm1d(filters)  # not tested
         elif norm == 'graph':
             self.norm = gnn.GraphNorm(filters)
         elif norm is None:

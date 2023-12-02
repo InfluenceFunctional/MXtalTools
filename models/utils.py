@@ -65,7 +65,7 @@ def save_model(model, optimizer):
     torch.save({'model_state_dict': model.state_dict(), 'optimizer_state_dict': optimizer.state_dict()}, 'ckpts/model_ckpt')
 
 
-def init_optimizer(model_name, optim_config, model, freeze_params=False):
+def init_optimizer(model_name, optim_config, model, amsgrad=False, freeze_params=False):
     """
     initialize optimizers
     @param optim_config: config for a given optimizer
@@ -87,7 +87,7 @@ def init_optimizer(model_name, optim_config, model, freeze_params=False):
         optimizer = optim_config.optimizer
         init_lr = optim_config.init_lr
 
-    amsgrad = True
+    amsgrad = amsgrad
 
     if model_name == 'autoencoder' and hasattr(model, 'encoder'):
         if freeze_params:
@@ -97,31 +97,22 @@ def init_optimizer(model_name, optim_config, model, freeze_params=False):
             {'params': model.encoder.parameters(), 'lr': optim_config.encoder_init_lr},
             {'params': model.decoder.parameters(), 'lr': optim_config.decoder_init_lr}
         ]
-        if optimizer == 'adam':
-            optimizer = optim.Adam(params_dict, amsgrad=amsgrad, lr=optim_config.init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-        elif optimizer == 'adamw':
-            optimizer = optim.AdamW(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-        elif optimizer == 'sgd':
-            optimizer = optim.SGD(params_dict, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
-        else:
-            print(optim_config.optimizer + ' is not a valid optimizer')
-            sys.exit()
 
     else:
         if freeze_params:
-            model_params = [param for param in model.parameters() if param.requires_grad == True]
+            params_dict = [param for param in model.parameters() if param.requires_grad == True]
         else:
-            model_params = model.parameters()
+            params_dict = model.parameters()
 
-        if optimizer == 'adam':
-            optimizer = optim.Adam(model_params, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-        elif optimizer == 'adamw':
-            optimizer = optim.AdamW(model_params, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-        elif optimizer == 'sgd':
-            optimizer = optim.SGD(model_params, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
-        else:
-            print(optim_config.optimizer + ' is not a valid optimizer')
-            sys.exit()
+    if optimizer == 'adam':
+        optimizer = optim.Adam(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+    elif optimizer == 'adamw':
+        optimizer = optim.AdamW(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+    elif optimizer == 'sgd':
+        optimizer = optim.SGD(params_dict, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
+    else:
+        print(optim_config.optimizer + ' is not a valid optimizer')
+        sys.exit()
 
     return optimizer
 
@@ -536,7 +527,7 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
     if dist_to_self:
         pred_points = ref_points
     else:
-        pred_types = decoded_data.x / nodewise_weights[:, None] * type_distance_scaling
+        pred_types = decoded_data.x * type_distance_scaling  # nodes are already weighted at 1
         pred_points = torch.cat((decoded_data.pos, pred_types), dim=1)  # assume input x has already been normalized
 
     if isolate_dimensions is not None:  # only compute distances over certain dimensions
@@ -562,4 +553,3 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
         return torch.log(nodewise_overlap)
     else:
         return nodewise_overlap
-

@@ -2,7 +2,7 @@ machine: "cluster"  # "local" or "cluster"
 device: "cuda"  # "cuda" or "cpu"
 anomaly_detection: False  # DEPRECATED slows down the code
 mode: autoencoder  # 'gan' for crystal generator AND/OR discriminator or 'regression' for molecule property prediction or 'figures' or 'autoencoder' or 'search' WIP
-dataset_name: 'test_dataset.pkl'  # dataset.pkl is large test_dataset.pkl is slow for faster prototyping
+dataset_name: 'dataset.pkl'  # dataset.pkl is large test_dataset.pkl is slow for faster prototyping
 misc_dataset_name: 'misc_data_for_dataset.npy'  # contains necessary standardizations. Leave as-is in general
 dataset_yaml_path: '/dataset/small_autoencoder.yaml'  # path within configs to .yaml which defines dataset filtering
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
@@ -10,12 +10,14 @@ save_checkpoints: False # will do it always on cluster, only locally if True
 
 dataset:  # overwrite values from the dataset config
   max_dataset_length: 10000
+  test_fraction: 0.5
+
 
 # batching & convergence
 early_epochs_step_override: 100  # after how many steps to break an 'early' epoch
 num_early_epochs: 10  # how many 'early' epochs should we have
-grow_batch_size: True
-min_batch_size: 2
+grow_batch_size: False
+min_batch_size: 500
 max_batch_size: 500
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
@@ -31,11 +33,11 @@ logger:
   log_figures: True
 
 seeds:
-  model: 0
+  model: 12345
   dataset: 0
 
 # for reloading prior checkpoints
-model_paths:  # paths starting from the checkpoints path in the user config
+model_paths:
   discriminator: null
   generator: null
   regressor: null
@@ -46,22 +48,21 @@ generator_positional_noise: 0
 regressor_positional_noise: 0
 autoencoder_positional_noise: 0
 
-generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # In which space groups should the generator sample new crystals
-#null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
-supercell_size: 5  # how big of a supercell to build before paring down to crystal graph - 5 is a good value
+generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
+supercell_size: 5
 
 # for GAN training
 generator:
   # settings
-  canonical_conformer_orientation: 'random' # 'standardized' or 'random'
+  canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
-  train_vdw: True  # train using vdw overlap loss
+  train_vdw: True
   train_adversarially: True
   vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
   density_loss_func: l1  # 'l1' or 'mse'
-  adversarial_loss_func: 'score'  # how to rescale the adversarial loss
-  train_h_bond: False # train hydrogen bond matching score (non-directional and generally untested)
-  similarity_penalty: 0  # scale for our various attempts to make it sample diversely - probably best not to use for now
+  adversarial_loss_func: 'score'  #
+  train_h_bond: False # (non-directional)
+  similarity_penalty: 0.5
 
   #generator optimizer and model
   optimizer: null
@@ -70,13 +71,13 @@ generator:
 
 discriminator:
   # settings
-  train_adversarially: True  # train on samples from the generator
-  train_on_randn: True  # train on gaussian-sampled cell params (poor)
-  train_on_distorted: True  # train on true samples which have been distorted
-  distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
+  train_adversarially: True
+  train_on_randn: True
+  train_on_distorted: True
   use_classification_loss: True
   use_rdf_distance_loss: True
-  use_cell_distance_loss: False  # DO NOT USE - only meaningful when generating within the same space group
+  use_cell_distance_loss: False  # DO NOT USE only meaningful when generating within the same space group
+  distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
   # discriminator optimizer and model
   optimizer: null
@@ -88,9 +89,9 @@ autoencoder:
   type_distance_scaling: 0.5
   init_sigma: 0.25
   sigma_lambda: 0.99
-  sigma_threshold: 0.025
+  sigma_threshold: 0.01
   overlap_eps: 1.0E-3
-  max_overlap_threshold: 0.1
+  max_overlap_threshold: 0.25  # guessed
   independent_node_weights: False
   node_weight_temperature: 10
 
@@ -105,9 +106,8 @@ autoencoder:
     lr_schedule: False
     beta1: 0.9
     beta2: 0.999
-    weight_decay: 0.001
+    weight_decay: 0
     convergence_eps: 0.0001
-    training_period: 1
     lr_growth_lambda: 1.00
     lr_shrink_lambda: 0.995
     use_plateau_scheduler: False
@@ -116,19 +116,16 @@ autoencoder:
     graph_convolution_type: TransformerConv
     graph_aggregator: max
     embedding_depth: 512
-    activation: gelu
-    num_decoder_layers: 4
+    activation: 'leaky relu'
+    num_decoder_layers: 2
     decoder_norm_mode: 'batch'
     decoder_dropout_probability: 0
     graph_node_norm: 'graph layer'
     graph_node_dropout: 0
     graph_message_dropout: 0
     num_attention_heads: 4
-    graph_message_depth: 512
-    graph_node_dims: 512
-    num_graph_convolutions: 4
-    graph_embedding_depth: 512
-    nodewise_fc_layers: 4
+    num_graph_convolutions: 2
+    nodewise_fc_layers: 2
     num_radial: 50
     radial_function: gaussian
     max_num_neighbors: 100

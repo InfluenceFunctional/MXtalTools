@@ -262,9 +262,9 @@ class Modeller:
 
         if self.train_autoencoder:
             self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
-            self.config.autoencoder.max_num_atoms = self.dataDims['max_molecule_radius']
+            self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']
             self.config.autoencoder.min_num_atoms = self.dataDims['min_molecule_num_atoms']
-            self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_num_atoms']
+            self.config.autoencoder.max_num_atoms = self.dataDims['max_molecule_num_atoms']
 
             allowed_types = self.dataDims['allowed_atom_types']
             type_translation_index = np.zeros(allowed_types.max()) - 1
@@ -391,8 +391,8 @@ class Modeller:
         generates a uniform random point cloud with maximum radius 1
         """
 
-        point_num_rands = np.random.randint(low=self.config.autoencoder.min_num_atoms,
-                                            high=self.config.autoencoder.min_num_atoms + 1,
+        point_num_rands = np.random.randint(low=2, #self.config.autoencoder.min_num_atoms,
+                                            high=self.config.autoencoder.max_num_atoms + 1,
                                             size=batch_size)
 
         # truly random point clouds within a sphere of fixed maximum radius of 1
@@ -419,7 +419,7 @@ class Modeller:
         data = data.to(self.device)
         decoding = self.models_dict['autoencoder'](data.clone())
 
-        autoencoder_losses, stats, decoded_data, nodewise_weights_tensor = self.compute_autoencoder_loss(decoding, data)
+        autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data)
         autoencoder_loss = autoencoder_losses.mean()
 
         if update_weights:
@@ -433,11 +433,14 @@ class Modeller:
                                           autoencoder_losses.cpu().detach().numpy())
 
         if step == 0:  # save the complete final samples
-            self.logger.update_stats_dict(self.epoch_type, ['sample', 'decoded_sample', 'nodewise_weights'],
-                                          [data.cpu().detach(),
-                                           decoded_data.cpu().detach(),
-                                           nodewise_weights_tensor.cpu().detach().numpy()], mode='append')
-        self.logger.update_stats_dict(self.epoch_type, list(stats.keys()), list(stats.values()), mode='append')
+            self.logger.update_stats_dict(self.epoch_type,
+                                          ['sample', 'decoded_sample'],
+                                          [data.cpu().detach(), decoded_data.cpu().detach()
+                                           ], mode='append')
+        self.logger.update_stats_dict(self.epoch_type,
+                                      list(stats.keys()),
+                                      list(stats.values()),
+                                      mode='append')
 
     def autoencoder_epoch(self, data_loader, update_weights, iteration_override=None):
         if update_weights:
@@ -445,27 +448,29 @@ class Modeller:
         else:
             self.models_dict['autoencoder'].eval()
 
-        if self.config.autoencoder.random_fraction == 1:
-            if self.epoch_type == 'train':
-                num_steps = 100
-            else:
-                num_steps = 10
-
+        if self.config.autoencoder.random_fraction == 1 and self.epoch_type == 'train':  # fully random epoch
+            num_steps = 100
             for i in tqdm(range(num_steps)):  # xx steps per epoch
-                data = self.generate_random_point_cloud_batch(max(data_loader.batch_size, 2))  # must always be at least two graphs per batch
+                data = self.generate_random_point_cloud_batch(self.config.max_batch_size)  # just take the max size
+
                 self.autoencoder_step(data, update_weights, step=i)
 
-        else:
+        elif self.epoch_type == 'train':  # mixed random & data epoch
             for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
                 if np.random.uniform(0, 1, 1) < self.config.autoencoder.random_fraction or data.num_graphs == 1:
                     data = self.generate_random_point_cloud_batch(max(data_loader.batch_size, 2))  # must always be at least two graphs per batch
                 else:
-                    if self.config.autoencoder_positional_noise > 0:
-                        data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
+                    data = self.preprocess_real_autoencoder_data(data)
 
-                    data = self.set_molecule_alignment(data, right_handed=False, mode_override='random')
-                    data.pos /= self.config.autoencoder.molecule_radius_normalization
-                    data.x[:, 0] = self.autoencoder_type_index[data.x[:, 0].long() - 1].float()  # reindex atom types
+                self.autoencoder_step(data, update_weights, step=i)
+
+                if iteration_override is not None:
+                    if i >= iteration_override:
+                        break  # stop training early - for debugging purposes
+
+        elif self.epoch_type != 'train':  # test always on real data
+            for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+                data = self.preprocess_real_autoencoder_data(data)
 
                 self.autoencoder_step(data, update_weights, step=i)
 
@@ -484,12 +489,23 @@ class Modeller:
             if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:  # if the overlap is too large, anneal
                 self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
+    def preprocess_real_autoencoder_data(self, data):
+        if self.config.autoencoder_positional_noise > 0:
+            data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
+
+        data = self.set_molecule_alignment(data, right_handed=False, mode_override='random')
+        data.pos /= self.config.autoencoder.molecule_radius_normalization
+        data.x[:, 0] = self.autoencoder_type_index[data.x[:, 0].long() - 1].float()  # reindex atom types
+
+        return data
+
     def compute_autoencoder_loss(self, decoding, data):
 
         decoded_data = data.clone()
         decoded_data.pos = decoding[:, :3]
         decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(self.config.autoencoder.model.num_decoder_points).to(self.config.device)
         if self.config.autoencoder.independent_node_weights:
+            assert False, "per_graph_pred_types is not set up for custom weighting"
             nodewise_weights_tensor = (torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature) /
                                        scatter(torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature), decoded_data.batch
                                                ).repeat_interleave(self.config.autoencoder.model.num_decoder_points))  # fast graph-wise softmax with high temperature
@@ -499,21 +515,23 @@ class Modeller:
             nodewise_weights_tensor = torch.tensor(nodewise_weights, dtype=torch.float32, device=self.config.device)
 
         # low T causes instability in backprop
-        decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1) * nodewise_weights_tensor[:, None]
+        decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
+        decoded_data.aux_ind = nodewise_weights_tensor
+        data.aux_ind = torch.ones(data.num_nodes, dtype=torch.float32, device=self.config.device)
 
         true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
         per_graph_true_types = scatter(true_nodes, data.batch[:, None], dim=0, reduce='mean')
-        per_graph_pred_types = scatter(decoded_data.x, decoded_data.batch[:, None], dim=0, reduce='sum') / data.mol_size[:, None]
+        per_graph_pred_types = scatter(decoded_data.x, decoded_data.batch[:, None], dim=0, reduce='mean')
 
         # assert torch.sum(per_graph_pred_types) = len(per_graph_pred_types)
 
         decoder_likelihoods = compute_gaussian_overlap(true_nodes, data, decoded_data, self.config.autoencoder_sigma,
-                                                       nodewise_weights=nodewise_weights_tensor,
+                                                       nodewise_weights=decoded_data.aux_ind,
                                                        overlap_type='gaussian', log_scale=False,
                                                        type_distance_scaling=self.config.autoencoder.type_distance_scaling)
 
         self_likelihoods = compute_gaussian_overlap(true_nodes, data, data, self.config.autoencoder_sigma,
-                                                    nodewise_weights=torch.ones(data.num_nodes, dtype=torch.float32, device=self.config.device),
+                                                    nodewise_weights=data.aux_ind,
                                                     overlap_type='gaussian', log_scale=False,
                                                     type_distance_scaling=self.config.autoencoder.type_distance_scaling,
                                                     dist_to_self=True)  # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
@@ -535,7 +553,7 @@ class Modeller:
 
         losses = reconstruction_loss + constraining_loss
 
-        stats = {'constraining_loss': constraining_loss.mean().cpu().detach().numpy(),
+        stats = {'constraining_loss': constraining_loss.mean().cpu().detach().numpy(),  # todo this is slow
                  'reconstruction_loss': reconstruction_loss.mean().cpu().detach().numpy(),
                  'nodewise_type_loss': nodewise_type_loss.cpu().detach().numpy(),
                  'scaled_reconstruction_loss': (reconstruction_loss.mean() * self.config.autoencoder_sigma).cpu().detach().numpy(),
@@ -544,7 +562,7 @@ class Modeller:
                  'mean_self_overlap': self_likelihoods.mean().cpu().detach().numpy(),
                  }
 
-        return losses, stats, decoded_data, nodewise_weights_tensor
+        return losses, stats, decoded_data
 
     def regression_epoch(self, data_loader, update_weights=True, iteration_override=None):
         if update_weights:
@@ -1181,9 +1199,8 @@ class Modeller:
 
     def increment_batch_size(self, train_loader, test_loader, extra_test_loader):
         if self.config.grow_batch_size:
-            if (((train_loader.batch_size < len(train_loader.dataset)) and (
-                    train_loader.batch_size < self.config.max_batch_size))
-                    or self.config.autoencoder.random_fraction == 1):  # if the batch is smaller than the dataset
+            if (train_loader.batch_size < len(train_loader.dataset)) and (
+                    train_loader.batch_size < self.config.max_batch_size):  # if the batch is smaller than the dataset
                 increment = max(4,
                                 int(train_loader.batch_size * self.config.batch_growth_increment))  # increment batch size
                 train_loader = update_dataloader_batch_size(train_loader, train_loader.batch_size + increment)

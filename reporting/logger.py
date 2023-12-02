@@ -168,4 +168,4 @@ class Logger:
     def log_epoch_analysis(self, test_loader):
         """sometimes do detailed reporting"""
         if (self.epoch % self.sample_reporting_frequency) == 0:
-            detailed_reporting(self.config, self.dataDims, test_loader, self.test_stats, extra_test_dict=self.extra_stats)
+            detailed_reporting(self.config, self.dataDims, test_loader, self.train_stats, self.test_stats, extra_test_dict=self.extra_stats)
