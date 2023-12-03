@@ -27,7 +27,7 @@ from dataset_management.CrystalData import CrystalData
 from models.autoencoder_models import point_autoencoder
 from models.crystal_rdf import new_crystal_rdf
 
-from models.discriminator_models import crystal_discriminator#, crystal_proxy_discriminator
+from models.discriminator_models import crystal_discriminator  # , crystal_proxy_discriminator
 from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
@@ -45,6 +45,7 @@ from dataset_management.utils import (get_dataloaders, update_dataloader_batch_s
 from reporting.logger import Logger
 
 from common.utils import softmax_np, init_sym_info, compute_rdf_distance
+
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
 # https://dictionary.iucr.org/Sohncke_groups#:~:text=Sohncke%20groups%20are%20the%20three,in%20the%20chiral%20space%20groups.
@@ -129,7 +130,7 @@ class Modeller:
         if self.config.mode == 'gan' or self.config.mode == 'search':
             self.models_dict['generator'] = crystal_generator(self.config.seeds.model, self.device, self.config.generator.model, self.dataDims, self.sym_info)
             self.models_dict['discriminator'] = crystal_discriminator(self.config.seeds.model, self.config.discriminator.model, self.dataDims)
-            #self.models_dict['proxy_discriminator'] = crystal_proxy_discriminator(self.config.seeds.model, self.config.proxy_discriminator.model, self.dataDims)
+            # self.models_dict['proxy_discriminator'] = crystal_proxy_discriminator(self.config.seeds.model, self.config.proxy_discriminator.model, self.dataDims)
         if self.config.mode == 'regression' or self.config.model_paths.regressor is not None:
             self.models_dict['regressor'] = molecule_regressor(self.config.seeds.model, self.config.regressor.model, self.dataDims)
         if self.config.mode == 'autoencoder' or self.config.model_paths.autoencoder is not None:
@@ -252,7 +253,7 @@ class Modeller:
         self.train_discriminator = (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn))
         self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
         self.train_regressor = self.config.mode == 'regression'
-        #self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
+        # self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
         self.train_autoencoder = self.config.mode == 'autoencoder'
 
         '''initialize datasets and useful classes'''
@@ -391,7 +392,7 @@ class Modeller:
         generates a uniform random point cloud with maximum radius 1
         """
 
-        point_num_rands = np.random.randint(low=2, #self.config.autoencoder.min_num_atoms,
+        point_num_rands = np.random.randint(low=2,  # self.config.autoencoder.min_num_atoms,
                                             high=self.config.autoencoder.max_num_atoms + 1,
                                             size=batch_size)
 
@@ -401,7 +402,7 @@ class Modeller:
         lengths = torch.rand(point_num_rands.sum(), 1, dtype=torch.float32, device=self.config.device)
         coords_list = (vectors / norms * lengths).split(point_num_rands.tolist())
 
-        #coords_list = [coords - coords.mean(0) for coords in coords_list]
+        # coords_list = [coords - coords.mean(0) for coords in coords_list]
         types_list = torch.randint(self.dataDims['num_atom_types'],
                                    size=(point_num_rands.sum(),),
                                    device=self.config.device).split(point_num_rands.tolist())
@@ -481,10 +482,9 @@ class Modeller:
         # post epoch processing
         self.logger.numpyize_stats_dict(self.epoch_type)
 
-        if self.epoch_type == 'train':
-            if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:  # todo switch this to record over prior epochs
-                if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps:
-                    self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
+        if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:  # todo switch this to record over prior epochs
+            if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps.__dict__[self.epoch_type]:
+                self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
             if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:  # if the overlap is too large, anneal
                 self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
@@ -504,15 +504,20 @@ class Modeller:
         decoded_data = data.clone()
         decoded_data.pos = decoding[:, :3]
         decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(self.config.autoencoder.model.num_decoder_points).to(self.config.device)
+        graph_weights = data.mol_size / self.config.autoencoder.model.num_decoder_points
+        nodewise_graph_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
+
         if self.config.autoencoder.independent_node_weights:
-            assert False, "per_graph_pred_types is not set up for custom weighting"
-            nodewise_weights_tensor = (torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature) /
-                                       scatter(torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature), decoded_data.batch
-                                               ).repeat_interleave(self.config.autoencoder.model.num_decoder_points))  # fast graph-wise softmax with high temperature
+            nodewise_weights = (torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature) /
+                                scatter(torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature), decoded_data.batch
+                                        ).repeat_interleave(self.config.autoencoder.model.num_decoder_points))  # fast graph-wise softmax with high temperature
+
+            nodewise_weights_tensor = nodewise_weights * data.mol_size.repeat_interleave(self.config.autoencoder.model.num_decoder_points)  # appropriate graph weighting
         else:
-            graph_weights = data.mol_size / self.config.autoencoder.model.num_decoder_points
-            nodewise_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
-            nodewise_weights_tensor = torch.tensor(nodewise_weights, dtype=torch.float32, device=self.config.device)
+            nodewise_weights_tensor = torch.tensor(nodewise_graph_weights, dtype=torch.float32, device=self.config.device)
+            nodewise_weights = torch.ones_like(nodewise_weights_tensor) / self.config.autoencoder.model.num_decoder_points
+
+        # torch.mean(torch.abs(scatter(nodewise_weights_tensor, decoded_data.batch) - data.mol_size)) < 1e-3  # test for appropriate weighting
 
         # low T causes instability in backprop
         decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
@@ -521,7 +526,7 @@ class Modeller:
 
         true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
         per_graph_true_types = scatter(true_nodes, data.batch[:, None], dim=0, reduce='mean')
-        per_graph_pred_types = scatter(decoded_data.x, decoded_data.batch[:, None], dim=0, reduce='mean')
+        per_graph_pred_types = scatter(decoded_data.x * nodewise_weights[:, None], decoded_data.batch[:, None], dim=0, reduce='sum')
 
         # assert torch.sum(per_graph_pred_types) = len(per_graph_pred_types)
 
@@ -540,7 +545,8 @@ class Modeller:
         # num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(self.config.device), num_points_prediction[:, 0])
 
         nodewise_type_loss = F.binary_cross_entropy(per_graph_pred_types, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)
-        reconstruction_loss = scatter(F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none'), data.batch, reduce='mean')  # overlaps should all be exactly 1
+        nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
+        reconstruction_loss = scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')  # overlaps should all be exactly 1
 
         true_dists = torch.linalg.norm(data.pos, dim=1)
         mean_true_dist = scatter(true_dists, data.batch, dim=0, reduce='mean')
@@ -551,7 +557,17 @@ class Modeller:
 
         constraining_loss = scatter(F.relu(decoded_dists - 1), decoded_data.batch, reduce='mean')  # keep decoder points within the working volume
 
-        losses = reconstruction_loss + constraining_loss
+        #node_weight_constraining_loss = scatter(F.smooth_l1_loss(nodewise_weights_tensor, nodewise_graph_weights, reduction='none'), decoded_data.batch)  # don't want these to explode
+
+        matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
+
+        if self.config.autoencoder.independent_node_weights:
+            node_weight_constraining_loss = scatter(F.relu(-torch.log10(nodewise_weights_tensor / torch.amin(nodewise_graph_weights)) - 2), decoded_data.batch)  # don't let these get too small
+
+            losses = reconstruction_loss + constraining_loss + node_weight_constraining_loss
+        else:
+            losses = reconstruction_loss + constraining_loss
+
 
         stats = {'constraining_loss': constraining_loss.mean().cpu().detach().numpy(),  # todo this is slow
                  'reconstruction_loss': reconstruction_loss.mean().cpu().detach().numpy(),
@@ -560,6 +576,8 @@ class Modeller:
                  'mean_dist_loss': mean_dist_loss.cpu().detach().numpy(),
                  'sigma': self.config.autoencoder_sigma,
                  'mean_self_overlap': self_likelihoods.mean().cpu().detach().numpy(),
+                 'matching_nodes_fraction': matching_nodes_fraction.cpu().detach().numpy(),
+                 'node_weight_constraining_loss': node_weight_constraining_loss.cpu().detach().numpy(),
                  }
 
         return losses, stats, decoded_data
@@ -635,6 +653,7 @@ class Modeller:
                     break  # stop training early - for debugging purposes
 
         self.logger.numpyize_stats_dict(self.epoch_type)
+
     #
     # def proxy_discriminator_epoch(self, data_loader=None, update_weights=True,
     #                               iteration_override=None):

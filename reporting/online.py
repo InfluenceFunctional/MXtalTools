@@ -56,7 +56,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
     if isinstance(cleaned_samples, list):
         cleaned_samples = np.stack(cleaned_samples)
 
-    if isinstance(raw_samples,list):
+    if isinstance(raw_samples, list):
         raw_samples = np.stack(raw_samples)
 
     overlaps_1d = {}
@@ -1388,33 +1388,47 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
 
         true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=dataDims['num_atom_types']).float()
 
-        coord_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder_sigma,
+        full_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
+                                                nodewise_weights=nodewise_weights_tensor,
+                                                overlap_type='gaussian', log_scale=False,
+                                                type_distance_scaling=config.autoencoder.type_distance_scaling)
+
+        self_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
+                                                nodewise_weights=torch.ones_like(data.x)[:, 0],
+                                                overlap_type='gaussian', log_scale=False,
+                                                type_distance_scaling=config.autoencoder.type_distance_scaling,
+                                                dist_to_self=True)
+
+        coord_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
                                                  nodewise_weights=nodewise_weights_tensor,
                                                  overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
                                                  type_distance_scaling=config.autoencoder.type_distance_scaling)
 
-        self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder_sigma,
+        self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
                                                       nodewise_weights=torch.ones_like(data.x)[:, 0],
                                                       overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
                                                       type_distance_scaling=config.autoencoder.type_distance_scaling,
                                                       dist_to_self=True)
 
-        type_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder_sigma,
+        type_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
                                                 nodewise_weights=nodewise_weights_tensor,
                                                 overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
                                                 type_distance_scaling=config.autoencoder.type_distance_scaling)
 
-        self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder_sigma,
+        self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
                                                      nodewise_weights=torch.ones_like(data.x)[:, 0],
                                                      overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
                                                      type_distance_scaling=config.autoencoder.type_distance_scaling,
                                                      dist_to_self=True)
 
-        wandb.log({epoch_type + "_positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
-                   epoch_type +"_typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy()})
+        wandb.log({epoch_type + "_evaluation_positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
+                   epoch_type + "_evaluation_typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy(),
+                   epoch_type + "_evaluation_overall_overlap": (full_overlap / self_overlap).mean().cpu().detach().numpy(),
+                   epoch_type + "_evaluation_matching_clouds_fraction": (torch.sum((1 - full_overlap) < 0.01) / data.num_nodes).cpu().detach().numpy(),
+                   })
 
         if config.logger.log_figures:
-            fig1, fig2 = overlap_plot(wandb, data, decoded_data, config.autoencoder_sigma, dataDims['num_atom_types'], 3)
+            fig1, fig2 = overlap_plot(data, decoded_data, config.autoencoder_sigma, dataDims['num_atom_types'], 3)
             wandb.log({
                 epoch_type + "_typewise_sample_distribution": fig1,
                 epoch_type + "_combined_sample_distribution": fig2,
@@ -1701,7 +1715,7 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
     return None
 
 
-def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart_dimension):
+def overlap_plot(data, decoded_data, working_sigma, max_point_types, cart_dimension):
     sigma = working_sigma
     max_xval = max(decoded_data.pos.amax(), data.pos.amax()).cpu().detach().numpy()
     min_xval = min(decoded_data.pos.amax(), data.pos.amin()).cpu().detach().numpy()
@@ -1785,12 +1799,8 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
             rows=rows, cols=cols,
             specs=[[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)])
 
-        if sigma >= 0.1:
-            num_gridpoints = 15
-        elif 0.1 > sigma > 0.005:
-            num_gridpoints = 25
-        else:
-            num_gridpoints = 50
+        num_gridpoints = max(15, int((2 / sigma)))  # roughly in units of sigma
+        num_gridpoints = min(50, num_gridpoints)
 
         x = np.linspace(min(-1, min_xval), max(1, max_xval), num_gridpoints)
         y = np.copy(x)
@@ -1844,22 +1854,22 @@ def overlap_plot(wandb, data, decoded_data, working_sigma, max_point_types, cart
 
             pred_dist = np.sum(pred_type_weights.T * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1)
 
-            #pred_dist = np.sum(np.exp(-(cdist(grid_array, points_true[ref_type_inds]) ** 2 / sigma)), axis=-1)  # self-overlap, for debugging
+            # pred_dist = np.sum(np.exp(-(cdist(grid_array, points_true[ref_type_inds]) ** 2 / sigma)), axis=-1)  # self-overlap, for debugging
 
             fig2.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
-                                       mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
-                                       showlegend=True if (j == 0 and graph_ind == 0) else False,
-                                       name=f'True type', legendgroup=f'True type'
-                                       ))
+                                        mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
+                                        showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                        name=f'True type', legendgroup=f'True type'
+                                        ))
 
             fig2.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
-                                    showlegend=True,
-                                    name=f'Predicted type {j}',
-                                    colorscale=colorscales[j],
-                                    showscale=False,
-                                    isomin=0.01, isomax=ymax, opacity=.25,
-                                    cmin=0, cmax=ymax,
-                                    surface_count=num_surface,
-                                    ))
+                                     showlegend=True,
+                                     name=f'Predicted type {j}',
+                                     colorscale=colorscales[j],
+                                     showscale=False,
+                                     isomin=0.01, isomax=ymax, opacity=.25,
+                                     cmin=0, cmax=ymax,
+                                     surface_count=num_surface,
+                                     ))
 
     return fig, fig2
