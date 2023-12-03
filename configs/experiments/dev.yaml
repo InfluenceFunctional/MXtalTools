@@ -27,12 +27,12 @@ extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 
 logger:
   run_name: dev
-  mini_csp_frequency: 5
-  sample_reporting_frequency: 2
-  log_figures: True
   experiment_tag: dev
+  mini_csp_frequency: 5  # how often to run CSP-style search WIP
+  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  log_figures: True
 
-sample_steps: 100 
+sample_steps: 100
 
 seeds:
   model: 12345
@@ -90,7 +90,7 @@ autoencoder:
   random_fraction: 1
   type_distance_scaling: 0.5
   init_sigma: 0.25
-  evaluation_sigma: 0.1
+  evaluation_sigma: 0.05
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   overlap_eps:

@@ -10,18 +10,18 @@ autoencoder:
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: batch
-    embedding_depth: 1024
+    embedding_depth: 512
     graph_aggregator: max
     graph_convolution_type: TransformerConv
     graph_message_dropout: 0
     graph_node_dropout: 0
     graph_node_norm: graph layer
     max_num_neighbors: 100
-    nodewise_fc_layers: 1
+    nodewise_fc_layers: 2
     num_attention_heads: 4
-    num_decoder_layers: 1
+    num_decoder_layers: 2
     num_decoder_points: 256
-    num_graph_convolutions: 1
+    num_graph_convolutions: 2
     num_radial: 50
     radial_function: gaussian
   node_weight_temperature: 1
@@ -50,7 +50,7 @@ autoencoder:
 autoencoder_positional_noise: 0
 batch_growth_increment: 0.05
 dataset:
-  max_dataset_length: 1000000
+  max_dataset_length: 10000
   test_fraction: 0.2
 dataset_name: dataset.pkl
 dataset_yaml_path: /dataset/full_autoencoder.yaml
@@ -104,7 +104,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-num_early_epochs: 10
+num_early_epochs: 0
 regressor:
   model: null
   optimizer: null

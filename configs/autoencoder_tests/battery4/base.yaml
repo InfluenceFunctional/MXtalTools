@@ -9,12 +9,12 @@ extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 dataset:  # overwrite values from the dataset config
-  max_dataset_length: 1000000
+  max_dataset_length: 10000
   test_fraction: 0.2
 
 # batching & convergence
 early_epochs_step_override: 100  # after how many steps to break an 'early' epoch
-num_early_epochs: 10  # how many 'early' epochs should we have
+num_early_epochs: 0  # how many 'early' epochs should we have
 grow_batch_size: False
 min_batch_size: 500
 max_batch_size: 500

@@ -10,7 +10,7 @@ goal of this battery is to try to converge some random point clouds
 """
 
 depths_list = [1, 2, 4]
-widths_list = [256, 512, 1024]
+widths_list = [512, 1024]
 
 ind = 0
 for i1 in range(len(depths_list)):

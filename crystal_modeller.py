@@ -483,11 +483,11 @@ class Modeller:
         self.logger.numpyize_stats_dict(self.epoch_type)
 
         if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:  # todo switch this to record over prior epochs
-            if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps.__dict__[self.epoch_type]:
+            if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps.train:
                 self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
-            if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:  # if the overlap is too large, anneal
-                self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
+        if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:  # if the overlap is too large, anneal
+            self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
     def preprocess_real_autoencoder_data(self, data):
         if self.config.autoencoder_positional_noise > 0:
@@ -544,7 +544,8 @@ class Modeller:
         # encoding_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
         # num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(self.config.device), num_points_prediction[:, 0])
 
-        nodewise_type_loss = F.binary_cross_entropy(per_graph_pred_types, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)
+        nodewise_type_loss = (F.binary_cross_entropy(per_graph_pred_types / per_graph_pred_types.sum(1)[:, None], per_graph_true_types) -  # ensure input is normed or this function fails
+                              F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
         nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
         reconstruction_loss = scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')  # overlaps should all be exactly 1
 
@@ -557,7 +558,7 @@ class Modeller:
 
         constraining_loss = scatter(F.relu(decoded_dists - 1), decoded_data.batch, reduce='mean')  # keep decoder points within the working volume
 
-        #node_weight_constraining_loss = scatter(F.smooth_l1_loss(nodewise_weights_tensor, nodewise_graph_weights, reduction='none'), decoded_data.batch)  # don't want these to explode
+        # node_weight_constraining_loss = scatter(F.smooth_l1_loss(nodewise_weights_tensor, nodewise_graph_weights, reduction='none'), decoded_data.batch)  # don't want these to explode
 
         matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
 
@@ -568,6 +569,7 @@ class Modeller:
         else:
             losses = reconstruction_loss + constraining_loss
 
+            node_weight_constraining_loss = torch.ones_like(constraining_loss)
 
         stats = {'constraining_loss': constraining_loss.mean().cpu().detach().numpy(),  # todo this is slow
                  'reconstruction_loss': reconstruction_loss.mean().cpu().detach().numpy(),
