@@ -83,7 +83,10 @@ def convert_box_to_cell_params(box_params):
     return T_fc_list
 
 
-def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch_size, conv_cutoff, test_fraction=0.2, filter_early=True, temperatures: list = None, shuffle=True):
+def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch_size,
+                                conv_cutoff, test_fraction=0.2, filter_early=True,
+                                temperatures: list = None, shuffle=True,
+                                melt_only=False, no_melt=False):
     dataset = pd.read_pickle(dataset_path)
     dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
 
@@ -120,10 +123,21 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
     else:
         melt_class_num = 9  # nicotinamide
 
-    for i in range(len(dataset)):
-        if dataset.iloc[i]['temperature'] >= 500:
-            targets[i] = melt_class_num
+    if melt_only:
+        bad_inds = np.argwhere(targets != melt_class_num)[:, 0]  # filter first 10ps steps for equilibration
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
+        targets = np.asarray(  # reindex on 0-n
+            [forms2tgt[form] for form in dataset['form']]
+        )
 
+    if no_melt:
+        bad_inds = np.argwhere(targets == melt_class_num)[:, 0]  # filter first 10ps steps for equilibration
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
+        targets = np.asarray(  # reindex on 0-n
+            [forms2tgt[form] for form in dataset['form']]
+        )
 
     # T_fc_list = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
 
@@ -158,10 +172,7 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
         cluster_targets = cluster_targets[good_mols]
 
         # identify surface mols
-        if False: #dataset.loc[i]['temperature'] > 500:
-            coord_shell_num = 10
-        else:
-            coord_shell_num = 20
+        coord_shell_num = 20
 
         true_max_mol_radius = torch.amax(mol_radii[good_mols])
         centroids = cluster_coords.mean(1)
@@ -175,31 +186,6 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
 
         # cluster_targets[surface_mols_ind] = len(forms2tgt)  # label surface molecules as 'disordered'
         cluster_mol_ind = torch.arange(len(good_mols)).repeat(mol_num_atoms, 1).T
-
-        #
-        # if dataset.loc[i]['gap_rate'] > 0:
-        #     # find gaps and any neighboring molecules
-        #     aa = 1
-        #     from scipy.stats import gaussian_kde
-        #     transform = gaussian_kde(cluster_coords.reshape(np.prod(cluster_coords.shape[:2]), 3).T, bw_method=0.1)
-        #     refrac = fractional_transform(cluster_coords.reshape(np.prod(cluster_coords.shape[:2]), 3), torch.linalg.inv(torch.Tensor(T_fc_list[i])))
-        #     frac_lin_list = [torch.linspace(0.25, 0.75, 25) for ind in range(3)]  # look only well within the structure
-        #     frac_grid = torch.cartesian_prod(*frac_lin_list)
-        #     cart_grid = fractional_transform(frac_grid, torch.Tensor(T_fc_list[i]))
-        #
-        #     density = transform(cart_grid.T)
-        #     point_density = transform(centroids.T)
-        #     x, y, z = cart_grid.T
-        #
-        #     normed_density = density / density.sum()
-        #     void = 1 / normed_density
-        #
-        #     fig = go.Figure()
-        #     fig.add_scatter3d(x=x, y=y, z=z, mode='markers', marker_color=void, marker_opacity=0.1)
-        #     # fig.add_scatter3d(x=x, y=y, z=z, mode='markers', marker_color=density, marker_opacity=0.1)
-        #     # fig.add_scatter3d(x=centroids[:,0], y=centroids[:,1], z=centroids[:,2], mode='markers', marker_color=point_density, marker_opacity=0.5)
-        #     fig.show()
-        #
 
         datapoints.append(
             CrystalData(

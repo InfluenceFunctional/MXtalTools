@@ -75,20 +75,32 @@ if __name__ == "__main__":
             generate_dataset_from_dumps(dumps_dirs, dataset_path)
             os.chdir(config['runs_path'])
 
+        if 'nic' in dataset_path.lower():
+            melt_frac = 1/9
+        elif 'urea' in dataset_path.lower():
+            melt_frac = 1/6
+
         _, train_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
                                                       dataset_path, config['dataset_size'],
-                                                      conv_cutoff=config['conv_cutoff'], batch_size=1, temperatures=[config['training_temps'][0]], test_fraction=1)
+                                                      conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                      temperatures=[config['training_temps'][0]], test_fraction=1,
+                                                      no_melt=True)
         _, test_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
                                                      dataset_path, int(config['dataset_size'] * 0.2),
-                                                     conv_cutoff=config['conv_cutoff'], batch_size=1, temperatures=[config['training_temps'][1]], test_fraction=1)
+                                                     conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                     temperatures=[config['training_temps'][1]], test_fraction=1,
+                                                     no_melt=True)
         _, hot_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                    dataset_path, int(config['dataset_size'] * 0.11),
-                                                    conv_cutoff=config['conv_cutoff'], batch_size=1, temperatures=[config['training_temps'][2]], test_fraction=1)
+                                                    dataset_path, int(config['dataset_size'] * melt_frac),
+                                                    conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                    temperatures=[config['training_temps'][-1]], test_fraction=1,
+                                                    melt_only=True)
 
         # split the hot trajs equally
         hot_length = len(hot_loader)
         train_loader.dataset.extend(hot_loader.dataset[:hot_length // 2])
         test_loader.dataset.extend(hot_loader.dataset[hot_length // 2:])
+        del hot_loader
 
         train_classifier(config, classifier, optimizer,
                          train_loader, test_loader,
@@ -106,26 +118,32 @@ if __name__ == "__main__":
         if not os.path.exists(dataset_path):
             generate_dataset_from_dumps(dumps_dirs, dataset_path)
 
+        if 'nic' in dataset_path.lower():
+            melt_frac = 1/9
+        elif 'urea' in dataset_path.lower():
+            melt_frac = 1/6
+
         _, train_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
                                                       dataset_path, config['dataset_size'],
-                                                      conv_cutoff=config['conv_cutoff'], batch_size=1, temperatures=[config['training_temps'][0]], test_fraction=1)
+                                                      conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                      temperatures=[config['training_temps'][0]], test_fraction=1,
+                                                      no_melt=True)
         _, test_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
                                                      dataset_path, int(config['dataset_size'] * 0.2),
-                                                     conv_cutoff=config['conv_cutoff'], batch_size=1, temperatures=[config['training_temps'][1]], test_fraction=1)
+                                                     conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                     temperatures=[config['training_temps'][1]], test_fraction=1,
+                                                     no_melt=True)
         _, hot_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                    dataset_path, int(config['dataset_size'] * 0.11),
-                                                    conv_cutoff=config['conv_cutoff'], batch_size=1, temperatures=[config['training_temps'][2]], test_fraction=1)
+                                                    dataset_path, int(config['dataset_size'] * melt_frac),
+                                                    conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                    temperatures=[config['training_temps'][-1]], test_fraction=1,
+                                                    melt_only=True)
 
         # split the hot trajs equally
         hot_length = len(hot_loader)
         train_loader.dataset.extend(hot_loader.dataset[:hot_length // 2])
         test_loader.dataset.extend(hot_loader.dataset[hot_length // 2:])
-        classifier_evaluation(config, classifier, optimizer,
-                              train_loader, test_loader,
-                              config['num_epochs'], wandb,
-                              class_names, ordered_class_names, config['device'],
-                              config['batch_size'], config['reporting_frequency'],
-                              config['runs_path'], config['run_name'])
+        classifier_evaluation(config, classifier, train_loader, test_loader, wandb, class_names, ordered_class_names, config['device'], config['run_name'])
 
     """
     Trajectory Classification & Analysis

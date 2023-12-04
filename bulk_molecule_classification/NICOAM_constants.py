@@ -3,7 +3,7 @@ nic_ordered_class_names = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX
 urea_class_names = ['A', 'B', 'C', 'I', 'III', 'IV', 'Melt']
 urea_ordered_class_names = ['A', 'B', 'C', 'I', 'III', 'IV', 'Melt']
 
-defect_names = ['Bulk', 'Low-Coordinate']
+defect_names = ['Bulk', 'Surface']
 
 identifier2form = {'NICOAM07': 5,
                    'NICOAM08': 7,
@@ -14,13 +14,14 @@ identifier2form = {'NICOAM07': 5,
                    'NICOAM16': 4,
                    'NICOAM17': 9,
                    'NICOAM18': 6,
+                   'NIC_Melt': 10,
                    'ureaA': 1,
                    'ureaB': 2,
                    'ureaC': 3,
                    'ureaI': 4,
                    'ureaIII': 5,
                    'ureaIV': 6,
-                   'Melt': 7,
+                   'UREA_Melt': 7,
                    }
 
 form2index = {0: 4,

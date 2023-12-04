@@ -174,6 +174,7 @@ class DataManager:
 
         self.tracking_keys.append('molecule_num_atoms')
         self.tracking_keys.append('molecule_volume')
+        self.tracking_keys.append('molecule_mass')
 
         self.tracking_keys = list(set(self.tracking_keys))  # remove duplicates
 

@@ -1366,7 +1366,7 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
         # if config.proxy_discriminator.train:
         #     proxy_discriminator_analysis(test_epoch_stats_dict)
 
-    elif config.mode == 'regression':
+    elif config.mode == 'regression' or config.mode == 'embedding_regression':
         log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
     elif config.mode == 'autoencoder':
@@ -1792,17 +1792,15 @@ def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, ca
     elif cart_dimension == 3:
 
         num_types = max_point_types
-        num_surface = 25
+        num_surface = 15
+        # num_gridpoints = max(15, int((2 / sigma)))  # roughly in units of sigma
+        # num_gridpoints = min(35, num_gridpoints)
+        num_gridpoints = 25
         cols = 3
         rows = num_types // cols + ((num_types % cols) != 0)
         fig = make_subplots(
             rows=rows, cols=cols,
             specs=[[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)])
-
-        # num_gridpoints = max(15, int((2 / sigma)))  # roughly in units of sigma
-        # num_gridpoints = min(35, num_gridpoints)
-
-        num_gridpoints = 25
 
         x = np.linspace(min(-1, min_xval), max(1, max_xval), num_gridpoints)
         y = np.copy(x)

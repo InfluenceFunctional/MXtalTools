@@ -22,49 +22,43 @@ def embedding_fig(results_dict, num_samples, classes, ordered_classes, run_tempe
     # sample_colorscale('hsv', 10)
     linewidths = [0, 0.75]
     linecolors = [None, 'DarkSlateGrey']
-    symbols = ['circle', 'diamond', 'square']
 
     fig = go.Figure()
-    for temp_ind, temperature in enumerate(run_temperatures):
-        for t_ind in range(len(classes)):  # todo switch to sum over forms
-            for d_ind in range(len(defect_names)):
-                inds = np.argwhere((results_dict['Temperature'][sample_inds] == temperature) *
-                                   (results_dict['Targets'][sample_inds] == t_ind) *
-                                   (results_dict['Defects'][sample_inds] == d_ind)
-                                   )[:, 0]
+    for t_ind in range(len(classes)):  # todo switch to sum over forms
+        for d_ind in range(len(defect_names)):
+            inds = np.argwhere((results_dict['Targets'][sample_inds] == t_ind) *
+                               (results_dict['Defects'][sample_inds] == d_ind)
+                               )[:, 0]
 
-                fig.add_trace(go.Scattergl(x=embedding[inds, 0], y=embedding[inds, 1],
-                                           mode='markers',
-                                           marker_color=target_colors[t_ind],
-                                           marker_symbol=symbols[temp_ind],
-                                           marker_line_width=linewidths[d_ind],
-                                           marker_line_color=linecolors[d_ind],
-                                           legendgroup=ordered_classes[t_ind],
-                                           name=ordered_classes[t_ind],  # + ', ' + defect_names[d_ind],# + ', ' + str(temperature) + 'K',
-                                           showlegend=True if (temperature == run_temperatures[0] or temperature == run_temperatures[2]) and d_ind == 1 else False,
-                                           opacity=0.75))
+            fig.add_trace(go.Scattergl(x=embedding[inds, 0], y=embedding[inds, 1],
+                                       mode='markers',
+                                       marker_color=target_colors[t_ind],
+                                       marker_line_width=linewidths[d_ind],
+                                       marker_line_color=linecolors[d_ind],
+                                       legendgroup=ordered_classes[t_ind],
+                                       name=ordered_classes[t_ind],  # + ', ' + defect_names[d_ind],# + ', ' + str(temperature) + 'K',
+                                       showlegend=True if d_ind == 0 else False,
+                                       opacity=0.75))
     fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
                       xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
                       plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
     return fig
 
 
-def form_accuracy_fig(results_dict, classes, ordered_classes, temp_series):
+def form_accuracy_fig(results_dict, ordered_classes, temp_series):
     scores = {}
     melt_names = ['Crystal', 'Melt']
-    fig = make_subplots(cols=3, rows=1, subplot_titles=[str(tmp) for tmp in temp_series], y_title="True Forms", x_title="Predicted Forms")
-    for temp_ind, temperature in enumerate(temp_series):
-        inds = np.argwhere(results_dict['Temperature'] == temperature)[:, 0]
+    fig = make_subplots(cols=2, rows=1, subplot_titles=["Low Temperature", "High Temperature"], y_title="True Forms", x_title="Predicted Forms")
+    for temp_ind in range(2):
+        if temp_ind == 0:
+            inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
+            temp_type = "Low"
+        else:
+            inds = np.argwhere(results_dict['Temperature'] > temp_series[0])[:, 0]
+            temp_type = "High"
         probs = results_dict['Type_Prediction'][inds]
         predicted_class = np.argmax(probs, axis=1)
         true_labels = results_dict['Targets'][inds]
-
-        if temperature == temp_series[2]:
-            true_labels = np.ones_like(true_labels)
-            predicted_class = np.asarray(predicted_class == (len(classes)-1)).astype(int)
-            probs_0 = probs[:, -2:]
-            probs_0[:, 0] = probs[:, :-1].sum(1)
-            probs = probs_0
 
         cmat = confusion_matrix(true_labels, predicted_class, normalize='true', labels=np.arange(len(ordered_classes)) if temp_ind < 2 else np.arange(len(melt_names)))
 
@@ -75,21 +69,15 @@ def form_accuracy_fig(results_dict, classes, ordered_classes, temp_series):
 
         f1 = f1_score(true_labels, predicted_class, average='micro')
 
-        if temperature == temp_series[2]:
-            fig.add_trace(go.Heatmap(z=cmat, x=melt_names, y=melt_names,
-                                     text=np.round(cmat, 2), texttemplate="%{text:.2g}", showscale=False,
-                                     colorscale='blues'),
-                          row=1, col=temp_ind + 1)
-        else:
-            fig.add_trace(go.Heatmap(z=cmat, x=ordered_classes, y=ordered_classes,
-                                     text=np.round(cmat, 2), texttemplate="%{text:.2g}", showscale=False,
-                                     colorscale='blues'),
-                          row=1, col=temp_ind + 1)
+        fig.add_trace(go.Heatmap(z=cmat, x=ordered_classes, y=ordered_classes,
+                                 text=np.round(cmat, 2), texttemplate="%{text:.2g}", showscale=False,
+                                 colorscale='blues'),
+                      row=1, col=temp_ind + 1)
 
-        fig.layout.annotations[temp_ind].update(text=f"{temperature}K: ROC AUC={auc:.2f}, F1={f1:.2f}")
+        fig.layout.annotations[temp_ind].update(text=f"{temp_type} T: ROC AUC={auc:.2f}, F1={f1:.2f}")
 
-        scores[str(temperature) + '_F1'] = f1
-        scores[str(temperature) + '_ROC_AUC'] = auc
+        scores[str(temp_type) + '_F1'] = f1
+        scores[str(temp_type) + '_ROC_AUC'] = auc
 
     fig.update_xaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True)
@@ -101,9 +89,15 @@ def form_accuracy_fig(results_dict, classes, ordered_classes, temp_series):
 
 def defect_accuracy_fig(results_dict, temp_series):
     scores = {}
-    fig = make_subplots(cols=3, rows=1, subplot_titles=[str(tmp) for tmp in temp_series], y_title="True Defects", x_title="Predicted Defects")
-    for temp_ind, temperature in enumerate(temp_series):
-        inds = np.argwhere(results_dict['Temperature'] == temperature)[:, 0]
+    fig = make_subplots(cols=2, rows=1, y_title="True Topology", x_title="Predicted Topology")
+    for temp_ind in range(2):
+        if temp_ind == 0:
+            inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
+            temp_type = "Low"
+        else:
+            inds = np.argwhere(results_dict['Temperature'] > temp_series[0])[:, 0]
+            temp_type = "High"
+
         probs = results_dict['Defect_Prediction'][inds]
         predicted_class = np.argmax(probs, axis=1)
         true_labels = results_dict['Defects'][inds]
@@ -121,23 +115,30 @@ def defect_accuracy_fig(results_dict, temp_series):
                                  text=np.round(cmat, 2), texttemplate="%{text:.2g}", showscale=False),
                       row=1, col=temp_ind + 1)
 
-        fig.layout.annotations[temp_ind].update(text=f"{temperature}K: ROC AUC={auc:.2f}, F1={f1:.2f}")
+        fig.layout.annotations[temp_ind].update(text=f"{temp_type} T: ROC AUC={auc:.2f}, F1={f1:.2f}")
 
-        scores[str(temperature) + '_F1'] = f1
-        scores[str(temperature) + '_ROC_AUC'] = auc
+        scores[str(temp_type) + '_F1'] = f1
+        scores[str(temp_type) + '_ROC_AUC'] = auc
 
     fig.update_xaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True)
     fig.update_yaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True)
+
     return fig, scores
 
 
-def all_accuracy_fig(results_dict, classes, ordered_classes, train_temps):  # todo fix class ordering
+def all_accuracy_fig(results_dict, ordered_classes, temp_series):  # todo fix class ordering
     scores = {}
     fig = make_subplots(cols=2, rows=1, subplot_titles=['100K', '350K'], y_title="True Class", x_title="Predicted Class")
-    for temp_ind, temperature in enumerate(train_temps[:2]):
-        inds = np.argwhere(results_dict['Temperature'] == temperature)[:, 0]
+    for temp_ind in range(2):
+        if temp_ind == 0:
+            inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
+            temp_type = "Low"
+        else:
+            inds = np.argwhere(results_dict['Temperature'] > temp_series[0])[:, 0]
+            temp_type = "High"
+
         defect_probs = results_dict['Defect_Prediction'][inds]
         form_probs = results_dict['Type_Prediction'][inds]
         probs = np.stack([np.outer(defect_probs[ind], form_probs[ind]).T.reshape(len(ordered_classes) * len(defect_names)) for ind in range(len(form_probs))])
@@ -163,10 +164,11 @@ def all_accuracy_fig(results_dict, classes, ordered_classes, train_temps):  # to
                                  text=np.round(cmat, 2), texttemplate="%{text:.2g}", showscale=False),
                       row=1, col=temp_ind + 1)
 
-        fig.layout.annotations[temp_ind].update(text=f"{temperature}K: ROC AUC={auc:.2f}, F1={f1:.2f}")
+        fig.layout.annotations[temp_ind].update(text=f"{temp_type} T: ROC AUC={auc:.2f}, F1={f1:.2f}")
 
-        scores[str(temperature) + '_F1'] = f1
-        scores[str(temperature) + '_ROC_AUC'] = auc
+        scores[str(temp_type) + '_F1'] = f1
+        scores[str(temp_type) + '_ROC_AUC'] = auc
+
     fig.update_xaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True, tickangle=90)
     fig.update_yaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',

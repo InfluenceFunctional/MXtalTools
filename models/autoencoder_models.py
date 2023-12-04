@@ -87,6 +87,10 @@ class point_autoencoder(nn.Module):
         initialize nodes on randn with uniform embedding
         decode
         """
-        encoding = self.encoder(data)
+        return self.decoder(self.encoder(data)).reshape(self.num_nodes * data.num_graphs, self.output_depth)
 
-        return self.decoder(encoding).reshape(self.num_nodes * data.num_graphs, self.output_depth)
+    def encode(self, data):
+        """
+        pass only the encoding
+        """
+        return self.encoder(data)

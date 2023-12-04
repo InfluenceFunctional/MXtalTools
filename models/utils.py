@@ -104,11 +104,11 @@ def init_optimizer(model_name, optim_config, model, amsgrad=False, freeze_params
         else:
             params_dict = model.parameters()
 
-    if optimizer == 'adam':
+    if optimizer.lower() == 'adam':
         optimizer = optim.Adam(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-    elif optimizer == 'adamw':
+    elif optimizer.lower() == 'adamw':
         optimizer = optim.AdamW(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
-    elif optimizer == 'sgd':
+    elif optimizer.lower() == 'sgd':
         optimizer = optim.SGD(params_dict, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
     else:
         print(optim_config.optimizer + ' is not a valid optimizer')
@@ -497,9 +497,8 @@ def decode_to_sph_rotvec(mol_orientations):
     return real_orientation_theta[:, None], real_orientation_phi[:, None], real_orientation_r[:, None]
 
 
-def get_regression_loss(regressor, data, mean, std):
+def get_regression_loss(regressor, data, targets, mean, std):
     predictions = regressor(data)[:, 0]
-    targets = data.y
     return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions.cpu().detach().numpy() * std + mean, targets.cpu().detach().numpy() * std + mean
 
 

@@ -28,6 +28,7 @@ from models.autoencoder_models import point_autoencoder
 from models.crystal_rdf import new_crystal_rdf
 
 from models.discriminator_models import crystal_discriminator  # , crystal_proxy_discriminator
+from models.embedding_regression_models import embedding_regressor
 from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
@@ -121,7 +122,7 @@ class Modeller:
         for models we will not use, just set them as nn.Linear(1,1)
         :return:
         """
-        self.model_names = ['generator', 'discriminator', 'regressor', 'autoencoder']
+        self.model_names = ['generator', 'discriminator', 'regressor', 'autoencoder', 'embedding_regressor']
         self.models_dict = {name: nn.Linear(1, 1) for name in self.model_names}  # initialize null models
 
         self.reload_model_checkpoint_configs()
@@ -135,6 +136,14 @@ class Modeller:
             self.models_dict['regressor'] = molecule_regressor(self.config.seeds.model, self.config.regressor.model, self.dataDims)
         if self.config.mode == 'autoencoder' or self.config.model_paths.autoencoder is not None:
             self.models_dict['autoencoder'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims)
+        if self.config.mode == 'embedding_regression':
+            self.models_dict['autoencoder'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims)
+            for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
+                param.requires_grad = False
+
+            self.config.embedding_regressor.model.embedding_depth = self.config.autoencoder.model.embedding_depth
+            self.models_dict['embedding_regressor'] = embedding_regressor(self.config.seeds.model, self.config.embedding_regressor.model)
+            assert self.config.model_paths.autoencoder is not None  # must preload the encoder
 
         if self.config.device.lower() == 'cuda':
             torch.backends.cudnn.benchmark = True
@@ -142,12 +151,14 @@ class Modeller:
             for model in self.models_dict.values():
                 model.cuda()
 
-        self.optimizers_dict = {model_name: init_optimizer(model_name, self.config.__dict__[model_name].optimizer, model) for model_name, model in self.models_dict.items()}
+        self.optimizers_dict = \
+            {model_name:
+                 init_optimizer(model_name, self.config.__dict__[model_name].optimizer, model) for model_name, model in self.models_dict.items()}
 
         for model_name, model_path in self.config.model_paths.__dict__.items():
             if model_path is not None:
                 self.models_dict[model_name], self.optimizers_dict[model_name] = reload_model(
-                    self.models_dict[model_name], self.optimizers_dict[model_name], self.config.__dict__[model_name]
+                    self.models_dict[model_name], self.optimizers_dict[model_name], self.config.model_paths.__dict__[model_name]
                 )
 
         self.schedulers_dict = {model_name: init_schedulers(
@@ -250,18 +261,20 @@ class Modeller:
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
 
-        self.train_discriminator = (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn))
-        self.train_generator = (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond))
-        self.train_regressor = self.config.mode == 'regression'
-        # self.train_proxy_discriminator = (self.config.mode == 'gan') and self.config.proxy_discriminator.train
-        self.train_autoencoder = self.config.mode == 'autoencoder'
+        self.train_models_dict = {
+            'discriminator': (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn)),
+            'generator': (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond)),
+            'regressor': self.config.mode == 'regression',
+            'autoencoder': self.config.mode == 'autoencoder',
+            'embedding_regressor': self.config.mode == 'embedding_regression',
+        }
 
         '''initialize datasets and useful classes'''
         train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
         self.init_gaussian_generator()
         num_params_dict = self.init_models()
 
-        if self.train_autoencoder:
+        if self.train_models_dict['autoencoder'] or self.train_models_dict['embedding_regressor']:
             self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
             self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']
             self.config.autoencoder.min_num_atoms = self.dataDims['min_molecule_num_atoms']
@@ -333,7 +346,7 @@ class Modeller:
 
                     '''sometimes test the generator on a mini CSP problem'''
                     if (self.config.mode == 'gan') and (epoch % self.config.logger.mini_csp_frequency == 0) and \
-                            self.train_generator and (epoch > 0):
+                            self.train_models_dict['generator'] and (epoch > 0):
                         pass  # todo finish search module
 
                     '''record metrics and analysis'''
@@ -375,7 +388,7 @@ class Modeller:
             if self.config.model_paths.regressor is not None:
                 self.models_dict['regressor'].eval()  # just using this to suggest densities to the generator
 
-            if self.train_discriminator or self.train_generator:
+            if self.train_models_dict['discriminator'] or self.train_models_dict['generator']:
                 self.gan_epoch(data_loader, update_weights, iteration_override)
             #
             # if self.train_proxy_discriminator:
@@ -386,6 +399,49 @@ class Modeller:
 
         elif self.config.mode == 'autoencoder':
             self.autoencoder_epoch(data_loader, update_weights, iteration_override)
+
+        elif self.config.mode == 'embedding_regression':
+            self.embedding_regression_epoch(data_loader, update_weights, iteration_override)
+
+    def embedding_regression_epoch(self, data_loader, update_weights, iteration_override):
+        if update_weights:
+            self.models_dict['embedding_regressor'].train(True)
+        else:
+            self.models_dict['embedding_regressor'].eval()
+
+        self.models_dict['autoencoder'].eval()
+
+        stats_keys = ['regressor_prediction', 'regressor_target', 'tracking_features']
+
+        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+            data = self.preprocess_real_autoencoder_data(data, no_noise=True)
+            data = data.to(self.device)
+
+            embedding = self.models_dict['autoencoder'].encode(data)
+            regression_losses_list, predictions, targets = get_regression_loss(
+                self.models_dict['embedding_regressor'], embedding, data.y, self.dataDims['target_mean'], self.dataDims['target_std'])
+            regression_loss = regression_losses_list.mean()
+
+            if update_weights:
+                self.optimizers_dict['embedding_regressor'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+                regression_loss.backward()  # back-propagation
+                self.optimizers_dict['embedding_regressor'].step()  # update parameters
+
+            '''log losses and other tracking values'''
+            self.logger.update_current_losses('embedding_regressor', self.epoch_type,
+                                              regression_loss.cpu().detach().numpy(),
+                                              regression_losses_list.cpu().detach().numpy())
+
+            stats_values = [predictions, targets]
+            self.logger.update_stats_dict(self.epoch_type, stats_keys, stats_values, mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, 'tracking_features', data.tracking.cpu().detach().numpy(), mode='append')
+
+            if iteration_override is not None:
+                if i >= iteration_override:
+                    break  # stop training early - for debugging purposes
+
+        # post epoch processing
+        self.logger.numpyize_stats_dict(self.epoch_type)
 
     def generate_random_point_cloud_batch(self, batch_size):
         """
@@ -455,8 +511,8 @@ class Modeller:
 
         if self.config.autoencoder.random_fraction == 1 and self.epoch_type == 'train':  # fully random epoch
             num_steps = 100
-            for i in tqdm(range(num_steps)):  # xx steps per epoch
-                data = self.generate_random_point_cloud_batch(self.config.max_batch_size)  # just take the max size
+            for i in tqdm(range(num_steps)):  # xx steps per random epoch
+                data = self.generate_random_point_cloud_batch(max(min(500, self.config.max_batch_size), data_loader.batch_size))  # just take the max size
 
                 self.autoencoder_step(data, update_weights, step=i)
 
@@ -483,6 +539,9 @@ class Modeller:
                     if i >= iteration_override:
                         break  # stop training early - for debugging purposes
 
+        # replace working loss with a non-mutable one (sigma movement makes regular loss not useful for convergence checks
+        self.logger.current_losses['autoencoder'][f'mean_{self.epoch_type}'] = self.logger.__dict__[f'{self.epoch_type}_stats']['matching_nodes_loss']
+
         # post epoch processing
         self.logger.numpyize_stats_dict(self.epoch_type)
 
@@ -498,9 +557,10 @@ class Modeller:
         if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
-    def preprocess_real_autoencoder_data(self, data):
-        if self.config.autoencoder_positional_noise > 0 and self.epoch_type == 'train':
-            data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
+    def preprocess_real_autoencoder_data(self, data, no_noise=False):
+        if not no_noise:
+            if self.config.autoencoder_positional_noise > 0 and self.epoch_type == 'train':
+                data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
 
         data = self.set_molecule_alignment(data, right_handed=False, mode_override='random')
         data.pos /= self.config.autoencoder.molecule_radius_normalization
@@ -589,6 +649,7 @@ class Modeller:
                  'sigma': self.config.autoencoder_sigma,
                  'mean_self_overlap': self_likelihoods.mean().cpu().detach().numpy(),
                  'matching_nodes_fraction': matching_nodes_fraction.cpu().detach().numpy(),
+                 'matching_nodes_loss': 1 - matching_nodes_fraction.cpu().detach().numpy(),
                  'node_weight_constraining_loss': node_weight_constraining_loss.mean().cpu().detach().numpy(),
                  }
 
@@ -608,7 +669,8 @@ class Modeller:
 
             data = data.to(self.device)
 
-            regression_losses_list, predictions, targets = get_regression_loss(self.models_dict['regressor'], data, self.dataDims['target_mean'], self.dataDims['target_std'])
+            regression_losses_list, predictions, targets = get_regression_loss(
+                self.models_dict['regressor'], data, data.y, self.dataDims['target_mean'], self.dataDims['target_std'])
             regression_loss = regression_losses_list.mean()
 
             if update_weights:
@@ -821,7 +883,7 @@ class Modeller:
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
         """
-        if self.train_discriminator:
+        if self.train_models_dict['discriminator']:
             (discriminator_output_on_real, discriminator_output_on_fake,
              cell_distortion_size, real_fake_rdf_distances) \
                 = self.get_discriminator_output(data, i)
@@ -912,7 +974,7 @@ class Modeller:
         execute a complete training step for the generator
         get sample losses, do reporting, update gradients
         """
-        if self.train_generator:
+        if self.train_models_dict['generator']:
             discriminator_raw_output, generated_samples, raw_samples, packing_loss, packing_prediction, packing_target, \
                 vdw_loss, vdw_score, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score = \
                 self.get_generator_losses(data)
@@ -1245,37 +1307,16 @@ class Modeller:
         return train_loader, test_loader, extra_test_loader
 
     def model_checkpointing(self, epoch):
-        if self.train_discriminator:  # todo make more general
-            model = 'discriminator'
-            loss_record = self.logger.loss_record[model]['mean_test']
-            past_mean_losses = [np.mean(record) for record in loss_record]
-            if np.average(self.logger.current_losses[model]['mean_test']) == np.amin(past_mean_losses):
-                print("Saving discriminator checkpoint")
-                self.logger.save_stats_dict(prefix='best_discriminator_')
-                save_checkpoint(epoch, self.models_dict['discriminator'], self.optimizers_dict['discriminator'], self.config.discriminator.__dict__,
-                                self.config.checkpoint_dir_path + 'best_discriminator' + self.run_identifier)
-
-        if self.train_generator:
-            model = 'generator'
-            loss_record = self.logger.loss_record[model]['mean_test']
-            past_mean_losses = [np.mean(record) for record in loss_record]
-            if np.average(self.logger.current_losses[model]['mean_test']) == np.amin(past_mean_losses):
-                print("Saving generator checkpoint")
-                self.logger.save_stats_dict(prefix='best_generator_')
-                save_checkpoint(epoch, self.models_dict['generator'], self.optimizers_dict['generator'], self.config.generator.__dict__,
-                                self.config.checkpoint_dir_path + 'best_generator' + self.run_identifier)
-
-        if self.train_regressor:
-            model = 'regressor'
-            loss_record = self.logger.loss_record[model]['mean_test']
-            past_mean_losses = [np.mean(record) for record in loss_record]
-            if np.average(self.logger.current_losses[model]['mean_test']) == np.amin(past_mean_losses):
-                print("Saving regressor checkpoint")
-                self.logger.save_stats_dict(prefix='best_regressor_')
-                save_checkpoint(epoch, self.models_dict['regressor'], self.optimizers_dict['regressor'], self.config.regressor.__dict__,
-                                self.config.checkpoint_dir_path + 'best_regressor' + self.run_identifier)
-
-        # todo checkpointing for proxy discriminator
+        loss_type_check = self.config.checkpointing_loss_type
+        for model_name in self.model_names:
+            if self.train_models_dict[model_name]:
+                loss_record = self.logger.loss_record[model_name][f'mean_{loss_type_check}']
+                past_mean_losses = [np.mean(record) for record in loss_record]
+                if np.average(self.logger.current_losses[model_name][f'mean_{loss_type_check}']) == np.amin(past_mean_losses):
+                    print(f"Saving {model_name} checkpoint")
+                    self.logger.save_stats_dict(prefix=f'best_{model_name}_')
+                    save_checkpoint(epoch, self.models_dict[model_name], self.optimizers_dict[model_name], self.config.__dict__[model_name].__dict__,
+                                    self.config.checkpoint_dir_path + f'best_{model_name}' + self.run_identifier)
 
     def update_lr(self):
         for model_name in self.model_names:
@@ -1323,14 +1364,14 @@ class Modeller:
         self.models_dict['generator'].eval()
         self.models_dict['discriminator'].eval()
         with torch.no_grad():
-            if self.train_discriminator:
+            if self.train_models_dict['discriminator']:
                 self.run_epoch(epoch_type='test', data_loader=test_loader, update_weights=False)  # compute loss on test set
 
                 if extra_test_loader is not None:
                     self.run_epoch(epoch_type='extra', data_loader=extra_test_loader, update_weights=False)  # compute loss on test set
 
             # sometimes test the generator on a mini CSP problem
-            if (self.config.mode == 'gan') and self.train_generator:
+            if (self.config.mode == 'gan') and self.train_models_dict['generator']:
                 pass  # self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
 
         self.logger.log_epoch_analysis(test_loader)
