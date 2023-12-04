@@ -1,6 +1,6 @@
 anomaly_detection: false
 autoencoder:
-  evaluation_sigma: 0.1
+  evaluation_sigma: 0.05
   independent_node_weights: true
   init_sigma: 0.25
   max_overlap_threshold: 0.25
@@ -33,7 +33,7 @@ autoencoder:
     encoder_init_lr: 0.0001
     init_lr: 0.0001
     lr_growth_lambda: 1.0
-    lr_schedule: false
+    lr_schedule: true
     lr_shrink_lambda: 0.995
     max_lr: 1.0e-05
     min_lr: 1.0e-05
@@ -42,12 +42,11 @@ autoencoder:
     weight_decay: 0
   overlap_eps:
     test: 0.001
-    train: 0.01
-  random_fraction: 0.25
+  random_fraction: 0.1
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   type_distance_scaling: 0.5
-autoencoder_positional_noise: 0
+autoencoder_positional_noise: 1
 batch_growth_increment: 0.05
 dataset:
   max_dataset_length: 10000000
@@ -88,11 +87,11 @@ gradient_norm_clip: 1
 grow_batch_size: false
 history: 10000
 logger:
-  experiment_tag: autoencoder_battery4
+  experiment_tag: autoencoder_battery5
   log_figures: true
   mini_csp_frequency: 5
   run_name: base_0
-  sample_reporting_frequency: 5
+  sample_reporting_frequency: 50
 machine: cluster
 max_batch_size: 500
 max_epochs: 100000
