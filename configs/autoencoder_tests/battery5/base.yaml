@@ -26,9 +26,9 @@ extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 
 logger:
   run_name: base
-  experiment_tag: autoencoder_battery4
+  experiment_tag: autoencoder_battery5
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 50  # how often to do detailed reporting with figures
   log_figures: True
 
 seeds:
@@ -45,10 +45,67 @@ model_paths:
 discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
-autoencoder_positional_noise: 0
+autoencoder_positional_noise: 1
 
 generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
+
+
+autoencoder:
+  random_fraction: 0.1
+  type_distance_scaling: 0.5
+  init_sigma: 0.25
+  evaluation_sigma: 0.05
+  sigma_lambda: 0.99
+  sigma_threshold: 0.01
+  overlap_eps:
+    test: 1.0E-3
+  max_overlap_threshold: 0.25  # guessed
+  independent_node_weights: True
+  node_weight_temperature: 1
+
+  # discriminator optimizer and model
+  optimizer:
+    optimizer: adam
+    init_lr: 1.0E-4
+    encoder_init_lr: 1.0E-4
+    decoder_init_lr: 1.0E-3
+    max_lr: 1.0E-5
+    min_lr: 1.0E-5
+    lr_schedule: True
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 0
+    convergence_eps: 0.0001
+    lr_growth_lambda: 1.00
+    lr_shrink_lambda: 0.995
+    use_plateau_scheduler: False
+
+  model:
+    graph_convolution_type: TransformerConv
+    graph_aggregator: max
+    embedding_depth: 512
+    activation: 'leaky relu'
+    num_decoder_layers: 2
+    decoder_norm_mode: 'batch'
+    decoder_dropout_probability: 0
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0
+    graph_message_dropout: 0
+    num_attention_heads: 4
+    num_graph_convolutions: 2
+    nodewise_fc_layers: 2
+    num_radial: 50
+    radial_function: gaussian
+    max_num_neighbors: 100
+    convolution_cutoff: 2
+    atom_type_embedding_dims: 5
+    num_decoder_points: 256
+
+regressor:
+  optimizer: null
+  model: null
+
 
 # for GAN training
 generator:
@@ -81,60 +138,4 @@ discriminator:
   # discriminator optimizer and model
   optimizer: null
 
-  model: null
-
-autoencoder:
-  random_fraction: 0.25
-  type_distance_scaling: 0.5
-  init_sigma: 0.25
-  evaluation_sigma: 0.1
-  sigma_lambda: 0.99
-  sigma_threshold: 0.01
-  overlap_eps:
-    train: 1.0E-2
-    test: 1.0E-3
-  max_overlap_threshold: 0.25  # guessed
-  independent_node_weights: True
-  node_weight_temperature: 1
-
-  # discriminator optimizer and model
-  optimizer:
-    optimizer: adam
-    init_lr: 1.0E-4
-    encoder_init_lr: 1.0E-4
-    decoder_init_lr: 1.0E-3
-    max_lr: 1.0E-5
-    min_lr: 1.0E-5
-    lr_schedule: False
-    beta1: 0.9
-    beta2: 0.999
-    weight_decay: 0
-    convergence_eps: 0.0001
-    lr_growth_lambda: 1.00
-    lr_shrink_lambda: 0.995
-    use_plateau_scheduler: False
-
-  model:
-    graph_convolution_type: TransformerConv
-    graph_aggregator: max
-    embedding_depth: 512
-    activation: 'leaky relu'
-    num_decoder_layers: 2
-    decoder_norm_mode: 'batch'
-    decoder_dropout_probability: 0
-    graph_node_norm: 'graph layer'
-    graph_node_dropout: 0
-    graph_message_dropout: 0
-    num_attention_heads: 4
-    num_graph_convolutions: 2
-    nodewise_fc_layers: 2
-    num_radial: 50
-    radial_function: gaussian
-    max_num_neighbors: 100
-    convolution_cutoff: 2
-    atom_type_embedding_dims: 5
-    num_decoder_points: 256
-
-regressor:
-  optimizer: null
   model: null

@@ -10,8 +10,8 @@ extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 
 dataset:
-  max_dataset_length: 1000
-  test_fraction: 0.5
+  max_dataset_length: 10000
+  test_fraction: 0.1
 
 # batching & convergence
 early_epochs_step_override: 100
@@ -87,14 +87,13 @@ discriminator:
   model: null
 
 autoencoder:
-  random_fraction: 1
+  random_fraction: 0.5
   type_distance_scaling: 0.5
   init_sigma: 0.25
   evaluation_sigma: 0.05
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   overlap_eps:
-    train: 1.0E-2
     test: 1.0E-3
   max_overlap_threshold: 0.25  # guessed
   independent_node_weights: True
@@ -108,7 +107,7 @@ autoencoder:
     decoder_init_lr: 1.0E-3
     max_lr: 1.0E-5
     min_lr: 1.0E-5
-    lr_schedule: False
+    lr_schedule: True
     beta1: 0.9
     beta2: 0.999
     weight_decay: 0

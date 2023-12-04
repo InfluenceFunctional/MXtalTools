@@ -1428,7 +1428,7 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
                    })
 
         if config.logger.log_figures:
-            fig1, fig2 = overlap_plot(data, decoded_data, config.autoencoder_sigma, dataDims['num_atom_types'], 3)
+            fig1, fig2 = gaussian_overlap_plot(data, decoded_data, config.autoencoder_sigma, dataDims['num_atom_types'], 3)
             wandb.log({
                 epoch_type + "_typewise_sample_distribution": fig1,
                 epoch_type + "_combined_sample_distribution": fig2,
@@ -1715,8 +1715,8 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
     return None
 
 
-def overlap_plot(data, decoded_data, working_sigma, max_point_types, cart_dimension):
-    sigma = working_sigma
+def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, cart_dimension):
+    sigma = max(working_sigma, 0.08)
     max_xval = max(decoded_data.pos.amax(), data.pos.amax()).cpu().detach().numpy()
     min_xval = min(decoded_data.pos.amax(), data.pos.amin()).cpu().detach().numpy()
     ymax = 1.1  # int(torch.diff(data.ptr).amax())  # max graph height
@@ -1799,8 +1799,10 @@ def overlap_plot(data, decoded_data, working_sigma, max_point_types, cart_dimens
             rows=rows, cols=cols,
             specs=[[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)])
 
-        num_gridpoints = max(15, int((2 / sigma)))  # roughly in units of sigma
-        num_gridpoints = min(50, num_gridpoints)
+        # num_gridpoints = max(15, int((2 / sigma)))  # roughly in units of sigma
+        # num_gridpoints = min(35, num_gridpoints)
+
+        num_gridpoints = 25
 
         x = np.linspace(min(-1, min_xval), max(1, max_xval), num_gridpoints)
         y = np.copy(x)

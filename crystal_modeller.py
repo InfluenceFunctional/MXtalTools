@@ -420,12 +420,16 @@ class Modeller:
         data = data.to(self.device)
         decoding = self.models_dict['autoencoder'](data.clone())
 
+        assert torch.sum(torch.isnan(decoding)) == 0, "NaN in decoder output"
+
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data)
         autoencoder_loss = autoencoder_losses.mean()
 
         if update_weights:
             self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
             autoencoder_loss.backward()  # back-propagation
+            torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
+                                           self.config.gradient_norm_clip)  # gradient clipping
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
         '''log losses and other tracking values'''
@@ -482,15 +486,20 @@ class Modeller:
         # post epoch processing
         self.logger.numpyize_stats_dict(self.epoch_type)
 
-        if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:  # todo switch this to record over prior epochs
-            if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps.train:
-                self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
+        # if we have learned the existing distribution
+        if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:
+            # and we more self-overlap than desired
+            if self.epoch_type == 'test':  # the overlap we ultimately care about is in the Test
+                if np.abs(1 - self.logger.test_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps.test:
+                    # tighten the target distribution
+                    self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
-        if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:  # if the overlap is too large, anneal
+        # if we have too much overlap, just tighten right away
+        if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
     def preprocess_real_autoencoder_data(self, data):
-        if self.config.autoencoder_positional_noise > 0:
+        if self.config.autoencoder_positional_noise > 0 and self.epoch_type == 'train':
             data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
 
         data = self.set_molecule_alignment(data, right_handed=False, mode_override='random')
@@ -544,7 +553,8 @@ class Modeller:
         # encoding_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
         # num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(self.config.device), num_points_prediction[:, 0])
 
-        nodewise_type_loss = (F.binary_cross_entropy(per_graph_pred_types / per_graph_pred_types.sum(1)[:, None], per_graph_true_types) -  # ensure input is normed or this function fails
+        assert torch.sum(torch.isnan(per_graph_pred_types)) == 0, "Predicted types contains NaN"
+        nodewise_type_loss = (F.binary_cross_entropy(per_graph_pred_types, per_graph_true_types) -  # ensure input is normed or this function fails
                               F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
         nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
         reconstruction_loss = scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')  # overlaps should all be exactly 1
@@ -579,7 +589,7 @@ class Modeller:
                  'sigma': self.config.autoencoder_sigma,
                  'mean_self_overlap': self_likelihoods.mean().cpu().detach().numpy(),
                  'matching_nodes_fraction': matching_nodes_fraction.cpu().detach().numpy(),
-                 'node_weight_constraining_loss': node_weight_constraining_loss.cpu().detach().numpy(),
+                 'node_weight_constraining_loss': node_weight_constraining_loss.mean().cpu().detach().numpy(),
                  }
 
         return losses, stats, decoded_data
@@ -826,9 +836,9 @@ class Modeller:
 
             if update_weights and (not skip_step):
                 self.optimizers_dict['discriminator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(),
-                                               self.config.gradient_norm_clip)  # gradient clipping
                 discriminator_loss.backward()  # back-propagation
+                torch.nn.utils.clip_grad_norm_(self.models_dict['discriminator'].parameters(),
+                                               self.config.gradient_norm_clip)  # gradient clipping
                 self.optimizers_dict['discriminator'].step()  # update parameters
 
     def aggregate_discriminator_losses(self,
@@ -918,9 +928,9 @@ class Modeller:
 
             if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+                generator_loss.backward()  # back-propagation
                 torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
                                                self.config.gradient_norm_clip)  # gradient clipping
-                generator_loss.backward()  # back-propagation
                 self.optimizers_dict['generator'].step()  # update parameters
 
             self.logger.update_stats_dict(self.epoch_type, ['final_generated_cell_parameters', 'generated_space_group_numbers', 'raw_generated_cell_parameters'],

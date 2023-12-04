@@ -24,17 +24,17 @@ dev = {'run_name': 'dev_nic',
        'batch_size': 5,
        'reporting_frequency': 1,
        'train_model': True,
-       'trajs_to_analyze_list': [f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(9)] +
-        [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
-        [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
+       'trajs_to_analyze_list': None, #[f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(9)] +
+        #[f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
+        #[f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
        'do_classifier_evaluation': False,
        'classifier_path': None, #'C:/Users/mikem/crystals/classifier_runs/dev_nic2_best_classifier_checkpoint',
        'learning_rate': 1e-4,
        'datasets_path': r'D:/crystals_extra/classifier_training/',
        'dumps_path': r'D:/crystals_extra/classifier_training/',
-       'dumps_dirs': ['bulk_trajs3', 'bulk_trajs4'],
+       'dumps_dirs': ['bulk_trajs3', 'Nic_liq_fin'],
        'training_temps': [100, 350, 700],
-       'dataset_name': 'nicotinamide_trajectories_dataset_100_350_high',
+       'dataset_name': 'nicotinamide_trajectories_dataset_100_350_700',
        'runs_path': r'C:/Users/mikem/crystals/classifier_runs/',
        'device': 'cuda',
        'seed': 1}
