@@ -8,9 +8,8 @@ from torch.nn import functional as F
 from torch.optim import lr_scheduler as lr_scheduler
 from torch_scatter import scatter
 
-from common.geometry_calculations import cell_vol_torch, batch_molecule_principal_axes_torch, compute_Ip_handedness
+from common.geometry_calculations import cell_vol_torch
 from common.utils import softmax_np, components2angle
-from crystal_building.utils import align_crystaldata_to_principal_axes, random_crystaldata_alignment
 from dataset_management.utils import update_dataloader_batch_size
 from models.asymmetric_radius_graph import radius
 
@@ -551,34 +550,3 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
         return nodewise_overlap
 
 
-def set_molecule_alignment(data, mode, right_handed=False, include_inversion=False):
-    """
-    set the position and orientation of the molecule with respect to the xyz axis
-    'standardized' sets the molecule principal inertial axes equal to the xyz axis
-    'random' sets a random orientation of the molecule
-    in any case, the molecule centroid is set at (0,0,0)
-
-    option to preserve the handedness of the molecule, e.g., by aligning with
-    (x,y,-z) for a left-handed molecule
-    """
-
-    if mode == 'standardized':
-        data = align_crystaldata_to_principal_axes(data, handedness=data.asym_unit_handedness)
-        # data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
-
-    elif mode == 'random':
-        data = random_crystaldata_alignment(data, include_inversion=include_inversion)
-        if right_handed:
-            coords_list = [data.pos[data.ptr[i]:data.ptr[i + 1]] for i in range(data.num_graphs)]
-            coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
-            principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)
-            handedness = compute_Ip_handedness(principal_axes_list)
-            for ind, hand in enumerate(handedness):
-                if hand == -1:
-                    data.pos[data.batch == ind] = -data.pos[data.batch == ind]  # invert
-
-            data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
-    elif mode == 'as is':
-        pass  # do nothing
-
-    return data

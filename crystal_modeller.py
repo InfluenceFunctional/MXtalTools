@@ -32,11 +32,11 @@ from models.embedding_regression_models import embedding_regressor
 from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
-                          save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss, compute_num_h_bonds, slash_batch, compute_gaussian_overlap, set_molecule_alignment)
+                          save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss, compute_num_h_bonds, slash_batch, compute_gaussian_overlap)
 from models.utils import (weight_reset, get_n_config)
 from models.vdw_overlap import vdw_overlap
 
-from crystal_building.utils import (clean_cell_params)
+from crystal_building.utils import (clean_cell_params, set_molecule_alignment)
 from crystal_building.builder import SupercellBuilder
 from crystal_building.utils import update_crystal_symmetry_elements
 

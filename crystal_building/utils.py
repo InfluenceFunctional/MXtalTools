@@ -648,3 +648,36 @@ def get_intra_mol_dists(cell_data, ind):
     coords = cell_data.pos[cell_data.batch == ind]
     coords = coords.reshape(len(coords) // int(cell_data.mol_size[ind]), int(cell_data.mol_size[ind]), 3)
     return torch.stack([torch.cdist(coords[i], coords[i]) for i in range(len(coords))])
+
+
+def set_molecule_alignment(data, mode, right_handed=False, include_inversion=False):
+    """
+    set the position and orientation of the molecule with respect to the xyz axis
+    'standardized' sets the molecule principal inertial axes equal to the xyz axis
+    'random' sets a random orientation of the molecule
+    in any case, the molecule centroid is set at (0,0,0)
+
+    option to preserve the handedness of the molecule, e.g., by aligning with
+    (x,y,-z) for a left-handed molecule
+    """
+
+    if mode == 'standardized':
+        data = align_crystaldata_to_principal_axes(data, handedness=data.asym_unit_handedness)
+        # data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
+
+    elif mode == 'random':
+        data = random_crystaldata_alignment(data, include_inversion=include_inversion)
+        if right_handed:
+            coords_list = [data.pos[data.ptr[i]:data.ptr[i + 1]] for i in range(data.num_graphs)]
+            coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
+            principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)
+            handedness = compute_Ip_handedness(principal_axes_list)
+            for ind, hand in enumerate(handedness):
+                if hand == -1:
+                    data.pos[data.batch == ind] = -data.pos[data.batch == ind]  # invert
+
+            data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
+    elif mode == 'as is':
+        pass  # do nothing
+
+    return data
