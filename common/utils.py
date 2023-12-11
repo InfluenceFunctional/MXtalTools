@@ -130,7 +130,7 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
 
     emd = earth_movers_distance_torch(torch_rdf1_f, torch_rdf2)
 
-    range_normed_emd = emd / len(torch_range)**2 * (torch_range[-1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+    range_normed_emd = emd / len(torch_range) ** 2 * (torch_range[-1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
     # do not adjust the above - distance is extensive weirdly extensive in bin scaling
     aggregation_weight = (rdf1.sum(1) + rdf2.sum(1)) / 2  # aggregate rdf components according to pairwise mean weight
     distance = (range_normed_emd * aggregation_weight).mean()
@@ -234,6 +234,7 @@ def angle2components(angle: torch.tensor):
     """
     return torch.cat((torch.sin(angle)[:, None], torch.cos(angle)[:, None]), dim=1)
 
+
 # def prep_symmetry_info():
 #     """
 #     if we don't have the symmetry dict prepared already, generate it
@@ -269,12 +270,11 @@ def angle2components(angle: torch.tensor):
 
 
 def repeat_interleave(
-    repeats: List[int],
-    device: Optional[torch.device] = None,
+        repeats: List[int],
+        device: Optional[torch.device] = None,
 ):
     """
     borrowed from torch_geometric.data.collate
     """
-    outs = [torch.full((n, ), i, device=device) for i, n in enumerate(repeats)]
+    outs = [torch.full((n,), i, device=device) for i, n in enumerate(repeats)]
     return torch.cat(outs, dim=0)
-

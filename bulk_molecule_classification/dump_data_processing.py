@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from bulk_molecule_classification.NICOAM_constants import identifier2form, num2atomicnum, type2num
+from bulk_molecule_classification.classifier_constants import identifier2form, num2atomicnum, type2num
 
 
 def process_dump(path):
@@ -71,11 +71,13 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
             elif 'urea' in dumps_dir:
                 run_config = {'temperature': float(dumps_dir.split('T')[-1]),
                               'gap_rate': 0}
-                if 'liq' in dumps_dir:
+                if 'liq' in dumps_dir or 'interface' in dumps_dir:
                     run_config['structure_identifier'] = 'UREA_Melt'
                 else:
                     run_config['structure_identifier'] = path.replace('\\', '/').split('/')[0]
-            elif 'Nic_liq_fin' in dumps_dir:
+            elif 'nicotinamide_liq' in dumps_dir:
+                run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
+            elif 'interfaces' in dumps_dir:
                 run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
             else:
                 assert False, "Trajectory directory is missing config file"
@@ -108,4 +110,4 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
 
     sample_df.to_pickle(dataset_path)
 
-    return None
+    return True

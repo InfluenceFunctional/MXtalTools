@@ -32,12 +32,11 @@ from models.embedding_regression_models import embedding_regressor
 from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
-                          save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss, compute_num_h_bonds, slash_batch, compute_gaussian_overlap)
+                          save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss, compute_num_h_bonds, slash_batch, compute_gaussian_overlap, set_molecule_alignment)
 from models.utils import (weight_reset, get_n_config)
 from models.vdw_overlap import vdw_overlap
 
-from crystal_building.utils import (random_crystaldata_alignment, align_crystaldata_to_principal_axes,
-                                    batch_molecule_principal_axes_torch, compute_Ip_handedness, clean_cell_params)
+from crystal_building.utils import (clean_cell_params)
 from crystal_building.builder import SupercellBuilder
 from crystal_building.utils import update_crystal_symmetry_elements
 
@@ -122,7 +121,7 @@ class Modeller:
         for models we will not use, just set them as nn.Linear(1,1)
         :return:
         """
-        self.model_names = ['generator', 'discriminator', 'regressor', 'autoencoder', 'embedding_regressor']
+        self.model_names = self.config.model_names
         self.models_dict = {name: nn.Linear(1, 1) for name in self.model_names}  # initialize null models
 
         self.reload_model_checkpoint_configs()
@@ -562,7 +561,7 @@ class Modeller:
             if self.config.autoencoder_positional_noise > 0 and self.epoch_type == 'train':
                 data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
 
-        data = self.set_molecule_alignment(data, right_handed=False, mode_override='random')
+        data = set_molecule_alignment(data, mode='random', right_handed=False, include_inversion=True)
         data.pos /= self.config.autoencoder.molecule_radius_normalization
         data.x[:, 0] = self.autoencoder_type_index[data.x[:, 0].long() - 1].float()  # reindex atom types
 
@@ -1071,42 +1070,6 @@ class Modeller:
         return (discriminator_output_on_real, discriminator_output_on_fake,
                 cell_distortion_size, rdf_dists)
 
-    def set_molecule_alignment(self, data, right_handed=False, mode_override=None):
-        """
-        set the position and orientation of the molecule with respect to the xyz axis
-        'standardized' sets the molecule principal inertial axes equal to the xyz axis
-        'random' sets a random orientation of the molecule
-        in any case, the molecule centroid is set at (0,0,0)
-
-        option to preserve the handedness of the molecule, e.g., by aligning with
-        (x,y,-z) for a left-handed molecule
-        """
-        if mode_override is not None:
-            mode = mode_override
-        else:
-            mode = self.config.generator.canonical_conformer_orientation
-
-        if mode == 'standardized':
-            data = align_crystaldata_to_principal_axes(data, handedness=data.asym_unit_handedness)
-            # data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
-
-        elif mode == 'random':
-            data = random_crystaldata_alignment(data)
-            if right_handed:
-                coords_list = [data.pos[data.ptr[i]:data.ptr[i + 1]] for i in range(data.num_graphs)]
-                coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(data.num_graphs)]
-                principal_axes_list, _, _ = batch_molecule_principal_axes_torch(coords_list_centred)
-                handedness = compute_Ip_handedness(principal_axes_list)
-                for ind, hand in enumerate(handedness):
-                    if hand == -1:
-                        data.pos[data.batch == ind] = -data.pos[data.batch == ind]  # invert
-
-                data.asym_unit_handedness = torch.ones_like(data.asym_unit_handedness)
-        elif mode == 'as is':
-            pass  # do nothing
-
-        return data
-
     def get_generator_samples(self, data, alignment_override=None):
         """
         set conformer orientation, optionally add noise, set the space group & symmetry information
@@ -1115,7 +1078,7 @@ class Modeller:
         """
         mol_data = data.clone()
         # conformer orientation setting
-        mol_data = self.set_molecule_alignment(mol_data, mode_override=alignment_override)
+        mol_data = set_molecule_alignment(mol_data, mode=alignment_override)
 
         # noise injection
         if self.config.generator_positional_noise > 0:
@@ -1238,14 +1201,14 @@ class Modeller:
             self.logger.update_stats_dict(self.epoch_type, 'generator_sample_source', np.zeros(len(generated_samples)), mode='extend')
 
         elif (self.config.discriminator.train_on_randn or override_randn) and (generator_ind == 2):
-            generator_data = self.set_molecule_alignment(real_data.clone(), mode_override=orientation)
+            generator_data = set_molecule_alignment(real_data.clone(), mode=orientation)
             negative_type = 'randn'
             generated_samples = self.gaussian_generator.forward(real_data.num_graphs, real_data).to(self.config.device)
 
             self.logger.update_stats_dict(self.epoch_type, 'generator_sample_source', np.ones(len(generated_samples)), mode='extend')
 
         elif (self.config.discriminator.train_on_distorted or override_distorted) and (generator_ind == 3):
-            generator_data = self.set_molecule_alignment(real_data.clone(), mode_override=orientation)
+            generator_data = set_molecule_alignment(real_data.clone(), mode=orientation)
             negative_type = 'distorted'
 
             generated_samples, distortion = self.make_distorted_samples(real_data)

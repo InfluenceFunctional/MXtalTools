@@ -26,7 +26,12 @@ def write_ovito_xyz(coords_in, atom_types_in, mol_flags_in, filename):
             atom_types = atom_types_in.copy()
 
         if len(mol_flags_in) != len(atom_types):
-            mol_flags = mol_flags_in.repeat(len(atom_types) // len(mol_flags_in))
+            if mol_flags_in.ndim == 1:
+                mol_flags = mol_flags_in.repeat(len(atom_types) // len(mol_flags_in))
+            elif mol_flags_in.ndim == 2:
+                mol_flags = mol_flags_in.repeat(len(atom_types) // len(mol_flags_in), 0)
+            else:
+                assert False, "Mol flags must have dim 1 or 2"
         else:
             mol_flags = mol_flags_in.copy()
 
@@ -48,13 +53,24 @@ def write_ovito_xyz(coords_in, atom_types_in, mol_flags_in, filename):
 
         particles.create_property('Position', data=coords[frame])
         particles.create_property('Particle Type', data=atom_types[frame])
-        particles.create_property('Mol Type', data=mol_flags[frame])
+        if mol_flags[frame].ndim == 2:
+            for ptype in range(mol_flags[frame].shape[1]):
+                particles.create_property(f'Mol Type {ptype}', data=mol_flags[frame][:, ptype])
+        elif mol_flags[frame].ndim == 1:
+            particles.create_property('Mol Type', data=mol_flags[frame])
 
     pipeline = Pipeline(source=PythonScriptSource(
         function=create_ovito_model))
 
+    if mol_flags[0].ndim == 1:
+        column_names = ['Position.X', 'Position.Y', 'Position.Z', 'Particle Type', 'Mol Type']
+    elif mol_flags[0].ndim == 2:
+        column_names = ['Position.X', 'Position.Y', 'Position.Z', 'Particle Type']
+        for ind in range(mol_flags[0].shape[1]):
+            column_names += [f'Mol Type {ind}']
+
     # Export the results of the data pipeline to an output file.
     # The system will invoke the Python function defined above once per animation frame.
     export_file(pipeline, f'{filename}.xyz', format='xyz',
-                columns=['Position.X', 'Position.Y', 'Position.Z', 'Particle Type', 'Mol Type'],
+                columns=column_names,
                 multiple_frames=True, start_frame=0, end_frame=len(coords) - 1)

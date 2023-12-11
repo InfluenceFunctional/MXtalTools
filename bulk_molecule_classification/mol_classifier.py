@@ -11,7 +11,7 @@ import numpy as np
 from bulk_molecule_classification.utils import (collect_to_traj_dataloaders, init_classifier,
                                                 reload_model)
 from bulk_molecule_classification.workflows import train_classifier, classifier_evaluation, trajectory_analysis
-from bulk_molecule_classification.NICOAM_constants import nic_class_names, nic_ordered_class_names, urea_class_names, urea_ordered_class_names
+from bulk_molecule_classification.classifier_constants import nic_class_names, nic_ordered_class_names, urea_class_names, urea_ordered_class_names
 from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
@@ -56,13 +56,12 @@ if __name__ == "__main__":
                                  config['num_fcs'], config['message_depth'],
                                  config['num_forms'], config['num_topologies'],
                                  config['seed'])
-
+    classifier.to(config['device'])
     optimizer = optim.Adam(classifier.parameters(), lr=config['learning_rate'])
 
     if config['classifier_path'] is not None:
         reload_model(classifier, config['device'], optimizer, config['classifier_path'], reload_optimizer=True)
 
-    classifier.to(config['device'])
     os.chdir(config['runs_path'])
 
     """
@@ -173,3 +172,4 @@ if __name__ == "__main__":
                 trajectory_analysis(config, classifier, config['run_name'],
                                     wandb, config['device'],
                                     dumps_dir=dump_dir)
+

@@ -1,15 +1,14 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regressor' or 'sampling' WIP
-dataset_name: 'qm9_molecules_dataset.pkl'
-misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
+mode: embedding_regression  # 'gan' or 'regression' or 'figures' or 'embedding_regressor' or 'sampling' WIP
+dataset_name: 'test_dataset.pkl'
+misc_dataset_name: 'misc_data_for_dataset.npy'
 base_config_path: '/experiments/base.yaml'  # base config
-dataset_yaml_path: '/dataset/qm9_autoencoder.yaml'
+dataset_yaml_path: '/dataset/full_autoencoder.yaml'
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
-model_names: ['autoencoder']
 
 dataset:
   max_dataset_length: 10000
@@ -45,7 +44,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null
+  autoencoder: /cluster/best_autoencoder_autoencoder_tests_battery6_1_04-12-17-49-48
   embedding_regressor: null
 
 discriminator_positional_noise: 0
@@ -57,7 +56,7 @@ generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate
 supercell_size: 5
 
 autoencoder:
-  random_fraction: 0
+  random_fraction: 0.5
   type_distance_scaling: 0.5
   init_sigma: 0.15
   evaluation_sigma: 0.05

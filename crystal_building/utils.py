@@ -373,7 +373,7 @@ def align_crystaldata_to_principal_axes(crystaldata, handedness):
     return crystaldata
 
 
-def random_crystaldata_alignment(crystaldata):
+def random_crystaldata_alignment(crystaldata, include_inversion=False):
     """
     randomize orientation of molecules in a crystaldata object
     """
@@ -381,6 +381,11 @@ def random_crystaldata_alignment(crystaldata):
 
     # center at 0
     coords_list_centred = [coords_list[i] - coords_list[i].mean(0) for i in range(crystaldata.num_graphs)]
+
+    # optionally invert through the centroid
+    if include_inversion:
+        invert_inds = np.random.choice([-1, 1], size=crystaldata.num_graphs, replace=True)
+        coords_list_centred = [coords * inversion for coords, inversion in zip(coords_list_centred, invert_inds)]
 
     # random orientation
     rotation_matrix_list = torch.tensor(Rotation.random(num=crystaldata.num_graphs).as_matrix(), device=crystaldata.x.device, dtype=crystaldata.pos.dtype)
@@ -514,7 +519,6 @@ def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_
     else:
         fixed_positions = mol_positions * 1
 
-
     '''collect'''
     final_samples = torch.cat((
         fixed_lengths,
@@ -576,6 +580,7 @@ def descale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     # scaled_mol_position = mol_position * asym_units
 
     return mol_position / torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
+
 
 def DEPRECATED_write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
     # todo rewrite or deprecate when we update sampling

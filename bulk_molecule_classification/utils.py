@@ -4,13 +4,13 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 
-from bulk_molecule_classification.NICOAM_constants import num2atomicnum
+from bulk_molecule_classification.classifier_constants import num2atomicnum
 from common.utils import delete_from_dataframe, softmax_np
 from dataset_management.CrystalData import CrystalData
 from dataset_management.utils import get_dataloaders
 from models.base_models import molecule_graph_model
 from common.geometry_calculations import coor_trans_matrix
-from bulk_molecule_classification.NICOAM_constants import defect_names, nic_ordered_class_names
+from bulk_molecule_classification.classifier_constants import defect_names, nic_ordered_class_names
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
@@ -86,7 +86,7 @@ def convert_box_to_cell_params(box_params):
 def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch_size,
                                 conv_cutoff, test_fraction=0.2, filter_early=True,
                                 temperatures: list = None, shuffle=True,
-                                melt_only=False, no_melt=False):
+                                melt_only=False, no_melt=False, early_only=False):
     dataset = pd.read_pickle(dataset_path)
     dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
 
@@ -105,17 +105,22 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
 
+    if early_only:
+        bad_inds = np.argwhere(np.asarray(dataset['time_step']) >= int(1e6))[:, 0]  # keep only 1 ns maximum
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
+
     if True:
         if 'gap_rate' in dataset.columns:
             bad_inds = np.argwhere(np.asarray(dataset['gap_rate']) > 0)[:, 0]  # cannot process gaps right now
             dataset = delete_from_dataframe(dataset, bad_inds)
             dataset = dataset.reset_index().drop(columns='index')
 
-    forms = np.sort(np.unique(dataset['form']))
-    forms2tgt = {form: i for i, form in enumerate(forms)}
-    targets = np.asarray(  # reindex on 0-n
-        [forms2tgt[form] for form in dataset['form']]
-    )
+    # forms = np.sort(np.unique(dataset['form']))
+    # forms2tgt = {form: i for i, form in enumerate(forms)}
+    targets = np.asarray(dataset['form']) - 1  # no longer need to reindex, as we have this now managed through the constants
+    # this will throw an error later if the combined dataset is missing any forms, but it shouldn't be missing any forms in general
+    # so that's fine
 
     # set high temperature samples to 'melted' class
     if 'urea' in dataset_path:
@@ -124,27 +129,26 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
         melt_class_num = 9  # nicotinamide
 
     if melt_only:
-        bad_inds = np.argwhere(targets != melt_class_num)[:, 0]  # filter first 10ps steps for equilibration
+        bad_inds = np.argwhere(targets != melt_class_num)[:, 0]
+        good_inds = np.argwhere(targets == melt_class_num)[:, 0]
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
-        targets = np.asarray(  # reindex on 0-n
-            [forms2tgt[form] for form in dataset['form']]
-        )
+        targets = targets[good_inds]
 
     if no_melt:
-        bad_inds = np.argwhere(targets == melt_class_num)[:, 0]  # filter first 10ps steps for equilibration
+        bad_inds = np.argwhere(targets == melt_class_num)[:, 0]
+        good_inds = np.argwhere(targets != melt_class_num)[:, 0]
+
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
-        targets = np.asarray(  # reindex on 0-n
-            [forms2tgt[form] for form in dataset['form']]
-        )
+        targets = targets[good_inds]
 
     # T_fc_list = convert_box_to_cell_params(np.stack(dataset['cell_params']))  # we don't use this anywhere
 
     print('Generating training datapoints')
     datapoints = []
-    rand_inds = np.random.choice(len(dataset), size=min(dataset_size, len(dataset)), replace=False)
-    for i in tqdm(rand_inds):
+    time_inds = np.arange(len(dataset))[::max(len(dataset) // dataset_size, 1)]
+    for i in tqdm(time_inds):
         ref_coords = torch.Tensor(dataset.loc[i]['coordinates'][0])
         atoms = dataset.loc[i]['atom_type'][0]
 
@@ -152,7 +156,7 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
         num_molecules = (len(ref_coords)) // mol_num_atoms
 
         mol_ind = torch.tensor(dataset.loc[i]['mol_ind'][0], dtype=torch.long)
-        assert num_molecules == torch.amax(mol_ind)
+        assert num_molecules == len(torch.unique(mol_ind))
 
         # we cannot trust the default indexing, so manually reindex according to the recorded molecule index
         cluster_coords = torch.stack([ref_coords[mol_ind == ind] for ind in torch.unique(mol_ind)])
@@ -345,6 +349,7 @@ def process_trajectory_results_dict(results_dict, loader, mol_num_atoms):
             molwise_results_dict[key] = [results_dict[key][index == ind].repeat(mol_num_atoms) for ind in range(len(loader))]
             molwise_results_dict['Molecule_' + key] = [results_dict[key][index == ind] for ind in range(len(loader))]
         else:
+            print(f"{key} is omitted from results dict")
             pass
 
     time_inds = [time[0] for time in molwise_results_dict['Time_Step']]

@@ -64,7 +64,12 @@ class DataManager:
         self.single_molecule_dataset_identifier = config.single_molecule_dataset_identifier
         np.random.seed(self.dataset_seed)
 
-        self.allowed_atom_types = np.unique(np.concatenate([atoms for atoms_lists in self.dataset['atom_atomic_numbers'] for atoms in atoms_lists]))
+        if isinstance(self.dataset['atom_atomic_numbers'], list):  # todo write a function for this style of flexible concatenation
+            self.allowed_atom_types = np.unique(
+                np.concatenate([atoms for atoms_lists in self.dataset['atom_atomic_numbers'] for atoms in atoms_lists]))
+        else:
+            self.allowed_atom_types = np.unique(
+                np.concatenate(self.dataset['atom_atomic_numbers']))
 
         if override_length is not None:
             self.max_dataset_length = override_length
@@ -73,9 +78,14 @@ class DataManager:
 
         self.dataset_length = min(len(self.dataset), self.max_dataset_length)
 
-        self.max_molecule_radius = np.amax(self.dataset['molecule_radius'])[0]
-        self.min_num_atoms = np.amin(self.dataset['molecule_num_atoms'])[0]
-        self.max_num_atoms = np.amax(self.dataset['molecule_num_atoms'])[0]
+        if self.dataset_type == 'crystal':
+            self.max_molecule_radius = np.amax(self.dataset['molecule_radius'])[0]
+            self.min_num_atoms = np.amin(self.dataset['molecule_num_atoms'])[0]
+            self.max_num_atoms = np.amax(self.dataset['molecule_num_atoms'])[0]
+        elif self.dataset_type == 'molecule':
+            self.max_molecule_radius = np.amax(self.dataset['molecule_radius'])
+            self.min_num_atoms = np.amin(self.dataset['molecule_num_atoms'])
+            self.max_num_atoms = np.amax(self.dataset['molecule_num_atoms'])
 
         # shuffle and cut up dataset before processing
         self.dataset = self.dataset.loc[np.random.choice(len(self.dataset), self.dataset_length, replace=False)]
@@ -87,9 +97,14 @@ class DataManager:
         '''identify keys to load & track'''
         self.atom_keys = config.atom_feature_keys
         self.molecule_keys = config.molecule_feature_keys
-        self.set_crystal_keys()
+        if self.dataset_type == 'crystal':
+            self.set_crystal_keys()
+            self.set_crystal_generation_keys()
+        else:
+            self.crystal_keys = []
+            self.lattice_keys = []
+            self.crystal_generation_features = []
         self.set_tracking_keys()
-        self.set_crystal_generation_keys()
 
         '''
         prep for modelling
@@ -160,9 +175,10 @@ class DataManager:
         will break if any of these are objects or strings
         """
         self.tracking_keys = []
-        self.tracking_keys.extend(self.crystal_keys)
-        self.tracking_keys.extend(self.lattice_keys)
         self.tracking_keys.extend(self.molecule_keys)
+        if self.dataset_type == 'crystal':
+            self.tracking_keys.extend(self.crystal_keys)
+            self.tracking_keys.extend(self.lattice_keys)
 
         composition_keys = []
         for key in self.dataset.columns:
@@ -202,41 +218,42 @@ class DataManager:
         It's easier to do it this way and doesn't seem that slow.
         """
 
-        '''
-        z_value
-        '''
-        for i in range(1, 32 + 1):
-            self.dataset['crystal_z_is_{}'.format(i)] = self.dataset['crystal_z_value'] == i
+        if self.dataset_type == 'crystal':
+            '''
+            z_value
+            '''
+            for i in range(1, 32 + 1):
+                self.dataset['crystal_z_is_{}'.format(i)] = self.dataset['crystal_z_value'] == i
 
-        '''
-        space group
-        '''
-        from constants.space_group_info import SPACE_GROUPS
-        for i, symbol in enumerate(np.unique(list(SPACE_GROUPS.values()))):
-            self.dataset['crystal_sg_is_' + symbol] = self.dataset['crystal_space_group_symbol'] == symbol
+            '''
+            space group
+            '''
+            from constants.space_group_info import SPACE_GROUPS
+            for i, symbol in enumerate(np.unique(list(SPACE_GROUPS.values()))):
+                self.dataset['crystal_sg_is_' + symbol] = self.dataset['crystal_space_group_symbol'] == symbol
 
-        '''
-        crystal system
-        '''
-        from constants.space_group_info import LATTICE_TYPE
-        # get dictionary for crystal system elements
-        for i, system in enumerate(np.unique(list(LATTICE_TYPE.values()))):
-            self.dataset['crystal_system_is_' + system] = self.dataset['crystal_system'] == system
+            '''
+            crystal system
+            '''
+            from constants.space_group_info import LATTICE_TYPE
+            # get dictionary for crystal system elements
+            for i, system in enumerate(np.unique(list(LATTICE_TYPE.values()))):
+                self.dataset['crystal_system_is_' + system] = self.dataset['crystal_system'] == system
 
-        '''
-        # set angle units to natural
-        '''
-        if (max(self.dataset['crystal_lattice_alpha']) > np.pi) or (max(self.dataset['crystal_lattice_beta']) > np.pi) or (max(self.dataset['crystal_lattice_gamma']) > np.pi):
-            self.dataset['crystal_lattice_alpha'] = self.dataset['crystal_lattice_alpha'] * np.pi / 180
-            self.dataset['crystal_lattice_beta'] = self.dataset['crystal_lattice_beta'] * np.pi / 180
-            self.dataset['crystal_lattice_gamma'] = self.dataset['crystal_lattice_gamma'] * np.pi / 180
+            '''
+            # set angle units to natural
+            '''
+            if (max(self.dataset['crystal_lattice_alpha']) > np.pi) or (max(self.dataset['crystal_lattice_beta']) > np.pi) or (max(self.dataset['crystal_lattice_gamma']) > np.pi):
+                self.dataset['crystal_lattice_alpha'] = self.dataset['crystal_lattice_alpha'] * np.pi / 180
+                self.dataset['crystal_lattice_beta'] = self.dataset['crystal_lattice_beta'] * np.pi / 180
+                self.dataset['crystal_lattice_gamma'] = self.dataset['crystal_lattice_gamma'] * np.pi / 180
 
-        '''
-        check for heavy atoms
-        '''
-        znums = [10, 18, 36, 54]
-        for znum in znums:
-            self.dataset[f'molecule_atom_heavier_than_{znum}_fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200]) for atom_list in self.dataset['atom_atomic_numbers']])
+            '''
+            check for heavy atoms
+            '''
+            znums = [10, 18, 36, 54]
+            for znum in znums:
+                self.dataset[f'molecule_atom_heavier_than_{znum}_fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200]) for atom_list in self.dataset['atom_atomic_numbers']])
 
     def get_regression_target(self):
         targets = self.dataset[self.regression_target]
@@ -267,18 +284,19 @@ class DataManager:
         key_dtype = []
         # featurize
 
-        feature_array = np.zeros((self.dataset_length, len(self.lattice_keys)), dtype=float)
-        for column_ind, key in enumerate(self.lattice_keys):
-            feature_vector = np.asarray(self.dataset[key])
+        feature_array = np.zeros((self.dataset_length, 12), dtype=float)
+        if self.dataset_type == 'crystal':
+            for column_ind, key in enumerate(self.lattice_keys):
+                feature_vector = np.asarray(self.dataset[key])
 
-            if isinstance(feature_vector[0], list):  # feature vector is an array of lists
-                feature_vector = np.concatenate(feature_vector)
+                if isinstance(feature_vector[0], list):  # feature vector is an array of lists
+                    feature_vector = np.concatenate(feature_vector)
 
-            key_dtype.append(feature_vector.dtype)
+                key_dtype.append(feature_vector.dtype)
 
-            feature_array[:, column_ind] = feature_vector
+                feature_array[:, column_ind] = feature_vector
 
-            assert np.sum(np.isnan(feature_vector)) == 0
+                assert np.sum(np.isnan(feature_vector)) == 0
 
         '''
         compute full covariance matrix, in raw basis
@@ -299,11 +317,17 @@ class DataManager:
         :param dataset:
         :return:
         """
-        atom_features_list = [np.zeros((len(self.dataset['atom_atomic_numbers'][i][0]), len(self.atom_keys))) for i in range(self.dataset_length)]
+        if self.dataset_type == 'crystal':
+            atom_features_list = [np.zeros((len(self.dataset['atom_atomic_numbers'][i][0]), len(self.atom_keys))) for i in range(self.dataset_length)]
+        elif self.dataset_type == 'molecule':
+            atom_features_list = [np.zeros((len(self.dataset['atom_atomic_numbers'][i]), len(self.atom_keys))) for i in range(self.dataset_length)]
 
         for column_ind, key in enumerate(self.atom_keys):
             for i in range(self.dataset_length):
-                feature_vector = np.asarray(self.dataset[key][i])[0]  # all atom features are lists-of-lists, for Z'=1 always just take the first element
+                if self.dataset_type == 'crystal':
+                    feature_vector = np.asarray(self.dataset[key][i])[0]  # all atom features are lists-of-lists, for Z'=1 always just take the first element
+                else:
+                    feature_vector = np.asarray(self.dataset[key][i]) # all atom features are lists-of-lists, for Z'=1 always just take the first element
 
                 if key == 'atom_atomic_numbers':
                     pass
@@ -316,6 +340,8 @@ class DataManager:
                 atom_features_list[i][:, column_ind] = feature_vector
 
         return atom_features_list
+
+    # todo add tests/ assertions for data construction
 
     def concatenate_molecule_features(self):
         """
@@ -355,18 +381,21 @@ class DataManager:
         self.dataset.drop(columns=[key for key in self.tracking_keys if key in self.dataset.columns], inplace=True)  # some of these are duplicates of above
 
         atom_coords = np.asarray(self.dataset['atom_coordinates'])
-        smiles = np.asarray(self.dataset['molecule_smiles'])
-        unit_cell_coords = self.dataset['crystal_unit_cell_coordinates']
-        T_fc_list = self.dataset['crystal_fc_transform']
-        crystal_identifier = self.dataset['crystal_identifier']
-        asym_unit_handedness = self.dataset['asymmetric_unit_handedness']
-        symmetry_ops = self.dataset['crystal_symmetry_operators']
-        #
-        # dataset.drop(columns=['atom_coordinates', 'molecule_smiles', 'crystal_unit_cell_coordinates',
-        #                       'crystal_fc_transform', 'crystal_identifier', 'asym_unit_handedness', 'crystal_symmetry_operators'], inplace=True)  # delete encoded columns to save on RAM
+        if self.dataset_type == 'crystal':
+            unit_cell_coords = self.dataset['crystal_unit_cell_coordinates']
+            T_fc_list = self.dataset['crystal_fc_transform']
+            crystal_identifier = self.dataset['crystal_identifier']
+            asym_unit_handedness = self.dataset['asymmetric_unit_handedness']
+            symmetry_ops = self.dataset['crystal_symmetry_operators']
+        else:
+            unit_cell_coords = torch.ones(len(self.dataset))
+            T_fc_list = torch.ones(len(self.dataset))
+            crystal_identifier = torch.ones(len(self.dataset))
+            asym_unit_handedness = torch.ones(len(self.dataset))
+            symmetry_ops = torch.ones(len(self.dataset))
+
         self.dataset = None
         return self.make_datapoints(atom_coords=atom_coords,
-                                    smiles=smiles,
                                     atom_features_list=atom_features_list,
                                     mol_features=molecule_features_array,
                                     targets=targets,
@@ -378,7 +407,7 @@ class DataManager:
                                     asymmetric_unit_handedness=asym_unit_handedness,
                                     crystal_symmetries=symmetry_ops)
 
-    def make_datapoints(self, atom_coords, smiles, atom_features_list, mol_features,
+    def make_datapoints(self, atom_coords, atom_features_list, mol_features,
                         targets, tracking_features, reference_cells, lattice_features,
                         T_fc_list, identifiers, asymmetric_unit_handedness, crystal_symmetries):
         """
@@ -393,8 +422,8 @@ class DataManager:
         """
         datapoints = []
 
-        mult_ind = self.tracking_keys.index('crystal_symmetry_multiplicity')
-        sg_ind_value_ind = self.tracking_keys.index('crystal_space_group_number')
+        mult_ind = self.tracking_keys.index('crystal_symmetry_multiplicity') if self.dataset_type == 'crystal' else 0
+        sg_ind_value_ind = self.tracking_keys.index('crystal_space_group_number') if self.dataset_type == 'crystal' else 0
         mol_size_ind = self.tracking_keys.index('molecule_num_atoms')
         mol_volume_ind = self.tracking_keys.index('molecule_volume')
 
@@ -403,10 +432,9 @@ class DataManager:
         for i in tqdm(range(self.dataset_length)):
             datapoints.append(
                 CrystalData(x=torch.Tensor(atom_features_list[i]),
-                            pos=torch.Tensor(atom_coords[i])[0],
+                            pos=torch.Tensor(atom_coords[i])[0] if self.dataset_type == 'crystal' else torch.Tensor(atom_coords[i]),
                             y=targets[i],
                             mol_x=torch.Tensor(mol_features[i, None, :]),
-                            smiles=smiles[i],
                             tracking=tracking_features[i, None, :],
                             ref_cell_pos=np.asarray(reference_cells[i]),  # won't collate properly as a torch tensor - must leave as np array
                             mult=tracking_features[i, mult_ind].int(),
@@ -425,15 +453,17 @@ class DataManager:
     def rebuild_indices(self):
         self.dataset = self.dataset.reset_index().drop(columns='index')
 
-        self.crystal_to_mol_dict, self.mol_to_crystal_dict = \
-            self.generate_mol2crystal_mapping()
+        if self.dataset_type == 'crystal':
+            self.crystal_to_mol_dict, self.mol_to_crystal_dict = \
+                self.generate_mol2crystal_mapping()
 
-        self.molecules_in_crystals_dict = \
-            self.identify_unique_molecules_in_crystals()
+            self.molecules_in_crystals_dict = \
+                self.identify_unique_molecules_in_crystals()
 
     def load_dataset_and_misc_data(self, dataset_name, misc_dataset_name):
         self.dataset = pd.read_pickle(self.datasets_path + dataset_name)
         misc_data_dict = np.load(self.datasets_path + misc_dataset_name, allow_pickle=True).item()
+        self.dataset_type = 'molecule' if 'qm9' in dataset_name.lower() else 'crystal'
 
         if 'blind_test' in dataset_name:
             self.mode = 'blind test'
@@ -446,14 +476,18 @@ class DataManager:
 
     def process_new_dataset(self, new_dataset_name):
         self.load_chunks()
+        self.dataset_type = 'molecule' if 'qm9' in new_dataset_name.lower() else 'crystal'
         self.rebuild_indices()
-        self.asymmetric_unit_analysis()
+
+        if 'qm9' in new_dataset_name.lower():
+            self.mol_to_crystal_dict, self.crystal_to_mol_dict, self.molecules_in_crystals_dict = None, None, None
+            pass
+        else:
+            self.asymmetric_unit_analysis()
+
         self.get_dataset_standardization_statistics()
 
         misc_data_dict = {
-            # 'crystal_to_mol_dict': self.crystal_to_mol_dict,
-            # 'mol_to_crystal_dict': self.mol_to_crystal_dict,
-            # 'molecules_in_crystals_dict': self.molecules_in_crystals_dict,
             'standardization_dict': self.standardization_dict
         }
 
@@ -614,9 +648,15 @@ class DataManager:
         for column in tqdm(self.dataset.columns):
             values = None
             if column[:4] == 'atom':
-                values = np.concatenate([atoms for atoms_lists in self.dataset[column] for atoms in atoms_lists])
+                if isinstance(self.dataset[column], list):
+                    values = np.concatenate([atoms for atoms_lists in self.dataset[column] for atoms in atoms_lists])
+                else:
+                    values = np.concatenate(self.dataset[column])
             elif column[:8] == 'molecule':
-                values = np.concatenate(self.dataset[column])
+                if isinstance(self.dataset[column], list):
+                    values = np.concatenate(self.dataset[column])
+                else:
+                    values = self.dataset[column]
             elif column[:7] == 'crystal':
                 values = self.dataset[column]
             elif column[:15] == 'asymmetric_unit':
@@ -879,8 +919,11 @@ if __name__ == '__main__':
     # miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/featurized_chunks/")
     # miner.process_new_dataset('dataset')
 
-    miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/acridin_chunks/")
-    miner.process_new_dataset('acridin_dataset')
+    miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/QM9_chunks/")
+    miner.process_new_dataset('qm9_molecules_dataset')
+    #
+    # miner = DataManager(device='cpu', datasets_path=r"D:\crystal_datasets/", chunks_path=r"D:\crystal_datasets/acridin_chunks/")
+    # miner.process_new_dataset('acridin_dataset')
     # '''filtering test'''
     # test_conditions = [
     #     ['molecule_mass', 'range', [0, 300]],

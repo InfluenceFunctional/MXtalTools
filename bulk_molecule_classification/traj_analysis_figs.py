@@ -4,17 +4,17 @@ from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
-from bulk_molecule_classification.NICOAM_constants import defect_names, nic_ordered_class_names, form2index, index2form
+from bulk_molecule_classification.classifier_constants import defect_names, nic_ordered_class_names, urea_ordered_class_names, form2index, index2form
 import plotly
 from scipy.ndimage import gaussian_filter1d
 
 
-def embedding_fig(results_dict, num_samples, classes, ordered_classes, run_temperatures):
+def embedding_fig(results_dict, num_samples, classes, ordered_classes, run_temperatures, max_samples=1000, perplexity=30):
 
-    sample_inds = np.random.choice(num_samples, size=min(1000, num_samples), replace=False)
+    sample_inds = np.random.choice(num_samples, size=min(max_samples, num_samples), replace=False)
     from sklearn.manifold import TSNE
-    embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=5000,
-                     init='pca', perplexity=30).fit_transform(results_dict['Latents'][sample_inds])
+    embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
+                     init='pca', perplexity=perplexity).fit_transform(results_dict['Latents'][sample_inds])
 
     # target_colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', 10, colortype='rgb')
     target_colors = (
@@ -24,7 +24,7 @@ def embedding_fig(results_dict, num_samples, classes, ordered_classes, run_tempe
     linecolors = [None, 'DarkSlateGrey']
 
     fig = go.Figure()
-    for t_ind in range(len(classes)):  # todo switch to sum over forms
+    for t_ind in range(len(classes)):
         for d_ind in range(len(defect_names)):
             inds = np.argwhere((results_dict['Targets'][sample_inds] == t_ind) *
                                (results_dict['Defects'][sample_inds] == d_ind)
@@ -33,15 +33,15 @@ def embedding_fig(results_dict, num_samples, classes, ordered_classes, run_tempe
             fig.add_trace(go.Scattergl(x=embedding[inds, 0], y=embedding[inds, 1],
                                        mode='markers',
                                        marker_color=target_colors[t_ind],
-                                       marker_line_width=linewidths[d_ind],
-                                       marker_line_color=linecolors[d_ind],
+                                       # marker_line_width=linewidths[d_ind],
+                                       # marker_line_color=linecolors[d_ind],
                                        legendgroup=ordered_classes[t_ind],
                                        name=ordered_classes[t_ind],  # + ', ' + defect_names[d_ind],# + ', ' + str(temperature) + 'K',
                                        showlegend=True if d_ind == 0 else False,
-                                       opacity=0.75))
+                                       opacity=0.75 if t_ind != len(classes) - 1 else 0.25))
     fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
                       xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
-                      plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
+                      plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
 
@@ -89,7 +89,7 @@ def form_accuracy_fig(results_dict, ordered_classes, temp_series):
 
 def defect_accuracy_fig(results_dict, temp_series):
     scores = {}
-    fig = make_subplots(cols=2, rows=1, y_title="True Topology", x_title="Predicted Topology")
+    fig = make_subplots(cols=2, rows=1, y_title="True Topology", x_title="Predicted Topology", horizontal_spacing=0.1)
     for temp_ind in range(2):
         if temp_ind == 0:
             inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
@@ -130,7 +130,7 @@ def defect_accuracy_fig(results_dict, temp_series):
 
 def all_accuracy_fig(results_dict, ordered_classes, temp_series):  # todo fix class ordering
     scores = {}
-    fig = make_subplots(cols=2, rows=1, subplot_titles=['100K', '350K'], y_title="True Class", x_title="Predicted Class")
+    fig = make_subplots(cols=2, rows=1, subplot_titles=['100K', '350K'], y_title="True Class", x_title="Predicted Class", horizontal_spacing=0.1)
     for temp_ind in range(2):
         if temp_ind == 0:
             inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
@@ -173,22 +173,25 @@ def all_accuracy_fig(results_dict, ordered_classes, temp_series):  # todo fix cl
                      showline=True, tickangle=90)
     fig.update_yaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True)
+    fig.layout.xaxis
 
     return fig, scores
 
 
-def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps):
+def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, molecule_type):
+    if molecule_type == 'urea':
+        ordered_class_names = urea_ordered_class_names
+    elif molecule_type == 'nicotinamide':
+        ordered_class_names = nic_ordered_class_names
 
+    num_classes = len(ordered_class_names)
     """trajectory analysis figure"""
-    pred_frac_traj = np.zeros((len(time_steps), 10))
-    pred_frac_traj_in = np.zeros((len(time_steps), 10))
-    pred_frac_traj_out = np.zeros((len(time_steps), 10))
+    pred_frac_traj = np.zeros((len(time_steps), num_classes))
+    pred_frac_traj_in = np.zeros((len(time_steps), num_classes))
+    pred_frac_traj_out = np.zeros((len(time_steps), num_classes))
     pred_confidence_traj = np.zeros(len(time_steps))
     pred_confidence_traj_in = np.zeros(len(time_steps))
     pred_confidence_traj_out = np.zeros(len(time_steps))
-
-    def get_prediction_confidence(p1):
-        return -np.log10(p1.prod(1)) / len(p1[0]) / np.log10(len(p1[0]))
 
     for ind, probs in enumerate(sorted_molwise_results_dict['Molecule_Type_Prediction']):
         inside_probs = probs[np.argwhere(sorted_molwise_results_dict['Molecule_Coordination_Numbers'][ind] > 20)][:, 0]
@@ -227,26 +230,32 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps):
     colors = plotly.colors.DEFAULT_PLOTLY_COLORS
     sigma = 5
     fig = make_subplots(cols=3, rows=1, subplot_titles=['All Molecules', 'Core', 'Surface'], x_title="Time (ns)", y_title="Form Fraction")
-    for ind in range(10):
-        fig.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                   y=gaussian_filter1d(pred_frac_traj[:, ind], sigma),
-                                   name=nic_ordered_class_names[ind],
-                                   legendgroup=nic_ordered_class_names[ind],
-                                   marker_color=colors[ind]),
+    for ind in range(num_classes):
+        fig.add_trace(go.Scatter(x=time_steps / 1000000,
+                                 y=gaussian_filter1d(pred_frac_traj[:, ind], sigma),
+                                 name=ordered_class_names[ind],
+                                 legendgroup=ordered_class_names[ind],
+                                 line_color=colors[ind],
+                                 mode='lines',
+                                 stackgroup='one'),
                       row=1, col=1)
-        fig.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                   y=gaussian_filter1d(pred_frac_traj_in[:, ind], sigma),
-                                   name=nic_ordered_class_names[ind],
-                                   legendgroup=nic_ordered_class_names[ind],
-                                   showlegend=False,
-                                   marker_color=colors[ind]),
+        fig.add_trace(go.Scatter(x=time_steps / 1000000,
+                                 y=gaussian_filter1d(pred_frac_traj_in[:, ind], sigma),
+                                 name=ordered_class_names[ind],
+                                 legendgroup=ordered_class_names[ind],
+                                 showlegend=False,
+                                 line_color=colors[ind],
+                                 mode='lines',
+                                 stackgroup='one'),
                       row=1, col=2)
-        fig.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                   y=gaussian_filter1d(pred_frac_traj_out[:, ind], sigma),
-                                   name=nic_ordered_class_names[ind],
-                                   legendgroup=nic_ordered_class_names[ind],
-                                   showlegend=False,
-                                   marker_color=colors[ind]),
+        fig.add_trace(go.Scatter(x=time_steps / 1000000,
+                                 y=gaussian_filter1d(pred_frac_traj_out[:, ind], sigma),
+                                 name=ordered_class_names[ind],
+                                 legendgroup=ordered_class_names[ind],
+                                 showlegend=False,
+                                 line_color=colors[ind],
+                                 mode='lines',
+                                 stackgroup='one'),
                       row=1, col=3)
 
     fig.add_trace(go.Scattergl(x=time_steps / 1000000,
@@ -266,6 +275,7 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps):
                                showlegend=False,
                                marker_color='Grey'),
                   row=1, col=3)
+    fig.update_yaxes(range=[0, 1])
 
     return fig, traj_dict
 
