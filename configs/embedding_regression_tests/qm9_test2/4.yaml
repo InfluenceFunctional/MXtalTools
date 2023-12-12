@@ -1,0 +1,142 @@
+anomaly_detection: false
+autoencoder:
+  evaluation_sigma: 0.05
+  independent_node_weights: true
+  init_sigma: 0.15
+  max_overlap_threshold: 0.25
+  model:
+    activation: leaky relu
+    atom_type_embedding_dims: 5
+    convolution_cutoff: 2
+    decoder_dropout_probability: 0
+    decoder_norm_mode: batch
+    embedding_depth: 512
+    graph_aggregator: max
+    graph_convolution_type: TransformerConv
+    graph_message_dropout: 0
+    graph_node_dropout: 0
+    graph_node_norm: graph layer
+    max_num_neighbors: 100
+    nodewise_fc_layers: 2
+    num_attention_heads: 4
+    num_decoder_layers: 2
+    num_decoder_points: 256
+    num_graph_convolutions: 2
+    num_radial: 50
+    radial_function: gaussian
+  node_weight_temperature: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 0.0001
+    decoder_init_lr: 0.001
+    encoder_init_lr: 0.0001
+    init_lr: 0.0001
+    lr_growth_lambda: 1.0
+    lr_schedule: true
+    lr_shrink_lambda: 0.995
+    max_lr: 1.0e-05
+    min_lr: 1.0e-05
+    optimizer: adam
+    use_plateau_scheduler: false
+    weight_decay: 0
+  overlap_eps:
+    test: 0.001
+  random_fraction: 0
+  sigma_lambda: 0.99
+  sigma_threshold: 0.01
+  type_distance_scaling: 0.5
+autoencoder_positional_noise: 0
+base_config_path: /experiments/base.yaml
+batch_growth_increment: 0.05
+checkpointing_loss_type: test
+dataset:
+  max_dataset_length: 10000000
+  test_fraction: 0.2
+dataset_name: qm9_molecules_dataset.pkl
+dataset_yaml_path: /dataset/qm9_autoencoder.yaml
+device: cuda
+discriminator:
+  distortion_magnitude: -1
+  model: null
+  optimizer: null
+  train_adversarially: true
+  train_on_distorted: true
+  train_on_randn: true
+  use_cell_distance_loss: false
+  use_classification_loss: true
+  use_rdf_distance_loss: true
+discriminator_positional_noise: 0
+early_epochs_step_override: 100
+embedding_regressor:
+  model:
+    depth: 256
+    dropout: 0
+    embedding_depth: 512
+    norm_mode: layer
+    num_layers: 40
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 0.0001
+    init_lr: 0.001
+    lr_growth_lambda: 1.0
+    lr_schedule: true
+    lr_shrink_lambda: 0.995
+    max_lr: 1.0e-05
+    min_lr: 1.0e-05
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0
+extra_test_period: 1
+extra_test_set_name: null
+generate_sgs:
+- P-1
+generator:
+  adversarial_loss_func: score
+  canonical_conformer_orientation: random
+  density_loss_func: l1
+  model: null
+  optimizer: null
+  packing_target_noise: 0.05
+  similarity_penalty: 0.5
+  train_adversarially: true
+  train_h_bond: false
+  train_vdw: true
+  vdw_loss_func: inv
+generator_positional_noise: 0
+gradient_norm_clip: 1
+grow_batch_size: true
+history: 5000
+logger:
+  experiment_tag: qm9r_test2
+  log_figures: true
+  mini_csp_frequency: 5
+  run_name: qm9r_test2_0_1_2_3_4
+  sample_reporting_frequency: 5
+machine: cluster
+max_batch_size: 1000
+max_epochs: 100000
+min_batch_size: 50
+misc_dataset_name: misc_data_for_qm9_molecules_dataset.npy
+mode: embedding_regression
+model_names:
+- autoencoder
+- embedding_regressor
+model_paths:
+  autoencoder: /best_autoencoder_autoencoder_tests_qm9_test1_7_11-12-13-29-29
+  discriminator: null
+  embedding_regressor: null
+  generator: null
+  regressor: null
+num_early_epochs: 0
+regressor:
+  model: null
+  optimizer: null
+regressor_positional_noise: 0
+sample_steps: 100
+save_checkpoints: false
+seeds:
+  dataset: 0
+  model: 12345
+supercell_size: 5

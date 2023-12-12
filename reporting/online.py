@@ -1496,10 +1496,11 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
                    })
 
         if config.logger.log_figures:
-            fig1, fig2 = gaussian_overlap_plot(data, decoded_data, config.autoencoder_sigma, dataDims['num_atom_types'], 3)
+            fig1, fig2, fig3 = gaussian_overlap_plot(data, decoded_data, config.autoencoder_sigma, dataDims['num_atom_types'], 3)
             wandb.log({
                 epoch_type + "_typewise_sample_distribution": fig1,
                 epoch_type + "_combined_sample_distribution": fig2,
+                epoch_type + "_pointwise_sample_distribution": fig3,
             })
     return None
 
@@ -1907,7 +1908,7 @@ def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, ca
                                     ), row=row, col=col)
 
         fig.update_coloraxes(autocolorscale=False, colorscale='Jet')
-
+        #  too expensive
         fig2 = go.Figure()
         colors = (
             'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
@@ -1940,4 +1941,66 @@ def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, ca
                                      surface_count=num_surface,
                                      ))
 
-    return fig, fig2
+        fig3 = go.Figure()
+        colors = (
+            'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+            'rgb(165, 170, 153)')
+        colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
+
+        for j in range(max_point_types):
+
+            ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+
+            pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
+
+            fig3.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+                                        mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
+                                        showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                        name=f'True type', legendgroup=f'True type'
+                                        ))
+
+            fig3.add_trace(go.Scatter3d(x=points_pred[:, 0], y=points_pred[:, 1], z=points_pred[:, 2],
+                                        mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, marker_line_color='white',
+                                        showlegend=True,
+                                        name=f'Predicted type {j}'
+                                        ))
+
+
+    """ unweighted gaussian mixture combination """
+    #
+    # fig4 = go.Figure()
+    # colors = (
+    #     'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+    #     'rgb(165, 170, 153)')
+    # colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
+    #
+    # from sklearn.mixture import GaussianMixture
+    # combo = torch.cat([decoded_data.pos[decoded_data.batch == graph_ind], decoded_data.x[decoded_data.batch == graph_ind]], dim=1).cpu().detach().numpy()
+    # truth = torch.cat([data.pos[data.batch == graph_ind], F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=5)], dim=1).cpu().detach().numpy()
+    # gm = GaussianMixture(n_components=int(data.mol_size[graph_ind]), covariance_type='spherical').fit(combo)
+    # pred_particles = gm.means_
+    # dists = cdist(pred_particles, truth)
+    # matched_particles = pred_particles[np.argmin(dists, axis=0)]
+    # distmat = cdist(matched_particles, truth)
+    # rmsd = np.linalg.norm(truth[:, :3] - matched_particles[:, :3], axis=1).mean()
+    # type_rmsd = np.linalg.norm(truth[:, 3:] - matched_particles[:, 3:], axis=1).mean()
+    # tot_rmsd = np.linalg.norm(truth - matched_particles, axis=1).mean()
+    #
+    # for j in range(max_point_types):
+    #
+    #     ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+    #
+    #     pred_type_inds = np.argwhere(pred_particles[:, 3:].argmax(1) == j)[:, 0]
+    #
+    #     fig4.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+    #                                 mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
+    #                                 showlegend=True if (j == 0 and graph_ind == 0) else False,
+    #                                 name=f'True type', legendgroup=f'True type'
+    #                                 ))
+    #
+    #     fig4.add_trace(go.Scatter3d(x=pred_particles[pred_type_inds][:, 0], y=pred_particles[pred_type_inds][:, 1], z=pred_particles[pred_type_inds][:, 2],
+    #                                 mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='white', showlegend=True,
+    #                                 name=f'Predicted type {j}'))
+    #
+    # fig4.show()
+    return fig, fig2, fig3
