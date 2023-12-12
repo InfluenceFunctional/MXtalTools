@@ -44,7 +44,7 @@ from dataset_management.manager import DataManager
 from dataset_management.utils import (get_dataloaders, update_dataloader_batch_size)
 from reporting.logger import Logger
 
-from common.utils import softmax_np, init_sym_info, compute_rdf_distance
+from common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict
 
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
@@ -299,6 +299,13 @@ class Modeller:
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
             # this means we also can't do wandb sweeps properly, as-is
+
+            flat_config_dict = flatten_dict(namespace2dict(self.config.__dict__), separator='_')
+            for key in flat_config_dict.keys():
+                if 'path' in str(type(flat_config_dict[key])).lower():
+                    flat_config_dict[key] = str(flat_config_dict[key])
+
+            wandb.log(flat_config_dict)  # log config in un-nested fashion to use as parameters
 
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
             wandb.log(num_params_dict)

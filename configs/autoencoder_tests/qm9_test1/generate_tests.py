@@ -10,18 +10,17 @@ base_config = load_yaml('base.yaml')
 2) check positional noise & embedding depth
 """
 
-
 configs = [
-    [0, 64],
-    [0, 128],
-    [0, 256],
-    [0, 512],
-    [.1, 64],
-    [.1, 512],
-    [.5, 64],
-    [.5, 512],
-    [1, 64],
-    [1, 512]
+    [0, 64],  # bad
+    [0, 128],  # not as bad
+    [0, 256],  # intermediate quality
+    [0, 512],  # excellent
+    [.1, 64],  # bad
+    [.1, 512],  # excellent
+    [.5, 64],  # bad
+    [.5, 512],  # excellent
+    [1, 64],  # bad
+    [1, 512]  # excellent
 ]
 
 ind = 0

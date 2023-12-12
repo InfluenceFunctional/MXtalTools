@@ -77,7 +77,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
                     run_config['structure_identifier'] = path.replace('\\', '/').split('/')[0]
             elif 'nicotinamide_liq' in dumps_dir:
                 run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
-            elif 'interfaces' in dumps_dir:
+            elif 'interface' in dumps_dir:
                 run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
             else:
                 assert False, "Trajectory directory is missing config file"

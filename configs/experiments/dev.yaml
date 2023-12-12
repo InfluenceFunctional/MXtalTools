@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regressor' or 'sampling' WIP
+mode: embedding_regression  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP
 dataset_name: 'qm9_molecules_dataset.pkl'
 misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
 base_config_path: '/experiments/base.yaml'  # base config
@@ -9,18 +9,18 @@ dataset_yaml_path: '/dataset/qm9_autoencoder.yaml'
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
-model_names: ['autoencoder']
+model_names: ['autoencoder', 'embedding_regressor']
 
 dataset:
-  max_dataset_length: 10000
+  max_dataset_length: 10000000
   test_fraction: 0.1
 
 # batching & convergence
 early_epochs_step_override: 100
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 100
-max_batch_size: 500
+min_batch_size: 50
+max_batch_size: 100
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks
@@ -45,7 +45,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null
+  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test1_7_11-12-13-29-29
   embedding_regressor: null
 
 discriminator_positional_noise: 0
@@ -128,7 +128,7 @@ embedding_regressor:
 
   model:
     embedding_depth: 512
-    num_layers: 4
+    num_layers: 12
     depth: 512
     norm_mode: 'batch'
     dropout: 0.1

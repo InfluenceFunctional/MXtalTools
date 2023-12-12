@@ -1146,47 +1146,122 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     target = np.asarray(epoch_stats_dict['regressor_target'])
     prediction = np.asarray(epoch_stats_dict['regressor_prediction'])
 
-    multiplicity = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_symmetry_multiplicity')]
-    mol_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_volume')]
-    mol_mass = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_mass')]
-    target_density = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_density')]
-    target_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_cell_volume')]
-    target_packing_coefficient = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_packing_coefficient')]
+    if 'crystal' in dataDims['regression_target']:
+        multiplicity = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_symmetry_multiplicity')]
+        mol_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_volume')]
+        mol_mass = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_mass')]
+        target_density = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_density')]
+        target_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_cell_volume')]
+        target_packing_coefficient = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_packing_coefficient')]
 
-    if target_key == 'crystal_reduced_volume':
-        predicted_volume = prediction
-        predicted_packing_coefficient = mol_volume * multiplicity / (prediction * multiplicity)
-    elif target_key == 'crystal_packing_coefficient':
-        predicted_volume = mol_volume * multiplicity / prediction
-        predicted_packing_coefficient = prediction
-    elif target_key == 'crystal_density':
-        predicted_volume = prediction / (mol_mass * multiplicity) / 1.66
-        predicted_packing_coefficient = prediction * mol_volume / mol_mass / 1.66
+        if target_key == 'crystal_reduced_volume':
+            predicted_volume = prediction
+            predicted_packing_coefficient = mol_volume * multiplicity / (prediction * multiplicity)
+        elif target_key == 'crystal_packing_coefficient':
+            predicted_volume = mol_volume * multiplicity / prediction
+            predicted_packing_coefficient = prediction
+        elif target_key == 'crystal_density':
+            predicted_volume = prediction / (mol_mass * multiplicity) / 1.66
+            predicted_packing_coefficient = prediction * mol_volume / mol_mass / 1.66
+        else:
+            assert False, f"Detailed reporting for {target_key} is not yet implemented"
+
+        predicted_density = (mol_mass * multiplicity) / predicted_volume * 1.66
+        losses = ['normed_error', 'abs_normed_error', 'squared_error']
+        loss_dict = {}
+        fig_dict = {}
+        fig = make_subplots(cols=3, rows=2, subplot_titles=['asym_unit_volume', 'packing_coefficient', 'density', 'asym_unit_volume error', 'packing_coefficient error', 'density error'])
+        for ind, (name, tgt_value, pred_value) in enumerate(zip(['asym_unit_volume', 'packing_coefficient', 'density'], [target_volume, target_packing_coefficient, target_density], [predicted_volume, predicted_packing_coefficient,
+                                                                                                                                                                                      predicted_density])):
+            for loss in losses:
+                if loss == 'normed_error':
+                    loss_i = (tgt_value - pred_value) / np.abs(tgt_value)
+                elif loss == 'abs_normed_error':
+                    loss_i = np.abs((tgt_value - pred_value) / np.abs(tgt_value))
+                elif loss == 'squared_error':
+                    loss_i = (tgt_value - pred_value) ** 2
+                else:
+                    assert False, "Loss not implemented"
+                loss_dict[name + '_' + loss + '_mean'] = np.mean(loss_i)
+                loss_dict[name + '_' + loss + '_std'] = np.std(loss_i)
+
+            linreg_result = linregress(tgt_value, pred_value)
+            loss_dict[name + '_regression_R_value'] = linreg_result.rvalue
+            loss_dict[name + '_regression_slope'] = linreg_result.slope
+
+            # predictions vs target trace
+            xline = np.linspace(max(min(tgt_value), min(pred_value)),
+                                min(max(tgt_value), max(pred_value)), 2)
+
+            xy = np.vstack([tgt_value, pred_value])
+            try:
+                z = get_point_density(xy)
+            except:
+                z = np.ones_like(tgt_value)
+
+            row = 1
+            col = ind % 3 + 1
+            fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=0.1, showlegend=False),
+                          row=row, col=col)
+            fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                          row=row, col=col)
+
+            row = 2
+            fig.add_trace(go.Histogram(x=pred_value - tgt_value,
+                                       histnorm='probability density',
+                                       nbinsx=100,
+                                       name="Error Distribution",
+                                       showlegend=False,
+                                       marker_color='rgba(0,0,100,1)'),
+                          row=row, col=col)
+        #
+        fig.update_yaxes(title_text='Predicted AUnit Volume (A<sup>3</sup>)', row=1, col=1, dtick=2500, range=[0, 15000], tickformat=".0f")
+        fig.update_yaxes(title_text='Predicted Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4], tickformat=".1f")
+        fig.update_yaxes(title_text='Predicted Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
+
+        fig.update_xaxes(title_text='True AUnit Volume (A<sup>3</sup>)', row=1, col=1, dtick=2500, range=[0, 15000], tickformat=".0f")
+        fig.update_xaxes(title_text='True Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4], tickformat=".1f")
+        fig.update_xaxes(title_text='True Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
+
+        fig.update_xaxes(title_text='Packing Coefficient Error', row=2, col=2, dtick=0.05, tickformat=".2f")
+        fig.update_xaxes(title_text='Density Error (g/cm<sup>3</sup>)', row=2, col=3, dtick=0.1, tickformat=".1f")
+        fig.update_xaxes(title_text='AUnit Volume (A<sup>3</sup>)', row=2, col=1, dtick=250, tickformat=".0f")
+
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
+        fig_dict['Regression Results'] = fig
+
+        """
+        correlate losses with molecular features
+        """  # todo convert the below to a function
+        fig = make_correlates_plot(np.asarray(epoch_stats_dict['tracking_features']),
+                                   np.abs(target_packing_coefficient - predicted_packing_coefficient) / target_packing_coefficient, dataDims)
+        fig_dict['Regressor Loss Correlates'] = fig
     else:
-        assert False, f"Detailed reporting for {target_key} is not yet implemented"
 
-    predicted_density = (mol_mass * multiplicity) / predicted_volume * 1.66
-    losses = ['normed_error', 'abs_normed_error', 'squared_error']
-    loss_dict = {}
-    fig_dict = {}
-    fig = make_subplots(cols=3, rows=2, subplot_titles=['asym_unit_volume', 'packing_coefficient', 'density', 'asym_unit_volume error', 'packing_coefficient error', 'density error'])
-    for ind, (name, tgt_value, pred_value) in enumerate(zip(['asym_unit_volume', 'packing_coefficient', 'density'], [target_volume, target_packing_coefficient, target_density], [predicted_volume, predicted_packing_coefficient,
-                                                                                                                                                                                  predicted_density])):
+        tgt_value = target
+        pred_value = prediction
+        losses = ['normed_error', 'abs_normed_error', 'squared_error']
+        loss_dict = {}
+        fig_dict = {}
+        fig = make_subplots(cols=2, rows=1)
         for loss in losses:
             if loss == 'normed_error':
-                loss_i = (tgt_value - pred_value) / np.abs(tgt_value)
+                loss_i = (target - prediction) / np.abs(target)
             elif loss == 'abs_normed_error':
-                loss_i = np.abs((tgt_value - pred_value) / np.abs(tgt_value))
+                loss_i = np.abs((target - prediction) / np.abs(target))
             elif loss == 'squared_error':
-                loss_i = (tgt_value - pred_value) ** 2
+                loss_i = (target - prediction) ** 2
             else:
                 assert False, "Loss not implemented"
-            loss_dict[name + '_' + loss + '_mean'] = np.mean(loss_i)
-            loss_dict[name + '_' + loss + '_std'] = np.std(loss_i)
 
-        linreg_result = linregress(tgt_value, pred_value)
-        loss_dict[name + '_regression_R_value'] = linreg_result.rvalue
-        loss_dict[name + '_regression_slope'] = linreg_result.slope
+            loss_dict[loss + '_mean'] = np.mean(loss_i)
+            loss_dict[loss + '_std'] = np.std(loss_i)
+
+            linreg_result = linregress(tgt_value, pred_value)
+            loss_dict['regression_R_value'] = linreg_result.rvalue
+            loss_dict['regression_slope'] = linreg_result.slope
 
         # predictions vs target trace
         xline = np.linspace(max(min(tgt_value), min(pred_value)),
@@ -1198,45 +1273,38 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         except:
             z = np.ones_like(tgt_value)
 
-        row = 1
-        col = ind % 3 + 1
         fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=0.1, showlegend=False),
-                      row=row, col=col)
+                      row=1, col=1)
         fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
-                      row=row, col=col)
+                      row=1, col=1)
 
-        row = 2
         fig.add_trace(go.Histogram(x=pred_value - tgt_value,
                                    histnorm='probability density',
                                    nbinsx=100,
                                    name="Error Distribution",
                                    showlegend=False,
                                    marker_color='rgba(0,0,100,1)'),
-                      row=row, col=col)
-    #
-    fig.update_yaxes(title_text='Predicted AUnit Volume (A<sup>3</sup>)', row=1, col=1, dtick=2500, range=[0, 15000], tickformat=".0f")
-    fig.update_yaxes(title_text='Predicted Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4], tickformat=".1f")
-    fig.update_yaxes(title_text='Predicted Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
+                      row=1, col=2)  #
 
-    fig.update_xaxes(title_text='True AUnit Volume (A<sup>3</sup>)', row=1, col=1, dtick=2500, range=[0, 15000], tickformat=".0f")
-    fig.update_xaxes(title_text='True Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4], tickformat=".1f")
-    fig.update_xaxes(title_text='True Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
+        #
+        target_name = dataDims['regression_target']
+        fig.update_yaxes(title_text=f'Predicted {target_name}', row=1, col=1, tickformat=".0f")
 
-    fig.update_xaxes(title_text='Packing Coefficient Error', row=2, col=2, dtick=0.05, tickformat=".2f")
-    fig.update_xaxes(title_text='Density Error (g/cm<sup>3</sup>)', row=2, col=3, dtick=0.1, tickformat=".1f")
-    fig.update_xaxes(title_text='AUnit Volume (A<sup>3</sup>)', row=2, col=1, dtick=250, tickformat=".0f")
+        fig.update_xaxes(title_text=f'True {target_name}', row=1, col=1, tickformat=".0f")
 
-    fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
-    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_xaxes(title_text=f'{target_name} Error', row=1, col=2, tickformat=".2f")
 
-    fig_dict['Regression Results'] = fig
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
 
-    """
-    correlate losses with molecular features
-    """  # todo convert the below to a function
-    fig = make_correlates_plot(np.asarray(epoch_stats_dict['tracking_features']),
-                               np.abs(target_packing_coefficient - predicted_packing_coefficient) / target_packing_coefficient, dataDims)
-    fig_dict['Regressor Loss Correlates'] = fig
+        fig_dict['Regression Results'] = fig
+
+        """
+        correlate losses with molecular features
+        """  # todo convert the below to a function
+        fig = make_correlates_plot(np.asarray(epoch_stats_dict['tracking_features']),
+                                   np.abs(target - prediction) / target, dataDims)
+        fig_dict['Regressor Loss Correlates'] = fig
 
     wandb.log(loss_dict)
     wandb.log(fig_dict)
@@ -1716,10 +1784,10 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
 
 
 def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, cart_dimension):
-    sigma = max(working_sigma, 0.08)
+    sigma = 0.01
     max_xval = max(decoded_data.pos.amax(), data.pos.amax()).cpu().detach().numpy()
     min_xval = min(decoded_data.pos.amax(), data.pos.amin()).cpu().detach().numpy()
-    ymax = 1.1  # int(torch.diff(data.ptr).amax())  # max graph height
+    cmax = 1  # int(torch.diff(data.ptr).amax())  # max graph height
     fig, fig2 = None, None
 
     if cart_dimension == 1:
@@ -1749,7 +1817,7 @@ def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, ca
                 # fig.add_scattergl(x=x, y=np.sum(np.exp(-(x - points_true[ref_type_inds]) ** 2 / 0.00001), axis=0), line_color='blue', showlegend=False, name='True', row=row, col=col)
                 # fig.add_scattergl(x=x, y=np.sum(pred_type_weights * np.exp(-(x - points_pred) ** 2 / 0.00001), axis=0), line_color='red', showlegend=False, name='Predicted', row=row, col=col)
 
-        fig.update_yaxes(range=[0, ymax])
+        fig.update_yaxes(range=[0, cmax])
 
     elif cart_dimension == 2:
         fig = make_subplots(rows=max_point_types, cols=min(4, data.num_graphs))
@@ -1778,7 +1846,7 @@ def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, ca
                                          showlegend=True if (j == 0 and graph_ind == 0) else False,
                                          name=f'Predicted type', legendgroup=f'Predicted type',
                                          coloraxis="coloraxis",
-                                         contours=dict(start=0, end=ymax, size=ymax / 50)
+                                         contours=dict(start=0, end=cmax, size=cmax / 50)
                                          ), row=row, col=col)
 
                 fig.add_trace(go.Scattergl(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1],
@@ -1787,22 +1855,22 @@ def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, ca
                                            name=f'True type', legendgroup=f'True type'
                                            ), row=row, col=col)
 
-        fig.update_coloraxes(cmin=0, cmax=ymax, autocolorscale=False, colorscale='viridis')
+        fig.update_coloraxes(cmin=0, cmax=cmax, autocolorscale=False, colorscale='viridis')
 
     elif cart_dimension == 3:
 
         num_types = max_point_types
         num_surface = 15
+        num_gridpoints = 25
         # num_gridpoints = max(15, int((2 / sigma)))  # roughly in units of sigma
         # num_gridpoints = min(35, num_gridpoints)
-        num_gridpoints = 25
         cols = 3
         rows = num_types // cols + ((num_types % cols) != 0)
         fig = make_subplots(
             rows=rows, cols=cols,
             specs=[[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)])
 
-        x = np.linspace(min(-1, min_xval), max(1, max_xval), num_gridpoints)
+        x = np.linspace(min_xval, max_xval, num_gridpoints)
         y = np.copy(x)
         z = np.copy(x)
         xx, yy, zz = np.meshgrid(x, y, z)
@@ -1829,12 +1897,12 @@ def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, ca
                                        name=f'True type', legendgroup=f'True type'
                                        ), row=row, col=col)
 
-            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=pred_dist,
+            fig.add_trace(go.Volume(x=xx.flatten(), y=yy.flatten(), z=zz.flatten(), value=1 - np.abs(1 - pred_dist),
                                     showlegend=True if (j == 0 and graph_ind == 0) else False,
                                     name=f'Predicted type', legendgroup=f'Predicted type',
                                     coloraxis="coloraxis",
-                                    isomin=0, isomax=ymax, opacity=.05,
-                                    cmin=0, cmax=ymax,
+                                    isomin=0.05, isomax=cmax, opacity=.05,
+                                    cmin=0, cmax=cmax,
                                     surface_count=num_surface,
                                     ), row=row, col=col)
 
@@ -1867,8 +1935,8 @@ def gaussian_overlap_plot(data, decoded_data, working_sigma, max_point_types, ca
                                      name=f'Predicted type {j}',
                                      colorscale=colorscales[j],
                                      showscale=False,
-                                     isomin=0.01, isomax=ymax, opacity=.25,
-                                     cmin=0, cmax=ymax,
+                                     isomin=0.05, isomax=cmax, opacity=.1,
+                                     cmin=0, cmax=cmax,
                                      surface_count=num_surface,
                                      ))
 

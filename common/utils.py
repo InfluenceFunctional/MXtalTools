@@ -4,6 +4,8 @@ import torch
 import pandas as pd
 from scipy.interpolate import interpn
 from typing import List, Optional
+import collections
+from copy import copy
 
 from constants.space_group_info import SYM_OPS, LATTICE_TYPE, POINT_GROUPS, SPACE_GROUPS
 
@@ -278,3 +280,37 @@ def repeat_interleave(
     """
     outs = [torch.full((n,), i, device=device) for i, n in enumerate(repeats)]
     return torch.cat(outs, dim=0)
+
+
+def namespace2dict(namespace_dict, higher_level=''):
+    copied_dict = copy(namespace_dict)
+    for key in copied_dict.keys():
+        if 'namespace' in str(type(copied_dict[key])).lower():
+            copied_dict[key] = namespace2dict(copied_dict[key].__dict__, higher_level=key)
+        else:
+            pass
+
+    return copied_dict
+
+
+def flatten_dict(dictionary, parent_key=False, separator='_'):
+    """
+    From : https://stackoverflow.com/questions/6027558/flatten-nested-dictionaries-compressing-keys
+    Turn a nested dictionary into a flattened dictionary
+    :param dictionary: The dictionary to flatten
+    :param parent_key: The string to prepend to dictionary's keys
+    :param separator: The string used to separate flattened keys
+    :return: A flattened dictionary
+    """
+
+    items = []
+    for key, value in dictionary.items():
+        new_key = str(parent_key) + separator + key if parent_key else key
+        if isinstance(value, collections.abc.MutableMapping):
+            items.extend(flatten_dict(value, new_key, separator).items())
+        elif isinstance(value, list):
+            for k, v in enumerate(value):
+                items.extend(flatten_dict({str(k): v}, new_key).items())
+        else:
+            items.append((new_key, value))
+    return dict(items)

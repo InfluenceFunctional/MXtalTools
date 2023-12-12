@@ -24,9 +24,11 @@ dev = {'run_name': 'dev_nic',
        'batch_size': 5,
        'reporting_frequency': 1,
        'train_model': False,
-       'trajs_to_analyze_list': ["D:/crystals_extra/classifier_training/melt_crystal_trajs/melt_test7"], #[f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(9)],# +  # FORWARD SLASHES ONLY
-                                #[f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
-                                #[f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
+       'trajs_to_analyze_list': ['D:/crystals_extra/classifier_training/new_melt_interface'],
+       # ['D:/crystals_extra/classifier_training/crystals_in_melt_test3']
+       # ["D:/crystals_extra/classifier_training/melt_crystal_trajs/melt_test7"], #[f'D:/crystals_extra/classifier_training/melt_trajs2/{num}/' for num in range(9)],# +  # FORWARD SLASHES ONLY
+       # [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
+       # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
        'do_classifier_evaluation': False,
        'classifier_path': 'C:/Users/mikem/crystals/classifier_runs/dev_nic_1conv_best_classifier_checkpoint',
        'learning_rate': 1e-4,
