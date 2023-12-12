@@ -201,7 +201,7 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
         # except RuntimeError:
         #     print('Ovito trajectory writing failed')
 
-        fig, traj_dict = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, 'urea' if config['mol_num_atoms'] == 8 else 'nicotinamide')
+        fig, fig2, traj_dict = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, 'urea' if config['mol_num_atoms'] == 8 else 'nicotinamide')
 
         if os.path.exists(dumps_dir + 'run_config.npy'):
             run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
@@ -209,8 +209,12 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
                 title=f"Form {identifier2form[run_config['structure_identifier']]}, "
                       f"Cluster Radius {run_config['max_sphere_radius']}A, "
                       f"Temperature {run_config['temperature']}K")
+            fig2.update_layout(
+                title=f"Form {identifier2form[run_config['structure_identifier']]}, "
+                      f"Cluster Radius {run_config['max_sphere_radius']}A, "
+                      f"Temperature {run_config['temperature']}K")
 
-        elif 'urea_interfaces' in dumps_dir:
+        elif 'urea_interface' in dumps_dir:
             fig.update_layout(
                 title="Urea Interface")
             run_config = None
@@ -224,4 +228,5 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
 
         np.save(output_dict_path, traj_analysis)
         fig.write_image(f"{dataset_name}_Trajectory_Analysis.png", scale=4)
+        fig2.write_image(f"{dataset_name}_Trajectory_Analysis.png", scale=4)
         wandb.log({f"{dataset_name} Trajectory Analysis": fig})

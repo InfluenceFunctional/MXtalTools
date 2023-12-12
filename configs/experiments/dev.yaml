@@ -12,7 +12,7 @@ checkpointing_loss_type: test  # will save a new checkpoint when a minimum of th
 model_names: ['autoencoder', 'embedding_regressor']
 
 dataset:
-  max_dataset_length: 10000000
+  max_dataset_length: 1000
   test_fraction: 0.1
 
 # batching & convergence

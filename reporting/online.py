@@ -1288,11 +1288,11 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
 
         #
         target_name = dataDims['regression_target']
-        fig.update_yaxes(title_text=f'Predicted {target_name}', row=1, col=1, tickformat=".0f")
+        fig.update_yaxes(title_text=f'Predicted {target_name}', row=1, col=1, tickformat=".2g")
 
-        fig.update_xaxes(title_text=f'True {target_name}', row=1, col=1, tickformat=".0f")
+        fig.update_xaxes(title_text=f'True {target_name}', row=1, col=1, tickformat=".2g")
 
-        fig.update_xaxes(title_text=f'{target_name} Error', row=1, col=2, tickformat=".2f")
+        fig.update_xaxes(title_text=f'{target_name} Error', row=1, col=2, tickformat=".2g")
 
         fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
         fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))

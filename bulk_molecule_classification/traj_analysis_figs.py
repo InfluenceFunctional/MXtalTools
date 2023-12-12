@@ -180,9 +180,9 @@ def all_accuracy_fig(results_dict, ordered_classes, temp_series):  # todo fix cl
 
 def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, molecule_type):
     if molecule_type == 'urea':
-        ordered_class_names = urea_ordered_class_names
+        ordered_class_names = urea_ordered_class_names + ['Uncertain']
     elif molecule_type == 'nicotinamide':
-        ordered_class_names = nic_ordered_class_names
+        ordered_class_names = nic_ordered_class_names + ['Uncertain']
 
     num_classes = len(ordered_class_names)
     """trajectory analysis figure"""
@@ -194,12 +194,17 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, 
     pred_confidence_traj_out = np.zeros(len(time_steps))
 
     for ind, probs in enumerate(sorted_molwise_results_dict['Molecule_Type_Prediction']):
-        inside_probs = probs[np.argwhere(sorted_molwise_results_dict['Molecule_Coordination_Numbers'][ind] > 20)][:, 0]
-        outside_probs = probs[np.argwhere(sorted_molwise_results_dict['Molecule_Coordination_Numbers'][ind] < 20)][:, 0]
+        inside_inds = np.argwhere(sorted_molwise_results_dict['Molecule_Coordination_Numbers'][ind] > 20)[:, 0]
+        outside_inds = np.argwhere(sorted_molwise_results_dict['Molecule_Coordination_Numbers'][ind] <= 20)[:, 0]
+
+        inside_probs = probs[inside_inds]
+        outside_probs = probs[outside_inds]
 
         pred = np.argmax(probs, axis=-1)
-        inside_pred = np.argmax(inside_probs, axis=-1)
-        outside_pred = np.argmax(outside_probs, axis=-1)
+        max_confidence = probs.max(1)
+        pred[max_confidence < 0.5] = num_classes - 1  # insufficiently high confidence gets assigned 'uncertain'
+        inside_pred = pred[inside_inds]
+        outside_pred = pred[outside_inds]
 
         pred_confidence_traj[ind] = probs.max(1).mean()  # get_prediction_confidence(probs).mean()
         pred_confidence_traj_in[ind] = inside_probs.max(1).mean()  # get_prediction_confidence(inside_probs).mean()
@@ -277,7 +282,25 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, 
                   row=1, col=3)
     fig.update_yaxes(range=[0, 1])
 
-    return fig, traj_dict
+    fig2 = go.Figure()
+    for ind in range(num_classes):
+        fig2.add_trace(go.Scatter(x=time_steps / 1000000,
+                                  y=gaussian_filter1d(pred_frac_traj[:, ind], sigma),
+                                  name=ordered_class_names[ind],
+                                  legendgroup=ordered_class_names[ind],
+                                  line_color=colors[ind],
+                                  mode='lines',
+                                  stackgroup='one'),
+                       )
+    fig2.add_trace(go.Scattergl(x=time_steps / 1000000,
+                                y=gaussian_filter1d(pred_confidence_traj[:], sigma),
+                                name="Confidence",
+                                marker_color='Grey'),
+                   )
+    fig2.update_yaxes(range=[0, 1])
+    fig2.update_layout(xaxis_title="Time (ns)", yaxis_title='Form Prediction')
+
+    return fig, fig2, traj_dict
 
 
 def check_for_extra_values(row, extra_axes, extra_values):

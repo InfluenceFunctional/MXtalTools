@@ -5,10 +5,21 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from bulk_molecule_classification.classifier_constants import identifier2form, num2atomicnum, type2num
+from bulk_molecule_classification.classifier_constants import identifier2form, type2num
 
 
 def process_dump(path):
+    if path == 'traj_urea_interface.dump':
+        num2atomicnum = {1: 1,
+                         2: 8,
+                         3: 6,
+                         4: 7,
+                         5: 7,
+                         }
+
+    else:
+        from bulk_molecule_classification.classifier_constants import num2atomicnum
+
     file = open(path, 'r')
     lines = file.readlines()
     file.close()
@@ -78,7 +89,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
             elif 'nicotinamide_liq' in dumps_dir:
                 run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
             elif 'interface' in dumps_dir:
-                run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
+                run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'UREA_Melt'}
             else:
                 assert False, "Trajectory directory is missing config file"
 
