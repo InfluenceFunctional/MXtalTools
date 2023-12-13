@@ -290,6 +290,13 @@ class Modeller:
         self.hit_max_lr_dict = {model_name: False for model_name in self.model_names}
         converged, epoch, prev_epoch_failed = self.config.max_epochs == 0, 0, False
 
+        flat_config_dict = flatten_dict(namespace2dict(self.config.__dict__), separator='_')
+        for key in flat_config_dict.keys():
+            if 'path' in str(type(flat_config_dict[key])).lower():
+                flat_config_dict[key] = str(flat_config_dict[key])
+
+        self.config.__dict__.update(flat_config_dict)
+
         with (wandb.init(config=self.config,
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
@@ -299,13 +306,6 @@ class Modeller:
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
             # this means we also can't do wandb sweeps properly, as-is
-
-            flat_config_dict = flatten_dict(namespace2dict(self.config.__dict__), separator='_')
-            for key in flat_config_dict.keys():
-                if 'path' in str(type(flat_config_dict[key])).lower():
-                    flat_config_dict[key] = str(flat_config_dict[key])
-
-            wandb.log(flat_config_dict)  # log config in un-nested fashion to use as parameters
 
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
             wandb.log(num_params_dict)
