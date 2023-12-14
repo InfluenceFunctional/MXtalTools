@@ -10,16 +10,16 @@ Converge regression model based on molecule regressor
 """
 
 configs = [
-    [1, 256],
-    [4, 256],
-    [12, 256],
-    [1, 512],
-    [4, 512],
-    [12, 512],
-    [16, 256],
-    [4, 1024],
-    [24, 256],
-    [40, 256],
+    [1, 256],  # awful
+    [4, 256],  # middle/bad
+    [12, 256],  # pretty good
+    [1, 512],  # awful
+    [4, 512],  # middle/bad
+    [12, 512],  # middle/bad
+    [16, 256],  # third best
+    [4, 1024],  # pretty good
+    [24, 256],  # second best
+    [40, 256],  # best
 ]
 
 ind = 0

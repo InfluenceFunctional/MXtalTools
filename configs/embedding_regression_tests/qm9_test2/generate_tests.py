@@ -10,12 +10,12 @@ Converge regression model based on molecule regressor
 """
 
 configs = [
-    [0, None],
-    [0.1, None],
-    [0.5, None],
-    [0, 'batch'],
-    [0, 'layer'],
-    [0.5, 'batch'],
+    [0, None],  # third best ever
+    [0.1, None],  # middling
+    [0.5, None],  # bad
+    [0, 'batch'],  # second best ever
+    [0, 'layer'],  # best ever
+    [0.5, 'batch'],  # bad
 ]
 
 ind = 0
