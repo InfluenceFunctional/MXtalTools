@@ -8,7 +8,8 @@ from bulk_molecule_classification.classifier_constants import form2index, identi
 from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
 
 from bulk_molecule_classification.traj_analysis_figs import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig
-from bulk_molecule_classification.utils import get_loss, classifier_reporting, record_step_results, collect_to_traj_dataloaders, process_trajectory_results_dict
+from bulk_molecule_classification.utils import get_loss, classifier_reporting, record_step_results, process_trajectory_results_dict
+from bulk_molecule_classification.dataset_prep import collect_to_traj_dataloaders
 
 
 def train_classifier(config, classifier, optimizer,
@@ -129,16 +130,19 @@ def classifier_evaluation(config, classifier, train_loader, test_loader,
 
         fig_dict = {}
         '''embed train, test, melt'''
-        fig_dict['Embedding_Analysis'] = embedding_fig(results_dict, num_samples, class_names, ordered_class_names, config['training_temps'],
-                                                       max_samples=1000, perplexity=30)
+        fig_dict['Embedding_Analysis'], results_dict['embedding'] = embedding_fig(
+            results_dict, num_samples, class_names, ordered_class_names, config['training_temps'],
+            max_samples=1000, perplexity=30)
 
         '''accuracy metrics'''
         fig_dict['Form_Confusion_Matrices'], accuracy_scores = form_accuracy_fig(results_dict, ordered_class_names, config['training_temps'])
         fig_dict['Defect_Confusion_Matrices'], accuracy_scores = defect_accuracy_fig(results_dict, config['training_temps'])
         fig_dict['All_Confusion_Matrices'], accuracy_scores = all_accuracy_fig(results_dict, ordered_class_names, config['training_temps'])
 
-        os.chdir(config['runs_path'])
+        os.chdir(config['results_path'])
         [fig_dict[key].write_image(f"{config['run_name']}_Figure_{i}.png") for i, key in enumerate(fig_dict.keys())]
+        results_dict['config'] = config
+        np.save(config['run_name'] + '_evaluation_results_dict', results_dict)
         wandb.log(fig_dict)
 
 
@@ -148,7 +152,7 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
     dataset_name = '_'.join(dumps_dir.split('/')[-3:])
     datasets_path = config['datasets_path']
     dataset_path = f'{datasets_path}{dataset_name}.pkl'
-    output_dict_path = config['runs_path'] + dataset_name + '_analysis'
+    output_dict_path = config['results_path'] + dataset_name + '_analysis'
 
     if True:  # not os.path.exists(output_dict_path + '.npy'):
         if not os.path.exists(dataset_path):
@@ -158,14 +162,21 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
                 print(f'{dumps_dir} does not contain valid dump to analyze')
                 return False
 
-        os.chdir(config['runs_path'])
+        os.chdir(config['runs_path'])  # todo move this
+
+        if os.path.exists(dumps_dir + 'run_config.npy'):
+            run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
+        else:
+            run_config = None
 
         _, loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                dataset_path, config['dataset_size'], batch_size=1, temperatures=None,
+                                                dataset_path, config['dataset_size'],
+                                                batch_size=1, temperatures=None,
                                                 conv_cutoff=config['conv_cutoff'],
                                                 test_fraction=1, shuffle=False, filter_early=False,
-                                                early_only=True if 'melt' in dumps_dir else False)
-
+                                                early_only=False,
+                                                run_config=run_config,
+                                                pare_to_cluster=True)
         results_dict = None
         classifier.train(False)
         with torch.no_grad():
@@ -181,30 +192,57 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
             except:
                 results_dict[key] = np.stack(results_dict[key])
 
+        os.chdir(config['results_path'])
+
         results_dict['Atomwise_Sample_Index'] = results_dict['Sample_Index'].repeat(config['mol_num_atoms'])
         results_dict['Type_Prediction_Choice'] = np.argmax(results_dict['Type_Prediction'], axis=-1)  # argmax sample
         results_dict['Type_Prediction_Choice'] = np.asarray([form2index[tgt] for tgt in results_dict['Type_Prediction_Choice']])
         results_dict['Type_Prediction_Confidence'] = np.amax(results_dict['Type_Prediction'], axis=-1)  # argmax sample
 
         sorted_molwise_results_dict, time_steps = process_trajectory_results_dict(results_dict, loader, config['mol_num_atoms'])
-        write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
-                        sorted_molwise_results_dict['Atom_Types'],
-                        sorted_molwise_results_dict['Type_Prediction_Choice'], filename=dataset_name + '_prediction')  # write a trajectory
+        del results_dict
+
+        if dumps_dir == r'D:/crystals_extra/classifier_training/urea_melt_interface_T200':  # collect predictions to form I and IV or 'other'
+            interface_mode = True
+            for step in tqdm(range(len(sorted_molwise_results_dict['Molecule_Type_Prediction']))):
+                orig_pred = sorted_molwise_results_dict['Molecule_Type_Prediction'][step]
+                unknowns = orig_pred[:, [0, 1, 2, 4, 6]].sum(1)[:, None]
+                new_pred = np.concatenate([orig_pred[:, [3, 5]], unknowns], axis=1)
+                sorted_molwise_results_dict['Molecule_Type_Prediction'][step] = new_pred
+
+                orig_choice = sorted_molwise_results_dict['Molecule_Type_Prediction_Choice'][step]
+                orig_choice[orig_choice == 2] = 1  # form IV to index 1
+                for ind in range(8):
+                    if ind != 0 and ind != 1:
+                        orig_choice[orig_choice == ind] = 2
+
+                sorted_molwise_results_dict['Molecule_Type_Prediction_Choice'][step] = orig_choice
+        else:
+            interface_mode = False
 
         write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
                         sorted_molwise_results_dict['Atom_Types'],
-                        sorted_molwise_results_dict['Type_Prediction_Confidence'], filename=dataset_name + '_confidence')  # write a trajectory
+                        sorted_molwise_results_dict['Molecule_Type_Prediction_Choice'], filename=dataset_name + '_prediction')  # write a trajectory
 
         write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
                         sorted_molwise_results_dict['Atom_Types'],
                         sorted_molwise_results_dict['Molecule_Type_Prediction'], filename=dataset_name + '_all_probs')  # write a trajectory
-        # except RuntimeError:
-        #     print('Ovito trajectory writing failed')
-
-        fig, fig2, traj_dict = classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, 'urea' if config['mol_num_atoms'] == 8 else 'nicotinamide')
 
         if os.path.exists(dumps_dir + 'run_config.npy'):
             run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
+            if 'crystal' in dumps_dir and 'melt' in dumps_dir:
+                inside_radius = run_config['max_sphere_radius']
+            else:
+                inside_radius = None
+        else:
+            inside_radius = None
+
+        fig, fig2, traj_dict = classifier_trajectory_analysis_fig(
+            sorted_molwise_results_dict, time_steps,
+            'urea' if config['mol_num_atoms'] == 8 else 'nicotinamide',
+            inside_radius=inside_radius, interface_mode=interface_mode)
+
+        if os.path.exists(dumps_dir + 'run_config.npy'):
             fig.update_layout(
                 title=f"Form {identifier2form[run_config['structure_identifier']]}, "
                       f"Cluster Radius {run_config['max_sphere_radius']}A, "
@@ -228,5 +266,5 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
 
         np.save(output_dict_path, traj_analysis)
         fig.write_image(f"{dataset_name}_Trajectory_Analysis.png", scale=4)
-        fig2.write_image(f"{dataset_name}_Trajectory_Analysis.png", scale=4)
+        fig2.write_image(f"{dataset_name}_Combined_Trajectory_Analysis.png", scale=4)
         wandb.log({f"{dataset_name} Trajectory Analysis": fig})

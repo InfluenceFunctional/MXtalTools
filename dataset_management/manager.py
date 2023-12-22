@@ -9,7 +9,8 @@ from constants.asymmetric_units import asym_unit_dict
 from constants.space_group_info import SYM_OPS
 from crystal_building.utils import build_unit_cell, batch_asymmetric_unit_pose_analysis_torch
 from dataset_management.CrystalData import CrystalData
-from dataset_management.utils import get_range_fraction
+from dataset_management.utils import get_range_fraction, get_fraction
+from constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, SYMBOLS
 
 
 class DataManager:
@@ -254,6 +255,11 @@ class DataManager:
             znums = [10, 18, 36, 54]
             for znum in znums:
                 self.dataset[f'molecule_atom_heavier_than_{znum}_fraction'] = np.asarray([get_range_fraction(atom_list, [znum, 200]) for atom_list in self.dataset['atom_atomic_numbers']])
+        elif self.dataset_type == 'molecule':
+            for anum in self.allowed_atom_types:
+                self.dataset[f'molecule_{SYMBOLS[anum]}_fraction'] = np.asarray([
+                    get_fraction(atom_list, anum) for atom_list in self.dataset['atom_atomic_numbers']
+                    ])
 
     def get_regression_target(self):
         targets = self.dataset[self.regression_target]

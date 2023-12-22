@@ -45,3 +45,8 @@ def update_dataloader_batch_size(loader, new_batch_size):
                       num_workers=loader.num_workers,
                       pin_memory=loader.pin_memory,
                       drop_last=loader.drop_last)
+
+
+def get_fraction(atomic_numbers, target: int):
+    """get fraction of atomic numbers equal to target"""
+    return np.sum(atomic_numbers == target) / len(atomic_numbers)

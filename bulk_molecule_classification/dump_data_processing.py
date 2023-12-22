@@ -40,7 +40,7 @@ def process_dump(path):
             ]
             )
         elif "ITEM: ATOMS" in line:  # atoms header
-            headers = line.split()[2:-3]
+            headers = line.split()[2:8]
             atom_data = np.zeros((n_atoms, len(headers)))
             for ind2 in range(n_atoms):
                 newline = lines[1 + ind + ind2].split()
@@ -51,7 +51,7 @@ def process_dump(path):
 
                 newline[2] = num2atomicnum[atom_ind]
 
-                atom_data[ind2] = np.asarray(newline[:-3]).astype(float)  # cut off velocity elements
+                atom_data[ind2] = np.asarray(newline[:6]).astype(float)  # only want indices and positions
 
             frame_data = pd.DataFrame(atom_data, columns=headers)
             frame_data.attrs['cell_params'] = cell_params  # add attribute directly to dataframe
@@ -100,18 +100,32 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
             trajectory_dict = process_dump(path)
 
             for ts, (times, vals) in enumerate(tqdm(trajectory_dict.items())):
-                new_dict = {'atom_type': [vals['element'].astype(int)],
-                            'mol_ind': [vals['mol']],
-                            'coordinates': [np.concatenate((
-                                np.asarray(vals['x'])[:, None],
-                                np.asarray(vals['y'])[:, None],
-                                np.asarray(vals['z'])[:, None]), axis=-1)],
-                            'temperature': temperature,
-                            'form': form,
-                            'time_step': times,
-                            'cell_params': vals.attrs['cell_params'],
-                            'gap_rate': gap_rate,
-                            }
+                if 'xu' in vals.columns:
+                    new_dict = {'atom_type': [vals['element'].astype(int)],
+                                'mol_ind': [vals['mol']],
+                                'coordinates': [np.concatenate((
+                                    np.asarray(vals['xu'])[:, None],
+                                    np.asarray(vals['yu'])[:, None],
+                                    np.asarray(vals['zu'])[:, None]), axis=-1)],
+                                'temperature': temperature,
+                                'form': form,
+                                'time_step': times,
+                                'cell_params': vals.attrs['cell_params'],
+                                'gap_rate': gap_rate,
+                                }
+                else:
+                    new_dict = {'atom_type': [vals['element'].astype(int)],
+                                'mol_ind': [vals['mol']],
+                                'coordinates': [np.concatenate((
+                                    np.asarray(vals['x'])[:, None],
+                                    np.asarray(vals['y'])[:, None],
+                                    np.asarray(vals['z'])[:, None]), axis=-1)],
+                                'temperature': temperature,
+                                'form': form,
+                                'time_step': times,
+                                'cell_params': vals.attrs['cell_params'],
+                                'gap_rate': gap_rate,
+                                }
 
                 new_df = pd.DataFrame()
                 for key in new_dict.keys():

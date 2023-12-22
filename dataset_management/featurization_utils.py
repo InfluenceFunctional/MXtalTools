@@ -7,6 +7,7 @@ from scipy.spatial.distance import cdist
 from common.geometry_calculations import compute_principal_axes_np, coor_trans_matrix
 from constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, SYMBOLS
 from constants.space_group_info import SPACE_GROUPS
+from dataset_management.utils import get_fraction
 
 '''setup fingerprint generator'''
 fingerprint_generator = AllChem.GetMorganGenerator(radius=2, includeChirality=False)
@@ -38,11 +39,6 @@ def chunkify(lst: list, n: int):
     break up a list into n chunks of equal size (up to last chunk)
     """
     return [lst[ind::n] for ind in range(n)]
-
-
-def get_fraction(atomic_numbers, target: int):
-    """get fraction of atomic numbers equal to target"""
-    return np.sum(atomic_numbers == target) / len(atomic_numbers)
 
 
 def get_dipole(coords, charges):

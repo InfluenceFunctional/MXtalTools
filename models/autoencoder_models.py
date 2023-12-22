@@ -82,12 +82,20 @@ class point_autoencoder(nn.Module):
             dropout=config.decoder_dropout_probability,
         )
 
-    def forward(self, data):
+    def forward(self, data, rotations=None):
         """
         initialize nodes on randn with uniform embedding
         decode
+        if rotate_embedding:
+        rotate the embedding space
         """
-        return self.decoder(self.encoder(data)).reshape(self.num_nodes * data.num_graphs, self.output_depth)
+        encoding = self.encoder(data)
+        if rotations is not None:  # rotate the encoding
+            encoding = encoding.reshape(data.num_graphs, encoding.shape[1] // 3, 3)  # vectorize
+            encoding = torch.einsum('nij, nkj->nki', rotations, encoding)  # rotate
+            encoding = encoding.reshape(data.num_graphs, encoding.shape[1] * 3)  # re-flatten
+
+        return self.decoder(encoding).reshape(self.num_nodes * data.num_graphs, self.output_depth)
 
     def encode(self, data):
         """

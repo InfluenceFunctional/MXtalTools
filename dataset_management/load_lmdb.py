@@ -20,7 +20,7 @@ for idx in keys:
     data = pickle.loads(datapoint_pickled)
     all_atoms.extend(data['atoms'])
 
-a, b =np.unique(all_atoms, return_counts=True)
+a, b = np.unique(all_atoms, return_counts=True)
 
-for ia, ib in zip(a,b):
+for ia, ib in zip(a, b):
     print(f'{ia} : {ib}')

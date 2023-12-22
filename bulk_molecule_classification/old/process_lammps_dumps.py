@@ -10,7 +10,8 @@ import wandb
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
 
-from bulk_molecule_classification.utils import convert_box_to_cell_params, collect_to_traj_dataloaders, init_classifier
+from bulk_molecule_classification.utils import convert_box_to_cell_params, init_classifier
+from bulk_molecule_classification.dataset_prep import collect_to_traj_dataloaders
 from bulk_molecule_classification.classifier_constants import type2num, num2atomicnum
 from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
 

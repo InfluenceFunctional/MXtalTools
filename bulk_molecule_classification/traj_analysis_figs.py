@@ -42,13 +42,13 @@ def embedding_fig(results_dict, num_samples, classes, ordered_classes, run_tempe
     fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
                       xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
                       plot_bgcolor='rgba(0,0,0,0)')
-    return fig
+    return fig, embedding
 
 
 def form_accuracy_fig(results_dict, ordered_classes, temp_series):
     scores = {}
     melt_names = ['Crystal', 'Melt']
-    fig = make_subplots(cols=2, rows=1, subplot_titles=["Low Temperature", "High Temperature"], y_title="True Forms", x_title="Predicted Forms")
+    fig = make_subplots(cols=2, rows=1, subplot_titles=["Low Temperature", "High Temperature"], horizontal_spacing=0.1)
     for temp_ind in range(2):
         if temp_ind == 0:
             inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
@@ -84,12 +84,15 @@ def form_accuracy_fig(results_dict, ordered_classes, temp_series):
     fig.update_yaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True)
 
+    fig.update_xaxes(title_text="Predicted Class")
+    fig.update_yaxes(title_text="True Class", row=1, col=1)
+
     return fig, scores
 
 
 def defect_accuracy_fig(results_dict, temp_series):
     scores = {}
-    fig = make_subplots(cols=2, rows=1, y_title="True Topology", x_title="Predicted Topology", horizontal_spacing=0.1)
+    fig = make_subplots(cols=2, rows=1, subplot_titles=['a', 'b'], horizontal_spacing=0.1)
     for temp_ind in range(2):
         if temp_ind == 0:
             inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
@@ -124,13 +127,15 @@ def defect_accuracy_fig(results_dict, temp_series):
                      showline=True)
     fig.update_yaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True)
+    fig.update_xaxes(title_text="Predicted Class")
+    fig.update_yaxes(title_text="True Class", row=1, col=1)
 
     return fig, scores
 
 
 def all_accuracy_fig(results_dict, ordered_classes, temp_series):  # todo fix class ordering
     scores = {}
-    fig = make_subplots(cols=2, rows=1, subplot_titles=['100K', '350K'], y_title="True Class", x_title="Predicted Class", horizontal_spacing=0.1)
+    fig = make_subplots(cols=2, rows=1, subplot_titles=['100K', '350K'], horizontal_spacing=0.2)
     for temp_ind in range(2):
         if temp_ind == 0:
             inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
@@ -173,29 +178,118 @@ def all_accuracy_fig(results_dict, ordered_classes, temp_series):  # todo fix cl
                      showline=True, tickangle=90)
     fig.update_yaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True)
-    fig.layout.xaxis
+
+    fig.update_xaxes(title_text="Predicted Class")
+    fig.update_yaxes(title_text="True Class", row=1, col=1)
 
     return fig, scores
 
 
-def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, molecule_type):
+def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, molecule_type, inside_radius=None, interface_mode=False):
     if molecule_type == 'urea':
         ordered_class_names = urea_ordered_class_names + ['Uncertain']
+        mol_num_atoms = 8
     elif molecule_type == 'nicotinamide':
         ordered_class_names = nic_ordered_class_names + ['Uncertain']
+        mol_num_atoms = 15
+
+    stacked_plot = True
+    colors = None
+    inside_mode = 'radius'
+
+    if interface_mode:
+        ordered_class_names = ['I', 'IV', 'Other']
+        stacked_plot = False
+        colors = ['rgb(50, 50, 150)', 'rgb(50, 150, 50)', 'rgb(150, 50, 50)']
+        inside_radius = 20
+        inside_mode = 'z'
 
     num_classes = len(ordered_class_names)
+
     """trajectory analysis figure"""
+    traj_dict = process_trajectory_data(
+        inside_radius, mol_num_atoms, num_classes,
+        ordered_class_names, sorted_molwise_results_dict, time_steps, inside_mode=inside_mode)
+
+    if colors is None:
+        colors = plotly.colors.DEFAULT_PLOTLY_COLORS + ['rgb(50, 50, 50)']
+    sigma = min(5, len(traj_dict['overall_number']) / 100)
+    fig = make_subplots(cols=3, rows=1,
+                        subplot_titles=['All Molecules',
+                                        'Core' if not interface_mode else 'Interface',
+                                        'Surface' if not interface_mode else 'Bulk'],
+                        x_title="Time (ns)", y_title="Form Fraction")
+    for i2, key in enumerate(['overall_fraction', 'inside_fraction', 'outside_fraction']):
+        traj = traj_dict[key]
+        for ind in range(num_classes):
+            fig.add_trace(go.Scatter(x=time_steps / 1000000,
+                                     y=gaussian_filter1d(traj[:, ind], sigma),
+                                     name=ordered_class_names[ind],
+                                     legendgroup=ordered_class_names[ind],
+                                     line_color=colors[ind],
+                                     mode='lines',
+                                     showlegend=True if i2 == 0 else False,
+                                     stackgroup='one' if stacked_plot else None),
+                          row=1, col=i2 + 1)
+        if not interface_mode:
+            fig.add_trace(go.Scattergl(x=time_steps / 1000000,
+                                       y=gaussian_filter1d(traj_dict[key.split('_')[0] + '_confidence'][:], sigma),
+                                       name="Confidence",
+                                       legendgroup="Confidence",
+                                       showlegend=True if i2 == 0 else False,
+                                       marker_color='Grey'),
+                          row=1, col=i2 + 1)
+    if not interface_mode:
+        fig.update_yaxes(range=[0, 1])
+
+    fig2 = go.Figure()
+    for ind in range(num_classes):
+        fig2.add_trace(go.Scatter(x=time_steps / 1000000,
+                                  y=gaussian_filter1d(traj_dict['overall_fraction'][:, ind], sigma),
+                                  name=ordered_class_names[ind],
+                                  legendgroup=ordered_class_names[ind],
+                                  line_color=colors[ind],
+                                  mode='lines',
+                                  stackgroup='one' if stacked_plot else None),
+                       )
+    fig2.add_trace(go.Scattergl(x=time_steps / 1000000,
+                                y=gaussian_filter1d(traj_dict['overall_fraction'][:], sigma),
+                                name="Confidence",
+                                marker_color='Grey'),
+                   )
+    fig2.update_yaxes(range=[0, 1])
+    fig2.update_layout(xaxis_title="Time (ns)", yaxis_title='Form Prediction')
+
+    return fig, fig2, traj_dict
+
+
+def process_trajectory_data(inside_radius, mol_num_atoms, num_classes, ordered_class_names, sorted_molwise_results_dict, time_steps, inside_mode='radius'):
     pred_frac_traj = np.zeros((len(time_steps), num_classes))
     pred_frac_traj_in = np.zeros((len(time_steps), num_classes))
     pred_frac_traj_out = np.zeros((len(time_steps), num_classes))
     pred_confidence_traj = np.zeros(len(time_steps))
     pred_confidence_traj_in = np.zeros(len(time_steps))
     pred_confidence_traj_out = np.zeros(len(time_steps))
-
+    pred_num = np.zeros_like(pred_frac_traj)
+    pred_num_in = np.zeros_like(pred_frac_traj)
+    pred_num_out = np.zeros_like(pred_frac_traj)
     for ind, probs in enumerate(sorted_molwise_results_dict['Molecule_Type_Prediction']):
-        inside_inds = np.argwhere(sorted_molwise_results_dict['Molecule_Coordination_Numbers'][ind] > 20)[:, 0]
-        outside_inds = np.argwhere(sorted_molwise_results_dict['Molecule_Coordination_Numbers'][ind] <= 20)[:, 0]
+        if inside_mode == 'radius':
+            if inside_radius is not None:
+                coords = sorted_molwise_results_dict['Coordinates'][ind]
+                centroids = coords.reshape(coords.shape[0] // mol_num_atoms, mol_num_atoms, 3).mean(1)
+                centroid_dists = np.linalg.norm(centroids - centroids.mean(0), axis=1)
+                inside_inds = np.argwhere(centroid_dists < inside_radius)[:, 0]
+                outside_inds = np.argwhere(centroid_dists >= inside_radius)[:, 0]
+            else:
+                inside_inds = np.argwhere(sorted_molwise_results_dict['Molecule_Coordination_Numbers'][ind] > 20)[:, 0]
+                outside_inds = np.argwhere(sorted_molwise_results_dict['Molecule_Coordination_Numbers'][ind] <= 20)[:, 0]
+        elif inside_mode == 'z':
+            coords = sorted_molwise_results_dict['Coordinates'][ind]
+            centroids = coords.reshape(coords.shape[0] // mol_num_atoms, mol_num_atoms, 3).mean(1)
+            centroid_dists = np.abs(centroids - centroids.mean(0))[:, 2]  # only track the z axis
+            inside_inds = np.argwhere(centroid_dists < inside_radius)[:, 0]
+            outside_inds = np.argwhere(centroid_dists >= inside_radius)[:, 0]
 
         inside_probs = probs[inside_inds]
         outside_probs = probs[outside_inds]
@@ -214,93 +308,32 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, 
         count_sum = sum(counts)
         for thing, count in zip(uniques, counts):
             pred_frac_traj[ind, thing] = count / count_sum
+            pred_num[ind, thing] = count
 
         uniques, counts = np.unique(inside_pred, return_counts=True)
         count_sum = sum(counts)
         for thing, count in zip(uniques, counts):
             pred_frac_traj_in[ind, thing] = count / count_sum
+            pred_num_in[ind, thing] = count
 
         uniques, counts = np.unique(outside_pred, return_counts=True)
         count_sum = sum(counts)
         for thing, count in zip(uniques, counts):
             pred_frac_traj_out[ind, thing] = count / count_sum
+            pred_num_out[ind, thing] = count
 
     traj_dict = {'overall_fraction': pred_frac_traj,
                  'inside_fraction': pred_frac_traj_in,
                  'outside_fraction': pred_frac_traj_out,
                  'overall_confidence': pred_confidence_traj,
                  'inside_confidence': pred_confidence_traj_in,
-                 'outside_confidence': pred_confidence_traj_out}
-
-    colors = plotly.colors.DEFAULT_PLOTLY_COLORS
-    sigma = 5
-    fig = make_subplots(cols=3, rows=1, subplot_titles=['All Molecules', 'Core', 'Surface'], x_title="Time (ns)", y_title="Form Fraction")
-    for ind in range(num_classes):
-        fig.add_trace(go.Scatter(x=time_steps / 1000000,
-                                 y=gaussian_filter1d(pred_frac_traj[:, ind], sigma),
-                                 name=ordered_class_names[ind],
-                                 legendgroup=ordered_class_names[ind],
-                                 line_color=colors[ind],
-                                 mode='lines',
-                                 stackgroup='one'),
-                      row=1, col=1)
-        fig.add_trace(go.Scatter(x=time_steps / 1000000,
-                                 y=gaussian_filter1d(pred_frac_traj_in[:, ind], sigma),
-                                 name=ordered_class_names[ind],
-                                 legendgroup=ordered_class_names[ind],
-                                 showlegend=False,
-                                 line_color=colors[ind],
-                                 mode='lines',
-                                 stackgroup='one'),
-                      row=1, col=2)
-        fig.add_trace(go.Scatter(x=time_steps / 1000000,
-                                 y=gaussian_filter1d(pred_frac_traj_out[:, ind], sigma),
-                                 name=ordered_class_names[ind],
-                                 legendgroup=ordered_class_names[ind],
-                                 showlegend=False,
-                                 line_color=colors[ind],
-                                 mode='lines',
-                                 stackgroup='one'),
-                      row=1, col=3)
-
-    fig.add_trace(go.Scattergl(x=time_steps / 1000000,
-                               y=gaussian_filter1d(pred_confidence_traj[:], sigma),
-                               name="Confidence",
-                               marker_color='Grey'),
-                  row=1, col=1)
-    fig.add_trace(go.Scattergl(x=time_steps / 1000000,
-                               y=gaussian_filter1d(pred_confidence_traj_in[:], sigma),
-                               name="Confidence",
-                               showlegend=False,
-                               marker_color='Grey'),
-                  row=1, col=2)
-    fig.add_trace(go.Scattergl(x=time_steps / 1000000,
-                               y=gaussian_filter1d(pred_confidence_traj_out[:], sigma),
-                               name="Confidence",
-                               showlegend=False,
-                               marker_color='Grey'),
-                  row=1, col=3)
-    fig.update_yaxes(range=[0, 1])
-
-    fig2 = go.Figure()
-    for ind in range(num_classes):
-        fig2.add_trace(go.Scatter(x=time_steps / 1000000,
-                                  y=gaussian_filter1d(pred_frac_traj[:, ind], sigma),
-                                  name=ordered_class_names[ind],
-                                  legendgroup=ordered_class_names[ind],
-                                  line_color=colors[ind],
-                                  mode='lines',
-                                  stackgroup='one'),
-                       )
-    fig2.add_trace(go.Scattergl(x=time_steps / 1000000,
-                                y=gaussian_filter1d(pred_confidence_traj[:], sigma),
-                                name="Confidence",
-                                marker_color='Grey'),
-                   )
-    fig2.update_yaxes(range=[0, 1])
-    fig2.update_layout(xaxis_title="Time (ns)", yaxis_title='Form Prediction')
-
-    return fig, fig2, traj_dict
+                 'outside_confidence': pred_confidence_traj_out,
+                 'inside_number': pred_num_in,
+                 'outside_number': pred_num_out,
+                 'overall_number': pred_num,
+                 'time_steps': time_steps,
+                 'ordered_classes': ordered_class_names}
+    return traj_dict
 
 
 def check_for_extra_values(row, extra_axes, extra_values):

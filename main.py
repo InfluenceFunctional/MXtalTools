@@ -32,3 +32,6 @@ if __name__ == '__main__':
     elif config.mode == 'search':
         _, dataloader, _ = predictor.load_dataset_and_dataloaders(override_test_fraction=1)
         predictor.crystal_search(molecule_data=dataloader.dataset[0], data_contains_ground_truth=True)
+
+    elif config.mode == 'embedding':
+        predictor.embed_dataset()

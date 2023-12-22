@@ -19,6 +19,7 @@ from distutils.dir_util import copy_tree
 from torch.nn import functional as F
 from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
+from scipy.spatial.transform import Rotation as R
 
 from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
 from constants.asymmetric_units import asym_unit_dict
@@ -250,6 +251,86 @@ class Modeller:
 
         return train_loader, test_loader, extra_test_loader
 
+    def embed_dataset(self):
+        '''prep workdir'''
+        self.source_directory = os.getcwd()
+        self.prep_new_working_directory()
+
+        '''initialize datasets and useful classes'''
+        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders()
+        num_params_dict = self.init_models()
+
+        self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
+        self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']
+        self.config.autoencoder.min_num_atoms = self.dataDims['min_molecule_num_atoms']
+        self.config.autoencoder.max_num_atoms = self.dataDims['max_molecule_num_atoms']
+
+        allowed_types = self.dataDims['allowed_atom_types']
+        type_translation_index = np.zeros(allowed_types.max()) - 1
+        for ind, atype in enumerate(allowed_types):
+            type_translation_index[atype - 1] = ind
+
+        self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device=self.config.device)
+
+        self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
+
+        with (wandb.init(config=self.config,
+                         project=self.config.wandb.project_name,
+                         entity=self.config.wandb.username,
+                         tags=[self.config.logger.experiment_tag],
+                         settings=wandb.Settings(code_dir="."))):
+
+            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+            # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
+            # this means we also can't do wandb sweeps properly, as-is
+
+            wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
+            wandb.log(num_params_dict)
+            wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
+                       "Initial Batch Size": self.config.current_batch_size})
+
+            self.models_dict['autoencoder'].eval()
+            self.epoch_type = 'test'
+
+            for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+                data = self.preprocess_real_autoencoder_data(data)
+
+                data = data.to(self.device)
+                encoding = self.models_dict['autoencoder'].encode(data.clone()).cpu().detach().numpy()
+
+                stats_values = [data.tracking[:, ind].cpu().detach().numpy() for ind in range(data.tracking.shape[1])]
+                stats_keys = self.dataDims['tracking_features']
+
+                stats_values += [encoding]
+                stats_keys += ['encoding']
+
+                self.logger.update_stats_dict(self.epoch_type,
+                                              stats_keys,
+                                              stats_values,
+                                              mode='append')
+
+            # post epoch processing
+            self.logger.numpyize_stats_dict(self.epoch_type)
+
+            from sklearn.manifold import TSNE
+            embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
+                             init='pca', perplexity=30).fit_transform(self.logger.test_stats['encoding'])
+
+            import plotly.graph_objects as go
+            fig = go.Figure()
+            mol_key = 'molecule_num_atoms'
+            fig.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
+                                       mode='markers',
+                                       marker_color=np.concatenate(self.logger.test_stats[mol_key]),
+                                       opacity=1,
+                                       marker_colorbar=dict(title=mol_key),
+                                       ))
+            fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
+                              xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
+                              plot_bgcolor='rgba(0,0,0,0)')
+            fig.show()
+            aa = 1
+
     def train_crystal_models(self):
         """
         train and/or evaluate one or more models
@@ -480,7 +561,19 @@ class Modeller:
     def autoencoder_step(self, data, update_weights, step):
 
         data = data.to(self.device)
-        decoding = self.models_dict['autoencoder'](data.clone())
+        if self.config.autoencoder.train_equivariance:
+            rotations = torch.tensor(
+                R.random(data.num_graphs).as_matrix() * np.random.choice((-1, 1), replace=True, size=data.num_graphs)[:, None, None],
+                dtype=torch.float,
+                device=data.x.device)
+        else:
+            rotations = None
+
+        decoding = self.models_dict['autoencoder'](data.clone(), rotations=rotations)
+
+        if self.config.autoencoder.train_equivariance:
+            # rotate input for loss computation vs. decoder
+            data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch==ind]) for ind in range(data.num_graphs)])
 
         assert torch.sum(torch.isnan(decoding)) == 0, "NaN in decoder output"
 
@@ -638,7 +731,7 @@ class Modeller:
 
         matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
 
-        if self.config.autoencoder.independent_node_weights:
+        if self.config.autoencoder.independent_node_weights:  # are we sure the below should be the minimum?
             node_weight_constraining_loss = scatter(F.relu(-torch.log10(nodewise_weights_tensor / torch.amin(nodewise_graph_weights)) - 2), decoded_data.batch)  # don't let these get too small
 
             losses = reconstruction_loss + constraining_loss + node_weight_constraining_loss

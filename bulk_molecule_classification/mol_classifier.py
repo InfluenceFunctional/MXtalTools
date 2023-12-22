@@ -1,175 +1,140 @@
-import os
-import warnings
-import torch.optim as optim
-import wandb
-import argparse
-from bulk_molecule_classification.dev_configs import configs, dev
-from random import shuffle
 import torch
-import numpy as np
+import torch.nn as nn
 
-from bulk_molecule_classification.utils import (collect_to_traj_dataloaders, init_classifier,
-                                                reload_model)
-from bulk_molecule_classification.workflows import train_classifier, classifier_evaluation, trajectory_analysis
-from bulk_molecule_classification.classifier_constants import nic_class_names, nic_ordered_class_names, urea_class_names, urea_ordered_class_names
-from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
+from models.GraphNeuralNetwork import EmbeddingBlock, GCBlock
+from models.basis_functions import BesselBasisLayer, GaussianEmbedding
+from models.components import MLP, construct_radial_graph
+from models.global_aggregation import global_aggregation
 
-warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
-warnings.filterwarnings("ignore", category=UserWarning)  # ignore ovito error
 
-parser = argparse.ArgumentParser()
-args = parser.parse_known_args()[1]
+class MoleculeClassifier(nn.Module):
+    def __init__(self,
+                 input_node_depth: int,
+                 node_embedding_depth: int,
+                 nodewise_fc_layers: int,
+                 message_depth: int,
+                 convolution_type: str,
+                 graph_embedding_depth: int,
+                 num_fcs: int,
+                 fc_norm,
+                 num_blocks: int,
+                 num_radial: int,
+                 output_dimension: int,
+                 num_embedding_types=101,
+                 cutoff: float = 5.0,
+                 max_num_neighbors: int = 32,
+                 envelope_exponent: int = 5,
+                 activation='gelu',
+                 embedding_hidden_dimension=5,
+                 message_norm=None,
+                 message_dropout=0,
+                 nodewise_norm=None,
+                 nodewise_dropout=0,
+                 radial_embedding='bessel',
+                 attention_heads=1,
+                 seed=1,
+                 ):
+        super(MoleculeClassifier, self).__init__()
 
-if '--config' in args:  # new format
-    config = configs[int(args[1])]
-else:
-    config = dev
+        self.max_num_neighbors = max_num_neighbors
+        self.cutoff = cutoff
 
-if __name__ == "__main__":
-    """init model"""
-    np.random.seed(config['seed'])
-    torch.manual_seed(config['seed'])
+        if radial_embedding == 'bessel':
+            self.rbf = BesselBasisLayer(num_radial, cutoff, envelope_exponent)
+        elif radial_embedding == 'gaussian':
+            self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
 
-    """get dataset"""
-    if config['train_model'] or config['do_classifier_evaluation']:
-        dataset_name = config['dataset_name']
-        datasets_path = config['datasets_path']
-        dataset_path = f'{datasets_path}{dataset_name}.pkl'
-        dumps_dirs = [config['dumps_path'] + dir_name for dir_name in config['dumps_dirs']]
+        self.atom_embedding = EmbeddingBlock(node_embedding_depth,
+                                             num_embedding_types,
+                                             input_node_depth,
+                                             embedding_hidden_dimension)
 
-    if 'urea' in config['run_name']:
-        class_names = urea_class_names
-        ordered_class_names = urea_ordered_class_names
-        config['num_forms'] = 7
-        config['mol_num_atoms'] = 8
-    else:
-        class_names = nic_class_names
-        ordered_class_names = nic_ordered_class_names
-        config['num_forms'] = 10
-        config['mol_num_atoms'] = 15
+        self.interaction_blocks = torch.nn.ModuleList([
+            GCBlock(message_depth,
+                    node_embedding_depth,
+                    convolution_type,
+                    num_radial,
+                    norm=message_norm,
+                    dropout=message_dropout,
+                    heads=attention_heads,
+                    )
+            for _ in range(num_blocks)
+        ])
 
-    config['num_topologies'] = 2
+        self.fc_blocks = torch.nn.ModuleList([
+            MLP(
+                layers=nodewise_fc_layers,
+                filters=node_embedding_depth,
+                input_dim=node_embedding_depth,
+                output_dim=node_embedding_depth,
+                activation=activation,
+                norm=nodewise_norm,
+                dropout=nodewise_dropout,
+            )
+            for _ in range(num_blocks)
+        ])
 
-    classifier = init_classifier(config['conv_cutoff'], config['num_convs'],
-                                 config['embedding_depth'], config['dropout'],
-                                 config['graph_norm'], config['fc_norm'],
-                                 config['num_fcs'], config['message_depth'],
-                                 config['num_forms'], config['num_topologies'],
-                                 config['seed'])
-    classifier.to(config['device'])
-    optimizer = optim.Adam(classifier.parameters(), lr=config['learning_rate'])
+        self.global_pool = global_aggregation('molwise', graph_embedding_depth)
 
-    if config['classifier_path'] is not None:
-        reload_model(classifier, config['device'], optimizer, config['classifier_path'], reload_optimizer=True)
+        self.gnn_mlp = MLP(layers=num_fcs,
+                           filters=node_embedding_depth,
+                           norm=fc_norm,
+                           dropout=nodewise_dropout,
+                           input_dim=graph_embedding_depth,
+                           output_dim=output_dimension,
+                           conditioning_dim=0,
+                           seed=seed
+                           )
 
-    os.chdir(config['runs_path'])
+    def get_geom_embedding(self, edge_index, pos):
+        """
+        compute elements for radial & spherical embeddings
+        """
+        i, j = edge_index  # i->j source-to-target
+        dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
 
-    """
-    training
-    """
-    if config['train_model']:
-        os.chdir(config['runs_path'])
+        return dist, self.rbf(dist)
 
-        if not os.path.exists(dataset_path):
-            generate_dataset_from_dumps(dumps_dirs, dataset_path)
-            os.chdir(config['runs_path'])
+    def forward(self, data, return_latent=False):
 
-        if 'nic' in dataset_path.lower():
-            melt_frac = 1/9
-        elif 'urea' in dataset_path.lower():
-            melt_frac = 1/6
+        x = self.atom_embedding(data.x)  # embed atomic numbers & compute initial atom-wise feature vector
+        batch = data.batch
 
-        _, train_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                      dataset_path, config['dataset_size'],
-                                                      conv_cutoff=config['conv_cutoff'], batch_size=1,
-                                                      temperatures=[config['training_temps'][0]], test_fraction=1,
-                                                      no_melt=True)
-        _, test_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                     dataset_path, int(config['dataset_size'] * 0.2),
-                                                     conv_cutoff=config['conv_cutoff'], batch_size=1,
-                                                     temperatures=[config['training_temps'][1]], test_fraction=1,
-                                                     no_melt=True)
-        _, hot_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                    dataset_path, int(config['dataset_size'] * melt_frac),
-                                                    conv_cutoff=config['conv_cutoff'], batch_size=1,
-                                                    temperatures=[config['training_temps'][-1]], test_fraction=1,
-                                                    melt_only=True)
+        if data.periodic[0]:  # get radial embeddings periodically using minimum image convention
+            edge_index, dist, rbf = self.periodize_box(data)
 
-        # split the hot trajs equally
-        hot_length = len(hot_loader)
-        train_loader.dataset.extend(hot_loader.dataset[:hot_length // 2])
-        test_loader.dataset.extend(hot_loader.dataset[hot_length // 2:])
-        del hot_loader
+        else:  # just get the radial graph the normal way
+            edges_dict = construct_radial_graph(data.pos, data.batch, data.ptr, self.cutoff, self.max_num_neighbors)
+            edge_index = edges_dict['edge_index']
+            dist, rbf = self.get_geom_embedding(edge_index, data.pos)
 
-        train_classifier(config, classifier, optimizer,
-                         train_loader, test_loader,
-                         config['num_epochs'], wandb,
-                         class_names, ordered_class_names,
-                         config['device'],
-                         config['batch_size'], config['reporting_frequency'],
-                         config['runs_path'], config['run_name']
-                         )
+        for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
+            x = convolution(x, rbf, edge_index, batch)  # graph convolution - residual is already inside the conv operator
+            x = fc(x, batch=batch)  # feature-wise 1D convolution, residual is already inside
 
-    """
-    Evaluation & analysis
-    """
-    if config['do_classifier_evaluation']:
-        if not os.path.exists(dataset_path):
-            generate_dataset_from_dumps(dumps_dirs, dataset_path)
+        x = self.global_pool(x, batch, cluster=data.mol_ind, output_dim=data.num_graphs)
 
-        if 'nic' in dataset_path.lower():
-            melt_frac = 1/9
-        elif 'urea' in dataset_path.lower():
-            melt_frac = 1/6
+        return self.gnn_mlp(x, return_latent=return_latent)
 
-        _, train_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                      dataset_path, config['dataset_size'],
-                                                      conv_cutoff=config['conv_cutoff'], batch_size=1,
-                                                      temperatures=[config['training_temps'][0]], test_fraction=1,
-                                                      no_melt=True)
-        _, test_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                     dataset_path, int(config['dataset_size'] * 0.2),
-                                                     conv_cutoff=config['conv_cutoff'], batch_size=1,
-                                                     temperatures=[config['training_temps'][1]], test_fraction=1,
-                                                     no_melt=True)
-        _, hot_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                    dataset_path, int(config['dataset_size'] * melt_frac),
-                                                    conv_cutoff=config['conv_cutoff'], batch_size=1,
-                                                    temperatures=[config['training_temps'][-1]], test_fraction=1,
-                                                    melt_only=True)
+    def periodize_box(self, data):
+        assert data.num_graphs == 1  # this only works one at a time
+        # restrict particles individually to box
+        frac_coords = data.pos @ torch.linalg.inv(data.T_fc.T)
+        frac_coords -= torch.floor(frac_coords)
+        # B.9 in Tuckerman
+        # convert to fractional
+        # get pointwise differences
+        # subtract nearest integer
+        # transform back to cartesian
+        fdistmats = torch.stack([
+            frac_coords[:, ind, None] - frac_coords[None, :, ind]
+            for ind in range(3)])
+        fdistmats -= torch.round(fdistmats)
+        distmats = fdistmats.permute((1, 2, 0)) @ data.T_fc.T
+        norms = torch.linalg.norm(distmats, dim=-1)
+        a, b = torch.where((norms > 0) * (norms <= self.cutoff))  # faster but still pretty slow
+        edge_index = torch.cat((a[None, :], b[None, :]), dim=0)
+        dist = norms[edge_index[0], edge_index[1]]
+        rbf = self.rbf(dist)
 
-        # split the hot trajs equally
-        hot_length = len(hot_loader)
-        train_loader.dataset.extend(hot_loader.dataset[:hot_length // 2])
-        test_loader.dataset.extend(hot_loader.dataset[hot_length // 2:])
-        classifier_evaluation(config, classifier, train_loader, test_loader, wandb, class_names, ordered_class_names, config['device'], config['run_name'])
-
-    """
-    Trajectory Classification & Analysis
-    """
-    if config['trajs_to_analyze_list'] is not None:
-        with wandb.init(project='cluster_classifier', entity='mkilgour'):
-            wandb.run.name = config['run_name'] + '_trajectory_analysis'
-            wandb.log({'config': config})
-            dumps_list = config['trajs_to_analyze_list']
-            # shuffle(dumps_list)  # this speeds up lazy parallel evaluation
-            for dump_dir in config['trajs_to_analyze_list']:
-
-                if 'urea' in dump_dir:
-                    class_names = urea_class_names
-                    ordered_class_names = urea_ordered_class_names
-                    config['num_forms'] = 7
-                    config['mol_num_atoms'] = 8
-                else:
-                    class_names = nic_class_names
-                    ordered_class_names = nic_ordered_class_names
-                    config['num_forms'] = 10
-                    config['mol_num_atoms'] = 15
-
-                config['num_topologies'] = 2
-
-                print(f"Processing dump {dump_dir}")
-                trajectory_analysis(config, classifier, config['run_name'],
-                                    wandb, config['device'],
-                                    dumps_dir=dump_dir)
-
+        return edge_index, dist, rbf
