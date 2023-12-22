@@ -131,9 +131,26 @@ def process_daisuke_dats():
             for il, line in enumerate(lines):
                 data_dict[dats[ind]][il, :] = np.asarray(line.split(), dtype=float)
 
+    results_dict = {}
+    for key, data in data_dict.items():
+        if key[0].lower() == 'u':
+            n_types = 7
+        elif key[0].lower() == 'n':
+            n_types = 10
+        else:
+            assert False
+        results_dict[key] = {
+            'Type_Prediction': data[:, 1:1 + n_types],
+            'Targets': np.argmax(data[:, 1 + n_types:1 + 2 * n_types], axis=1),
+            'Temperature': data[:, -1],
+        }
+        assert round(sum(results_dict[key]['Type_Prediction'].sum(1))) == len(results_dict[key]['Type_Prediction'])
+
+    # todo reorder the classes from I IV liq A B C III
+    return results_dict['UT100only_MK_style.dat'], results_dict['NT100only_MK_style.dat']
+
 
 def paper_defect_accuracy_fig(results_dict, defect_names, temp_series):
-
     scores = {}
     fig = go.Figure()
     for temp_ind in range(1, 2):
@@ -208,10 +225,11 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
                                      stackgroup='one' if stacked_plot else None),
                           row=1, col=i2 + 1)
 
+    fig.update_xaxes(range=[-0.1, 1.1], zeroline=False)
     fig.update_yaxes(range=[0, 0.6])
-    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig.update_xaxes(zerolinecolor='black')
     fig.update_yaxes(zerolinecolor='black')  # , gridcolor='grey')
+    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig.update_layout(font=dict(size=FONTSIZE))
     fig.update_annotations(font=dict(size=FONTSIZE))
 
@@ -291,7 +309,7 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
             traj = traj_dict[key]
             for ind in range(3):
                 fig.add_trace(go.Scatter(x=traj_dict['time_steps'] / 1000000,
-                                         y=gaussian_filter1d(traj[:, ind], 1 if i3 == 1 else 5),
+                                         y=gaussian_filter1d(traj[:, ind], 1 if i3 == 0.5 else 5),
                                          name=traj_dict['classes'][ind],
                                          line_color=colors_list[i3][ind],
                                          mode='lines',
@@ -299,9 +317,9 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
                                          stackgroup='one' if stacked_plot else None),
                               row=i3 + 1, col=i2 + 1)
 
-    fig.update_xaxes(range=[0, 5])
-    fig.update_xaxes(range=[0, .25], row=2, col=1)
-    fig.update_xaxes(range=[0, .25], row=2, col=2)
+    fig.update_xaxes(range=[-0.1, 5.1], zeroline=False)
+    fig.update_xaxes(range=[-.0025, .2525], row=2, col=1, zeroline=False)
+    fig.update_xaxes(range=[-.0025, .2525], row=2, col=2, zeroline=False)
 
     fig.update_yaxes(range=[0, 1])
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
