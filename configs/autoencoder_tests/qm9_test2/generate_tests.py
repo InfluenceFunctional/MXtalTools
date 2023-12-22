@@ -29,8 +29,6 @@ for ii in range(len(configs)):
     config['autoencoder']['model']['nodewise_fc_layers'] = configs[ii][2]
     config['autoencoder']['model']['num_decoder_layers'] = configs[ii][2]
 
-
-
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
 

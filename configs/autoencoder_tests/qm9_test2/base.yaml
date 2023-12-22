@@ -98,7 +98,7 @@ autoencoder:
     graph_node_norm: 'graph layer'
     graph_node_dropout: 0
     graph_message_dropout: 0
-    num_attention_heads: 4
+    num_attention_heads: 3
     num_graph_convolutions: 2
     nodewise_fc_layers: 2
     num_radial: 50
