@@ -6,27 +6,23 @@ import numpy as np
 base_config = load_yaml('base.yaml')
 
 """
-1) test performance on converging the QM9
-2) check positional noise & embedding depth
+from previous tests:
+- deep decoder with lots of points
+- shallow encoder with lots of FCs
+- deep but not too-deep embedding
+
+open question: role of optimizer?
 """
 
 configs = [
-    [1, 513, 4, 4, 256],  # OK
-    [4, 513, 4, 4, 256],  # trash
-    [2, 513, 2, 4, 256],  # OK
-    [2, 513, 4, 2, 256],  # not great loss but somehow amazing node matching? Really confusing
-    [2, 513, 4, 4, 512],  # fasted by far to converge, though still hard, and not great nodewise
-    [2, 513, 6, 4, 256],  # OK
-    [2, 513, 4, 6, 256],  # OK
+    [2, 513, 4, 4, 1024],
+    [2, 513, 4, 4, 2048],
+    [1, 513, 8, 4, 512],
+    [1, 513, 4, 8, 512],
+    [1, 513, 8, 8, 512],
+    [1, 513, 8, 8, 1024],
 ]
 
-# correlates from test 2 and 3
-# num decoder points is huge
-# more GC's is bad
-# but more GC nodewise is good
-# more decoder layers is good
-# very deep embedding causes hideously slow training & non-convergence in general
-# either need 'deep but not too deep' embedding, or some way to make it behave
 
 ind = 0
 for ii in range(len(configs)):

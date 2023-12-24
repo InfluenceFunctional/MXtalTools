@@ -24,6 +24,15 @@ class global_aggregation(nn.Module):
         elif agg_func == 'set2set':
             self.agg = gnn.Set2Set(in_channels=depth, processing_steps=4)
             self.agg_fc = nn.Linear(depth * 2, depth)  # condense to correct number of filters
+        elif agg_func == 'simple combo':
+            self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
+            self.agg_fc = MLP(
+                layers=1,
+                filters=depth,
+                input_dim=depth * (len(self.agg_list1)),
+                output_dim=depth,
+                norm=None,
+                dropout=0)  # condense to correct number of filters
         elif agg_func == 'combo':
             self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
             # self.agg_list3 = [gnn.global_sort_pool]
@@ -58,6 +67,9 @@ class global_aggregation(nn.Module):
             output2 = [agg(x, batch, size=output_dim) for agg in self.agg_list2]
             # output3 = [agg(x, batch, 3, size = output_dim) for agg in self.agg_list3]
             return self.agg_fc(torch.cat((output1 + output2), dim=1))
+        elif self.agg_func == 'simple combo':
+            output1 = [agg(x, batch, size=output_dim) for agg in self.agg_list1]
+            return self.agg_fc(torch.cat(output1, dim=1))
         elif self.agg_func is None:
             return x  # do nothing
         elif self.agg_func == 'molwise':
