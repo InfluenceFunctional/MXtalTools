@@ -107,7 +107,7 @@ mode: autoencoder
 model_names:
 - autoencoder
 model_paths:
-  autoencoder: null
+  autoencoder: 'best_autoencoder_autoencoder_tests_qm9_test3_4_22-12-15-04-18'
   discriminator: null
   embedding_regressor: null
   generator: null
