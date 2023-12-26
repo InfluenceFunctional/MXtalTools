@@ -29,8 +29,8 @@ for ii in range(len(configs)):
     config = copy(base_config)
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ind)
     config['autoencoder']['optimizer']['optimizer'] = configs[ii][0]
-    config['autoencoder']['optimizer']['encoder_init_lr'] = configs[ii][1]
-    config['autoencoder']['optimizer']['decoder_init_lr'] = configs[ii][2]
+    config['autoencoder']['optimizer']['decoder_init_lr'] = configs[ii][1]
+    config['autoencoder']['optimizer']['encoder_init_lr'] = configs[ii][2]
     config['autoencoder']['optimizer']['beta1'] = configs[ii][3]
     config['autoencoder']['optimizer']['beta2'] = configs[ii][4]
     config['autoencoder']['optimizer']['weight_decay'] = configs[ii][5]
