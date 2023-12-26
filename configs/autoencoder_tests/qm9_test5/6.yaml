@@ -10,7 +10,7 @@ autoencoder:
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: batch
-    embedding_depth: 512
+    embedding_depth: 513
     graph_aggregator: combo
     graph_convolution_type: TransformerConv
     graph_message_dropout: 0

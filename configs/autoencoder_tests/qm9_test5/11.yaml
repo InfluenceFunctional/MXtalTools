@@ -10,8 +10,8 @@ autoencoder:
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: batch
-    embedding_depth: 512
-    graph_aggregator: max
+    embedding_depth: 513
+    graph_aggregator: simple combo
     graph_convolution_type: TransformerConv
     graph_message_dropout: 0
     graph_node_dropout: 0
@@ -37,7 +37,7 @@ autoencoder:
     lr_shrink_lambda: 0.995
     max_lr: 1.0e-05
     min_lr: 1.0e-05
-    optimizer: sgd
+    optimizer: adam
     use_plateau_scheduler: false
     weight_decay: 0
   overlap_eps:
