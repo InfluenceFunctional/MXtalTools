@@ -90,7 +90,7 @@ generator:
   vdw_loss_func: inv
 generator_positional_noise: 0
 gradient_norm_clip: 1
-grow_batch_size: true
+grow_batch_size: False #true
 history: 5000
 logger:
   experiment_tag: qm9_test3
@@ -101,7 +101,7 @@ logger:
 machine: cluster
 max_batch_size: 1000
 max_epochs: 100000
-min_batch_size: 100
+min_batch_size: 1000 # 100
 misc_dataset_name: misc_data_for_qm9_molecules_dataset.npy
 mode: autoencoder
 model_names:
