@@ -90,7 +90,7 @@ autoencoder:
   model:
     graph_convolution_type: TransformerConv
     graph_aggregator: max
-    embedding_depth: 512
+    embedding_depth: 513
     activation: 'leaky relu'
     num_decoder_layers: 4
     decoder_norm_mode: 'batch'
