@@ -12,15 +12,16 @@ from previous tests:
 - deep but not too-deep embedding
 
 open question: role of optimizer?
+result: possibly stochasticity plays a big role here
 """
 
-configs = [
-    [2, 513, 4, 4, 1024],
-    [2, 513, 4, 4, 2048],
-    [1, 513, 8, 4, 512],
-    [1, 513, 4, 8, 512],
-    [1, 513, 8, 8, 512],
-    [1, 513, 8, 8, 1024],
+configs = [  # none better than test3 best
+    [2, 513, 4, 4, 1024],  # tied with 1 early but crashed
+    [2, 513, 4, 4, 2048],  # best here
+    [1, 513, 8, 4, 512],  # meh
+    [1, 513, 4, 8, 512],  # meh
+    [1, 513, 8, 8, 512],  # meh
+    [1, 513, 8, 8, 1024],  # meh
 ]
 
 
@@ -33,7 +34,6 @@ for ii in range(len(configs)):
     config['autoencoder']['model']['nodewise_fc_layers'] = configs[ii][2]
     config['autoencoder']['model']['num_decoder_layers'] = configs[ii][3]
     config['autoencoder']['model']['num_decoder_points'] = configs[ii][4]
-
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
