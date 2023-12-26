@@ -2,7 +2,7 @@ anomaly_detection: false
 autoencoder:
   evaluation_sigma: 0.05
   independent_node_weights: true
-  init_sigma: 0.15
+  init_sigma: 0.091 #0.15
   max_overlap_threshold: 0.25
   model:
     activation: leaky relu
@@ -29,9 +29,9 @@ autoencoder:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 0.0001
-    decoder_init_lr: 0.001
-    encoder_init_lr: 0.0001
-    init_lr: 0.0001
+    decoder_init_lr: 0.0001 #0.001
+    encoder_init_lr: 0.00001 #0.0001
+    init_lr: 0.00001
     lr_growth_lambda: 1.0
     lr_schedule: true
     lr_shrink_lambda: 0.995
