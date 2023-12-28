@@ -20,8 +20,13 @@ configs = [
     ['adam', 0.001, 0.0001, 0.9, 0.999, 0, 'max', 'gelu', 3],
     ['adam', 0.001, 0.0001, 0.9, 0.999, 0, 'max', 'leaky relu', 6],
     ['adamw', 0.001, 0.0001, 0.9, 0.999, 0, 'max', 'leaky relu', 3],
-    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.1, 'max', 'leaky relu', 3],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.1, 'max', 'leaky relu', 3],  # somewhat late but then very fast convergence
     ['adam', 0.001, 0.0001, 0.9, 0.999, 0, 'simple combo', 'leaky relu', 3],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.01, 'max', 'leaky relu', 3],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.5, 'max', 'leaky relu', 3],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.1, 'simple combo', 'leaky relu', 3],
+    ['adamw', 0.002, 0.0002, 0.9, 0.999, 0.1, 'max', 'leaky relu', 3],
+
 ]
 
 ind = 0
