@@ -567,6 +567,14 @@ class Modeller:
 
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
 
+        autoencoder_loss = autoencoder_losses.mean()
+        if update_weights:
+            self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+            autoencoder_loss.backward()  # back-propagation
+            torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
+                                           self.config.gradient_norm_clip)  # gradient clipping
+            self.optimizers_dict['autoencoder'].step()  # update parameters
+
         if self.config.autoencoder.train_equivariance:
             rotations = torch.tensor(
                 R.random(data.num_graphs).as_matrix() * np.random.choice((-1, 1), replace=True, size=data.num_graphs)[:, None, None],
@@ -576,9 +584,9 @@ class Modeller:
             # embed the input data then rotate the embedding
             embed1 = self.models_dict['autoencoder'].encode(data.clone())
             embed1 = torch.einsum('nij, nkj->nki', rotations, embed1.reshape(
-                data.num_graphs, embed1.shape[1]//3, 3
+                data.num_graphs, embed1.shape[1] // 3, 3
             ))  # rotate in 3D
-            embed1 = embed1.reshape(data.num_graphs, embed1.shape[1]*3)
+            embed1 = embed1.reshape(data.num_graphs, embed1.shape[1] * 3)
 
             # rotate the input data and embed it
             data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch == ind]) for ind in range(data.num_graphs)])
@@ -586,17 +594,14 @@ class Modeller:
 
             # compare the embeddings - should be identical for an equivariant embedding
             equivariance_loss = F.smooth_l1_loss(embed1, embed2, reduction='none').mean(-1)
-            autoencoder_losses += equivariance_loss
+            # autoencoder_losses += equivariance_loss
             stats['equivariance_loss'] = equivariance_loss.mean().cpu().detach().numpy()
-
-        autoencoder_loss = autoencoder_losses.mean()
-
-        if update_weights:
-            self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-            autoencoder_loss.backward()  # back-propagation
-            torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
-                                           self.config.gradient_norm_clip)  # gradient clipping
-            self.optimizers_dict['autoencoder'].step()  # update parameters
+            if update_weights:
+                self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+                equivariance_loss.mean().backward()  # back-propagation
+                torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
+                                               self.config.gradient_norm_clip)  # gradient clipping
+                self.optimizers_dict['autoencoder'].step()  # update parameters
 
         '''log losses and other tracking values'''
         self.logger.update_current_losses('autoencoder', self.epoch_type,
