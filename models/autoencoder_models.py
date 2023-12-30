@@ -90,10 +90,6 @@ class point_autoencoder(nn.Module):
         rotate the embedding space
         """
         encoding = self.encoder(data)
-        if rotations is not None:  # rotate the encoding
-            encoding = encoding.reshape(data.num_graphs, encoding.shape[1] // 3, 3)  # vectorize
-            encoding = torch.einsum('nij, nkj->nki', rotations, encoding)  # rotate
-            encoding = encoding.reshape(data.num_graphs, encoding.shape[1] * 3)  # re-flatten
 
         return self.decoder(encoding).reshape(self.num_nodes * data.num_graphs, self.output_depth)
 

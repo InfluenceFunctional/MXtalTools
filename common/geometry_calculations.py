@@ -108,18 +108,75 @@ def single_molecule_principal_axes_torch(coords: torch.tensor, masses=None, retu
         return Ip, Ipm, I
 
 
-def batch_molecule_principal_axes_torch(coords_list: list):
+def batch_molecule_principal_axes_torch(coords_list: list, skip_centring=False):
     """
     rapidly compute principal axes for a list of coordinates in batch fashion
     """
-    coords_list_centred = [coord - coord.mean(0) for coord in coords_list]
-    all_coords = torch.cat(coords_list_centred)
+    if not skip_centring:
+        coords_list_centred = [coord - coord.mean(0) for coord in coords_list]
+        all_coords = torch.cat(coords_list_centred)
+    else:
+        all_coords = torch.cat(coords_list)
 
-    ptrs = [0]
-    ptrs.extend([len(coord) for coord in coords_list])
-    ptrs = torch.tensor(ptrs, dtype=torch.int, device=all_coords.device).cumsum(0)
-    batch = torch.cat([(i - 1) * torch.ones(ptrs[i] - ptrs[i - 1], dtype=torch.int64, device=all_coords.device) for i in range(1, len(ptrs))])
+    batch, ptrs = extract_ptr_from_list(all_coords, coords_list)
 
+    Ip, Ip_moments, inertial_tensor = scatter_compute_Ip(all_coords, batch)
+
+    # cardinal direction is vector from CoM to the farthest atom
+    direction = get_cardinal_direction(all_coords, batch, ptrs)
+    normed_direction = direction / torch.linalg.norm(direction, dim=1)[:, None]
+    overlaps, signs = get_overlaps(Ip, normed_direction)
+
+    Ip_fin = correct_Ip_directions(Ip, overlaps, signs)  # somehow, fails for mirror planes, on top of symmetric and spherical tops
+
+    return Ip_fin, Ip_moments, inertial_tensor
+
+    '''  visualize clouds and axes for testing
+    import plotly.graph_objects as go
+    ind = 16
+    x, y, z = all_coords[batch==ind].T.cpu().detach().numpy()
+    fig = go.Figure(go.Scatter3d(x=x,y=y,z=z,mode='markers'))
+    a, b, c = torch.stack([torch.zeros_like(direction[ind]), direction[ind]]).T.cpu().detach().numpy()
+    fig.add_trace(go.Scatter3d(x=a, y=b, z=c))
+    for i in range(3):
+        a, b, c = torch.stack([torch.zeros_like(direction[ind]), Ip[ind, i]]).T.cpu().detach().numpy()
+        fig.add_trace(go.Scatter3d(x=a, y=b, z=c))
+    for i in range(3):
+        a, b, c = torch.stack([torch.zeros_like(direction[ind]), Ip_fin[ind, i]]).T.cpu().detach().numpy()
+        fig.add_trace(go.Scatter3d(x=a, y=b, z=c))
+    fig.show()
+    '''
+
+
+def correct_Ip_directions(Ip, overlaps, signs, overlap_threshold: float = 1e-5):
+    Ip_fin = torch.zeros_like(Ip)
+    for ii, Ip_i in enumerate(Ip):
+        Ip_i = (Ip_i.T * signs[ii]).T  # if the vectors have negative overlap, flip the direction, happens if the cardinal direction is too close to an existing principal axisI
+        if any(torch.abs(overlaps[ii]) < overlap_threshold):  # if any overlaps are vanishing (up to 32 bit precision), determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+            # enforce right-handedness in the free vector
+            fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap
+            if compute_Ip_handedness(Ip_i) < 0:  # make sure result is right-handed
+                Ip_i[fix_ind] = -Ip_i[fix_ind]
+
+        Ip_fin[ii] = Ip_i
+    return Ip_fin
+
+
+def get_overlaps(Ip, direction):
+    overlaps = torch.einsum('nij,nj->ni', (Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
+    signs = torch.sign(overlaps)  # we want any exactly zero overlaps to come with positive signs
+    signs[signs == 0] = 1
+    return overlaps, signs
+
+
+def get_cardinal_direction(all_coords, batch, ptrs):
+    dists = torch.linalg.norm(all_coords, axis=1)  # CoM is at 0,0,0
+    max_ind = torch.stack([torch.argmax(dists[batch == i]) + ptrs[i] for i in range(len(ptrs) - 1)])  # find the furthest atom in each mol
+    direction = all_coords[max_ind]
+    return direction
+
+
+def scatter_compute_Ip(all_coords, batch):
     Ixy = -scatter(all_coords[:, 0] * all_coords[:, 1], batch)
     Iyz = -scatter(all_coords[:, 1] * all_coords[:, 2], batch)
     Ixz = -scatter(all_coords[:, 0] * all_coords[:, 2], batch)
@@ -132,30 +189,22 @@ def batch_molecule_principal_axes_torch(coords_list: list):
 
     Ipm, Ip = torch.linalg.eig(inertial_tensor)  # principal inertial tensor
     Ipm, Ip = torch.real(Ipm), torch.real(Ip)
+
+    Ip = Ip.permute(0, 2, 1)  # switch to row-wise eigenvectors
+
     sort_inds = torch.argsort(Ipm, dim=1)
     Ipm = torch.stack([Ipm[i, sort_inds[i]] for i in range(len(sort_inds))])
-    Ip = torch.stack([Ip[i].T[sort_inds[i]] for i in range(len(sort_inds))])  # want eigenvectors to be sorted row-wise (rather than column-wise)
+    Ip = torch.stack([Ip[i][sort_inds[i]] for i in range(len(sort_inds))])  # sort also the eigenvectors
 
-    # cardinal direction is vector from CoM to farthest atom
-    dists = torch.linalg.norm(all_coords, axis=1)  # CoM is at 0,0,0
-    max_ind = torch.stack([torch.argmax(dists[batch == i]) + ptrs[i] for i in range(len(ptrs) - 1)])  # find furthest atom in each mol
-    direction = all_coords[max_ind]
-    overlaps = torch.einsum('nij,nj->ni', (Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
-    signs = torch.sign(overlaps)  # we want any exactly zero overlaps to come with positive signs
-    signs[signs == 0] = 1
+    return Ip, Ipm, inertial_tensor
 
-    Ip_fin = torch.zeros_like(Ip)
-    for ii, Ip_i in enumerate(Ip):
-        Ip_i = (Ip_i.T * signs[ii]).T  # if the vectors have negative overlap, flip the direction
-        if any(torch.abs(overlaps[ii]) < 1e-3):  # if any overlaps are vanishing (up to 32 bit precision), determine the direction via the RHR (if two overlaps are vanishing, this will not work)
-            # enforce right-handedness in the free vector
-            fix_ind = torch.argmin(torch.abs(overlaps[ii]))  # vector with vanishing overlap
-            if compute_Ip_handedness(Ip_i) < 0:  # make sure result is right handed
-                Ip_i[fix_ind] = -Ip_i[fix_ind]
 
-        Ip_fin[ii] = Ip_i
-
-    return Ip_fin, Ipm, inertial_tensor
+def extract_ptr_from_list(all_coords, coords_list):
+    ptrs = [0]
+    ptrs.extend([len(coord) for coord in coords_list])
+    ptrs = torch.tensor(ptrs, dtype=torch.int, device=all_coords.device).cumsum(0)
+    batch = torch.cat([(i - 1) * torch.ones(ptrs[i] - ptrs[i - 1], dtype=torch.int64, device=all_coords.device) for i in range(1, len(ptrs))])
+    return batch, ptrs
 
 
 def coor_trans_matrix_torch(opt: str, v: torch.tensor, a: torch.tensor, return_vol: bool = False):

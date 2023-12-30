@@ -561,23 +561,34 @@ class Modeller:
     def autoencoder_step(self, data, update_weights, step):
 
         data = data.to(self.device)
+        decoding = self.models_dict['autoencoder'](data.clone())
+
+        assert torch.sum(torch.isnan(decoding)) == 0, "NaN in decoder output"
+
+        autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
+
         if self.config.autoencoder.train_equivariance:
             rotations = torch.tensor(
                 R.random(data.num_graphs).as_matrix() * np.random.choice((-1, 1), replace=True, size=data.num_graphs)[:, None, None],
                 dtype=torch.float,
                 device=data.x.device)
-        else:
-            rotations = None
 
-        decoding = self.models_dict['autoencoder'](data.clone(), rotations=rotations)
+            # embed the input data then rotate the embedding
+            embed1 = self.models_dict['autoencoder'].encode(data.clone())
+            embed1 = torch.einsum('nij, nkj->nki', rotations, embed1.reshape(
+                data.num_graphs, embed1.shape[1]//3, 3
+            ))  # rotate in 3D
+            embed1 = embed1.reshape(data.num_graphs, embed1.shape[1]*3)
 
-        if self.config.autoencoder.train_equivariance:
-            # rotate input for loss computation vs. decoder
-            data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch==ind]) for ind in range(data.num_graphs)])
+            # rotate the input data and embed it
+            data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch == ind]) for ind in range(data.num_graphs)])
+            embed2 = self.models_dict['autoencoder'].encode(data.clone())
 
-        assert torch.sum(torch.isnan(decoding)) == 0, "NaN in decoder output"
+            # compare the embeddings - should be identical for an equivariant embedding
+            equivariance_loss = F.smooth_l1_loss(embed1, embed2, reduction='none').mean(-1)
+            autoencoder_losses += equivariance_loss
+            stats['equivariance_loss'] = equivariance_loss.mean().cpu().detach().numpy()
 
-        autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data)
         autoencoder_loss = autoencoder_losses.mean()
 
         if update_weights:

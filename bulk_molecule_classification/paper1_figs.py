@@ -1,12 +1,9 @@
 import numpy as np
-import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
-import plotly
 from copy import copy
 from scipy.ndimage import gaussian_filter1d
-from skimage import io
 
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
