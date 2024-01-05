@@ -69,7 +69,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
         dump_files = glob.glob(r'*/*.dump', recursive=True) + glob.glob('*.dump')  # plus any free dumps directly in this dir
 
         if len(dump_files) == 0:
-            return False
+            assert False
 
         for path in tqdm(dump_files):
             print(f"Processing dump {path}")
@@ -86,7 +86,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
                     run_config['structure_identifier'] = 'UREA_Melt'
                 else:
                     run_config['structure_identifier'] = path.replace('\\', '/').split('/')[0]
-            elif 'nicotinamide_liq' in dumps_dir:
+            elif 'nicotinamide_liq' in dumps_dir or 'nic_liq' in dumps_dir:
                 run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
             elif 'interface' in dumps_dir:
                 run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'UREA_Melt'}

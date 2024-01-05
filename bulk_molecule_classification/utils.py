@@ -31,6 +31,16 @@ def convert_box_to_cell_params(box_params):
     zlo = zlo_bound
     zhi = zhi_bound
     """
+
+    try:
+        box_params = np.stack(box_params)
+    except ValueError:  # pad zeros to orthorhombic boxes
+        box_params = box_params.tolist()
+        for ind in range(len(box_params)):
+            if box_params[ind].shape[-1] == 2:
+                box_params[ind] = np.concatenate([box_params[ind], np.zeros(3)[:, None]], axis=-1)
+        box_params = np.stack(box_params)
+
     xlo_bound = box_params[:, 0, 0]
     ylo_bound = box_params[:, 1, 0]
     zlo_bound = box_params[:, 2, 0]
@@ -90,7 +100,8 @@ def reindex_mols(dataset, i, mol_num_atoms):
     return atomic_numbers, mol_ind, num_molecules, ref_coords
 
 
-def filter_mols(dataset, dataset_path, early_only, filter_early, melt_only, no_melt, temperatures):
+def filter_mols(dataset, dataset_path, early_only, filter_early, melt_only, no_melt, temperatures,
+                periodic_only, aperiodic_only, max_box_volume, min_box_volume):
     if temperatures is not None:
         good_inds = []
         for temperature in temperatures:
@@ -98,19 +109,63 @@ def filter_mols(dataset, dataset_path, early_only, filter_early, melt_only, no_m
 
         good_inds = np.unique(np.concatenate(good_inds))
         bad_inds = np.asarray([ind for ind in np.arange(len(dataset)) if ind not in good_inds])
+        print(f"Temperature filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
     if filter_early:
         bad_inds = np.argwhere(np.asarray(dataset['time_step']) <= int(1e4))[:, 0]  # filter first 10ps steps for equilibration
+        print(f"Early filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
     if early_only:
         bad_inds = np.argwhere(np.asarray(dataset['time_step']) >= int(1e6))[:, 0]  # keep only 1 ns maximum
+        print(f"Early only filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
+
+    if max_box_volume is not None:
+        T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
+        approx_box_volume = (T_fc_list[:, 0, 0] * T_fc_list[:, 1, 1] * T_fc_list[:, 2, 2])
+        bad_inds = np.argwhere(approx_box_volume > max_box_volume)[0, :]
+        print(f"Max box filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
+
+    if min_box_volume is not None:
+        T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
+        approx_box_volume = (T_fc_list[:, 0, 0] * T_fc_list[:, 1, 1] * T_fc_list[:, 2, 2])
+        bad_inds = np.argwhere(approx_box_volume < min_box_volume)[0, :]
+        print(f"Min box filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
+
+    if periodic_only or aperiodic_only:
+        num_atoms = np.asarray([len(thing[0]) for thing in dataset['atom_type']])
+        T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
+        density = num_atoms / (T_fc_list[:, 0, 0] * T_fc_list[:, 1, 1] * T_fc_list[:, 2, 2])
+
+    if periodic_only:
+        bad_inds = np.argwhere(density <= 0.025).flatten()
+        print(f"Periodic only filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
+        dataset = delete_from_dataframe(dataset, bad_inds)
+        dataset = dataset.reset_index().drop(columns='index')
+    if aperiodic_only:
+        bad_inds = np.argwhere(density > 0.025).flatten()
+        print(f"Aperiodic only filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
     if True:
         if 'gap_rate' in dataset.columns:
             bad_inds = np.argwhere(np.asarray(dataset['gap_rate']) > 0)[:, 0]  # cannot process gaps right now
+            print(f"No Gaps filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
             dataset = delete_from_dataframe(dataset, bad_inds)
             dataset = dataset.reset_index().drop(columns='index')
     # forms = np.sort(np.unique(dataset['form']))
@@ -125,12 +180,16 @@ def filter_mols(dataset, dataset_path, early_only, filter_early, melt_only, no_m
         melt_class_num = 9  # nicotinamide
     if melt_only:
         bad_inds = np.argwhere(targets != melt_class_num)[:, 0]
+        print(f"Melt only filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
         good_inds = np.argwhere(targets == melt_class_num)[:, 0]
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
         targets = targets[good_inds]
     if no_melt:
         bad_inds = np.argwhere(targets == melt_class_num)[:, 0]
+        print(f"No Melt filter killed {len(bad_inds)} out of {len(dataset)} samples")
+
         good_inds = np.argwhere(targets != melt_class_num)[:, 0]
 
         dataset = delete_from_dataframe(dataset, bad_inds)
@@ -154,23 +213,30 @@ def identify_surface_molecules(cluster_coords, cluster_targets, conv_cutoff, goo
     return centroids, cluster_mol_ind, coordination_number, defect_type
 
 
-def pare_fragmented_molecules(cluster_atoms, cluster_coords, cluster_targets):
+def pare_fragmented_molecules(cluster_atoms, cluster_coords, cluster_targets, pare_fragmented):
     mol_centroids = cluster_coords.mean(1)
     intramolecular_centroid_dists = torch.linalg.norm(mol_centroids[:, None, :] - cluster_coords, dim=2)
     mol_radii = intramolecular_centroid_dists.amax(1)
     max_mol_radius = torch.quantile(mol_radii, 0.05) * 1.25  # 25% leniency on the 5% quantile
-    good_mols = torch.argwhere(mol_radii < max_mol_radius)[:, 0]
+    if pare_fragmented:
+        good_mols = torch.argwhere(mol_radii < max_mol_radius)[:, 0]
+    else:
+        good_mols = torch.arange(len(mol_radii))  # keep everything if periodic
     cluster_coords = cluster_coords[good_mols]
     cluster_atoms = cluster_atoms[good_mols]
     cluster_targets = cluster_targets[good_mols]
     return cluster_atoms, cluster_coords, cluster_targets, good_mols, mol_radii
 
 
-def compute_mol_radii(cluster_coords):
+def compute_mol_radii(cluster_coords, pare_fragmented):
     mol_centroids = cluster_coords.mean(1)
     intramolecular_centroid_dists = torch.linalg.norm(mol_centroids[:, None, :] - cluster_coords, dim=2)
     mol_radii = intramolecular_centroid_dists.amax(1)
-    good_mols = torch.arange(len(mol_radii))
+    if pare_fragmented:
+        max_mol_radius = torch.quantile(mol_radii, 0.05) * 1.25  # 25% leniency on the 5% quantile
+        good_mols = torch.argwhere(mol_radii < max_mol_radius)[:, 0]
+    else:
+        good_mols = torch.arange(len(mol_radii))
     return good_mols, mol_radii
 
 

@@ -52,11 +52,11 @@ if __name__ == "__main__":
     config['num_topologies'] = 2
 
     classifier = new_init_classifier(config['conv_cutoff'], config['num_convs'],
-                                 config['embedding_depth'], config['dropout'],
-                                 config['graph_norm'], config['fc_norm'],
-                                 config['num_fcs'], config['message_depth'],
-                                 config['num_forms'], config['num_topologies'],
-                                 config['seed'])
+                                     config['embedding_depth'], config['dropout'],
+                                     config['graph_norm'], config['fc_norm'],
+                                     config['num_fcs'], config['message_depth'],
+                                     config['num_forms'], config['num_topologies'],
+                                     config['seed'])
     classifier.to(config['device'])
     optimizer = optim.Adam(classifier.parameters(), lr=config['learning_rate'])
 
@@ -76,31 +76,72 @@ if __name__ == "__main__":
             os.chdir(config['runs_path'])
 
         if 'nic' in dataset_path.lower():
-            melt_frac = 1/9
-        elif 'urea' in dataset_path.lower():
-            melt_frac = 1/6
+            melt_frac = 1 / 10
+            box_transition_size = 31  # approximate cutoff from histograms between 20x20x20 and 40x40x40 boxes
 
+        elif 'urea' in dataset_path.lower():
+            melt_frac = 1 / 7
+            box_transition_size = 24  # the distribution is extremely bimodal with a big split, this is a lower end
+
+        bulk_frac = 0.5
+        surface_frac = 0.5
+
+
+        # small-scale periodic samples
         _, train_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                      dataset_path, config['dataset_size'],
+                                                      dataset_path, int(config['dataset_size'] * bulk_frac),
                                                       conv_cutoff=config['conv_cutoff'], batch_size=1,
                                                       temperatures=[config['training_temps'][0]], test_fraction=1,
-                                                      no_melt=True)
+                                                      no_melt=True, periodic_only=True, max_box_volume=box_transition_size ** 3)
         _, test_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-                                                     dataset_path, int(config['dataset_size'] * 0.2),
+                                                     dataset_path, int(config['dataset_size'] * 0.2 * bulk_frac),
                                                      conv_cutoff=config['conv_cutoff'], batch_size=1,
                                                      temperatures=[config['training_temps'][1]], test_fraction=1,
-                                                     no_melt=True)
-        # _, hot_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
-        #                                             dataset_path, int(config['dataset_size'] * melt_frac),
-        #                                             conv_cutoff=config['conv_cutoff'], batch_size=1,
-        #                                             temperatures=[config['training_temps'][-1]], test_fraction=1,
-        #                                             melt_only=True)
-        #
-        # # split the hot trajs equally
-        # hot_length = len(hot_loader)
-        # train_loader.dataset.extend(hot_loader.dataset[:hot_length // 2])
-        # test_loader.dataset.extend(hot_loader.dataset[hot_length // 2:])
-        # del hot_loader
+                                                     no_melt=True, periodic_only=True, max_box_volume=box_transition_size ** 3)
+        _, hot_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
+                                                    dataset_path, int(config['dataset_size'] * melt_frac * bulk_frac),
+                                                    conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                    filter_early=False,
+                                                    temperatures=[config['training_temps'][-1]], test_fraction=1,
+                                                    melt_only=True, periodic_only=True, max_box_volume=box_transition_size ** 3)
+
+        # carve spheres out of larger bulk samples
+        _, s_train_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
+                                                        dataset_path, int(config['dataset_size'] * surface_frac),
+                                                        conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                        temperatures=[config['training_temps'][0]], test_fraction=1,
+                                                        no_melt=True, periodic_only=True, pare_to_cluster=True,
+                                                        min_box_volume=box_transition_size ** 3,
+                                                        max_cluster_radius=15)
+        _, s_test_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
+                                                       dataset_path, int(config['dataset_size'] * 0.2 * surface_frac),
+                                                       conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                       temperatures=[config['training_temps'][1]], test_fraction=1,
+                                                       no_melt=True, periodic_only=True, pare_to_cluster=True,
+                                                       min_box_volume=box_transition_size ** 3,
+                                                       max_cluster_radius=15)
+        _, s_hot_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
+                                                      dataset_path, int(config['dataset_size'] * melt_frac * surface_frac),
+                                                      conv_cutoff=config['conv_cutoff'], batch_size=1,
+                                                      temperatures=[config['training_temps'][-1]], test_fraction=1,
+                                                      melt_only=True, periodic_only=True, pare_to_cluster=True,
+                                                      filter_early=True,
+                                                      min_box_volume=box_transition_size ** 3,
+                                                      max_cluster_radius=15)
+
+        # split the hot trajs equally
+        hot_length = len(hot_loader)
+        train_loader.dataset.extend(hot_loader.dataset[:hot_length // 2])
+        test_loader.dataset.extend(hot_loader.dataset[hot_length // 2:])
+
+        # append the surface trajs
+        train_loader.dataset.extend(s_train_loader.dataset)
+        test_loader.dataset.extend(s_test_loader.dataset)
+        hot_length = len(s_hot_loader)
+        train_loader.dataset.extend(s_hot_loader.dataset[:hot_length // 2])
+        test_loader.dataset.extend(s_hot_loader.dataset[hot_length // 2:])
+
+        del hot_loader, s_test_loader, s_train_loader
 
         train_classifier(config, classifier, optimizer,
                          train_loader, test_loader,
@@ -119,9 +160,9 @@ if __name__ == "__main__":
             generate_dataset_from_dumps(dumps_dirs, dataset_path)
 
         if 'nic' in dataset_path.lower():
-            melt_frac = 1/9
+            melt_frac = 1 / 9
         elif 'urea' in dataset_path.lower():
-            melt_frac = 1/6
+            melt_frac = 1 / 6
 
         _, train_loader = collect_to_traj_dataloaders(config['mol_num_atoms'],
                                                       dataset_path, config['dataset_size'],
@@ -172,5 +213,4 @@ if __name__ == "__main__":
                 print(f"Processing dump {dump_dir}")
                 trajectory_analysis(config, classifier, config['run_name'],
                                     wandb, config['device'],
-                                    dumps_dir=dump_dir,)
-
+                                    dumps_dir=dump_dir, )

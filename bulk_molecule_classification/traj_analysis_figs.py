@@ -4,7 +4,7 @@ from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
-from bulk_molecule_classification.classifier_constants import defect_names, nic_ordered_class_names, urea_ordered_class_names, form2index, index2form
+from bulk_molecule_classification.classifier_constants import defect_names, nic_ordered_class_names, urea_ordered_class_names, form2index, index2form, identifier2form
 import plotly
 from scipy.ndimage import gaussian_filter1d
 
@@ -436,3 +436,79 @@ def plot_classifier_pies(results_df, xaxis_title, yaxis_title, class_names, extr
         fig.update_layout(title=property_name)
         fig.show(renderer="browser")
         fig.write_image(form + "_classifier_pies.png")
+
+
+def cluster_property_heatmap(results_df, property, xaxis_title, yaxis_title, extra_axes=None, extra_axes_values=None, take_mean=False, norm_against_zero_y=False):
+    xaxis = np.unique(results_df[xaxis_title])
+    yaxis = np.unique(results_df[yaxis_title])
+    unique_structures = np.unique(results_df['structure_identifier'])
+
+    shift_heatmap, n_samples = collate_property_over_multiple_runs(property,
+                                                                   results_df, xaxis, xaxis_title, yaxis, yaxis_title, unique_structures,
+                                                                   extra_axes=extra_axes, extra_axes_values=extra_axes_values, take_mean=take_mean)
+    unique_structures = ["Form " + str(identifier2form[struct]) for struct in unique_structures]
+
+    fig = make_subplots(rows=1, cols=len(unique_structures), subplot_titles=unique_structures)
+
+    for i in range(1, len(unique_structures) + 1):
+        if norm_against_zero_y:
+            heatmap = shift_heatmap[i - 1] / shift_heatmap[i - 1][:, 0, None]
+            max_val, min_val = None, None
+        else:
+            heatmap = shift_heatmap[i - 1]
+            max_val = np.amax(shift_heatmap[i - 1])
+            min_val = np.amin(shift_heatmap[i - 1])
+
+        fig.add_trace(go.Heatmap(z=heatmap.T,
+                                 text=n_samples[i - 1].T,
+                                 texttemplate="%{text}",
+                                 colorscale='Viridis', zmax=max_val, zmin=min_val,
+                                 ), row=1, col=i)
+
+        fig.update_xaxes(title_text=xaxis_title, row=1, col=i)
+        fig.update_yaxes(title_text=yaxis_title, row=1, col=i)
+
+    fig.update_layout(xaxis=dict(
+        tickmode='array',
+        tickvals=np.arange(len(xaxis)),
+        ticktext=xaxis
+    ))
+    fig.update_layout(yaxis=dict(
+        tickmode='array',
+        tickvals=np.arange(len(yaxis)),
+        ticktext=yaxis
+    ))
+    if len(unique_structures) > 1:
+        fig.update_layout(xaxis2=dict(
+            tickmode='array',
+            tickvals=np.arange(len(xaxis)),
+            ticktext=xaxis
+        ))
+        fig.update_layout(yaxis2=dict(
+            tickmode='array',
+            tickvals=np.arange(len(yaxis)),
+            ticktext=yaxis
+        ))
+    if len(unique_structures) > 2:
+        fig.update_layout(xaxis3=dict(
+            tickmode='array',
+            tickvals=np.arange(len(xaxis)),
+            ticktext=xaxis
+        ))
+        fig.update_layout(yaxis3=dict(
+            tickmode='array',
+            tickvals=np.arange(len(yaxis)),
+            ticktext=yaxis
+        ))
+    fig.update_traces(colorbar=dict(tickmode="array", tickvals=[0, 0.25, 0.5, 0.75, 1], ticks="outside"), coloraxis='coloraxis', showscale=True)
+    fig.update_layout(coloraxis={'colorscale': 'viridis', 'cmin': 0})
+    fig.update_layout()
+    if extra_axes is not None:
+        property_name = property + ' ' + str(extra_axes) + ' ' + str(extra_axes_values)
+    else:
+        property_name = property
+    fig.update_layout(title=property_name)
+    fig.show(renderer="browser")
+    fig.write_image(property + "_heatmap.png")
+
+    return fig

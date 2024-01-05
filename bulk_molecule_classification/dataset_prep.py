@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from bulk_molecule_classification.utils import filter_mols, convert_box_to_cell_params, reindex_mols, reindex_molecules, force_molecules_into_box, pare_cluster_radius, compute_mol_radii, identify_surface_molecules
+from bulk_molecule_classification.utils import filter_mols, convert_box_to_cell_params, reindex_mols, reindex_molecules, force_molecules_into_box, pare_cluster_radius, compute_mol_radii, identify_surface_molecules, pare_fragmented_molecules
 from dataset_management.CrystalData import CrystalData
 from dataset_management.utils import get_dataloaders
 
@@ -12,13 +12,19 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
                                 conv_cutoff, test_fraction=0.2, filter_early=True,
                                 temperatures: list = None, shuffle=True,
                                 melt_only=False, no_melt=False, early_only=False,
-                                run_config=None, pare_to_cluster=True):
+                                run_config=None, pare_to_cluster=False,
+                                periodic_only=False, aperiodic_only=False,
+                                max_cluster_radius=None, max_box_volume=None,
+                                min_box_volume=None):
     dataset = pd.read_pickle(dataset_path)
     dataset = dataset.reset_index().drop(columns='index')  # reindexing is crucial here
 
-    dataset, targets = filter_mols(dataset, dataset_path, early_only, filter_early, melt_only, no_melt, temperatures)
-
-    T_fc_list = torch.Tensor(convert_box_to_cell_params(np.stack(dataset['cell_params'])))
+    dataset, targets = filter_mols(dataset, dataset_path, early_only, filter_early,
+                                   melt_only, no_melt, temperatures, periodic_only, aperiodic_only,
+                                   max_box_volume, min_box_volume)
+    assert len(dataset) > 0, "Full dataset was filtered!"
+    # recompute from filtered
+    T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
 
     print('Generating training datapoints')
     datapoints = []
@@ -33,6 +39,9 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
         else:
             periodic = False
 
+        if pare_to_cluster:
+            periodic = False
+
         # we cannot trust the default indexing, so manually reindex according to the recorded molecule index
         cluster_atoms, cluster_coords, cluster_targets = reindex_molecules(atomic_numbers, i, mol_ind, num_molecules, ref_coords, targets)
 
@@ -41,11 +50,15 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
 
         # pare the cluster down to a manageable overall size
         if run_config is not None and pare_to_cluster:
-            max_cluster_radius = run_config['max_sphere_radius'] + 2 * conv_cutoff  # minimal cluster plus buffer
+            if max_cluster_radius is None:
+                max_cluster_radius = run_config['max_sphere_radius'] + 2 * conv_cutoff  # minimal cluster plus buffer
+
             cluster_atoms, cluster_coords, cluster_targets = pare_cluster_radius(cluster_atoms, cluster_coords, cluster_targets, max_cluster_radius=max_cluster_radius)
 
         # pare off molecules which are fragmented
-        good_mols, mol_radii = compute_mol_radii(cluster_coords)
+        cluster_atoms, cluster_coords, cluster_targets, good_mols, mol_radii = pare_fragmented_molecules(
+            cluster_atoms, cluster_coords, cluster_targets, pare_fragmented=not periodic
+        )
 
         # identify surface mols
         centroids, cluster_mol_ind, coordination_number, defect_type = identify_surface_molecules(

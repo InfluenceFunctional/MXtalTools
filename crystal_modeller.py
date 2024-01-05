@@ -140,7 +140,6 @@ class Modeller:
             self.models_dict['autoencoder'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims)
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
                 param.requires_grad = False
-
             self.config.embedding_regressor.model.embedding_depth = self.config.autoencoder.model.embedding_depth
             self.models_dict['embedding_regressor'] = embedding_regressor(self.config.seeds.model, self.config.embedding_regressor.model)
             assert self.config.model_paths.autoencoder is not None  # must preload the encoder
@@ -252,7 +251,7 @@ class Modeller:
         return train_loader, test_loader, extra_test_loader
 
     def embed_dataset(self):
-        '''prep workdir'''
+        """prep workdir"""
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
 
@@ -575,6 +574,12 @@ class Modeller:
                                            self.config.gradient_norm_clip)  # gradient clipping
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
+        if step == 0:  # save the complete final samples
+            self.logger.update_stats_dict(self.epoch_type,
+                                          ['sample', 'decoded_sample'],
+                                          [data.cpu().detach(), decoded_data.cpu().detach()
+                                           ], mode='append')
+
         if self.config.autoencoder.train_equivariance:
             rotations = torch.tensor(
                 R.random(data.num_graphs).as_matrix() * np.random.choice((-1, 1), replace=True, size=data.num_graphs)[:, None, None],
@@ -594,8 +599,8 @@ class Modeller:
 
             # compare the embeddings - should be identical for an equivariant embedding
             equivariance_loss = F.smooth_l1_loss(embed1, embed2, reduction='none').mean(-1)
-            # autoencoder_losses += equivariance_loss
             stats['equivariance_loss'] = equivariance_loss.mean().cpu().detach().numpy()
+
             if update_weights:
                 self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
                 equivariance_loss.mean().backward()  # back-propagation
@@ -608,11 +613,6 @@ class Modeller:
                                           autoencoder_loss.cpu().detach().numpy(),
                                           autoencoder_losses.cpu().detach().numpy())
 
-        if step == 0:  # save the complete final samples
-            self.logger.update_stats_dict(self.epoch_type,
-                                          ['sample', 'decoded_sample'],
-                                          [data.cpu().detach(), decoded_data.cpu().detach()
-                                           ], mode='append')
         self.logger.update_stats_dict(self.epoch_type,
                                       list(stats.keys()),
                                       list(stats.values()),

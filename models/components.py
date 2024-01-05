@@ -12,7 +12,7 @@ from models.asymmetric_radius_graph import asymmetric_radius_graph
 class MLP(nn.Module):
     def __init__(self, layers, filters, input_dim, output_dim,
                  activation='gelu', seed=0, dropout=0, conditioning_dim=0,
-                 norm=None, bias=True, norm_after_linear=False, conditioning_mode = 'concat_to_first'):
+                 norm=None, bias=True, norm_after_linear=False, conditioning_mode='concat_to_first'):
         super(MLP, self).__init__()
         # initialize constants and layers
 

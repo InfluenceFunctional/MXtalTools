@@ -15,6 +15,9 @@ nic_eval_path = 'dev_nic_evaluation_results_dict.npy'
 urea_interface_path = 'crystals_extra_classifier_training_urea_melt_interface_T200_analysis.npy'
 nic_traj_path1 = 'paper_nic_clusters2_1__analysis.npy'
 nic_traj_path2 = 'paper_nic_clusters2_7__analysis.npy'
+d_nic_tnsne_path1 = 'daisuke_nic_tsne1.npy'
+d_nic_tnsne_path2 = 'daisuke_nic_tsne2.npy'
+d_nic_tnsne_path3 = 'daisuke_nic_tsne3.npy'
 
 OTHER_COLOR = 'rgb(50, 50, 50)'
 FONTSIZE = 22
@@ -48,12 +51,12 @@ def paper_embedding_fig(results_dict, ordered_classes, max_samples=1000, perplex
 
         fig.add_trace(go.Scattergl(x=embedding[inds, 0], y=embedding[inds, 1],
                                    mode='markers',
-                                   marker_size=10,
+                                   marker_size=5,
                                    marker_color=target_colors[t_ind],
                                    legendgroup=ordered_classes[t_ind],
                                    name=ordered_classes[t_ind],
                                    showlegend=True,
-                                   opacity=.85))
+                                   opacity=.65))
 
     fig.update_layout(xaxis_showgrid=True, yaxis_showgrid=True, xaxis_zeroline=True, yaxis_zeroline=True,
                       xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
@@ -128,23 +131,64 @@ def process_daisuke_dats():
             for il, line in enumerate(lines):
                 data_dict[dats[ind]][il, :] = np.asarray(line.split(), dtype=float)
 
-    results_dict = {}
+    d_results_dict = {}
     for key, data in data_dict.items():
         if key[0].lower() == 'u':
             n_types = 7
+            #  I, IV, liq, A, B, C, III.
+            old2new = {3: 0,
+                       4: 1,
+                       5: 2,
+                       0: 3,
+                       6: 4,
+                       1: 5,
+                       2: 6}
+            #p_reindex = [3, 4, 5, 0, 6, 1, 2]
+
         elif key[0].lower() == 'n':
             n_types = 10
+            # # ['V', 'VII', 'VIII', 'I', 'II', 'III', 'IV', 'IX', 'VI', 'Melt']
+            # old2new = {3: 0,
+            #            4: 1,
+            #            5: 2,
+            #            6: 3,
+            #            0: 4,
+            #            8: 5,
+            #            1: 6,
+            #            2: 7,
+            #            7: 8,
+            #            9: 9}
+            #
+            old2new = {0: 0,
+                       1: 1,
+                       2: 2,
+                       3: 3,
+                       4: 4,
+                       5: 5,
+                       6: 6,
+                       7: 7,
+                       8: 8,
+                       9: 9}
+
+            #p_reindex = [4, 6, 7, 0, 1, 2, 3, 8, 5, 9]
+
         else:
             assert False
-        results_dict[key] = {
+
+        target_reindex = list(old2new.keys())
+
+        d_results_dict[key] = {
             'Type_Prediction': data[:, 1:1 + n_types],
             'Targets': np.argmax(data[:, 1 + n_types:1 + 2 * n_types], axis=1),
             'Temperature': data[:, -1],
         }
-        assert round(sum(results_dict[key]['Type_Prediction'].sum(1))) == len(results_dict[key]['Type_Prediction'])
+        assert round(sum(d_results_dict[key]['Type_Prediction'].sum(1))) == len(d_results_dict[key]['Type_Prediction'])
 
-    # todo reorder the classes from I IV liq A B C III
-    return results_dict['UT100only_MK_style.dat'], results_dict['NT100only_MK_style.dat']
+        # reindex targets
+        d_results_dict[key]['Targets'] = np.asarray([old2new[thing] for thing in d_results_dict[key]['Targets']])
+        d_results_dict[key]['Type_Prediction'] = d_results_dict[key]['Type_Prediction'][:, target_reindex]
+
+    return d_results_dict['UTmixedonly_w_o_inter_MK_style.dat'], d_results_dict['Nmixed_MK_style.dat']
 
 
 def paper_defect_accuracy_fig(results_dict, defect_names, temp_series):
@@ -205,25 +249,28 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
     colors = [COLORS[0], COLORS[3], OTHER_COLOR]
 
     sigma = min(5, len(traj_dict['overall_fraction']) / 100)
-    fig = make_subplots(cols=2, rows=1,
-                        subplot_titles=['(a) Interface',
-                                        '(b) Bulk'],
-                        x_title="Time (ps)", y_title="Form Fraction")
-    for i2, key in enumerate(['inside_fraction', 'outside_fraction']):
-        traj = traj_dict[key]
-        for ind in range(num_classes):
-            fig.add_trace(go.Scatter(x=traj_dict['time_steps'] / 1000,
-                                     y=gaussian_filter1d(traj[:, ind], sigma),
-                                     name=ordered_class_names[ind],
-                                     legendgroup=ordered_class_names[ind],
-                                     line_color=colors[ind],
-                                     mode='lines',
-                                     showlegend=True if i2 == 0 else False,
-                                     stackgroup='one' if stacked_plot else None),
-                          row=1, col=i2 + 1)
+    fig = go.Figure()
+    # make_subplots(cols=2, rows=1,
+    #                     subplot_titles=['(a) Interface',
+    #                                     '(b) Bulk'],
+    #                     x_title="Time (ps)", y_title="Form Fraction")
+    # for i2, key in enumerate(['inside_fraction', 'outside_fraction']):
+    key = 'inside_fraction'
+    i2 = 0
+    traj = traj_dict[key]
+    for ind in range(num_classes):
+        fig.add_trace(go.Scatter(x=traj_dict['time_steps'] / 1000,
+                                 y=gaussian_filter1d(traj[:, ind], sigma),
+                                 name=ordered_class_names[ind],
+                                 legendgroup=ordered_class_names[ind],
+                                 line_color=colors[ind],
+                                 mode='lines',
+                                 showlegend=True if i2 == 0 else False,
+                                 stackgroup='one' if stacked_plot else None),
+                      )  # row=1, col=i2 + 1)
 
-    fig.update_xaxes(range=[-0.1, 1.1], zeroline=False)
-    fig.update_yaxes(range=[0, 0.6])
+    fig.update_xaxes(range=[-0.1, 1.1], zeroline=False, title='Time (ps)')
+    fig.update_yaxes(range=[0, 0.6], title='Form Fraction')
     fig.update_xaxes(zerolinecolor='black')
     fig.update_yaxes(zerolinecolor='black')  # , gridcolor='grey')
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
@@ -413,6 +460,44 @@ fig_dict['nic_tSNE'] = paper_embedding_fig(
     results_dict, nic_ordered_class_names, max_samples=1000, perplexity=30)
 
 del results_dict
+
+'''
+daisuke's cmats
+'''
+urea_results, nic_results = process_daisuke_dats()
+
+fig_dict['d_urea_form_cmat'] = paper_form_accuracy_fig(
+    urea_results, urea_ordered_class_names, [100, 200])
+
+fig_dict['d_nic_form_cmat'] = paper_form_accuracy_fig(
+    nic_results, nic_ordered_class_names, [100, 350])
+
+'''
+daisuke's tSNE
+'''
+d_nic_embed_dict = np.load(d_nic_tnsne_path1, allow_pickle=True).item()
+fig_dict['d_nic_tSNE1'] = paper_embedding_fig(
+    d_nic_embed_dict, nic_ordered_class_names, max_samples=1000, perplexity=30)
+d_nic_embed_dict = np.load(d_nic_tnsne_path2, allow_pickle=True).item()
+fig_dict['d_nic_tSNE2'] = paper_embedding_fig(
+    d_nic_embed_dict, nic_ordered_class_names, max_samples=1000, perplexity=30)
+d_nic_embed_dict = np.load(d_nic_tnsne_path2, allow_pickle=True).item()
+fig_dict['d_nic_tSNE3'] = paper_embedding_fig(
+    d_nic_embed_dict, nic_ordered_class_names, max_samples=1000, perplexity=30)
+
+#
+# d_urea_embed_dict = np.load(d_urea_tnsne_path1, allow_pickle=True).item()
+# fig_dict['d_urea_tSNE1'] = paper_embedding_fig(
+#     d_urea_embed_dict, urea_ordered_class_names, max_samples=1000, perplexity=30)
+# d_urea_embed_dict = np.load(d_urea_tnsne_path2, allow_pickle=True).item()
+# fig_dict['d_urea_tSNE2'] = paper_embedding_fig(
+#     d_urea_embed_dict, urea_ordered_class_names, max_samples=1000, perplexity=30)
+# d_urea_embed_dict = np.load(d_urea_tnsne_path2, allow_pickle=True).item()
+# fig_dict['d_urea_tSNE3'] = paper_embedding_fig(
+#     d_urea_embed_dict, urea_ordered_class_names, max_samples=1000, perplexity=30)
+#
+
+
 '''
 urea interface trajectory
 '''

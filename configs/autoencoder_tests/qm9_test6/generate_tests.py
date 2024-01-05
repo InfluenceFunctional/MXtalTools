@@ -10,9 +10,13 @@ base_config = load_yaml('base.yaml')
 """
 
 configs = [
-    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.01, 'max', 'leaky relu', 3],
-    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.1, 'max', 'leaky relu', 3],
-    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.5, 'max', 'leaky relu', 3],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.01, 'max', 'leaky relu', 3, 0],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.1, 'max', 'leaky relu', 3, 0],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.5, 'max', 'leaky relu', 3, 0],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.01, 'max', 'leaky relu', 3, 0.1],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.01, 'max', 'leaky relu', 3, 0.25],
+    ['adamw', 0.001, 0.0001, 0.9, 0.999, 0.01, 'max', 'leaky relu', 3, 0.5],
+
 ]
 
 ind = 0
@@ -28,6 +32,8 @@ for ii in range(len(configs)):
     config['autoencoder']['model']['graph_aggregator'] = configs[ii][6]
     config['autoencoder']['model']['activation'] = configs[ii][7]
     config['autoencoder']['model']['num_attention_heads'] = configs[ii][8]
+    config['autoencoder']['model']['graph_node_dropout'] = configs[ii][9]
+    config['autoencoder']['model']['decoder_dropout_probability'] = configs[ii][9]
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
