@@ -72,7 +72,7 @@ dev = {'run_name': 'dev_nic',
 
 configs = []
 base_config = {'run_name': 'dev',
-               'convergence_history': 50,
+               'convergence_history': 200,
                'num_convs': 1,
                'embedding_depth': 256,
                'message_depth': 128,
@@ -81,7 +81,7 @@ base_config = {'run_name': 'dev',
                'fc_norm': 'layer',
                'num_fcs': 2,
                'num_epochs': 1000,
-               'dataset_size': 500,
+               'dataset_size': 1000,
                'conv_cutoff': 6,
                'batch_size': 5,
                'reporting_frequency': 1,
@@ -120,8 +120,10 @@ for i in range(len(config_list)):
                 configs[-1]['run_name'] = f'urea test{i}'
                 configs[-1]['dataset_name'] = 'new_urea_full'
                 configs[-1]['dumps_dirs'] = ['new_small_urea_liq_T350', 'daisuke_small_ureas/T100', 'daisuke_small_ureas/T200', 'urea_liq_T350', 'urea_bulk_trajs/T100', 'urea_bulk_trajs/T200']
+                configs[-1]['training_temps'] = [100, 200, 350]
             elif mol == 0:
                 configs[-1]['run_name'] = f'nic test{i}'
                 configs[-1]['dataset_name'] = 'new_nic_full'
                 configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'bulk_trajs3', 'new_small_bulk']
+                configs[-1]['training_temps'] = [100, 350]
 
