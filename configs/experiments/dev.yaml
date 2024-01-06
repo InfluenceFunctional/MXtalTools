@@ -89,10 +89,10 @@ autoencoder:
 
   model:
     encoder_type: 'equivariant' # or variant
-    decoder_type: 'equivariant' # or variant
+    decoder_type: 'variant' # or variant
     graph_convolution_type: TransformerConv
     graph_aggregator: 'max'  # N/A to equivariant
-    sh_order: 2  # order of spherical harmonics
+    sh_order: 5  # order of spherical harmonics
     embedding_depth: 513 # this is the overall embedding depth. should cleanly divide by 3 to get the vector embedding
     encoder_radial_depth: 513
     activation: 'leaky relu'

@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from models.base_models import molecule_graph_model
 from models.basis_functions import BesselBasisLayer, GaussianEmbedding
 from models.components import MLP
-import e3nn
+import e3nn.o3 as o3
+import e3nn.nn as enn
 from torch_scatter import scatter
 
 
@@ -51,11 +53,11 @@ class equivariant_decoder(nn.Module):
     def __init__(self, config):
         super(equivariant_decoder, self).__init__()
 
-        self.encoding_irreps_out = e3nn.o3.Irreps(f"{config.embedding_depth // 3:.0f}x1o")
-        self.decoding_radial_irreps = e3nn.o3.Irreps(f"{config.embedding_depth // 3} x0e")
-        self.decoding_irreps_out = e3nn.o3.Irreps(f"{config.num_decoder_points:.0f} x1o + {config.num_decoder_points * (self.num_classes + 1):.0f} x0e")
+        self.encoding_irreps_out = o3.Irreps(f"{config.embedding_depth // 3:.0f}x1o")
+        self.decoding_radial_irreps = o3.Irreps(f"{config.embedding_depth // 3} x0e")
+        self.decoding_irreps_out = o3.Irreps(f"{config.num_decoder_points:.0f} x1o + {config.num_decoder_points * (self.num_classes + 1):.0f} x0e")
 
-        self.tp2 = e3nn.o3.FullyConnectedTensorProduct(
+        self.tp2 = o3.FullyConnectedTensorProduct(
             irreps_in1=self.decoding_radial_irreps,
             irreps_in2=self.encoding_irreps_out,
             irreps_out=self.decoding_irreps_out,
@@ -85,29 +87,26 @@ class equivariant_encoder(nn.Module):
         super(equivariant_encoder, self).__init__()
 
         sh_order = config.sh_order
-        self.irreps_sh = e3nn.o3.Irreps.spherical_harmonics(sh_order)
-        self.encoding_irreps_out = e3nn.o3.Irreps(f"{config.embedding_depth // 3:.0f}x1o")
-        self.encoding_radial_irreps = e3nn.o3.Irreps(f"{config.encoder_radial_depth:.0f} x0e")
+        self.irreps_sh = o3.Irreps.spherical_harmonics(sh_order)
+        self.irreps_mid = o3.Irreps('64x0e + 64x1e + 64x1o + 32x2e + 32x2o')
+        self.encoding_irreps_out = o3.Irreps(f"{config.embedding_depth // 3:.0f}x1o")
+        self.encoding_radial_irreps = o3.Irreps(f"{config.encoder_radial_depth:.0f} x0e")
 
+        '''initial node embedding'''
+        self.node_emb = nn.Embedding(100, config.atom_type_embedding_dims)
+
+        '''edge embedding'''
         if config.radial_function == 'bessel':
             self.rbf = BesselBasisLayer(config.num_radial, 1, 5)
         elif config.radial_function == 'gaussian':
             self.rbf = GaussianEmbedding(start=0.0, stop=1, num_gaussians=config.num_radial)
-
-        self.tp1 = e3nn.o3.FullyConnectedTensorProduct(
-            irreps_in1=self.encoding_radial_irreps,
-            irreps_in2=self.irreps_sh,
-            irreps_out=self.encoding_irreps_out,
-            internal_weights=True,
-        )
-
-        self.rbf_emb = MLP(layers=1, filters=config.encoder_radial_depth,
+        self.rbf_emb = MLP(layers=1,
+                           filters=config.encoder_radial_depth,
                            input_dim=config.num_radial,
                            output_dim=config.encoder_radial_depth,
                            norm=config.graph_node_norm,
                            dropout=config.graph_node_dropout,
                            activation=config.activation)
-        self.node_emb = nn.Embedding(100, config.atom_type_embedding_dims)
         self.radial_message = MLP(layers=config.nodewise_fc_layers,
                                   filters=config.encoder_radial_depth,
                                   input_dim=config.encoder_radial_depth + config.atom_type_embedding_dims,
@@ -116,6 +115,28 @@ class equivariant_encoder(nn.Module):
                                   dropout=config.graph_node_dropout,
                                   activation=config.activation)
 
+        '''equivariant aggregation op'''
+        self.tp1 = o3.FullyConnectedTensorProduct(
+            irreps_in1=self.encoding_radial_irreps,
+            irreps_in2=self.irreps_sh,
+            irreps_out=self.irreps_mid,
+            internal_weights=True,
+        )
+
+        self.act1 = enn.Activation(irreps_in=self.irreps_mid,
+                                   acts=[F.gelu, None, None, None, None])
+
+        self.tl1 = o3.Linear(irreps_in=self.irreps_mid,
+                             irreps_out=self.irreps_mid,
+                             internal_weights=True)
+
+        self.act2 = enn.Activation(irreps_in=self.irreps_mid,
+                                   acts=[F.gelu, None, None, None, None])
+
+        self.tl2 = o3.Linear(irreps_in=self.irreps_mid,
+                             irreps_out=self.encoding_irreps_out,
+                             internal_weights=True)
+
     def forward(self, data):
 
         pos = data.pos
@@ -123,7 +144,7 @@ class equivariant_encoder(nn.Module):
 
         centroid = torch.zeros((1, 3), dtype=torch.float32, device=pos.device)
 
-        e_x = e3nn.o3.spherical_harmonics(
+        e_x = o3.spherical_harmonics(
             l=self.irreps_sh,
             x=pos - centroid,
             normalize=False,
@@ -136,13 +157,16 @@ class equivariant_encoder(nn.Module):
         node_emb = self.node_emb(z)
         radial_message = self.radial_message(torch.cat([r_emb, node_emb], dim=-1))
 
-        c_emb = self.tp1(
-            radial_message,
-            e_x)
+        c_emb = self.act1(self.tp1(
+            radial_message, e_x))
 
         # graph aggregation by sum and mean
-        encoding = (scatter(c_emb, data.batch, dim_size=data.num_graphs, dim=0, reduce='mean') +
-                    scatter(c_emb, data.batch, dim_size=data.num_graphs, dim=0, reduce='sum'))
+        c_emb = (scatter(c_emb, data.batch, dim_size=data.num_graphs, dim=0, reduce='mean') +
+                 scatter(c_emb, data.batch, dim_size=data.num_graphs, dim=0, reduce='sum'))
+
+        c_emb = self.act2(self.tl1(c_emb))
+
+        encoding = self.tl2(c_emb)
 
         return encoding
 

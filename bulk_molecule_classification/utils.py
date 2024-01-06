@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from bulk_molecule_classification.classifier_constants import num2atomicnum
 from common.utils import delete_from_dataframe, softmax_np
 from models.base_models import molecule_graph_model
-from mol_classifier import MoleculeClassifier
+from bulk_molecule_classification.mol_classifier import MoleculeClassifier
 from common.geometry_calculations import coor_trans_matrix
 from bulk_molecule_classification.classifier_constants import defect_names
 

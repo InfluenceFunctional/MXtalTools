@@ -574,13 +574,7 @@ class Modeller:
                                            self.config.gradient_norm_clip)  # gradient clipping
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
-        if step == 0:  # save the complete final samples
-            self.logger.update_stats_dict(self.epoch_type,
-                                          ['sample', 'decoded_sample'],
-                                          [data.cpu().detach(), decoded_data.cpu().detach()
-                                           ], mode='append')
-
-        if self.config.autoencoder.train_equivariance:
+        if self.config.autoencoder.train_equivariance or step == 0:
             rotations = torch.tensor(
                 R.random(data.num_graphs).as_matrix() * np.random.choice((-1, 1), replace=True, size=data.num_graphs)[:, None, None],
                 dtype=torch.float,
@@ -599,14 +593,20 @@ class Modeller:
 
             # compare the embeddings - should be identical for an equivariant embedding
             equivariance_loss = F.smooth_l1_loss(embed1, embed2, reduction='none').mean(-1)
-            stats['equivariance_loss'] = equivariance_loss.mean().cpu().detach().numpy()
+            stats['encoder_equivariance_loss'] = equivariance_loss.mean().cpu().detach().numpy()
+            #
+            # if update_weights:
+            #     self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+            #     equivariance_loss.mean().backward()  # back-propagation
+            #     torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
+            #                                    self.config.gradient_norm_clip)  # gradient clipping
+            #     self.optimizers_dict['autoencoder'].step()  # update parameters
 
-            if update_weights:
-                self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-                equivariance_loss.mean().backward()  # back-propagation
-                torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
-                                               self.config.gradient_norm_clip)  # gradient clipping
-                self.optimizers_dict['autoencoder'].step()  # update parameters
+        if step == 0:  # save the complete final samples
+            self.logger.update_stats_dict(self.epoch_type,
+                                          ['sample', 'decoded_sample'],
+                                          [data.cpu().detach(), decoded_data.cpu().detach()
+                                           ], mode='append')
 
         '''log losses and other tracking values'''
         self.logger.update_current_losses('autoencoder', self.epoch_type,
