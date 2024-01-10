@@ -102,14 +102,14 @@ base_config = {'run_name': 'dev',
                'seed': 1}
 
 config_list = [
-    [1, 256, 128],  # nic: ok, urea: great
+    #[1, 256, 128],  # nic: ok, urea: great
     [2, 256, 128],  # nic: best, urea: great
-    [1, 64, 32],  # nic: ok, urea: great
-    [2, 64, 32],  # nic: worst, urea: bad
+    #[1, 64, 32],  # nic: ok, urea: great
+    #[2, 64, 32],  # nic: worst, urea: bad
 ]
 
 for i in range(len(config_list)):
-    for si in range(4):
+    for si in range(6):
         for mol in range(0, 2):
             configs.append(copy(base_config))
             configs[-1]['seed'] = si
