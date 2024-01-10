@@ -259,6 +259,8 @@ def force_molecules_into_box(T_fc_list, cluster_coords, i):
     will have no effect on fragmented molecules or
     molecules otherwise wrapped
     """
+    # recenter about zero
+    cluster_coords -= cluster_coords.amin((0, 1))[None, None, :]
     mol_centroids = cluster_coords.mean(1)
     frac_mol_centroids = mol_centroids @ torch.linalg.inv(T_fc_list[i].T)
     adjustment_fractional_vector = -torch.floor(frac_mol_centroids)
@@ -396,7 +398,7 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
     return model, optimizer
 
 
-def record_step_results(results_dict, output, sample, data, latents_dict, step, config, index_offset=0):
+def record_step_results(results_dict, output, sample, data, latents, embeddings, step, config, index_offset=0):
     if results_dict is None:
         results_dict = {'Temperature': [],
                         'Time_Step': [],
@@ -411,14 +413,16 @@ def record_step_results(results_dict, output, sample, data, latents_dict, step, 
                         'Atom_Types': [],
                         'Molecule_Index': [],
                         'Molecule_Centroids': [],
-                        'Coordination_Numbers': []}
+                        'Coordination_Numbers': [],
+                        'Embeddings': []}
 
     results_dict['Loss'].append(get_loss(output, sample, config['num_forms']).cpu().detach().numpy())
     results_dict['Type_Prediction'].append(F.softmax(output[:, :config['num_forms']], dim=1).cpu().detach().numpy())
     results_dict['Defect_Prediction'].append(F.softmax(output[:, config['num_forms']:], dim=1).cpu().detach().numpy())
     results_dict['Targets'].append(sample.y.cpu().detach().numpy())
     results_dict['Defects'].append(sample.defect.cpu().detach().numpy())
-    results_dict['Latents'].append(latents_dict['final_activation'])
+    results_dict['Latents'].append(latents.cpu().detach().numpy())  # ['final_activation'])
+    results_dict['Embeddings'].append(embeddings.cpu().detach().numpy())
     results_dict['Temperature'].append(np.ones(len(sample.y)) * data.tracking[0][0])
     results_dict['Time_Step'].append(np.ones(len(sample.y)) * data.tracking[0][1])
     results_dict['Sample_Index'].append(np.ones(len(sample.y)) * step + index_offset)

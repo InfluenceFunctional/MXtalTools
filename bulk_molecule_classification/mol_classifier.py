@@ -95,7 +95,7 @@ class MoleculeClassifier(nn.Module):
 
         return dist, self.rbf(dist)
 
-    def forward(self, data, return_latent=False):
+    def forward(self, data, return_latent=False, return_embedding=False):
 
         x = self.atom_embedding(data.x)  # embed atomic numbers & compute initial atom-wise feature vector
         batch = data.batch
@@ -114,7 +114,10 @@ class MoleculeClassifier(nn.Module):
 
         x = self.global_pool(x, batch, cluster=data.mol_ind, output_dim=data.num_graphs)
 
-        return self.gnn_mlp(x, return_latent=return_latent)
+        if not return_embedding:
+            return self.gnn_mlp(x, return_latent=return_latent)
+        else:
+            return self.gnn_mlp(x, return_latent=return_latent), x
 
     def periodize_box(self, data):
         assert data.num_graphs == 1  # this only works one at a time

@@ -111,13 +111,13 @@ def classifier_evaluation(config, classifier, train_loader, test_loader,
             classifier.eval()
             for step, data in enumerate(tqdm(train_loader)):
                 sample = data.to(device)
-                output, latents_dict = classifier(sample, return_latent=True)
-                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step, config)
+                (output, latents), embeddings = classifier(sample, return_latent=True, return_embedding=True)
+                results_dict = record_step_results(results_dict, output, sample, data, latents, embeddings, step, config)
 
             for step, data in enumerate(tqdm(test_loader)):
                 sample = data.to(device)
-                output, latents_dict = classifier(sample, return_latent=True)
-                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step, config, index_offset=len(train_loader))
+                (output, latents), embeddings = classifier(sample, return_latent=True, return_embedding=True)
+                results_dict = record_step_results(results_dict, output, sample, data, latents, embeddings, step, config, index_offset=len(train_loader))
 
         for key in results_dict.keys():
             try:
@@ -176,15 +176,15 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
                                                 test_fraction=1, shuffle=False, filter_early=False,
                                                 early_only=False,
                                                 run_config=run_config,
-                                                pare_to_cluster=True)
+                                                pare_to_cluster=True if 'interface' not in dataset_path else False)
         results_dict = None
         classifier.train(False)
         with torch.no_grad():
             classifier.eval()
             for step, data in enumerate(tqdm(loader)):
                 sample = data.to(device)
-                output, latents_dict = classifier(sample, return_latent=True)
-                results_dict = record_step_results(results_dict, output, sample, data, latents_dict, step, config)
+                (output, latents), embeddings = classifier(sample, return_latent=True, return_embedding=True)
+                results_dict = record_step_results(results_dict, output, sample, data, latents, embeddings, step, config)
 
         for key in results_dict.keys():
             try:

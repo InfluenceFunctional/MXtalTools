@@ -89,28 +89,26 @@ autoencoder:
 
   model:
     encoder_type: 'equivariant' # or variant
-    decoder_type: 'variant' # or variant
-    graph_convolution_type: TransformerConv
-    graph_aggregator: 'max'  # N/A to equivariant
-    sh_order: 5  # order of spherical harmonics
-    embedding_depth: 513 # this is the overall embedding depth. should cleanly divide by 3 to get the vector embedding
-    encoder_radial_depth: 513
+    decoder_type: 'variant' # or variant or equivariant WIP
+    sh_order: 2
+    graph_aggregator: 'mean'
+    embedding_depth: 513
     activation: 'leaky relu'
-    num_decoder_layers: 2
+    num_decoder_layers: 4
     decoder_norm_mode: 'batch'
     decoder_dropout_probability: 0
     graph_node_norm: 'graph layer'
     graph_node_dropout: 0
     graph_message_dropout: 0
-    num_attention_heads: 3  # should cleanly divide embedding_depth  # N/A to equivariant
-    num_graph_convolutions: 2  # N/A to equivariant
-    nodewise_fc_layers: 2
+    num_attention_heads: 3
+    num_graph_convolutions: 2
+    nodewise_fc_layers: 4
     num_radial: 50
     radial_function: gaussian
-    max_num_neighbors: 100  # N/A to equivariant
-    convolution_cutoff: 1 # 2 for unconstrained, 1 for equivariant
+    max_num_neighbors: 100
+    convolution_cutoff: 2
     atom_type_embedding_dims: 5
-    num_decoder_points: 256
+    num_decoder_points: 512
 
 regressor:
   optimizer: null
