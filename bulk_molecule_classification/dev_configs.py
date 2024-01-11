@@ -118,12 +118,12 @@ for i in range(len(config_list)):
             configs[-1]['message_depth'] = config_list[i][2]
 
             if mol == 1:
-                configs[-1]['run_name'] = f'urea test{i}'
+                configs[-1]['run_name'] = f'urea test{i}_{si}'
                 configs[-1]['dataset_name'] = 'new_urea_full'
                 configs[-1]['dumps_dirs'] = ['new_small_urea_liq_T350', 'daisuke_small_ureas/T100', 'daisuke_small_ureas/T200', 'urea_liq_T350', 'urea_bulk_trajs/T100', 'urea_bulk_trajs/T200']
                 configs[-1]['training_temps'] = [100, 200, 350]
             elif mol == 0:
-                configs[-1]['run_name'] = f'nic test{i}'
+                configs[-1]['run_name'] = f'nic test{i}_{si}'
                 configs[-1]['dataset_name'] = 'new_nic_full'
                 configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'bulk_trajs3', 'new_small_bulk']
                 configs[-1]['training_temps'] = [100, 350]

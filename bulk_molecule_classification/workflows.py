@@ -70,7 +70,7 @@ def train_classifier(config, classifier, optimizer,
             if test_record[-1] == np.amin(test_record):
                 torch.save({'model_state_dict': classifier.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict()},
-                           runs_path + run_name + str(config.seed) + '_best_classifier_checkpoint')
+                           runs_path + run_name + '_best_classifier_checkpoint')
 
                 time_since_best = 0
             else:
