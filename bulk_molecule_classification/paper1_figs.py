@@ -2,16 +2,14 @@ import numpy as np
 import os
 
 from bulk_molecule_classification.classifier_constants import (nic_ordered_class_names, urea_ordered_class_names,
-                                                               defect_names)
-from bulk_molecule_classification.paper1_figs_utils import (embedding_fig, paper_form_accuracy_fig,
-                                                            process_daisuke_dats, paper_defect_accuracy_fig,
-                                                            urea_interface_fig, nic_clusters_fig, dual_embedding_fig)
+                                                               )
+from bulk_molecule_classification.paper1_figs_utils import (process_daisuke_dats, urea_interface_fig, nic_clusters_fig, combined_accuracy_fig, combined_embedding_fig, paper_form_accuracy_fig)
 
 max_tsne_samples = 1000
 
 os.chdir(r'D:\crystals_extra\classifier_training\results')
 urea_eval_path = 'dev_urea_evaluation_results_jan_dict.npy'
-nic_eval_path = 'dev_nic_evaluation_results_jan_dict.npy'
+nic_eval_path = 'dev_nic_evaluation_results_jan12_dict.npy'
 urea_interface_path = 'crystals_extra_classifier_training_urea_melt_interface_T200_analysis.npy'
 nic_traj_path1 = 'paper_nic_clusters2_1__analysis.npy'
 nic_traj_path2 = 'paper_nic_clusters2_7__analysis.npy'
@@ -29,22 +27,28 @@ urea form confusion matrix
 '''
 results_dict = np.load(urea_eval_path, allow_pickle=True).item()
 
-fig_dict['urea_form_cmat'], scores_dict['urea_form'] = paper_form_accuracy_fig(
+fig_dict['urea_cmat'], scores_dict['urea'] = combined_accuracy_fig(
     results_dict, urea_ordered_class_names, [100, 200, 350])
-
-'''
-urea topology confusion matrix
-'''
-fig_dict['urea_topology_cmat'], scores_dict['urea_topology'] = paper_defect_accuracy_fig(
-    results_dict, defect_names, [100, 200, 350])
 
 '''
 urea tSNE
 '''
-fig_dict['urea_tSNE'] = dual_embedding_fig(
-    ['(a) Graph Embedding', '(b) Final Layer Activation'],
-    results_dict, results_dict, urea_ordered_class_names,
-    max_samples=max_tsne_samples, perplexity=30, embed_keys=['Embeddings', 'Latents']
+d_urea_embed_dict2 = np.load(d_urea_tsne_path2, allow_pickle=True)
+d_urea_embed_dict3 = np.load(d_urea_tsne_path3, allow_pickle=True)
+old2new = {3: 0,  # reindex urea targets
+           4: 1,
+           5: 2,
+           0: 3,
+           6: 4,
+           1: 5,
+           2: 6}
+d_urea_embed_dict2['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict2['Targets']])
+d_urea_embed_dict3['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict3['Targets']])
+d_urea_embed_dict2['Embeddings'] = d_urea_embed_dict2['Latents']
+
+fig_dict['urea_tSNE'] = combined_embedding_fig(
+    results_dict, d_urea_embed_dict2, d_urea_embed_dict3, urea_ordered_class_names,
+    max_samples=max_tsne_samples, perplexity=30, molecule_name='urea'
 )
 del results_dict
 
@@ -53,22 +57,19 @@ nic form confusion matrix
 '''
 results_dict = np.load(nic_eval_path, allow_pickle=True).item()
 
-fig_dict['nic_form_cmat'], scores_dict['nic_form'] = paper_form_accuracy_fig(
+fig_dict['nic_cmat'], scores_dict['nic'] = combined_accuracy_fig(
     results_dict, nic_ordered_class_names, [100, 350])
-
-'''
-nic topology confusion matrix
-'''
-fig_dict['nic_topology_cmat'], scores_dict['nic_topology'] = paper_defect_accuracy_fig(
-    results_dict, defect_names, [100, 350])
 
 '''
 nic tSNE
 '''
-fig_dict['nic_tSNE'] = dual_embedding_fig(
-    ['(a) Graph Embedding', '(b) Final Layer Activation'],
-    results_dict, results_dict, nic_ordered_class_names,
-    max_samples=max_tsne_samples, perplexity=30, embed_keys=['Embeddings', 'Latents']
+d_nic_embed_dict2 = np.load(d_nic_tsne_path2, allow_pickle=True).item()
+d_nic_embed_dict3 = np.load(d_nic_tsne_path3, allow_pickle=True).item()
+d_nic_embed_dict2['Embeddings'] = d_nic_embed_dict2['Latents']
+
+fig_dict['nicotinamide_tSNE'] = combined_embedding_fig(
+    results_dict, d_nic_embed_dict2, d_nic_embed_dict3, nic_ordered_class_names,
+    max_samples=max_tsne_samples, perplexity=30, molecule_name='nicotinamide'
 )
 
 del results_dict
@@ -83,36 +84,6 @@ fig_dict['d_urea_form_cmat'], scores_dict['d_urea_form'] = paper_form_accuracy_f
 
 fig_dict['d_nic_form_cmat'], scores_dict['d_nic_form'] = paper_form_accuracy_fig(
     nic_results, nic_ordered_class_names, [100, 350])
-
-'''
-daisuke's tSNE
-'''
-d_nic_embed_dict2 = np.load(d_nic_tsne_path2, allow_pickle=True).item()
-d_nic_embed_dict3 = np.load(d_nic_tsne_path3, allow_pickle=True).item()
-
-d_urea_embed_dict2 = np.load(d_urea_tsne_path2, allow_pickle=True)
-d_urea_embed_dict3 = np.load(d_urea_tsne_path3, allow_pickle=True)
-old2new = {3: 0,  # reindex urea targets
-           4: 1,
-           5: 2,
-           0: 3,
-           6: 4,
-           1: 5,
-           2: 6}
-d_urea_embed_dict2['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict2['Targets']])
-d_urea_embed_dict3['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict3['Targets']])
-
-fig_dict['d_nic_tSNE'] = dual_embedding_fig(
-    ['(a) Input Descriptors', '(b) Model Embedding'],
-    d_nic_embed_dict2, d_nic_embed_dict3, nic_ordered_class_names,
-    max_samples=max_tsne_samples, perplexity=30, embed_keys=['Latents', 'Latents']
-)
-
-fig_dict['d_urea_tSNE'] = dual_embedding_fig(
-    ['(a) Input Descriptors', '(b) Model Embedding'],
-    d_urea_embed_dict2, d_urea_embed_dict3, urea_ordered_class_names,
-    max_samples=max_tsne_samples, perplexity=30, embed_keys=['Latents', 'Latents']
-)
 
 # '''
 # urea interface trajectory
@@ -130,7 +101,17 @@ traj_dict2 = np.load(nic_traj_path2, allow_pickle=True).item()
 fig_dict['nic_trajectories'] = nic_clusters_fig(traj_dict1, traj_dict2)
 
 for key, fig in fig_dict.items():
-    fig.write_image(key + '.png', scale=4)
+    if 'cmat' in key:
+        if key[0] != 'd':
+            fig.write_image(key + '.png', width=1920 // 2 + 100, height=1080 // 2)
+        else:
+            fig.write_image(key + '.png', width=1920 // 4, height=1080 // 2)
+    elif 'tSNE' in key:
+        fig.write_image(key + '.png', width=960, height=900)
+    elif 'traj' in key:
+        fig.write_image(key + '.png', width=960, height=900)
+    else:
+        fig.write_image(key + '.png', scale=4)
 for key, fig in fig_dict.items():
     fig.show()
 

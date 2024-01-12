@@ -8,49 +8,90 @@ from scipy.ndimage import gaussian_filter1d
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
 
-def embedding_fig(results_dict, ordered_classes, max_samples=1000, perplexity=30):
-    num_samples = len(results_dict['Targets'])
-    sample_inds = np.random.choice(num_samples, size=min(max_samples, num_samples), replace=False)
-    from sklearn.manifold import TSNE
-    embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
-                     init='pca', perplexity=perplexity).fit_transform(results_dict['Latents'][sample_inds])
+def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
+                           ordered_classes, molecule_name,
+                           max_samples=1000, perplexity=30):
 
-    target_colors = copy(COLORS)
-    melt_ind = len(ordered_classes)
-    target_colors[melt_ind - 1] = COLORS[-1]
+    if molecule_name == 'urea':
+        n_images = 7
+    elif molecule_name == 'nicotinamide':
+        n_images = 10
 
-    fig = go.Figure()
-    for t_ind in range(len(ordered_classes)):
-        inds = np.argwhere((results_dict['Targets'][sample_inds] == t_ind)
-                           )[:, 0]
+    image_path = r'D:\crystals_extra\classifier_training\polymorph_images/'
+    if molecule_name == 'nicotinamide':
+        filenames = ['NICOAM13.png',
+                     'NICOAM14.png',
+                     'NICOAM15.png',
+                     'NICOAM16.png',
+                     'NICOAM07.png',
+                     'NICOAM18.png',
+                     'NICOAM08.png',
+                     'NICOAM09.png',
+                     'NICOAM17.png',
+                     'NIC_melt.png']
+        stits = ['Form I',
+                 'Form II',
+                 'Form III',
+                 'Form IV',
+                 'Form V',
+                 'Form VI',
+                 'Form VII',
+                 'Form VIII',
+                 'Form IX',
+                 'Melt']
+    elif molecule_name == 'urea':
+        filenames = ['UREAA.png',
+                     'UREAB.png',
+                     'UREAC.png',
+                     'UREAI.png',
+                     'UREAIII.png',
+                     'UREAIV.png',
+                     'UREA_melt.png']
+        stits = ['Form A',
+                 'Form B',
+                 'Form C',
+                 'Form I',
+                 'Form III',
+                 'Form IV',
+                 'Melt']
 
-        fig.add_trace(go.Scattergl(x=embedding[inds, 0], y=embedding[inds, 1],
-                                   mode='markers',
-                                   marker_size=5,
-                                   marker_color=target_colors[t_ind],
-                                   legendgroup=ordered_classes[t_ind],
-                                   name=ordered_classes[t_ind],
-                                   showlegend=True,
-                                   opacity=.65))
+    from PIL import Image
 
-    fig.update_layout(xaxis_showgrid=True, yaxis_showgrid=True, xaxis_zeroline=True, yaxis_zeroline=True,
-                      xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
-                      plot_bgcolor='rgba(0,0,0,0)')
-    fig.update_yaxes(linecolor='black', mirror=True)  # , gridcolor='grey', zerolinecolor='grey')
-    fig.update_xaxes(linecolor='black', mirror=True)  # , gridcolor='grey', zerolinecolor='grey')
-    fig.update_layout(font=dict(size=FONTSIZE), legend_font_size=LEGEND_FONTSIZE)
-    return fig
+    images = [Image.open(image_path + pathi) for pathi in filenames]
 
+    fig = make_subplots(rows=2, cols=2,
+                        subplot_titles=["(a) Graph Embedding",
+                                        "(b) GNN Final Layer",
+                                        "(c) SFC Input",
+                                        "(d) SFC Final Layer"],
+                        vertical_spacing=0.2)
 
-def dual_embedding_fig(subplot_titles_list, results_dict1, results_dict2, ordered_classes, embed_keys, max_samples=1000, perplexity=30):
-    fig = make_subplots(rows=1, cols=2, subplot_titles=subplot_titles_list, x_title='tSNE1', y_title='tSNE2')
+    embed_keys = ['Embeddings', 'Latents']
 
-    for ic, results_dict in enumerate([results_dict1, results_dict2]):
+    for ic, results_dict in enumerate([mk_results_dict, mk_results_dict, d_results_dict1, d_results_dict2]):
+        if ic == 0:
+            row = 1
+            col = 1
+            cind = 0
+        elif ic == 1:
+            row = 1
+            col = 2
+            cind = 1
+        elif ic == 2:
+            row = 2
+            col = 1
+            cind = 0
+        elif ic == 3:
+            row = 2
+            col = 2
+            cind = 1
+
         num_samples = len(results_dict['Targets'])
         sample_inds = np.random.choice(num_samples, size=min(max_samples, num_samples), replace=False)
         from sklearn.manifold import TSNE
+
         embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
-                         init='pca', perplexity=perplexity).fit_transform(results_dict[embed_keys[ic]][sample_inds])
+                         init='pca', perplexity=perplexity).fit_transform(results_dict[embed_keys[cind]][sample_inds])
 
         target_colors = copy(COLORS)
         melt_ind = len(ordered_classes)
@@ -64,72 +105,51 @@ def dual_embedding_fig(subplot_titles_list, results_dict1, results_dict2, ordere
                                        mode='markers',
                                        marker_size=5,
                                        marker_color=target_colors[t_ind],
-                                       legendgroup=ordered_classes[t_ind],
+                                       # legendgroup=ordered_classes[t_ind],
                                        name=ordered_classes[t_ind],
-                                       showlegend=True if ic == 0 else False,
+                                       showlegend=False,  # True if ic == 0 else False,
                                        opacity=.65),
-                          row=1, col=ic + 1)
+                          row=row, col=col)
 
-    fig.update_layout(xaxis1_showgrid=True, yaxis1_showgrid=True, xaxis1_zeroline=True, yaxis1_zeroline=True,
-                      xaxis1_showticklabels=False, yaxis1_showticklabels=False,
-                      xaxis2_showgrid=True, yaxis2_showgrid=True, xaxis2_zeroline=True, yaxis2_zeroline=True,
-                      xaxis2_showticklabels=False, yaxis2_showticklabels=False,
-                      plot_bgcolor='rgba(0,0,0,0)')
-    fig.update_yaxes(linecolor='black', mirror=True)  # , gridcolor='grey', zerolinecolor='grey')
-    fig.update_xaxes(linecolor='black', mirror=True)  # , gridcolor='grey', zerolinecolor='grey')
-    fig.update_layout(font=dict(size=FONTSIZE),
-                      legend_font_size=LEGEND_FONTSIZE,
-                      legend_itemsizing='constant')
+    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_yaxes(linecolor='black', mirror=True,
+                     showgrid=True, zeroline=True, showticklabels=False,
+                     title='tSNE2')
+    fig.update_xaxes(linecolor='black', mirror=True,
+                     showgrid=True, zeroline=True, showticklabels=False,
+                     title='tSNE1')
+    fig.update_layout(font=dict(size=FONTSIZE))
+
+    ylevels = np.linspace(1.1, 0.05, n_images)
+    xlevel = 1.05
+
+    for ind in range(n_images):
+        fig.add_layout_image(
+            dict(source=images[ind],
+                 y=ylevels[ind], x=xlevel)
+        )
+        fig.add_annotation(y=ylevels[ind] - 0.03, x=xlevel + .25,
+                           text=stits[ind],
+                           showarrow=False,
+                           xref='paper',
+                           yref='paper',
+                           xanchor='left',
+                           yanchor='top',
+                           font_size=int(FONTSIZE * 0.8))
+    fig.update_annotations(font_size=FONTSIZE)
+    imsize = 0.28 if molecule_name == 'urea' else 0.22
+    fig.update_layout_images(dict(
+        xref="paper",
+        yref="paper",
+        sizex=imsize,
+        sizey=imsize,
+        xanchor="left",
+        yanchor="top"
+    ))
+    fig.layout.margin.r = 300
+    #fig.show()
 
     return fig
-
-
-def paper_form_accuracy_fig(results_dict, ordered_classes, temp_series):
-    scores = {}
-    melt_names = ['Crystal', 'Melt']
-    fig = go.Figure()  # make_subplots(cols=1, rows=1, subplot_titles=["Low Temperature", "High Temperature"], horizontal_spacing=0.1)
-    # letts = ['a', 'b']
-    for temp_ind in range(1, 2):
-        # lett = letts[temp_ind]
-        if temp_ind == 0:
-            inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
-            temp_type = "Low"
-        else:
-            inds = np.argwhere(results_dict['Temperature'] > temp_series[0])[:, 0]
-            temp_type = "High"
-        probs = results_dict['Type_Prediction'][inds]
-        predicted_class = np.argmax(probs, axis=1)
-        true_labels = results_dict['Targets'][inds]
-
-        cmat = confusion_matrix(true_labels, predicted_class, normalize='true', labels=np.arange(len(ordered_classes)) if temp_ind < 2 else np.arange(len(melt_names)))
-
-        try:
-            auc = roc_auc_score(true_labels, probs, multi_class='ovo')
-        except ValueError:
-            auc = 1
-
-        f1 = f1_score(true_labels, predicted_class, average='micro')
-
-        fig.add_trace(go.Heatmap(z=cmat, x=ordered_classes, y=ordered_classes,
-                                 text=np.round(cmat, 2), texttemplate="%{text:.2f}", showscale=False,
-                                 colorscale='blues'),
-                      )
-
-        # fig.layout.annotations[temp_ind].update(text=f"({lett}) {temp_type} T: ROC AUC={auc:.2f}, F1={f1:.2f}")
-
-        scores[str(temp_type) + '_F1'] = f1
-        scores[str(temp_type) + '_ROC_AUC'] = auc
-
-    fig.update_xaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
-                     showline=True)
-    fig.update_yaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
-                     showline=True)
-
-    fig.update_xaxes(title_text="Predicted Class")
-    fig.update_yaxes(title_text="True Class")
-    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
-    fig.update_layout(font=dict(size=FONTSIZE))
-    return fig, scores
 
 
 def process_daisuke_dats():
@@ -208,45 +228,69 @@ def process_daisuke_dats():
     return d_results_dict['UTmixedonly_w_o_inter_MK_style.dat'], d_results_dict['Nmixed_MK_style.dat']
 
 
-def paper_defect_accuracy_fig(results_dict, defect_names, temp_series):
+def combined_accuracy_fig(results_dict, ordered_classes, temp_series):
     scores = {}
-    fig = go.Figure()
-    for temp_ind in range(1, 2):
-        if temp_ind == 0:
-            inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
-            temp_type = "Low"
-        else:
-            inds = np.argwhere(results_dict['Temperature'] > temp_series[0])[:, 0]
-            temp_type = "High"
+    melt_names = ['Crystal', 'Melt']
+    defect_names = ['Bulk', 'Surface']
 
-        probs = results_dict['Defect_Prediction'][inds]
-        predicted_class = np.argmax(probs, axis=1)
-        true_labels = results_dict['Defects'][inds]
+    fig = make_subplots(cols=2, rows=1,
+                        subplot_titles=["(a) Polymorph", "(b) Topology"],
+                        horizontal_spacing=0.1)
+    # letts = ['a', 'b']
+    temp_ind = 1
+    inds = np.argwhere(results_dict['Temperature'] > temp_series[0])[:, 0]
+    temp_type = "High"
+    probs = results_dict['Type_Prediction'][inds]
+    predicted_class = np.argmax(probs, axis=1)
+    true_labels = results_dict['Targets'][inds]
 
-        cmat = confusion_matrix(true_labels, predicted_class, normalize='true', labels=np.arange(2))
+    cmat = confusion_matrix(true_labels, predicted_class, normalize='true', labels=np.arange(len(ordered_classes)) if temp_ind < 2 else np.arange(len(melt_names)))
 
-        try:
-            auc = roc_auc_score(true_labels, probs, multi_class='ovo')
-        except ValueError:
-            auc = 1
+    try:
+        auc = roc_auc_score(true_labels, probs, multi_class='ovo')
+    except ValueError:
+        auc = 1
 
-        f1 = f1_score(true_labels, predicted_class, average='micro')
+    f1 = f1_score(true_labels, predicted_class, average='micro')
 
-        fig.add_trace(go.Heatmap(z=cmat, x=defect_names, y=defect_names, colorscale='blues',
-                                 text=np.round(cmat, 2), texttemplate="%{text:.2f}", showscale=False),
-                      )
+    scores[str(temp_type) + '_F1'] = f1
+    scores[str(temp_type) + '_ROC_AUC'] = auc
 
-        scores[str(temp_type) + '_F1'] = f1
-        scores[str(temp_type) + '_ROC_AUC'] = auc
+    fig.add_trace(go.Heatmap(z=cmat, x=ordered_classes, y=ordered_classes,
+                             text=np.round(cmat, 2), texttemplate="%{text:.2f}", showscale=False,
+                             colorscale='blues'),
+                  row=1, col=1)
+
+    probs = results_dict['Defect_Prediction'][inds]
+    predicted_class = np.argmax(probs, axis=1)
+    true_labels = results_dict['Defects'][inds]
+
+    cmat = confusion_matrix(true_labels, predicted_class, normalize='true', labels=np.arange(2))
+
+    try:
+        auc = roc_auc_score(true_labels, probs, multi_class='ovo')
+    except ValueError:
+        auc = 1
+
+    f1 = f1_score(true_labels, predicted_class, average='micro')
+
+    fig.add_trace(go.Heatmap(z=cmat, x=defect_names, y=defect_names, colorscale='blues',
+                             text=np.round(cmat, 2), texttemplate="%{text:.2f}", showscale=False),
+                  row=1, col=2)
 
     fig.update_xaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True)
     fig.update_yaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
                      showline=True)
+
+    scores[str(temp_type) + 'top_F1'] = f1
+    scores[str(temp_type) + 'top_ROC_AUC'] = auc
+
     fig.update_xaxes(title_text="Predicted Class")
-    fig.update_yaxes(title_text="True Class")
+    fig.update_yaxes(title_text="True Class", row=1, col=1)
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig.update_layout(font=dict(size=FONTSIZE))
+
     return fig, scores
 
 
@@ -267,11 +311,6 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
 
     sigma = min(5, len(traj_dict['overall_fraction']) / 100)
     fig = go.Figure()
-    # make_subplots(cols=2, rows=1,
-    #                     subplot_titles=['(a) Interface',
-    #                                     '(b) Bulk'],
-    #                     x_title="Time (ps)", y_title="Form Fraction")
-    # for i2, key in enumerate(['inside_fraction', 'outside_fraction']):
     key = 'inside_number'
     i2 = 0
     traj = traj_dict[key]
@@ -281,13 +320,15 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
                                  name=ordered_class_names[ind],
                                  legendgroup=ordered_class_names[ind],
                                  line_color=colors[ind],
+                                 line_width=4,
                                  mode='lines',
                                  showlegend=True if i2 == 0 else False,
                                  stackgroup='one' if stacked_plot else None),
-                      )  # row=1, col=i2 + 1)
+                      )
 
     fig.update_xaxes(range=[-0.1, 1.1], zeroline=False, title='Time (ps)')
-    fig.update_yaxes(title='Molecules Per Form')
+    fig.update_yaxes(range=[0, 500])
+    fig.update_yaxes(title='Number of Molecules')
     fig.update_xaxes(zerolinecolor='black')
     fig.update_yaxes(zerolinecolor='black')  # , gridcolor='grey')
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
@@ -296,18 +337,18 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
 
     timepoints = np.asarray([0, 250, 500, 750, 1000]) / 1e3
     for time in timepoints:
-        for col in [1, 2]:
-            fig.add_vline(x=time, line_dash='dash', line_color='grey', col=col, row=1)  #
+        fig.add_vline(x=time, line_dash='dash', line_color='grey')  #
 
+    fig.add_vline(x=-0.01, line_color='black')
     ylevel = -0.25
     xlevels = np.linspace(-0.1, 0.9, len(images))
-    stits = ['(b)', '(c)', '(d)', '(e)', '(f)']
+    stits = ['0', '250 ns', '500 ns', '750 ns', '1 ps']
     for ind in range(len(images)):
         fig.add_layout_image(
             dict(source=images[ind],
                  y=ylevel, x=xlevels[ind])
         )
-        fig.add_annotation(y=ylevel + 0.05, x=xlevels[ind],
+        fig.add_annotation(y=ylevel + 0.05, x=xlevels[ind] + 0.015,
                            text=stits[ind],
                            showarrow=False,
                            xref='paper',
@@ -322,9 +363,8 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
         xanchor="left",
         yanchor="top"
     ))
-    fig.update_layout(title='(a)')
     fig.layout.margin.b = 425
-    fig.show()
+    #fig.show()
 
     return fig
 
@@ -368,8 +408,8 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
     fig = make_subplots(cols=2, rows=2,
                         subplot_titles=['(a) 100K Core',
                                         '(b) 100K Surface',
-                                        '(g) 350K Core',
-                                        '(h) 350K Surface',
+                                        '(c) 350K Core',
+                                        '(d) 350K Surface',
                                         ],
                         vertical_spacing=0.5,
                         )
@@ -379,24 +419,27 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
             traj = traj_dict[key]
             for ind in range(3):
                 fig.add_trace(go.Scatter(x=traj_dict['time_steps'] / 1000000,
-                                         y=gaussian_filter1d(traj[:, ind], 1, mode='nearest'),
+                                         y=gaussian_filter1d(traj[:, ind], 2, mode='nearest'),
                                          name=traj_dict['classes'][ind],
                                          line_color=colors_list[i3][ind],
                                          mode='lines',
+                                         line_width=2,
                                          showlegend=True if i3 == 0 and i2 == 0 else False,
                                          stackgroup='one' if stacked_plot else None),
                               row=i3 + 1, col=i2 + 1)
 
     fig.update_xaxes(range=[-0.1, 5.1], zeroline=False)
-    fig.update_xaxes(range=[-.0025, .525], row=2, col=1, zeroline=False)
-    fig.update_xaxes(range=[-.0025, .525], row=2, col=2, zeroline=False)
+    fig.add_vline(x=-0.01, line_color='black')
+    fig.update_xaxes(range=[-.0025, .525], row=2, col=1, zeroline=True)
+    fig.update_xaxes(range=[-.0025, .525], row=2, col=2, zeroline=True)
+    fig.update_yaxes(rangemode='nonnegative')
 
     # fig.update_yaxes(range=[0, 1])
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig.update_xaxes(zerolinecolor='black', showgrid=False)
     fig.update_yaxes(zerolinecolor='black', showgrid=False)
-    fig.update_yaxes(title='Molecules Per Form', row=1, col=1)
-    fig.update_yaxes(title='Molecules Per Form', row=2, col=1)
+    fig.update_yaxes(title='Number of Molecules', row=1, col=1)
+    fig.update_yaxes(title='Number of Molecules', row=2, col=1)
     fig.update_xaxes(title='Time (ns)', row=2, col=1)
     fig.update_xaxes(title='Time (ns)', row=2, col=2)
     fig.update_layout(font=dict(size=FONTSIZE))
@@ -414,15 +457,15 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
             for col in [1, 2]:
                 fig.add_vline(x=time, line_dash='dash', line_color='grey', row=row, col=col)
 
-    ylevel = .7
-    xlevels = np.linspace(-0.1, 0.86, 4)
-    stits = ['(c)', '(d)', '(e)', '(f)']
+    ylevel = .65
+    xlevels = np.linspace(-0.05, 0.86, 4)
+    stits = ['0 ns', '1 ns', '2 ns', '3 ns']
     for ind in range(4):
         fig.add_layout_image(
             dict(source=images[ind],
                  y=ylevel, x=xlevels[ind])
         )
-        fig.add_annotation(y=ylevel - 0.05, x=xlevels[ind],
+        fig.add_annotation(y=ylevel - 0.05, x=xlevels[ind] - 0.05,
                            text=stits[ind],
                            showarrow=False,
                            xref='paper',
@@ -430,14 +473,14 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
                            xanchor='left',
                            yanchor='top')
 
-    stits = ['(i)', '(j)', '(k)', '(l)']
-    ylevel = -0.075
+    stits = ['0 ps', '50 ps', '100 ps', '500 ps']
+    ylevel = -0.1
     for ind in range(4):
         fig.add_layout_image(
             dict(source=images[ind + 4],
                  y=ylevel, x=xlevels[ind])
         )
-        fig.add_annotation(y=ylevel - 0.05, x=xlevels[ind],
+        fig.add_annotation(y=ylevel - 0.05, x=xlevels[ind] - 0.05,
                            text=stits[ind],
                            showarrow=False,
                            xref='paper',
@@ -448,14 +491,14 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
     fig.update_layout_images(dict(
         xref="paper",
         yref="paper",
-        sizex=0.35,
-        sizey=0.35,
+        sizex=0.3,
+        sizey=0.3,
         xanchor="left",
         yanchor="top"
     ))
 
     fig.layout.margin.b = 250
-    fig.show()
+    #fig.show()
     return fig
 
 
@@ -472,3 +515,51 @@ COLORS = ['rgb(141,211,199)',
           'rgb(252,205,229)',
           'rgb(217,217,217)',
           'rgb(188,35,189)']
+
+
+def paper_form_accuracy_fig(results_dict, ordered_classes, temp_series):
+    scores = {}
+    melt_names = ['Crystal', 'Melt']
+    fig = go.Figure()  # make_subplots(cols=1, rows=1, subplot_titles=["Low Temperature", "High Temperature"], horizontal_spacing=0.1)
+    # letts = ['a', 'b']
+    for temp_ind in range(1, 2):
+        # lett = letts[temp_ind]
+        if temp_ind == 0:
+            inds = np.argwhere(results_dict['Temperature'] == temp_series[0])[:, 0]
+            temp_type = "Low"
+        else:
+            inds = np.argwhere(results_dict['Temperature'] > temp_series[0])[:, 0]
+            temp_type = "High"
+        probs = results_dict['Type_Prediction'][inds]
+        predicted_class = np.argmax(probs, axis=1)
+        true_labels = results_dict['Targets'][inds]
+
+        cmat = confusion_matrix(true_labels, predicted_class, normalize='true', labels=np.arange(len(ordered_classes)) if temp_ind < 2 else np.arange(len(melt_names)))
+
+        try:
+            auc = roc_auc_score(true_labels, probs, multi_class='ovo')
+        except ValueError:
+            auc = 1
+
+        f1 = f1_score(true_labels, predicted_class, average='micro')
+
+        fig.add_trace(go.Heatmap(z=cmat, x=ordered_classes, y=ordered_classes,
+                                 text=np.round(cmat, 2), texttemplate="%{text:.2f}", showscale=False,
+                                 colorscale='blues'),
+                      )
+
+        # fig.layout.annotations[temp_ind].update(text=f"({lett}) {temp_type} T: ROC AUC={auc:.2f}, F1={f1:.2f}")
+
+        scores[str(temp_type) + '_F1'] = f1
+        scores[str(temp_type) + '_ROC_AUC'] = auc
+
+    fig.update_xaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
+                     showline=True)
+    fig.update_yaxes(linewidth=1, linecolor='black', mirror=True, ticks='inside',
+                     showline=True)
+
+    fig.update_xaxes(title_text="Predicted Class")
+    fig.update_yaxes(title_text="True Class")
+    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_layout(font=dict(size=FONTSIZE))
+    return fig, scores
