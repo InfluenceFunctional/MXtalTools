@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from models.components import MLP
 from torch_geometric import nn as gnn
+from torch_scatter import scatter
 
 
 class global_aggregation(nn.Module):
@@ -10,7 +11,7 @@ class global_aggregation(nn.Module):
     NOTE - I believe PyG might have a new built-in method which does exactly this
     """
 
-    def __init__(self, agg_func, depth):  # todo rewrite this with new pyg aggr class
+    def __init__(self, agg_func, depth):  # todo rewrite this with new pyg aggr class and/or custom functions (e.g., scatter)
         super(global_aggregation, self).__init__()
         self.agg_func = agg_func
         if agg_func == 'mean':
@@ -19,6 +20,8 @@ class global_aggregation(nn.Module):
             self.agg = gnn.global_add_pool
         elif agg_func == 'max':
             self.agg = gnn.global_max_pool
+        elif self.agg_func == '1o max':
+            pass
         elif agg_func == 'attention':
             self.agg = gnn.GlobalAttention(nn.Sequential(nn.Linear(depth, depth), nn.LeakyReLU(), nn.Linear(depth, 1)))
         elif agg_func == 'set2set':
@@ -33,18 +36,17 @@ class global_aggregation(nn.Module):
                 output_dim=depth,
                 norm=None,
                 dropout=0)  # condense to correct number of filters
+        elif agg_func == 'mean sum':  # todo add a max aggregator which picks max by vector length (equivariant!)
+            pass
         elif agg_func == 'combo':
             self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
-            # self.agg_list3 = [gnn.global_sort_pool]
-            # self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))])  # aggregation functions requiring parameters
             self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(
                 MLP(input_dim=depth,
                     output_dim=1,
-                    layers=4,
+                    layers=1,
                     filters=depth,
                     activation='leaky relu',
                     norm=None),
-                # nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1))
             )])  # aggregation functions requiring parameters
             self.agg_fc = MLP(
                 layers=1,
@@ -58,7 +60,7 @@ class global_aggregation(nn.Module):
         elif agg_func is None:
             self.agg = nn.Identity()
 
-    def forward(self, x, batch, cluster=None, output_dim=None):
+    def forward(self, x, batch, cluster=None, output_dim=None, v=None):
         if self.agg_func == 'set2set':
             x = self.agg(x, batch, size=output_dim)
             return self.agg_fc(x)
@@ -74,5 +76,12 @@ class global_aggregation(nn.Module):
             return x  # do nothing
         elif self.agg_func == 'molwise':
             return self.agg(cluster=cluster, batch=batch, x=x)[0]
+        elif self.agg_func == 'mean sum':
+            return (scatter(x, batch, dim_size=output_dim, dim=0, reduce='mean') +
+                    scatter(x, batch, dim_size=output_dim, dim=0, reduce='sum'))
+        elif self.agg_func == 'equivariant max':  # todo equivariant attention aggregation
+            # assume the input is nx3xk dimensional
+            agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)])
+            return scatter(x, batch, dim_size=output_dim, dim=0, reduce='max'), agg
         else:
             return self.agg(x, batch, size=output_dim)

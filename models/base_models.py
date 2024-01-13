@@ -7,13 +7,14 @@ from models.global_aggregation import global_aggregation
 from models.components import MLP, construct_radial_graph
 
 from constants.space_group_feature_tensor import SG_FEATURE_TENSOR
+import e3nn.o3 as o3
 
 
 class molecule_graph_model(nn.Module):
     def __init__(self, num_atom_feats,
                  output_dimension,
-                 graph_convolution_type,
                  graph_aggregator,
+                 equivariant_graph=False,
                  concat_pos_to_atom_features=False,
                  concat_mol_to_atom_features=False,
                  concat_crystal_to_atom_features=False,
@@ -26,7 +27,6 @@ class molecule_graph_model(nn.Module):
                  fc_norm_mode=None,
                  graph_node_norm=None,
                  graph_node_dropout=0,
-                 graph_message_norm=None,
                  graph_message_dropout=0,
                  num_radial=32,
                  num_attention_heads=4,
@@ -48,6 +48,7 @@ class molecule_graph_model(nn.Module):
         super(molecule_graph_model, self).__init__()
 
         torch.manual_seed(seed)
+        self.equivariant_graph = equivariant_graph
         self.periodic_structure = periodic_structure
         self.concat_pos_to_atom_features = concat_pos_to_atom_features
         self.concat_mol_to_atom_features = concat_mol_to_atom_features
@@ -60,7 +61,11 @@ class molecule_graph_model(nn.Module):
 
         input_node_depth = num_atom_feats
         if concat_pos_to_atom_features:
-            input_node_depth += cartesian_dimension
+            if self.equivariant_graph:
+                input_node_depth += 1  # radial dimension - spherical harmonics explicitly added later
+            else:
+                input_node_depth += cartesian_dimension
+
         if concat_mol_to_atom_features:
             input_node_depth += num_mol_feats
         if concat_crystal_to_atom_features:
@@ -74,14 +79,12 @@ class molecule_graph_model(nn.Module):
             graph_embedding_depth=graph_embedding_depth,
             nodewise_fc_layers=nodewise_fc_layers,
             message_depth=graph_message_depth,
-            convolution_type=graph_convolution_type,
             num_blocks=num_graph_convolutions,
             num_radial=num_radial,
             max_num_neighbors=max_num_neighbors,
             activation=activation,
             embedding_hidden_dimension=atom_type_embedding_dims,
             cutoff=convolution_cutoff,
-            message_norm=graph_message_norm,
             message_dropout=graph_message_dropout,
             nodewise_norm=graph_node_norm,
             nodewise_dropout=graph_node_dropout,
@@ -89,6 +92,7 @@ class molecule_graph_model(nn.Module):
             attention_heads=num_attention_heads,
             periodize_inside_nodes=periodic_structure,
             outside_convolution_type=outside_convolution_type,
+            equivariant_graph=equivariant_graph,
         )
 
         # initialize global pooling operation
@@ -124,9 +128,13 @@ class molecule_graph_model(nn.Module):
                 self.output_fc = nn.Identity()
 
     def forward(self, data, edges_dict=None, return_latent=False, return_dists=False):
-
-        if edges_dict is None:  # option to pass pre-prepared radial graph
-            edges_dict = construct_radial_graph(data.pos, data.batch, data.ptr, self.convolution_cutoff, self.max_num_neighbors, aux_ind=data.aux_ind)
+        if edges_dict is None:  # option to rebuild radial graph
+            edges_dict = construct_radial_graph(data.pos,
+                                                data.batch,
+                                                data.ptr,
+                                                self.convolution_cutoff,
+                                                self.max_num_neighbors,
+                                                aux_ind=data.aux_ind)
 
         if self.graph_net.outside_convolution_type != 'none':
             agg_batch = edges_dict['inside_batch']
@@ -134,44 +142,66 @@ class molecule_graph_model(nn.Module):
             agg_batch = data.batch
 
         x = data.x  # already cloned before it comes into this function
-        if self.concat_pos_to_atom_features:
-            x = torch.cat((x, data.pos), dim=-1)
-
-        if self.concat_mol_to_atom_features:
-            nodes_per_graph = torch.diff(data.ptr)
-            x = torch.cat((x,
-                           torch.repeat_interleave(data.mol_x, nodes_per_graph, 0)),
-                          dim=-1)
-
-        if self.concat_crystal_to_atom_features:
-            nodes_per_graph = torch.diff(data.ptr)
-            crystal_features = torch.tensor(self.SG_FEATURE_TENSOR[data.sg_ind], dtype=torch.float32, device=data.x.device)
-            x = torch.cat((x,
-                           torch.repeat_interleave(crystal_features, nodes_per_graph, 0)),
-                          dim=-1)
-
-        if self.concat_cell_params_to_atom_features:
-            nodes_per_graph = torch.diff(data.ptr)
-            x = torch.cat((x,
-                           torch.repeat_interleave(data.cell_params, nodes_per_graph, 0)),
-                          dim=-1)
-
-        x = self.graph_net(x, data.pos, data.batch, data.ptr, edges_dict)  # get graph encoding
-        if self.global_pool.agg_func == 'molwise':
-            x = self.global_pool(x, agg_batch, cluster=data.mol_ind, output_dim=data.num_graphs)  # aggregate atoms to molecules
+        x = self.append_init_node_features(data,
+                                           x)
+        x = self.graph_net(x,
+                           data.pos,
+                           data.batch,
+                           data.ptr,
+                           edges_dict)  # get graph encoding
+        if self.equivariant_graph:
+            x, v = x
         else:
-            x = self.global_pool(x, agg_batch, output_dim=data.num_graphs)  # aggregate atoms to molecule
+            v = None
 
-        if self.mol_fc is not None:
-            mol_feats = self.mol_fc(data.mol_x)  # molecule features are repeated, only need one per molecule (hence data.ptr)
+        x, v = self.global_pool(x,
+                                agg_batch,
+                                v=v,
+                                cluster=data.mol_ind if self.global_pool.agg_func == 'molwise' else None,
+                                output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
+
+        if not self.equivariant_graph:
+            # todo add equivariant support here
+            x = self.gnn_mlp(x,
+                             conditions=self.mol_fc(data.mol_x) if self.mol_fc is not None else None  # add graph-wise features
+                             ) if self.num_fc_layers > 0 else x  # mix graph encoding with molecule-scale features
+
+            output = self.output_fc(x)
+
         else:
-            mol_feats = None
+            output = v
 
-        if self.num_fc_layers > 0:
-            x = self.gnn_mlp(x, conditions=mol_feats)  # mix graph fingerprint with molecule-scale features
+        extra_outputs = self.collect_extra_outputs(data, edges_dict, return_dists, return_latent, x)
 
-        output = self.output_fc(x)
+        if len(extra_outputs) > 0:
+            return output, extra_outputs
+        else:
+            return output
 
+    '''
+    equivariance test
+    x = x0.clone()
+    v = v0.clone()
+    
+    from scipy.spatial.transform import Rotation as R
+    rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
+    _, embedding = self.global_pool(x,
+                            agg_batch,
+                            v=v,
+                            cluster=data.mol_ind if self.global_pool.agg_func == 'molwise' else None,
+                            output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representationrotv = torch.einsum('ij, njk -> nik', rmat, out)
+    rotv = torch.einsum('ij, njk -> nik', rmat, v)
+    rotembedding = torch.einsum('ij, nkj -> nki', rmat, embedding)
+    
+    _, rotembedding2 = self.global_pool(x,
+                            agg_batch,
+                            v=rotv,
+                            cluster=data.mol_ind if self.global_pool.agg_func == 'molwise' else None,
+                            output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representationrotv = torch.einsum('ij, njk -> nik', rmat, out)print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
+    print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
+    '''
+
+    def collect_extra_outputs(self, data, edges_dict, return_dists, return_latent, x):
         extra_outputs = {}
         if return_dists:
             extra_outputs['dists_dict'] = edges_dict
@@ -180,14 +210,42 @@ class molecule_graph_model(nn.Module):
                 extra_outputs['dists_dict']['intermolecular_dist_batch'] = data.batch[edges_dict['edge_index_inter'][0]]
                 extra_outputs['dists_dict']['intermolecular_dist_atoms'] = [data.x[edges_dict['edge_index_inter'][0], 0].long(), data.x[edges_dict['edge_index_inter'][1], 0].long()]
                 extra_outputs['dists_dict']['intermolecular_dist_inds'] = edges_dict['edge_index_inter']
-
         if return_latent:
             extra_outputs['final_activation'] = x.cpu().detach().numpy()
+        return extra_outputs
 
-        assert torch.sum(torch.isnan(output)) == 0
-        assert torch.sum(torch.isfinite(output)) == len(output.flatten())
+    def append_init_node_features(self, data, x):
+        if self.concat_pos_to_atom_features:
+            if self.equivariant_graph:
+                # rad = torch.linalg.norm(data.pos, dim=1)
+                # centroid = torch.zeros((1, 3), device=data.pos.device, dtype=data.pos.dtype)
+                # sh = o3.spherical_harmonics(
+                #     l=[ind for ind in range(0, self.sh_order + 1)],
+                #     x=data.pos - centroid,
+                #     normalize=True,
+                #     normalization='component'
+                # )
+                # x = torch.cat((x, rad[:, None], sh), dim=-1)
 
-        if len(extra_outputs) > 0:
-            return output, extra_outputs
-        else:
-            return output
+                rad = torch.linalg.norm(data.pos, dim=1)
+                x = torch.cat((x, rad[:, None], data.pos), dim=-1)
+            else:
+                x = torch.cat((x, data.pos), dim=-1)
+
+        if self.concat_mol_to_atom_features:
+            nodes_per_graph = torch.diff(data.ptr)
+            x = torch.cat((x,
+                           torch.repeat_interleave(data.mol_x, nodes_per_graph, 0)),
+                          dim=-1)
+        if self.concat_crystal_to_atom_features:
+            nodes_per_graph = torch.diff(data.ptr)
+            crystal_features = torch.tensor(self.SG_FEATURE_TENSOR[data.sg_ind], dtype=torch.float32, device=data.x.device)
+            x = torch.cat((x,
+                           torch.repeat_interleave(crystal_features, nodes_per_graph, 0)),
+                          dim=-1)
+        if self.concat_cell_params_to_atom_features:
+            nodes_per_graph = torch.diff(data.ptr)
+            x = torch.cat((x,
+                           torch.repeat_interleave(data.cell_params, nodes_per_graph, 0)),
+                          dim=-1)
+        return x

@@ -1,10 +1,11 @@
 import sys
 
 import torch
-import torch_geometric
 from torch import nn
 import torch_geometric.nn as gnn
-import torch.nn.functional as F
+from torch.nn import functional as F
+from e3nn import o3
+import e3nn.nn as enn
 
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 
@@ -12,7 +13,9 @@ from models.asymmetric_radius_graph import asymmetric_radius_graph
 class MLP(nn.Module):
     def __init__(self, layers, filters, input_dim, output_dim,
                  activation='gelu', seed=0, dropout=0, conditioning_dim=0,
-                 norm=None, bias=True, norm_after_linear=False, conditioning_mode='concat_to_first'):
+                 norm=None, bias=True, norm_after_linear=False,
+                 conditioning_mode='concat_to_first',
+                 equivariant=False):
         super(MLP, self).__init__()
         # initialize constants and layers
 
@@ -21,7 +24,7 @@ class MLP(nn.Module):
         if isinstance(filters, list):
             self.n_filters = filters
         else:
-            self.n_filters = [filters for n in range(layers + 1)]
+            self.n_filters = [filters for _ in range(layers + 1)]
             self.same_depth = True
 
         if self.n_filters.count(self.n_filters[0]) != len(self.n_filters):  # if they are not all the same, we need residue adjustments
@@ -41,6 +44,7 @@ class MLP(nn.Module):
         self.dropout_p = dropout
         self.activation = activation
         self.norm_after_linear = norm_after_linear
+        self.equivariant = equivariant
 
         torch.manual_seed(seed)
 
@@ -78,9 +82,19 @@ class MLP(nn.Module):
         else:
             self.output_layer = nn.Identity()
 
-    def forward(self, x, conditions=None, return_latent=False, batch=None):
+        if equivariant:
+            assert self.same_depth
+            assert self.output_dim == self.n_filters[-1] == self.n_filters[0]
+            self.equivariant_layers = torch.nn.ModuleList([
+                nn.Linear(self.n_filters[i + 1], self.n_filters[i + 1], bias=False)
+                for i in range(self.n_layers)
+            ])
+
+    def forward(self, x, v=None, conditions=None, return_latent=False, batch=None):
         if conditions is not None:
             x = torch.cat((x, conditions), dim=1)
+        if v is not None:
+            x = torch.cat((x, torch.linalg.norm(v, dim=1)), dim=-1)
 
         x = self.init_layer(x)  # get the right feature depth
 
@@ -94,6 +108,78 @@ class MLP(nn.Module):
                 x = res + dropout(activation(norm(linear(x), batch=batch)))  # residue
             else:
                 x = res + dropout(activation(linear(norm(x, batch=batch))))  # residue
+
+            if v is not None:
+                v = v + x[:, None, :] * self.equivariant_layers[i](v)
+
+        if not self.equivariant:
+            if return_latent:
+                return self.output_layer(x), x
+            else:
+                return self.output_layer(x)
+        else:
+            if return_latent:
+                return self.output_layer(x), v, x
+            else:
+                return self.output_layer(x), v
+
+
+'''
+equivariance test
+v = v0.clone()
+from scipy.spatial.transform import Rotation as R
+rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
+embedding = v + x[:, None, :] * self.equivariant_layers[i](v)
+rotv = torch.einsum('ij, njk -> nik', rmat, v)
+rotembedding = torch.einsum('ij, njk -> nik', rmat, embedding)
+
+rotembedding2 = rotv + x[:, None, :] * self.equivariant_layers[i](rotv)
+print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
+'''
+
+class EMLP(nn.Module):  # equivariant MLP  # todo deprecate
+    def __init__(self, layers, irreps_hidden, irreps_in, irreps_out,
+                 activation='gelu', seed=0,
+                 norm=None):
+        super(EMLP, self).__init__()
+        # initialize constants and layers
+
+        self.n_layers = layers
+        self.irreps_out = irreps_out
+        self.irreps_in = irreps_in
+        self.irreps_hidden = irreps_hidden
+        self.activation = activation
+
+        torch.manual_seed(seed)
+
+        self.fc_layers = torch.nn.ModuleList([
+            o3.Linear(irreps_hidden, irreps_hidden)
+            for i in range(self.n_layers)
+        ])
+
+        activations = [Activation(activation, 1) if '0e' in str(irrep) else None for irrep in irreps_hidden]
+        self.fc_activations = torch.nn.ModuleList([
+            enn.Activation(irreps_in=irreps_hidden,
+                           acts=activations)
+            for _ in range(self.n_layers)
+        ])
+
+        if self.irreps_in != self.irreps_hidden:
+            self.init_layer = o3.Linear(self.irreps_in, self.irreps_hidden)  # set appropriate sizing
+        else:
+            self.init_layer = nn.Identity()
+
+        if self.irreps_in != self.irreps_hidden:
+            self.output_layer = o3.Linear(self.irreps_hidden, self.irreps_out)
+        else:
+            self.output_layer = nn.Identity()
+
+    def forward(self, x, conditions=None, return_latent=False, batch=None):
+
+        x = self.init_layer(x)  # get the right feature depth
+
+        for i, (linear, activation) in enumerate(zip(self.fc_layers, self.fc_activations)):
+            x = x + activation(linear(x))  # residue -- always same hidden dimension
 
         if return_latent:
             return self.output_layer(x), x
@@ -159,7 +245,7 @@ class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation
         # define module to learn parameters
         # 1d convolutions allow for grouping of terms, unlike nn.linear which is always fully-connected.
         # #This way should be fast and efficient, and play nice with pytorch optim
-        self.linear = nn.Conv1d(channels * n_basis, channels, kernel_size=1, groups=int(channels), bias=False)
+        self.linear = nn.Conv1d(channels * n_basis, channels, kernel_size=(1, 1), groups=int(channels), bias=False)
 
         # nn.init.normal(self.linear.weight.data, std=0.1)
 
@@ -173,8 +259,8 @@ class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation
         return torch.exp(-self.gamma * (x - self.dict) ** 2)
 
     def forward(self, x):
-        x = self.kernel(x).unsqueeze(-1)  # run activation, output shape batch, features, y, x, basis
-        x = x.reshape(x.shape[0], x.shape[1] * x.shape[2], x.shape[3])  # concatenate basis functions with filters
+        x = self.kernel(x).unsqueeze(-1).unsqueeze(-1)  # run activation, output shape batch, features, y, x, basis
+        x = x.reshape(x.shape[0], x.shape[1] * x.shape[2], x.shape[3], x.shape[4])  # concatenate basis functions with filters
         x = self.linear(x).squeeze(-1).squeeze(-1)  # apply linear coefficients and sum
 
         return x
@@ -210,3 +296,12 @@ def construct_radial_graph(pos, batch, ptr, cutoff, max_num_neighbors, aux_ind=N
                                       max_num_neighbors=max_num_neighbors, flow='source_to_target')  # note - requires batch be monotonically increasing
 
         return {'edge_index': edge_index}
+
+
+class ShiftedSoftplus(torch.nn.Module):
+    def __init__(self):
+        super(ShiftedSoftplus, self).__init__()
+        self.shift = torch.log(torch.tensor(2.0)).item()
+
+    def forward(self, x):
+        return F.softplus(x) - self.shift

@@ -602,7 +602,7 @@ class Modeller:
             #                                    self.config.gradient_norm_clip)  # gradient clipping
             #     self.optimizers_dict['autoencoder'].step()  # update parameters
 
-        if step == 0:  # save the complete final samples
+        if step == 1:  # save the complete final samples
             self.logger.update_stats_dict(self.epoch_type,
                                           ['sample', 'decoded_sample'],
                                           [data.cpu().detach(), decoded_data.cpu().detach()
