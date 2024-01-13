@@ -4,7 +4,7 @@ from torch import nn as nn
 from models.base_models import molecule_graph_model
 from models.components import MLP
 
-from models.old import equivariant_decoder
+import torch
 
 
 class point_autoencoder(nn.Module):
@@ -16,37 +16,124 @@ class point_autoencoder(nn.Module):
         self.output_depth = self.num_classes + 3 + 1
         self.num_nodes = config.num_decoder_points
 
+        self.equivariant_encoder = config.encoder_type == 'equivariant'
+        self.equivariant_decoder = config.decoder_type == 'equivariant'
+
         self.encoder = point_encoder(seed, config)
 
-        if config.decoder_type.lower() == 'equivariant':
-            self.decoder = equivariant_decoder(config)
-        elif config.decoder_type.lower() == 'variant':  # unstructured swarm decoder
-            self.decoder = MLP(
-                layers=config.num_decoder_layers,
-                filters=config.embedding_depth * 3,
-                input_dim=config.embedding_depth * 3,
-                output_dim=self.output_depth * self.num_nodes,
-                activation='gelu',
-                norm=config.decoder_norm_mode,
-                dropout=config.decoder_dropout_probability,
-            )
+        self.decoder = MLP(
+            layers=config.num_decoder_layers,
+            filters=config.embedding_depth if self.equivariant_decoder else config.embedding_depth * 3,
+            input_dim=config.embedding_depth * 2 if self.equivariant_encoder else config.embedding_depth * 3,
+            output_dim=(self.output_depth - 3 if self.equivariant_decoder else 0) * self.num_nodes,
+            activation='gelu',
+            norm=config.decoder_norm_mode,
+            dropout=config.decoder_dropout_probability,
+            equivariant=config.decoder_type == 'equivariant',
+            vector_output_dim=self.num_nodes,
+        )
 
     def forward(self, data):
-        if self.encoder.model.equivariant_graph:
-            encoding = self.encoder(data)
-            if not self.decoder.equivariant:
-                encoding = encoding.reshape(len(encoding), encoding.shape[1] * encoding.shape[2])
-        else:
-            encoding = self.encoder(data)
+        encoding = self.encode(data)
+        return self.decode(encoding)
 
-        return self.decoder(encoding).reshape(self.num_nodes * data.num_graphs, self.output_depth)
-
-    def encode(self, data):
+    def encode(self, data):  # todo unify the I/O shapes between equivariant & point models
         """
         pass only the encoding
         """
-        encoding = self.encoder(data)
-        return encoding.reshape(len(encoding), encoding.shape[1] * encoding.shape[2])
+        if self.encoder.model.equivariant_graph:
+            encoding = self.encoder(data)
+            if not self.decoder.equivariant:
+                return encoding.reshape(len(encoding), encoding.shape[1] * encoding.shape[2])
+            else:
+                return encoding
+        else:
+            return self.encoder(data)
+
+    def decode(self, encoding):
+        if self.decoder.equivariant:
+            decoding = self.decoder(x=torch.linalg.norm(encoding, dim=-1),
+                                    v=encoding.permute(0, 2, 1))
+        else:
+            decoding = self.decoder(encoding)
+
+        if self.decoder.equivariant:
+            scalar_decoding, vector_decoding = decoding
+            # vector_decoding = vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_nodes, 3)
+            # scalar_decoding = scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)
+            return torch.cat([
+                vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_nodes, 3),
+                scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)],
+                dim=-1)
+        else:
+            return decoding.reshape(self.num_nodes * len(encoding), self.output_depth)
+
+    '''
+    >>> vector decoding equivariance test
+    from scipy.spatial.transform import Rotation as R
+    
+    rmat = torch.tensor(R.random().as_matrix(),device=encoding.device, dtype=torch.float32)
+    
+    v1 = encoding.clone()
+    rotv1 = torch.einsum('ij, nkj->nki', rmat, v1)
+    
+    decoding = self.decoder(x=torch.linalg.norm(v1, dim=-1),
+                            v=v1.permute(0,2,1))
+    y1 = decoding[1]
+    
+    decoding = self.decoder(x=torch.linalg.norm(rotv1, dim=-1),
+                            v=rotv1.permute(0,2,1))
+    y2 = decoding[1]
+    
+    roty1 = torch.einsum('ij, njk->nik', rmat, y1)
+    
+    print(torch.mean(torch.abs(y2 - roty1)))
+    
+    >>> scalar decoding invariance test
+    from scipy.spatial.transform import Rotation as R
+    
+    rmat = torch.tensor(R.random().as_matrix(),device=encoding.device, dtype=torch.float32)
+    
+    v1 = encoding.clone()
+    rotv1 = torch.einsum('ij, nkj->nki', rmat, v1)
+    
+    decoding = self.decoder(x=torch.linalg.norm(v1, dim=-1),
+                            v=v1.permute(0,2,1))
+    y1 = decoding[0]
+    
+    decoding = self.decoder(x=torch.linalg.norm(rotv1, dim=-1),
+                            v=rotv1.permute(0,2,1))
+    y2 = decoding[0]
+    torch.mean(torch.abs(y1-y2))
+    
+    >>> including reshaping and recombination
+    from scipy.spatial.transform import Rotation as R
+    
+    rmat = torch.tensor(R.random().as_matrix(), device=encoding.device, dtype=torch.float32)
+    
+    v1 = encoding.clone()
+    rotv1 = torch.einsum('ij, nkj->nki', rmat, v1)
+    
+    decoding = self.decoder(x=torch.linalg.norm(v1, dim=-1),
+                            v=v1.permute(0, 2, 1))
+    
+    scalar_decoding, vector_decoding = decoding
+    vector_decoding = vector_decoding.permute(0,2,1).reshape(len(vector_decoding) * self.num_nodes, 3)
+    scalar_decoding = scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)
+    y1 = torch.cat([vector_decoding, scalar_decoding], dim=-1)[:, :3]
+    
+    decoding = self.decoder(x=torch.linalg.norm(rotv1, dim=-1),
+                            v=rotv1.permute(0, 2, 1))
+    
+    scalar_decoding, vector_decoding = decoding
+    vector_decoding = vector_decoding.permute(0,2,1).reshape(len(vector_decoding) * self.num_nodes, 3)
+    scalar_decoding = scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)
+    y2 = torch.cat([vector_decoding, scalar_decoding], dim=-1)[:, :3]
+    
+    roty1 = torch.einsum('ij, nj->ni', rmat, y1)
+    
+    print(torch.mean(torch.abs(roty1 - y2))) 
+    '''
 
 
 class point_encoder(nn.Module):

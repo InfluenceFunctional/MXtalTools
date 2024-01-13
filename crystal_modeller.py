@@ -574,35 +574,10 @@ class Modeller:
                                            self.config.gradient_norm_clip)  # gradient clipping
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
-        if self.config.autoencoder.train_equivariance or step == 0:
-            rotations = torch.tensor(
-                R.random(data.num_graphs).as_matrix() * np.random.choice((-1, 1), replace=True, size=data.num_graphs)[:, None, None],
-                dtype=torch.float,
-                device=data.x.device)
-
-            # embed the input data then rotate the embedding
-            embed1 = self.models_dict['autoencoder'].encode(data.clone())
-            embed1 = torch.einsum('nij, nkj->nki', rotations, embed1.reshape(
-                data.num_graphs, embed1.shape[1] // 3, 3
-            ))  # rotate in 3D
-            embed1 = embed1.reshape(data.num_graphs, embed1.shape[1] * 3)
-
-            # rotate the input data and embed it
-            data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch == ind]) for ind in range(data.num_graphs)])
-            embed2 = self.models_dict['autoencoder'].encode(data.clone())
-
-            # compare the embeddings - should be identical for an equivariant embedding
-            equivariance_loss = F.smooth_l1_loss(embed1, embed2, reduction='none').mean(-1)
-            stats['encoder_equivariance_loss'] = equivariance_loss.mean().cpu().detach().numpy()
-            #
-            # if update_weights:
-            #     self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-            #     equivariance_loss.mean().backward()  # back-propagation
-            #     torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
-            #                                    self.config.gradient_norm_clip)  # gradient clipping
-            #     self.optimizers_dict['autoencoder'].step()  # update parameters
-
-        if step == 1:  # save the complete final samples
+        if step == 0:  # save the complete final samples
+            encoder_equivariance_loss, decoder_equivariance_loss = self.equivariance_test(data.clone())
+            stats['encoder_equivariance_loss'] = encoder_equivariance_loss.mean().cpu().detach().numpy()
+            stats['decoder_equivariance_loss'] = decoder_equivariance_loss.mean().cpu().detach().numpy()
             self.logger.update_stats_dict(self.epoch_type,
                                           ['sample', 'decoded_sample'],
                                           [data.cpu().detach(), decoded_data.cpu().detach()
@@ -617,6 +592,61 @@ class Modeller:
                                       list(stats.keys()),
                                       list(stats.values()),
                                       mode='append')
+
+    def equivariance_test(self, data):
+        rotations = torch.tensor(
+            R.random(data.num_graphs).as_matrix() * np.random.choice((-1, 1), replace=True, size=data.num_graphs)[:, None, None],
+            dtype=torch.float,
+            device=data.x.device)
+
+        '''
+        check encoder end-to-end equivariance
+        '''
+        '''embed the input data then rotate the embedding'''
+        encoding = self.models_dict['autoencoder'].encode(data.clone())
+        if self.config.autoencoder.model.encoder_type == 'equivariant':
+            rotated_encoding = torch.einsum('nij, nkj->nki',
+                                            rotations,
+                                            encoding
+                                            )  # rotate in 3D
+        else:
+            rotated_encoding = torch.einsum('nij, nkj->nki',
+                                            rotations,
+                                            encoding.reshape(data.num_graphs, encoding.shape[1] // 3, 3)
+                                            )  # rotate in 3D
+        rotated_encoding = rotated_encoding.reshape(data.num_graphs, rotated_encoding.shape[1] * 3)
+
+        '''rotate the input data and embed it'''
+        data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch == ind])
+                              for ind in range(data.num_graphs)])
+        encoding2 = self.models_dict['autoencoder'].encode(data.clone())
+        if self.config.autoencoder.model.encoder_type == 'equivariant':
+            encoding2 = encoding2.reshape(data.num_graphs, encoding2.shape[1] * 3)
+
+        '''compare the embeddings - should be identical for an equivariant embedding'''
+        encoder_equivariance_loss = (torch.abs(rotated_encoding - encoding2) / torch.abs(rotated_encoding)).mean(-1)
+
+        '''
+        check decoder end-to-end equivariance
+        '''
+        '''take a given embedding and decoded it'''
+        decoding = self.models_dict['autoencoder'].decode(encoding)
+
+        '''rotate embedding and decode'''
+        decoding2 = self.models_dict['autoencoder'].decode(rotated_encoding.reshape(data.num_graphs, encoding.shape[1], 3))
+
+        '''rotate first decoding and compare'''
+        decoded_batch = torch.arange(data.num_graphs).repeat_interleave(self.config.autoencoder.model.num_decoder_points).to(self.config.device)
+
+        rotated_decoding_positions = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], decoding[:, :3][decoded_batch == ind])
+                                                for ind in range(data.num_graphs)])
+        rotated_decoding = decoding.clone()
+        rotated_decoding[:, :3] = rotated_decoding_positions
+
+        # first three dimensions should be equivariant and all trailing invariant
+        decoder_equivariance_loss = (torch.abs(rotated_decoding[:, :3] - decoding2[:, :3]) / torch.abs(rotated_decoding[:, :3])).mean(-1)
+
+        return encoder_equivariance_loss, decoder_equivariance_loss
 
     def autoencoder_epoch(self, data_loader, update_weights, iteration_override=None):
         if update_weights:

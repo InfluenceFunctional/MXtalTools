@@ -15,7 +15,8 @@ class MLP(nn.Module):
                  activation='gelu', seed=0, dropout=0, conditioning_dim=0,
                  norm=None, bias=True, norm_after_linear=False,
                  conditioning_mode='concat_to_first',
-                 equivariant=False):
+                 equivariant=False,
+                 vector_output_dim=None):
         super(MLP, self).__init__()
         # initialize constants and layers
 
@@ -39,6 +40,7 @@ class MLP(nn.Module):
         self.conditioning_mode = conditioning_mode  # todo write a proper all_layer mode
         self.conditioning_dim = conditioning_dim
         self.output_dim = output_dim
+        self.v_output_dim = vector_output_dim if vector_output_dim is not None else output_dim
         self.input_dim = input_dim + conditioning_dim
         self.norm_mode = norm
         self.dropout_p = dropout
@@ -84,17 +86,29 @@ class MLP(nn.Module):
 
         if equivariant:
             assert self.same_depth
-            assert self.output_dim == self.n_filters[-1] == self.n_filters[0]
             self.equivariant_layers = torch.nn.ModuleList([
                 nn.Linear(self.n_filters[i + 1], self.n_filters[i + 1], bias=False)
                 for i in range(self.n_layers)
             ])
+            self.invariant_scaling_layers = torch.nn.ModuleList([
+                nn.Linear(self.n_filters[i + 1], self.n_filters[i + 1], bias=True)
+                for i in range(self.n_layers)
+            ])
+            if self.v_output_dim != self.n_filters[-1]:
+                self.v_output_layer = nn.Linear(self.n_filters[-1], self.v_output_dim, bias=False)
+            else:
+                self.v_output_layer = nn.Identity()
+            if self.input_dim//2 != self.n_filters[0]:
+                self.v_init_layer = nn.Linear(self.input_dim//2, self.n_filters[0], bias=False)
+            else:
+                self.v_init_layer = nn.Identity()
 
     def forward(self, x, v=None, conditions=None, return_latent=False, batch=None):
         if conditions is not None:
             x = torch.cat((x, conditions), dim=1)
         if v is not None:
             x = torch.cat((x, torch.linalg.norm(v, dim=1)), dim=-1)
+            v = self.v_init_layer(v)
 
         x = self.init_layer(x)  # get the right feature depth
 
@@ -110,7 +124,7 @@ class MLP(nn.Module):
                 x = res + dropout(activation(linear(norm(x, batch=batch))))  # residue
 
             if v is not None:
-                v = v + x[:, None, :] * self.equivariant_layers[i](v)
+                v = v + self.invariant_scaling_layers[i](x)[:, None, :] * self.equivariant_layers[i](v)
 
         if not self.equivariant:
             if return_latent:
@@ -119,22 +133,27 @@ class MLP(nn.Module):
                 return self.output_layer(x)
         else:
             if return_latent:
-                return self.output_layer(x), v, x
+                return self.output_layer(x), self.v_output_layer(v), x
             else:
-                return self.output_layer(x), v
+                return self.output_layer(x), self.v_output_layer(v)
 
 
 '''
 equivariance test
-v = v0.clone()
+>> linear scaling layer
 from scipy.spatial.transform import Rotation as R
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-embedding = v + x[:, None, :] * self.equivariant_layers[i](v)
-rotv = torch.einsum('ij, njk -> nik', rmat, v)
-rotembedding = torch.einsum('ij, njk -> nik', rmat, embedding)
 
-rotembedding2 = rotv + x[:, None, :] * self.equivariant_layers[i](rotv)
-print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
+rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
+
+v1 = v.clone()
+rotv1 = torch.einsum('ij, njk->nik', rmat, v1)
+
+y1 = v1 + self.invariant_scaling_layers[i](x)[:, None, :] * self.equivariant_layers[i](v1)
+y2 = rotv1 + self.invariant_scaling_layers[i](x)[:, None, :] * self.equivariant_layers[i](rotv1)
+
+roty1 = torch.einsum('ij, njk->nik', rmat, y1)
+
+print(torch.mean(torch.abs(y2 - roty1)))
 '''
 
 class EMLP(nn.Module):  # equivariant MLP  # todo deprecate

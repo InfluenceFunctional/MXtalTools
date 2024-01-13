@@ -6,22 +6,22 @@ import numpy as np
 base_config = load_yaml('base.yaml')
 
 """
-- testing new equivariant model
+- testing new equivariant model again
 
 
-notes: deeper decoder is better
-equivariance is imperfect
-accidentally left on equivariance training
+
 """
 
 configs = [
     [1, 171, 4, 4],
-    [4, 513, 4, 4],  # crashed
+    [2, 171, 4, 4],
+    [3, 171, 4, 4],
+    [2, 342, 4, 4],
     [2, 171, 2, 4],
     [2, 171, 4, 2],
-    [2, 171, 4, 4],
-    [2, 171, 6, 4],
-    [2, 171, 4, 6],
+    [2, 171, 8, 4],
+    [2, 171, 4, 8],
+
 ]
 
 ind = 0
