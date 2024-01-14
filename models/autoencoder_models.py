@@ -24,8 +24,9 @@ class point_autoencoder(nn.Module):
         self.decoder = MLP(
             layers=config.num_decoder_layers,
             filters=config.embedding_depth if self.equivariant_decoder else config.embedding_depth * 3,
-            input_dim=config.embedding_depth * 2 if self.equivariant_encoder else config.embedding_depth * 3,
+            input_dim=config.embedding_depth if self.equivariant_encoder else config.embedding_depth * 3,
             output_dim=(self.output_depth - 3 if self.equivariant_decoder else 0) * self.num_nodes,
+            conditioning_dim=config.embedding_depth,
             activation='gelu',
             norm=config.decoder_norm_mode,
             dropout=config.decoder_dropout_probability,
@@ -46,14 +47,34 @@ class point_autoencoder(nn.Module):
             if not self.decoder.equivariant:
                 return encoding.reshape(len(encoding), encoding.shape[1] * encoding.shape[2])
             else:
-                return encoding
+                return encoding.permute(0, 2, 1)
         else:
             return self.encoder(data)
+
+    '''
+    encoder equivariance test
+    from scipy.spatial.transform import Rotation as R
+
+    rmat = torch.tensor(R.random().as_matrix(), device=data.x.device, dtype=torch.float32)
+    
+    d1 = data.clone()
+    encoding = self.encoder(d1)
+    rotpos = torch.einsum('ij, nj->ni', rmat, d1.pos)
+    rotencoding = torch.einsum('ij, njk->nik', rmat, encoding)
+    d2 = d1.clone()
+    d2.pos = rotpos
+    
+    encoding2 = self.encoder(d2)
+    
+    print(torch.mean(torch.abs(encoding2 - rotencoding)))
+    print(torch.amax(torch.abs(encoding2 - rotencoding)))
+    '''
 
     def decode(self, encoding):
         if self.decoder.equivariant:
             decoding = self.decoder(x=torch.linalg.norm(encoding, dim=-1),
-                                    v=encoding.permute(0, 2, 1))
+                                    v=encoding.permute(0, 2, 1),
+                                    conditions=torch.linalg.norm(encoding, dim=-1))
         else:
             decoding = self.decoder(encoding)
 
@@ -69,6 +90,10 @@ class point_autoencoder(nn.Module):
             return decoding.reshape(self.num_nodes * len(encoding), self.output_depth)
 
     '''
+    >>> vector encoding equivariance test
+    
+    
+    
     >>> vector decoding equivariance test
     from scipy.spatial.transform import Rotation as R
     
@@ -158,7 +183,7 @@ class point_encoder(nn.Module):
             graph_node_dropout=config.graph_node_dropout,
             graph_message_dropout=config.graph_message_dropout,
             num_attention_heads=config.num_attention_heads,
-            graph_message_depth=config.embedding_depth,
+            graph_message_depth=config.graph_message_depth,
             graph_node_dims=config.embedding_depth,
             num_graph_convolutions=config.num_graph_convolutions,
             graph_embedding_depth=config.embedding_depth,

@@ -77,6 +77,7 @@ class GCBlock(torch.nn.Module):
             # reshape to node dimension
             return self.message_to_node(x)
 
+
 '''
 equivariance test 
 
@@ -154,12 +155,40 @@ class FC_Block(torch.nn.Module):
 
         self.model = MLP(layers=nodewise_fc_layers,
                          filters=node_embedding_depth,
-                         input_dim=node_embedding_depth * 2 if self.equivariant else node_embedding_depth,
+                         input_dim=node_embedding_depth,
                          output_dim=node_embedding_depth,
+                         conditioning_dim=node_embedding_depth if equivariant else 0,
                          activation=activation,
                          norm=nodewise_norm,
                          dropout=nodewise_dropout,
                          equivariant=equivariant)
 
-    def forward(self, x, v=None, conditions=None, return_latent=False, batch=None):
-        return self.model(x, v=v, conditions=conditions, return_latent=return_latent, batch=batch)
+    def forward(self, x, v=None, return_latent=False, batch=None):
+        return self.model(x,
+                          v=v,
+                          conditions=torch.linalg.norm(v, dim=1) if v is not None else None,
+                          return_latent=return_latent,
+                          batch=batch)
+
+
+'''
+equivariance test
+
+>>> FC block
+from scipy.spatial.transform import Rotation as R
+rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
+_, embedding = self.model(x,
+                          v=v,
+                          conditions=torch.linalg.norm(v, dim=1) if v is not None else None,
+                          return_latent=return_latent,
+                          batch=batch)
+rotv = torch.einsum('ij, njk -> nik', rmat, v)
+rotembedding = torch.einsum('ij, njk -> nik', rmat, embedding)
+
+_, rotembedding2 = self.model(x,
+                          v=rotv,
+                          conditions=torch.linalg.norm(v, dim=1) if v is not None else None,
+                          return_latent=return_latent,
+                          batch=batch)
+print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
+'''

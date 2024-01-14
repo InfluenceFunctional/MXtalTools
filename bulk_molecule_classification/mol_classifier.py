@@ -4,7 +4,7 @@ import torch.nn as nn
 from models.GraphNeuralNetwork import EmbeddingBlock, GCBlock
 from models.basis_functions import BesselBasisLayer, GaussianEmbedding
 from models.components import MLP, construct_radial_graph
-from models.global_aggregation import global_aggregation
+from models.globalaggregation import GlobalAggregation
 
 
 class MoleculeClassifier(nn.Module):
@@ -74,7 +74,7 @@ class MoleculeClassifier(nn.Module):
             for _ in range(num_blocks)
         ])
 
-        self.global_pool = global_aggregation('molwise', graph_embedding_depth)
+        self.global_pool = GlobalAggregation('molwise', graph_embedding_depth)
 
         self.gnn_mlp = MLP(layers=num_fcs,
                            filters=node_embedding_depth,

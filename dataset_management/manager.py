@@ -35,7 +35,8 @@ class DataManager:
         self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks], ignore_index=True)
 
     def load_dataset_for_modelling(self, config, dataset_name, misc_dataset_name, override_length=None,
-                                   filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False):
+                                   filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False,
+                                   filter_protons=False):
 
         self.load_dataset_and_misc_data(dataset_name, misc_dataset_name)
 
@@ -56,6 +57,10 @@ class DataManager:
             self.dataset = delete_from_dataframe(self.dataset, bad_inds)
             print("Duplicate molecule filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
             self.rebuild_indices()
+
+        if filter_protons:
+            # TODO go in to each entry and delete only the proton lines - expensive!
+            aa = 1
 
         self.generate_datapoints(config, override_length)
 

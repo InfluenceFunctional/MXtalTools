@@ -74,9 +74,11 @@ class GraphNeuralNetwork(torch.nn.Module):
         ])
 
         if self.equivariant_graph:
-            assert node_embedding_depth == graph_embedding_depth
-            self.output_layer = nn.Identity()
-        elif not self.equivariant_graph and node_embedding_depth != graph_embedding_depth:
+            if node_embedding_depth != graph_embedding_depth:
+                self.v_output_layer = nn.Linear(node_embedding_depth, graph_embedding_depth)
+            else:
+                self.v_output_layer = nn.Identity()
+        if node_embedding_depth != graph_embedding_depth:
             self.output_layer = nn.Linear(node_embedding_depth, graph_embedding_depth)
         else:
             self.output_layer = nn.Identity()
@@ -131,7 +133,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                 x = self.manually_periodize(inside_batch, inside_inds, n, n_repeats, ptr, x)
 
         if v is not None:
-            return self.output_layer(x), v
+            return self.output_layer(x), self.v_output_layer(v)
         else:
             return self.output_layer(x)
 

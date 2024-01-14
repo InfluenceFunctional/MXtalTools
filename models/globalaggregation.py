@@ -3,16 +3,17 @@ import torch.nn as nn
 from models.components import MLP
 from torch_geometric import nn as gnn
 from torch_scatter import scatter
+from models.global_attention_aggregation import AttentionalAggregation_w_alpha
 
 
-class global_aggregation(nn.Module):
+class GlobalAggregation(nn.Module):
     """
     wrapper for several types of global aggregation functions
     NOTE - I believe PyG might have a new built-in method which does exactly this
     """
 
     def __init__(self, agg_func, depth):  # todo rewrite this with new pyg aggr class and/or custom functions (e.g., scatter)
-        super(global_aggregation, self).__init__()
+        super(GlobalAggregation, self).__init__()
         self.agg_func = agg_func
         if agg_func == 'mean':
             self.agg = gnn.global_mean_pool
@@ -57,8 +58,29 @@ class global_aggregation(nn.Module):
                 dropout=0)  # condense to correct number of filters
         elif agg_func == 'molwise':
             self.agg = gnn.pool.max_pool_x
+        elif agg_func == 'equivariant attention':
+            self.agg = AttentionalAggregation_w_alpha(
+                MLP(input_dim=depth,
+                    output_dim=1,
+                    layers=1,
+                    filters=depth,
+                    activation='leaky relu',
+                    norm=None)
+            )
+        elif agg_func == 'equivariant combo':
+            self.agg = AttentionalAggregation_w_alpha(
+                MLP(input_dim=depth,
+                    output_dim=1,
+                    layers=1,
+                    filters=depth,
+                    activation='leaky relu',
+                    norm=None)
+            )
         elif agg_func is None:
             self.agg = nn.Identity()
+
+        if agg_func == 'equivariant max':
+            print("WARNING Equivariant max pooling is mostly but not 100% equivariant, e.g., in degenerate cases")
 
     def forward(self, x, batch, cluster=None, output_dim=None, v=None):
         if self.agg_func == 'set2set':
@@ -81,7 +103,19 @@ class global_aggregation(nn.Module):
                     scatter(x, batch, dim_size=output_dim, dim=0, reduce='sum'))
         elif self.agg_func == 'equivariant max':  # todo equivariant attention aggregation
             # assume the input is nx3xk dimensional
-            agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)])
+            agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)]).permute(0, 2, 1)
             return scatter(x, batch, dim_size=output_dim, dim=0, reduce='max'), agg
+        elif self.agg_func == 'equivariant combo':
+            # NOTE max aggregation here sometimes breaks equivariance - possibly degenerate vectors?
+            #agg1 = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)]).permute(0, 2, 1)
+            scalar_agg, alpha = self.agg(x, batch, dim_size=output_dim, return_alpha=True)
+            agg1 = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation
+            agg2 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='mean')
+            agg3 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='sum')
+            return scalar_agg, agg1 + agg2 + agg3  # return num_graphsx3xk
+        elif self.agg_func == 'equivariant attention':
+            scalar_agg, alpha = self.agg(x, batch, dim_size=output_dim, return_alpha=True)
+            vector_agg = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation
+            return scalar_agg, vector_agg
         else:
             return self.agg(x, batch, size=output_dim)

@@ -35,3 +35,4 @@ if __name__ == '__main__':
 
     elif config.mode == 'embedding':
         predictor.embed_dataset()
+
