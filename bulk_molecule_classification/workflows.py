@@ -176,7 +176,7 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
                                                 test_fraction=1, shuffle=False, filter_early=False,
                                                 early_only=False,
                                                 run_config=run_config,
-                                                pare_to_cluster=True if 'interface' not in dataset_path else False)
+                                                pare_to_cluster=False if 'interface' in dataset_path else True)
         results_dict = None
         classifier.train(False)
         with torch.no_grad():
