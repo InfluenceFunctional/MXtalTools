@@ -88,7 +88,7 @@ autoencoder:
 
   model:
     encoder_type: 'equivariant' # or variant
-    decoder_type: 'equivariant' # or variant or equivariant WIP
+    decoder_type: 'equivariant' # or variant
     graph_aggregator: 'equivariant combo'
     embedding_depth: 171
     graph_message_depth: 171  # must cleanly divide num_heads
