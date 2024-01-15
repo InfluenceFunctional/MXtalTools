@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 os.chdir(r'D:\crystals_extra\classifier_training\results')
 
 files = os.listdir()
-results_dicts = [file for file in files if 'analysis' in file and 'crystal_in_melt_test7' in file]
+results_dicts = [file for file in files if 'analysis' in file and 'crystal_in_melt_test8' in file]
 
 dfs = []
 for ind, dict_path in enumerate(results_dicts):

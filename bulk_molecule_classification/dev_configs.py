@@ -24,8 +24,8 @@ dev = {'run_name': 'dev_nic',
        'batch_size': 5,
        'reporting_frequency': 1,
        'train_model': False,
-       'trajs_to_analyze_list': #[f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [2, 7]],
-       [f'D:/crystals_extra/classifier_training/crystal_in_melt_test8/{ind}/' for ind in range(22)],
+       'trajs_to_analyze_list':  # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [2, 7]],
+           [f'D:/crystals_extra/classifier_training/crystal_in_melt_test8/{ind}/' for ind in range(22)],
        # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in range(12)],
        # [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
        # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
@@ -41,6 +41,40 @@ dev = {'run_name': 'dev_nic',
        'results_path': r'D:\crystals_extra\classifier_training\results/',
        'device': 'cuda',
        'seed': 1}
+
+cluster_eval = {'run_name': 'cluster_eval_nic',
+                'convergence_history': 50,
+                'num_convs': 2,
+                'embedding_depth': 256,
+                'message_depth': 128,
+                'dropout': 0.25,
+                'graph_norm': 'graph layer',
+                'fc_norm': 'layer',
+                'num_fcs': 2,
+                'num_epochs': 1000,
+                'dataset_size': 600,
+                'conv_cutoff': 6,
+                'batch_size': 5,
+                'reporting_frequency': 1,
+                'train_model': False,
+                'trajs_to_analyze_list':  # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [2, 7]],
+                    [f'/vast/mk8347/molecule_clusters/crystal_in_melt_test8/{ind}/' for ind in range(22)],
+                # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in range(12)],
+                # [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
+                # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
+                'do_classifier_evaluation': False,
+                'classifier_path': '/vast/mk8347/molecule_clusters/classifier_ckpts/nic_test0_3_best_classifier_checkpoint',
+                'learning_rate': 1e-4,
+                'datasets_path': r'/vast/mk8347/molecule_clusters/traj_pickles/',
+                'dumps_path': r'/vast/mk8347/molecule_clusters/',
+                'training_temps': [100, 350],
+                'dataset_name': 'new_nic_full',
+                'dumps_dirs': None,  # ['melt_trajs2', 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
+                'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
+                'results_path': r'/vast/mk8347/molecule_clusters/results/',
+                'device': 'cuda',
+                'seed': 1}
+
 #
 # dev = {'run_name': 'dev_urea',
 #        'convergence_history': 50,
@@ -102,10 +136,10 @@ base_config = {'run_name': 'dev',
                'seed': 1}
 
 config_list = [
-    #[1, 256, 128],  # nic: ok, urea: great
+    # [1, 256, 128],  # nic: ok, urea: great
     [2, 256, 128],  # nic: best, urea: great
-    #[1, 64, 32],  # nic: ok, urea: great
-    #[2, 64, 32],  # nic: worst, urea: bad
+    # [1, 64, 32],  # nic: ok, urea: great
+    # [2, 64, 32],  # nic: worst, urea: bad
 ]
 
 for i in range(len(config_list)):

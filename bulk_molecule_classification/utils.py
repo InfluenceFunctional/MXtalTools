@@ -254,13 +254,14 @@ def reindex_molecules(atomic_numbers, i, mol_ind, num_molecules, ref_coords, tar
     return cluster_atoms, cluster_coords, cluster_targets
 
 
-def force_molecules_into_box(T_fc_list, cluster_coords, i):
+def force_molecules_into_box(T_fc_list, cluster_coords, i, periodic):
     """
     will have no effect on fragmented molecules or
     molecules otherwise wrapped
     """
     # recenter about zero
-    cluster_coords -= cluster_coords.amin((0, 1))[None, None, :]
+    if periodic:  # don't do this for clusters or other floating objects
+        cluster_coords -= cluster_coords.amin((0, 1))[None, None, :]
     mol_centroids = cluster_coords.mean(1)
     frac_mol_centroids = mol_centroids @ torch.linalg.inv(T_fc_list[i].T)
     adjustment_fractional_vector = -torch.floor(frac_mol_centroids)

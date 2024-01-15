@@ -46,7 +46,7 @@ def collect_to_traj_dataloaders(mol_num_atoms, dataset_path, dataset_size, batch
         cluster_atoms, cluster_coords, cluster_targets = reindex_molecules(atomic_numbers, i, mol_ind, num_molecules, ref_coords, targets)
 
         # force any periodic images back into the box
-        cluster_coords = force_molecules_into_box(T_fc_list, cluster_coords, i)
+        cluster_coords = force_molecules_into_box(T_fc_list, cluster_coords, i, periodic)
 
         # pare the cluster down to a manageable overall size
         if run_config is not None and pare_to_cluster:
