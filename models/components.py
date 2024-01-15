@@ -178,12 +178,10 @@ class MLP(nn.Module):
         return res, v_res
 
     def vector_forward(self, i, v, x, v_res):
-        v = v_res + self.s_to_v_activations[i](self.s_to_v_gating_layers[i](x)[:, None, :]) * self.v_fc_layers[i](v)
-
+        v = v_res + self.s_to_v_activations[i](self.s_to_v_gating_layers[i](x)[:, None, :]) * self.v_fc_layers[i](v)  # A(FC(x)) * FC(v)
         return v
 
     def scalar_forward(self, activation, batch, dropout, i, linear, norm, x, v, res):
-
         if v is not None:  # concatenate vector lengths to scalar values
             x = torch.cat([x, torch.linalg.norm(v, dim=1)], dim=-1)
 

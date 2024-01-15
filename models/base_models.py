@@ -142,12 +142,9 @@ class molecule_graph_model(nn.Module):
             agg_batch = data.batch
 
         x = data.x  # already cloned before it comes into this function
-        x = self.append_init_node_features(data,
-                                           x)
-        x = self.graph_net(x,
-                           data.pos,
-                           data.batch,
-                           data.ptr,
+        x = self.append_init_node_features(data, x)
+        x = self.graph_net(x, data.pos,
+                           data.batch, data.ptr,
                            edges_dict)  # get graph encoding
         if self.equivariant_graph:
             x, v = x

@@ -76,6 +76,7 @@ class GlobalAggregation(nn.Module):
                     activation='leaky relu',
                     norm=None)
             )
+            self.agg_fc = nn.Linear(depth * 3, depth, bias=False)
         elif agg_func is None:
             self.agg = nn.Identity()
 
@@ -112,7 +113,7 @@ class GlobalAggregation(nn.Module):
             agg1 = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation
             agg2 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='mean')
             agg3 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='sum')
-            return scalar_agg, agg1 + agg2 + agg3  # return num_graphsx3xk
+            return scalar_agg, self.agg_fc(torch.cat([agg1, agg2, agg3], dim=-1))  # return num_graphsx3xk
         elif self.agg_func == 'equivariant attention':
             scalar_agg, alpha = self.agg(x, batch, dim_size=output_dim, return_alpha=True)
             vector_agg = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation

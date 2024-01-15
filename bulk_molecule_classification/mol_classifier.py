@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from models.GraphNeuralNetwork import EmbeddingBlock, GCBlock
+from models.GraphNeuralNetwork import EmbeddingBlock, GC_Block
 from models.basis_functions import BesselBasisLayer, GaussianEmbedding
 from models.components import MLP, construct_radial_graph
 from models.globalaggregation import GlobalAggregation
@@ -50,14 +50,14 @@ class MoleculeClassifier(nn.Module):
                                              embedding_hidden_dimension)
 
         self.interaction_blocks = torch.nn.ModuleList([
-            GCBlock(message_depth,
-                    node_embedding_depth,
-                    convolution_type,
-                    num_radial,
-                    norm=message_norm,
-                    dropout=message_dropout,
-                    heads=attention_heads,
-                    )
+            GC_Block(message_depth,
+                     node_embedding_depth,
+                     convolution_type,
+                     num_radial,
+                     norm=message_norm,
+                     dropout=message_dropout,
+                     heads=attention_heads,
+                     )
             for _ in range(num_blocks)
         ])
 

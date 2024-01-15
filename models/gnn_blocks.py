@@ -25,7 +25,7 @@ class EmbeddingBlock(torch.nn.Module):
         return self.linear(concat_vec)
 
 
-class GCBlock(torch.nn.Module):
+class GC_Block(torch.nn.Module):
     def __init__(self,
                  message_depth,
                  node_embedding_depth,
@@ -33,7 +33,7 @@ class GCBlock(torch.nn.Module):
                  dropout=0,
                  heads=1,
                  equivariant=False):
-        super(GCBlock, self).__init__()
+        super(GC_Block, self).__init__()
         self.embed_edge = nn.Linear(radial_dim, radial_dim, bias=False)
         self.equivariant = equivariant
         if equivariant:

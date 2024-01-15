@@ -2,7 +2,7 @@ from models.basis_functions import GaussianEmbedding, BesselBasisLayer
 import torch
 import torch.nn as nn
 
-from models.gnn_blocks import EmbeddingBlock, GCBlock, FC_Block
+from models.gnn_blocks import EmbeddingBlock, GC_Block, FC_Block
 
 
 class GraphNeuralNetwork(torch.nn.Module):
@@ -50,14 +50,22 @@ class GraphNeuralNetwork(torch.nn.Module):
         if self.equivariant_graph:
             self.init_vector_embedding = nn.Linear(1, node_embedding_depth, bias=False)
 
+        self.zeroth_fc_block = FC_Block(
+                nodewise_fc_layers,
+                node_embedding_depth,
+                activation,
+                nodewise_norm,
+                nodewise_dropout,
+                equivariant=self.equivariant_graph)
+
         self.interaction_blocks = torch.nn.ModuleList([
-            GCBlock(message_depth,
-                    node_embedding_depth,
-                    num_radial,
-                    dropout=message_dropout,
-                    heads=attention_heads,
-                    equivariant=equivariant_graph,
-                    )
+            GC_Block(message_depth,
+                     node_embedding_depth,
+                     num_radial,
+                     dropout=message_dropout,
+                     heads=attention_heads,
+                     equivariant=equivariant_graph,
+                     )
             for _ in range(num_blocks)
         ])
 
@@ -96,9 +104,11 @@ class GraphNeuralNetwork(torch.nn.Module):
         if self.equivariant_graph:
             x, v = z[:, :-3], z[:, -3:]
             v = self.init_vector_embedding(v[:, :, None])
-            x = self.init_node_embedding(x)  # embed atomic numbers & compute initial atom-wise feature vector #
+            x = self.init_node_embedding(x)  # embed atomic numbers & compute initial atom-wise feature vector
         else:
-            x, v = self.init_node_embedding(z), None  # embed atomic numbers & compute initial atom-wise feature vector #
+            x, v = self.init_node_embedding(z), None  # embed atomic numbers & compute initial atom-wise feature vector
+
+        x, v = self.zeroth_fc_block(x=x, v=v, batch=batch)
 
         (edge_index, edge_index_inter,
          inside_batch, inside_inds,
