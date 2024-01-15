@@ -5,6 +5,7 @@ from _plotly_utils.colors import n_colors, sample_colorscale
 from plotly.subplots import make_subplots
 from scipy.spatial.distance import cdist
 from scipy.stats import linregress
+from sklearn.cluster import KMeans
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
@@ -1496,9 +1497,12 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
                    })
 
         if config.logger.log_figures:
-            fig = gaussian_overlap_plot(data, decoded_data, dataDims['num_atom_types'])
+            fig, fig2, rmsd, max_dist = gaussian_overlap_plot(data, decoded_data, dataDims['num_atom_types'])
             wandb.log({
                 epoch_type + "_pointwise_sample_distribution": fig,
+                epoch_type + "_cluster_sample_distribution": fig2,
+                epoch_type + "_sample_RMSD": rmsd,
+                epoch_type + "_max_dist": max_dist
             })
     return None
 
@@ -1795,70 +1799,85 @@ def gaussian_overlap_plot(data, decoded_data, max_point_types):
         fig = twoD_gaussian_overlap_plot(cmax, data, decoded_data, max_point_types, max_xval, min_xval, sigma)
 
     if True:  # cart_dimension == 3:
-        fig = go.Figure()  # scatter all the true & predicted points, colorweighted by atom type
-        colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
-                  'rgb(165, 170, 153)'] * 10
-        colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
-        graph_ind = 0
+        fig, graph_ind, points_true = swarm_vs_tgt_fig(cmax, data, decoded_data, max_point_types)
 
-        points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
-        points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
-        for j in range(max_point_types):
+        """ weighted gaussian mixture combination """
+        rmsd, max_dist, fig2 = swarm_cluster_fig(data, decoded_data, graph_ind, max_point_types, points_true)
 
-            ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+    return fig, fig2, rmsd, max_dist
 
-            pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
 
-            fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
-                                       mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
-                                       showlegend=True if (j == 0 and graph_ind == 0) else False,
-                                       name=f'True type', legendgroup=f'True type'
-                                       ))
+def swarm_cluster_fig(data, decoded_data, graph_ind, max_point_types, points_true):
+    combo = torch.cat([decoded_data.pos[decoded_data.batch == graph_ind], decoded_data.x[decoded_data.batch == graph_ind]], dim=1).cpu().detach().numpy()
+    sample_weights = decoded_data.aux_ind[decoded_data.batch == graph_ind].cpu().detach().numpy()
+    truth = torch.cat([data.pos[data.batch == graph_ind], F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=5)], dim=1).cpu().detach().numpy()
+    km = KMeans(n_clusters=int(data.mol_size[graph_ind]), verbose=0).fit(combo, sample_weights)
+    pred_particles = km.cluster_centers_
+    dists = cdist(pred_particles, truth)
+    matched_particle_inds = np.argmin(dists, axis=0)
+    all_targets_matched = len(np.unique(matched_particle_inds)) == len(truth)
+    matched_particles = pred_particles[matched_particle_inds]
+    matched_dists = np.linalg.norm(truth[:, :3] - matched_particles[:, :3], axis=1)
 
-            fig.add_trace(go.Scatter3d(x=points_pred[:, 0], y=points_pred[:, 1], z=points_pred[:, 2],
-                                       mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, marker_line_color='white',
-                                       showlegend=True,
-                                       name=f'Predicted type {j}'
-                                       ))
+    if all_targets_matched:
+        distmat = cdist(matched_particles, truth)
+        rmsd = matched_dists.mean()
+        max_dist = matched_dists.max()
+        type_rmsd = np.linalg.norm(truth[:, 3:] - matched_particles[:, 3:], axis=1).mean()
+        type_max_dist = np.linalg.norm(truth[:, 3:] - matched_particles[:, 3:], axis=1).max()
+        tot_rmsd = np.linalg.norm(truth - matched_particles, axis=1).mean()
+        tot_max_dist = np.linalg.norm(truth - matched_particles, axis=1).max()
+    else:
+        rmsd = np.Inf
+        max_dist = np.Inf
+    fig2 = go.Figure()
+    colors = (
+        'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+        'rgb(165, 170, 153)')
+    for j in range(len(matched_dists)):
+        vec = np.stack([matched_particles[j, :3], truth[j, :3]])
+        fig2.add_trace(go.Scatter3d(x=vec[:, 0], y=vec[:, 1], z=vec[:, 2], mode='lines', line_color='black', showlegend=False))
+    for j in range(max_point_types):
+        ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+        pred_type_inds = np.argwhere(pred_particles[:, 3:].argmax(1) == j)[:, 0]
+        fig2.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+                                    mode='markers', marker_color=colors[j], marker_size=12, marker_line_width=8, marker_line_color='black',
+                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                    name=f'True type', legendgroup=f'True type'
+                                    ))
+        fig2.add_trace(go.Scatter3d(x=pred_particles[pred_type_inds][:, 0], y=pred_particles[pred_type_inds][:, 1], z=pred_particles[pred_type_inds][:, 2],
+                                    mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=8, marker_line_color='white', showlegend=True,
+                                    marker_symbol='diamond',
+                                    name=f'Predicted type {j}'))
+    return rmsd, max_dist, fig2
 
-    """ unweighted gaussian mixture combination """
-    #
-    # fig4 = go.Figure()
-    # colors = (
-    #     'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
-    #     'rgb(165, 170, 153)')
-    # colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
-    #
-    # from sklearn.mixture import GaussianMixture
-    # combo = torch.cat([decoded_data.pos[decoded_data.batch == graph_ind], decoded_data.x[decoded_data.batch == graph_ind]], dim=1).cpu().detach().numpy()
-    # truth = torch.cat([data.pos[data.batch == graph_ind], F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=5)], dim=1).cpu().detach().numpy()
-    # gm = GaussianMixture(n_components=int(data.mol_size[graph_ind]), covariance_type='spherical').fit(combo)
-    # pred_particles = gm.means_
-    # dists = cdist(pred_particles, truth)
-    # matched_particles = pred_particles[np.argmin(dists, axis=0)]
-    # distmat = cdist(matched_particles, truth)
-    # rmsd = np.linalg.norm(truth[:, :3] - matched_particles[:, :3], axis=1).mean()
-    # type_rmsd = np.linalg.norm(truth[:, 3:] - matched_particles[:, 3:], axis=1).mean()
-    # tot_rmsd = np.linalg.norm(truth - matched_particles, axis=1).mean()
-    #
-    # for j in range(max_point_types):
-    #
-    #     ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
-    #
-    #     pred_type_inds = np.argwhere(pred_particles[:, 3:].argmax(1) == j)[:, 0]
-    #
-    #     fig4.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
-    #                                 mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
-    #                                 showlegend=True if (j == 0 and graph_ind == 0) else False,
-    #                                 name=f'True type', legendgroup=f'True type'
-    #                                 ))
-    #
-    #     fig4.add_trace(go.Scatter3d(x=pred_particles[pred_type_inds][:, 0], y=pred_particles[pred_type_inds][:, 1], z=pred_particles[pred_type_inds][:, 2],
-    #                                 mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='white', showlegend=True,
-    #                                 name=f'Predicted type {j}'))
-    #
-    # fig4.show()
-    return fig
+
+def swarm_vs_tgt_fig(cmax, data, decoded_data, max_point_types):
+    fig = go.Figure()  # scatter all the true & predicted points, colorweighted by atom type
+    colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+              'rgb(165, 170, 153)'] * 10
+    colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
+    graph_ind = 0
+    points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
+    points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+    for j in range(max_point_types):
+
+        ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+
+        pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
+
+        fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
+                                   mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
+                                   showlegend=True if (j == 0 and graph_ind == 0) else False,
+                                   name=f'True type', legendgroup=f'True type'
+                                   ))
+
+        fig.add_trace(go.Scatter3d(x=points_pred[:, 0], y=points_pred[:, 1], z=points_pred[:, 2],
+                                   mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, marker_line_color='white',
+                                   showlegend=True,
+                                   name=f'Predicted type {j}'
+                                   ))
+    return fig, graph_ind, points_true
 
 
 def oneD_gaussian_overlap_plot(cmax, data, decoded_data, max_point_types, max_xval, min_xval, sigma):
