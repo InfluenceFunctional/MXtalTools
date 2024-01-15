@@ -9,7 +9,9 @@ base_config = load_yaml('base.yaml')
 - testing new equivariant model again
 
 
-
+Seeing large model problems here
+-: significant overfitting
+-: NaN outputs
 """
 
 configs = [
@@ -21,6 +23,11 @@ configs = [
     [4, 513, 171, 1, 8, 9, 1e-5],  # 5 NaN out
     [4, 513, 513, 1, 8, 27, 1e-5],  # 6 NaN out
     [8, 513, 513, 1, 8, 27, 1e-5],  # 7 NaN out
+    [1, 171, 171, 4, 4, 9, 1e-4],  # 8
+    [2, 171, 171, 4, 4, 9, 1e-4],  # 9
+    [3, 171, 171, 4, 4, 9, 1e-4],  # 10
+    [4, 171, 171, 4, 4, 9, 1e-4],  # 11
+
 ]
 
 ind = 0
