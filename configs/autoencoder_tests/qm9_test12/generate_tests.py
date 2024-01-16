@@ -7,23 +7,30 @@ base_config = load_yaml('base.yaml')
 
 """
 - testing new equivariant model again
+looking for fast training with minimal overfitting and good stability
 
-
-Seeing large model problems here
--: significant overfitting
--: NaN outputs
+1) train small no-conv nets faster
+2) is there a goldilocks conv net
+3) keep mucking about with conv options
 """
 
 configs = [
-    [0, 171, 171, 8, 1, 9, 0],  # 0  decent convergence without overfitting
-    [0, 171, 171, 8, 8, 9, 0.5],  # 1  great convergence with some overfitting before crashing
-    [4, 171, 171, 1, 4, 9, 0],  # 2  2nd best convergence minimal overfitting
-    [4, 57, 57, 1, 4, 3, 0],  # 3 slow and gradual convergence
-    [8, 171, 171, 1, 8, 9, 0],  # 4 crashed early OK performance
-    [4, 513, 171, 1, 4, 9, 0],  # 5  very slow, not really converging
-    [0, 57, 57, 8, 8, 9, 0.5],  # 6
-    [0, 57, 57, 8, 8, 9, 0],  # 7
-    [0, 57, 57, 12, 12, 9, 0],  # 8  NaN in types crash
+    [0, 56, 56, 8, 8, 9, 0, 1e-3, 512],  #
+
+    [0, 76, 76, 8, 8, 9, 0, 1e-4, 512],  #
+    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512],  #
+    [0, 342, 342, 8, 1, 9, 0, 1e-4, 512],  #
+    [0, 513, 513, 8, 1, 9, 0, 1e-4, 512],  #
+
+    [0, 128, 128, 8, 8, 9, 0, 1e-3, 512],  #
+
+    [0, 171, 171, 1, 8, 9, 0, 1e-4, 512],  #
+    [0, 342, 342, 1, 8, 9, 0, 1e-4, 512],  #
+    [0, 513, 513, 1, 8, 9, 0, 1e-4, 512],  #
+
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 256],  #
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 768],  #
+
 ]
 
 ind = 0
@@ -37,6 +44,9 @@ for ii in range(len(configs)):
     config['autoencoder']['model']['num_decoder_layers'] = configs[ii][4]
     config['autoencoder']['model']['num_attention_heads'] = configs[ii][5]
     config['autoencoder_positional_noise'] = configs[ii][6]
+    config['autoencoder']['optimizer']['encoder_init_lr'] = configs[ii][7]
+    config['autoencoder']['model']['num_decoder_points'] = configs[ii][8]
+
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)

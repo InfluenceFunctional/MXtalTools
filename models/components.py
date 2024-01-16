@@ -9,7 +9,7 @@ from models.asymmetric_radius_graph import asymmetric_radius_graph
 from models.vector_LayerNorm import VectorLayerNorm
 
 
-class MLP(nn.Module):
+class MLP(nn.Module):  # todo rewrite up & downscaling to be between rather within layers, without activation/norming
     def __init__(self, layers, filters, input_dim, output_dim,
                  activation='gelu', seed=0, dropout=0, conditioning_dim=0,
                  norm=None, bias=True, norm_after_linear=False,

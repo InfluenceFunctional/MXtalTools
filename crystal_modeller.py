@@ -723,51 +723,14 @@ class Modeller:
         decoded_data = data.clone()
         decoded_data.pos = decoding[:, :3]
         decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(self.config.autoencoder.model.num_decoder_points).to(self.config.device)
-        graph_weights = data.mol_size / self.config.autoencoder.model.num_decoder_points
-        nodewise_graph_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
 
-        if self.config.autoencoder.independent_node_weights:
-            nodewise_weights = (torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature) /
-                                scatter(torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature), decoded_data.batch
-                                        ).repeat_interleave(self.config.autoencoder.model.num_decoder_points))  # fast graph-wise softmax with high temperature
+        nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = self.get_node_weights(data, decoded_data, decoding)
 
-            nodewise_weights_tensor = nodewise_weights * data.mol_size.repeat_interleave(self.config.autoencoder.model.num_decoder_points)  # appropriate graph weighting
-        else:
-            nodewise_weights_tensor = torch.tensor(nodewise_graph_weights, dtype=torch.float32, device=self.config.device)
-            nodewise_weights = torch.ones_like(nodewise_weights_tensor) / self.config.autoencoder.model.num_decoder_points
-
-        # torch.mean(torch.abs(scatter(nodewise_weights_tensor, decoded_data.batch) - data.mol_size)) < 1e-3  # test for appropriate weighting
-
-        # low T causes instability in backprop
         decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
         decoded_data.aux_ind = nodewise_weights_tensor
         data.aux_ind = torch.ones(data.num_nodes, dtype=torch.float32, device=self.config.device)
 
-        true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
-        per_graph_true_types = scatter(true_nodes, data.batch[:, None], dim=0, reduce='mean')
-        per_graph_pred_types = scatter(decoded_data.x * nodewise_weights[:, None], decoded_data.batch[:, None], dim=0, reduce='sum')
-
-        # assert torch.sum(per_graph_pred_types) = len(per_graph_pred_types)
-
-        decoder_likelihoods = compute_gaussian_overlap(true_nodes, data, decoded_data, self.config.autoencoder_sigma,
-                                                       nodewise_weights=decoded_data.aux_ind,
-                                                       overlap_type='gaussian', log_scale=False,
-                                                       type_distance_scaling=self.config.autoencoder.type_distance_scaling)
-
-        self_likelihoods = compute_gaussian_overlap(true_nodes, data, data, self.config.autoencoder_sigma,
-                                                    nodewise_weights=data.aux_ind,
-                                                    overlap_type='gaussian', log_scale=False,
-                                                    type_distance_scaling=self.config.autoencoder.type_distance_scaling,
-                                                    dist_to_self=True)  # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
-
-        # encoding_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
-        # num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(self.config.device), num_points_prediction[:, 0])
-
-        assert torch.sum(torch.isnan(per_graph_pred_types)) == 0, "Predicted types contains NaN"
-        nodewise_type_loss = (F.binary_cross_entropy(per_graph_pred_types, per_graph_true_types) -  # ensure input is normed or this function fails
-                              F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
-        nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
-        reconstruction_loss = scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')  # overlaps should all be exactly 1
+        nodewise_reconstruction_loss, nodewise_type_loss, reconstruction_loss, self_likelihoods = self.get_reconstruction_loss(data, decoded_data, nodewise_weights)
 
         true_dists = torch.linalg.norm(data.pos, dim=1)
         mean_true_dist = scatter(true_dists, data.batch, dim=0, reduce='mean')
@@ -777,21 +740,19 @@ class Modeller:
         mean_dist_loss = F.smooth_l1_loss(mean_decoded_dist, mean_true_dist)
 
         constraining_loss = scatter(F.relu(decoded_dists - 1), decoded_data.batch, reduce='mean')  # keep decoder points within the working volume
-
-        # node_weight_constraining_loss = scatter(F.smooth_l1_loss(nodewise_weights_tensor, nodewise_graph_weights, reduction='none'), decoded_data.batch)  # don't want these to explode
-
         matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
 
         if self.config.autoencoder.independent_node_weights:  # are we sure the below should be the minimum?
-            node_weight_constraining_loss = scatter(F.relu(-torch.log10(nodewise_weights_tensor / torch.amin(nodewise_graph_weights)) - 2), decoded_data.batch)  # don't let these get too small
-
+            node_weight_constraining_loss = scatter(
+                F.relu(-torch.log10(nodewise_weights_tensor / torch.amin(nodewise_graph_weights)) - 2),
+                decoded_data.batch)  # don't let these get too small
             losses = reconstruction_loss + constraining_loss + node_weight_constraining_loss
         else:
             losses = reconstruction_loss + constraining_loss
 
             node_weight_constraining_loss = torch.ones_like(constraining_loss)
 
-        stats = {'constraining_loss': constraining_loss.mean().cpu().detach().numpy(),  # todo this is slow
+        stats = {'constraining_loss': constraining_loss.mean().cpu().detach().numpy(),  # todo all this CPU business is slow
                  'reconstruction_loss': reconstruction_loss.mean().cpu().detach().numpy(),
                  'nodewise_type_loss': nodewise_type_loss.cpu().detach().numpy(),
                  'scaled_reconstruction_loss': (reconstruction_loss.mean() * self.config.autoencoder_sigma).cpu().detach().numpy(),
@@ -804,6 +765,42 @@ class Modeller:
                  }
 
         return losses, stats, decoded_data
+
+    def get_reconstruction_loss(self, data, decoded_data, nodewise_weights):
+        true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
+        per_graph_true_types = scatter(true_nodes, data.batch[:, None], dim=0, reduce='mean')
+        per_graph_pred_types = scatter(decoded_data.x * nodewise_weights[:, None], decoded_data.batch[:, None], dim=0, reduce='sum')
+        decoder_likelihoods = compute_gaussian_overlap(true_nodes, data, decoded_data, self.config.autoencoder_sigma,
+                                                       nodewise_weights=decoded_data.aux_ind,
+                                                       overlap_type='gaussian', log_scale=False,
+                                                       type_distance_scaling=self.config.autoencoder.type_distance_scaling)
+        self_likelihoods = compute_gaussian_overlap(true_nodes, data, data, self.config.autoencoder_sigma,
+                                                    nodewise_weights=data.aux_ind,
+                                                    overlap_type='gaussian', log_scale=False,
+                                                    type_distance_scaling=self.config.autoencoder.type_distance_scaling,
+                                                    dist_to_self=True)  # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
+        # encoding_type_loss = F.binary_cross_entropy_with_logits(composition_prediction, per_graph_true_types) - F.binary_cross_entropy(per_graph_true_types, per_graph_true_types)  # subtract out minimum
+        # num_points_loss = F.mse_loss(torch.Tensor(point_num_rands).to(self.config.device), num_points_prediction[:, 0])
+        assert torch.sum(torch.isnan(per_graph_pred_types)) == 0, "Predicted types contains NaN"
+        nodewise_type_loss = (F.binary_cross_entropy(per_graph_pred_types, per_graph_true_types) -  # ensure input is normed or this function fails
+                              F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
+        nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
+        reconstruction_loss = scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')  # overlaps should all be exactly 1
+        return nodewise_reconstruction_loss, nodewise_type_loss, reconstruction_loss, self_likelihoods
+
+    def get_node_weights(self, data, decoded_data, decoding):
+        graph_weights = data.mol_size / self.config.autoencoder.model.num_decoder_points
+        nodewise_graph_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
+        if self.config.autoencoder.independent_node_weights:
+            nodewise_weights = (torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature) /
+                                scatter(torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature), decoded_data.batch
+                                        ).repeat_interleave(self.config.autoencoder.model.num_decoder_points))  # fast graph-wise softmax with high temperature
+
+            nodewise_weights_tensor = nodewise_weights * data.mol_size.repeat_interleave(self.config.autoencoder.model.num_decoder_points)  # appropriate graph weighting
+        else:
+            nodewise_weights_tensor = torch.tensor(nodewise_graph_weights, dtype=torch.float32, device=self.config.device)
+            nodewise_weights = torch.ones_like(nodewise_weights_tensor) / self.config.autoencoder.model.num_decoder_points
+        return nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
 
     def regression_epoch(self, data_loader, update_weights=True, iteration_override=None):
         if update_weights:
