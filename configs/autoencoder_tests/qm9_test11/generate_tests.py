@@ -15,12 +15,13 @@ Seeing large model problems here
 """
 
 configs = [
-    [0, 171, 171, 8, 1, 9, 0],  # 0
-    [0, 171, 171, 8, 8, 9, 0.5],  # 1
-    [4, 171, 171, 1, 4, 9, 0],  # 2
-    [4, 57, 57, 1, 4, 3, 0],  # 3
-    [8, 171, 171, 1, 8, 9, 0],  # 4
-    [4, 513, 171, 1, 4, 9, 0],  # 5
+    [0, 171, 171, 8, 1, 9, 0],  # 0  decent convergence without overfitting
+    [0, 171, 171, 8, 8, 9, 0.5],  # 1  great convergence with some overfitting before crashing
+    [4, 171, 171, 1, 4, 9, 0],  # 2  2nd best convergence minimal overfitting
+    [4, 57, 57, 1, 4, 3, 0],  # 3 slow and gradual convergence
+    [8, 171, 171, 1, 8, 9, 0],  # 4 crashed early OK performance
+    [4, 513, 171, 1, 4, 9, 0],  # 5  very slow, not really converging
+    [0, 57, 57, 8, 8, 9, 0.5],  # 1  great convergence with some overfitting before crashing
 ]
 
 ind = 0
