@@ -28,6 +28,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                  periodize_inside_nodes=False,
                  outside_convolution_type='none',
                  equivariant_graph=False,
+                 vector_norm=False,
                  ):
         super(GraphNeuralNetwork, self).__init__()
 
@@ -56,7 +57,8 @@ class GraphNeuralNetwork(torch.nn.Module):
                 activation,
                 nodewise_norm,
                 nodewise_dropout,
-                equivariant=self.equivariant_graph)
+                equivariant=self.equivariant_graph,
+                vector_norm=vector_norm)
 
         self.interaction_blocks = torch.nn.ModuleList([
             GC_Block(message_depth,
@@ -77,6 +79,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                 nodewise_norm,
                 nodewise_dropout,
                 equivariant=self.equivariant_graph,
+                vector_norm=vector_norm,
             )
             for _ in range(num_blocks)
         ])

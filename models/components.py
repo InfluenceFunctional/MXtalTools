@@ -4,10 +4,9 @@ import torch
 from torch import nn
 import torch_geometric.nn as gnn
 from torch.nn import functional as F
-from e3nn import o3
-import e3nn.nn as enn
 
 from models.asymmetric_radius_graph import asymmetric_radius_graph
+from models.vector_LayerNorm import VectorLayerNorm
 
 
 class MLP(nn.Module):
@@ -17,10 +16,10 @@ class MLP(nn.Module):
                  conditioning_mode='concat_to_first',
                  equivariant=False,
                  residue_v_to_s=False,
-                 vector_output_dim=None):
+                 vector_output_dim=None,
+                 vector_norm=False):
         super(MLP, self).__init__()
         # initialize constants and layers
-
         self.n_layers = layers
         self.conditioning_mode = conditioning_mode  # todo write a proper all_layer conditioning mode
         self.conditioning_dim = conditioning_dim
@@ -34,15 +33,16 @@ class MLP(nn.Module):
         self.norm_after_linear = norm_after_linear
         self.equivariant = equivariant
         self.residue_v_to_s = residue_v_to_s
+        self.vector_norm = vector_norm
+        if self.vector_norm:
+            assert self.equivariant
         if residue_v_to_s:
             assert self.equivariant
 
         torch.manual_seed(seed)
 
         self.init_filters(filters, layers)
-
         self.init_scalar_transforms()
-
         if equivariant:
             self.init_vector_transforms()
 
@@ -111,7 +111,7 @@ class MLP(nn.Module):
         """vector MLP layers"""
         '''input layer'''
         if self.input_dim != self.n_filters[0]:
-            self.v_init_layer = nn.Linear(self.input_dim//2, self.n_filters[0], bias=False)
+            self.v_init_layer = nn.Linear(self.input_dim // 2, self.n_filters[0], bias=False)
         else:
             self.v_init_layer = nn.Identity()
 
@@ -128,6 +128,16 @@ class MLP(nn.Module):
             Activation(self.activation, self.n_filters[i + 1])
             for i in range(self.n_layers)
         ])
+        if self.vector_norm:
+            self.v_fc_norms = torch.nn.ModuleList([
+                Normalization('graph vector layer', self.n_filters[i + 1])
+                for i in range(self.n_layers)
+            ])
+        else:
+            self.v_fc_norms = torch.nn.ModuleList([
+                Normalization(None, self.n_filters[i + 1])
+                for i in range(self.n_layers)
+            ])
 
         '''output layer'''
         if self.v_output_dim != self.n_filters[-1]:
@@ -149,7 +159,7 @@ class MLP(nn.Module):
             x = self.scalar_forward(activation, batch, dropout, i, linear, norm, x, v, res)
 
             if self.equivariant:
-                v = self.vector_forward(i, v, x, v_res)
+                v = self.vector_forward(i, v, x, v_res, batch)
 
         if not self.equivariant:
             if return_latent:
@@ -177,8 +187,16 @@ class MLP(nn.Module):
 
         return res, v_res
 
-    def vector_forward(self, i, v, x, v_res):
-        v = v_res + self.s_to_v_activations[i](self.s_to_v_gating_layers[i](x)[:, None, :]) * self.v_fc_layers[i](v)  # A(FC(x)) * FC(v)
+    def vector_forward(self, i, v, x, v_res, batch):
+        v = (v_res +
+             self.s_to_v_activations[i](
+                 self.s_to_v_gating_layers[i](
+                     x
+                 )[:, None, :]) *
+             (self.v_fc_layers[i]
+                 (self.v_fc_norms[i](
+                 v, batch=batch)
+             )))  # A(FC(x)) * FC(N(v))
         return v
 
     def scalar_forward(self, activation, batch, dropout, i, linear, norm, x, v, res):
@@ -213,54 +231,54 @@ print(torch.mean(torch.abs(y2 - roty1)))
 '''
 
 
-class EMLP(nn.Module):  # equivariant MLP  # todo deprecate
-    def __init__(self, layers, irreps_hidden, irreps_in, irreps_out,
-                 activation='gelu', seed=0,
-                 norm=None):
-        super(EMLP, self).__init__()
-        # initialize constants and layers
-
-        self.n_layers = layers
-        self.irreps_out = irreps_out
-        self.irreps_in = irreps_in
-        self.irreps_hidden = irreps_hidden
-        self.activation = activation
-
-        torch.manual_seed(seed)
-
-        self.fc_layers = torch.nn.ModuleList([
-            o3.Linear(irreps_hidden, irreps_hidden)
-            for i in range(self.n_layers)
-        ])
-
-        activations = [Activation(activation, 1) if '0e' in str(irrep) else None for irrep in irreps_hidden]
-        self.fc_activations = torch.nn.ModuleList([
-            enn.Activation(irreps_in=irreps_hidden,
-                           acts=activations)
-            for _ in range(self.n_layers)
-        ])
-
-        if self.irreps_in != self.irreps_hidden:
-            self.init_layer = o3.Linear(self.irreps_in, self.irreps_hidden)  # set appropriate sizing
-        else:
-            self.init_layer = nn.Identity()
-
-        if self.irreps_in != self.irreps_hidden:
-            self.output_layer = o3.Linear(self.irreps_hidden, self.irreps_out)
-        else:
-            self.output_layer = nn.Identity()
-
-    def forward(self, x, conditions=None, return_latent=False, batch=None):
-
-        x = self.init_layer(x)  # get the right feature depth
-
-        for i, (linear, activation) in enumerate(zip(self.fc_layers, self.fc_activations)):
-            x = x + activation(linear(x))  # residue -- always same hidden dimension
-
-        if return_latent:
-            return self.output_layer(x), x
-        else:
-            return self.output_layer(x)
+# class EMLP(nn.Module):  # equivariant MLP  # todo deprecate
+#     def __init__(self, layers, irreps_hidden, irreps_in, irreps_out,
+#                  activation='gelu', seed=0,
+#                  norm=None):
+#         super(EMLP, self).__init__()
+#         # initialize constants and layers
+#
+#         self.n_layers = layers
+#         self.irreps_out = irreps_out
+#         self.irreps_in = irreps_in
+#         self.irreps_hidden = irreps_hidden
+#         self.activation = activation
+#
+#         torch.manual_seed(seed)
+#
+#         self.fc_layers = torch.nn.ModuleList([
+#             o3.Linear(irreps_hidden, irreps_hidden)
+#             for i in range(self.n_layers)
+#         ])
+#
+#         activations = [Activation(activation, 1) if '0e' in str(irrep) else None for irrep in irreps_hidden]
+#         self.fc_activations = torch.nn.ModuleList([
+#             enn.Activation(irreps_in=irreps_hidden,
+#                            acts=activations)
+#             for _ in range(self.n_layers)
+#         ])
+#
+#         if self.irreps_in != self.irreps_hidden:
+#             self.init_layer = o3.Linear(self.irreps_in, self.irreps_hidden)  # set appropriate sizing
+#         else:
+#             self.init_layer = nn.Identity()
+#
+#         if self.irreps_in != self.irreps_hidden:
+#             self.output_layer = o3.Linear(self.irreps_hidden, self.irreps_out)
+#         else:
+#             self.output_layer = nn.Identity()
+#
+#     def forward(self, x, conditions=None, return_latent=False, batch=None):
+#
+#         x = self.init_layer(x)  # get the right feature depth
+#
+#         for i, (linear, activation) in enumerate(zip(self.fc_layers, self.fc_activations)):
+#             x = x + activation(linear(x))  # residue -- always same hidden dimension
+#
+#         if return_latent:
+#             return self.output_layer(x), x
+#         else:
+#             return self.output_layer(x)
 
 
 class Normalization(nn.Module):
@@ -277,6 +295,8 @@ class Normalization(nn.Module):
             self.norm = nn.InstanceNorm1d(filters)  # not tested
         elif norm == 'graph':
             self.norm = gnn.GraphNorm(filters)
+        elif norm == 'graph vector layer':
+            self.norm = VectorLayerNorm(filters)
         elif norm is None:
             self.norm = nn.Identity()
         else:

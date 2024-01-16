@@ -18,6 +18,7 @@ class point_autoencoder(nn.Module):
 
         self.equivariant_encoder = config.encoder_type == 'equivariant'
         self.equivariant_decoder = config.decoder_type == 'equivariant'
+        self.fully_equivariant = self.equivariant_encoder and self.equivariant_decoder
 
         self.encoder = point_encoder(seed, config)
 
@@ -32,6 +33,7 @@ class point_autoencoder(nn.Module):
             dropout=config.decoder_dropout_probability,
             equivariant=config.decoder_type == 'equivariant',
             vector_output_dim=self.num_nodes,
+            vector_norm=config.decoder_vector_norm,
         )
 
     def forward(self, data):
@@ -42,14 +44,16 @@ class point_autoencoder(nn.Module):
         """
         pass only the encoding
         """
+        encoding = self.encoder(data)
+        assert torch.sum(torch.isnan(encoding)) == 0, "NaN in encoder output"
+
         if self.encoder.model.equivariant_graph:
-            encoding = self.encoder(data)
             if not self.decoder.equivariant:
                 return encoding.reshape(len(encoding), encoding.shape[1] * encoding.shape[2])
             else:
                 return encoding.permute(0, 2, 1)
         else:
-            return self.encoder(data)
+            return encoding
 
     '''
     encoder equivariance test
@@ -80,14 +84,16 @@ class point_autoencoder(nn.Module):
 
         if self.decoder.equivariant:
             scalar_decoding, vector_decoding = decoding
-            # vector_decoding = vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_nodes, 3)
-            # scalar_decoding = scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)
-            return torch.cat([
+            decoding = torch.cat([
                 vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_nodes, 3),
                 scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)],
                 dim=-1)
         else:
-            return decoding.reshape(self.num_nodes * len(encoding), self.output_depth)
+            decoding = decoding.reshape(self.num_nodes * len(encoding), self.output_depth)
+
+        assert torch.sum(torch.isnan(decoding)) == 0, "NaN in decoder output"
+
+        return decoding
 
     '''
     >>> vector encoding equivariance test
@@ -196,6 +202,7 @@ class point_encoder(nn.Module):
             periodic_structure=False,
             outside_convolution_type='none',
             cartesian_dimension=3,
+            vector_norm=config.encoder_vector_norm,
         )
 
     def forward(self, data):

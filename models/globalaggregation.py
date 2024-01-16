@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from models.components import MLP
+from models.components import MLP, Normalization
 from torch_geometric import nn as gnn
 from torch_scatter import scatter
 from models.global_attention_aggregation import AttentionalAggregation_w_alpha
@@ -76,6 +76,7 @@ class GlobalAggregation(nn.Module):
                     activation='leaky relu',
                     norm=None)
             )
+            self.agg_norm = Normalization('graph vector layer', depth * 3)
             self.agg_fc = nn.Linear(depth * 3, depth, bias=False)
         elif agg_func is None:
             self.agg = nn.Identity()
@@ -102,7 +103,7 @@ class GlobalAggregation(nn.Module):
         elif self.agg_func == 'mean sum':
             return (scatter(x, batch, dim_size=output_dim, dim=0, reduce='mean') +
                     scatter(x, batch, dim_size=output_dim, dim=0, reduce='sum'))
-        elif self.agg_func == 'equivariant max':  # todo equivariant attention aggregation
+        elif self.agg_func == 'equivariant max':
             # assume the input is nx3xk dimensional
             agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)]).permute(0, 2, 1)
             return scatter(x, batch, dim_size=output_dim, dim=0, reduce='max'), agg
@@ -113,7 +114,7 @@ class GlobalAggregation(nn.Module):
             agg1 = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation
             agg2 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='mean')
             agg3 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='sum')
-            return scalar_agg, self.agg_fc(torch.cat([agg1, agg2, agg3], dim=-1))  # return num_graphsx3xk
+            return scalar_agg, self.agg_fc(self.agg_norm(torch.cat([agg1, agg2, agg3], dim=-1), batch=torch.arange(len(agg1), device=agg1.device, dtype=torch.long)))  # return num_graphsx3xk
         elif self.agg_func == 'equivariant attention':
             scalar_agg, alpha = self.agg(x, batch, dim_size=output_dim, return_alpha=True)
             vector_agg = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation

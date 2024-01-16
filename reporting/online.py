@@ -1497,7 +1497,7 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
                    })
 
         if config.logger.log_figures:
-            fig, fig2, rmsd, max_dist = gaussian_overlap_plot(data, decoded_data, dataDims['num_atom_types'])
+            fig, fig2, rmsd, max_dist = gaussian_overlap_plots(data, decoded_data, dataDims['num_atom_types'])
             wandb.log({
                 epoch_type + "_pointwise_sample_distribution": fig,
                 epoch_type + "_cluster_sample_distribution": fig2,
@@ -1786,7 +1786,7 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
     return None
 
 
-def gaussian_overlap_plot(data, decoded_data, max_point_types):
+def gaussian_overlap_plots(data, decoded_data, max_point_types):
     sigma = 0.01
     max_xval = max(decoded_data.pos.amax(), data.pos.amax()).cpu().detach().numpy()
     min_xval = min(decoded_data.pos.amax(), data.pos.amin()).cpu().detach().numpy()
@@ -1842,11 +1842,12 @@ def swarm_cluster_fig(data, decoded_data, graph_ind, max_point_types, points_tru
         pred_type_inds = np.argwhere(pred_particles[:, 3:].argmax(1) == j)[:, 0]
         fig2.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
                                     mode='markers', marker_color=colors[j], marker_size=12, marker_line_width=8, marker_line_color='black',
+                                    opacity=0.6,
                                     showlegend=True if (j == 0 and graph_ind == 0) else False,
                                     name=f'True type', legendgroup=f'True type'
                                     ))
         fig2.add_trace(go.Scatter3d(x=pred_particles[pred_type_inds][:, 0], y=pred_particles[pred_type_inds][:, 1], z=pred_particles[pred_type_inds][:, 2],
-                                    mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=8, marker_line_color='white', showlegend=True,
+                                    mode='markers', marker_color=colors[j], marker_size=6, marker_line_width=8, marker_line_color='white', showlegend=True,
                                     marker_symbol='diamond',
                                     name=f'Predicted type {j}'))
     return rmsd, max_dist, fig2

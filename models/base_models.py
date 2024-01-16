@@ -43,6 +43,7 @@ class molecule_graph_model(nn.Module):
                  periodic_structure=False,
                  outside_convolution_type='none',
                  cartesian_dimension=3,
+                 vector_norm=False,
                  ):
 
         super(molecule_graph_model, self).__init__()
@@ -93,6 +94,7 @@ class molecule_graph_model(nn.Module):
             periodize_inside_nodes=periodic_structure,
             outside_convolution_type=outside_convolution_type,
             equivariant_graph=equivariant_graph,
+            vector_norm=vector_norm,
         )
 
         # initialize global pooling operation
@@ -100,12 +102,14 @@ class molecule_graph_model(nn.Module):
 
         # molecule features FC layer
         if num_mol_feats != 0:
+            assert not self.equivariant_graph, "Equivariance not set up for post aggregation MLP"
             self.mol_fc = nn.Linear(num_mol_feats, num_mol_feats)
         else:
             self.mol_fc = None
 
         # FC model to post-process graph fingerprint
         if num_fc_layers > 0:
+            assert not self.equivariant_graph, "Equivariance not set up for post aggregation MLP"
             self.gnn_mlp = MLP(layers=num_fc_layers,
                                filters=fc_depth,
                                norm=fc_norm_mode,

@@ -148,7 +148,8 @@ class FC_Block(torch.nn.Module):
                  activation,
                  nodewise_norm,
                  nodewise_dropout,
-                 equivariant=False
+                 equivariant=False,
+                 vector_norm=False,
                  ):
         super(FC_Block, self).__init__()
         self.equivariant = equivariant
@@ -161,7 +162,8 @@ class FC_Block(torch.nn.Module):
                          activation=activation,
                          norm=nodewise_norm,
                          dropout=nodewise_dropout,
-                         equivariant=equivariant)
+                         equivariant=equivariant,
+                         vector_norm=vector_norm)
 
     def forward(self, x, v=None, return_latent=False, batch=None):
         return self.model(x,
