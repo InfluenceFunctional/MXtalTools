@@ -96,10 +96,10 @@ gradient_norm_clip: 1
 grow_batch_size: true
 history: 5000
 logger:
-  experiment_tag: qm9_test9
+  experiment_tag: qm9_test11
   log_figures: true
   mini_csp_frequency: 5
-  run_name: qm9_test9_0_1_2
+  run_name: qm9_test11_0_1_2
   sample_reporting_frequency: 10
 machine: cluster
 max_batch_size: 1000
