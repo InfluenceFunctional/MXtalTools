@@ -62,7 +62,7 @@ def get_closest_prior_time(time, timesteps):
 
 init_equil_time = equil_time * 1
 init_equil_time_ind = get_closest_prior_time(init_equil_time, timesteps)
-melt_finished_time = equil_time * 4  # finish melt + 1 equil time
+melt_finished_time = equil_time * 3  # finish melt
 melt_finished_time_ind = get_closest_prior_time(melt_finished_time, timesteps)
 final_time = timesteps[-1]
 final_time_ind = len(timesteps) - 1
@@ -94,8 +94,70 @@ for property in ['init_stability', 'melt_stability', 'final_stability', 'stabili
                                          yaxis_title='temperature',
                                          ))
 
-
 aa = 0
+
+from scipy.ndimage import gaussian_filter1d
+from _plotly_utils.colors import n_colors
+
+colors = n_colors('rgb(5,120,200)', 'rgb(250,50,5)', len(np.unique(results_df['temperature'])), colortype='rgb')
+temps = np.sort(np.unique(results_df['temperature']))
+temp_dict = {temp: ind for ind, temp in enumerate(temps)}
+
+tstart = get_closest_prior_time(equil_time * 3, timesteps) + 1
+sigma=5
+
+fig = make_subplots(cols=2, rows=2, subplot_titles=['Raw Values', 'Normed against t=0'], horizontal_spacing=0.05, vertical_spacing=0.075)
+for temp in temps:
+    for ind in range(len(results_df)):
+        if results_df['temperature'].iloc[ind] == temp:
+            x = results_df['time_steps'].iloc[ind][tstart:]
+            y = results_df['inside_number'].iloc[ind][tstart:, form_ind]
+            fig.add_scatter(x=x, y=gaussian_filter1d(y, sigma=sigma),
+                            name=str(results_df['temperature'].iloc[ind]),
+                            legendgroup=str(results_df['temperature'].iloc[ind]),
+                            line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
+                            showlegend=ind % 2 == 0, row=1, col=1)
+for temp in temps:
+    for ind in range(len(results_df)):
+        if results_df['temperature'].iloc[ind] == temp:
+            x = results_df['time_steps'].iloc[ind][tstart:]
+            y = results_df['inside_number'].iloc[ind][tstart:, form_ind] / results_df['inside_number'].iloc[ind][tstart, form_ind]
+            fig.add_scatter(x=x, y=gaussian_filter1d(y, sigma=sigma),
+                            name=str(results_df['temperature'].iloc[ind]),
+                            legendgroup=str(results_df['temperature'].iloc[ind]),
+                            line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
+                            showlegend=False, row=1, col=2)
+
+
+tstart = 0
+sigma=5
+
+for temp in temps:
+    for ind in range(len(results_df)):
+        if results_df['temperature'].iloc[ind] == temp:
+            x = results_df['time_steps'].iloc[ind][tstart:]
+            y = results_df['inside_number'].iloc[ind][tstart:, form_ind]
+            fig.add_scatter(x=x, y=gaussian_filter1d(y, sigma=sigma),
+                            name=str(results_df['temperature'].iloc[ind]),
+                            legendgroup=str(results_df['temperature'].iloc[ind]),
+                            line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
+                            showlegend=False, row=2, col=1)
+for temp in temps:
+    for ind in range(len(results_df)):
+        if results_df['temperature'].iloc[ind] == temp:
+            x = results_df['time_steps'].iloc[ind][tstart:]
+            y = results_df['inside_number'].iloc[ind][tstart:, form_ind] / results_df['inside_number'].iloc[ind][tstart, form_ind]
+            fig.add_scatter(x=x, y=gaussian_filter1d(y, sigma=sigma),
+                            name=str(results_df['temperature'].iloc[ind]),
+                            legendgroup=str(results_df['temperature'].iloc[ind]),
+                            line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
+                            showlegend=False, row=2, col=2)
+
+fig.update_xaxes(title='Time (ns)')
+fig.update_yaxes(title='Num Molecules')
+
+fig.show()
+
 #
 #
 # """NN output analysis"""

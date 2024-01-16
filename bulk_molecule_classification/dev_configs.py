@@ -25,7 +25,7 @@ dev = {'run_name': 'dev_nic',
        'reporting_frequency': 1,
        'train_model': False,
        'trajs_to_analyze_list':  # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [2, 7]],
-           [f'D:/crystals_extra/classifier_training/crystal_in_melt_test8/{ind}/' for ind in range(10, 22)],
+           [f'D:/crystals_extra/classifier_training/crystal_in_melt_test8/{ind}/' for ind in range(11, 22)],
        # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in range(12)],
        # [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
        # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
