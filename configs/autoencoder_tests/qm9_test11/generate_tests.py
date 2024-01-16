@@ -21,7 +21,9 @@ configs = [
     [4, 57, 57, 1, 4, 3, 0],  # 3 slow and gradual convergence
     [8, 171, 171, 1, 8, 9, 0],  # 4 crashed early OK performance
     [4, 513, 171, 1, 4, 9, 0],  # 5  very slow, not really converging
-    [0, 57, 57, 8, 8, 9, 0.5],  # 1  great convergence with some overfitting before crashing
+    [0, 57, 57, 8, 8, 9, 0.5],  # 6
+    [0, 57, 57, 8, 8, 9, 0],  # 7
+    [0, 57, 57, 12, 12, 9, 0],  # 7
 ]
 
 ind = 0
