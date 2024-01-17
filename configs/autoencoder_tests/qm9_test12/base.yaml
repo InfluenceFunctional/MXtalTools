@@ -98,6 +98,7 @@ autoencoder:
     nodewise_fc_layers: 1
     activation: 'leaky relu'
     num_decoder_layers: 4
+    decoder_ramp_depth: True
 
     decoder_norm_mode: 'batch'
     graph_node_norm: 'graph layer'

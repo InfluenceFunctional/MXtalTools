@@ -4,12 +4,13 @@ import torch
 from torch import nn
 import torch_geometric.nn as gnn
 from torch.nn import functional as F
+import numpy as np
 
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from models.vector_LayerNorm import VectorLayerNorm
 
 
-class MLP(nn.Module):  # todo rewrite up & downscaling to be between rather within layers, without activation/norming
+class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
     def __init__(self, layers, filters, input_dim, output_dim,
                  activation='gelu', seed=0, dropout=0, conditioning_dim=0,
                  norm=None, bias=True, norm_after_linear=False,
@@ -17,7 +18,8 @@ class MLP(nn.Module):  # todo rewrite up & downscaling to be between rather with
                  equivariant=False,
                  residue_v_to_s=False,
                  vector_output_dim=None,
-                 vector_norm=False):
+                 vector_norm=False,
+                 ramp_depth=False):
         super(MLP, self).__init__()
         # initialize constants and layers
         self.n_layers = layers
@@ -34,6 +36,7 @@ class MLP(nn.Module):  # todo rewrite up & downscaling to be between rather with
         self.equivariant = equivariant
         self.residue_v_to_s = residue_v_to_s
         self.vector_norm = vector_norm
+        self.ramp_depth = ramp_depth
         if self.vector_norm:
             assert self.equivariant
         if residue_v_to_s:
@@ -49,18 +52,29 @@ class MLP(nn.Module):  # todo rewrite up & downscaling to be between rather with
     def init_filters(self, filters, layers):
         if isinstance(filters, list):
             self.n_filters = filters
+            residue_filters = [self.input_dim] + self.n_filters
+
+        elif self.ramp_depth:  # smoothly ramp feature depth across layers
+            # linear scaling
+            # self.n_filters = torch.linspace(self.input_dim, self.output_dim, self.n_layers).long().tolist()
+            # log scaling for consistent growth ratio
+            p = np.log(self.output_dim) / np.log(self.input_dim)
+            self.n_filters = [int(self.input_dim ** (1 + (p - 1) * (i / (self.n_layers - 1)))) for i in range(self.n_layers)]
+            residue_filters = [self.input_dim] + self.n_filters
+            self.same_depth = False
         else:
-            self.n_filters = [filters for _ in range(layers + 1)]
-            self.same_depth = True
+            self.n_filters = [filters for _ in range(layers)]
+
         if self.n_filters.count(self.n_filters[0]) != len(self.n_filters):  # if they are not all the same, we need residue adjustments
             self.same_depth = False
             self.residue_adjust = torch.nn.ModuleList([
-                nn.Linear(self.n_filters[i], self.n_filters[i + 1], bias=False)
+                nn.Linear(residue_filters[i], residue_filters[i + 1], bias=False)
                 for i in range(self.n_layers)
             ])
             if self.equivariant:
+                residue_filters[0] -= self.conditioning_dim
                 self.v_residue_adjust = torch.nn.ModuleList([
-                    nn.Linear(self.n_filters[i], self.n_filters[i + 1], bias=False)
+                    nn.Linear(residue_filters[i], residue_filters[i + 1], bias=False)
                     for i in range(self.n_layers)
                 ])
         else:
@@ -78,16 +92,16 @@ class MLP(nn.Module):  # todo rewrite up & downscaling to be between rather with
         '''working layers'''
         self.fc_layers = torch.nn.ModuleList([
             nn.Linear(self.n_filters[i] + (self.n_filters[i] if self.equivariant else 0),
-                      self.n_filters[i + 1], bias=self.bias)
+                      self.n_filters[i], bias=self.bias)
             for i in range(self.n_layers)
         ])
         self.fc_activations = torch.nn.ModuleList([
-            Activation(self.activation, self.n_filters[i + 1])
+            Activation(self.activation, self.n_filters[i])
             for i in range(self.n_layers)
         ])
         if self.norm_after_linear:
             self.fc_norms = torch.nn.ModuleList([
-                Normalization(self.norm_mode, self.n_filters[i + 1])
+                Normalization(self.norm_mode, self.n_filters[i])
                 for i in range(self.n_layers)
             ])
         else:
@@ -117,25 +131,25 @@ class MLP(nn.Module):  # todo rewrite up & downscaling to be between rather with
 
         '''working layers'''
         self.v_fc_layers = torch.nn.ModuleList([
-            nn.Linear(self.n_filters[i + 1], self.n_filters[i + 1], bias=False)
+            nn.Linear(self.n_filters[i], self.n_filters[i], bias=False)
             for i in range(self.n_layers)
         ])
         self.s_to_v_gating_layers = torch.nn.ModuleList([
-            nn.Linear(self.n_filters[i + 1], self.n_filters[i + 1], bias=True)
+            nn.Linear(self.n_filters[i], self.n_filters[i], bias=True)
             for i in range(self.n_layers)
         ])
         self.s_to_v_activations = torch.nn.ModuleList([
-            Activation(self.activation, self.n_filters[i + 1])
+            Activation(self.activation, self.n_filters[i])
             for i in range(self.n_layers)
         ])
         if self.vector_norm:
             self.v_fc_norms = torch.nn.ModuleList([
-                Normalization('graph vector layer', self.n_filters[i + 1])
+                Normalization('graph vector layer', self.n_filters[i])
                 for i in range(self.n_layers)
             ])
         else:
             self.v_fc_norms = torch.nn.ModuleList([
-                Normalization(None, self.n_filters[i + 1])
+                Normalization(None, self.n_filters[i])
                 for i in range(self.n_layers)
             ])
 
@@ -154,12 +168,12 @@ class MLP(nn.Module):  # todo rewrite up & downscaling to be between rather with
             v = self.v_init_layer(v)
 
         for i, (norm, linear, activation, dropout) in enumerate(zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
-            res, v_res = self.get_residues(i, v, x)
+            x, v = self.get_residues(i, x, v)
 
-            x = self.scalar_forward(activation, batch, dropout, i, linear, norm, x, v, res)
+            x = self.scalar_forward(activation, batch, dropout, linear, norm, x, v)
 
             if self.equivariant:
-                v = self.vector_forward(i, v, x, v_res, batch)
+                v = self.vector_forward(i, x, v, batch)
 
         if not self.equivariant:
             if return_latent:
@@ -172,34 +186,35 @@ class MLP(nn.Module):  # todo rewrite up & downscaling to be between rather with
             else:
                 return self.output_layer(x), self.v_output_layer(v)
 
-    def get_residues(self, i, v, x):
+    def get_residues(self, i, x, v):
         if self.same_depth:
-            res = x.clone()
+            x = x.clone()
         else:
-            res = self.residue_adjust[i](x)
+            x = self.residue_adjust[i](x)
         if self.equivariant:
             if self.same_depth:
-                v_res = v.clone()
+                v = v.clone()
             else:
-                v_res = self.v_residue_adjust[i](v)
+                v = self.v_residue_adjust[i](v)
         else:
-            v_res = None
+            v = None
 
-        return res, v_res
+        return x, v
 
-    def vector_forward(self, i, v, x, v_res, batch):
-        v = (v_res +
+    def vector_forward(self, i, x, v, batch):
+        v = (v +
              self.s_to_v_activations[i](
                  self.s_to_v_gating_layers[i](
                      x
                  )[:, None, :]) *
-             (self.v_fc_layers[i]
-                 (self.v_fc_norms[i](
-                 v, batch=batch)
+             (self.v_fc_layers[i](
+                 self.v_fc_norms[i](
+                     v, batch=batch)
              )))  # A(FC(x)) * FC(N(v))
         return v
 
-    def scalar_forward(self, activation, batch, dropout, i, linear, norm, x, v, res):
+    def scalar_forward(self, activation, batch, dropout, linear, norm, x, v):
+        res = x.clone()
         if v is not None:  # concatenate vector lengths to scalar values
             x = torch.cat([x, torch.linalg.norm(v, dim=1)], dim=-1)
 

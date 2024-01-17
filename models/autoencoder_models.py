@@ -34,6 +34,7 @@ class point_autoencoder(nn.Module):
             equivariant=config.decoder_type == 'equivariant',
             vector_output_dim=self.num_nodes,
             vector_norm=config.decoder_vector_norm,
+            ramp_depth=config.decoder_ramp_depth,
         )
 
     def forward(self, data):

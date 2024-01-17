@@ -15,21 +15,24 @@ looking for fast training with minimal overfitting and good stability
 """
 
 configs = [
-    [0, 56, 56, 8, 8, 9, 0, 1e-3, 512],  #
+    [0, 56, 56, 8, 8, 9, 0, 1e-3, 512, False],  # 0
 
-    [0, 76, 76, 8, 8, 9, 0, 1e-4, 512],  #
-    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512],  #
-    [0, 342, 342, 8, 1, 9, 0, 1e-4, 512],  #
-    [0, 513, 513, 8, 1, 9, 0, 1e-4, 512],  #
+    [0, 76, 76, 8, 8, 9, 0, 1e-4, 512, False],  # 1
+    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512, False],  # 2
+    [0, 342, 342, 8, 1, 9, 0, 1e-4, 512, False],  # 3
+    [0, 513, 513, 8, 1, 9, 0, 1e-4, 512, False],  # 4
 
-    [0, 128, 128, 8, 8, 9, 0, 1e-3, 512],  #
+    [0, 128, 128, 8, 8, 9, 0, 1e-3, 512, False],  # 5
 
-    [0, 171, 171, 1, 8, 9, 0, 1e-4, 512],  #
-    [0, 342, 342, 1, 8, 9, 0, 1e-4, 512],  #
-    [0, 513, 513, 1, 8, 9, 0, 1e-4, 512],  #
+    [0, 171, 171, 1, 8, 9, 0, 1e-4, 512, False],  # 6
+    [0, 342, 342, 1, 8, 9, 0, 1e-4, 512, False],  # 7
+    [0, 513, 513, 1, 8, 9, 0, 1e-4, 512, False],  # 8
 
-    [4, 171, 171, 1, 4, 9, 0, 1e-4, 256],  #
-    [4, 171, 171, 1, 4, 9, 0, 1e-4, 768],  #
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 256, False],  # 9
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 768, False],  # 10
+
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 512, True],  # 11
+    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512, True],  # 12
 
 ]
 
@@ -46,7 +49,7 @@ for ii in range(len(configs)):
     config['autoencoder_positional_noise'] = configs[ii][6]
     config['autoencoder']['optimizer']['encoder_init_lr'] = configs[ii][7]
     config['autoencoder']['model']['num_decoder_points'] = configs[ii][8]
-
+    config['autoencoder']['model']['decoder_ramp_depth'] = configs[ii][9]
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)

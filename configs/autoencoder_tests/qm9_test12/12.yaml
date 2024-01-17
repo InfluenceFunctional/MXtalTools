@@ -10,14 +10,14 @@ autoencoder:
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: batch
-    decoder_ramp_depth: false
+    decoder_ramp_depth: true
     decoder_type: equivariant
     decoder_vector_norm: true
-    embedding_depth: 56
+    embedding_depth: 128
     encoder_type: equivariant
     encoder_vector_norm: true
     graph_aggregator: equivariant combo
-    graph_message_depth: 56
+    graph_message_depth: 128
     graph_message_dropout: 0
     graph_node_dropout: 0
     graph_node_norm: graph layer
@@ -35,7 +35,7 @@ autoencoder:
     beta2: 0.999
     convergence_eps: 0.0001
     decoder_init_lr: 0.001
-    encoder_init_lr: 0.001
+    encoder_init_lr: 0.0001
     init_lr: 0.0001
     lr_growth_lambda: 1.0
     lr_schedule: true
@@ -100,7 +100,7 @@ logger:
   experiment_tag: qm9_test12
   log_figures: true
   mini_csp_frequency: 5
-  run_name: qm9_test12_0
+  run_name: qm9_test12_0_1_2_3_4_5_6_7_8_9_10_11_12
   sample_reporting_frequency: 10
 machine: cluster
 max_batch_size: 1000

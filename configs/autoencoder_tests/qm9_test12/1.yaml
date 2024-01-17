@@ -10,6 +10,7 @@ autoencoder:
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: batch
+    decoder_ramp_depth: false
     decoder_type: equivariant
     decoder_vector_norm: true
     embedding_depth: 76
