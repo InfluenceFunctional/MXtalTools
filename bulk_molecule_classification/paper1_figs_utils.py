@@ -120,15 +120,15 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
                      title='tSNE1')
     fig.update_layout(font=dict(size=FONTSIZE))
 
-    ylevels = np.linspace(1.1, 0.05, n_images)
-    xlevel = 1.05
+    ylevels = [-0.25 for _ in range(n_images)]
+    xlevels = np.linspace(0, 0.9, n_images)
 
     for ind in range(n_images):
         fig.add_layout_image(
             dict(source=images[ind],
-                 y=ylevels[ind], x=xlevel)
+                 y=ylevels[ind], x=xlevels[ind])
         )
-        fig.add_annotation(y=ylevels[ind] - 0.03, x=xlevel + .25,
+        fig.add_annotation(y=ylevels[ind] - 0.08, x=xlevels[ind],
                            text=stits[ind],
                            showarrow=False,
                            xref='paper',
@@ -146,8 +146,8 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
         xanchor="left",
         yanchor="top"
     ))
-    fig.layout.margin.r = 300
-    #fig.show()
+    fig.layout.margin.b = 300
+    # fig.show()
 
     return fig
 
@@ -364,7 +364,7 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
         yanchor="top"
     ))
     fig.layout.margin.b = 425
-    #fig.show()
+    # fig.show()
 
     return fig
 
@@ -498,7 +498,7 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
     ))
 
     fig.layout.margin.b = 250
-    #fig.show()
+    # fig.show()
     return fig
 
 
