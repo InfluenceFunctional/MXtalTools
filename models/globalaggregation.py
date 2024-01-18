@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from models.components import MLP, Normalization
 from torch_geometric import nn as gnn
-from torch_scatter import scatter
+from torch_scatter import scatter, scatter_softmax
 from models.global_attention_aggregation import AttentionalAggregation_w_alpha
 
 
@@ -107,6 +107,10 @@ class GlobalAggregation(nn.Module):
             # assume the input is nx3xk dimensional
             agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)]).permute(0, 2, 1)
             return scatter(x, batch, dim_size=output_dim, dim=0, reduce='max'), agg
+        elif self.agg_func == 'equivariant softmax':
+            weights = scatter_softmax(torch.linalg.norm(v, dim=1), batch, dim=0)
+            agg = scatter(weights[:, None, :] * v, batch, dim=0, dim_size=output_dim, reduce='sum')
+            return scatter(weights * x, batch, dim_size=output_dim, dim=0, reduce='sum'), agg
         elif self.agg_func == 'equivariant combo':
             # NOTE max aggregation here sometimes breaks equivariance - possibly degenerate vectors?
             #agg1 = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)]).permute(0, 2, 1)
@@ -123,3 +127,21 @@ class GlobalAggregation(nn.Module):
             return scalar_agg, vector_agg
         else:
             return self.agg(x, batch, size=output_dim)
+
+'''
+from scipy.spatial.transform import Rotation as R
+
+rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
+
+v1 = v.clone()
+rotv1 = torch.einsum('ij, njk->nik', rmat, v1)
+
+weights = scatter_softmax(torch.linalg.norm(v, dim=1), batch, dim=0)
+
+y1 = scatter(weights[:, None, :] * v1, batch, dim=0, dim_size=output_dim, reduce='sum')
+y2 = scatter(weights[:, None, :] * rotv1, batch, dim=0, dim_size=output_dim, reduce='sum')
+
+roty1 = torch.einsum('ij, njk->nik', rmat, y1)
+
+print(torch.mean(torch.abs(y2 - roty1)))
+'''

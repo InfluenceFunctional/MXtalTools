@@ -10,23 +10,23 @@ autoencoder:
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: batch
-    decoder_ramp_depth: false
+    decoder_ramp_depth: true
     decoder_type: equivariant
     decoder_vector_norm: true
-    embedding_depth: 513
+    embedding_depth: 171
     encoder_type: equivariant
     encoder_vector_norm: true
-    graph_aggregator: equivariant softmax
-    graph_message_depth: 513
+    graph_aggregator: equivariant combo
+    graph_message_depth: 171
     graph_message_dropout: 0
     graph_node_dropout: 0
     graph_node_norm: graph layer
     max_num_neighbors: 100
     nodewise_fc_layers: 1
     num_attention_heads: 9
-    num_decoder_layers: 8
+    num_decoder_layers: 4
     num_decoder_points: 512
-    num_graph_convolutions: 0
+    num_graph_convolutions: 4
     num_radial: 32
     radial_function: gaussian
   node_weight_temperature: 1
@@ -100,7 +100,7 @@ logger:
   experiment_tag: qm9_test12
   log_figures: true
   mini_csp_frequency: 5
-  run_name: qm9_test12_0_1_2_3_4_5_6_7_8
+  run_name: qm9_test12_0_1_2_3_4_5_6_7_8_9_10_11_12_13_14_15
   sample_reporting_frequency: 10
 machine: cluster
 max_batch_size: 1000

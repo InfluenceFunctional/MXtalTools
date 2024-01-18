@@ -15,24 +15,30 @@ looking for fast training with minimal overfitting and good stability
 """
 
 configs = [
-    [0, 56, 56, 8, 8, 9, 0, 1e-3, 512, False],  # 0
+    [0, 56, 56, 8, 8, 9, 0, 1e-3, 512, False, 'equivariant softmax'],  # 0
 
-    [0, 76, 76, 8, 8, 9, 0, 1e-4, 512, False],  # 1
-    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512, False],  # 2
-    [0, 342, 342, 8, 1, 9, 0, 1e-4, 512, False],  # 3
-    [0, 513, 513, 8, 1, 9, 0, 1e-4, 512, False],  # 4
+    [0, 76, 76, 8, 8, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 1
+    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 2
+    [0, 342, 342, 8, 1, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 3
+    [0, 513, 513, 8, 1, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 4
 
-    [0, 128, 128, 8, 8, 9, 0, 1e-3, 512, False],  # 5
+    [0, 128, 128, 8, 8, 9, 0, 1e-3, 512, False, 'equivariant softmax'],  # 5
 
-    [0, 171, 171, 1, 8, 9, 0, 1e-4, 512, False],  # 6
-    [0, 342, 342, 1, 8, 9, 0, 1e-4, 512, False],  # 7
-    [0, 513, 513, 1, 8, 9, 0, 1e-4, 512, False],  # 8
+    [0, 171, 171, 1, 8, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 6
+    [0, 342, 342, 1, 8, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 7
+    [0, 513, 513, 1, 8, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 8
 
-    [4, 171, 171, 1, 4, 9, 0, 1e-4, 256, False],  # 9
-    [4, 171, 171, 1, 4, 9, 0, 1e-4, 768, False],  # 10
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 256, False, 'equivariant softmax'],  # 9
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 768, False, 'equivariant softmax'],  # 10
 
-    [4, 171, 171, 1, 4, 9, 0, 1e-4, 512, True],  # 11
-    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512, True],  # 12
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 512, True, 'equivariant softmax'],  # 11
+    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512, True, 'equivariant softmax'],  # 12
+
+    [0, 76, 76, 8, 8, 9, 0, 1e-4, 512, False, 'equivariant combo'],  # 13
+    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512, False, 'equivariant combo'],  # 14
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 512, True, 'equivariant combo'],  # 15
+    [0, 171, 171, 1, 8, 9, 0, 1e-4, 512, False, 'equivariant combo'],  # 16
+    [4, 171, 171, 1, 4, 9, 0, 1e-4, 256, False, 'equivariant combo'],  # 17
 
 ]
 
@@ -50,6 +56,7 @@ for ii in range(len(configs)):
     config['autoencoder']['optimizer']['encoder_init_lr'] = configs[ii][7]
     config['autoencoder']['model']['num_decoder_points'] = configs[ii][8]
     config['autoencoder']['model']['decoder_ramp_depth'] = configs[ii][9]
+    config['autoencoder']['model']['graph_aggregator'] = configs[ii][10]
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)

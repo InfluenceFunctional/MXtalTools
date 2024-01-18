@@ -16,7 +16,7 @@ autoencoder:
     embedding_depth: 171
     encoder_type: equivariant
     encoder_vector_norm: true
-    graph_aggregator: equivariant combo
+    graph_aggregator: equivariant softmax
     graph_message_depth: 171
     graph_message_dropout: 0
     graph_node_dropout: 0

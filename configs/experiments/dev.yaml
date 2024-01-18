@@ -94,7 +94,7 @@ autoencoder:
     embedding_depth: 57
     graph_message_depth: 57  # must cleanly divide num_heads
     num_attention_heads: 3
-    graph_aggregator: 'equivariant combo'
+    graph_aggregator: 'equivariant softmax'
     nodewise_fc_layers: 1
     activation: 'leaky relu'
     num_decoder_layers: 4
