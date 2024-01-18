@@ -5,7 +5,7 @@ from bulk_molecule_classification.classifier_constants import (nic_ordered_class
                                                                )
 from bulk_molecule_classification.paper1_figs_utils import (process_daisuke_dats, urea_interface_fig, nic_clusters_fig, combined_accuracy_fig, combined_embedding_fig, paper_form_accuracy_fig)
 
-max_tsne_samples = 1000
+max_tsne_samples = 100
 
 os.chdir(r'D:\crystals_extra\classifier_training\results')
 urea_eval_path = 'dev_urea_evaluation_results_jan_dict.npy'
@@ -107,7 +107,7 @@ for key, fig in fig_dict.items():
         else:
             fig.write_image(key + '.png', width=1920 // 4, height=1080 // 2)
     elif 'tSNE' in key:
-        fig.write_image(key + '.png', width=960, height=900)
+        fig.write_image(key + '.png', width=1920 // 1.5, height=1080//1.2)
     elif 'traj' in key:
         fig.write_image(key + '.png', width=960, height=900)
     else:

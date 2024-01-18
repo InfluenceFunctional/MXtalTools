@@ -58,13 +58,14 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
     from PIL import Image
 
     images = [Image.open(image_path + pathi) for pathi in filenames]
-
     fig = make_subplots(rows=2, cols=2,
                         subplot_titles=["(a) Graph Embedding",
                                         "(b) GNN Final Layer",
                                         "(c) SFC Input",
                                         "(d) SFC Final Layer"],
-                        vertical_spacing=0.2)
+                        vertical_spacing=0.15,
+                        horizontal_spacing=0.1,
+                        )
 
     embed_keys = ['Embeddings', 'Latents']
 
@@ -101,7 +102,7 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
             inds = np.argwhere((results_dict['Targets'][sample_inds] == t_ind)
                                )[:, 0]
 
-            fig.add_trace(go.Scattergl(x=embedding[inds, 0], y=embedding[inds, 1],
+            fig.add_trace(go.Scattergl(x=embedding[inds, 0] / np.amax(np.abs(embedding[:, 0])), y=embedding[inds, 1] / np.amax(np.abs(embedding[:, 1])),
                                        mode='markers',
                                        marker_size=5,
                                        marker_color=target_colors[t_ind],
@@ -113,22 +114,32 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
 
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig.update_yaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True, showticklabels=False,
-                     title='tSNE2')
+                     showgrid=True, zeroline=True)  # , showticklabels=False)
     fig.update_xaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True, showticklabels=False,
-                     title='tSNE1')
-    fig.update_layout(font=dict(size=FONTSIZE))
+                     showgrid=True, zeroline=True)  # , showticklabels=False)
 
-    ylevels = [-0.25 for _ in range(n_images)]
-    xlevels = np.linspace(0, 0.9, n_images)
+    fig.update_layout(xaxis1_title='tSNE1',
+                      xaxis2_title='tSNE1',
+                      xaxis3_title='tSNE1',
+                      xaxis4_title='tSNE1',
+                      yaxis1_title='tSNE2',
+                      yaxis2_title='tSNE2',
+                      yaxis3_title='tSNE2',
+                      yaxis4_title='tSNE2')
+
+    fig.update_layout(font=dict(size=FONTSIZE))
+    fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
+    fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
+
+    ylevels = [-0.2 for _ in range(n_images)]
+    xlevels = np.linspace(-0.075, 0.9, n_images)
 
     for ind in range(n_images):
         fig.add_layout_image(
             dict(source=images[ind],
                  y=ylevels[ind], x=xlevels[ind])
         )
-        fig.add_annotation(y=ylevels[ind] - 0.08, x=xlevels[ind],
+        fig.add_annotation(y=ylevels[ind] + 0.05, x=xlevels[ind] + 0.05,
                            text=stits[ind],
                            showarrow=False,
                            xref='paper',
@@ -137,7 +148,7 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
                            yanchor='top',
                            font_size=int(FONTSIZE * 0.8))
     fig.update_annotations(font_size=FONTSIZE)
-    imsize = 0.28 if molecule_name == 'urea' else 0.22
+    imsize = 0.28 if molecule_name == 'urea' else 0.18
     fig.update_layout_images(dict(
         xref="paper",
         yref="paper",
@@ -146,9 +157,9 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
         xanchor="left",
         yanchor="top"
     ))
-    fig.layout.margin.b = 300
+    fig.layout.margin.b = 270
     # fig.show()
-
+    # fig.write_image('aa.png', width=1920 // 1.5, height=1080 // 1.2)
     return fig
 
 
