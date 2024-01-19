@@ -47,7 +47,7 @@ def get_dipole(coords, charges):
     """
     center_of_geometry = np.average(np.asarray(coords), axis=0)
     center_of_charge = np.average(np.asarray(coords), weights=charges, axis=0)
-    return np.linalg.norm(center_of_charge - center_of_geometry), center_of_geometry
+    return np.linalg.norm(center_of_charge - center_of_geometry), center_of_charge - center_of_geometry
 
 
 def get_crystal_sym_ops(crystal):

@@ -34,5 +34,5 @@ if __name__ == '__main__':
         predictor.crystal_search(molecule_data=dataloader.dataset[0], data_contains_ground_truth=True)
 
     elif config.mode == 'embedding':
-        predictor.embed_dataset()
+        predictor.autoencoder_embedding_analysis()
 

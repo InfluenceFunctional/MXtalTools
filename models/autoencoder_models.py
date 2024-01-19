@@ -27,7 +27,7 @@ class point_autoencoder(nn.Module):
             filters=config.embedding_depth if self.equivariant_decoder else config.embedding_depth * 3,
             input_dim=config.embedding_depth if self.equivariant_encoder else config.embedding_depth * 3,
             output_dim=(self.output_depth - 3 if self.equivariant_decoder else 0) * self.num_nodes,
-            conditioning_dim=config.embedding_depth,
+            conditioning_dim=config.embedding_depth,  # todo retrain after getting rid of this
             activation='gelu',
             norm=config.decoder_norm_mode,
             dropout=config.decoder_dropout_probability,
@@ -46,15 +46,12 @@ class point_autoencoder(nn.Module):
         pass only the encoding
         """
         encoding = self.encoder(data)
+        if self.encoder.model.equivariant_graph:
+            encoding = encoding[1]  # extract vector component
+
         assert torch.sum(torch.isnan(encoding)) == 0, "NaN in encoder output"
 
-        if self.encoder.model.equivariant_graph:
-            if not self.decoder.equivariant:
-                return encoding.reshape(len(encoding), encoding.shape[1] * encoding.shape[2])
-            else:
-                return encoding.permute(0, 2, 1)
-        else:
-            return encoding
+        return encoding
 
     '''
     encoder equivariance test
@@ -77,19 +74,21 @@ class point_autoencoder(nn.Module):
 
     def decode(self, encoding):
         if self.decoder.equivariant:
-            decoding = self.decoder(x=torch.linalg.norm(encoding, dim=-1),
-                                    v=encoding.permute(0, 2, 1),
-                                    conditions=torch.linalg.norm(encoding, dim=-1))
-        else:
-            decoding = self.decoder(encoding)
-
-        if self.decoder.equivariant:
+            '''encoding nx3xk'''
+            norm = torch.linalg.norm(encoding, dim=1)
+            decoding = self.decoder(x=norm,
+                                    v=encoding,
+                                    conditions=norm)
             scalar_decoding, vector_decoding = decoding
+            '''combine vector and scalar features to n*nodes x m'''
             decoding = torch.cat([
                 vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_nodes, 3),
                 scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)],
                 dim=-1)
         else:
+            '''encoding nxk'''
+            decoding = self.decoder(encoding)
+            '''decoding n x nodes*m to n*nodes x m'''
             decoding = decoding.reshape(self.num_nodes * len(encoding), self.output_depth)
 
         assert torch.sum(torch.isnan(decoding)) == 0, "NaN in decoder output"
@@ -181,7 +180,7 @@ class point_encoder(nn.Module):
             concat_pos_to_atom_features=True,
             concat_mol_to_atom_features=False,
             concat_crystal_to_atom_features=False,
-            activation='gelu',
+            activation='gelu',  # todo adjust and retrain  config.activation
             num_fc_layers=0,
             fc_depth=0,
             fc_norm_mode=None,

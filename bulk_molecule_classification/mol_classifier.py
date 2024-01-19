@@ -3,8 +3,7 @@ import torch.nn as nn
 
 from models.GraphNeuralNetwork import EmbeddingBlock, GC_Block
 from models.basis_functions import BesselBasisLayer, GaussianEmbedding
-from models.components import MLP, construct_radial_graph
-from models.globalaggregation import GlobalAggregation
+from models.components import MLP, construct_radial_graph, GlobalAggregation
 
 
 class MoleculeClassifier(nn.Module):

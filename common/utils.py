@@ -1,6 +1,7 @@
 import numpy as np
 
 import torch
+from torch_scatter import scatter
 import pandas as pd
 from scipy.interpolate import interpn
 from typing import List, Optional
@@ -12,6 +13,13 @@ from constants.space_group_info import SYM_OPS, LATTICE_TYPE, POINT_GROUPS, SPAC
 '''
 general utilities
 '''
+
+
+def batch_compute_dipole(pos, batch, z, electronegativity_tensor):
+    centers_of_geometry = scatter(pos, batch, dim=0, reduce='mean')
+    centers_of_charge = scatter(electronegativity_tensor[z.long()][:, None] * pos, batch, dim=0, reduce='mean')
+
+    return centers_of_charge - centers_of_geometry
 
 
 def get_point_density(xy, bins=1000):

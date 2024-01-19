@@ -18,8 +18,8 @@ configs = [
     [0, 56, 56, 8, 8, 9, 0, 1e-3, 512, False, 'equivariant softmax'],  # 0
 
     [0, 76, 76, 8, 8, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 1
-    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 2
-    [0, 342, 342, 8, 1, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 3
+    [0, 128, 128, 8, 8, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 2 crashed: type NaN
+    [0, 342, 342, 8, 1, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 3 fully converged
     [0, 513, 513, 8, 1, 9, 0, 1e-4, 512, False, 'equivariant softmax'],  # 4
 
     [0, 128, 128, 8, 8, 9, 0, 1e-3, 512, False, 'equivariant softmax'],  # 5

@@ -21,14 +21,14 @@ from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from scipy.spatial.transform import Rotation as R
 
-from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS
+from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY
 from constants.asymmetric_units import asym_unit_dict
 from csp.SampleOptimization import gradient_descent_sampling, mcmc_sampling
 from dataset_management.CrystalData import CrystalData
 from models.autoencoder_models import point_autoencoder
 from models.crystal_rdf import new_crystal_rdf
 
-from models.discriminator_models import crystal_discriminator  # , crystal_proxy_discriminator
+from models.discriminator_models import crystal_discriminator
 from models.embedding_regression_models import embedding_regressor
 from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
@@ -45,7 +45,9 @@ from dataset_management.manager import DataManager
 from dataset_management.utils import (get_dataloaders, update_dataloader_batch_size)
 from reporting.logger import Logger
 
-from common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict
+from common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict, batch_compute_dipole
+from common.geometry_calculations import batch_molecule_principal_axes_torch
+from reporting.online import compute_full_evaluation_overlap, autoencoder_embedding_tsnes, compute_coord_evaluation_overlap, compute_type_evaluation_overlap
 
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
@@ -73,6 +75,10 @@ class Modeller:
         self.atom_weights = ATOM_WEIGHTS
         self.vdw_radii = VDW_RADII
         self.sym_info = init_sym_info()
+        for key, value in ELECTRONEGATIVITY.items():
+            if value is None:
+                ELECTRONEGATIVITY[key] = 0
+        self.electronegativity_tensor = torch.tensor(list(ELECTRONEGATIVITY.values()), dtype=torch.float32, device=self.config.device)
 
         self.supercell_builder = SupercellBuilder(device=self.config.device, rotation_basis='spherical')
 
@@ -123,11 +129,10 @@ class Modeller:
         :return:
         """
         self.model_names = self.config.model_names
-        self.models_dict = {name: nn.Linear(1, 1) for name in self.model_names}  # initialize null models
-
         self.reload_model_checkpoint_configs()
 
         print("Initializing model(s) for " + self.config.mode)
+        self.models_dict = {}
         if self.config.mode == 'gan' or self.config.mode == 'search':
             self.models_dict['generator'] = crystal_generator(self.config.seeds.model, self.device, self.config.generator.model, self.dataDims, self.sym_info)
             self.models_dict['discriminator'] = crystal_discriminator(self.config.seeds.model, self.config.discriminator.model, self.dataDims)
@@ -141,8 +146,15 @@ class Modeller:
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
                 param.requires_grad = False
             self.config.embedding_regressor.model.embedding_depth = self.config.autoencoder.model.embedding_depth
-            self.models_dict['embedding_regressor'] = embedding_regressor(self.config.seeds.model, self.config.embedding_regressor.model)
+            self.models_dict['embedding_regressor'] = embedding_regressor(self.config.seeds.model, self.config.embedding_regressor.model,
+                                                                          prediction_type=self.config.embedding_regressor.prediction_type,
+                                                                          embedding_type=self.config.autoencoder.model.encoder_type,
+                                                                          num_targets=self.config.embedding_regressor.num_targets
+                                                                          )
             assert self.config.model_paths.autoencoder is not None  # must preload the encoder
+
+        null_models = {name: nn.Linear(1, 1) for name in self.model_names if name not in self.models_dict.keys()}  # initialize null models
+        self.models_dict.update(null_models)
 
         if self.config.device.lower() == 'cuda':
             torch.backends.cudnn.benchmark = True
@@ -250,7 +262,8 @@ class Modeller:
 
         return train_loader, test_loader, extra_test_loader
 
-    def embed_dataset(self):
+    def autoencoder_embedding_analysis(self):
+
         """prep workdir"""
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
@@ -278,11 +291,7 @@ class Modeller:
                          entity=self.config.wandb.username,
                          tags=[self.config.logger.experiment_tag],
                          settings=wandb.Settings(code_dir="."))):
-
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
-            # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
-            # this means we also can't do wandb sweeps properly, as-is
-
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
             wandb.log(num_params_dict)
             wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
@@ -292,43 +301,55 @@ class Modeller:
             self.epoch_type = 'test'
 
             for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-                data = self.preprocess_real_autoencoder_data(data)
-
-                data = data.to(self.device)
-                encoding = self.models_dict['autoencoder'].encode(data.clone()).cpu().detach().numpy()
-
-                stats_values = [data.tracking[:, ind].cpu().detach().numpy() for ind in range(data.tracking.shape[1])]
-                stats_keys = self.dataDims['tracking_features']
-
-                stats_values += [encoding]
-                stats_keys += ['encoding']
-
-                self.logger.update_stats_dict(self.epoch_type,
-                                              stats_keys,
-                                              stats_values,
-                                              mode='append')
+                self.autoencoder_embedding_step(data)
 
             # post epoch processing
             self.logger.numpyize_stats_dict(self.epoch_type)
 
-            from sklearn.manifold import TSNE
-            embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
-                             init='pca', perplexity=30).fit_transform(self.logger.test_stats['encoding'])
-
-            import plotly.graph_objects as go
-            fig = go.Figure()
-            mol_key = 'molecule_num_atoms'
-            fig.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
-                                       mode='markers',
-                                       marker_color=np.concatenate(self.logger.test_stats[mol_key]),
-                                       opacity=1,
-                                       marker_colorbar=dict(title=mol_key),
-                                       ))
-            fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
-                              xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
-                              plot_bgcolor='rgba(0,0,0,0)')
-            fig.show()
+            # analysis & visualization
+            autoencoder_embedding_tsnes(self.logger.test_stats)
             aa = 1
+
+    def autoencoder_embedding_step(self, data):
+        data = self.preprocess_real_autoencoder_data(data, no_noise=True, orientation_override=None)
+        data = data.to(self.device)
+        encoding = self.models_dict['autoencoder'].encode(data.clone())
+        decoding = self.models_dict['autoencoder'].decode(encoding)
+        self.autoencoder_evaluation_sample_analysis(data, decoding, encoding)
+
+    def autoencoder_evaluation_sample_analysis(self, data, decoding, encoding):
+        autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
+        nodewise_weights_tensor = decoded_data.aux_ind
+        true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
+
+        full_overlap, self_overlap = compute_full_evaluation_overlap(self.config, data, decoded_data, nodewise_weights_tensor, true_nodes)
+        coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(self.config, data, decoded_data, nodewise_weights_tensor, true_nodes)
+        self_type_overlap, type_overlap = compute_type_evaluation_overlap(self.config, data, self.dataDims, decoded_data, nodewise_weights_tensor, true_nodes)
+
+        Ip, Ipm, I = batch_molecule_principal_axes_torch([data.pos[data.batch == ind] for ind in range(data.num_graphs)])
+
+        stats_values = [data.tracking[:, ind].cpu().detach().numpy() for ind in range(data.tracking.shape[1])]
+        stats_keys = self.dataDims['tracking_features']
+        stats_values += [encoding.cpu().detach().numpy(),
+                         (full_overlap / self_overlap).cpu().detach().numpy(),
+                         (coord_overlap / self_coord_overlap).cpu().detach().numpy(),
+                         (self_type_overlap / type_overlap).cpu().detach().numpy(),
+                         Ip.cpu().detach().numpy(),
+                         Ipm.cpu().detach().numpy()]
+        stats_keys += ['encoding',
+                       'evaluation_overlap',
+                       'evaluation_coord_overlap',
+                       'evaluation_type_overlap',
+                       'principal_inertial_axes',
+                       'principal_inertial_moments']
+        self.logger.update_stats_dict(self.epoch_type,
+                                      stats_keys,
+                                      stats_values,
+                                      mode='append')
+        self.logger.update_stats_dict(self.epoch_type,
+                                      list(stats.keys()),
+                                      list(stats.values()),
+                                      mode='append')
 
     def train_crystal_models(self):
         """
@@ -500,13 +521,22 @@ class Modeller:
         stats_keys = ['regressor_prediction', 'regressor_target', 'tracking_features']
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            data = self.preprocess_real_autoencoder_data(data, no_noise=True)
+            data = self.preprocess_real_autoencoder_data(data, no_noise=True, orientation_override='random')
             data = data.to(self.device)
 
             embedding = self.models_dict['autoencoder'].encode(data)
-            regression_losses_list, predictions, targets = get_regression_loss(
+
+            if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
+                data.y = batch_compute_dipole(data.pos, data.batch, data.x[:, 0], self.electronegativity_tensor)
+
+            losses, predictions, targets = get_regression_loss(
                 self.models_dict['embedding_regressor'], embedding, data.y, self.dataDims['target_mean'], self.dataDims['target_std'])
-            regression_loss = regression_losses_list.mean()
+
+            if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
+                predictions = np.linalg.norm(predictions, axis=-1)
+                targets = np.linalg.norm(targets, axis=-1)
+
+            regression_loss = losses.mean()
 
             if update_weights:
                 self.optimizers_dict['embedding_regressor'].zero_grad(set_to_none=True)  # reset gradients from previous passes
@@ -516,7 +546,7 @@ class Modeller:
             '''log losses and other tracking values'''
             self.logger.update_current_losses('embedding_regressor', self.epoch_type,
                                               regression_loss.cpu().detach().numpy(),
-                                              regression_losses_list.cpu().detach().numpy())
+                                              losses.cpu().detach().numpy())
 
             stats_values = [predictions, targets]
             self.logger.update_stats_dict(self.epoch_type, stats_keys, stats_values, mode='extend')
@@ -581,10 +611,17 @@ class Modeller:
                                           [data.cpu().detach(), decoded_data.cpu().detach()
                                            ], mode='append')
 
-        '''log losses and other tracking values'''
-        self.logger.update_current_losses('autoencoder', self.epoch_type,
-                                          autoencoder_loss.cpu().detach().numpy(),
-                                          autoencoder_losses.cpu().detach().numpy())
+            # do evaluation on current sample and save this as our loss for tracking purposes
+            nodewise_weights_tensor = decoded_data.aux_ind
+            true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
+            full_overlap, self_overlap = compute_full_evaluation_overlap(self.config, data, decoded_data, nodewise_weights_tensor, true_nodes)
+
+            '''log losses and other tracking values'''
+            # for the purpose of convergence, we track the evaluation overlap rather than the loss, which is sigma-dependent
+            # it's also expensive to compute so we only do it once per epoch
+            self.logger.update_current_losses('autoencoder', self.epoch_type,
+                                              1 - (full_overlap / self_overlap).mean().cpu().detach().numpy(),
+                                              1 - (full_overlap / self_overlap).cpu().detach().numpy())
 
         self.logger.update_stats_dict(self.epoch_type,
                                       list(stats.keys()),
@@ -613,7 +650,7 @@ class Modeller:
         '''take a given embedding and decoded it'''
         decoding = self.models_dict['autoencoder'].decode(encoding)
         '''rotate embedding and decode'''
-        decoding2 = self.models_dict['autoencoder'].decode(rotated_encoding.reshape(data.num_graphs, encoding.shape[1], 3))
+        decoding2 = self.models_dict['autoencoder'].decode(rotated_encoding.reshape(data.num_graphs, 3, encoding.shape[-1]))
         '''rotate first decoding and compare'''
         decoded_batch = torch.arange(data.num_graphs).repeat_interleave(self.config.autoencoder.model.num_decoder_points).to(self.config.device)
         rotated_decoding_positions = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], decoding[:, :3][decoded_batch == ind])
@@ -631,22 +668,22 @@ class Modeller:
         '''embed the input data then rotate the embedding'''
         encoding = self.models_dict['autoencoder'].encode(data.clone())
         if self.config.autoencoder.model.encoder_type == 'equivariant':
-            rotated_encoding = torch.einsum('nij, nkj->nki',
+            rotated_encoding = torch.einsum('nij, njk->nik',
                                             rotations,
                                             encoding
                                             )  # rotate in 3D
         else:
-            rotated_encoding = torch.einsum('nij, nkj->nki',
+            rotated_encoding = torch.einsum('nij, njk->nik',
                                             rotations,
                                             encoding.reshape(data.num_graphs, encoding.shape[1] // 3, 3)
                                             )  # rotate in 3D
-        rotated_encoding = rotated_encoding.reshape(data.num_graphs, rotated_encoding.shape[1] * 3)
+        rotated_encoding = rotated_encoding.reshape(data.num_graphs, rotated_encoding.shape[-1] * 3)
         '''rotate the input data and embed it'''
         data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch == ind])
                               for ind in range(data.num_graphs)])
         encoding2 = self.models_dict['autoencoder'].encode(data.clone())
         if self.config.autoencoder.model.encoder_type == 'equivariant':
-            encoding2 = encoding2.reshape(data.num_graphs, encoding2.shape[1] * 3)
+            encoding2 = encoding2.reshape(data.num_graphs, encoding2.shape[-1] * 3)
         '''compare the embeddings - should be identical for an equivariant embedding'''
         encoder_equivariance_loss = (torch.abs(rotated_encoding - encoding2) / torch.abs(rotated_encoding)).mean(-1)
         return encoder_equivariance_loss, encoding, rotated_encoding
@@ -705,13 +742,15 @@ class Modeller:
         if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
-    def preprocess_real_autoencoder_data(self, data, no_noise=False):
+    def preprocess_real_autoencoder_data(self, data, no_noise=False, orientation_override=None):
         if not no_noise:
             if self.config.autoencoder_positional_noise > 0 and self.epoch_type == 'train':
                 data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
 
-        if not self.models_dict['autoencoder'].fully_equivariant:
+        if not self.models_dict['autoencoder'].fully_equivariant and orientation_override is None:
             data = set_molecule_alignment(data, mode='random', right_handed=False, include_inversion=True)
+        else:
+            data = set_molecule_alignment(data, mode=orientation_override, right_handed=False, include_inversion=True)
 
         data.pos /= self.config.autoencoder.molecule_radius_normalization
         data.x[:, 0] = self.autoencoder_type_index[data.x[:, 0].long() - 1].float()  # reindex atom types
@@ -1422,8 +1461,8 @@ class Modeller:
         for model_name in self.model_names:
             if self.train_models_dict[model_name]:
                 loss_record = self.logger.loss_record[model_name][f'mean_{loss_type_check}']
-                past_mean_losses = [np.mean(record) for record in loss_record]
-                if np.average(self.logger.current_losses[model_name][f'mean_{loss_type_check}']) == np.amin(past_mean_losses):
+                past_mean_losses = [np.mean(record) for record in loss_record]  # load all prior epoch losses
+                if np.average(self.logger.current_losses[model_name][f'mean_{loss_type_check}']) == np.amin(past_mean_losses):  # save if this is the best
                     print(f"Saving {model_name} checkpoint")
                     self.logger.save_stats_dict(prefix=f'best_{model_name}_')
                     save_checkpoint(epoch, self.models_dict[model_name], self.optimizers_dict[model_name], self.config.__dict__[model_name].__dict__,
@@ -1674,6 +1713,7 @@ class Modeller:
                 model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
                 self.config.__dict__[model_name].optimizer = model_config.optimizer
                 self.config.__dict__[model_name].model = model_config.model
+                print(f"Reloading {model_name} {model_path}")
 
     def crystal_search(self, molecule_data, batch_size=None, data_contains_ground_truth=True):
         """

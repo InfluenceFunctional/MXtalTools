@@ -1,12 +1,15 @@
 import sys
 
 import torch
-from torch import nn
+from torch import nn, nn as nn
 import torch_geometric.nn as gnn
 from torch.nn import functional as F
 import numpy as np
+from torch_geometric import nn as gnn
+from torch_scatter import scatter, scatter_softmax
 
 from models.asymmetric_radius_graph import asymmetric_radius_graph
+from models.global_attention_aggregation import AttentionalAggregation_w_alpha
 from models.vector_LayerNorm import VectorLayerNorm
 
 
@@ -125,7 +128,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         """vector MLP layers"""
         '''input layer'''
         if self.input_dim != self.n_filters[0]:
-            self.v_init_layer = nn.Linear(self.input_dim // 2, self.n_filters[0], bias=False)
+            self.v_init_layer = nn.Linear(self.input_dim - self.conditioning_dim, self.n_filters[0], bias=False)
         else:
             self.v_init_layer = nn.Identity()
 
@@ -246,56 +249,6 @@ print(torch.mean(torch.abs(y2 - roty1)))
 '''
 
 
-# class EMLP(nn.Module):  # equivariant MLP  # todo deprecate
-#     def __init__(self, layers, irreps_hidden, irreps_in, irreps_out,
-#                  activation='gelu', seed=0,
-#                  norm=None):
-#         super(EMLP, self).__init__()
-#         # initialize constants and layers
-#
-#         self.n_layers = layers
-#         self.irreps_out = irreps_out
-#         self.irreps_in = irreps_in
-#         self.irreps_hidden = irreps_hidden
-#         self.activation = activation
-#
-#         torch.manual_seed(seed)
-#
-#         self.fc_layers = torch.nn.ModuleList([
-#             o3.Linear(irreps_hidden, irreps_hidden)
-#             for i in range(self.n_layers)
-#         ])
-#
-#         activations = [Activation(activation, 1) if '0e' in str(irrep) else None for irrep in irreps_hidden]
-#         self.fc_activations = torch.nn.ModuleList([
-#             enn.Activation(irreps_in=irreps_hidden,
-#                            acts=activations)
-#             for _ in range(self.n_layers)
-#         ])
-#
-#         if self.irreps_in != self.irreps_hidden:
-#             self.init_layer = o3.Linear(self.irreps_in, self.irreps_hidden)  # set appropriate sizing
-#         else:
-#             self.init_layer = nn.Identity()
-#
-#         if self.irreps_in != self.irreps_hidden:
-#             self.output_layer = o3.Linear(self.irreps_hidden, self.irreps_out)
-#         else:
-#             self.output_layer = nn.Identity()
-#
-#     def forward(self, x, conditions=None, return_latent=False, batch=None):
-#
-#         x = self.init_layer(x)  # get the right feature depth
-#
-#         for i, (linear, activation) in enumerate(zip(self.fc_layers, self.fc_activations)):
-#             x = x + activation(linear(x))  # residue -- always same hidden dimension
-#
-#         if return_latent:
-#             return self.output_layer(x), x
-#         else:
-#             return self.output_layer(x)
-
-
 class Normalization(nn.Module):
     def __init__(self, norm, filters, *args, **kwargs):
         super().__init__()
@@ -407,3 +360,145 @@ def construct_radial_graph(pos, batch, ptr, cutoff, max_num_neighbors, aux_ind=N
                                       max_num_neighbors=max_num_neighbors, flow='source_to_target')  # note - requires batch be monotonically increasing
 
         return {'edge_index': edge_index}
+
+
+class GlobalAggregation(nn.Module):
+    """
+    wrapper for several types of global aggregation functions
+    NOTE - I believe PyG might have a new built-in method which does exactly this
+    """
+
+    def __init__(self, agg_func, depth):  # todo rewrite this with new pyg aggr class and/or custom functions (e.g., scatter)
+        super(GlobalAggregation, self).__init__()
+        self.agg_func = agg_func
+        if agg_func == 'mean':
+            self.agg = gnn.global_mean_pool
+        elif agg_func == 'sum':
+            self.agg = gnn.global_add_pool
+        elif agg_func == 'max':
+            self.agg = gnn.global_max_pool
+        elif self.agg_func == '1o max':
+            pass
+        elif agg_func == 'attention':
+            self.agg = gnn.GlobalAttention(nn.Sequential(nn.Linear(depth, depth), nn.LeakyReLU(), nn.Linear(depth, 1)))
+        elif agg_func == 'set2set':
+            self.agg = gnn.Set2Set(in_channels=depth, processing_steps=4)
+            self.agg_fc = nn.Linear(depth * 2, depth)  # condense to correct number of filters
+        elif agg_func == 'simple combo':
+            self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
+            self.agg_fc = MLP(
+                layers=1,
+                filters=depth,
+                input_dim=depth * (len(self.agg_list1)),
+                output_dim=depth,
+                norm=None,
+                dropout=0)  # condense to correct number of filters
+        elif agg_func == 'mean sum':  # todo add a max aggregator which picks max by vector length (equivariant!)
+            pass
+        elif agg_func == 'combo':
+            self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
+            self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(
+                MLP(input_dim=depth,
+                    output_dim=1,
+                    layers=1,
+                    filters=depth,
+                    activation='leaky relu',
+                    norm=None),
+            )])  # aggregation functions requiring parameters
+            self.agg_fc = MLP(
+                layers=1,
+                filters=depth,
+                input_dim=depth * (len(self.agg_list1) + 1),
+                output_dim=depth,
+                norm=None,
+                dropout=0)  # condense to correct number of filters
+        elif agg_func == 'molwise':
+            self.agg = gnn.pool.max_pool_x
+        elif agg_func == 'equivariant attention':
+            self.agg = AttentionalAggregation_w_alpha(
+                MLP(input_dim=depth,
+                    output_dim=1,
+                    layers=1,
+                    filters=depth,
+                    activation='leaky relu',
+                    norm=None)
+            )
+        elif agg_func == 'equivariant combo':
+            self.agg = AttentionalAggregation_w_alpha(
+                MLP(input_dim=depth,
+                    output_dim=1,
+                    layers=1,
+                    filters=depth,
+                    activation='leaky relu',
+                    norm=None)
+            )
+            self.agg_norm = Normalization('graph vector layer', depth * 3)
+            self.agg_fc = nn.Linear(depth * 3, depth, bias=False)
+        elif agg_func is None:
+            self.agg = nn.Identity()
+
+        if agg_func == 'equivariant max':
+            print("WARNING Equivariant max pooling is mostly but not 100% equivariant, e.g., in degenerate cases")
+
+    def forward(self, x, batch, cluster=None, output_dim=None, v=None):
+        if self.agg_func == 'set2set':
+            x = self.agg(x, batch, size=output_dim)
+            return self.agg_fc(x)
+        elif self.agg_func == 'combo':
+            output1 = [agg(x, batch, size=output_dim) for agg in self.agg_list1]
+            output2 = [agg(x, batch, size=output_dim) for agg in self.agg_list2]
+            # output3 = [agg(x, batch, 3, size = output_dim) for agg in self.agg_list3]
+            return self.agg_fc(torch.cat((output1 + output2), dim=1))
+        elif self.agg_func == 'simple combo':
+            output1 = [agg(x, batch, size=output_dim) for agg in self.agg_list1]
+            return self.agg_fc(torch.cat(output1, dim=1))
+        elif self.agg_func is None:
+            return x  # do nothing
+        elif self.agg_func == 'molwise':
+            return self.agg(cluster=cluster, batch=batch, x=x)[0]
+        elif self.agg_func == 'mean sum':
+            return (scatter(x, batch, dim_size=output_dim, dim=0, reduce='mean') +
+                    scatter(x, batch, dim_size=output_dim, dim=0, reduce='sum'))
+        elif self.agg_func == 'equivariant max':
+            # assume the input is nx3xk dimensional. Imperfectly equivariant
+            agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)])
+            return scatter(x, batch, dim_size=output_dim, dim=0, reduce='max'), agg
+        elif self.agg_func == 'equivariant softmax':
+            weights = scatter_softmax(torch.linalg.norm(v, dim=1), batch, dim=0)
+            return (scatter(weights * x, batch, dim_size=output_dim, dim=0, reduce='sum'),
+                    scatter(weights[:, None, :] * v, batch, dim=0, dim_size=output_dim, reduce='sum'))
+        elif self.agg_func == 'equivariant combo':
+            scalar_agg, alpha = self.agg(x, batch, dim_size=output_dim, return_alpha=True)
+            agg1 = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation
+            agg2 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='mean')
+            agg3 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='sum')
+
+            return scalar_agg, self.agg_fc(
+                self.agg_norm(
+                    torch.cat([agg1, agg2, agg3], dim=-1),
+                    batch=torch.arange(len(agg1), device=agg1.device, dtype=torch.long)))  # return num_graphsx3xk
+        elif self.agg_func == 'equivariant attention':
+            scalar_agg, alpha = self.agg(x, batch, dim_size=output_dim, return_alpha=True)
+            vector_agg = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation
+            return scalar_agg, vector_agg
+        else:
+            return self.agg(x, batch, size=output_dim)
+
+
+'''
+from scipy.spatial.transform import Rotation as R
+
+rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
+
+v1 = v.clone()
+rotv1 = torch.einsum('ij, njk->nik', rmat, v1)
+
+weights = scatter_softmax(torch.linalg.norm(v, dim=1), batch, dim=0)
+
+y1 = scatter(weights[:, None, :] * v1, batch, dim=0, dim_size=output_dim, reduce='sum')
+y2 = scatter(weights[:, None, :] * rotv1, batch, dim=0, dim_size=output_dim, reduce='sum')
+
+roty1 = torch.einsum('ij, njk->nik', rmat, y1)
+
+print(torch.mean(torch.abs(y2 - roty1)))
+'''

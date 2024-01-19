@@ -437,3 +437,7 @@ def coor_trans_matrix(opt, v, a, return_vol=False):
         return m, np.abs(vol)
     else:
         return m
+
+
+def compute_principal_moment_ratios(Ipm: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarray):
+    return Ipm[:, 0] / Ipm[:, 1], Ipm[:, 1] / Ipm[:, 2], Ipm[:, 0] / Ipm[:, 2]

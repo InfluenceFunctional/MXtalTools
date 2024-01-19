@@ -14,7 +14,7 @@ import torch.nn.functional as F
 
 from common.utils import get_point_density
 
-from common.geometry_calculations import cell_vol
+from common.geometry_calculations import cell_vol, compute_principal_moment_ratios
 from models.utils import compute_gaussian_overlap
 
 blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
@@ -1439,8 +1439,10 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
         log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
     elif config.mode == 'autoencoder':
-        log_autoencoder_analysis(config, dataDims, train_epoch_stats_dict, epoch_type='train')
-        log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict, epoch_type='test')
+        log_autoencoder_analysis(config, dataDims, train_epoch_stats_dict,
+                                 'train', config.autoencoder.molecule_radius_normalization)
+        log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict,
+                                 'test', config.autoencoder.molecule_radius_normalization)
 
     if extra_test_dict is not None and len(extra_test_dict) > 0 and 'blind_test' in config.extra_test_set_name:
         discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict)
@@ -1448,63 +1450,75 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
     return None
 
 
-def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
-    if 'sample' in epoch_stats_dict.keys():
-        collater = Collater(None, None)
-        data = collater(epoch_stats_dict['sample'])
-        decoded_data = collater(epoch_stats_dict['decoded_sample'])
-        nodewise_weights_tensor = decoded_data.aux_ind
+def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type, molecule_radius_normalization):
+    collater = Collater(None, None)
+    data = collater(epoch_stats_dict['sample'])
+    decoded_data = collater(epoch_stats_dict['decoded_sample'])
+    nodewise_weights_tensor = decoded_data.aux_ind
 
-        true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=dataDims['num_atom_types']).float()
+    true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=dataDims['num_atom_types']).float()
 
-        full_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
-                                                nodewise_weights=nodewise_weights_tensor,
-                                                overlap_type='gaussian', log_scale=False,
-                                                type_distance_scaling=config.autoencoder.type_distance_scaling)
+    full_overlap, self_overlap = compute_full_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes)
 
-        self_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                nodewise_weights=torch.ones_like(data.x)[:, 0],
-                                                overlap_type='gaussian', log_scale=False,
-                                                type_distance_scaling=config.autoencoder.type_distance_scaling,
-                                                dist_to_self=True)
+    coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes)
 
-        coord_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
-                                                 nodewise_weights=nodewise_weights_tensor,
-                                                 overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
-                                                 type_distance_scaling=config.autoencoder.type_distance_scaling)
+    self_type_overlap, type_overlap = compute_type_evaluation_overlap(config, data, dataDims, decoded_data, nodewise_weights_tensor, true_nodes)
 
-        self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                      nodewise_weights=torch.ones_like(data.x)[:, 0],
-                                                      overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
-                                                      type_distance_scaling=config.autoencoder.type_distance_scaling,
-                                                      dist_to_self=True)
+    wandb.log({epoch_type + "_evaluation_positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
+               epoch_type + "_evaluation_typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy(),
+               epoch_type + "_evaluation_overall_overlap": (full_overlap / self_overlap).mean().cpu().detach().numpy(),
+               epoch_type + "_evaluation_matching_clouds_fraction": (torch.sum((1 - full_overlap) < 0.01) / data.num_nodes).cpu().detach().numpy(),
+               })
 
-        type_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
-                                                nodewise_weights=nodewise_weights_tensor,
-                                                overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
-                                                type_distance_scaling=config.autoencoder.type_distance_scaling)
+    if config.logger.log_figures:
+        fig, fig2, rmsd, max_dist = gaussian_overlap_plots(data, decoded_data, dataDims['num_atom_types'], molecule_radius_normalization)
+        wandb.log({
+            epoch_type + "_pointwise_sample_distribution": fig,
+            epoch_type + "_cluster_sample_distribution": fig2,
+            epoch_type + "_sample_RMSD": rmsd,
+            epoch_type + "_max_dist": max_dist
+        })
 
-        self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                     nodewise_weights=torch.ones_like(data.x)[:, 0],
-                                                     overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
-                                                     type_distance_scaling=config.autoencoder.type_distance_scaling,
-                                                     dist_to_self=True)
-
-        wandb.log({epoch_type + "_evaluation_positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
-                   epoch_type + "_evaluation_typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy(),
-                   epoch_type + "_evaluation_overall_overlap": (full_overlap / self_overlap).mean().cpu().detach().numpy(),
-                   epoch_type + "_evaluation_matching_clouds_fraction": (torch.sum((1 - full_overlap) < 0.01) / data.num_nodes).cpu().detach().numpy(),
-                   })
-
-        if config.logger.log_figures:
-            fig, fig2, rmsd, max_dist = gaussian_overlap_plots(data, decoded_data, dataDims['num_atom_types'])
-            wandb.log({
-                epoch_type + "_pointwise_sample_distribution": fig,
-                epoch_type + "_cluster_sample_distribution": fig2,
-                epoch_type + "_sample_RMSD": rmsd,
-                epoch_type + "_max_dist": max_dist
-            })
     return None
+
+
+def compute_type_evaluation_overlap(config, data, dataDims, decoded_data, nodewise_weights_tensor, true_nodes):
+    type_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
+                                            nodewise_weights=nodewise_weights_tensor,
+                                            overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
+                                            type_distance_scaling=config.autoencoder.type_distance_scaling)
+    self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
+                                                 nodewise_weights=torch.ones_like(data.x)[:, 0],
+                                                 overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
+                                                 type_distance_scaling=config.autoencoder.type_distance_scaling,
+                                                 dist_to_self=True)
+    return self_type_overlap, type_overlap
+
+
+def compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes):
+    coord_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
+                                             nodewise_weights=nodewise_weights_tensor,
+                                             overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
+                                             type_distance_scaling=config.autoencoder.type_distance_scaling)
+    self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
+                                                  nodewise_weights=torch.ones_like(data.x)[:, 0],
+                                                  overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
+                                                  type_distance_scaling=config.autoencoder.type_distance_scaling,
+                                                  dist_to_self=True)
+    return coord_overlap, self_coord_overlap
+
+
+def compute_full_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes):
+    full_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
+                                            nodewise_weights=nodewise_weights_tensor,
+                                            overlap_type='gaussian', log_scale=False,
+                                            type_distance_scaling=config.autoencoder.type_distance_scaling)
+    self_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
+                                            nodewise_weights=torch.ones_like(data.x)[:, 0],
+                                            overlap_type='gaussian', log_scale=False,
+                                            type_distance_scaling=config.autoencoder.type_distance_scaling,
+                                            dist_to_self=True)
+    return full_overlap, self_overlap
 
 
 def proxy_discriminator_analysis(epoch_stats_dict):
@@ -1786,10 +1800,7 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
     return None
 
 
-def gaussian_overlap_plots(data, decoded_data, max_point_types):
-    sigma = 0.01
-    max_xval = max(decoded_data.pos.amax(), data.pos.amax()).cpu().detach().numpy()
-    min_xval = min(decoded_data.pos.amax(), data.pos.amin()).cpu().detach().numpy()
+def gaussian_overlap_plots(data, decoded_data, max_point_types, molecule_radius_normalization):
     cmax = 1
 
     if False:  # cart_dimension == 1:
@@ -1799,37 +1810,59 @@ def gaussian_overlap_plots(data, decoded_data, max_point_types):
         fig = twoD_gaussian_overlap_plot(cmax, data, decoded_data, max_point_types, max_xval, min_xval, sigma)
 
     if True:  # cart_dimension == 3:
-        fig, graph_ind, points_true = swarm_vs_tgt_fig(cmax, data, decoded_data, max_point_types)
+        fig = swarm_vs_tgt_fig(cmax, data, decoded_data, max_point_types)
 
         """ weighted gaussian mixture combination """
-        rmsd, max_dist, fig2 = swarm_cluster_fig(data, decoded_data, graph_ind, max_point_types, points_true)
+        rmsd, max_dist, fig2 = decoder_swarm_clustering(0, data, decoded_data, max_point_types, molecule_radius_normalization)
 
     return fig, fig2, rmsd, max_dist
 
 
-def swarm_cluster_fig(data, decoded_data, graph_ind, max_point_types, points_true):
-    combo = torch.cat([decoded_data.pos[decoded_data.batch == graph_ind], decoded_data.x[decoded_data.batch == graph_ind]], dim=1).cpu().detach().numpy()
+def decoder_swarm_clustering(graph_ind, data, decoded_data, max_point_types, molecule_radius_normalization):
+    (matched_dists, matched_particles, max_dist,
+     points_true, pred_particle_weights,
+     pred_particles, rmsd, truth) = (
+        cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization))
+
+    fig2 = swarm_cluster_fig(data, graph_ind, matched_dists, matched_particles, max_point_types, points_true, pred_particle_weights, pred_particles, truth)
+
+    return rmsd, max_dist, fig2
+
+
+def cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization):
+    points_true = data.pos[data.batch == graph_ind]
+    points_pred = torch.cat([decoded_data.pos[decoded_data.batch == graph_ind], decoded_data.x[decoded_data.batch == graph_ind]], dim=1).cpu().detach().numpy()
+    points_true[:, :3] *= molecule_radius_normalization
+    points_pred[:, :3] *= molecule_radius_normalization
     sample_weights = decoded_data.aux_ind[decoded_data.batch == graph_ind].cpu().detach().numpy()
-    truth = torch.cat([data.pos[data.batch == graph_ind], F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=5)], dim=1).cpu().detach().numpy()
-    km = KMeans(n_clusters=int(data.mol_size[graph_ind]), verbose=0).fit(combo, sample_weights)
-    pred_particles = km.cluster_centers_
+    truth = torch.cat([points_true, F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=5)], dim=1).cpu().detach().numpy()
+    points_true = points_true.cpu().detach().numpy()
+    intra_distmat = cdist(truth, truth) + np.eye(len(truth)) * 10
+    intrapoint_cutoff = np.amin(intra_distmat) / 2
+    distmat = cdist(truth, points_pred)
+    pred_particle_weights = np.zeros(len(distmat))
+    pred_particles = np.zeros((len(distmat), points_pred.shape[1]))
+    for ind in range(len(distmat)):
+        collect_inds = np.argwhere(distmat[ind] < intrapoint_cutoff)[:, 0]
+        collected_particles = points_pred[collect_inds]
+        collected_particle_weights = sample_weights[collect_inds]
+        pred_particle_weights[ind] = collected_particle_weights.sum()
+        pred_particles[ind] = np.sum(collected_particle_weights[:, None] * collected_particles, axis=0)
     dists = cdist(pred_particles, truth)
     matched_particle_inds = np.argmin(dists, axis=0)
     all_targets_matched = len(np.unique(matched_particle_inds)) == len(truth)
     matched_particles = pred_particles[matched_particle_inds]
     matched_dists = np.linalg.norm(truth[:, :3] - matched_particles[:, :3], axis=1)
-
     if all_targets_matched:
-        distmat = cdist(matched_particles, truth)
         rmsd = matched_dists.mean()
         max_dist = matched_dists.max()
-        type_rmsd = np.linalg.norm(truth[:, 3:] - matched_particles[:, 3:], axis=1).mean()
-        type_max_dist = np.linalg.norm(truth[:, 3:] - matched_particles[:, 3:], axis=1).max()
-        tot_rmsd = np.linalg.norm(truth - matched_particles, axis=1).mean()
-        tot_max_dist = np.linalg.norm(truth - matched_particles, axis=1).max()
     else:
         rmsd = np.Inf
         max_dist = np.Inf
+    return matched_dists, matched_particles, max_dist, points_true, pred_particle_weights, pred_particles, rmsd, truth
+
+
+def swarm_cluster_fig(data, graph_ind, matched_dists, matched_particles, max_point_types, points_true, pred_particle_weights, pred_particles, truth):
     fig2 = go.Figure()
     colors = (
         'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
@@ -1850,7 +1883,8 @@ def swarm_cluster_fig(data, decoded_data, graph_ind, max_point_types, points_tru
                                     mode='markers', marker_color=colors[j], marker_size=6, marker_line_width=8, marker_line_color='white', showlegend=True,
                                     marker_symbol='diamond',
                                     name=f'Predicted type {j}'))
-    return rmsd, max_dist, fig2
+    fig2.update_layout(title=f"Overlapping Mass {pred_particle_weights.mean():.3f}")
+    return fig2
 
 
 def swarm_vs_tgt_fig(cmax, data, decoded_data, max_point_types):
@@ -1878,7 +1912,7 @@ def swarm_vs_tgt_fig(cmax, data, decoded_data, max_point_types):
                                    showlegend=True,
                                    name=f'Predicted type {j}'
                                    ))
-    return fig, graph_ind, points_true
+    return fig
 
 
 def oneD_gaussian_overlap_plot(cmax, data, decoded_data, max_point_types, max_xval, min_xval, sigma):
@@ -1943,3 +1977,30 @@ def twoD_gaussian_overlap_plot(cmax, data, decoded_data, max_point_types, max_xv
                                        ), row=row, col=col)
     fig.update_coloraxes(cmin=0, cmax=cmax, autocolorscale=False, colorscale='viridis')
     return fig
+
+
+def autoencoder_embedding_tsnes(stats_dict):
+    max_num_samples = 500
+    #mol_key = 'Ipm1/Ipm2'
+
+    vector_encodings = stats_dict['encoding'][:max_num_samples]
+    scalar_encodings = np.linalg.norm(vector_encodings, axis=1)
+    vector_encodings = vector_encodings.reshape(len(vector_encodings), 3 * vector_encodings.shape[-1])
+    from sklearn.manifold import TSNE
+    import plotly.graph_objects as go
+
+    for encodings in [scalar_encodings, vector_encodings]:
+        embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
+                         init='pca', perplexity=30).fit_transform(encodings)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
+                                   mode='markers',
+                                   #marker_color=stats_dict[mol_key][:max_num_samples],
+                                   opacity=1,
+                                   #marker_colorbar=dict(title=mol_key),
+                                   ))
+        fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
+                          xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
+                          plot_bgcolor='rgba(0,0,0,0)')
+        fig.show()

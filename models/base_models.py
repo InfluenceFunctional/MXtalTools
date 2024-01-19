@@ -3,8 +3,7 @@ from models.GraphNeuralNetwork import GraphNeuralNetwork
 import torch
 import torch.nn as nn
 
-from models.globalaggregation import GlobalAggregation
-from models.components import MLP, construct_radial_graph
+from models.components import MLP, construct_radial_graph, GlobalAggregation
 
 from constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 import e3nn.o3 as o3
@@ -170,7 +169,7 @@ class molecule_graph_model(nn.Module):
             output = self.output_fc(x)
 
         else:
-            output = v
+            output = x, v
 
         extra_outputs = self.collect_extra_outputs(data, edges_dict, return_dists, return_latent, x)
 
