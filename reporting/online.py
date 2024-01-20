@@ -1984,6 +1984,16 @@ def autoencoder_embedding_tsnes(stats_dict):
     #mol_key = 'Ipm1/Ipm2'
 
     vector_encodings = stats_dict['encoding'][:max_num_samples]
+
+    # try a bunch of the same samples, rotated
+    rotencodings = []
+    from scipy.spatial.transform import Rotation as R
+    for i in range(max_num_samples):
+        rmat = R.random().as_matrix()
+        rotencodings.append(np.einsum('ij, jk->ik', rmat, vector_encodings[i // 50]))
+    rotencodings = np.stack(rotencodings)
+    vector_encodings = rotencodings
+
     scalar_encodings = np.linalg.norm(vector_encodings, axis=1)
     vector_encodings = vector_encodings.reshape(len(vector_encodings), 3 * vector_encodings.shape[-1])
     from sklearn.manifold import TSNE
@@ -1996,7 +2006,7 @@ def autoencoder_embedding_tsnes(stats_dict):
         fig = go.Figure()
         fig.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
                                    mode='markers',
-                                   #marker_color=stats_dict[mol_key][:max_num_samples],
+                                   marker_color=np.arange(500)//50, #stats_dict[mol_key][:max_num_samples],
                                    opacity=1,
                                    #marker_colorbar=dict(title=mol_key),
                                    ))
