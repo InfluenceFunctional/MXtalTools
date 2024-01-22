@@ -319,6 +319,8 @@ class Modeller:
 
     def autoencoder_evaluation_sample_analysis(self, data, decoding, encoding):
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
+        # from reporting.online import gaussian_3d_overlap_plots
+        # fig, fig2, rmsd, max_dist, tot_overlap = gaussian_3d_overlap_plots(data, decoded_data, self.dataDims['num_atom_types'], self.config.autoencoder.molecule_radius_normalization)
         nodewise_weights_tensor = decoded_data.aux_ind
         true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
 

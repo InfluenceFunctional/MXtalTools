@@ -41,7 +41,7 @@ class point_autoencoder(nn.Module):
         encoding = self.encode(data)
         return self.decode(encoding)
 
-    def encode(self, data):  # todo unify the I/O shapes between equivariant & point models
+    def encode(self, data):
         """
         pass only the encoding
         """
@@ -207,3 +207,32 @@ class point_encoder(nn.Module):
 
     def forward(self, data):
         return self.model(data)
+
+
+"""
+>>> cross product equivariance test
+from scipy.spatial.transform import Rotation as R
+
+rmat = torch.tensor(R.random().as_matrix(), device='cpu', dtype=torch.float32)
+
+v1 = torch.randn(10,3)
+encoding = torch.cross(v1[:5],v1[5:])
+v2 = torch.einsum('ij, nj->ni', rmat, v1)
+rotencoding = torch.einsum('ij, nj->ni', rmat, encoding)
+encoding2 = torch.cross(v2[:5],v2[5:])
+
+print(torch.mean(torch.abs(encoding2 - rotencoding)))
+print(torch.amax(torch.abs(encoding2 - rotencoding)))
+
+rmat = -rmat
+
+v1 = torch.randn(10,3)
+encoding = torch.cross(v1[:5],v1[5:])
+v2 = torch.einsum('ij, nj->ni', rmat, v1)
+rotencoding = torch.einsum('ij, nj->ni', rmat, encoding)
+encoding2 = torch.cross(v2[:5],v2[5:])
+
+print(torch.mean(torch.abs(encoding2 - rotencoding)))
+print(torch.amax(torch.abs(encoding2 - rotencoding)))
+
+"""
