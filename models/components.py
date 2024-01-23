@@ -62,7 +62,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
             # self.n_filters = torch.linspace(self.input_dim, self.output_dim, self.n_layers).long().tolist()
             # log scaling for consistent growth ratio
             p = np.log(self.output_dim) / np.log(self.input_dim)
-            self.n_filters = [int(self.input_dim ** (1 + (p - 1) * (i / (self.n_layers - 1)))) for i in range(self.n_layers)]
+            self.n_filters = [int(self.input_dim ** (1 + (p - 1) * (i / (self.n_layers)))) for i in range(self.n_layers)]
             residue_filters = [self.input_dim] + self.n_filters
             self.same_depth = False
         else:

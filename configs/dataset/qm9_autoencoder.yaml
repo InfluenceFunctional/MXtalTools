@@ -13,6 +13,7 @@ test_fraction: 0.2
 
 filter_polymorphs: False
 filter_duplicate_molecules: False
+filter_protons: False
 filter_conditions: null
 
 atom_feature_keys: [

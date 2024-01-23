@@ -10,6 +10,7 @@ save_dataset: False
 regression_target: 'molecule_num_atoms'
 single_molecule_dataset_identifier: null
 test_fraction: 0.05
+filter_protons: False
 
 filter_polymorphs: False
 filter_duplicate_molecules: False

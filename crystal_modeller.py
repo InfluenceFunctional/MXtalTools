@@ -18,7 +18,7 @@ from shutil import copy
 from distutils.dir_util import copy_tree
 from torch.nn import functional as F
 from torch_geometric.loader.dataloader import Collater
-from torch_scatter import scatter
+from torch_scatter import scatter, scatter_softmax
 from scipy.spatial.transform import Rotation as R
 
 from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY
@@ -196,7 +196,8 @@ class Modeller:
             misc_dataset_name=self.config.misc_dataset_name,
             filter_conditions=self.config.dataset.filter_conditions,
             filter_polymorphs=self.config.dataset.filter_polymorphs,
-            filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules
+            filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules,
+            filter_protons=self.config.dataset.filter_protons,
         )
         self.dataDims = data_manager.dataDims
         self.t_i_d = {feat: index for index, feat in enumerate(self.dataDims['tracking_features'])}  # tracking feature index dictionary
@@ -221,6 +222,7 @@ class Modeller:
                 filter_conditions=blind_test_conditions,  # standard filtration conditions
                 filter_polymorphs=False,  # do not filter duplicates - e.g., in Blind test they're almost all duplicates!
                 filter_duplicate_molecules=False,
+                filter_protons=self.config.dataset.filter_protons,
             )
 
         else:
@@ -668,7 +670,10 @@ class Modeller:
         check encoder end-to-end equivariance
         """
         '''embed the input data then rotate the embedding'''
-        encoding = self.models_dict['autoencoder'].encode(data.clone())
+        encoding = self.models_dict['autoencoder'].encode(data.clone(), z=torch.zeros((data.num_graphs,  # uniform prior for comparison
+                                                                                       self.config.autoencoder.model.bottleneck_dim),
+                                                                                      dtype=torch.float32,
+                                                                                      device=self.config.device))
         if self.config.autoencoder.model.encoder_type == 'equivariant':
             rotated_encoding = torch.einsum('nij, njk->nik',
                                             rotations,
@@ -683,7 +688,10 @@ class Modeller:
         '''rotate the input data and embed it'''
         data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch == ind])
                               for ind in range(data.num_graphs)])
-        encoding2 = self.models_dict['autoencoder'].encode(data.clone())
+        encoding2 = self.models_dict['autoencoder'].encode(data.clone(), z=torch.zeros((data.num_graphs,
+                                                                                        self.config.autoencoder.model.bottleneck_dim),
+                                                                                       dtype=torch.float32,
+                                                                                       device=self.config.device))
         if self.config.autoencoder.model.encoder_type == 'equivariant':
             encoding2 = encoding2.reshape(data.num_graphs, encoding2.shape[-1] * 3)
         '''compare the embeddings - should be identical for an equivariant embedding'''
@@ -805,6 +813,11 @@ class Modeller:
                  'node_weight_constraining_loss': node_weight_constraining_loss.mean().cpu().detach().numpy(),
                  }
 
+        if self.config.autoencoder.model.variational_encoder:
+            embedding_KLD = self.models_dict['autoencoder'].kld
+            stats['embedding_KLD'] = embedding_KLD.mean().cpu().detach().numpy()
+            losses = losses + embedding_KLD.mean(1) * self.config.autoencoder.KLD_weight
+
         return losses, stats, decoded_data
 
     def get_reconstruction_loss(self, data, decoded_data, nodewise_weights):
@@ -833,10 +846,12 @@ class Modeller:
         graph_weights = data.mol_size / self.config.autoencoder.model.num_decoder_points
         nodewise_graph_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
         if self.config.autoencoder.independent_node_weights:
-            nodewise_weights = (torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature) /
-                                scatter(torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature), decoded_data.batch
-                                        ).repeat_interleave(self.config.autoencoder.model.num_decoder_points))  # fast graph-wise softmax with high temperature
-
+            #  manual scatter softmax
+            # numerator = torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature)
+            # denominator = scatter(torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature), decoded_data.batch)
+            # nodewise_weights = (numerator / denominator.repeat_interleave(self.config.autoencoder.model.num_decoder_points)) # fast graph-wise softmax with high temperature
+            # faster & more stable implementation
+            nodewise_weights = scatter_softmax(decoding[:, -1] / self.config.autoencoder.node_weight_temperature, decoded_data.batch, dim=0)
             nodewise_weights_tensor = nodewise_weights * data.mol_size.repeat_interleave(self.config.autoencoder.model.num_decoder_points)  # appropriate graph weighting
         else:
             nodewise_weights_tensor = torch.tensor(nodewise_graph_weights, dtype=torch.float32, device=self.config.device)

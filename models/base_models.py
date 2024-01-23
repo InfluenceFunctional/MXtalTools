@@ -101,14 +101,12 @@ class molecule_graph_model(nn.Module):
 
         # molecule features FC layer
         if num_mol_feats != 0:
-            assert not self.equivariant_graph, "Equivariance not set up for post aggregation MLP"
             self.mol_fc = nn.Linear(num_mol_feats, num_mol_feats)
         else:
             self.mol_fc = None
 
-        # FC model to post-process graph fingerprint
+        """Optional built-in FC model to post-process graph fingerprint"""
         if num_fc_layers > 0:
-            assert not self.equivariant_graph, "Equivariance not set up for post aggregation MLP"
             self.gnn_mlp = MLP(layers=num_fc_layers,
                                filters=fc_depth,
                                norm=fc_norm_mode,
@@ -116,19 +114,26 @@ class molecule_graph_model(nn.Module):
                                input_dim=graph_embedding_depth,
                                output_dim=fc_depth,
                                conditioning_dim=num_mol_feats,
-                               seed=seed
+                               seed=seed,
+                               equivariant=self.equivariant_graph,
+                               vector_output_dim=graph_embedding_depth,
+                               vector_norm=vector_norm,
                                )
-
-            if fc_depth != output_dimension:  # only want this if we have to change the dimension
-                self.output_fc = nn.Linear(fc_depth, output_dimension, bias=False)
-            else:
-                self.output_fc = nn.Identity()
+            gnn_output_depth = fc_depth
         else:
-            self.gnn_mlp = nn.Identity()
-            if graph_embedding_depth != output_dimension:  # only want this if we have to change the dimension
-                self.output_fc = nn.Linear(graph_embedding_depth, output_dimension, bias=False)
+            gnn_output_depth = graph_embedding_depth
+
+        """initialize output reshaping layers"""
+        if gnn_output_depth != output_dimension:  # only want this if we have to change the dimension
+            self.output_fc = nn.Linear(gnn_output_depth, output_dimension, bias=False)
+        else:
+            self.output_fc = nn.Identity()
+
+        if self.equivariant_graph:
+            if gnn_output_depth != output_dimension:  # only want this if we have to change the dimension
+                self.v_output_fc = nn.Linear(gnn_output_depth, output_dimension, bias=False)
             else:
-                self.output_fc = nn.Identity()
+                self.v_output_fc = nn.Identity()
 
     def forward(self, data, edges_dict=None, return_latent=False, return_dists=False):
         if edges_dict is None:  # option to rebuild radial graph
@@ -160,16 +165,16 @@ class molecule_graph_model(nn.Module):
                                 cluster=data.mol_ind if self.global_pool.agg_func == 'molwise' else None,
                                 output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
 
-        if not self.equivariant_graph:
-            # todo add equivariant support here
-            x = self.gnn_mlp(x,
-                             conditions=self.mol_fc(data.mol_x) if self.mol_fc is not None else None  # add graph-wise features
-                             ) if self.num_fc_layers > 0 else x  # mix graph encoding with molecule-scale features
+        if self.num_fc_layers > 0:
+            gmlp_out = self.gnn_mlp(x, v=v,
+                                    conditions=self.mol_fc(data.mol_x) if self.mol_fc is not None else None  # add graph-wise features
+                                    )
+            if self.equivariant_graph:
+                x, v = gmlp_out
+            else:
+                x = gmlp_out
 
-            output = self.output_fc(x)
-
-        else:
-            output = x, v
+        output = self.output_fc(x), self.v_output_fc(v) if self.equivariant_graph else self.output_fc(x)
 
         extra_outputs = self.collect_extra_outputs(data, edges_dict, return_dists, return_latent, x)
 
@@ -278,7 +283,7 @@ class molecule_graph_model(nn.Module):
                 # x = torch.cat((x, rad[:, None], sh), dim=-1)
 
                 rad = torch.linalg.norm(data.pos, dim=1)
-                x = torch.cat((x, rad[:, None], data.pos/rad[:, None]), dim=-1)  # radii and normed directions
+                x = torch.cat((x, rad[:, None], data.pos / rad[:, None]), dim=-1)  # radii and normed directions
             else:
                 x = torch.cat((x, data.pos), dim=-1)
 

@@ -1450,7 +1450,8 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
     return None
 
 
-def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type, molecule_radius_normalization):
+def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type,
+                             molecule_radius_normalization):
     collater = Collater(None, None)
     data = collater(epoch_stats_dict['sample'])
     decoded_data = collater(epoch_stats_dict['decoded_sample'])
@@ -1471,7 +1472,8 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type, mol
                })
 
     if config.logger.log_figures:
-        fig, fig2, rmsd, max_dist, tot_overlap= gaussian_3d_overlap_plots(data, decoded_data, dataDims['num_atom_types'], molecule_radius_normalization)
+        fig, fig2, rmsd, max_dist, tot_overlap= gaussian_3d_overlap_plots(data, decoded_data, dataDims['num_atom_types'],
+                                                                          molecule_radius_normalization)
         wandb.log({
             epoch_type + "_pointwise_sample_distribution": fig,
             epoch_type + "_cluster_sample_distribution": fig2,
@@ -1806,29 +1808,29 @@ def gaussian_3d_overlap_plots(data, decoded_data, max_point_types, molecule_radi
     fig = swarm_vs_tgt_fig(data, decoded_data, max_point_types)
 
     """ weighted gaussian mixture combination """
-    rmsd, max_dist, tot_overlap, fig2 = decoder_swarm_clustering(0, data, decoded_data, molecule_radius_normalization)
+    rmsd, max_dist, tot_overlap, fig2 = decoder_swarm_clustering(0, data, decoded_data, molecule_radius_normalization, max_point_types)
 
     return fig, fig2, rmsd, max_dist, tot_overlap
 
 
-def decoder_swarm_clustering(graph_ind, data, decoded_data, molecule_radius_normalization):
+def decoder_swarm_clustering(graph_ind, data, decoded_data, molecule_radius_normalization, num_classes):
     (matched_dists, matched_particles, max_dist,
      points_true, pred_particle_weights,
      pred_particles, rmsd, truth) = (
-        cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization))
+        cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes))
 
     fig2 = swarm_cluster_fig(data, graph_ind, matched_particles, points_true, pred_particle_weights, pred_particles, truth)
 
     return rmsd, max_dist, pred_particle_weights.mean(), fig2
 
 
-def cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization):
+def cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes):
     points_true = data.pos[data.batch == graph_ind]
     points_pred = torch.cat([decoded_data.pos[decoded_data.batch == graph_ind], decoded_data.x[decoded_data.batch == graph_ind]], dim=1).cpu().detach().numpy()
     points_true[:, :3] *= molecule_radius_normalization
     points_pred[:, :3] *= molecule_radius_normalization
     sample_weights = decoded_data.aux_ind[decoded_data.batch == graph_ind].cpu().detach().numpy()
-    truth = torch.cat([points_true, F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=5)], dim=1).cpu().detach().numpy()
+    truth = torch.cat([points_true, F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=num_classes)], dim=1).cpu().detach().numpy()
     points_true = points_true.cpu().detach().numpy()
     intra_distmat = cdist(truth, truth) + np.eye(len(truth)) * 10
     intrapoint_cutoff = np.amin(intra_distmat) / 2

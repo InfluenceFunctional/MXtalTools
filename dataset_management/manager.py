@@ -59,8 +59,28 @@ class DataManager:
             self.rebuild_indices()
 
         if filter_protons:
-            # TODO go in to each entry and delete only the proton lines - expensive!
-            aa = 1
+            atom_keys = []
+            for key in self.dataset.columns:
+                if key.lower()[:5] == 'atom_':
+                    atom_keys.append(key)
+            init_atoms = len(np.concatenate(self.dataset['atom_atomic_numbers']))
+            new_rows = []
+            for ind, row in tqdm(self.dataset.iterrows(), total=self.dataset.shape[0]):
+                atoms = row['atom_atomic_numbers']
+                heavy_atom_inds = np.argwhere(atoms != 1)[:, 0]
+
+                for key in atom_keys:
+                    row[key] = row[key][heavy_atom_inds]
+
+                row['molecule_num_atoms'] = len(heavy_atom_inds)
+                new_rows.append(row)
+
+            self.dataset = pd.DataFrame(new_rows)
+
+            self.dataset = delete_from_dataframe(self.dataset, np.argwhere(self.dataset['molecule_num_atoms']==1)[:,0])  # delete methane, ammonia, etc.
+
+            final_atoms = len(np.concatenate(self.dataset['atom_atomic_numbers']))
+            print(f"Proton filter removed {init_atoms - final_atoms} atoms leaving {final_atoms}")
 
         self.generate_datapoints(config, override_length)
 
@@ -264,7 +284,7 @@ class DataManager:
             for anum in self.allowed_atom_types:
                 self.dataset[f'molecule_{SYMBOLS[anum]}_fraction'] = np.asarray([
                     get_fraction(atom_list, anum) for atom_list in self.dataset['atom_atomic_numbers']
-                    ])
+                ])
 
     def get_regression_target(self):
         targets = self.dataset[self.regression_target]
@@ -338,7 +358,7 @@ class DataManager:
                 if self.dataset_type == 'crystal':
                     feature_vector = np.asarray(self.dataset[key][i])[0]  # all atom features are lists-of-lists, for Z'=1 always just take the first element
                 else:
-                    feature_vector = np.asarray(self.dataset[key][i]) # all atom features are lists-of-lists, for Z'=1 always just take the first element
+                    feature_vector = np.asarray(self.dataset[key][i])  # all atom features are lists-of-lists, for Z'=1 always just take the first element
 
                 if key == 'atom_atomic_numbers':
                     pass

@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: embedding  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' WIP
+mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' WIP
 dataset_name: 'qm9_molecules_dataset.pkl'
 misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
 base_config_path: '/experiments/base.yaml'  # base config
@@ -14,6 +14,7 @@ model_names: ['autoencoder']#, 'embedding_regressor']
 dataset:
   max_dataset_length: 1000
   test_fraction: 0.2
+  filter_protons: True
 
 # batching & convergence
 early_epochs_step_override: 100
@@ -45,18 +46,19 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test12_3_18-01-12-23-40
+  autoencoder: null #/cluster/best_autoencoder_autoencoder_tests_qm9_test12_3_18-01-12-23-40
   embedding_regressor: null
 
 discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
-autoencoder_positional_noise: 0
+autoencoder_positional_noise: 0.1
 
 generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
 
 autoencoder:
+  KLD_weight: 0.1
   random_fraction: 0
   type_distance_scaling: 0.5
   init_sigma: 0.15
@@ -87,17 +89,19 @@ autoencoder:
     use_plateau_scheduler: False
 
   model:
+    variational_encoder: True
     encoder_type: 'equivariant' # or variant
     decoder_type: 'equivariant' # or variant
 
-    num_graph_convolutions: 2
-    embedding_depth: 57
+    num_graph_convolutions: 0
+    embedding_depth: 512
+    bottleneck_dim: 64
     graph_message_depth: 57  # must cleanly divide num_heads
     num_attention_heads: 3
     graph_aggregator: 'equivariant softmax'
-    nodewise_fc_layers: 1
+    nodewise_fc_layers: 8
     activation: 'gelu'
-    num_decoder_layers: 4
+    num_decoder_layers: 8
     decoder_ramp_depth: True
 
     decoder_norm_mode: 'batch'
@@ -114,7 +118,7 @@ autoencoder:
     max_num_neighbors: 100
     convolution_cutoff: 2
     atom_type_embedding_dims: 5
-    num_decoder_points: 512
+    num_decoder_points: 128
 
 regressor:
   optimizer: null

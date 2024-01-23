@@ -11,23 +11,25 @@ class point_autoencoder(nn.Module):
     def __init__(self, seed, config, dataDims):
         super(point_autoencoder, self).__init__()
         '''conditioning model'''
-
+        cartesian_dimension = 3
         self.num_classes = dataDims['num_atom_types']
-        self.output_depth = self.num_classes + 3 + 1
+        self.output_depth = self.num_classes + cartesian_dimension + 1
         self.num_nodes = config.num_decoder_points
 
         self.equivariant_encoder = config.encoder_type == 'equivariant'
         self.equivariant_decoder = config.decoder_type == 'equivariant'
         self.fully_equivariant = self.equivariant_encoder and self.equivariant_decoder
+        self.variational = config.variational_encoder
+        self.bottleneck_dim = config.bottleneck_dim
 
         self.encoder = point_encoder(seed, config)
 
         self.decoder = MLP(
             layers=config.num_decoder_layers,
             filters=config.embedding_depth if self.equivariant_decoder else config.embedding_depth * 3,
-            input_dim=config.embedding_depth if self.equivariant_encoder else config.embedding_depth * 3,
+            input_dim=config.bottleneck_dim if self.equivariant_encoder else config.bottleneck_dim * 3,
             output_dim=(self.output_depth - 3 if self.equivariant_decoder else 0) * self.num_nodes,
-            conditioning_dim=config.embedding_depth,  # todo retrain after getting rid of this
+            conditioning_dim=0,
             activation='gelu',
             norm=config.decoder_norm_mode,
             dropout=config.decoder_dropout_probability,
@@ -39,15 +41,34 @@ class point_autoencoder(nn.Module):
 
     def forward(self, data):
         encoding = self.encode(data)
+
         return self.decode(encoding)
 
-    def encode(self, data):
+    def encode(self, data, z=None):
         """
         pass only the encoding
         """
         encoding = self.encoder(data)
-        if self.encoder.model.equivariant_graph:
-            encoding = encoding[1]  # extract vector component
+        if self.equivariant_encoder:
+            x, v = encoding  # extract vector component
+        else:
+            x = encoding
+
+        if self.variational:  # this appears to break equivariance but it's only because the lengths are changing
+            assert self.equivariant_encoder, "Variational autoencoder only implemented for equivariant encoder"
+            mu = torch.linalg.norm(v, dim=1)
+            log_sigma = x
+            sigma = torch.exp(0.5 * log_sigma)
+            if z is None:
+                z = torch.randn_like(sigma)
+            stochastic_weight = z*sigma + mu  # parameterized distribution
+            encoding = stochastic_weight[:, None, :] * v  # rescale vector length by learned distribution
+            self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution
+        else:
+            if self.equivariant_encoder:
+                encoding = v
+            else:
+                encoding = x
 
         assert torch.sum(torch.isnan(encoding)) == 0, "NaN in encoder output"
 
@@ -77,8 +98,8 @@ class point_autoencoder(nn.Module):
             '''encoding nx3xk'''
             norm = torch.linalg.norm(encoding, dim=1)
             decoding = self.decoder(x=norm,
-                                    v=encoding,
-                                    conditions=norm)
+                                    v=encoding)
+
             scalar_decoding, vector_decoding = decoding
             '''combine vector and scalar features to n*nodes x m'''
             decoding = torch.cat([
@@ -173,14 +194,14 @@ class point_encoder(nn.Module):
         self.model = molecule_graph_model(
             num_atom_feats=1,
             num_mol_feats=0,
-            output_dimension=config.embedding_depth,
+            output_dimension=config.bottleneck_dim,
             seed=seed,
             equivariant_graph=True if config.encoder_type == 'equivariant' else False,
             graph_aggregator=config.graph_aggregator,
             concat_pos_to_atom_features=True,
             concat_mol_to_atom_features=False,
             concat_crystal_to_atom_features=False,
-            activation='gelu',  # todo adjust and retrain  config.activation
+            activation=config.activation,
             num_fc_layers=0,
             fc_depth=0,
             fc_norm_mode=None,
