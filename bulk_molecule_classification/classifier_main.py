@@ -74,7 +74,7 @@ if __name__ == "__main__":
             generate_dataset_from_dumps(dumps_dirs, dataset_path)
             os.chdir(config['runs_path'])
 
-        train_loader, test_loader = collate_training_dataloaders(config, dataset_path)
+        train_loader, test_loader = collate_training_dataloaders(config, dataset_path, mode='hot')
 
         train_classifier(config, classifier, optimizer,
                          train_loader, test_loader,
