@@ -21,7 +21,7 @@ early_epochs_step_override: 100
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 50
-max_batch_size: 500
+max_batch_size: 2000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 5000  # for convergence checks

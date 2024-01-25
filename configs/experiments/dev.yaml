@@ -1,18 +1,18 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: embedding  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' WIP
+mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' WIP
 dataset_name: 'qm9_molecules_dataset.pkl'
 misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
 base_config_path: '/experiments/base.yaml'  # base config
 dataset_yaml_path: '/dataset/qm9_autoencoder.yaml'
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
-save_checkpoints: False # will do it always on cluster, only locally if True
+save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
 model_names: ['autoencoder']#, 'embedding_regressor']
 
 dataset:
-  max_dataset_length: 10000
+  max_dataset_length: 1000000
   test_fraction: 0.2
   filter_protons: True
 
@@ -20,7 +20,7 @@ dataset:
 early_epochs_step_override: 100
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 250
+min_batch_size: 500
 max_batch_size: 500
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
@@ -52,13 +52,13 @@ model_paths:
 discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
-autoencoder_positional_noise: 0.1
+autoencoder_positional_noise: 0.15
 
 generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
 
 autoencoder:
-  KLD_weight: 0.01
+  KLD_weight: 0.1
   random_fraction: 0
   type_distance_scaling: 0.5
   init_sigma: 0.073 #0.15
@@ -74,11 +74,11 @@ autoencoder:
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 1.0E-4
+    init_lr: 1.0E-5
     encoder_init_lr: 1.0E-5
     decoder_init_lr: 1.0E-5
     max_lr: 1.0E-5
-    min_lr: 1.0E-5
+    min_lr: 5.0E-6
     lr_schedule: True
     beta1: 0.9
     beta2: 0.999

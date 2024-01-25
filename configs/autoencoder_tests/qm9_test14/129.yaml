@@ -127,7 +127,7 @@ logger:
   run_name: qm9_test14_54_55_56_57_58_59_60_61_62_63_64_65_66_67_68_69_70_71_72_73_74_75_76_77_78_79_80_81_82_83_84_85_86_87_88_89_90_91_92_93_94_95_96_97_98_99_100_101_102_103_104_105_106_107_108_109_110_111_112_113_114_115_116_117_118_119_120_121_122_123_124_125_126_127_128_129
   sample_reporting_frequency: 5
 machine: cluster
-max_batch_size: 500
+max_batch_size: 2000
 max_epochs: 100000
 min_batch_size: 50
 misc_dataset_name: misc_data_for_qm9_molecules_dataset.npy
