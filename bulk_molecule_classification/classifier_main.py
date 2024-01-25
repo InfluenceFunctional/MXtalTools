@@ -121,6 +121,4 @@ if __name__ == "__main__":
                 config['num_topologies'] = 2
 
                 print(f"Processing dump {dump_dir}")
-                trajectory_analysis(config, classifier, config['run_name'],
-                                    wandb, config['device'],
-                                    dumps_dir=dump_dir, )
+                trajectory_analysis(config, classifier, wandb, config['device'], dumps_dir=dump_dir)

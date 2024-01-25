@@ -146,7 +146,7 @@ def classifier_evaluation(config, classifier, train_loader, test_loader,
         wandb.log(fig_dict)
 
 
-def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
+def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
 
     from bulk_molecule_classification.ovito_utils import write_ovito_xyz
     dataset_name = '_'.join(dumps_dir.split('/')[-3:])
@@ -242,6 +242,27 @@ def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
             sorted_molwise_results_dict, time_steps,
             'urea' if config['mol_num_atoms'] == 8 else 'nicotinamide',
             inside_radius=inside_radius, interface_mode=interface_mode)
+
+        """ type density vs radius over time
+        from plotly.subplots import make_subplots
+        timepoints = np.linspace(0, 200, 24).astype(int)
+        
+        fig = make_subplots(rows=4, cols=6, subplot_titles=[f't={timepoint}' for timepoint in timepoints])
+        for ind in range(24):
+            row = ind // 6 + 1
+            col = ind % 6 + 1
+            ind = timepoints[ind]
+            print(row)
+            print(col)
+            radii = sorted_molwise_results_dict['Centroid Radii'][ind]
+            f4_frac = sorted_molwise_results_dict['Molecule_Type_Prediction'][ind][:, 3]
+            sort_inds = np.argsort(radii)[::-1]
+            fig.add_trace(go.Scatter(x=radii[sort_inds], y=gaussian_filter1d(f4_frac[sort_inds],sigma=5)), row=row, col=col)
+        fig.update_xaxes(title='Radius')
+        fig.update_yaxes(title='Form 4 Fraction')
+        fig.update_yaxes(range=[-0.05, 1.05])
+        fig.show()
+        """
 
         if os.path.exists(dumps_dir + 'run_config.npy'):
             fig.update_layout(

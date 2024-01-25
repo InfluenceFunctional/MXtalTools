@@ -464,6 +464,14 @@ def process_trajectory_results_dict(results_dict, loader, mol_num_atoms):
     for key in molwise_results_dict.keys():
         sorted_molwise_results_dict[key] = [molwise_results_dict[key][ind] for ind in sort_inds]
 
+    centroid_dists = []
+    for ind in range(len(sorted_molwise_results_dict['Coordinates'])):
+        coords = sorted_molwise_results_dict['Coordinates'][ind]
+        centroids = coords.reshape(coords.shape[0] // mol_num_atoms, mol_num_atoms, 3).mean(1)
+        centroid_dists.append(np.linalg.norm(centroids - centroids.mean(0), axis=1))
+
+    sorted_molwise_results_dict['Centroid Radii'] = centroid_dists
+
     return sorted_molwise_results_dict, np.asarray(time_inds)[sort_inds]
 
 
