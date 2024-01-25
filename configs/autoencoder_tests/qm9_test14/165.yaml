@@ -1,6 +1,6 @@
 anomaly_detection: false
 autoencoder:
-  KLD_weight: 0.1
+  KLD_weight: 0.01
   evaluation_sigma: 0.05
   independent_node_weights: true
   init_sigma: 0.15
@@ -8,7 +8,7 @@ autoencoder:
   model:
     activation: gelu
     atom_type_embedding_dims: 5
-    bottleneck_dim: 128
+    bottleneck_dim: 256
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: batch
@@ -27,8 +27,8 @@ autoencoder:
     nodewise_fc_layers: 8
     num_attention_heads: 4
     num_decoder_layers: 2
-    num_decoder_points: 512
-    num_graph_convolutions: 4
+    num_decoder_points: 128
+    num_graph_convolutions: 0
     num_radial: 32
     radial_function: gaussian
     variational_encoder: true
@@ -37,8 +37,8 @@ autoencoder:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 0.0001
-    decoder_init_lr: 0.0005
-    encoder_init_lr: 0.0001
+    decoder_init_lr: 0.0001
+    encoder_init_lr: 0.001
     init_lr: 0.0001
     lr_growth_lambda: 1.0
     lr_schedule: true
@@ -47,7 +47,7 @@ autoencoder:
     min_lr: 1.0e-05
     optimizer: adamw
     use_plateau_scheduler: false
-    weight_decay: 0.05
+    weight_decay: 0.1
   overlap_eps:
     test: 0.001
   random_fraction: 0
@@ -124,7 +124,7 @@ logger:
   experiment_tag: qm9_test14
   log_figures: true
   mini_csp_frequency: 5
-  run_name: qm9_test14_0_1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_25_26_27_28_29_30_31_32_33_34_35_36_37_38_39_40_41_42_43_44_45_46_47_48_49_50_51_52_53_54_55_56_57_58_59_60_61_62_63_64_65_66_67_68_69_70_71_72_73_74_75_76_77_78_79_80_81_82_83_84_85_86_87_88_89_90_91_92_93_94_95_96_97_98_99_100_101_102_103_104_105_106_107_108_109_110_111_112_113_114_115_116_117_118_119_120_121_122_123_124_125_126_127_128_129_130_131_132_133_134_135_136_137_138_139_140_141_142_143_144_145_146_147_148_149_150_151_152_153_154_155_156_157_158_159_160_161_162_163_164_165
+  run_name: qm9_test14_54_55_56_57_58_59_60_61_62_63_64_65_66_67_68_69_70_71_72_73_74_75_76_77_78_79_80_81_82_83_84_85_86_87_88_89_90_91_92_93_94_95_96_97_98_99_100_101_102_103_104_105_106_107_108_109_110_111_112_113_114_115_116_117_118_119_120_121_122_123_124_125_126_127_128_129_130_131_132_133_134_135_136_137_138_139_140_141_142_143_144_145_146_147_148_149_150_151_152_153_154_155_156_157_158_159_160_161_162_163_164_165
   sample_reporting_frequency: 5
 machine: cluster
 max_batch_size: 500

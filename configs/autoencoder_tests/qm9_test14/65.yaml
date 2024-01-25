@@ -1,6 +1,6 @@
 anomaly_detection: false
 autoencoder:
-  KLD_weight: 0.1
+  KLD_weight: 0.01
   evaluation_sigma: 0.05
   independent_node_weights: true
   init_sigma: 0.15
@@ -8,14 +8,14 @@ autoencoder:
   model:
     activation: gelu
     atom_type_embedding_dims: 5
-    bottleneck_dim: 32
+    bottleneck_dim: 256
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: batch
     decoder_ramp_depth: true
     decoder_type: equivariant
     decoder_vector_norm: true
-    embedding_depth: 64
+    embedding_depth: 128
     encoder_type: equivariant
     encoder_vector_norm: true
     graph_aggregator: equivariant softmax
@@ -26,9 +26,9 @@ autoencoder:
     max_num_neighbors: 100
     nodewise_fc_layers: 1
     num_attention_heads: 4
-    num_decoder_layers: 2
-    num_decoder_points: 64
-    num_graph_convolutions: 4
+    num_decoder_layers: 1
+    num_decoder_points: 128
+    num_graph_convolutions: 1
     num_radial: 32
     radial_function: gaussian
     variational_encoder: true
@@ -37,7 +37,7 @@ autoencoder:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 0.0001
-    decoder_init_lr: 0.0005
+    decoder_init_lr: 0.0001
     encoder_init_lr: 0.0005
     init_lr: 0.0001
     lr_growth_lambda: 1.0
@@ -124,7 +124,7 @@ logger:
   experiment_tag: qm9_test14
   log_figures: true
   mini_csp_frequency: 5
-  run_name: qm9_test14_0_1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_25_26_27_28_29_30_31_32_33_34_35_36_37_38_39_40_41_42_43_44_45_46_47_48_49_50_51_52_53_54_55_56_57_58_59_60_61_62_63_64_65
+  run_name: qm9_test14_54_55_56_57_58_59_60_61_62_63_64_65
   sample_reporting_frequency: 5
 machine: cluster
 max_batch_size: 500

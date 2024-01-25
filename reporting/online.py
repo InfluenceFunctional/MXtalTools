@@ -5,7 +5,8 @@ from _plotly_utils.colors import n_colors, sample_colorscale
 from plotly.subplots import make_subplots
 from scipy.spatial.distance import cdist
 from scipy.stats import linregress
-from sklearn.cluster import KMeans
+from sklearn.cluster import AgglomerativeClustering
+
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
@@ -1472,8 +1473,8 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type,
                })
 
     if config.logger.log_figures:
-        fig, fig2, rmsd, max_dist, tot_overlap= gaussian_3d_overlap_plots(data, decoded_data, dataDims['num_atom_types'],
-                                                                          molecule_radius_normalization)
+        fig, fig2, rmsd, max_dist, tot_overlap = gaussian_3d_overlap_plots(data, decoded_data, dataDims['num_atom_types'],
+                                                                           molecule_radius_normalization)
         wandb.log({
             epoch_type + "_pointwise_sample_distribution": fig,
             epoch_type + "_cluster_sample_distribution": fig2,
@@ -1813,28 +1814,72 @@ def gaussian_3d_overlap_plots(data, decoded_data, max_point_types, molecule_radi
     return fig, fig2, rmsd, max_dist, tot_overlap
 
 
+def decoder_clustering(points_pred, sample_weights, intrapoint_cutoff):
+
+    ag = AgglomerativeClustering(n_clusters=None, metric='euclidean', linkage='complete', distance_threshold=intrapoint_cutoff).fit_predict(points_pred[:, :3])
+    n_clusters = len(np.unique(ag))
+    pred_particle_weights = np.zeros(n_clusters)
+    pred_particles = np.zeros((n_clusters, points_pred.shape[1]))
+    for ind in range(n_clusters):
+        collect_inds = ag == ind
+        collected_particles = points_pred[collect_inds]
+        collected_particle_weights = sample_weights[collect_inds]
+        pred_particle_weights[ind] = collected_particle_weights.sum()
+        pred_particles[ind] = np.sum(collected_particle_weights[:, None] * collected_particles, axis=0)
+
+    '''aggregate any 'floaters' or low-probability particles into their nearest neighbors'''
+    weak_particles = np.argwhere(pred_particle_weights < 0.5).flatten()
+    ind = 0
+    while len(weak_particles >= 1):
+        particle = pred_particles[weak_particles[ind], :3]
+        dmat = cdist(particle[None, :], pred_particles[:, :3])
+        dmat[dmat == 0] = 100
+        nearest_neighbor = np.argmin(dmat)
+        pred_particles[nearest_neighbor] = pred_particles[nearest_neighbor] * pred_particle_weights[nearest_neighbor] + pred_particles[weak_particles[ind]] * pred_particle_weights[weak_particles[ind]]
+        pred_particle_weights[nearest_neighbor] = pred_particle_weights[nearest_neighbor] + pred_particle_weights[weak_particles[ind]]
+        pred_particles = np.delete(pred_particles, weak_particles[ind], axis=0)
+        pred_particle_weights = np.delete(pred_particle_weights, weak_particles[ind], axis=0)
+        weak_particles = np.argwhere(pred_particle_weights < 0.5).flatten()
+
+    #
+    # if len(pred_particles) == int(torch.sum(data.batch == graph_ind)):
+    #     matched_dists = cdist(pred_particles[:, :3], coords_true)
+    #     matched_inds = np.argmin(matched_dists, axis=1)[:, None]
+    #     if len(np.unique(matched_inds)) < len(pred_particles):
+    #         rmsd = np.Inf
+    #         max_dist = np.Inf
+    #     else:
+    #         rmsd = np.mean(np.amin(matched_dists, axis=1))
+    #         max_dist = np.amax(np.amin(matched_dists, axis=1))
+    #
+    # else:
+    #     rmsd = np.Inf
+    #     max_dist = np.Inf
+
+    return pred_particles, pred_particle_weights  # , rmsd, max_dist
+
+
 def decoder_swarm_clustering(graph_ind, data, decoded_data, molecule_radius_normalization, num_classes):
-    (matched_dists, matched_particles, max_dist,
-     points_true, pred_particle_weights,
-     pred_particles, rmsd, truth) = (
+    (matched_particles, max_dist, pred_particle_weights, pred_particles, rmsd, points_true) = (
         cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes))
 
-    fig2 = swarm_cluster_fig(data, graph_ind, matched_particles, points_true, pred_particle_weights, pred_particles, truth)
+    fig2 = swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights, pred_particles, points_true)
 
     return rmsd, max_dist, pred_particle_weights.mean(), fig2
 
 
 def cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes):
-    points_true = data.pos[data.batch == graph_ind]
-    points_pred = torch.cat([decoded_data.pos[decoded_data.batch == graph_ind], decoded_data.x[decoded_data.batch == graph_ind]], dim=1).cpu().detach().numpy()
-    points_true[:, :3] *= molecule_radius_normalization
-    points_pred[:, :3] *= molecule_radius_normalization
-    sample_weights = decoded_data.aux_ind[decoded_data.batch == graph_ind].cpu().detach().numpy()
-    truth = torch.cat([points_true, F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=num_classes)], dim=1).cpu().detach().numpy()
-    points_true = points_true.cpu().detach().numpy()
-    intra_distmat = cdist(truth, truth) + np.eye(len(truth)) * 10
+    """"""
+    '''extract true and predicted points'''
+    coords_true, coords_pred, points_true, points_pred, sample_weights = (
+        extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes, to_numpy=True))
+
+    '''get minimum true bond lengths'''
+    intra_distmat = cdist(points_true, points_true) + np.eye(len(points_true)) * 10
     intrapoint_cutoff = np.amin(intra_distmat) / 2
-    distmat = cdist(truth, points_pred)
+
+    '''assign output density mass to each input particle (scaffolded clustering)'''
+    distmat = cdist(points_true, points_pred)
     pred_particle_weights = np.zeros(len(distmat))
     pred_particles = np.zeros((len(distmat), points_pred.shape[1]))
     for ind in range(len(distmat)):
@@ -1843,27 +1888,44 @@ def cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normal
         collected_particle_weights = sample_weights[collect_inds]
         pred_particle_weights[ind] = collected_particle_weights.sum()
         pred_particles[ind] = np.sum(collected_particle_weights[:, None] * collected_particles, axis=0)
-    dists = cdist(pred_particles, truth)
+
+    '''get distances to true and predicted particles'''
+    dists = cdist(pred_particles, points_true)
     matched_particle_inds = np.argmin(dists, axis=0)
-    all_targets_matched = len(np.unique(matched_particle_inds)) == len(truth)
+    all_targets_matched = len(np.unique(matched_particle_inds)) == len(points_true)
     matched_particles = pred_particles[matched_particle_inds]
-    matched_dists = np.linalg.norm(truth[:, :3] - matched_particles[:, :3], axis=1)
-    if all_targets_matched:
+    matched_dists = np.linalg.norm(points_true[:, :3] - matched_particles[:, :3], axis=1)
+    if all_targets_matched and np.amax(np.abs(1 - pred_particle_weights)) < 0.1:  # +/- 10% of 100% probability
         rmsd = matched_dists.mean()
         max_dist = matched_dists.max()
     else:
         rmsd = np.Inf
         max_dist = np.Inf
-    return matched_dists, matched_particles, max_dist, points_true, pred_particle_weights, pred_particles, rmsd, truth
+    return matched_particles, max_dist, pred_particle_weights, pred_particles, rmsd, points_true
 
 
-def swarm_cluster_fig(data, graph_ind, matched_particles, points_true, pred_particle_weights, pred_particles, truth):
+def extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes, to_numpy=False):
+    coords_true = data.pos[data.batch == graph_ind] * molecule_radius_normalization
+    coords_pred = decoded_data.pos[decoded_data.batch == graph_ind] * molecule_radius_normalization
+    points_true = torch.cat([coords_true, F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=num_classes)], dim=1)
+    points_pred = torch.cat([coords_pred, decoded_data.x[decoded_data.batch == graph_ind]], dim=1)
+    sample_weights = decoded_data.aux_ind[decoded_data.batch == graph_ind]
+
+    if to_numpy:
+        return (coords_true.cpu().detach().numpy(), coords_pred.cpu().detach().numpy(),
+                points_true.cpu().detach().numpy(), points_pred.cpu().detach().numpy(),
+                sample_weights.cpu().detach().numpy())
+    else:
+        return coords_true, coords_pred, points_true, points_pred, sample_weights
+
+
+def swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights, pred_particles, points_true):
     fig2 = go.Figure()
     colors = (
         'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
         'rgb(165, 170, 153)')
     for j in range(len(points_true)):
-        vec = np.stack([matched_particles[j, :3], truth[j, :3]])
+        vec = np.stack([matched_particles[j, :3], points_true[j, :3]])
         fig2.add_trace(go.Scatter3d(x=vec[:, 0], y=vec[:, 1], z=vec[:, 2], mode='lines', line_color='black', showlegend=False))
     for j in range(pred_particles.shape[-1] - 4):
         ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
@@ -1909,6 +1971,8 @@ def swarm_vs_tgt_fig(data, decoded_data, max_point_types):
                                    name=f'Predicted type {j}'
                                    ))
     return fig
+
+
 #
 # TODO deprecated - rewrite for toy / demo purposes
 # def oneD_gaussian_overlap_plot(cmax, data, decoded_data, max_point_types, max_xval, min_xval, sigma):
@@ -1976,37 +2040,39 @@ def swarm_vs_tgt_fig(data, decoded_data, max_point_types):
 
 
 def autoencoder_embedding_tsnes(stats_dict):
-    max_num_samples = 500
-    #mol_key = 'Ipm1/Ipm2'
+    max_num_samples = 1000
+    # mol_key = 'Ipm1/Ipm2'
 
     vector_encodings = stats_dict['encoding'][:max_num_samples]
 
     # try a bunch of the same samples, rotated
-    rotencodings = []
-    from scipy.spatial.transform import Rotation as R
-    for i in range(max_num_samples):
-        rmat = R.random().as_matrix()
-        rotencodings.append(np.einsum('ij, jk->ik', rmat, vector_encodings[i // 50]))
-    rotencodings = np.stack(rotencodings)
-    vector_encodings = rotencodings
-
+    # rotencodings = []
+    # from scipy.spatial.transform import Rotation as R
+    # for i in range(max_num_samples):
+    #     rmat = R.random().as_matrix()
+    #     rotencodings.append(np.einsum('ij, jk->ik', rmat, vector_encodings[i // 50]))
+    # rotencodings = np.stack(rotencodings)
+    # vector_encodings = rotencodings
+    #
     scalar_encodings = np.linalg.norm(vector_encodings, axis=1)
     vector_encodings = vector_encodings.reshape(len(vector_encodings), 3 * vector_encodings.shape[-1])
     from sklearn.manifold import TSNE
     import plotly.graph_objects as go
 
-    for encodings in [scalar_encodings, vector_encodings]:
+    for encodings in [scalar_encodings]:  # , vector_encodings]:
         embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
                          init='pca', perplexity=30).fit_transform(encodings)
 
         fig = go.Figure()
         fig.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
                                    mode='markers',
-                                   marker_color=np.arange(500)//50, #stats_dict[mol_key][:max_num_samples],
-                                   opacity=1,
-                                   #marker_colorbar=dict(title=mol_key),
+                                   # marker_color=np.arange(500)//50, #stats_dict[mol_key][:max_num_samples],
+                                   opacity=.75,
+                                   # marker_colorbar=dict(title=mol_key),
                                    ))
         fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
                           xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
                           plot_bgcolor='rgba(0,0,0,0)')
         fig.show()
+
+    return None

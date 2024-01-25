@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' WIP
+mode: embedding  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' WIP
 dataset_name: 'qm9_molecules_dataset.pkl'
 misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
 base_config_path: '/experiments/base.yaml'  # base config
@@ -12,7 +12,7 @@ checkpointing_loss_type: test  # will save a new checkpoint when a minimum of th
 model_names: ['autoencoder']#, 'embedding_regressor']
 
 dataset:
-  max_dataset_length: 1000
+  max_dataset_length: 10000
   test_fraction: 0.2
   filter_protons: True
 
@@ -20,7 +20,7 @@ dataset:
 early_epochs_step_override: 100
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 50
+min_batch_size: 250
 max_batch_size: 500
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
@@ -46,7 +46,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null #/cluster/best_autoencoder_autoencoder_tests_qm9_test12_3_18-01-12-23-40
+  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test14_3_23-01-21-53-36
   embedding_regressor: null
 
 discriminator_positional_noise: 0
@@ -58,10 +58,10 @@ generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate
 supercell_size: 5
 
 autoencoder:
-  KLD_weight: 0.1
+  KLD_weight: 0.01
   random_fraction: 0
   type_distance_scaling: 0.5
-  init_sigma: 0.15
+  init_sigma: 0.073 #0.15
   evaluation_sigma: 0.05
   sigma_lambda: 0.99
   sigma_threshold: 0.01
@@ -75,8 +75,8 @@ autoencoder:
   optimizer:
     optimizer: adamw
     init_lr: 1.0E-4
-    encoder_init_lr: 1.0E-4
-    decoder_init_lr: 1.0E-4
+    encoder_init_lr: 1.0E-5
+    decoder_init_lr: 1.0E-5
     max_lr: 1.0E-5
     min_lr: 1.0E-5
     lr_schedule: True

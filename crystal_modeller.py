@@ -271,7 +271,7 @@ class Modeller:
         self.prep_new_working_directory()
 
         '''initialize datasets and useful classes'''
-        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders()
+        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=1)
         num_params_dict = self.init_models()
 
         self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
@@ -318,11 +318,72 @@ class Modeller:
         encoding = self.models_dict['autoencoder'].encode(data.clone())
         decoding = self.models_dict['autoencoder'].decode(encoding)
         self.autoencoder_evaluation_sample_analysis(data, decoding, encoding)
+        """
+        init code for decoder generation analysis
+        # TODO molecule validity checker
+        graph_ind = 2
+        decoding = self.models_dict['autoencoder'].decode(torch.randn_like(encoding))
+        
+        decoded_data = data.clone()
+        decoded_data.pos = decoding[:, :3]
+        decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(self.config.autoencoder.model.num_decoder_points).to(self.config.device)
+        
+        nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = self.get_node_weights(data, decoded_data, decoding)
+        
+        decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
+        decoded_data.aux_ind = nodewise_weights_tensor
+        
+        colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+                  'rgb(165, 170, 153)'] * 10
+        colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
+        cmax = 1
+        graph_ind = 0
+        points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+        fig = go.Figure()
+        for j in range( self.dataDims['num_atom_types']):
+        
+            pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
+        
+            fig.add_trace(go.Scatter3d(x=points_pred[:, 0] * self.config.autoencoder.molecule_radius_normalization, 
+                                       y=points_pred[:, 1] * self.config.autoencoder.molecule_radius_normalization, 
+                                       z=points_pred[:, 2] * self.config.autoencoder.molecule_radius_normalization,
+                                       mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, marker_line_color='white',
+                                       showlegend=True,
+                                       name=f'Predicted type {j}',
+                                       legendgroup=f'Predicted type {j}',
+                                       ))
+        
+        from reporting.online import cluster_swarm_vs_truth, decoder_clustering, extract_true_and_predicted_points
+        
+        coords_true, coords_pred, points_true, points_pred, sample_weights = (
+            extract_true_and_predicted_points(data, decoded_data, graph_ind, self.config.autoencoder.molecule_radius_normalization, self.dataDims['num_atom_types'], to_numpy=True))
+        
+        glom_points_pred, glom_pred_weights = decoder_clustering(points_pred, sample_weights, 0.75)
+        
+        for j in range(self.dataDims['num_atom_types']):
+            type_inds = np.argwhere(np.argmax(glom_points_pred[:, 3:], axis=1) == j)[:, 0]
+        
+            pred_type_weights = glom_points_pred[type_inds, j+3] * glom_pred_weights[type_inds]
+        
+            fig.add_trace(go.Scatter3d(x=glom_points_pred[type_inds, 0], y=glom_points_pred[type_inds, 1], z=glom_points_pred[type_inds, 2],
+                                       mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, 
+                                       marker_line_color='black', marker_line_width=30,
+                                       showlegend=True if j == 0 else False,
+                                       name=f'Clustered Atoms',
+                                       legendgroup=f'Clustered Atoms'
+                                       ))
+        fig.show()
+        
+        """
 
     def autoencoder_evaluation_sample_analysis(self, data, decoding, encoding):
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
-        # from reporting.online import gaussian_3d_overlap_plots
+        # from reporting.online import gaussian_3d_overlap_plots,
         # fig, fig2, rmsd, max_dist, tot_overlap = gaussian_3d_overlap_plots(data, decoded_data, self.dataDims['num_atom_types'], self.config.autoencoder.molecule_radius_normalization)
+        from reporting.online import cluster_swarm_vs_truth, decoder_clustering
+        (matched_particles, max_dist, pred_particle_weights, pred_particles, rmsd, points_true) = (
+            cluster_swarm_vs_truth(data, decoded_data, 0, self.config.autoencoder.molecule_radius_normalization, self.config.dataDims['num_atom_types']))
+
         nodewise_weights_tensor = decoded_data.aux_ind
         true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
 

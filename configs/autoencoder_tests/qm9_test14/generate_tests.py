@@ -7,6 +7,8 @@ base_config = load_yaml('base.yaml')
 
 """
 big random attack for variational autoencoder
+
+batch sizes can be at least 2-3x without protons
 """
 
 search_space = {
@@ -25,11 +27,11 @@ search_space = {
         'encoder_init_lr': [5e-4, 1e-4, 1e-3],
         'decoder_init_lr': [5e-4, 1e-4, 1e-3],
     },
-    'KLD_weight': [0.01, 0.1, 0.5],
+    'KLD_weight': [0.01],#, 0.1, 0.5],
 
 }
 np.random.seed(1)
-ind = 0
+ind = 54
 n_runs = 200
 for ii in range(n_runs):
     config = copy(base_config)
