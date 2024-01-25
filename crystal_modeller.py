@@ -322,6 +322,7 @@ class Modeller:
         init code for decoder generation analysis
         # TODO molecule validity checker
         graph_ind = 2
+        import plotly.graph_objects as go
         decoding = self.models_dict['autoencoder'].decode(torch.randn_like(encoding))
         
         decoded_data = data.clone()

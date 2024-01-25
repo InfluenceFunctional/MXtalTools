@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' WIP
+mode: embedding  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' WIP
 dataset_name: 'qm9_molecules_dataset.pkl'
 misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
 base_config_path: '/experiments/base.yaml'  # base config
@@ -12,7 +12,7 @@ checkpointing_loss_type: test  # will save a new checkpoint when a minimum of th
 model_names: ['autoencoder']#, 'embedding_regressor']
 
 dataset:
-  max_dataset_length: 1000000
+  max_dataset_length: 10000
   test_fraction: 0.2
   filter_protons: True
 
@@ -46,7 +46,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test14_3_23-01-21-53-36
+  autoencoder: /best_autoencoder_experiments_dev_24-01-22-34-33 #/cluster/best_autoencoder_autoencoder_tests_qm9_test14_3_23-01-21-53-36
   embedding_regressor: null
 
 discriminator_positional_noise: 0
