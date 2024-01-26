@@ -8,8 +8,8 @@ from random import shuffle
 import torch
 import numpy as np
 
-from bulk_molecule_classification.utils import (init_classifier, reload_model, new_init_classifier)
-from bulk_molecule_classification.dataset_prep import collect_to_traj_dataloaders, collate_training_dataloaders
+from bulk_molecule_classification.utils import (reload_model, new_init_classifier)
+from bulk_molecule_classification.dataset_prep import collate_training_dataloaders
 from bulk_molecule_classification.workflows import train_classifier, classifier_evaluation, trajectory_analysis
 from bulk_molecule_classification.classifier_constants import nic_class_names, nic_ordered_class_names, urea_class_names, urea_ordered_class_names
 from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
@@ -74,7 +74,7 @@ if __name__ == "__main__":
             generate_dataset_from_dumps(dumps_dirs, dataset_path)
             os.chdir(config['runs_path'])
 
-        train_loader, test_loader = collate_training_dataloaders(config, dataset_path, mode='hot')
+        train_loader, test_loader = collate_training_dataloaders(config, dataset_path, mode='cold')
 
         train_classifier(config, classifier, optimizer,
                          train_loader, test_loader,

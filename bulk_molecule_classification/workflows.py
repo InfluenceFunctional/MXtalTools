@@ -245,6 +245,9 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
 
         """ type density vs radius over time
         from plotly.subplots import make_subplots
+        import plotly.graph_objects as go
+        from scipy.ndimage import gaussian_filter1d
+
         timepoints = np.linspace(0, 200, 24).astype(int)
         
         fig = make_subplots(rows=4, cols=6, subplot_titles=[f't={timepoint}' for timepoint in timepoints])

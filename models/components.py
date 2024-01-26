@@ -122,7 +122,7 @@ class Normalization(nn.Module):
             sys.exit()
 
     def forward(self, input, batch=None):
-        if batch is not None and self.norm_type != 'batch' and self.norm_type is not None:
+        if batch is not None and self.norm_type != 'batch' and self.norm_type is not None and 'graph' in self.norm_type:
             return self.norm(input, batch)
 
         return self.norm(input)

@@ -109,8 +109,8 @@ class MoleculeClassifier(nn.Module):
             dist, rbf = self.get_geom_embedding(edge_index, data.pos)
 
         for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
-            x = convolution(x, rbf, edge_index, batch)  # graph convolution - residual is already inside the conv operator
-            x = fc(x, batch=batch)  # feature-wise 1D convolution, residual is already inside
+            x = convolution(x, rbf, edge_index, batch)  # graph convolution
+            x = fc(x, batch=batch)  # feature-wise 1D convolution
 
         x = self.global_pool(x, batch, cluster=data.mol_ind, output_dim=data.num_graphs)
 
@@ -118,6 +118,37 @@ class MoleculeClassifier(nn.Module):
             return self.gnn_mlp(x, return_latent=return_latent)
         else:
             return self.gnn_mlp(x, return_latent=return_latent), x
+
+        """
+        >>> norm safety test
+        self.gnn_mlp.eval()
+        x0 = x.clone()
+        y0 = self.gnn_mlp(x0, return_latent=return_latent)
+        x1 = x0
+        x1[0, :] += 10
+        y1 = self.gnn_mlp(x1, return_latent=return_latent)
+        print(torch.sum(torch.abs(y0[1:]-y1[1:])))
+        import plotly.graph_objects as go
+        fig = go.Figure(go.Heatmap(z=(y0-y1).abs().cpu().detach().numpy())).show()
+        
+        >>> norm inside FC safety
+        self.eval()
+        x0 = x.clone()
+        x1 = x.clone()
+        x1[0, :] += 10
+        for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
+            x0 = fc(x0, batch=batch)  # feature-wise 1D convolution, residual is already inside
+        
+        for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
+            x1 = fc(x1, batch=batch)  # feature-wise 1D convolution, residual is already inside
+        
+        far_inds = torch.arange(len(x))[1:]
+        print(torch.sum(torch.abs(x0[far_inds] - x1[far_inds])))
+        import plotly.graph_objects as go
+        
+        fig = go.Figure(go.Scatter(y=(x0[far_inds] - x1[far_inds]).abs().sum(1).cpu().detach().numpy())).show()
+
+        """
 
     def periodize_box(self, data):
         assert data.num_graphs == 1  # this only works one at a time
