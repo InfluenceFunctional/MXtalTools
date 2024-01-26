@@ -110,7 +110,7 @@ config_list = [
 ]
 
 for i in range(len(config_list)):
-    for si in range(5):
+    for si in range(4):
         for mol in range(0, 2):
             configs.append(copy(base_config))
             configs[-1]['seed'] = si
