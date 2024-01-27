@@ -166,4 +166,4 @@ base_config = {'run_name': 'cluster_traj_eval',
 # for evaluationf
 for ind in range(0, 22):
     configs.append(copy(base_config))
-    configs[-1]['trajs_to_analyze_list'] = f'/vast/mk8347/molecule_clusters/crystal_in_melt_test8/{ind}/'
+    configs[-1]['trajs_to_analyze_list'] = [f'/vast/mk8347/molecule_clusters/crystal_in_melt_test8/{ind}/']
