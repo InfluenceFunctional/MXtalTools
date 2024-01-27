@@ -221,6 +221,8 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
         else:
             interface_mode = False
 
+        np.save(output_dict_path, sorted_molwise_results_dict)
+
         write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
                         sorted_molwise_results_dict['Atom_Types'],
                         sorted_molwise_results_dict['Molecule_Type_Prediction_Choice'], filename=dataset_name + '_prediction')  # write a trajectory
@@ -289,7 +291,6 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
         traj_analysis['run_config'] = run_config
         traj_analysis['eval_config'] = config
 
-        np.save(output_dict_path, traj_analysis)
         fig.write_image(f"{dataset_name}_Trajectory_Analysis.png", scale=4)
         fig2.write_image(f"{dataset_name}_Combined_Trajectory_Analysis.png", scale=4)
         wandb.log({f"{dataset_name} Trajectory Analysis": fig})
