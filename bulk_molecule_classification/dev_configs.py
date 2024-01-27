@@ -122,12 +122,48 @@ for device in ['cuda', 'cpu']:
                 configs[-1]['message_depth'] = config_list[i][2]
 
                 if mol == 1:
-                    configs[-1]['run_name'] = f'urea test{i}_{si}'
+                    configs[-1]['run_name'] = f'urea_test{i}_{si}'
                     configs[-1]['dataset_name'] = 'new_urea_full'
                     configs[-1]['dumps_dirs'] = ['new_small_urea_liq_T350', 'daisuke_small_ureas/T100', 'daisuke_small_ureas/T200', 'urea_liq_T350', 'urea_bulk_trajs/T100', 'urea_bulk_trajs/T200']
                     configs[-1]['training_temps'] = [100, 200, 350]
                 elif mol == 0:
-                    configs[-1]['run_name'] = f'nic test{i}_{si}'
+                    configs[-1]['run_name'] = f'nic_test{i}_{si}'
                     configs[-1]['dataset_name'] = 'new_nic_full'
                     configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'bulk_trajs3', 'new_small_bulk']
                     configs[-1]['training_temps'] = [100, 350]
+
+
+configs = []
+base_config = {'run_name': 'cluster_traj_eval',
+               'convergence_history': 200,
+               'num_convs': 1,
+               'embedding_depth': 256,
+               'message_depth': 128,
+               'dropout': 0.25,
+               'graph_norm': 'layer',
+               'fc_norm': 'layer',
+               'num_fcs': 2,
+               'num_epochs': 1000,
+               'dataset_size': 1000,
+               'conv_cutoff': 6,
+               'batch_size': 5,
+               'reporting_frequency': 1,
+               'train_model': False,
+               'trajs_to_analyze_list': None,
+               'do_classifier_evaluation': False,
+               'classifier_path': '/vast/mk8347/molecule_clusters/classifier_ckpts/nic_test0_1_best_classifier_checkpoint',
+               'learning_rate': 1e-4,
+               'datasets_path': r'/vast/mk8347/molecule_clusters/traj_pickles/',
+               'dumps_path': r'/vast/mk8347/molecule_clusters/',
+               'training_temps': [100, 350],
+               'dataset_name': 'new_nic_full',
+               'dumps_dirs': None,  # ['melt_trajs2', 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
+               'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
+               'results_path': r'/vast/mk8347/molecule_clusters/results/',
+               'device': 'cpu',
+               'seed': 1}
+
+# for evaluationf
+for ind in range(0, 22):
+    configs.append(copy(base_config))
+    configs[-1]['trajs_to_analyze_list'] = f'/vast/mk8347/molecule_clusters/crystal_in_melt_test8/{ind}/'
