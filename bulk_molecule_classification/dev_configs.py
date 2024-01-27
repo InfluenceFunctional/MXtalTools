@@ -24,13 +24,14 @@ dev = {'run_name': 'dev_nic',
        'batch_size': 5,
        'reporting_frequency': 1,
        'train_model': False,
-       'trajs_to_analyze_list': # # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [2, 7]],
+       'trajs_to_analyze_list':  # # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [2, 7]],
            [f'D:/crystals_extra/classifier_training/crystal_in_melt_test8/{ind}/' for ind in range(0, 22)],
        # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in range(12)],
        # [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
        # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
        'do_classifier_evaluation': False,
-       'classifier_path': 'C:/Users/mikem/crystals/classifier_runs/dev_nic_best_quick_classifier_checkpoint', #'C:/Users/mikem/crystals/classifier_runs/dev_nic_best_hot_classifier_checkpoint', #'C:/Users/mikem/crystals/classifier_runs/nic_test0_3_best_classifier_checkpoint',
+       'classifier_path': 'C:/Users/mikem/crystals/classifier_runs/dev_nic_best_quick_classifier_checkpoint',
+       # 'C:/Users/mikem/crystals/classifier_runs/dev_nic_best_hot_classifier_checkpoint', #'C:/Users/mikem/crystals/classifier_runs/nic_test0_3_best_classifier_checkpoint',
        'learning_rate': 1e-4,
        'datasets_path': r'D:/crystals_extra/classifier_training/traj_pickles/',
        'dumps_path': r'D:/crystals_extra/classifier_training/',
@@ -109,22 +110,24 @@ config_list = [
     # [2, 64, 32],  # nic: worst, urea: bad
 ]
 
-for i in range(len(config_list)):
-    for si in range(4):
-        for mol in range(0, 2):
-            configs.append(copy(base_config))
-            configs[-1]['seed'] = si
-            configs[-1]['num_convs'] = config_list[i][0]
-            configs[-1]['embedding_depth'] = config_list[i][1]
-            configs[-1]['message_depth'] = config_list[i][2]
+for device in ['cuda', 'cpu']:
+    for i in range(len(config_list)):
+        for si in range(4):
+            for mol in range(0, 2):
+                configs.append(copy(base_config))
+                configs[-1]['device'] = device
+                configs[-1]['seed'] = si
+                configs[-1]['num_convs'] = config_list[i][0]
+                configs[-1]['embedding_depth'] = config_list[i][1]
+                configs[-1]['message_depth'] = config_list[i][2]
 
-            if mol == 1:
-                configs[-1]['run_name'] = f'urea test{i}_{si}'
-                configs[-1]['dataset_name'] = 'new_urea_full'
-                configs[-1]['dumps_dirs'] = ['new_small_urea_liq_T350', 'daisuke_small_ureas/T100', 'daisuke_small_ureas/T200', 'urea_liq_T350', 'urea_bulk_trajs/T100', 'urea_bulk_trajs/T200']
-                configs[-1]['training_temps'] = [100, 200, 350]
-            elif mol == 0:
-                configs[-1]['run_name'] = f'nic test{i}_{si}'
-                configs[-1]['dataset_name'] = 'new_nic_full'
-                configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'bulk_trajs3', 'new_small_bulk']
-                configs[-1]['training_temps'] = [100, 350]
+                if mol == 1:
+                    configs[-1]['run_name'] = f'urea test{i}_{si}'
+                    configs[-1]['dataset_name'] = 'new_urea_full'
+                    configs[-1]['dumps_dirs'] = ['new_small_urea_liq_T350', 'daisuke_small_ureas/T100', 'daisuke_small_ureas/T200', 'urea_liq_T350', 'urea_bulk_trajs/T100', 'urea_bulk_trajs/T200']
+                    configs[-1]['training_temps'] = [100, 200, 350]
+                elif mol == 0:
+                    configs[-1]['run_name'] = f'nic test{i}_{si}'
+                    configs[-1]['dataset_name'] = 'new_nic_full'
+                    configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'bulk_trajs3', 'new_small_bulk']
+                    configs[-1]['training_temps'] = [100, 350]
