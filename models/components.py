@@ -204,6 +204,18 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
 
         return x, v
 
+    def scalar_forward(self, activation, batch, dropout, linear, norm, x, v):
+        res = x.clone()
+        if v is not None:  # concatenate vector lengths to scalar values
+            x = torch.cat([x, torch.linalg.norm(v, dim=1)], dim=-1)
+
+        if self.norm_after_linear:
+            x = res + dropout(activation(norm(linear(x), batch=batch)))
+        else:
+            x = res + dropout(activation(linear(norm(x, batch=batch))))
+
+        return x
+
     def vector_forward(self, i, x, v, batch):
         v = (v +
              self.s_to_v_activations[i](
@@ -216,17 +228,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
              )))  # A(FC(x)) * FC(N(v))
         return v
 
-    def scalar_forward(self, activation, batch, dropout, linear, norm, x, v):
-        res = x.clone()
-        if v is not None:  # concatenate vector lengths to scalar values
-            x = torch.cat([x, torch.linalg.norm(v, dim=1)], dim=-1)
 
-        if self.norm_after_linear:
-            x = res + dropout(activation(norm(linear(x), batch=batch)))
-        else:
-            x = res + dropout(activation(linear(norm(x, batch=batch))))
-
-        return x
 
 
 '''

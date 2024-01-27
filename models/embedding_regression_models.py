@@ -27,7 +27,7 @@ class embedding_regressor(nn.Module):
                          filters=config.depth,
                          norm=config.norm_mode,
                          dropout=config.dropout,
-                         input_dim=config.embedding_depth,
+                         input_dim=config.bottleneck_dim,
                          output_dim=self.output_dim,
                          conditioning_dim=0,
                          seed=seed,

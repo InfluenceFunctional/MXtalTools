@@ -21,7 +21,8 @@ atom_feature_keys: [
 ]
 
 molecule_feature_keys : [
-'molecule_num_atoms'
+'molecule_num_atoms',
+'molecule_mass'
 ]
 #
 #"molecule_num_atoms": int(text[0]),

@@ -145,7 +145,7 @@ class Modeller:
             self.models_dict['autoencoder'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims)
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
                 param.requires_grad = False
-            self.config.embedding_regressor.model.embedding_depth = self.config.autoencoder.model.embedding_depth
+            self.config.embedding_regressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
             self.models_dict['embedding_regressor'] = embedding_regressor(self.config.seeds.model, self.config.embedding_regressor.model,
                                                                           prediction_type=self.config.embedding_regressor.prediction_type,
                                                                           embedding_type=self.config.autoencoder.model.encoder_type,
