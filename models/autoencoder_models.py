@@ -25,7 +25,7 @@ class point_autoencoder(nn.Module):
         self.encoder = point_encoder(seed, config)
 
         self.decoder = MLP(
-            layers=config.num_decoder_layers,
+            layers=config.num_decoder_layers,  # todo deprecate non equivariant encoder I/O
             filters=config.embedding_depth if self.equivariant_decoder else config.embedding_depth * 3,
             input_dim=config.bottleneck_dim if self.equivariant_encoder else config.bottleneck_dim * 3,
             output_dim=(self.output_depth - 3 if self.equivariant_decoder else 0) * self.num_nodes,

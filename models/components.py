@@ -229,8 +229,6 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         return v
 
 
-
-
 '''
 equivariance test
 >> linear scaling layer
