@@ -1814,7 +1814,7 @@ def gaussian_3d_overlap_plots(data, decoded_data, max_point_types, molecule_radi
     return fig, fig2, rmsd, max_dist, tot_overlap
 
 
-def decoder_clustering(points_pred, sample_weights, intrapoint_cutoff):
+def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cutoff):
 
     ag = AgglomerativeClustering(n_clusters=None, metric='euclidean', linkage='complete', distance_threshold=intrapoint_cutoff).fit_predict(points_pred[:, :3])
     n_clusters = len(np.unique(ag))
@@ -1860,15 +1860,17 @@ def decoder_clustering(points_pred, sample_weights, intrapoint_cutoff):
 
 
 def decoder_swarm_clustering(graph_ind, data, decoded_data, molecule_radius_normalization, num_classes):
-    (matched_particles, max_dist, pred_particle_weights, pred_particles, rmsd, points_true) = (
-        cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes))
+    (pred_particles, pred_particle_weights, points_true) = (
+        decoder_scaffolded_clustering(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes))
+
+    matched_particles, max_dist, rmsd = compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles)
 
     fig2 = swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights, pred_particles, points_true)
 
     return rmsd, max_dist, pred_particle_weights.mean(), fig2
 
 
-def cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes):
+def decoder_scaffolded_clustering(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes):
     """"""
     '''extract true and predicted points'''
     coords_true, coords_pred, points_true, points_pred, sample_weights = (
@@ -1889,6 +1891,10 @@ def cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normal
         pred_particle_weights[ind] = collected_particle_weights.sum()
         pred_particles[ind] = np.sum(collected_particle_weights[:, None] * collected_particles, axis=0)
 
+    return pred_particles, pred_particle_weights, points_true
+
+
+def compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles):
     '''get distances to true and predicted particles'''
     dists = cdist(pred_particles, points_true)
     matched_particle_inds = np.argmin(dists, axis=0)
@@ -1901,7 +1907,7 @@ def cluster_swarm_vs_truth(data, decoded_data, graph_ind, molecule_radius_normal
     else:
         rmsd = np.Inf
         max_dist = np.Inf
-    return matched_particles, max_dist, pred_particle_weights, pred_particles, rmsd, points_true
+    return matched_particles, max_dist, rmsd
 
 
 def extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes, to_numpy=False):

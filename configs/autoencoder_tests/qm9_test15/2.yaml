@@ -3,7 +3,7 @@ autoencoder:
   KLD_weight: 0.001
   evaluation_sigma: 0.05
   independent_node_weights: true
-  init_sigma: 0.15
+  init_sigma: 0.075
   max_overlap_threshold: 0.25
   model:
     activation: gelu
