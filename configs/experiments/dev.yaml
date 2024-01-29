@@ -7,7 +7,7 @@ misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
 base_config_path: '/experiments/base.yaml'  # base config
 dataset_yaml_path: '/dataset/qm9_autoencoder.yaml'
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
-save_checkpoints: False # will do it always on cluster, only locally if True
+save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
 model_names: ['autoencoder', 'embedding_regressor']
 
@@ -33,7 +33,7 @@ logger:
   run_name: dev
   experiment_tag: dev
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
   log_figures: True
 
 sample_steps: 100
@@ -62,7 +62,7 @@ autoencoder:
   KLD_weight: 0.01
   random_fraction: 0
   type_distance_scaling: 0.5
-  init_sigma: 0.073 #0.15
+  init_sigma: 0.15 #0.15
   evaluation_sigma: 0.05
   sigma_lambda: 0.99
   sigma_threshold: 0.01
@@ -79,7 +79,7 @@ autoencoder:
     encoder_init_lr: 5.0E-5
     decoder_init_lr: 1.0E-4
     max_lr: 1.0E-5
-    min_lr: 5.0E-6
+    min_lr: 5.0E-5
     lr_schedule: True
     beta1: 0.9
     beta2: 0.999
@@ -96,7 +96,7 @@ autoencoder:
 
     num_graph_convolutions: 1
     embedding_depth: 128
-    bottleneck_dim: 128
+    bottleneck_dim: 256
     graph_message_depth: 64  # must cleanly divide num_heads
     num_attention_heads: 4
     graph_aggregator: 'equivariant softmax'
@@ -119,7 +119,7 @@ autoencoder:
     max_num_neighbors: 100
     convolution_cutoff: 2
     atom_type_embedding_dims: 5
-    num_decoder_points: 128
+    num_decoder_points: 256
 
 regressor:
   optimizer: null
