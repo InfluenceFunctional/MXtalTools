@@ -17,12 +17,12 @@ warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 os.chdir(r'D:\crystals_extra\classifier_training\results')
 
 files = os.listdir()
-results_dicts = [file for file in files if 'analysis' in file and 'crystal_in_melt_test8' in file]
+results_dicts = [file for file in files if 'analysis' in file and 'crystal_in_melt_test9' in file]
 
 dfs = []
 useful_keys = ['Molecule_Temperature', 'Molecule_Type_Prediction', 'Centroid Radii']
 for ind, dict_path in tqdm(enumerate(results_dicts)):
-    dumps_dir = f'D:/crystals_extra/classifier_training/crystal_in_melt_test8/{int(dict_path.split("_")[-3])}/'
+    dumps_dir = f'D:/crystals_extra/classifier_training/crystal_in_melt_test9/{int(dict_path.split("_")[-3])}/'
     if os.path.exists(dumps_dir + 'run_config.npy'):
         run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
 

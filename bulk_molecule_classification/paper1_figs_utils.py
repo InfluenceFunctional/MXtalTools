@@ -163,6 +163,109 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
     return fig
 
 
+def pretty_embedding(mk_results_dict,
+                           ordered_classes,
+                         ):
+
+    molecule_name = 'nicotinamide'
+    n_images = 10
+
+    image_path = r'D:\crystals_extra\classifier_training\polymorph_images/'
+    if molecule_name == 'nicotinamide':
+        filenames = ['NICOAM13.png',
+                     'NICOAM14.png',
+                     'NICOAM15.png',
+                     'NICOAM16.png',
+                     'NICOAM07.png',
+                     'NICOAM18.png',
+                     'NICOAM08.png',
+                     'NICOAM09.png',
+                     'NICOAM17.png',
+                     'NIC_melt.png']
+        stits = ['Form I',
+                 'Form II',
+                 'Form III',
+                 'Form IV',
+                 'Form V',
+                 'Form VI',
+                 'Form VII',
+                 'Form VIII',
+                 'Form IX',
+                 'Melt']
+
+    from PIL import Image
+
+    images = [Image.open(image_path + pathi) for pathi in filenames]
+    fig = go.Figure()
+
+    num_samples = len(mk_results_dict['Targets'])
+    sample_inds = np.random.choice(num_samples, size=min(1000, num_samples), replace=False)
+    from sklearn.manifold import TSNE
+
+    embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
+                     init='pca', perplexity=30).fit_transform(mk_results_dict['Latents'][sample_inds])
+
+    target_colors = copy(COLORS)
+    melt_ind = len(ordered_classes)
+    target_colors[melt_ind - 1] = COLORS[-1]
+
+    for t_ind in range(len(ordered_classes)):
+        inds = np.argwhere((mk_results_dict['Targets'][sample_inds] == t_ind)
+                           )[:, 0]
+
+        fig.add_trace(go.Scattergl(x=embedding[inds, 0] / np.amax(np.abs(embedding[:, 0])), y=embedding[inds, 1] / np.amax(np.abs(embedding[:, 1])),
+                                   mode='markers',
+                                   marker_size=5,
+                                   marker_color=target_colors[t_ind],
+                                   # legendgroup=ordered_classes[t_ind],
+                                   name=ordered_classes[t_ind],
+                                   showlegend=False,  # True if ic == 0 else False,
+                                   opacity=.65))
+
+    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_yaxes(linecolor='black', mirror=True,
+                     showgrid=True, zeroline=True)  # , showticklabels=False)
+    fig.update_xaxes(linecolor='black', mirror=True,
+                     showgrid=True, zeroline=True)  # , showticklabels=False)
+
+    fig.update_layout(xaxis_title='tSNE1',
+                      yaxis_title='tSNE2'
+                      )
+
+    fig.update_layout(font=dict(size=FONTSIZE))
+    fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
+    fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
+
+    ylevels = [-0.2 for _ in range(n_images)]
+    xlevels = np.linspace(-0.075, 0.9, n_images)
+
+    for ind in range(n_images):
+        fig.add_layout_image(
+            dict(source=images[ind],
+                 y=ylevels[ind], x=xlevels[ind])
+        )
+        fig.add_annotation(y=ylevels[ind] + 0.05, x=xlevels[ind] + 0.05,
+                           text=stits[ind],
+                           showarrow=False,
+                           xref='paper',
+                           yref='paper',
+                           xanchor='left',
+                           yanchor='top',
+                           font_size=int(FONTSIZE * 0.8))
+    fig.update_annotations(font_size=FONTSIZE)
+    imsize = 0.28 if molecule_name == 'urea' else 0.18
+    fig.update_layout_images(dict(
+        xref="paper",
+        yref="paper",
+        sizex=imsize,
+        sizey=imsize,
+        xanchor="left",
+        yanchor="top"
+    ))
+    fig.layout.margin.b = 270
+
+    return fig
+
 def process_daisuke_dats():
     """
     daisuke's dat format
