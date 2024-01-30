@@ -44,7 +44,7 @@ class point_autoencoder(nn.Module):
 
         return self.decode(encoding)
 
-    def encode(self, data, z=None):
+    def encode(self, data, z=None, deterministic=False):
         """
         pass only the encoding
         """
@@ -60,9 +60,9 @@ class point_autoencoder(nn.Module):
             log_sigma = x
             sigma = torch.exp(0.5 * log_sigma)
             if z is None:
-                z = torch.randn_like(sigma)
-            stochastic_weight = z*sigma + mu  # parameterized distribution
-            encoding = stochastic_weight[:, None, :] * v  # rescale vector length by learned distribution
+                z = torch.randn((len(sigma), 3, sigma.shape[-1]), dtype=v.dtype, device=v.device)
+            stochastic_weight = torch.linalg.norm(z * sigma[:, None, :] + mu[:, None, :], dim=1)  # parameterized distribution
+            encoding = stochastic_weight[:, None, :] * v / torch.linalg.norm(v,dim=1)[:, None, :]  # rescale vector length by learned distribution
             self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution
         else:
             if self.equivariant_encoder:

@@ -322,3 +322,13 @@ def flatten_dict(dictionary, parent_key=False, separator='_'):
         else:
             items.append((new_key, value))
     return dict(items)
+
+
+def cart2sph(coords: torch.tensor):
+    r = torch.linalg.norm(coords, dim=1)
+    theta = torch.atan2(coords[:, 1], coords[:, 0])
+    phi = torch.arccos(coords[:, 2] / r)
+    return torch.cat([
+        r.unsqueeze(1), theta.unsqueeze(1), phi.unsqueeze(1)],
+        dim=1
+    )
