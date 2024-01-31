@@ -164,8 +164,8 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
 
 
 def pretty_embedding(mk_results_dict,
-                           ordered_classes,
-                         ):
+                     ordered_classes,
+                     ):
 
     molecule_name = 'nicotinamide'
     n_images = 10
@@ -265,6 +265,7 @@ def pretty_embedding(mk_results_dict,
     fig.layout.margin.b = 270
 
     return fig
+
 
 def process_daisuke_dats():
     """
@@ -619,16 +620,35 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
 OTHER_COLOR = 'rgb(50, 50, 50)'
 FONTSIZE = 22
 LEGEND_FONTSIZE = 14
-COLORS = ['rgb(141,211,199)',
-          'rgb(200,200,115)',
-          'rgb(145,90,218)',
-          'rgb(251,128,114)',
-          'rgb(128,177,211)',
-          'rgb(253,180,98)',
-          'rgb(179,222,105)',
-          'rgb(252,205,229)',
-          'rgb(217,217,217)',
-          'rgb(188,35,189)']
+COLORS = ['rgb(141,211,199)',  # NICOAM13, ureaA
+          'rgb(200,200,115)',  # NICOAM14, ureaB
+          'rgb(145,90,218)',  # NICOAM15, ureaC
+          'rgb(251,128,114)',  # NICOAM16, ureaI
+          'rgb(128,177,211)',  # NICOAM07, ureaIII
+          'rgb(253,180,98)',  # NICOAM18, ureaIV
+          'rgb(179,222,105)',  # NICOAM08
+          'rgb(252,205,229)',  # NICOAM09
+          'rgb(217,217,217)',  # NICOAM17
+          'rgb(188,35,189)']  # MELT
+
+identifier2form = {'NICOAM07': 5,
+                   'NICOAM08': 7,
+                   'NICOAM09': 8,
+                   'NICOAM13': 1,
+                   'NICOAM14': 2,
+                   'NICOAM15': 3,
+                   'NICOAM16': 4,
+                   'NICOAM17': 9,
+                   'NICOAM18': 6,
+                   'NIC_Melt': 10,
+                   'ureaA': 1,
+                   'ureaB': 2,
+                   'ureaC': 3,
+                   'ureaI': 4,
+                   'ureaIII': 5,
+                   'ureaIV': 6,
+                   'UREA_Melt': 7,
+                   }
 
 
 def paper_form_accuracy_fig(results_dict, ordered_classes, temp_series):
