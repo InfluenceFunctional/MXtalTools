@@ -105,8 +105,13 @@ class Logger:
         np.save(save_path, self.test_stats)
 
     def check_model_convergence(self):
-        self.converged_flags = {model_name: check_convergence(self.loss_record[model_name]['mean_test'], self.config.history,
-                                                              self.config.__dict__[model_name].optimizer.convergence_eps)
+        self.converged_flags = {model_name: check_convergence(self.loss_record[model_name]['mean_test'],
+                                                              self.config.history,
+                                                              self.config.__dict__[model_name].optimizer.convergence_eps,
+                                                              self.epoch,
+                                                              self.config.minimum_epochs,
+                                                              self.config.overfit_tolerance,
+                                                              train_record=self.loss_record[model_name]['mean_train'])
                                 for model_name in self.model_names if self.config.__dict__[model_name].optimizer is not None}
 
     def log_fig_dict(self, fig_dict):

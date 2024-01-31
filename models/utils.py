@@ -1,6 +1,7 @@
 import sys
 
 import numpy as np
+from scipy.stats import linregress
 import torch
 import wandb
 from torch import optim, nn as nn
@@ -30,7 +31,7 @@ def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr):
     return optimizer, lr
 
 
-def check_convergence(record, history, convergence_eps):
+def check_convergence(test_record, history, convergence_eps, epoch, minimum_epochs, overfit_tolerance, train_record=None):
     """
     check if we are converged
     condition: test loss has increased or levelled out over the last several epochs
@@ -38,27 +39,67 @@ def check_convergence(record, history, convergence_eps):
     """
 
     converged = False
-    if type(record) is list:
-        try:
-            record = np.concatenate(record)
-        except ValueError:
-            record = np.asarray(record)
-    elif isinstance(record, np.ndarray):
-        record = record.copy()
 
-    if len(record) > 2 * history:
-        #  all of last :history: points are above the 5% quantile of the training record
-        if all(record[-history:] > np.quantile(record, 0.05)):
-            converged = True
-            print("Model converged, target diverging")
+    if epoch > minimum_epochs + 1:
+        if type(test_record) is list:
+            test_record = np.asarray([rec.mean() for rec in test_record])
 
-        criteria = np.abs(np.mean(record[-history:]) / np.mean(record[-2 * history:-history]))  # change in mean over 2 periods of history
-        print('Convergence criteria at {:.3f}'.format(np.log10(criteria)))  # todo better rolling metric here - trailing exponential something
-        if criteria < convergence_eps:
-            converged = True
-            print("Model converged, target stabilized")
+        elif isinstance(test_record, np.ndarray):
+            test_record = test_record.copy()
+
+        if np.sum(np.isnan(test_record)) > 0:
+            return True
+
+        '''
+        conditions
+        1. not decreasing significantly quickly (log slope too shallow)
+        XX not using2. not near global minimum
+        3. train and test not significantly diverging
+        '''
+        linreg = linregress(np.arange(len(test_record[-history:])), np.log10(test_record[-history:]))
+        converged = linreg.slope > -convergence_eps
+        # if not converged:
+        #     converged *= all(test_record[-history] > np.quantile(test_record, 0.05))
+        if converged:
+            print(f"Model Converged!: Slow convergence with log-slope of {linreg.slope:.5f}")
+            return True
+
+        if train_record is not None:
+            if type(train_record) is list:
+                train_record = np.asarray([rec.mean() for rec in train_record])
+
+            elif isinstance(train_record, np.ndarray):
+                train_record = train_record.copy()
+
+            test_train_ratio = test_record/train_record
+            if test_train_ratio[-history:].mean() > overfit_tolerance:
+                print(f"Model Converged!: Overfit at {test_train_ratio[-history:].mean():.2f}")
+                return True
 
     return converged
+
+
+"""  game to help determine good values
+import numpy as np
+import plotly.graph_objects as go
+from scipy.stats import linregress
+from plotly.subplots import make_subplots
+
+x = np.linspace(0,1000,1000)
+y = np.exp(-x/400)*(10*np.cos(x/100)**2 + 1) + np.random.randn(len(x))/2
+history = 50
+condition = np.zeros(len(x))
+for ind in range(history,len(x)):
+    linreg = linregress(x[ind-history:ind], np.log10(y[ind-history:ind]))
+    condition[ind] = linreg.slope > -.0001
+    # if not condition[ind]:
+    #     condition[ind] *= all(y[ind-history:ind] > np.quantile(y[:ind], 0.05))
+
+fig = make_subplots(rows=1,cols=2)
+fig.add_scatter(x=x,y=np.log10(y),mode='markers',marker_color=condition.astype(float),row=1,col=1)
+fig.add_scatter(x=x,y=y,mode='markers',marker_color=condition.astype(float),row=1,col=2)
+fig.show()
+"""
 
 
 def init_optimizer(model_name, optim_config, model, amsgrad=False, freeze_params=False):
@@ -550,3 +591,14 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
         return nodewise_overlap
 
 
+def direction_coefficient(v):
+    """
+    norm vectors
+    take inner product
+    sum the gaussian-weighted dot product components
+    """
+    norms = torch.linalg.norm(v, dim=1)
+    nv = v / (norms[:, None, :] + 1e-3)
+    dp = torch.einsum('nik,nil->nkl', nv, nv)
+
+    return torch.exp(-(1 - dp) ** 2).mean(-1)

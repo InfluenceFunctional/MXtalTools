@@ -565,11 +565,12 @@ class Modeller:
                     prev_epoch_failed = False
 
                 except RuntimeError as e:  # if we do hit OOM, slash the batch size
-                    if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
+                    if "CUDA" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
                         if prev_epoch_failed:
                             gc.collect()  # TODO not clear to me that this is effective
 
-                        train_loader, test_loader = slash_batch(train_loader, test_loader, 0.05)  # shrink batch size
+                        train_loader, test_loader = slash_batch(train_loader, test_loader,
+                                                                slash_fraction=0.25)  # shrink batch size
                         torch.cuda.empty_cache()
                         self.config.grow_batch_size = False  # stop growing the batch for the rest of the run
                         prev_epoch_failed = True
@@ -778,7 +779,7 @@ class Modeller:
         '''rotate the input data and embed it'''
         data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch == ind])
                               for ind in range(data.num_graphs)])
-        encoding2 = self.models_dict['autoencoder'].encode(data.clone(), z=torch.zeros((data.num_graphs,
+        encoding2 = self.models_dict['autoencoder'].encode(data.clone(), z=torch.zeros((data.num_graphs, 3,
                                                                                         self.config.autoencoder.model.bottleneck_dim),
                                                                                        dtype=torch.float32,
                                                                                        device=self.config.device))

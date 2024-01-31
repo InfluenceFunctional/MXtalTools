@@ -1,4 +1,3 @@
-import torch.nn as nn
 from torch import nn as nn
 
 from models.base_models import molecule_graph_model
@@ -44,7 +43,7 @@ class point_autoencoder(nn.Module):
 
         return self.decode(encoding)
 
-    def encode(self, data, z=None, deterministic=False):
+    def encode(self, data, z=None):
         """
         pass only the encoding
         """
@@ -61,6 +60,8 @@ class point_autoencoder(nn.Module):
             sigma = torch.exp(0.5 * log_sigma)
             if z is None:
                 z = torch.randn((len(sigma), 3, sigma.shape[-1]), dtype=v.dtype, device=v.device)
+            else:
+                assert z.ndim == 3, "Improper dimension for encoder latent noise"
             stochastic_weight = torch.linalg.norm(z * sigma[:, None, :] + mu[:, None, :], dim=1)  # parameterized distribution
             encoding = stochastic_weight[:, None, :] * v / (torch.linalg.norm(v, dim=1)[:, None, :] + 1e-3)  # rescale vector length by learned distribution
             self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution

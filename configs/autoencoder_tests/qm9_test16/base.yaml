@@ -1,4 +1,4 @@
-machine: "local"  # or "cluster"
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' WIP
@@ -14,15 +14,15 @@ model_names: ['autoencoder']#, 'embedding_regressor']
 dataset:
   max_dataset_length: 1000000
   test_fraction: 0.2
-  filter_protons: False
+  filter_protons: True
   regression_target: molecule_isotropic_polarizability
 
 # batching & convergence
-early_epochs_step_override: 5
+early_epochs_step_override: 10
 num_early_epochs: 20
 grow_batch_size: True
 min_batch_size: 2000
-max_batch_size: 10000
+max_batch_size: 50000
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 1.5  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 100
@@ -32,8 +32,8 @@ gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  run_name: dev
-  experiment_tag: dev
+  run_name: qm9_test16
+  experiment_tag: qm9_test16
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
   sample_reporting_frequency: 1  # how often to do detailed reporting with figures
   log_figures: True
@@ -49,7 +49,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null # /best_autoencoder_experiments_dev_30-01-09-23-45 #/cluster/best_autoencoder_autoencoder_tests_qm9_test14_58_25-01-21-44-03
+  autoencoder: null
   embedding_regressor: null
 
 discriminator_positional_noise: 0
@@ -64,13 +64,13 @@ autoencoder:
   KLD_weight: 0.01
   random_fraction: 0
   type_distance_scaling: 0.5
-  init_sigma: 0.15 #0.15
+  init_sigma: 0.1 #0.15
   evaluation_sigma: 0.05
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   overlap_eps:
     test: 1.0E-3
-  max_overlap_threshold: 0.25  # guessed
+  max_overlap_threshold: 0.25
   independent_node_weights: True
   node_weight_temperature: 1
 

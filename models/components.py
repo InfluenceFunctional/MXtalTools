@@ -2,7 +2,6 @@ import sys
 
 import torch
 from torch import nn, nn as nn
-import torch_geometric.nn as gnn
 from torch.nn import functional as F
 import numpy as np
 from torch_geometric import nn as gnn
@@ -11,6 +10,7 @@ from torch_scatter import scatter, scatter_softmax
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from models.global_attention_aggregation import AttentionalAggregation_w_alpha
 from models.vector_LayerNorm import VectorLayerNorm
+from models.utils import direction_coefficient
 
 
 class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
