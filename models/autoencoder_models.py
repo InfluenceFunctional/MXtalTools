@@ -62,7 +62,7 @@ class point_autoencoder(nn.Module):
             if z is None:
                 z = torch.randn((len(sigma), 3, sigma.shape[-1]), dtype=v.dtype, device=v.device)
             stochastic_weight = torch.linalg.norm(z * sigma[:, None, :] + mu[:, None, :], dim=1)  # parameterized distribution
-            encoding = stochastic_weight[:, None, :] * v / torch.linalg.norm(v,dim=1)[:, None, :]  # rescale vector length by learned distribution
+            encoding = stochastic_weight[:, None, :] * v / (torch.linalg.norm(v, dim=1)[:, None, :] + 1e-3)  # rescale vector length by learned distribution
             self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution
         else:
             if self.equivariant_encoder:

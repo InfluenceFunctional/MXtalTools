@@ -312,6 +312,34 @@ class Modeller:
             autoencoder_embedding_tsnes(self.logger.test_stats)
             aa = 1
 
+            ''' >>> noisy embeddings
+            data = data.to(self.device)
+            data0 = data.clone()
+            encodings = []
+            for ind in tqdm(range(100)):
+                data = self.preprocess_real_autoencoder_data(data0.clone(), no_noise=False, orientation_override=None)
+                encodings.append(self.models_dict['autoencoder'].encode(data.clone()).cpu().detach().numpy())
+            encodings = np.stack(encodings)
+            scalar_encodings = np.linalg.norm(encodings, axis=2)[:, :10, :].reshape(100*10,256)
+            from sklearn.manifold import TSNE
+            import plotly.graph_objects as go
+            
+            embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
+                             init='pca', perplexity=30).fit_transform(scalar_encodings)
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
+                                       mode='markers',
+                                       marker_color=np.arange(1000)%10,#np.concatenate(stats_dict[mol_key])[:max_num_samples],
+                                       opacity=.75,
+                                       #marker_colorbar=dict(title=mol_key),
+                                       ))
+            fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
+                              xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
+                              plot_bgcolor='rgba(0,0,0,0)')
+            fig.show()
+            '''
+
     def autoencoder_embedding_step(self, data):
         data = self.preprocess_real_autoencoder_data(data, no_noise=True, orientation_override=None)
         data = data.to(self.device)
@@ -732,7 +760,7 @@ class Modeller:
         check encoder end-to-end equivariance
         """
         '''embed the input data then rotate the embedding'''
-        encoding = self.models_dict['autoencoder'].encode(data.clone(), z=torch.zeros((data.num_graphs,  # uniform prior for comparison
+        encoding = self.models_dict['autoencoder'].encode(data.clone(), z=torch.zeros((data.num_graphs, 3,  # uniform prior for comparison
                                                                                        self.config.autoencoder.model.bottleneck_dim),
                                                                                       dtype=torch.float32,
                                                                                       device=self.config.device))
@@ -821,7 +849,7 @@ class Modeller:
 
         if not self.models_dict['autoencoder'].fully_equivariant and orientation_override is None:
             data = set_molecule_alignment(data, mode='random', right_handed=False, include_inversion=True)
-        else:
+        elif orientation_override is not None:
             data = set_molecule_alignment(data, mode=orientation_override, right_handed=False, include_inversion=True)
 
         data.pos /= self.config.autoencoder.molecule_radius_normalization

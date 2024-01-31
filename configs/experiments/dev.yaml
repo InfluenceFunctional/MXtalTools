@@ -12,9 +12,9 @@ checkpointing_loss_type: test  # will save a new checkpoint when a minimum of th
 model_names: ['autoencoder', 'embedding_regressor']
 
 dataset:
-  max_dataset_length: 10000000
+  max_dataset_length: 1000
   test_fraction: 0.2
-  filter_protons: True
+  filter_protons: False
   regression_target: molecule_isotropic_polarizability
 
 # batching & convergence
@@ -47,13 +47,13 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null #/cluster/best_autoencoder_autoencoder_tests_qm9_test14_58_25-01-21-44-03
+  autoencoder: null # /best_autoencoder_experiments_dev_30-01-09-23-45 #/cluster/best_autoencoder_autoencoder_tests_qm9_test14_58_25-01-21-44-03
   embedding_regressor: null
 
 discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
-autoencoder_positional_noise: 0.15
+autoencoder_positional_noise: 0.05
 
 generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
@@ -75,7 +75,7 @@ autoencoder:
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 1.0E-5
+    init_lr: 1.0E-4
     encoder_init_lr: 5.0E-5
     decoder_init_lr: 1.0E-4
     max_lr: 1.0E-5
@@ -83,7 +83,7 @@ autoencoder:
     lr_schedule: True
     beta1: 0.9
     beta2: 0.999
-    weight_decay: 0.1
+    weight_decay: 0.075
     convergence_eps: 0.0001
     lr_growth_lambda: 1.00
     lr_shrink_lambda: 0.999
@@ -95,12 +95,12 @@ autoencoder:
     decoder_type: 'equivariant' # or variant
 
     num_graph_convolutions: 1
-    embedding_depth: 128
-    bottleneck_dim: 256
+    embedding_depth: 512
+    bottleneck_dim: 512
     graph_message_depth: 64  # must cleanly divide num_heads
     num_attention_heads: 4
     graph_aggregator: 'equivariant softmax'
-    nodewise_fc_layers: 8
+    nodewise_fc_layers: 4
     activation: 'gelu'
     num_decoder_layers: 4
     decoder_ramp_depth: True
