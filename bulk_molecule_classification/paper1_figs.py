@@ -45,11 +45,11 @@ old2new = {3: 0,  # reindex urea targets
 d_urea_embed_dict2['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict2['Targets']])
 d_urea_embed_dict3['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict3['Targets']])
 d_urea_embed_dict2['Embeddings'] = d_urea_embed_dict2['Latents']
-
-fig_dict['urea_tSNE'] = combined_embedding_fig(
-    results_dict, d_urea_embed_dict2, d_urea_embed_dict3, urea_ordered_class_names,
-    max_samples=max_tsne_samples, perplexity=30, molecule_name='urea'
-)
+#
+# fig_dict['urea_tSNE'] = combined_embedding_fig(
+#     results_dict, d_urea_embed_dict2, d_urea_embed_dict3, urea_ordered_class_names,
+#     max_samples=max_tsne_samples, perplexity=30, molecule_name='urea'
+# )
 del results_dict
 
 '''

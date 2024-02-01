@@ -131,8 +131,8 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
     fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
 
-    ylevels = [-0.2 for _ in range(n_images)]
-    xlevels = np.linspace(-0.075, 0.9, n_images)
+    ylevels = [-0.2 - 0.325 * (ind % 2) for ind in range(n_images)]
+    xlevels = np.linspace(-0.075, 0.9, int(np.ceil(n_images/2))).repeat(2)
 
     for ind in range(n_images):
         fig.add_layout_image(
@@ -148,7 +148,7 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
                            yanchor='top',
                            font_size=int(FONTSIZE * 0.8))
     fig.update_annotations(font_size=FONTSIZE)
-    imsize = 0.28 if molecule_name == 'urea' else 0.18
+    imsize = 0.3
     fig.update_layout_images(dict(
         xref="paper",
         yref="paper",
@@ -157,9 +157,9 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
         xanchor="left",
         yanchor="top"
     ))
-    fig.layout.margin.b = 270
+    fig.layout.margin.b = 375
     # fig.show()
-    # fig.write_image('aa.png', width=1920 // 1.5, height=1080 // 1.2)
+    fig.write_image('aa.png', width=1920 // 1.5, height=1080 // 1.2)
     return fig
 
 
