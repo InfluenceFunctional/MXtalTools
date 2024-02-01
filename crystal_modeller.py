@@ -200,6 +200,13 @@ class Modeller:
             filter_protons=self.config.dataset.filter_protons,
         )
         self.dataDims = data_manager.dataDims
+
+        if self.train_models_dict['autoencoder'] or self.train_models_dict['embedding_regressor']:
+            self.prep_autoencoder_constants()
+            for ind, data in enumerate(data_manager):
+                data.pos /= self.config.autoencoder.molecule_radius_normalization
+                data.x[:, 0] = self.autoencoder_type_index[data.x[:, 0].long() - 1]  # reindex atom types
+
         self.t_i_d = {feat: index for index, feat in enumerate(self.dataDims['tracking_features'])}  # tracking feature index dictionary
         self.lattice_means = torch.tensor(self.dataDims['lattice_means'], dtype=torch.float32, device=self.config.device)
         self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], dtype=torch.float32, device=self.config.device)
@@ -235,6 +242,17 @@ class Modeller:
             test_fraction = self.config.dataset.test_fraction
 
         return self.prep_dataloaders(data_manager, extra_data_manager, test_fraction)
+
+    def prep_autoencoder_constants(self):
+        self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
+        self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']
+        self.config.autoencoder.min_num_atoms = self.dataDims['min_molecule_num_atoms']
+        self.config.autoencoder.max_num_atoms = self.dataDims['max_molecule_num_atoms']
+        allowed_types = self.dataDims['allowed_atom_types']
+        type_translation_index = np.zeros(allowed_types.max()) - 1
+        for ind, atype in enumerate(allowed_types):
+            type_translation_index[atype - 1] = ind
+        self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device='cpu')
 
     def prep_dataloaders(self, dataset_builder, extra_dataset_builder=None, test_fraction=0.2, override_batch_size: int = None):
         """
@@ -284,7 +302,7 @@ class Modeller:
         for ind, atype in enumerate(allowed_types):
             type_translation_index[atype - 1] = ind
 
-        self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device=self.config.device)
+        self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.float32, device='cpu')
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
@@ -467,19 +485,6 @@ class Modeller:
         train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
         self.init_gaussian_generator()
         num_params_dict = self.init_models()
-
-        if self.train_models_dict['autoencoder'] or self.train_models_dict['embedding_regressor']:
-            self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
-            self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']
-            self.config.autoencoder.min_num_atoms = self.dataDims['min_molecule_num_atoms']
-            self.config.autoencoder.max_num_atoms = self.dataDims['max_molecule_num_atoms']
-
-            allowed_types = self.dataDims['allowed_atom_types']
-            type_translation_index = np.zeros(allowed_types.max()) - 1
-            for ind, atype in enumerate(allowed_types):
-                type_translation_index[atype - 1] = ind
-
-            self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device=self.config.device)
 
         '''initialize some training metrics'''
         self.hit_max_lr_dict = {model_name: False for model_name in self.model_names}
@@ -684,9 +689,7 @@ class Modeller:
 
     def autoencoder_step(self, data, update_weights, step):
 
-        data = data.to(self.device)
         decoding = self.models_dict['autoencoder'](data.clone())
-
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
 
         autoencoder_loss = autoencoder_losses.mean()
@@ -706,6 +709,7 @@ class Modeller:
                                           [data.cpu().detach(), decoded_data.cpu().detach()
                                            ], mode='append')
 
+        if step % 100 == 0:
             # do evaluation on current sample and save this as our loss for tracking purposes
             nodewise_weights_tensor = decoded_data.aux_ind
             true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
@@ -713,7 +717,7 @@ class Modeller:
 
             '''log losses and other tracking values'''
             # for the purpose of convergence, we track the evaluation overlap rather than the loss, which is sigma-dependent
-            # it's also expensive to compute so we only do it once per epoch
+            # it's also expensive to compute so do it rarely
             self.logger.update_current_losses('autoencoder', self.epoch_type,
                                               1 - (full_overlap / self_overlap).mean().cpu().detach().numpy(),
                                               1 - (full_overlap / self_overlap).cpu().detach().numpy())
@@ -795,38 +799,35 @@ class Modeller:
         else:
             self.models_dict['autoencoder'].eval()
 
-        if self.config.autoencoder.random_fraction == 1 and self.epoch_type == 'train':  # fully random epoch
-            num_steps = 100
-            for i in tqdm(range(num_steps)):  # xx steps per random epoch
-                data = self.generate_random_point_cloud_batch(max(min(500, self.config.max_batch_size), data_loader.batch_size))  # just take the max size
+        # if self.config.autoencoder.random_fraction == 1 and self.epoch_type == 'train':  # fully random epoch  # todo deprecate
+        #     num_steps = 100
+        #     for i in tqdm(range(num_steps)):  # xx steps per random epoch
+        #         data = self.generate_random_point_cloud_batch(max(min(500, self.config.max_batch_size), data_loader.batch_size))  # just take the max size
+        #
+        #         self.autoencoder_step(data, update_weights, step=i)
+        #
+        # elif self.epoch_type == 'train':  # mixed random & data epoch  # todo deprecate
+        #     for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+        #         if np.random.uniform(0, 1, 1) < self.config.autoencoder.random_fraction or data.num_graphs == 1:
+        #             data = self.generate_random_point_cloud_batch(max(data_loader.batch_size, 2))  # must always be at least two graphs per batch
+        #         else:
+        #             data = self.preprocess_real_autoencoder_data(data)
+        #
+        #         self.autoencoder_step(data, update_weights, step=i)
+        #
+        #         if iteration_override is not None:
+        #             if i >= iteration_override:
+        #                 break  # stop training early - for debugging purposes
+        #
+        # elif self.epoch_type != 'train':  # test always on real data
+        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+            data = self.preprocess_real_autoencoder_data(data)
+            data = data.to(self.device)
+            self.autoencoder_step(data, update_weights, step=i)
 
-                self.autoencoder_step(data, update_weights, step=i)
-
-        elif self.epoch_type == 'train':  # mixed random & data epoch
-            for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-                if np.random.uniform(0, 1, 1) < self.config.autoencoder.random_fraction or data.num_graphs == 1:
-                    data = self.generate_random_point_cloud_batch(max(data_loader.batch_size, 2))  # must always be at least two graphs per batch
-                else:
-                    data = self.preprocess_real_autoencoder_data(data)
-
-                self.autoencoder_step(data, update_weights, step=i)
-
-                if iteration_override is not None:
-                    if i >= iteration_override:
-                        break  # stop training early - for debugging purposes
-
-        elif self.epoch_type != 'train':  # test always on real data
-            for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-                data = self.preprocess_real_autoencoder_data(data)
-
-                self.autoencoder_step(data, update_weights, step=i)
-
-                if iteration_override is not None:
-                    if i >= iteration_override:
-                        break  # stop training early - for debugging purposes
-
-        # replace working loss with a non-mutable one (sigma movement makes regular loss not useful for convergence checks
-        self.logger.current_losses['autoencoder'][f'mean_{self.epoch_type}'] = self.logger.__dict__[f'{self.epoch_type}_stats']['matching_nodes_loss']
+            if iteration_override is not None:
+                if i >= iteration_override:
+                    break  # stop training early - for debugging purposes
 
         # post epoch processing
         self.logger.numpyize_stats_dict(self.epoch_type)
@@ -852,9 +853,6 @@ class Modeller:
             data = set_molecule_alignment(data, mode='random', right_handed=False, include_inversion=True)
         elif orientation_override is not None:
             data = set_molecule_alignment(data, mode=orientation_override, right_handed=False, include_inversion=True)
-
-        data.pos /= self.config.autoencoder.molecule_radius_normalization
-        data.x[:, 0] = self.autoencoder_type_index[data.x[:, 0].long() - 1].float()  # reindex atom types
 
         return data
 
@@ -889,10 +887,9 @@ class Modeller:
             losses = reconstruction_loss + constraining_loss + node_weight_constraining_loss
         else:
             losses = reconstruction_loss + constraining_loss
-
             node_weight_constraining_loss = torch.ones_like(constraining_loss)
 
-        stats = {'constraining_loss': constraining_loss.mean().cpu().detach().numpy(),  # todo all this CPU business is slow
+        stats = {'constraining_loss': constraining_loss.mean().cpu().detach().numpy(),
                  'reconstruction_loss': reconstruction_loss.mean().cpu().detach().numpy(),
                  'nodewise_type_loss': nodewise_type_loss.cpu().detach().numpy(),
                  'scaled_reconstruction_loss': (reconstruction_loss.mean() * self.config.autoencoder_sigma).cpu().detach().numpy(),

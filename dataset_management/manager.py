@@ -59,30 +59,30 @@ class DataManager:
             self.rebuild_indices()
 
         if filter_protons:
-            atom_keys = []
-            for key in self.dataset.columns:
-                if key.lower()[:5] == 'atom_':
-                    atom_keys.append(key)
-            init_atoms = len(np.concatenate(self.dataset['atom_atomic_numbers']))
-            new_rows = []
-            for ind, row in tqdm(self.dataset.iterrows(), total=self.dataset.shape[0]):
-                atoms = row['atom_atomic_numbers']
-                heavy_atom_inds = np.argwhere(atoms != 1)[:, 0]
-
-                for key in atom_keys:
-                    row[key] = row[key][heavy_atom_inds]
-
-                row['molecule_num_atoms'] = len(heavy_atom_inds)
-                new_rows.append(row)
-
-            self.dataset = pd.DataFrame(new_rows)
-
-            self.dataset = delete_from_dataframe(self.dataset, np.argwhere(self.dataset['molecule_num_atoms']==1)[:,0])  # delete methane, ammonia, etc.
-
-            final_atoms = len(np.concatenate(self.dataset['atom_atomic_numbers']))
-            print(f"Proton filter removed {init_atoms - final_atoms} atoms leaving {final_atoms}")
+            self.filter_protons_ROUGH()
 
         self.generate_datapoints(config, override_length)
+
+    def filter_protons_ROUGH(self):
+        atom_keys = []
+        for key in self.dataset.columns:
+            if key.lower()[:5] == 'atom_':
+                atom_keys.append(key)
+        init_atoms = len(np.concatenate(self.dataset['atom_atomic_numbers']))
+        new_rows = []
+        for ind, row in tqdm(self.dataset.iterrows(), total=self.dataset.shape[0]):
+            atoms = row['atom_atomic_numbers']
+            heavy_atom_inds = np.argwhere(atoms != 1)[:, 0]
+
+            for key in atom_keys:
+                row[key] = row[key][heavy_atom_inds]
+
+            row['molecule_num_atoms'] = len(heavy_atom_inds)
+            new_rows.append(row)
+        self.dataset = pd.DataFrame(new_rows)
+        self.dataset = delete_from_dataframe(self.dataset, np.argwhere(self.dataset['molecule_num_atoms'] == 1)[:, 0])  # delete methane, ammonia, etc.
+        final_atoms = len(np.concatenate(self.dataset['atom_atomic_numbers']))
+        print(f"Proton filter removed {init_atoms - final_atoms} atoms leaving {final_atoms}")
 
     def generate_datapoints(self, config, override_length):
         self.regression_target = config.regression_target
