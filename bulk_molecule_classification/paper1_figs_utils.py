@@ -118,21 +118,21 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
     fig.update_xaxes(linecolor='black', mirror=True,
                      showgrid=True, zeroline=True)  # , showticklabels=False)
 
-    fig.update_layout(xaxis1_title='tSNE1',
-                      xaxis2_title='tSNE1',
+    fig.update_layout(#xaxis1_title='tSNE1',
+                      #xaxis2_title='tSNE1',
                       xaxis3_title='tSNE1',
                       xaxis4_title='tSNE1',
                       yaxis1_title='tSNE2',
-                      yaxis2_title='tSNE2',
+                      #yaxis2_title='tSNE2',
                       yaxis3_title='tSNE2',
-                      yaxis4_title='tSNE2')
-
+                      #yaxis4_title='tSNE2')
+    )
     fig.update_layout(font=dict(size=FONTSIZE))
     fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
 
     ylevels = [-0.2 - 0.325 * (ind % 2) for ind in range(n_images)]
-    xlevels = np.linspace(-0.075, 0.9, int(np.ceil(n_images/2))).repeat(2)
+    xlevels = np.linspace(-0.025, 0.875, int(np.ceil(n_images/2))).repeat(2)
 
     for ind in range(n_images):
         fig.add_layout_image(

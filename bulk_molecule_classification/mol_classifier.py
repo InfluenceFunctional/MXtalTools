@@ -172,3 +172,20 @@ class MoleculeClassifier(nn.Module):
         rbf = self.rbf(dist)
 
         return edge_index, dist, rbf
+
+    '''
+    from torch_nl import compute_neighborlist
+    import time
+    pbc = torch.tensor([True, True, True]).to('cuda')
+    cell = data.T_fc.T
+    t0 = time.time()
+    a, b = torch.where((norms > 0) * (norms <= self.cutoff))  # faster but still pretty slow
+    edge_index = torch.cat((a[None, :], b[None, :]), dim=0)
+    t1 = time.time()
+    edge_index2, batch_mapping, shifts_idx = compute_neighborlist(
+        self.cutoff, data.pos, cell, pbc, data.batch, False
+    )
+    t2 = time.time()
+    print(t1-t0)
+    print(t2-t1)
+    '''
