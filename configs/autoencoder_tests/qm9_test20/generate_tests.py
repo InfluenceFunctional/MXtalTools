@@ -35,7 +35,7 @@ config_list = [
     ['batch', 4, 128, .1, 0.001, True, 0, 5e-4, 5e-4],  # 0
     ['layer', 4, 128, .1, 0.001, True, 0, 5e-4, 5e-4],  # 1
     [None, 4, 128, .1, 0.001, True, 0, 5e-5, 5e-5],  # 2  #NaN
-    ['batch', 8, 128, .1, 0.001, True, 0, 5e-4, 5e-4],  # 3
+    ['batch', 8, 128, .1, 0.001, True, 0, 5e-4, 5e-4],  # 3  # immediate NaN 2nd try
     ['batch', 4, 256, .1, 0.001, True, 0, 5e-5, 5e-5],  # 4  # NaN
     ['batch', 4, 128, .75, 0.001, True, 0, 5e-4, 5e-4],  # 5
     ['batch', 4, 128, .1, 0.1, True, 0, 5e-5, 5e-5],  # 6 NaN
