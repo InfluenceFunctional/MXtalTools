@@ -6,9 +6,7 @@ import numpy as np
 base_config = load_yaml('base.yaml')
 
 """
-big random attack for variational autoencoder
-
-batch sizes can be at least 2-3x without protons
+Results - these were all competitive - convergint to about .94 rather quickly with minimal overfitting
 """
 
 search_space = {
@@ -64,7 +62,7 @@ for ix1 in range(2):
                 config['autoencoder']['model']['decoder_norm_mode'] = (
                     search_space['model']['decoder_norm_mode'][ix3])
 
-                config['autoencoder']['model']['variational_autoencoder'] = (
+                config['autoencoder']['model']['variational_autoencoder'] = (  #MK this was a fuckup
                     search_space['model']['variational_encoder'][ix4])
 
                 with open(str(ind) + '.yaml', 'w') as outfile:
