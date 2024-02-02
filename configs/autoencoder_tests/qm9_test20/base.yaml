@@ -86,7 +86,7 @@ autoencoder:
     beta1: 0.9
     beta2: 0.999
     weight_decay: 0.1
-    convergence_eps: 1E-6
+    convergence_eps: 1.0E-6
     lr_growth_lambda: 1.00
     lr_shrink_lambda: 0.995
     use_plateau_scheduler: False

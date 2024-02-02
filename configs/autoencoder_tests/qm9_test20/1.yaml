@@ -36,7 +36,7 @@ autoencoder:
   optimizer:
     beta1: 0.9
     beta2: 0.999
-    convergence_eps: 1E-6
+    convergence_eps: 1.0e-06
     decoder_init_lr: 0.0005
     encoder_init_lr: 0.0005
     init_lr: 0.0001
