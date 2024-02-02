@@ -55,7 +55,7 @@ model_paths:
 discriminator_positional_noise: 0
 generator_positional_noise: 0
 regressor_positional_noise: 0
-autoencoder_positional_noise: 0
+autoencoder_positional_noise: 0 #
 
 generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in original sg.  'all' -> will randomly pick between all possibilities. []
 supercell_size: 5
