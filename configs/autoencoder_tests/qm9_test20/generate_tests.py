@@ -32,15 +32,20 @@ search_space = {
 }
 # norm mode, decoder layers, decoder points, weight decay, kld, filter protons, positional noise
 config_list = [
-    ['batch', 4, 128, .1, 0.001, True, 0],  # 0
-    ['layer', 4, 128, .1, 0.001, True, 0],  # 1
-    [None, 4, 128, .1, 0.001, True, 0],  # 2
-    ['batch', 8, 128, .1, 0.001, True, 0],  # 3
-    ['batch', 4, 256, .1, 0.001, True, 0],  # 4
-    ['batch', 4, 128, .75, 0.001, True, 0],  # 5
-    ['batch', 4, 128, .1, 0.1, True, 0],  # 6
-    ['batch', 4, 128, .1, 0.001, False, 0],  # 7
-    ['batch', 4, 128, .1, 0.001, True, 0.5],  # 8
+    ['batch', 4, 128, .1, 0.001, True, 0, 5e-4, 5e-4],  # 0
+    ['layer', 4, 128, .1, 0.001, True, 0, 5e-4, 5e-4],  # 1
+    [None, 4, 128, .1, 0.001, True, 0, 5e-4, 5e-4],  # 2  #NaN
+    ['batch', 8, 128, .1, 0.001, True, 0, 5e-4, 5e-4],  # 3
+    ['batch', 4, 256, .1, 0.001, True, 0, 5e-4, 5e-4],  # 4  # NaN
+    ['batch', 4, 128, .75, 0.001, True, 0, 5e-4, 5e-4],  # 5
+    ['batch', 4, 128, .1, 0.1, True, 0, 5e-4, 5e-4],  # 6 NaN
+    ['batch', 4, 128, .1, 0.001, False, 0, 5e-4, 5e-4],  # 7  # NaN
+    ['batch', 4, 128, .1, 0.001, True, 0.5, 5e-4, 5e-4],  # 8
+    [None, 4, 128, .1, 0.001, True, 0, 5e-5, 5e-5],  # 2-9  #NaN
+    ['batch', 4, 256, .1, 0.001, True, 0, 5e-5, 5e-5],  # 4-10  # NaN
+    ['batch', 4, 128, .1, 0.001, False, 0, 5e-5, 5e-5],  # 7-11  # NaN
+    [None, 4, 128, .1, 0.001, True, 0, 5e-5, 5e-5],  # 2-12  #NaN
+
 ]
 
 np.random.seed(1)
@@ -57,6 +62,9 @@ for ix1 in range(len(config_list)):
     config['autoencoder']['KLD_weight'] = config_list[ix1][4]
     config['dataset']['filter_protons'] = config_list[ix1][5]
     config['autoencoder_positional_noise'] = config_list[ix1][6]
+    config['autoencoder']['optimizer']['encoder_init_lr'] = config_list[ix1][7]
+    config['autoencoder']['optimizer']['decoder_init_lr'] = config_list[ix1][8]
+
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
