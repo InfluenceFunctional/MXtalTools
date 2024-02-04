@@ -288,6 +288,14 @@ class Modeller:
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
 
+        self.train_models_dict = {
+            'discriminator': (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn)),
+            'generator': (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond)),
+            'regressor': self.config.mode == 'regression',
+            'autoencoder': self.config.mode == 'autoencoder',
+            'embedding_regressor': self.config.mode == 'embedding_regression',
+        }
+
         '''initialize datasets and useful classes'''
         _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=1)
         num_params_dict = self.init_models()
@@ -334,11 +342,17 @@ class Modeller:
             data = data.to(self.device)
             data0 = data.clone()
             encodings = []
-            for ind in tqdm(range(100)):
-                data = self.preprocess_real_autoencoder_data(data0.clone(), no_noise=False, orientation_override=None)
-                encodings.append(self.models_dict['autoencoder'].encode(data.clone()).cpu().detach().numpy())
+            num_samples = 100
+            for ind in tqdm(range(10)):
+                data.pos += torch.randn_like(data.pos) * 0.05
+                encodings.append(self.models_dict['autoencoder'].encode(data.clone(),
+                                                                        z= torch.zeros((data.num_graphs, 3,  # uniform prior for comparison
+                                                                                                   self.config.autoencoder.model.bottleneck_dim),
+                                                                                                  dtype=torch.float32,
+                                                                                                  device=self.config.device)
+                              ).cpu().detach().numpy())
             encodings = np.stack(encodings)
-            scalar_encodings = np.linalg.norm(encodings, axis=2)[:, :10, :].reshape(100*10,256)
+            scalar_encodings = np.linalg.norm(encodings, axis=2)[:, :num_samples, :].reshape(num_samples * 10, encodings.shape[-1])
             from sklearn.manifold import TSNE
             import plotly.graph_objects as go
             
@@ -348,14 +362,14 @@ class Modeller:
             fig = go.Figure()
             fig.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
                                        mode='markers',
-                                       marker_color=np.arange(1000)%10,#np.concatenate(stats_dict[mol_key])[:max_num_samples],
+                                       marker_color=np.arange(1000) % num_samples,  # np.concatenate(stats_dict[mol_key])[:max_num_samples],
                                        opacity=.75,
-                                       #marker_colorbar=dict(title=mol_key),
+                                       # marker_colorbar=dict(title=mol_key),
                                        ))
             fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
                               xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
                               plot_bgcolor='rgba(0,0,0,0)')
-            fig.show()
+            fig.show(renderer='browser')
             '''
 
     def autoencoder_embedding_step(self, data):
@@ -400,12 +414,12 @@ class Modeller:
                                        legendgroup=f'Predicted type {j}',
                                        ))
         
-        from reporting.online import cluster_swarm_vs_truth, decoder_clustering, extract_true_and_predicted_points
+        from reporting.online import decoder_scaffolded_clustering, decoder_agglomerative_clustering, extract_true_and_predicted_points
         
         coords_true, coords_pred, points_true, points_pred, sample_weights = (
             extract_true_and_predicted_points(data, decoded_data, graph_ind, self.config.autoencoder.molecule_radius_normalization, self.dataDims['num_atom_types'], to_numpy=True))
         
-        glom_points_pred, glom_pred_weights = decoder_clustering(points_pred, sample_weights, 0.75)
+        glom_points_pred, glom_pred_weights = decoder_agglomerative_clustering(points_pred, sample_weights, 0.75)
         
         for j in range(self.dataDims['num_atom_types']):
             type_inds = np.argwhere(np.argmax(glom_points_pred[:, 3:], axis=1) == j)[:, 0]
@@ -844,10 +858,12 @@ class Modeller:
         if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
-    def preprocess_real_autoencoder_data(self, data, no_noise=False, orientation_override=None):
+    def preprocess_real_autoencoder_data(self, data, no_noise=False, orientation_override=None, noise_override=None):
         if not no_noise:
-            if self.config.autoencoder_positional_noise > 0 and self.epoch_type == 'train':
-                data.pos += torch.randn_like(data.pos) * self.config.regressor_positional_noise
+            if noise_override is not None:
+                data.pos += torch.randn_like(data.pos) * self.config.autoencoder_positional_noise
+            elif self.config.autoencoder_positional_noise > 0 and self.epoch_type == 'train':
+                data.pos += torch.randn_like(data.pos) * self.config.autoencoder_positional_noise
 
         if not self.models_dict['autoencoder'].fully_equivariant and orientation_override is None:
             data = set_molecule_alignment(data, mode='random', right_handed=False, include_inversion=True)

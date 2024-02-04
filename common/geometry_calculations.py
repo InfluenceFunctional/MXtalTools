@@ -49,7 +49,7 @@ def compute_principal_axes_np(coords):
 
 def compute_inertial_tensor_torch(x: torch.tensor, y: torch.tensor, z: torch.tensor):
     """
-    compute the inertial tensor for a series of x y z coordinates
+    compute the inertial tensor for a series of x y z coordinates [n x 3]
     """
     Ixy = -torch.sum(x * y)
     Iyz = -torch.sum(y * z)
