@@ -145,6 +145,7 @@ model_paths:
   generator: null
   regressor: null
 num_early_epochs: 0
+overfit_tolerance: 4
 regressor:
   model: null
   optimizer: null
