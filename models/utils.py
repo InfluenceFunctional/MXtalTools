@@ -56,7 +56,12 @@ def check_convergence(test_record, history, convergence_eps, epoch, minimum_epoc
         XX not using2. not near global minimum
         3. train and test not significantly diverging
         '''
-        linreg = linregress(np.arange(len(test_record[-history:])), np.log10(test_record[-history:]))
+
+        lin_hist = test_record[-history:]
+        if history > 20 and minimum_epochs > 20:  # scrub outliers
+            lin_hist = lin_hist[(np.quantile(lin_hist, 0.05) < lin_hist) * (lin_hist < np.quantile(lin_hist, 0.95))]
+
+        linreg = linregress(np.arange(len(lin_hist)), np.log10(lin_hist))
         converged = linreg.slope > -convergence_eps
         # if not converged:
         #     converged *= all(test_record[-history] > np.quantile(test_record, 0.05))

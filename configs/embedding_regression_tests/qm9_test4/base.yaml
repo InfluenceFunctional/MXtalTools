@@ -23,9 +23,10 @@ num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 50
 max_batch_size: 2000
-batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
+batch_growth_increment: 0.5 # fraction of batch size to grow by each epoch
+minimum_epochs: 100
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 5000  # for convergence checks
+history: 100  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
@@ -47,7 +48,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: /model
+  autoencoder: /best_autoencoder_autoencoder_tests_qm9_test20_1_02-02-11-33-00
   embedding_regressor: null
 
 discriminator_positional_noise: 0
@@ -138,7 +139,7 @@ embedding_regressor:
     beta1: 0.9
     beta2: 0.999
     weight_decay: 0
-    convergence_eps: 0.0001
+    convergence_eps: 1.0E-5
     lr_growth_lambda: 1.00
     lr_shrink_lambda: 0.995
     use_plateau_scheduler: False
@@ -147,8 +148,8 @@ embedding_regressor:
     num_layers: 8
     depth: 128
     norm_mode: 'batch'
-    dropout: 0.25
-    equivariant: False
+    dropout: 0.1
+    equivariant: True
     vector_norm: True
 
 
