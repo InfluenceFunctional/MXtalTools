@@ -288,10 +288,39 @@ class DataManager:
 
     def get_regression_target(self):
         targets = self.dataset[self.regression_target]
+        targets = np.clip(targets, a_min=np.quantile(targets, 0.001), a_max=np.quantile(targets, 0.999))  # cut severe outliers
         target_mean = self.standardization_dict[self.regression_target][0]
         target_std = self.standardization_dict[self.regression_target][1]
 
         return (targets - target_mean) / target_std
+
+    # target_list = [
+    #     "molecule_rotational_constant_a",
+    #     "molecule_rotational_constant_b",
+    #     "molecule_rotational_constant_c",
+    #     "molecule_dipole_moment",
+    #     "molecule_isotropic_polarizability",
+    #     "molecule_HOMO_energy",
+    #     "molecule_LUMO_energy",
+    #     "molecule_gap_energy",
+    #     "molecule_el_spatial_extent",
+    #     "molecule_zpv_energy",
+    #     "molecule_internal_energy_0",
+    #     "molecule_internal_energy_STP",
+    #     "molecule_enthalpy_STP",
+    #     "molecule_free_energy_STP",
+    #     "molecule_heat_capacity_STP"]
+    #
+    # import plotly.graph_objects as go
+    # from plotly.subplots import make_subplots
+    #
+    # fig = make_subplots(rows=4, cols=4, subplot_titles=target_list)
+    # for i, target in enumerate(target_list):
+    #     targets = self.dataset[target]
+    #     targets = np.clip(targets, a_min=np.quantile(targets, 0.001), a_max=np.quantile(targets, 0.999))
+    #     fig.add_histogram(x=targets, nbinsx=100, histnorm='probability density', row=i % 4 + 1, col=i // 4 + 1)
+    #
+    # fig.show(renderer='browser')
 
     def gather_tracking_features(self):
         """

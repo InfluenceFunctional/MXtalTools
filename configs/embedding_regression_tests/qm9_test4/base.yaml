@@ -15,7 +15,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: True
-  target: null
+  regression_target: null
 
 # batching & convergence
 early_epochs_step_override: 100
@@ -132,14 +132,14 @@ embedding_regressor:
   num_targets: 1
 
   optimizer:
-    optimizer: adam
+    optimizer: adamw
     init_lr: 1.0E-3
     max_lr: 1.0E-5
     min_lr: 1.0E-5
     lr_schedule: True
     beta1: 0.9
     beta2: 0.999
-    weight_decay: 0
+    weight_decay: 0.05
     convergence_eps: 1.0E-5
     lr_growth_lambda: 1.00
     lr_shrink_lambda: 0.995
