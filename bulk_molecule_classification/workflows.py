@@ -37,7 +37,7 @@ def train_classifier(config, classifier, optimizer,
             test_true_defects = []
             classifier.train(True)
             optimizer.zero_grad()
-            for step, sample in enumerate(tqdm(train_loader)):
+            for step, sample in enumerate(tqdm(train_loader, miniters=int(len(train_loader) / 25))):
                 sample = sample.to(device)
 
                 output = classifier(sample)
@@ -55,7 +55,7 @@ def train_classifier(config, classifier, optimizer,
             with torch.no_grad():
                 classifier.eval()
 
-                for step, sample in enumerate(tqdm(test_loader)):
+                for step, sample in enumerate(tqdm(test_loader,  miniters=int(len(test_loader) / 25))):
                     sample = sample.to(device)
 
                     output = classifier(sample)  # fix mini-batch behavior
