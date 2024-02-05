@@ -106,28 +106,34 @@ base_config = {'run_name': 'dev',
                'device': 'cuda',
                'seed': 1}
 
+# config_list = [
+#     [1, 256, 128, 0, None, None, 2, 1000],  # 0
+#     [1, 256, 128, .25, None, None, 2, 1000],  # 1
+#     [1, 256, 128, .5, None, None, 2, 1000],  # 2
+#     [1, 256, 128, 0, 'layer', None, 2, 1000],  # 3
+#     [1, 256, 128, 0, None, 'layer', 2, 1000],  # 4
+#     [1, 256, 128, 0, 'layer', 'layer', 2, 1000],  # 5
+#     [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000],  # 6
+#     [1, 512, 256, 0.25, 'layer', 'layer', 2, 1000],  # 7
+#     [1, 256, 256, 0.25, 'layer', 'layer', 2, 1000],  # 8
+#     [1, 128, 64, 0.25, 'layer', 'layer', 2, 1000],  # 9
+#     [1, 256, 128, 0.25, 'layer', 'batch', 2, 1000],  # 10
+#     [1, 256, 128, 0.25, 'layer', 'layer', 1, 1000],  # 11
+#     [1, 256, 128, 0.25, 'layer', 'layer', 4, 1000],  # 12
+#     [1, 256, 128, 0.25, 'layer', 'layer', 2, 5000],  # 13
+# ]
 config_list = [
-    [1, 256, 128, 0, None, None, 2, 1000],  # 0
-    [1, 256, 128, .25, None, None, 2, 1000],  # 1
-    [1, 256, 128, .5, None, None, 2, 1000],  # 2
-    [1, 256, 128, 0, 'layer', None, 2, 1000],  # 3
-    [1, 256, 128, 0, None, 'layer', 2, 1000],  # 4
-    [1, 256, 128, 0, 'layer', 'layer', 2, 1000],  # 5
-    [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000],  # 6
-    [1, 512, 256, 0.25, 'layer', 'layer', 2, 1000],  # 7
-    [1, 256, 256, 0.25, 'layer', 'layer', 2, 1000],  # 8
-    [1, 128, 64, 0.25, 'layer', 'layer', 2, 1000],  # 9
-    [1, 256, 128, 0.25, 'layer', 'batch', 2, 1000],  # 10
-    [1, 256, 128, 0.25, 'layer', 'layer', 1, 1000],  # 11
-    [1, 256, 128, 0.25, 'layer', 'layer', 4, 1000],  # 12
-    [1, 256, 128, 0.25, 'layer', 'layer', 2, 5000],  # 13
-
+    [1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'cold'],  # 0
+    [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'cold'],  # 1
+    [1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'hot'],  # 2
+    [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'hot'],  # 3
 ]
+
 test_name = 'Feb2'
 for device in ['cuda']:#, 'cpu']:
     for i in range(len(config_list)):
         for si in range(2):
-            for mol in range(0, 1):  # 2):
+            for mol in range(0, 2):
                 configs.append(copy(base_config))
                 configs[-1]['device'] = device
                 configs[-1]['seed'] = si
@@ -138,6 +144,7 @@ for device in ['cuda']:#, 'cpu']:
                 configs[-1]['fc_norm'] = config_list[i][5]
                 configs[-1]['num_fcs'] = config_list[i][6]
                 configs[-1]['dataset_size'] = config_list[i][7]
+                configs[-1]['dataset_temperature'] = config_list[i][8]
 
                 if mol == 1:
                     configs[-1]['run_name'] = f'urea_{test_name}_test{i}_{si}'
