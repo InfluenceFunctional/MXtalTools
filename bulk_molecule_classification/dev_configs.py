@@ -124,7 +124,7 @@ config_list = [
 
 ]
 test_name = 'Feb2'
-for device in ['cuda', 'cpu']:
+for device in ['cuda']:#, 'cpu']:
     for i in range(len(config_list)):
         for si in range(2):
             for mol in range(0, 1):  # 2):
@@ -139,7 +139,6 @@ for device in ['cuda', 'cpu']:
                 configs[-1]['num_fcs'] = config_list[i][6]
                 configs[-1]['dataset_size'] = config_list[i][7]
 
-
                 if mol == 1:
                     configs[-1]['run_name'] = f'urea_{test_name}_test{i}_{si}'
                     configs[-1]['dataset_name'] = 'new_urea_full'
@@ -150,7 +149,7 @@ for device in ['cuda', 'cpu']:
                     configs[-1]['dataset_name'] = 'new_nic_full'
                     configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'bulk_trajs3', 'new_small_bulk']
                     configs[-1]['training_temps'] = [100, 350]
-
+aa = 1
 #
 # configs = []
 # base_config = {'run_name': 'cluster_traj_eval',
