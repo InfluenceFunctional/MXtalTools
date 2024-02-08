@@ -14,7 +14,7 @@ sweep_id: tn521gfs
 sweep_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/sweeps/qm9_sweep1.yaml'
 
 dataset:
-  max_dataset_length: 1000
+  max_dataset_length: 1.0E6
   test_fraction: 0.2
   filter_protons: False
   regression_target: molecule_rotational_constant_a
