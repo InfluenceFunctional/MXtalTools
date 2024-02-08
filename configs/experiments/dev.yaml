@@ -14,7 +14,7 @@ sweep_id: null #tn521gfs
 sweep_path: null #'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep1/qm9_sweep1.yaml'
 
 dataset:
-  max_dataset_length: 10000
+  max_dataset_length: 1000
   test_fraction: 0.2
   filter_protons: False
   regression_target: molecule_rotational_constant_a
@@ -98,15 +98,15 @@ autoencoder:
     encoder_type: 'equivariant' # or variant
     decoder_type: 'equivariant' # or variant
 
-    num_graph_convolutions: 1
-    embedding_depth: 1024
+    num_graph_convolutions: 0
+    embedding_depth: 256
     bottleneck_dim: 64
     graph_message_depth: 64  # must cleanly divide num_heads
     num_attention_heads: 4
     graph_aggregator: 'equivariant softmax'
-    nodewise_fc_layers: 12
+    nodewise_fc_layers: 8
     activation: 'gelu'
-    num_decoder_layers: 12
+    num_decoder_layers: 4
     decoder_ramp_depth: True
 
     decoder_norm_mode: 'layer'

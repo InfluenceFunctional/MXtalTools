@@ -8,7 +8,7 @@ base_config = load_yaml('base.yaml')
 """
 sequentially numbered sweep configs
 """
-for ix1 in range(0, 20):
+for ix1 in range(0, 100):
     config = copy(base_config)
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ix1)
 
