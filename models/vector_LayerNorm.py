@@ -53,11 +53,11 @@ class VectorLayerNorm(torch.nn.Module):
                 Automatically calculated if not given. (default: :obj:`None`)
         """
         if self.mode == 'graph':
-            if batch is None:
+            if batch is None:  # assumes whole input is single graph
                 norm = torch.linalg.norm(v, dim=1).mean(0)
                 out = v / (norm + self.eps)[None, None, :]
 
-            else:
+            else:  # take norms graph-wise
                 if batch_size is None:
                     batch_size = int(batch.max()) + 1
 
@@ -72,9 +72,9 @@ class VectorLayerNorm(torch.nn.Module):
 
             return out
 
-        if self.mode == 'node':
-            norm = torch.linalg.norm(v, dim=1).mean(0)
-            out = v / (norm.mean(0) + self.eps)[None, None, :]
+        if self.mode == 'node':  # separate norms node-by-node
+            norm = torch.linalg.norm(v, dim=1)
+            out = v / (norm + self.eps)[:, None, :]
 
             if self.weight is not None:
                 out = out * self.weight

@@ -21,7 +21,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
                  equivariant=False,
                  residue_v_to_s=False,
                  vector_output_dim=None,
-                 vector_norm=False,
+                 vector_norm=None,
                  ramp_depth=False):
         super(MLP, self).__init__()
         # initialize constants and layers
@@ -145,16 +145,10 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
             Activation(self.activation, self.n_filters[i])
             for i in range(self.n_layers)
         ])
-        if self.vector_norm:
-            self.v_fc_norms = torch.nn.ModuleList([
-                Normalization('graph vector layer', self.n_filters[i])
-                for i in range(self.n_layers)
-            ])
-        else:
-            self.v_fc_norms = torch.nn.ModuleList([
-                Normalization(None, self.n_filters[i])
-                for i in range(self.n_layers)
-            ])
+        self.v_fc_norms = torch.nn.ModuleList([
+            Normalization(self.vector_norm, self.n_filters[i])
+            for i in range(self.n_layers)
+        ])
 
         '''output layer'''
         if self.v_output_dim != self.n_filters[-1]:
@@ -264,18 +258,20 @@ class Normalization(nn.Module):
         elif norm == 'graph':
             self.norm = gnn.GraphNorm(filters)
         elif norm == 'graph vector layer':
-            self.norm = VectorLayerNorm(filters)
+            self.norm = VectorLayerNorm(filters, mode='graph')
+        elif norm == 'vector layer':
+            self.norm = VectorLayerNorm(filters, mode='node')
         elif norm is None:
             self.norm = nn.Identity()
         else:
             print(norm + " is not a valid normalization")
             sys.exit()
 
-    def forward(self, input, batch=None):
+    def forward(self, x, batch=None):
         if batch is not None and self.norm_type != 'batch' and self.norm_type is not None:
-            return self.norm(input, batch)
+            return self.norm(x, batch)
 
-        return self.norm(input)
+        return self.norm(x)
 
 
 class Activation(nn.Module):

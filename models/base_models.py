@@ -3,10 +3,9 @@ from models.GraphNeuralNetwork import GraphNeuralNetwork
 import torch
 import torch.nn as nn
 
-from models.components import MLP, construct_radial_graph, GlobalAggregation
+from models.components import MLP, construct_radial_graph, GlobalAggregation, Normalization
 
 from constants.space_group_feature_tensor import SG_FEATURE_TENSOR
-import e3nn.o3 as o3
 
 
 class molecule_graph_model(nn.Module):
@@ -42,7 +41,7 @@ class molecule_graph_model(nn.Module):
                  periodic_structure=False,
                  outside_convolution_type='none',
                  cartesian_dimension=3,
-                 vector_norm=False,
+                 vector_norm=None,
                  ):
 
         super(molecule_graph_model, self).__init__()
@@ -117,7 +116,7 @@ class molecule_graph_model(nn.Module):
                                seed=seed,
                                equivariant=self.equivariant_graph,
                                vector_output_dim=graph_embedding_depth,
-                               vector_norm=vector_norm,
+                               vector_norm='vector layer' if vector_norm is not None else None,
                                )
             gnn_output_depth = fc_depth
         else:
@@ -125,14 +124,18 @@ class molecule_graph_model(nn.Module):
 
         """initialize output reshaping layers"""
         if gnn_output_depth != output_dimension:  # only want this if we have to change the dimension
+            self.output_fc_norm = Normalization(fc_norm_mode, gnn_output_depth)
             self.output_fc = nn.Linear(gnn_output_depth, output_dimension, bias=False)
         else:
+            self.output_fc_norm = nn.Identity()
             self.output_fc = nn.Identity()
 
         if self.equivariant_graph:
             if gnn_output_depth != output_dimension:  # only want this if we have to change the dimension
+                self.v_output_norm = Normalization('graph vector layer' if vector_norm else None, gnn_output_depth)
                 self.v_output_fc = nn.Linear(gnn_output_depth, output_dimension, bias=False)
             else:
+                self.v_output_norm = nn.Identity()
                 self.v_output_fc = nn.Identity()
 
     def forward(self, data, edges_dict=None, return_latent=False, return_dists=False):

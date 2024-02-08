@@ -149,7 +149,7 @@ class FC_Block(torch.nn.Module):
                  nodewise_norm,
                  nodewise_dropout,
                  equivariant=False,
-                 vector_norm=False,
+                 vector_norm=None,
                  ):
         super(FC_Block, self).__init__()
         self.equivariant = equivariant

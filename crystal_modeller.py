@@ -575,7 +575,7 @@ class Modeller:
 
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
-            # this means we also can't do wandb sweeps properly, as-is
+            # this means we also can't do wandb qm9_sweep1 properly, as-is
 
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
             wandb.log(num_params_dict)

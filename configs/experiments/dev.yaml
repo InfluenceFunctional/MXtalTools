@@ -10,11 +10,11 @@ extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
 model_names: ['autoencoder']#, 'embedding_regressor']
-sweep_id: tn521gfs
-sweep_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/sweeps/qm9_sweep1.yaml'
+sweep_id: null #tn521gfs
+sweep_path: null #'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep1/qm9_sweep1.yaml'
 
 dataset:
-  max_dataset_length: 1.0E6
+  max_dataset_length: 10000
   test_fraction: 0.2
   filter_protons: False
   regression_target: molecule_rotational_constant_a
@@ -98,21 +98,21 @@ autoencoder:
     encoder_type: 'equivariant' # or variant
     decoder_type: 'equivariant' # or variant
 
-    num_graph_convolutions: 0
-    embedding_depth: 256
+    num_graph_convolutions: 1
+    embedding_depth: 1024
     bottleneck_dim: 64
     graph_message_depth: 64  # must cleanly divide num_heads
     num_attention_heads: 4
     graph_aggregator: 'equivariant softmax'
-    nodewise_fc_layers: 8
+    nodewise_fc_layers: 12
     activation: 'gelu'
-    num_decoder_layers: 4
+    num_decoder_layers: 12
     decoder_ramp_depth: True
 
     decoder_norm_mode: 'layer'
     graph_node_norm: 'graph layer'
-    encoder_vector_norm: True
-    decoder_vector_norm: True
+    encoder_vector_norm: 'graph vector layer'
+    decoder_vector_norm: 'vector layer'
 
     graph_node_dropout: 0
     graph_message_dropout: 0

@@ -1,6 +1,7 @@
 from models.basis_functions import GaussianEmbedding, BesselBasisLayer
 import torch
 import torch.nn as nn
+from models.components import Normalization
 
 from models.gnn_blocks import EmbeddingBlock, GC_Block, FC_Block
 
@@ -28,7 +29,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                  periodize_inside_nodes=False,
                  outside_convolution_type='none',
                  equivariant_graph=False,
-                 vector_norm=False,
+                 vector_norm=None,
                  ):
         super(GraphNeuralNetwork, self).__init__()
 
@@ -84,14 +85,18 @@ class GraphNeuralNetwork(torch.nn.Module):
             for _ in range(num_blocks)
         ])
 
-        if self.equivariant_graph:
+        if self.equivariant_graph:  # todo abstract out output block
             if node_embedding_depth != graph_embedding_depth:
+                self.v_output_norm = Normalization(vector_norm, node_embedding_depth)
                 self.v_output_layer = nn.Linear(node_embedding_depth, graph_embedding_depth, bias=False)
             else:
+                self.v_output_norm = nn.Identity()
                 self.v_output_layer = nn.Identity()
         if node_embedding_depth != graph_embedding_depth:
+            self.output_norm = Normalization(node_embedding_depth, node_embedding_depth)
             self.output_layer = nn.Linear(node_embedding_depth, graph_embedding_depth, bias=False)
         else:
+            self.output_norm = nn.Identity()
             self.output_layer = nn.Identity()
 
     def get_geom_embedding(self, edge_index, pos):

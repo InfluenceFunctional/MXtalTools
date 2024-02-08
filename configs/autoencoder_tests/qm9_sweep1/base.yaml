@@ -11,7 +11,7 @@ save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
 model_names: ['autoencoder']#, 'embedding_regressor']
 sweep_id: tn521gfs
-sweep_path: /scratch/mk8347/mcrygan/configs/autoencoder_tests/sweeps/qm9_sweep1.yaml
+sweep_path: /scratch/mk8347/mcrygan/configs/autoencoder_tests/qm9_sweep1/qm9_sweep1.yaml
 
 dataset:
   max_dataset_length: 1.0E+6
@@ -111,8 +111,8 @@ autoencoder:
 
     decoder_norm_mode: 'layer'
     graph_node_norm: 'graph layer'
-    encoder_vector_norm: True
-    decoder_vector_norm: True
+    encoder_vector_norm: 'graph vector layer'
+    decoder_vector_norm: 'vector layer'
 
     graph_node_dropout: 0
     graph_message_dropout: 0
