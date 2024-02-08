@@ -1828,7 +1828,9 @@ def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cut
         pred_particles[ind] = np.sum(collected_particle_weights[:, None] * collected_particles, axis=0)
 
     '''aggregate any 'floaters' or low-probability particles into their nearest neighbors'''
-    weak_particles = np.argwhere(pred_particle_weights < 0.5).flatten()
+    single_node_weight = np.amax(pred_particle_weights)  # the largest particle weight as set as the norm against which to measure other particles
+    # if there is a double particle, this will fail - but then the decoding is bad anyway
+    weak_particles = np.argwhere(pred_particle_weights < single_node_weight / 2).flatten()
     ind = 0
     while len(weak_particles >= 1):
         particle = pred_particles[weak_particles[ind], :3]
@@ -1856,7 +1858,7 @@ def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cut
     #     rmsd = np.Inf
     #     max_dist = np.Inf
 
-    return pred_particles, pred_particle_weights  # , rmsd, max_dist
+    return pred_particles, pred_particle_weights  # , rmsd, max_dist # todo add flags around unequal weights
 
 
 def decoder_swarm_clustering(graph_ind, data, decoded_data, molecule_radius_normalization, num_classes):
@@ -1895,7 +1897,7 @@ def decoder_scaffolded_clustering(data, decoded_data, graph_ind, molecule_radius
 
 
 def compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles):
-    '''get distances to true and predicted particles'''
+    """get distances to true and predicted particles"""
     dists = cdist(pred_particles, points_true)
     matched_particle_inds = np.argmin(dists, axis=0)
     all_targets_matched = len(np.unique(matched_particle_inds)) == len(points_true)

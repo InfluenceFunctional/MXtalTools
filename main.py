@@ -25,14 +25,32 @@ if __name__ == '__main__':
     '''
     run the code in selected mode
     '''
-    predictor = Modeller(config)
-    if config.mode == 'gan' or config.mode == 'regression' or config.mode == 'autoencoder' or config.mode == 'embedding_regression':
-        predictor.train_crystal_models()
+    if config.sweep_id is not None:
+        import wandb
+        from common.config_processing import load_yaml
 
-    elif config.mode == 'search':
-        _, dataloader, _ = predictor.load_dataset_and_dataloaders(override_test_fraction=1)
-        predictor.crystal_search(molecule_data=dataloader.dataset[0], data_contains_ground_truth=True)
+        sweep_config = load_yaml(config.sweep_path)
+        predictor = Modeller(config)
+        #
+        # sweep_id = wandb.sweep(sweep=sweep_configuration,
+        #                        project="MXtalTools",
+        #                        entity='mkilgour',
+        #                        )
 
-    elif config.mode == 'embedding':
-        predictor.autoencoder_embedding_analysis()
+        wandb.agent(config.sweep_id, project="MXtalTools", function=predictor.train_crystal_models, count=1)
 
+    else:
+
+        predictor = Modeller(config)
+        if config.mode == 'gan' or config.mode == 'regression' or config.mode == 'autoencoder' or config.mode == 'embedding_regression':
+            predictor.train_crystal_models()
+
+        elif config.mode == 'search':
+            _, dataloader, _ = predictor.load_dataset_and_dataloaders(override_test_fraction=1)
+            predictor.crystal_search(molecule_data=dataloader.dataset[0], data_contains_ground_truth=True)
+
+        elif config.mode == 'embedding':
+            predictor.autoencoder_embedding_analysis()
+
+        elif config.mode == 'mol_generation':
+            predictor.autoencoder_molecule_generation()

@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from argparse import Namespace
 #
-# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+#os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 import sys
 import gc
@@ -201,7 +201,7 @@ class Modeller:
         )
         self.dataDims = data_manager.dataDims
 
-        if self.train_models_dict['autoencoder'] or self.train_models_dict['embedding_regressor']:
+        if self.train_models_dict['autoencoder'] or self.train_models_dict['embedding_regressor']:  # todo change this to 'if autoencoder exists' or some proxy
             self.prep_autoencoder_constants()
             for ind, data in enumerate(data_manager):
                 data.pos /= self.config.autoencoder.molecule_radius_normalization
@@ -282,18 +282,132 @@ class Modeller:
 
         return train_loader, test_loader, extra_test_loader
 
-    def autoencoder_embedding_analysis(self):
+    def autoencoder_molecule_generation(self):
 
         """prep workdir"""
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
 
         self.train_models_dict = {
-            'discriminator': (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn)),
-            'generator': (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond)),
-            'regressor': self.config.mode == 'regression',
-            'autoencoder': self.config.mode == 'autoencoder',
-            'embedding_regressor': self.config.mode == 'embedding_regression',
+            'discriminator': False,
+            'generator': False,
+            'regressor': False,
+            'autoencoder': True,
+            'embedding_regressor': False,
+        }
+
+        '''initialize datasets and useful classes'''
+        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=1)
+        num_params_dict = self.init_models()
+
+        self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
+        self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']
+        self.config.autoencoder.min_num_atoms = self.dataDims['min_molecule_num_atoms']
+        self.config.autoencoder.max_num_atoms = self.dataDims['max_molecule_num_atoms']
+
+        allowed_types = self.dataDims['allowed_atom_types']
+        type_translation_index = np.zeros(allowed_types.max()) - 1
+        for ind, atype in enumerate(allowed_types):
+            type_translation_index[atype - 1] = ind
+
+        self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.float32, device='cpu')
+
+        self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
+
+        with (wandb.init(config=self.config,
+                         project=self.config.wandb.project_name,
+                         entity=self.config.wandb.username,
+                         tags=[self.config.logger.experiment_tag],
+                         settings=wandb.Settings(code_dir="."))):
+            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+            wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
+            wandb.log(num_params_dict)
+            wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
+                       "Initial Batch Size": self.config.current_batch_size})
+
+            self.models_dict['autoencoder'].eval()
+            self.epoch_type = 'test'
+
+            for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+                self.autoencoder_generation_step(data)
+
+            # post epoch processing
+            self.logger.numpyize_stats_dict(self.epoch_type)
+
+    def autoencoder_generation_step(self, data):
+        # TODO molecule validity checker
+        data.to(self.device)
+        import plotly.graph_objects as go
+        decoding = self.models_dict['autoencoder'].decode(torch.randn(size=(
+            data.num_graphs,
+            3,
+            self.config.autoencoder.model.bottleneck_dim
+        ), dtype=torch.float32, device=self.device))
+
+        decoded_data = data.clone()
+        decoded_data.pos = decoding[:, :3]
+        decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(self.config.autoencoder.model.num_decoder_points).to(self.config.device)
+
+        nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = self.get_node_weights(data, decoded_data, decoding)
+
+        decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
+        decoded_data.aux_ind = nodewise_weights_tensor
+
+        colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+                  'rgb(165, 170, 153)'] * 10
+        colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
+        cmax = 1
+        graph_ind = 0
+        points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
+        # fig = go.Figure()
+        # for j in range(self.dataDims['num_atom_types']):
+        #
+        #     pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
+        #
+        #     fig.add_trace(go.Scatter3d(x=points_pred[:, 0] * self.config.autoencoder.molecule_radius_normalization,
+        #                                y=points_pred[:, 1] * self.config.autoencoder.molecule_radius_normalization,
+        #                                z=points_pred[:, 2] * self.config.autoencoder.molecule_radius_normalization,
+        #                                mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, marker_line_color='white',
+        #                                showlegend=True,
+        #                                name=f'Predicted type {j}',
+        #                                legendgroup=f'Predicted type {j}',
+        #                                ))
+
+        from reporting.online import decoder_agglomerative_clustering, extract_true_and_predicted_points
+
+        graph_ind = 1
+        fig = go.Figure()
+        coords_true, coords_pred, points_true, points_pred, sample_weights = (
+            extract_true_and_predicted_points(data, decoded_data, graph_ind, self.config.autoencoder.molecule_radius_normalization, self.dataDims['num_atom_types'], to_numpy=True))
+
+        glom_points_pred, glom_pred_weights = decoder_agglomerative_clustering(points_pred, sample_weights, 0.75)
+
+        for j in range(self.dataDims['num_atom_types']):
+            type_inds = np.argwhere(np.argmax(glom_points_pred[:, 3:], axis=1) == j)[:, 0]
+
+            pred_type_weights = glom_points_pred[type_inds, j + 3] * glom_pred_weights[type_inds]
+            atom_type = int(torch.argwhere(self.autoencoder_type_index == j)) + 1
+
+            fig.add_trace(go.Scatter3d(x=glom_points_pred[type_inds, 0], y=glom_points_pred[type_inds, 1], z=glom_points_pred[type_inds, 2],
+                                       mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1,
+                                       marker_line_color='black', marker_line_width=30,
+                                       showlegend=True,# if j == 0 else False,
+                                       name=f'Clustered Atoms Type {atom_type}',
+                                       legendgroup=f'Clustered Atoms'
+                                       ))
+        fig.show(renderer='browser')
+
+    def autoencoder_embedding_analysis(self):
+        """prep workdir"""
+        self.source_directory = os.getcwd()
+        self.prep_new_working_directory()
+
+        self.train_models_dict = {
+            'discriminator': False,
+            'generator': False,
+            'regressor': False,
+            'autoencoder': True,
+            'embedding_regressor': False,
         }
 
         '''initialize datasets and useful classes'''
@@ -378,64 +492,6 @@ class Modeller:
         encoding = self.models_dict['autoencoder'].encode(data.clone())
         decoding = self.models_dict['autoencoder'].decode(encoding)
         self.autoencoder_evaluation_sample_analysis(data, decoding, encoding)
-        """
-        init code for decoder generation analysis
-        # TODO molecule validity checker
-        graph_ind = 2
-        import plotly.graph_objects as go
-        decoding = self.models_dict['autoencoder'].decode(torch.randn_like(encoding))
-        
-        decoded_data = data.clone()
-        decoded_data.pos = decoding[:, :3]
-        decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(self.config.autoencoder.model.num_decoder_points).to(self.config.device)
-        
-        nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = self.get_node_weights(data, decoded_data, decoding)
-        
-        decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
-        decoded_data.aux_ind = nodewise_weights_tensor
-        
-        colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
-                  'rgb(165, 170, 153)'] * 10
-        colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
-        cmax = 1
-        graph_ind = 0
-        points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
-        fig = go.Figure()
-        for j in range( self.dataDims['num_atom_types']):
-        
-            pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
-        
-            fig.add_trace(go.Scatter3d(x=points_pred[:, 0] * self.config.autoencoder.molecule_radius_normalization, 
-                                       y=points_pred[:, 1] * self.config.autoencoder.molecule_radius_normalization, 
-                                       z=points_pred[:, 2] * self.config.autoencoder.molecule_radius_normalization,
-                                       mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, marker_line_color='white',
-                                       showlegend=True,
-                                       name=f'Predicted type {j}',
-                                       legendgroup=f'Predicted type {j}',
-                                       ))
-        
-        from reporting.online import decoder_scaffolded_clustering, decoder_agglomerative_clustering, extract_true_and_predicted_points
-        
-        coords_true, coords_pred, points_true, points_pred, sample_weights = (
-            extract_true_and_predicted_points(data, decoded_data, graph_ind, self.config.autoencoder.molecule_radius_normalization, self.dataDims['num_atom_types'], to_numpy=True))
-        
-        glom_points_pred, glom_pred_weights = decoder_agglomerative_clustering(points_pred, sample_weights, 0.75)
-        
-        for j in range(self.dataDims['num_atom_types']):
-            type_inds = np.argwhere(np.argmax(glom_points_pred[:, 3:], axis=1) == j)[:, 0]
-        
-            pred_type_weights = glom_points_pred[type_inds, j+3] * glom_pred_weights[type_inds]
-        
-            fig.add_trace(go.Scatter3d(x=glom_points_pred[type_inds, 0], y=glom_points_pred[type_inds, 1], z=glom_points_pred[type_inds, 2],
-                                       mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, 
-                                       marker_line_color='black', marker_line_width=30,
-                                       showlegend=True if j == 0 else False,
-                                       name=f'Clustered Atoms',
-                                       legendgroup=f'Clustered Atoms'
-                                       ))
-        fig.show()
-        
-        """
 
     def autoencoder_evaluation_sample_analysis(self, data, decoding, encoding):
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
