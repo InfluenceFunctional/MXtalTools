@@ -10,8 +10,8 @@ extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
 model_names: ['autoencoder']#, 'embedding_regressor']
-sweep_id: h38n3wfs
-sweep_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep2/qm9_sweep2.yaml'
+sweep_id: null #h38n3wfs
+sweep_path: null #'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep2/qm9_sweep2.yaml'
 
 dataset:
   max_dataset_length: 1000

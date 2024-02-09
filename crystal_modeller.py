@@ -911,7 +911,7 @@ class Modeller:
         #
         # elif self.epoch_type != 'train':  # test always on real data
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            data = self.preprocess_real_autoencoder_data(data)
+            data = self.preprocess_real_autoencoder_data(data, no_noise = self.epoch_type == 'test')
             data = data.to(self.device)
             self.autoencoder_step(data, update_weights, step=i)
 
