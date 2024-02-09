@@ -1,0 +1,97 @@
+program: main.py
+name: qm9_sweep3
+method: bayes
+metric:
+  goal: minimize
+  name: test_evaluation_overlap_loss
+parameters:
+  max_batch_size:
+    distribution: int_uniform
+    min: 100
+    max: 2500
+  batch_growth_increment:
+    distribution: uniform
+    min: 0.05
+    max: 1
+  autoencoder_positional_noise:
+    distribution: uniform
+    min: 0
+    max: 0.05
+  autoencoder:
+    parameters:
+      KLD_weight:
+        distribution: uniform
+        min: 0.001
+        max: 0.1
+
+      optimizer:
+        parameters:
+          encoder_init_lr:
+            distribution: uniform
+            min: 0.00001
+            max: 0.0005
+          decoder_init_lr:
+            distribution: uniform
+            min: 0.00001
+            max: 0.001
+          beta1:
+            distribution: uniform
+            min: 0.9
+            max: 0.99
+          beta2:
+            distribution: uniform
+            min: 0.99
+            max: 0.9999
+          weight_decay:
+            distribution: uniform
+            min: 0.001
+            max: 1
+          lr_growth_lambda:
+            values: [1, 1.01, 1.1]
+          lr_shrink_lambda:
+            values: [0.999, 0.99, 0.95]
+          max_lr:
+            values: [0.0001, 0.0005]
+          min_lr:
+            values: [0.000001, 0.00001]
+
+      model:
+        parameters:
+          num_graph_convolutions:
+            distribution: int_uniform
+            min: 0
+            max: 8
+          nodewise_fc_layers:
+            distribution: int_uniform
+            min: 1
+            max: 12
+          num_decoder_layers:
+            distribution: int_uniform
+            min: 1
+            max: 12
+          decoder_norm_mode:
+            values: [null, 'batch', 'layer']
+          graph_node_norm:
+            values: [null, 'graph layer','layer']
+          convolution_cutoff:
+            distribution: uniform
+            min: 0.5
+            max: 2
+          num_decoder_points:
+            distribution: int_uniform
+            min: 64
+            max: 512
+          embedding_depth:
+            distribution: int_uniform
+            min: 64
+            max: 512
+          bottleneck_dim:
+            distribution: int_uniform
+            min: 64
+            max: 512
+          graph_message_depth:
+            values: [64, 128, 256, 512]
+          num_attention_heads:
+            values: [2, 4, 8, 16, 32]
+          decoder_ramp_depth:
+            values: [True, False]

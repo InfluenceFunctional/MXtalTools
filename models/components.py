@@ -9,9 +9,8 @@ from torch_scatter import scatter, scatter_softmax
 
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from models.global_attention_aggregation import AttentionalAggregation_w_alpha
+from models.utils import get_model_nans
 from models.vector_LayerNorm import VectorLayerNorm
-from models.utils import direction_coefficient
-
 
 class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
     def __init__(self, layers, filters, input_dim, output_dim,
@@ -141,11 +140,15 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
             nn.Linear(self.n_filters[i], self.n_filters[i], bias=True)
             for i in range(self.n_layers)
         ])
-        self.s_to_v_activations = torch.nn.ModuleList([
-            Activation(self.activation, self.n_filters[i])
+        self.s_to_v_activations = torch.nn.ModuleList([  # use tanh as gating function rather than standard activation which is unbound
+            Activation('tanh', self.n_filters[i])
             for i in range(self.n_layers)
         ])
         self.v_fc_norms = torch.nn.ModuleList([
+            Normalization(self.vector_norm, self.n_filters[i])
+            for i in range(self.n_layers)
+        ])
+        self.vector_to_scalar_norm = torch.nn.ModuleList([
             Normalization(self.vector_norm, self.n_filters[i])
             for i in range(self.n_layers)
         ])
@@ -164,10 +167,16 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         if v is not None:
             v = self.v_init_layer(v)
 
+        assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc input layer {get_model_nans(self.init_layer)}"
+
         for i, (norm, linear, activation, dropout) in enumerate(zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
             x, v = self.get_residues(i, x, v)
 
-            x = self.scalar_forward(activation, batch, dropout, linear, norm, x, v)
+            assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc residue output {get_model_nans(self.residue_adjust[i])}"
+
+            x = self.scalar_forward(i, activation, batch, dropout, linear, norm, x, v)
+
+            assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc linear output {get_model_nans(linear)}"
 
             if self.equivariant:
                 v = self.vector_forward(i, x, v, batch)
@@ -198,9 +207,10 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
 
         return x, v
 
-    def scalar_forward(self, activation, batch, dropout, linear, norm, x, v):
+    def scalar_forward(self,i, activation, batch, dropout, linear, norm, x, v):
         res = x.clone()
         if v is not None:  # concatenate vector lengths to scalar values
+            v = self.vector_to_scalar_norm[i](v)
             x = torch.cat([x, torch.linalg.norm(v, dim=1)], dim=-1)
 
         if self.norm_after_linear:
@@ -211,16 +221,10 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         return x
 
     def vector_forward(self, i, x, v, batch):
-        v = (v +
-             self.s_to_v_activations[i](
-                 self.s_to_v_gating_layers[i](
-                     x
-                 )[:, None, :]) *
-             (self.v_fc_layers[i](
-                 self.v_fc_norms[i](
-                     v, batch=batch)
-             )))  # A(FC(x)) * FC(N(v))
-        return v
+        gating_factor = self.s_to_v_activations[i](self.s_to_v_gating_layers[i](x))[:, None, :]
+        vector_mix = self.v_fc_layers[i](v)
+
+        return 0.5 * (v + self.v_fc_norms[i](gating_factor * vector_mix, batch=batch))  # A(FC(x)) * FC(N(v))   # rescaling factor keeps norm from exploding
 
 
 '''
@@ -285,6 +289,8 @@ class Activation(nn.Module):
             self.activation = kernelActivation(n_basis=10, span=4, channels=filters)
         elif activation_func.lower() == 'leaky relu':
             self.activation = F.leaky_relu
+        elif activation_func.lower() == 'tanh':
+            self.activation = F.tanh
 
     def forward(self, input):
         return self.activation(input)
@@ -460,7 +466,13 @@ class GlobalAggregation(nn.Module):
             agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)])
             return scatter(x, batch, dim_size=output_dim, dim=0, reduce='max'), agg
         elif self.agg_func == 'equivariant softmax':
+
+            # ensure vector norms are well conditioned going into the aggregator
+            # norm = torch.linalg.norm(v, dim=1)
+            # mean = scatter(norm, batch, dim=0, dim_size=batch.max() + 1, reduce='mean')
+            # normed_v = v / (mean.index_select(0, batch) + 1e-5)[:, None, :]
             weights = scatter_softmax(torch.linalg.norm(v, dim=1), batch, dim=0)
+
             return (scatter(weights * x, batch, dim_size=output_dim, dim=0, reduce='sum'),
                     scatter(weights[:, None, :] * v, batch, dim=0, dim_size=output_dim, reduce='sum'))
         elif self.agg_func == 'equivariant combo':

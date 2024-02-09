@@ -1,4 +1,4 @@
-machine: "local"  # or "cluster"
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
@@ -10,11 +10,11 @@ extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
 model_names: ['autoencoder']#, 'embedding_regressor']
-sweep_id: null #h38n3wfs
-sweep_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep3/qm9_sweep3.yaml'
+sweep_id: 74npm7gr
+sweep_path: /scratch/mk8347/mcrygan/configs/autoencoder_tests/qm9_sweep3/qm9_sweep3.yaml
 
 dataset:
-  max_dataset_length: 10000
+  max_dataset_length: 1000000
   test_fraction: 0.2
   filter_protons: False
   regression_target: molecule_rotational_constant_a
@@ -27,17 +27,17 @@ min_batch_size: 25
 max_batch_size: 10000
 batch_growth_increment: 0.5 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 100
+minimum_epochs: 100000
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 50  # for convergence checks
+history: 100000  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  run_name: dev
-  experiment_tag: dev
+  run_name: qm9_sweep3
+  experiment_tag: qm9_sweep3
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 2  # how often to do detailed reporting with figures
   log_figures: True
 
 sample_steps: 100
@@ -51,7 +51,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null #/cluster/best_autoencoder_autoencoder_tests_qm9_test20_1_02-02-11-33-00
+  autoencoder: null
   embedding_regressor: null
 
 discriminator_positional_noise: 0
@@ -63,7 +63,7 @@ generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate
 supercell_size: 5
 
 autoencoder:
-  KLD_weight: 0.001
+  KLD_weight: 0.05
   random_fraction: 0
   type_distance_scaling: 0.5
   init_sigma: 0.15 #0.15
@@ -94,24 +94,24 @@ autoencoder:
     use_plateau_scheduler: False
 
   model:
-    variational_encoder: False
+    variational_encoder: True
     encoder_type: 'equivariant' # or variant
     decoder_type: 'equivariant' # or variant
 
-    num_graph_convolutions: 1
-    embedding_depth: 128
-    bottleneck_dim: 256
+    num_graph_convolutions: 0
+    embedding_depth: 256
+    bottleneck_dim: 64
     graph_message_depth: 64  # must cleanly divide num_heads
-    num_attention_heads: 16
+    num_attention_heads: 4
     graph_aggregator: 'equivariant softmax'
-    nodewise_fc_layers: 4
-    activation: 'leaky relu'
+    nodewise_fc_layers: 8
+    activation: 'gelu'
     num_decoder_layers: 4
     decoder_ramp_depth: True
 
     decoder_norm_mode: 'layer'
     graph_node_norm: 'graph layer'
-    encoder_vector_norm: 'graph vector layer' #'graph vector layer'
+    encoder_vector_norm: 'graph vector layer'
     decoder_vector_norm: 'vector layer'
 
     graph_node_dropout: 0
@@ -141,7 +141,7 @@ embedding_regressor:
     lr_schedule: True
     beta1: 0.9
     beta2: 0.999
-    weight_decay: 1
+    weight_decay: 0.05
     convergence_eps: 0.0001
     lr_growth_lambda: 1.00
     lr_shrink_lambda: 0.995
@@ -153,7 +153,7 @@ embedding_regressor:
     norm_mode: 'layer'
     dropout: 0.1
     equivariant: True
-    vector_norm: 'vector layer'
+    vector_norm: True
 
 
 # for GAN training

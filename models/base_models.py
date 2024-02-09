@@ -6,6 +6,7 @@ import torch.nn as nn
 from models.components import MLP, construct_radial_graph, GlobalAggregation, Normalization
 
 from constants.space_group_feature_tensor import SG_FEATURE_TENSOR
+from models.utils import get_model_nans
 
 
 class molecule_graph_model(nn.Module):
@@ -159,14 +160,22 @@ class molecule_graph_model(nn.Module):
                            edges_dict)  # get graph encoding
         if self.equivariant_graph:
             x, v = x
+            assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn scalar output {get_model_nans(self.graph_net)}"
+
         else:
             v = None
+            assert torch.sum(torch.isnan(v)) == 0, f"NaN in gnn vector output {get_model_nans(self.graph_net)}"
 
         x, v = self.global_pool(x,
                                 agg_batch,
                                 v=v,
                                 cluster=data.mol_ind if self.global_pool.agg_func == 'molwise' else None,
                                 output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
+
+        assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
+
+        if v is not None:
+            assert torch.sum(torch.isnan(v)) == 0, f"NaN in gnn pool vector output {get_model_nans(self.graph_net)}"
 
         if self.num_fc_layers > 0:
             gmlp_out = self.gnn_mlp(x, v=v,
@@ -178,6 +187,12 @@ class molecule_graph_model(nn.Module):
                 x = gmlp_out
 
         output = self.output_fc(x), self.v_output_fc(v) if self.equivariant_graph else self.output_fc(x)
+
+        if self.equivariant_graph:
+            assert torch.sum(torch.isnan(output[0])) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
+            assert torch.sum(torch.isnan(output[1])) == 0, f"NaN in gnn pool vector output {get_model_nans(self.graph_net)}"
+        else:
+            assert torch.sum(torch.isnan(output)) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
 
         extra_outputs = self.collect_extra_outputs(data, edges_dict, return_dists, return_latent, x)
 

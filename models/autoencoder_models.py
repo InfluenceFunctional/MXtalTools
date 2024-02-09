@@ -2,6 +2,7 @@ from torch import nn as nn
 
 from models.base_models import molecule_graph_model
 from models.components import MLP
+from models.utils import get_model_nans
 
 import torch
 
@@ -56,7 +57,7 @@ class point_autoencoder(nn.Module):
         if self.variational:  # this appears to break equivariance but it's only because the lengths are changing
             assert self.equivariant_encoder, "Variational autoencoder only implemented for equivariant encoder"
             mu = torch.linalg.norm(v, dim=1)
-            log_sigma = x
+            log_sigma = x.clip(max=1)  # if this becomes large, we get Inf in next step
             sigma = torch.exp(0.5 * log_sigma)
             if z is None:
                 z = torch.randn((len(sigma), 3, sigma.shape[-1]), dtype=v.dtype, device=v.device)
@@ -71,7 +72,8 @@ class point_autoencoder(nn.Module):
             else:
                 encoding = x
 
-        assert torch.sum(torch.isnan(encoding)) == 0, "NaN in encoder output"
+        assert torch.sum(torch.isnan(encoding)) == 0, f"NaN in encoder output {get_model_nans(self.encoder)}"
+        assert torch.sum(torch.isfinite(encoding) == False) == 0, "Inf in encoder output"
 
         return encoding
 
@@ -113,7 +115,7 @@ class point_autoencoder(nn.Module):
             '''decoding n x nodes*m to n*nodes x m'''
             decoding = decoding.reshape(self.num_nodes * len(encoding), self.output_depth)
 
-        assert torch.sum(torch.isnan(decoding)) == 0, "NaN in decoder output"
+        assert torch.sum(torch.isnan(encoding)) == 0, f"NaN in decoder output with {get_model_nans(self.decoder)}"
 
         return decoding
 

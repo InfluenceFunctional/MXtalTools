@@ -31,10 +31,9 @@ if __name__ == '__main__':
 
         sweep_config = load_yaml(config.sweep_path)
         config.sweep_id = wandb.sweep(sweep=sweep_config,
-                               project="MXtalTools",
-                               entity='mkilgour',
-                               )
-
+                                      project="MXtalTools",
+                                      entity='mkilgour',
+                                      )
 
     if config.sweep_id is not None:
         import wandb

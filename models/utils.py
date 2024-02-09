@@ -607,3 +607,13 @@ def direction_coefficient(v):
     dp = torch.einsum('nik,nil->nkl', nv, nv)
 
     return torch.exp(-(1 - dp) ** 2).mean(-1)
+
+
+def get_model_nans(model):
+    if model is not None:
+        nans = 0
+        for parameter in model.parameters():
+            nans += int(torch.sum(torch.isnan(parameter)))
+        return nans
+    else:
+        return 0

@@ -777,7 +777,7 @@ class Modeller:
 
         return data
 
-    def autoencoder_step(self, data, update_weights, step):
+    def autoencoder_step(self, data, update_weights, step, last_step=False):
 
         decoding = self.models_dict['autoencoder'](data.clone())
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
@@ -787,7 +787,8 @@ class Modeller:
             self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
             autoencoder_loss.backward()  # back-propagation
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
-                                           self.config.gradient_norm_clip)  # gradient clipping
+                                           self.config.gradient_norm_clip)  # gradient clipping by norm
+            #norms = torch.stack([p.grad.norm() for p in self.models_dict['autoencoder'].parameters() if p.grad is not None])
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
         if step == 0:  # save the complete final samples
@@ -799,7 +800,7 @@ class Modeller:
                                           [data.cpu().detach(), decoded_data.cpu().detach()
                                            ], mode='append')
 
-        if step % 100 == 0:
+        if last_step:
             # do evaluation on current sample and save this as our loss for tracking purposes
             nodewise_weights_tensor = decoded_data.aux_ind
             true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
@@ -911,9 +912,9 @@ class Modeller:
         #
         # elif self.epoch_type != 'train':  # test always on real data
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            data = self.preprocess_real_autoencoder_data(data, no_noise = self.epoch_type == 'test')
+            data = self.preprocess_real_autoencoder_data(data, no_noise=self.epoch_type == 'test')
             data = data.to(self.device)
-            self.autoencoder_step(data, update_weights, step=i)
+            self.autoencoder_step(data, update_weights, step=i, last_step=i == len(data_loader) - 1)
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -997,6 +998,8 @@ class Modeller:
             embedding_KLD = self.models_dict['autoencoder'].kld
             stats['embedding_KLD'] = embedding_KLD.mean().cpu().detach().numpy()
             losses = losses + embedding_KLD.mean(1) * self.config.autoencoder.KLD_weight
+
+        assert torch.sum(torch.isnan(losses)) == 0, "NaN in Reconstruction Loss"
 
         return losses, stats, decoded_data
 
