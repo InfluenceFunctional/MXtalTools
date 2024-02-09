@@ -25,17 +25,23 @@ if __name__ == '__main__':
     '''
     run the code in selected mode
     '''
+    if config.sweep_id is None and config.sweep_path is not None:
+        import wandb
+        from common.config_processing import load_yaml
+
+        sweep_config = load_yaml(config.sweep_path)
+        config.sweep_id = wandb.sweep(sweep=sweep_config,
+                               project="MXtalTools",
+                               entity='mkilgour',
+                               )
+
+
     if config.sweep_id is not None:
         import wandb
         from common.config_processing import load_yaml
 
         sweep_config = load_yaml(config.sweep_path)
-        predictor = Modeller(config)
-        #
-        # sweep_id = wandb.sweep(sweep=sweep_configuration,
-        #                        project="MXtalTools",
-        #                        entity='mkilgour',
-        #                        )
+        predictor = Modeller(config, sweep_config=sweep_config)
 
         wandb.agent(config.sweep_id, project="MXtalTools", function=predictor.train_crystal_models, count=1)
 

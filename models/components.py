@@ -268,7 +268,7 @@ class Normalization(nn.Module):
             sys.exit()
 
     def forward(self, x, batch=None):
-        if batch is not None and self.norm_type != 'batch' and self.norm_type is not None:
+        if batch is not None and self.norm_type != 'batch' and self.norm_type != 'layer' and self.norm_type is not None:
             return self.norm(x, batch)
 
         return self.norm(x)

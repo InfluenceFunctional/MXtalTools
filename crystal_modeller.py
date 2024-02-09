@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from argparse import Namespace
 #
-#os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 import sys
 import gc
@@ -21,6 +21,7 @@ from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter, scatter_softmax
 from scipy.spatial.transform import Rotation as R
 
+from common.config_processing import dict2namespace
 from constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY
 from constants.asymmetric_units import asym_unit_dict
 from csp.SampleOptimization import gradient_descent_sampling, mcmc_sampling
@@ -59,13 +60,14 @@ class Modeller:
     main class which handles everything
     """
 
-    def __init__(self, config):
+    def __init__(self, config, sweep_config=None):
         """
         initialize config, physical constants, SGs to be generated
         load dataset and statistics
         decide what models we are training
         """
         self.config = config
+        self.sweep_config = sweep_config
         self.device = self.config.device
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
@@ -391,7 +393,7 @@ class Modeller:
             fig.add_trace(go.Scatter3d(x=glom_points_pred[type_inds, 0], y=glom_points_pred[type_inds, 1], z=glom_points_pred[type_inds, 2],
                                        mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1,
                                        marker_line_color='black', marker_line_width=30,
-                                       showlegend=True,# if j == 0 else False,
+                                       showlegend=True,  # if j == 0 else False,
                                        name=f'Clustered Atoms Type {atom_type}',
                                        legendgroup=f'Clustered Atoms'
                                        ))
@@ -538,34 +540,9 @@ class Modeller:
         train and/or evaluate one or more models
         regressor
         GAN (generator and/or discriminator)
+        autoencoder
+        embedding_regressor
         """
-        '''prep workdir'''
-        self.source_directory = os.getcwd()
-        self.prep_new_working_directory()
-
-        self.train_models_dict = {
-            'discriminator': (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn)),
-            'generator': (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond)),
-            'regressor': self.config.mode == 'regression',
-            'autoencoder': self.config.mode == 'autoencoder',
-            'embedding_regressor': self.config.mode == 'embedding_regression',
-        }
-
-        '''initialize datasets and useful classes'''
-        train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
-        self.init_gaussian_generator()
-        num_params_dict = self.init_models()
-
-        '''initialize some training metrics'''
-        self.hit_max_lr_dict = {model_name: False for model_name in self.model_names}
-        converged, epoch, prev_epoch_failed = self.config.max_epochs == 0, 0, False
-
-        flat_config_dict = flatten_dict(namespace2dict(self.config.__dict__), separator='_')
-        for key in flat_config_dict.keys():
-            if 'path' in str(type(flat_config_dict[key])).lower():
-                flat_config_dict[key] = str(flat_config_dict[key])
-
-        self.config.__dict__.update(flat_config_dict)
 
         with (wandb.init(config=self.config,
                          project=self.config.wandb.project_name,
@@ -573,9 +550,52 @@ class Modeller:
                          tags=[self.config.logger.experiment_tag],
                          settings=wandb.Settings(code_dir="."))):
 
+            if self.sweep_config is not None:  # write sweep config features to working config # todo make more universal - I hate wandb configs
+                def write_dict_to_namespace(d1, d2):
+                    """
+                    d1 is the first level dict of a namespace
+                    """
+                    for key in d1.__dict__.keys():
+                        print(key)
+                        if key in d2.keys():
+                            if not isinstance(d1.__dict__[key], Namespace):
+                                d1.__dict__[key] = d2[key]
+                            elif key in ['autoencoder', 'model', 'optimizer']:
+                                d1.__dict__[key], d2[key] = write_dict_to_namespace(d1.__dict__[key], d2[key])
+
+                    return d1, d2
+
+                self.config, wandb.config = write_dict_to_namespace(self.config, wandb.config)
+
+            '''prep workdir'''
+            self.source_directory = os.getcwd()
+            self.prep_new_working_directory()
+
+            self.train_models_dict = {
+                'discriminator': (self.config.mode == 'gan') and any((self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted, self.config.discriminator.train_on_randn)),
+                'generator': (self.config.mode == 'gan') and any((self.config.generator.train_vdw, self.config.generator.train_adversarially, self.config.generator.train_h_bond)),
+                'regressor': self.config.mode == 'regression',
+                'autoencoder': self.config.mode == 'autoencoder',
+                'embedding_regressor': self.config.mode == 'embedding_regression',
+            }
+
+            '''initialize datasets and useful classes'''
+            train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
+            self.init_gaussian_generator()
+            num_params_dict = self.init_models()
+
+            '''initialize some training metrics'''
+            self.hit_max_lr_dict = {model_name: False for model_name in self.model_names}
+            converged, epoch, prev_epoch_failed = self.config.max_epochs == 0, 0, False
+
+            flat_config_dict = flatten_dict(namespace2dict(self.config.__dict__), separator='_')
+            for key in flat_config_dict.keys():
+                if 'path' in str(type(flat_config_dict[key])).lower():
+                    flat_config_dict[key] = str(flat_config_dict[key])
+
+            self.config.__dict__.update(flat_config_dict)
+
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
-            # config = wandb.config # wandb configs don't support nested namespaces. look at the github thread to see if they eventually fix it
-            # this means we also can't do wandb qm9_sweep1 properly, as-is
 
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
             wandb.log(num_params_dict)

@@ -1470,6 +1470,7 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type,
                epoch_type + "_evaluation_typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_overall_overlap": (full_overlap / self_overlap).mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_matching_clouds_fraction": (torch.sum((1 - full_overlap) < 0.01) / data.num_nodes).cpu().detach().numpy(),
+               epoch_type + "_evaluation_overlap_loss": np.log10((1-(full_overlap / self_overlap).cpu().detach().numpy()).mean()),
                })
 
     if config.logger.log_figures:
