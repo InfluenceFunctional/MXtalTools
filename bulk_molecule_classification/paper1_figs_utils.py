@@ -7,6 +7,8 @@ from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter1d
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
+from bulk_molecule_classification.traj_analysis_figs import process_trajectory_data
+
 
 def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
                            ordered_classes, molecule_name,
@@ -64,7 +66,7 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
                                         "(c) SFC Input",
                                         "(d) SFC Final Layer"],
                         vertical_spacing=0.15,
-                        horizontal_spacing=0.1,
+                        horizontal_spacing=0.05,
                         )
 
     embed_keys = ['Embeddings', 'Latents']
@@ -131,15 +133,21 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
     fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
 
-    ylevels = [-0.2 - 0.325 * (ind % 2) for ind in range(n_images)]
-    xlevels = np.linspace(-0.025, 0.875, int(np.ceil(n_images/2))).repeat(2)
+    if molecule_name == 'nicotinamide':
+        ylevels = [-0.2 - 0.325 * (ind % 2) for ind in range(n_images)]
+        xlevels = np.linspace(-0.025, 0.875, int(np.ceil(n_images/2))).repeat(2)
+    elif molecule_name == 'urea':
+        ylevels = [-0.2 for ind in range(n_images)]
+        xlevels = np.linspace(-.1, 0.875, n_images)
 
+    imsize = 0.3 if molecule_name == 'nicotinamide' else 0.25
     for ind in range(n_images):
+
         fig.add_layout_image(
             dict(source=images[ind],
                  y=ylevels[ind], x=xlevels[ind])
         )
-        fig.add_annotation(y=ylevels[ind] + 0.05, x=xlevels[ind] + 0.05,
+        fig.add_annotation(y=ylevels[ind] + 0.05, x=xlevels[ind] + 0.075,
                            text=stits[ind],
                            showarrow=False,
                            xref='paper',
@@ -148,7 +156,6 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
                            yanchor='top',
                            font_size=int(FONTSIZE * 0.8))
     fig.update_annotations(font_size=FONTSIZE)
-    imsize = 0.3
     fig.update_layout_images(dict(
         xref="paper",
         yref="paper",
@@ -157,9 +164,11 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
         xanchor="left",
         yanchor="top"
     ))
-    fig.layout.margin.b = 375
+    if molecule_name == 'nicotinamide':
+        fig.layout.margin.b = 375
+    elif molecule_name == 'urea':
+        fig.layout.margin.b = 275
     # fig.show()
-    fig.write_image('aa.png', width=1920 // 1.5, height=1080 // 1.2)
     return fig
 
 
@@ -351,7 +360,6 @@ def combined_accuracy_fig(results_dict, ordered_classes, temp_series):
     fig = make_subplots(cols=2, rows=1,
                         subplot_titles=["(a) Polymorph", "(b) Topology"],
                         horizontal_spacing=0.1)
-    # letts = ['a', 'b']
     temp_ind = 1
     inds = np.argwhere(results_dict['Temperature'] > temp_series[0])[:, 0]
     temp_type = "High"
@@ -409,7 +417,7 @@ def combined_accuracy_fig(results_dict, ordered_classes, temp_series):
     return fig, scores
 
 
-def urea_interface_fig(traj_dict, stacked_plot=False):
+def urea_interface_fig(sorted_molwise_results_dict, stacked_plot=False):
 
     from PIL import Image
     image_paths = [r'C:\Users\mikem\crystals\classifier_runs/Interface0000.png',
@@ -421,16 +429,15 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
     images = [Image.open(pathi) for pathi in image_paths]
 
     num_classes = 3
-    ordered_class_names = ['I', 'IV', 'Other']
     colors = [COLORS[0], COLORS[3], OTHER_COLOR]
-
-    sigma = min(5, len(traj_dict['overall_fraction']) / 100)
+    ordered_class_names = ['I','IV','Other']
+    sigma = min(5, len(sorted_molwise_results_dict['inside_number']) / 100)
     fig = go.Figure()
     key = 'inside_number'
     i2 = 0
-    traj = traj_dict[key]
+    traj = sorted_molwise_results_dict[key]
     for ind in range(num_classes):
-        fig.add_trace(go.Scatter(x=traj_dict['time_steps'] / 1000,
+        fig.add_trace(go.Scatter(x=sorted_molwise_results_dict['time_steps'] / 1000,
                                  y=gaussian_filter1d(traj[:, ind], sigma),
                                  name=ordered_class_names[ind],
                                  legendgroup=ordered_class_names[ind],
@@ -484,7 +491,7 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
     return fig
 
 
-def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
+def nic_clusters_fig(traj_dict1, traj_dict2):
     from PIL import Image
     image_paths = [r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0000.png',
                    r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0100.png',
@@ -540,7 +547,7 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
                                          mode='lines',
                                          line_width=2,
                                          showlegend=True if i3 == 0 and i2 == 0 else False,
-                                         stackgroup='one' if stacked_plot else None),
+                                         stackgroup='one' if False else None),
                               row=i3 + 1, col=i2 + 1)
 
     fig.update_xaxes(range=[-0.1, 5.1], zeroline=False)
@@ -595,7 +602,7 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
             dict(source=images[ind + 4],
                  y=ylevel, x=xlevels[ind])
         )
-        fig.add_annotation(y=ylevel - 0.05, x=xlevels[ind] - 0.05,
+        fig.add_annotation(y=ylevel - 0.05, x=xlevels[ind] - 0.1,
                            text=stits[ind],
                            showarrow=False,
                            xref='paper',
@@ -606,8 +613,8 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
     fig.update_layout_images(dict(
         xref="paper",
         yref="paper",
-        sizex=0.3,
-        sizey=0.3,
+        sizex=0.22,
+        sizey=0.22,
         xanchor="left",
         yanchor="top"
     ))
@@ -623,13 +630,19 @@ LEGEND_FONTSIZE = 14
 COLORS = ['rgb(141,211,199)',  # NICOAM13, ureaA
           'rgb(200,200,115)',  # NICOAM14, ureaB
           'rgb(145,90,218)',  # NICOAM15, ureaC
-          'rgb(251,128,114)',  # NICOAM16, ureaI
-          'rgb(128,177,211)',  # NICOAM07, ureaIII
-          'rgb(253,180,98)',  # NICOAM18, ureaIV
+          'rgb(251,128,114)',  # NICOAM16, ureaI / UREAXX12
+          'rgb(128,177,211)',  # NICOAM07, ureaIII / UREAXX28
+          'rgb(253,180,98)',  # NICOAM18, ureaIV / UREAXX26
           'rgb(179,222,105)',  # NICOAM08
           'rgb(252,205,229)',  # NICOAM09
           'rgb(217,217,217)',  # NICOAM17
           'rgb(188,35,189)']  # MELT
+
+'''
+urea I(UREAXX12)
+urea III (UREAXX28)
+urea IV (UREAXX26)
+'''
 
 identifier2form = {'NICOAM07': 5,
                    'NICOAM08': 7,

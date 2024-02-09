@@ -5,11 +5,11 @@ from bulk_molecule_classification.classifier_constants import (nic_ordered_class
                                                                )
 from bulk_molecule_classification.paper1_figs_utils import (process_daisuke_dats, urea_interface_fig, nic_clusters_fig, combined_accuracy_fig, combined_embedding_fig, paper_form_accuracy_fig)
 
-max_tsne_samples = 100
+max_tsne_samples = 1000
 
 os.chdir(r'D:\crystals_extra\classifier_training\results')
-urea_eval_path = 'dev_urea_evaluation_results_jan_dict.npy'
-nic_eval_path = 'dev_nic_evaluation_results_jan12_dict.npy'
+urea_eval_path = 'dev_urea_evaluation_results_feb6_dict.npy'
+nic_eval_path = 'dev_nic_evaluation_results_feb6_dict.npy'
 urea_interface_path = 'crystals_extra_classifier_training_urea_melt_interface_T200_analysis.npy'
 nic_traj_path1 = 'paper_nic_clusters2_1__analysis.npy'
 nic_traj_path2 = 'paper_nic_clusters2_7__analysis.npy'
@@ -45,11 +45,11 @@ old2new = {3: 0,  # reindex urea targets
 d_urea_embed_dict2['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict2['Targets']])
 d_urea_embed_dict3['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict3['Targets']])
 d_urea_embed_dict2['Embeddings'] = d_urea_embed_dict2['Latents']
-#
-# fig_dict['urea_tSNE'] = combined_embedding_fig(
-#     results_dict, d_urea_embed_dict2, d_urea_embed_dict3, urea_ordered_class_names,
-#     max_samples=max_tsne_samples, perplexity=30, molecule_name='urea'
-# )
+
+fig_dict['urea_tSNE'] = combined_embedding_fig(
+    results_dict, d_urea_embed_dict2, d_urea_embed_dict3, urea_ordered_class_names,
+    max_samples=max_tsne_samples, perplexity=30, molecule_name='urea'
+)
 del results_dict
 
 '''

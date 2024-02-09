@@ -15,7 +15,7 @@ dev = {'run_name': 'dev_nic',
        'num_convs': 1,
        'embedding_depth': 256,
        'message_depth': 128,
-       'dropout': 0.25,
+       'dropout': 0.5,
        'graph_norm': 'layer',
        'fc_norm': 'layer',
        'num_fcs': 2,
@@ -24,14 +24,14 @@ dev = {'run_name': 'dev_nic',
        'conv_cutoff': 6,
        'batch_size': 5,
        'reporting_frequency': 1,
-       'train_model': True,
-       'trajs_to_analyze_list': None,  # # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [2, 7]],
-       # [f'D:/crystals_extra/classifier_training/crystal_in_melt_test8/{ind}/' for ind in range(0, 22)],
+       'train_model': False,
+       'trajs_to_analyze_list': #[f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [1, 2, 7]],
+       [f'D:/crystals_extra/classifier_training/crystal_in_melt_test9/{ind}/' for ind in range(0, 22)],
        # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in range(12)],
        # [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
        # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
        'do_classifier_evaluation': False,
-       'classifier_path': None,  # 'C:/Users/mikem/crystals/classifier_runs/dev_nic_best_quick_classifier_checkpoint',
+       'classifier_path': 'C:/Users/mikem/crystals/classifier_runs/nic_Feb2_test2_1_best_classifier_checkpoint',  # test1 for cold test2 for hot
        # 'C:/Users/mikem/crystals/classifier_runs/dev_nic_best_hot_classifier_checkpoint', #'C:/Users/mikem/crystals/classifier_runs/nic_test0_3_best_classifier_checkpoint',
        'learning_rate': 1e-4,
        'datasets_path': r'D:/crystals_extra/classifier_training/traj_pickles/',
@@ -43,15 +43,15 @@ dev = {'run_name': 'dev_nic',
        'results_path': r'D:\crystals_extra\classifier_training\results/',
        'device': 'cuda',
        'seed': 1}
-
+#
 #
 # dev = {'run_name': 'dev_urea',
 #        'dataset_temperature': 'cold',
 #        'convergence_history': 50,
-#        'num_convs': 2,
+#        'num_convs': 1,
 #        'embedding_depth': 256,
 #        'message_depth': 128,
-#        'dropout': 0.25,
+#        'dropout': 0.5,
 #        'graph_norm': 'layer',
 #        'fc_norm': 'layer',
 #        'num_fcs': 2,
@@ -61,9 +61,9 @@ dev = {'run_name': 'dev_nic',
 #        'batch_size': 5,
 #        'reporting_frequency': 1,
 #        'train_model': False,
-#        'trajs_to_analyze_list': ['D:/crystals_extra/classifier_training/urea_melt_interface_T200'],
-#        'do_classifier_evaluation': False,
-#        'classifier_path': 'C:/Users/mikem/crystals/classifier_runs/cluster_urea_test1_best_classifier_checkpoint',
+#        'trajs_to_analyze_list': None, #['D:/crystals_extra/classifier_training/urea_melt_interface_T200'],
+#        'do_classifier_evaluation': True,
+#        'classifier_path': 'C:/Users/mikem/crystals/classifier_runs/urea_Feb2_test1_1_best_classifier_checkpoint',
 #        'learning_rate': 1e-4,
 #        'datasets_path': r'D:/crystals_extra/classifier_training/traj_pickles/',
 #        'dumps_path': r'D:/crystals_extra/classifier_training/',
@@ -157,38 +157,38 @@ for device in ['cuda']:#, 'cpu']:
                     configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'bulk_trajs3', 'new_small_bulk']
                     configs[-1]['training_temps'] = [100, 350]
 aa = 1
-#
-# configs = []
-# base_config = {'run_name': 'cluster_traj_eval',
-#                'convergence_history': 200,
-#                'num_convs': 1,
-#                'embedding_depth': 256,
-#                'message_depth': 128,
-#                'dropout': 0.25,
-#                'graph_norm': 'layer',
-#                'fc_norm': 'layer',
-#                'num_fcs': 2,
-#                'num_epochs': 1000,
-#                'dataset_size': 1000,
-#                'conv_cutoff': 6,
-#                'batch_size': 5,
-#                'reporting_frequency': 1,
-#                'train_model': False,
-#                'trajs_to_analyze_list': None,
-#                'do_classifier_evaluation': False,
-#                'classifier_path': '/vast/mk8347/molecule_clusters/classifier_ckpts/nic_test0_1_best_classifier_checkpoint',
-#                'learning_rate': 1e-4,
-#                'datasets_path': r'/vast/mk8347/molecule_clusters/traj_pickles/',
-#                'dumps_path': r'/vast/mk8347/molecule_clusters/',
-#                'training_temps': [100, 350],
-#                'dataset_name': 'new_nic_full',
-#                'dumps_dirs': None,  # ['melt_trajs2', 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
-#                'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
-#                'results_path': r'/vast/mk8347/molecule_clusters/results/',
-#                'device': 'cpu',
-#                'seed': 1}
-#
-# # for evaluationf
-# for ind in range(0, 22):
-#     configs.append(copy(base_config))
-#     configs[-1]['trajs_to_analyze_list'] = [f'/vast/mk8347/molecule_clusters/crystal_in_melt_test8/{ind}/']
+
+configs = []
+base_config = {'run_name': 'cluster_traj_eval',
+               'convergence_history': 200,
+               'num_convs': 1,
+               'embedding_depth': 256,
+               'message_depth': 128,
+               'dropout': 0.25,
+               'graph_norm': 'layer',
+               'fc_norm': 'layer',
+               'num_fcs': 2,
+               'num_epochs': 1000,
+               'dataset_size': 1000,
+               'conv_cutoff': 6,
+               'batch_size': 5,
+               'reporting_frequency': 1,
+               'train_model': False,
+               'trajs_to_analyze_list': None,
+               'do_classifier_evaluation': False,
+               'classifier_path': '/vast/mk8347/molecule_clusters/classifier_ckpts/nic_Feb2_test2_1_best_classifier_checkpoint',
+               'learning_rate': 1e-4,
+               'datasets_path': r'/vast/mk8347/molecule_clusters/traj_pickles/',
+               'dumps_path': r'/vast/mk8347/molecule_clusters/',
+               'training_temps': [100, 350],
+               'dataset_name': 'new_nic_full',
+               'dumps_dirs': None,  # ['melt_trajs2', 'melt_trajs2'],  # ['urea_bulk_trajs/T100', 'urea_bulk_trajs/T250', 'urea_bulk_trajs/liqT700'],
+               'runs_path': r'/vast/mk8347/molecule_clusters/classifier_ckpts/',
+               'results_path': r'/vast/mk8347/molecule_clusters/results/',
+               'device': 'cpu',
+               'seed': 1}
+
+# for evaluationf
+for ind in range(0, 60):
+    configs.append(copy(base_config))
+    configs[-1]['trajs_to_analyze_list'] = [f'/vast/mk8347/molecule_clusters/crystal_in_melt_test9/{ind}/']

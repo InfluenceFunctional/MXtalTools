@@ -4,10 +4,10 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from bulk_molecule_classification.classifier_constants import form2index, identifier2form
+from bulk_molecule_classification.classifier_constants import form2index, identifier2form, urea_ordered_class_names, nic_ordered_class_names
 from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
 
-from bulk_molecule_classification.traj_analysis_figs import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig
+from bulk_molecule_classification.traj_analysis_figs import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig, process_trajectory_data
 from bulk_molecule_classification.utils import get_loss, classifier_reporting, record_step_results, process_trajectory_results_dict
 from bulk_molecule_classification.dataset_prep import collect_to_traj_dataloaders
 
@@ -55,7 +55,7 @@ def train_classifier(config, classifier, optimizer,
             with torch.no_grad():
                 classifier.eval()
 
-                for step, sample in enumerate(tqdm(test_loader,  miniters=int(len(test_loader) / 25))):
+                for step, sample in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
                     sample = sample.to(device)
 
                     output = classifier(sample)  # fix mini-batch behavior
@@ -153,11 +153,11 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
     dataset_path = f'{datasets_path}{dataset_name}.pkl'
     output_dict_path = config['results_path'] + dataset_name + '_analysis'
 
-    if not os.path.exists(output_dict_path + '.npy'):
+    if True: #not os.path.exists(output_dict_path + '.npy'):
         loader, run_config = collect_trajectory_dataloader(config, dataset_path, dumps_dir)
         results_dict = classify_trajectory(classifier, config, device, loader)
         os.chdir(config['results_path'])
-        sorted_molwise_results_dict, time_steps = process_classification_results(config, loader, output_dict_path, results_dict)
+        sorted_molwise_results_dict, time_steps = process_classification_results(config, loader, output_dict_path, results_dict, dataset_name, dumps_dir, run_config)
     else:
         os.chdir(config['results_path'])
         if os.path.exists(dumps_dir + 'run_config.npy'):
@@ -167,28 +167,16 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
         sorted_molwise_results_dict = np.load(output_dict_path + '.npy', allow_pickle=True).item()
         time_steps = np.asarray([time[0] for time in sorted_molwise_results_dict['Molecule_Time_Step']])
 
-    interface_mode = check_and_process_interface(dumps_dir, sorted_molwise_results_dict)
-
-    try:
-        from bulk_molecule_classification.ovito_utils import write_ovito_xyz
-        dataset_name = '_'.join(dumps_dir.split('/')[-3:])
-
-        write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
-                        sorted_molwise_results_dict['Atom_Types'],
-                        sorted_molwise_results_dict['Molecule_Type_Prediction_Choice'], filename=dataset_name + '_prediction')  # write a trajectory
-        #
-        # write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
-        #                 sorted_molwise_results_dict['Atom_Types'],
-        #                 sorted_molwise_results_dict['Molecule_Type_Prediction'], filename=dataset_name + '_all_probs')  # write a trajectory
-    except:
-        print("Ovito write error")
-
     inside_radius, run_config = get_inside_radius(dumps_dir, run_config)
+    if dumps_dir == r'D:/crystals_extra/classifier_training/urea_melt_interface_T200':  # collect predictions to form I and IV or 'other'
+        interface_mode = True
+    else:
+        interface_mode = False
 
-    fig, fig2, traj_dict = classifier_trajectory_analysis_fig(
+    fig, fig2 = classifier_trajectory_analysis_fig(
         sorted_molwise_results_dict, time_steps,
         'urea' if config['mol_num_atoms'] == 8 else 'nicotinamide',
-        inside_radius=inside_radius, interface_mode=interface_mode)
+        interface_mode=interface_mode)
 
     if os.path.exists(dumps_dir + 'run_config.npy'):
         fig.update_layout(
@@ -206,12 +194,29 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
     else:
         print("Missing trajectory config")
 
-    fig2 = radial_form_timeseries(fig, inside_radius, sorted_molwise_results_dict, time_steps)
+    if not interface_mode:
+        fig2 = radial_form_timeseries(fig, inside_radius, sorted_molwise_results_dict, time_steps)
+        fig2.write_image(f"{dataset_name}_Radial_Stability.png", width=1920, height=1080)
 
     fig.write_image(f"{dataset_name}_Trajectory_Analysis.png", scale=4)
-    fig2.write_image(f"{dataset_name}_Radial_Stability.png", width=1920, height=1080)
     wandb.log({f"{dataset_name} Trajectory Analysis": fig})
+    write_ovitos(dumps_dir, sorted_molwise_results_dict)
 
+
+def write_ovitos(dumps_dir, sorted_molwise_results_dict):
+    try:
+        from bulk_molecule_classification.ovito_utils import write_ovito_xyz
+        dataset_name = '_'.join(dumps_dir.split('/')[-3:])
+
+        write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
+                        sorted_molwise_results_dict['Atom_Types'],
+                        sorted_molwise_results_dict['Molecule_Type_Prediction_Choice'], filename=dataset_name + '_prediction')  # write a trajectory
+        #
+        # write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],
+        #                 sorted_molwise_results_dict['Atom_Types'],
+        #                 sorted_molwise_results_dict['Molecule_Type_Prediction'], filename=dataset_name + '_all_probs')  # write a trajectory
+    except:
+        pass
 
 def radial_form_timeseries(fig, inside_radius, sorted_molwise_results_dict, time_steps):
     # type density vs radius over time
@@ -292,7 +297,7 @@ def collect_trajectory_dataloader(config, dataset_path, dumps_dir):
     return loader, run_config
 
 
-def process_classification_results(config, loader, output_dict_path, results_dict):
+def process_classification_results(config, loader, output_dict_path, results_dict, dataset_name, dumps_dir, run_config):
     results_dict['Atomwise_Sample_Index'] = results_dict['Sample_Index'].repeat(config['mol_num_atoms'])
     results_dict['Type_Prediction_Choice'] = np.argmax(results_dict['Type_Prediction'], axis=-1)  # argmax sample
     results_dict['Type_Prediction_Choice'] = np.asarray([form2index[tgt] for tgt in results_dict['Type_Prediction_Choice']])
@@ -300,7 +305,31 @@ def process_classification_results(config, loader, output_dict_path, results_dic
     sorted_molwise_results_dict, time_steps = process_trajectory_results_dict(results_dict, loader, config['mol_num_atoms'])
     del results_dict
 
-    np.save(output_dict_path, sorted_molwise_results_dict)  # todo reorganize this function
+    interface_mode = check_and_process_interface(dumps_dir, sorted_molwise_results_dict)
+    inside_radius, run_config = get_inside_radius(dumps_dir, run_config)
+
+    if interface_mode:
+        inside_radius = 20
+        inside_mode = 'z'
+        ordered_class_names = ['I', 'IV', 'Other']
+        num_classes = len(ordered_class_names)
+    else:
+        inside_mode = 'radius'
+        ordered_class_names = urea_ordered_class_names if config['mol_num_atoms'] == 8 else nic_ordered_class_names
+        num_classes = len(ordered_class_names)
+
+    """trajectory analysis figure"""
+    traj_dict = process_trajectory_data(
+        inside_radius, config['mol_num_atoms'], num_classes,
+        ordered_class_names, sorted_molwise_results_dict, time_steps,
+        inside_mode=inside_mode)
+    sorted_molwise_results_dict.update(traj_dict)
+
+    if run_config is not None:
+        sorted_molwise_results_dict.update(run_config)
+
+    np.save(output_dict_path, sorted_molwise_results_dict)
+
     return sorted_molwise_results_dict, time_steps
 
 
