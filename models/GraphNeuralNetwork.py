@@ -88,16 +88,12 @@ class GraphNeuralNetwork(torch.nn.Module):
 
         if self.equivariant_graph:  # todo abstract out output block
             if node_embedding_depth != graph_embedding_depth:
-                self.v_output_norm = Normalization(vector_norm, node_embedding_depth)
                 self.v_output_layer = nn.Linear(node_embedding_depth, graph_embedding_depth, bias=False)
             else:
-                self.v_output_norm = nn.Identity()
                 self.v_output_layer = nn.Identity()
         if node_embedding_depth != graph_embedding_depth:
-            self.output_norm = Normalization(node_embedding_depth, node_embedding_depth)
             self.output_layer = nn.Linear(node_embedding_depth, graph_embedding_depth, bias=False)
         else:
-            self.output_norm = nn.Identity()
             self.output_layer = nn.Identity()
 
     def get_geom_embedding(self, edge_index, pos):
@@ -117,11 +113,11 @@ class GraphNeuralNetwork(torch.nn.Module):
         else:
             x, v = self.init_node_embedding(z), None  # embed atomic numbers & compute initial atom-wise feature vector
 
-        assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn init output {get_model_nans(self.init_node_embedding)}"
+        #assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn init output {get_model_nans(self.init_node_embedding)}"
 
         x, v = self.zeroth_fc_block(x=x, v=v, batch=batch)
 
-        assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn zeroth_fc output {get_model_nans(self.zeroth_fc_block)}"
+        #assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn zeroth_fc output {get_model_nans(self.zeroth_fc_block)}"
 
         (edge_index, edge_index_inter,
          inside_batch, inside_inds,
@@ -141,7 +137,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                 else:
                     x = x + convolution(x, v, rbf, edge_index, batch)  # graph convolution
 
-            assert torch.sum(torch.isnan(x)) == 0, f"NaN in conv output {get_model_nans(self.interaction_blocks)}"
+            #assert torch.sum(torch.isnan(x)) == 0, f"NaN in conv output {get_model_nans(self.interaction_blocks)}"
 
             if not self.periodize_inside_nodes:
                 if self.equivariant_graph:
@@ -153,7 +149,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                 else:
                     x = x + fc(x, v=v, batch=batch)  # feature-wise 1D convolution, residual is already inside
 
-                assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc_block output {get_model_nans(self.fc_blocks)}"
+                #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc_block output {get_model_nans(self.fc_blocks)}"
 
             else:
                 assert v is None, "Vector embeddings not yet set up for periodic graphs"

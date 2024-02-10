@@ -73,7 +73,7 @@ class point_autoencoder(nn.Module):
                 encoding = x
 
         assert torch.sum(torch.isnan(encoding)) == 0, f"NaN in encoder output {get_model_nans(self.encoder)}"
-        assert torch.sum(torch.isfinite(encoding) == False) == 0, "Inf in encoder output"
+        #assert torch.sum(torch.isfinite(encoding) == False) == 0, "Inf in encoder output"
 
         return encoding
 

@@ -488,7 +488,11 @@ class DataManager:
         mol_volume_ind = self.tracking_keys.index('molecule_volume')
 
         tracking_features = torch.Tensor(tracking_features)
-        print("Generating crystal data objects")
+        if self.dataset_type == 'crystal':
+            print("Generating crystal data objects")
+        else:
+            print("Generating molecule data objects")
+
         for i in tqdm(range(self.dataset_length)):
             datapoints.append(
                 CrystalData(x=torch.Tensor(atom_features_list[i]),

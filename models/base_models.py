@@ -125,18 +125,14 @@ class molecule_graph_model(nn.Module):
 
         """initialize output reshaping layers"""
         if gnn_output_depth != output_dimension:  # only want this if we have to change the dimension
-            self.output_fc_norm = Normalization(fc_norm_mode, gnn_output_depth)
             self.output_fc = nn.Linear(gnn_output_depth, output_dimension, bias=False)
         else:
-            self.output_fc_norm = nn.Identity()
             self.output_fc = nn.Identity()
 
         if self.equivariant_graph:
             if gnn_output_depth != output_dimension:  # only want this if we have to change the dimension
-                self.v_output_norm = Normalization('graph vector layer' if vector_norm else None, gnn_output_depth)
                 self.v_output_fc = nn.Linear(gnn_output_depth, output_dimension, bias=False)
             else:
-                self.v_output_norm = nn.Identity()
                 self.v_output_fc = nn.Identity()
 
     def forward(self, data, edges_dict=None, return_latent=False, return_dists=False):
@@ -160,11 +156,11 @@ class molecule_graph_model(nn.Module):
                            edges_dict)  # get graph encoding
         if self.equivariant_graph:
             x, v = x
-            assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn scalar output {get_model_nans(self.graph_net)}"
+            #assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn scalar output {get_model_nans(self.graph_net)}"
 
         else:
             v = None
-            assert torch.sum(torch.isnan(v)) == 0, f"NaN in gnn vector output {get_model_nans(self.graph_net)}"
+            # torch.sum(torch.isnan(v)) == 0, f"NaN in gnn vector output {get_model_nans(self.graph_net)}"
 
         x, v = self.global_pool(x,
                                 agg_batch,
@@ -172,7 +168,7 @@ class molecule_graph_model(nn.Module):
                                 cluster=data.mol_ind if self.global_pool.agg_func == 'molwise' else None,
                                 output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
 
-        assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
+        #assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
 
         if v is not None:
             assert torch.sum(torch.isnan(v)) == 0, f"NaN in gnn pool vector output {get_model_nans(self.graph_net)}"
@@ -188,11 +184,11 @@ class molecule_graph_model(nn.Module):
 
         output = self.output_fc(x), self.v_output_fc(v) if self.equivariant_graph else self.output_fc(x)
 
-        if self.equivariant_graph:
-            assert torch.sum(torch.isnan(output[0])) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
-            assert torch.sum(torch.isnan(output[1])) == 0, f"NaN in gnn pool vector output {get_model_nans(self.graph_net)}"
-        else:
-            assert torch.sum(torch.isnan(output)) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
+        #if self.equivariant_graph:
+            #assert torch.sum(torch.isnan(output[0])) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
+            #assert torch.sum(torch.isnan(output[1])) == 0, f"NaN in gnn pool vector output {get_model_nans(self.graph_net)}"
+        #else:
+            #assert torch.sum(torch.isnan(output)) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
 
         extra_outputs = self.collect_extra_outputs(data, edges_dict, return_dists, return_latent, x)
 

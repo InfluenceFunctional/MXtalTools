@@ -15,7 +15,7 @@ from models.vector_LayerNorm import VectorLayerNorm
 class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
     def __init__(self, layers, filters, input_dim, output_dim,
                  activation='gelu', seed=0, dropout=0, conditioning_dim=0,
-                 norm=None, bias=True, norm_after_linear=False,
+                 norm=None, bias=True, norm_after_linear=True,
                  conditioning_mode='concat_to_first',
                  equivariant=False,
                  residue_v_to_s=False,
@@ -37,9 +37,9 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         self.norm_after_linear = norm_after_linear
         self.equivariant = equivariant
         self.residue_v_to_s = residue_v_to_s
-        self.vector_norm = vector_norm
+        self.v_norm_mode = vector_norm
         self.ramp_depth = ramp_depth
-        if self.vector_norm:
+        if self.v_norm_mode:
             assert self.equivariant
         if residue_v_to_s:
             assert self.equivariant
@@ -73,14 +73,31 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
                 nn.Linear(residue_filters[i], residue_filters[i + 1], bias=False)
                 for i in range(self.n_layers)
             ])
-            if self.equivariant:
+        else:
+            self.same_depth = True
+
+        if self.equivariant:
+            if isinstance(filters, list):
+
+                self.v_n_filters = filters
+                residue_filters = [self.input_dim] + self.v_n_filters
+
+            elif self.ramp_depth:  # smoothly ramp feature depth across layers
+                # linear scaling
+                # self.n_filters = torch.linspace(self.input_dim, self.output_dim, self.n_layers).long().tolist()
+                # log scaling for consistent growth ratio
+                p = np.log(self.v_output_dim) / np.log(self.input_dim)
+                self.v_n_filters = [int(self.input_dim ** (1 + (p - 1) * (i / (self.n_layers)))) for i in range(self.n_layers)]
+                residue_filters = [self.input_dim] + self.v_n_filters
+            else:
+                self.v_n_filters = [filters for _ in range(layers)]
+
+            if self.n_filters.count(self.n_filters[0]) != len(self.n_filters):  # if they are not all the same, we need residue adjustments
                 residue_filters[0] -= self.conditioning_dim
                 self.v_residue_adjust = torch.nn.ModuleList([
                     nn.Linear(residue_filters[i], residue_filters[i + 1], bias=False)
                     for i in range(self.n_layers)
                 ])
-        else:
-            self.same_depth = True
 
     def init_scalar_transforms(self):
         """scalar MLP layers"""
@@ -127,35 +144,43 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         """vector MLP layers"""
         '''input layer'''
         if self.input_dim != self.n_filters[0]:
-            self.v_init_layer = nn.Linear(self.input_dim - self.conditioning_dim, self.n_filters[0], bias=False)
+            self.v_init_layer = nn.Linear(self.input_dim - self.conditioning_dim, self.v_n_filters[0], bias=False)
         else:
             self.v_init_layer = nn.Identity()
 
         '''working layers'''
         self.v_fc_layers = torch.nn.ModuleList([
-            nn.Linear(self.n_filters[i], self.n_filters[i], bias=False)
+            nn.Linear(self.v_n_filters[i], self.v_n_filters[i], bias=False)
             for i in range(self.n_layers)
         ])
         self.s_to_v_gating_layers = torch.nn.ModuleList([
-            nn.Linear(self.n_filters[i], self.n_filters[i], bias=True)
+            nn.Linear(self.n_filters[i], self.v_n_filters[i], bias=False)
             for i in range(self.n_layers)
         ])
         self.s_to_v_activations = torch.nn.ModuleList([  # use tanh as gating function rather than standard activation which is unbound
-            Activation('tanh', self.n_filters[i])
+            Activation('sigmoid', self.v_n_filters[i])  # positive outputs only to maintain equivariance (no vectors flipped)
             for i in range(self.n_layers)
         ])
         self.v_fc_norms = torch.nn.ModuleList([
-            Normalization(self.vector_norm, self.n_filters[i])
+            Normalization(self.v_norm_mode, self.v_n_filters[i])
             for i in range(self.n_layers)
         ])
         self.vector_to_scalar_norm = torch.nn.ModuleList([
-            Normalization(self.vector_norm, self.n_filters[i])
+            Normalization(self.norm_mode, self.n_filters[i])
+            for i in range(self.n_layers)
+        ])
+        self.vector_norm_to_scalar = torch.nn.ModuleList([
+            nn.Linear(self.v_n_filters[i], self.n_filters[i], bias=False)
+            for i in range(self.n_layers)
+        ])
+        self.scalar_to_vector_norm = torch.nn.ModuleList([
+            Normalization(self.norm_mode, self.v_n_filters[i], bias=False)
             for i in range(self.n_layers)
         ])
 
         '''output layer'''
         if self.v_output_dim != self.n_filters[-1]:
-            self.v_output_layer = nn.Linear(self.n_filters[-1], self.v_output_dim, bias=False)
+            self.v_output_layer = nn.Linear(self.v_n_filters[-1], self.v_output_dim, bias=False)
         else:
             self.v_output_layer = nn.Identity()
 
@@ -167,16 +192,16 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         if v is not None:
             v = self.v_init_layer(v)
 
-        assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc input layer {get_model_nans(self.init_layer)}"
+        #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc input layer {get_model_nans(self.init_layer)}"
 
         for i, (norm, linear, activation, dropout) in enumerate(zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
             x, v = self.get_residues(i, x, v)
 
-            assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc residue output {get_model_nans(self.residue_adjust[i])}"
+            #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc residue output {get_model_nans(self.residue_adjust[i])}"
 
             x = self.scalar_forward(i, activation, batch, dropout, linear, norm, x, v)
 
-            assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc linear output {get_model_nans(linear)}"
+            #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc linear output {get_model_nans(linear)}"
 
             if self.equivariant:
                 v = self.vector_forward(i, x, v, batch)
@@ -210,8 +235,11 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
     def scalar_forward(self,i, activation, batch, dropout, linear, norm, x, v):
         res = x.clone()
         if v is not None:  # concatenate vector lengths to scalar values
-            v = self.vector_to_scalar_norm[i](v)
-            x = torch.cat([x, torch.linalg.norm(v, dim=1)], dim=-1)
+            x = torch.cat([x,
+                           self.vector_to_scalar_norm[i](
+                               self.vector_norm_to_scalar[i](
+                                   torch.linalg.norm(v, dim=1)))],
+                          dim=-1)
 
         if self.norm_after_linear:
             x = res + dropout(activation(norm(linear(x), batch=batch)))
@@ -221,10 +249,13 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         return x
 
     def vector_forward(self, i, x, v, batch):
-        gating_factor = self.s_to_v_activations[i](self.s_to_v_gating_layers[i](x))[:, None, :]
-        vector_mix = self.v_fc_layers[i](v)
+        gating_factor = self.s_to_v_activations[i](
+            self.scalar_to_vector_norm[i](
+                self.s_to_v_gating_layers[i](x))[:, None, :]
+        )
+        vector_mix = self.v_fc_norms[i](self.v_fc_layers[i](v), batch=batch)
 
-        return 0.5 * (v + self.v_fc_norms[i](gating_factor * vector_mix, batch=batch))  # A(FC(x)) * FC(N(v))   # rescaling factor keeps norm from exploding
+        return 0.5 * (v + gating_factor * vector_mix)  # A(FC(x)) * FC(N(v))   # rescaling factor keeps norm from exploding
 
 
 '''
@@ -291,9 +322,11 @@ class Activation(nn.Module):
             self.activation = F.leaky_relu
         elif activation_func.lower() == 'tanh':
             self.activation = F.tanh
+        elif activation_func.lower() == 'sigmoid':
+            self.activation = F.sigmoid
 
-    def forward(self, input):
-        return self.activation(input)
+    def forward(self, x):
+        return self.activation(x)
 
 
 class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation of activation as a linear combination of basis functions

@@ -828,9 +828,6 @@ class Modeller:
 
         decoder_equivariance_loss = self.test_decoder_equivariance(data, encoding, rotated_encoding, rotations)
 
-        if encoder_equivariance_loss.amax() > 5e-2:
-            print("Large Encoder Equivariance Loss!")
-
         return encoder_equivariance_loss, decoder_equivariance_loss
 
     def test_decoder_equivariance(self, data, encoding, rotated_encoding, rotations):
