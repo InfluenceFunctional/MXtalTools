@@ -120,7 +120,7 @@ generator:
 generator_positional_noise: 0
 gradient_norm_clip: 1
 grow_batch_size: true
-history: 50
+history: 200
 logger:
   experiment_tag: qm9_test21
   log_figures: true
@@ -131,7 +131,7 @@ machine: cluster
 max_batch_size: 10000
 max_epochs: 100000
 min_batch_size: 25
-minimum_epochs: 1000
+minimum_epochs: 2000
 misc_dataset_name: misc_data_for_qm9_molecules_dataset.npy
 mode: autoencoder
 model_names:

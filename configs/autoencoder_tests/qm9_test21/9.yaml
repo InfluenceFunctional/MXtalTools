@@ -12,7 +12,7 @@ autoencoder:
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: layer
-    decoder_ramp_depth: true
+    decoder_ramp_depth: false
     decoder_type: equivariant
     decoder_vector_norm: vector layer
     embedding_depth: 256
@@ -125,7 +125,7 @@ logger:
   experiment_tag: qm9_test21
   log_figures: true
   mini_csp_frequency: 5
-  run_name: qm9_test21_0
+  run_name: qm9_test21_0_1_2_3_4_5_6_7_8_9
   sample_reporting_frequency: 5
 machine: cluster
 max_batch_size: 10000

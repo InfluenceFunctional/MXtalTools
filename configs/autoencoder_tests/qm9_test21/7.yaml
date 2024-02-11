@@ -26,7 +26,7 @@ autoencoder:
     max_num_neighbors: 100
     nodewise_fc_layers: 4
     num_attention_heads: 16
-    num_decoder_layers: 4
+    num_decoder_layers: 8
     num_decoder_points: 256
     num_graph_convolutions: 1
     num_radial: 32
@@ -125,7 +125,7 @@ logger:
   experiment_tag: qm9_test21
   log_figures: true
   mini_csp_frequency: 5
-  run_name: qm9_test21_0
+  run_name: qm9_test21_0_1_2_3_4_5_6_7
   sample_reporting_frequency: 5
 machine: cluster
 max_batch_size: 10000
