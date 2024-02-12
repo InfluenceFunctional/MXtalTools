@@ -8,14 +8,14 @@ autoencoder:
   model:
     activation: gelu
     atom_type_embedding_dims: 5
-    bottleneck_dim: 256
+    bottleneck_dim: 128
     convolution_cutoff: 2
     decoder_dropout_probability: 0
     decoder_norm_mode: layer
     decoder_ramp_depth: true
     decoder_type: equivariant
     decoder_vector_norm: vector layer
-    embedding_depth: 256
+    embedding_depth: 512
     encoder_type: equivariant
     encoder_vector_norm: graph vector layer
     graph_aggregator: equivariant softmax
@@ -28,7 +28,7 @@ autoencoder:
     num_attention_heads: 16
     num_decoder_layers: 4
     num_decoder_points: 256
-    num_graph_convolutions: 0
+    num_graph_convolutions: 1
     num_radial: 32
     radial_function: gaussian
     variational_encoder: false
@@ -42,7 +42,7 @@ autoencoder:
     init_lr: 5.0e-05
     lr_growth_lambda: 1.01
     lr_schedule: true
-    lr_shrink_lambda: 0.999
+    lr_shrink_lambda: 0.99
     max_lr: 0.0005
     min_lr: 5.0e-05
     optimizer: adamw
@@ -125,7 +125,7 @@ logger:
   experiment_tag: qm9_test21
   log_figures: true
   mini_csp_frequency: 5
-  run_name: qm9_test21_0_1_2
+  run_name: qm9_test21_0_1_2_3_4_5_6_7_8_9_10_11_12
   sample_reporting_frequency: 5
 machine: cluster
 max_batch_size: 10000

@@ -131,7 +131,7 @@ machine: cluster
 max_batch_size: 10000
 max_epochs: 100000
 min_batch_size: 25
-minimum_epochs: 2000
+minimum_epochs: 10000
 misc_dataset_name: misc_data_for_qm9_molecules_dataset.npy
 mode: autoencoder
 model_names:
