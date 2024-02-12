@@ -110,12 +110,14 @@ class GraphNeuralNetwork(torch.nn.Module):
             x, v = z[:, :-3], z[:, -3:]
             v = self.init_vector_embedding(v[:, :, None])
             x = self.init_node_embedding(x)  # embed atomic numbers & compute initial atom-wise feature vector
+            x, v = self.zeroth_fc_block(x=x, v=v, batch=batch)
+
         else:
             x, v = self.init_node_embedding(z), None  # embed atomic numbers & compute initial atom-wise feature vector
+            x = self.zeroth_fc_block(x=x, v=v, batch=batch)
 
         #assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn init output {get_model_nans(self.init_node_embedding)}"
 
-        x, v = self.zeroth_fc_block(x=x, v=v, batch=batch)
 
         #assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn zeroth_fc output {get_model_nans(self.zeroth_fc_block)}"
 

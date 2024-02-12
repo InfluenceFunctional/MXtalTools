@@ -9,20 +9,20 @@ np.random.seed(3)
 cmax = 1
 max_point_types = 2
 num_graphs = 1
-min_xval, max_xval = -1, 1
+min_xval, max_xval = 0, 1
 sigma = 0.001
 
-pos = np.array([-0.75, 0.05, 0.4, 0.9])  # np.random.uniform(0, max_xval - min_xval, size=n_input_particles) + min_xval
-types = np.array([1, 0, 1, 0])  # np.random.randint(max_point_types, size=n_input_particles)
+pos = np.array([0.1, 0.3, 0.7, 0.9])  # np.random.uniform(0, max_xval - min_xval, size=n_input_particles) + min_xval
+types = np.array([1, 0, 0, 1])  # np.random.randint(max_point_types, size=n_input_particles)
 
 num_gridpoints = 100
-x = np.linspace(-1.5, 1.5, num_gridpoints)
+x = np.linspace(-.25, 1.25, num_gridpoints)
 y = np.linspace(-.25, 1.25, num_gridpoints)
 xx, yy = np.meshgrid(x, y)
 grid_array = np.stack((xx.flatten(), yy.flatten())).T
 
-sigmas = [0.1, 0.05, 0.005]
-fig = make_subplots(rows=1, cols=len(sigmas), subplot_titles=[f"(a) Width={sigmas[0]:.2f}",f"(b) Width={sigmas[1]:.2f}",f"(c) Width={sigmas[2]:.2f}"])
+sigmas = [0.05, 0.025, 0.005]
+fig = make_subplots(rows=1, cols=len(sigmas), horizontal_spacing=0.1,subplot_titles=[f"(a) Width={sigmas[0]:.2f}", f"(b) Width={sigmas[1]:.2f}", f"(c) Width={sigmas[2]:.2f}"])
 for graph_ind, sigma in enumerate(sigmas):
     row = 1
     col = graph_ind + 1
@@ -30,7 +30,7 @@ for graph_ind, sigma in enumerate(sigmas):
     pl = [pos + np.random.randn(len(pos)) * sigma * 5 for _ in range(3)]
     tl = [types + np.random.randn(len(types)) * sigma * 5 for _ in range(3)]
     de_pos = np.concatenate(pl)
-    de_types = np.clip(np.concatenate(tl), a_min=0,a_max=1)
+    de_types = np.clip(np.concatenate(tl), a_min=0, a_max=1)
 
     points_true = np.concatenate([pos[:, None], types[:, None]], axis=1)
     points_pred = np.concatenate([de_pos[:, None], de_types[:, None]], axis=1)
@@ -80,11 +80,13 @@ for graph_ind, sigma in enumerate(sigmas):
                                name=f'True type', legendgroup=f'True type'
                                ), row=row, col=col)
 
-fig.update_xaxes(range=[-1.5, 1.5], title='Cartesian Dimension')
+fig.update_xaxes(range=[-.25, 1.25], title='Cartesian Dimension')
 fig.update_yaxes(range=[-.25, 1.25], title='Type Dimension')
 fig.update_layout(coloraxis_showscale=False)
 fig.update_coloraxes(showscale=False)
 fig.update_traces(showlegend=False)
+fig.update_layout(font_size=32)
+fig.update_annotations(font_size=32)
 fig.show()
 
 aa = 1

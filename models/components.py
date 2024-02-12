@@ -9,7 +9,6 @@ from torch_scatter import scatter, scatter_softmax
 
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from models.global_attention_aggregation import AttentionalAggregation_w_alpha
-from models.utils import get_model_nans
 from models.vector_LayerNorm import VectorLayerNorm
 
 class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
@@ -412,8 +411,6 @@ class GlobalAggregation(nn.Module):
             self.agg = gnn.global_add_pool
         elif agg_func == 'max':
             self.agg = gnn.global_max_pool
-        elif self.agg_func == '1o max':
-            pass
         elif agg_func == 'attention':
             self.agg = gnn.GlobalAttention(nn.Sequential(nn.Linear(depth, depth), nn.LeakyReLU(), nn.Linear(depth, 1)))
         elif agg_func == 'set2set':
@@ -498,14 +495,11 @@ class GlobalAggregation(nn.Module):
             # assume the input is nx3xk dimensional. Imperfectly equivariant
             agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)])
             return scatter(x, batch, dim_size=output_dim, dim=0, reduce='max'), agg
+        elif self.agg_func == 'softmax':
+            weights = scatter_softmax(x, batch, dim=0)
+            return scatter(weights * x, batch, dim_size=output_dim, dim=0, reduce='sum')
         elif self.agg_func == 'equivariant softmax':
-
-            # ensure vector norms are well conditioned going into the aggregator
-            # norm = torch.linalg.norm(v, dim=1)
-            # mean = scatter(norm, batch, dim=0, dim_size=batch.max() + 1, reduce='mean')
-            # normed_v = v / (mean.index_select(0, batch) + 1e-5)[:, None, :]
             weights = scatter_softmax(torch.linalg.norm(v, dim=1), batch, dim=0)
-
             return (scatter(weights * x, batch, dim_size=output_dim, dim=0, reduce='sum'),
                     scatter(weights[:, None, :] * v, batch, dim=0, dim_size=output_dim, reduce='sum'))
         elif self.agg_func == 'equivariant combo':

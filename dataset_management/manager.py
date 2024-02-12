@@ -90,7 +90,7 @@ class DataManager:
         self.single_molecule_dataset_identifier = config.single_molecule_dataset_identifier
         np.random.seed(self.dataset_seed)
 
-        if isinstance(self.dataset['atom_atomic_numbers'], list):  # todo write a function for this style of flexible concatenation
+        if isinstance(self.dataset['atom_atomic_numbers'], list) or isinstance(self.dataset['atom_atomic_numbers'][0], list):  # todo write a function for this style of flexible concatenation
             self.allowed_atom_types = np.unique(
                 np.concatenate([atoms for atoms_lists in self.dataset['atom_atomic_numbers'] for atoms in atoms_lists]))
         else:

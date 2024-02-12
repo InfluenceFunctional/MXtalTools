@@ -131,10 +131,10 @@ class Logger:
 
         metrics_to_log = {'epoch': self.epoch,
                           'packing_loss_coefficient': self.packing_loss_coefficient,
-                          'batch size': self.batch_size}
+                          'batch_size': self.batch_size}
 
         for key in self.learning_rates.keys():
-            metrics_to_log[f'{key} learning rate'] = self.learning_rates[key]
+            metrics_to_log[f'{key}_learning_rate'] = self.learning_rates[key]
 
         # losses
         for key in self.current_losses.keys():
@@ -167,6 +167,13 @@ class Logger:
                                 metrics_to_log[f'{name}_{key}'] = np.average(stats_dict[key])
                     else:  # ignore other objects
                         pass
+
+        for model in self.loss_record.keys():
+            for loss in self.loss_record[model].keys():
+                record = self.loss_record[model][loss]
+                if len(record) > 0:
+                    mean_record = np.asarray([rec.mean() for rec in record])
+                    metrics_to_log[model + '_best_' + loss] = np.amin(mean_record)
 
         return metrics_to_log
 
