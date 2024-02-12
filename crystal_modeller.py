@@ -917,9 +917,10 @@ class Modeller:
                 if i >= iteration_override:
                     break  # stop training early - for debugging purposes
 
-        # post epoch processing
         self.logger.numpyize_stats_dict(self.epoch_type)
+        self.autoencoder_annealing()
 
+    def autoencoder_annealing(self):
         # if we have learned the existing distribution
         if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:
             # and we more self-overlap than desired
@@ -927,7 +928,6 @@ class Modeller:
                 if np.abs(1 - self.logger.test_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps.test:
                     # tighten the target distribution
                     self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
-
         # if we have too much overlap, just tighten right away
         if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
