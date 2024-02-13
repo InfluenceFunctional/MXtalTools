@@ -778,8 +778,18 @@ class Modeller:
         return data
 
     def autoencoder_step(self, data, update_weights, step, last_step=False):
+        if self.config.autoencoder.infer_protons:  # delete protons from input to model, but keep for analysis
+            heavy_atom_inds = torch.argwhere(data.x != 0)[:, 0]
+            input_cloud = data.clone()
+            input_cloud.x = input_cloud.x[heavy_atom_inds]
+            input_cloud.pos = input_cloud.pos[heavy_atom_inds]
+            input_cloud.batch = input_cloud.batch[heavy_atom_inds]
+            a, b = torch.unique(input_cloud.batch, return_counts=True)
+            input_cloud.ptr = torch.cat([torch.zeros(1, device=self.device), torch.cumsum(b,dim=0)])
+        else:
+            input_cloud = data.clone()
 
-        decoding = self.models_dict['autoencoder'](data.clone())
+        decoding = self.models_dict['autoencoder'](input_cloud)
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
 
         autoencoder_loss = autoencoder_losses.mean()
@@ -788,7 +798,7 @@ class Modeller:
             autoencoder_loss.backward()  # back-propagation
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
-            #norms = torch.stack([p.grad.norm() for p in self.models_dict['autoencoder'].parameters() if p.grad is not None])
+            # norms = torch.stack([p.grad.norm() for p in self.models_dict['autoencoder'].parameters() if p.grad is not None])
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
         if step == 0:  # save the complete final samples
@@ -809,9 +819,12 @@ class Modeller:
             '''log losses and other tracking values'''
             # for the purpose of convergence, we track the evaluation overlap rather than the loss, which is sigma-dependent
             # it's also expensive to compute so do it rarely
+            overlap = (full_overlap / self_overlap).cpu().detach().numpy()
             self.logger.update_current_losses('autoencoder', self.epoch_type,
-                                              1 - (full_overlap / self_overlap).mean().cpu().detach().numpy(),
-                                              1 - (full_overlap / self_overlap).cpu().detach().numpy())
+                                              1 - overlap.mean(),
+                                              1 - overlap)
+
+            stats['evaluation_overlap'] = overlap.mean()
 
         self.logger.update_stats_dict(self.epoch_type,
                                       list(stats.keys()),
@@ -931,6 +944,12 @@ class Modeller:
         # if we have too much overlap, just tighten right away
         if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
+
+        if self.config.autoencoder.model.variational_encoder:
+            if self.logger.train_stats['evaluation_overlap'][-100:].mean() > self.config.autoencoder.KLD_threshold:
+                if self.epoch_type == 'test':
+                    if self.logger.test_stats['evaluation_overlap'][-100:].mean() > self.config.autoencoder.KLD_threshold:
+                        self.config.autoencoder.KLD_weight *= 1.01
 
     def preprocess_real_autoencoder_data(self, data, no_noise=False, orientation_override=None, noise_override=None):
         if not no_noise:

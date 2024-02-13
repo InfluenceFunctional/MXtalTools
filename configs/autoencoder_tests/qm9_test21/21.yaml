@@ -25,11 +25,11 @@ autoencoder:
     graph_node_dropout: 0
     graph_node_norm: graph layer
     max_num_neighbors: 100
-    nodewise_fc_layers: 2
+    nodewise_fc_layers: 4
     num_attention_heads: 16
     num_decoder_layers: 4
     num_decoder_points: 256
-    num_graph_convolutions: 2
+    num_graph_convolutions: 1
     num_radial: 32
     radial_function: gaussian
     variational_encoder: false
@@ -43,9 +43,9 @@ autoencoder:
     init_lr: 5.0e-05
     lr_growth_lambda: 1.01
     lr_schedule: true
-    lr_shrink_lambda: 0.999
-    max_lr: 0.0005
-    min_lr: 5.0e-05
+    lr_shrink_lambda: 0.99
+    max_lr: 0.0002
+    min_lr: 5.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
     weight_decay: 0.05
@@ -57,7 +57,7 @@ autoencoder:
   type_distance_scaling: 0.5
 autoencoder_positional_noise: 0
 base_config_path: /experiments/base.yaml
-batch_growth_increment: 0.5
+batch_growth_increment: 0.05
 checkpointing_loss_type: test
 dataset:
   filter_protons: false
@@ -126,10 +126,10 @@ logger:
   experiment_tag: qm9_test21
   log_figures: true
   mini_csp_frequency: 5
-  run_name: qm9_test21_0_1_2_3_4_5
+  run_name: qm9_test21_0_1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21
   sample_reporting_frequency: 5
 machine: cluster
-max_batch_size: 10000
+max_batch_size: 300
 max_epochs: 100000
 min_batch_size: 25
 minimum_epochs: 10000

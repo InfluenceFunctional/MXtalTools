@@ -64,6 +64,7 @@ supercell_size: 5
 
 autoencoder:
   KLD_weight: 0.001
+  KLD_threshold: 0.95
   random_fraction: 0
   type_distance_scaling: 0.5
   init_sigma: 0.15 #0.15
