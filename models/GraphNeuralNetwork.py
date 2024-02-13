@@ -180,6 +180,7 @@ class GraphNeuralNetwork(torch.nn.Module):
             edge_index, edge_index_inter, inside_inds, outside_inds, inside_batch, n_repeats = list(edges_dict.values())
             edge_index = torch.cat((edge_index, edge_index_inter), dim=1)  # all edges counted in one big batch
             dist, rbf = self.get_geom_embedding(edge_index, pos)
+            rbf_inter = None
         elif self.outside_convolution_type == 'last_layer':
             edge_index, edge_index_inter, inside_inds, outside_inds, inside_batch, n_repeats = list(edges_dict.values())
             dist, rbf = self.get_geom_embedding(edge_index, pos)

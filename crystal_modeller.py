@@ -90,6 +90,14 @@ class Modeller:
 
         self.collater = Collater(None, None)
 
+        '''compute the ratios between the norms of n-dimensional gaussians (means of chi distribution)'''
+        m1 = torch.sqrt(torch.ones(1) * 2) * torch.exp(torch.lgamma(torch.ones(1) * (12 + 1) / 2)) / torch.exp(torch.lgamma(torch.ones(1) * 12 / 2))
+        self.chi_scaling_factors = torch.zeros(4, dtype=torch.float, device=self.device)
+        for ind, ni in enumerate([3, 6, 9, 12]):
+
+            m2 = torch.sqrt(torch.ones(1) * 2) * torch.exp(torch.lgamma(torch.ones(1) * (ni + 1) / 2)) / torch.exp(torch.lgamma(torch.ones(1) * ni / 2))
+            self.chi_scaling_factors[ind] = m1 / m2
+
     def prep_new_working_directory(self):
         """
         make a workdir
@@ -785,7 +793,7 @@ class Modeller:
             input_cloud.pos = input_cloud.pos[heavy_atom_inds]
             input_cloud.batch = input_cloud.batch[heavy_atom_inds]
             a, b = torch.unique(input_cloud.batch, return_counts=True)
-            input_cloud.ptr = torch.cat([torch.zeros(1, device=self.device), torch.cumsum(b,dim=0)])
+            input_cloud.ptr = torch.cat([torch.zeros(1, device=self.device), torch.cumsum(b, dim=0)])
         else:
             input_cloud = data.clone()
 
@@ -1611,7 +1619,7 @@ class Modeller:
             self.logger.update_stats_dict(self.epoch_type, 'generator_sample_source', np.ones(len(generated_samples)), mode='extend')
 
         elif (self.config.discriminator.train_on_distorted or override_distorted) and (generator_ind == 3):
-            generator_data = set_molecule_alignment(real_data.clone(), mode=orientation)
+            generator_data = set_molecule_alignment(real_data.clone(), mode='as is')  # will be standardized anyway in cell builder
             negative_type = 'distorted'
 
             generated_samples, distortion = self.make_distorted_samples(real_data)
@@ -1641,10 +1649,19 @@ class Modeller:
         if distortion_override is not None:
             distortion = torch.randn_like(generated_samples_std) * distortion_override
         else:
+            # distortion types
+            # pick n=[1,4] of the 4 cell param types and proportionally noise them
+            distortion_mask = torch.randint(0, 2, size=(generated_samples_std.shape[0], 4), device=generated_samples_std.device, dtype=torch.long)
+            distortion_mask[distortion_mask.sum(1) == 0] = 1  # any zero entries go to all
+            distortion_mask = distortion_mask * self.chi_scaling_factors[distortion_mask.sum(1) - 1][:, None].float()
+            distortion_mask = distortion_mask.repeat_interleave(3, dim=1)
+
             if self.config.discriminator.distortion_magnitude == -1:
-                distortion = torch.randn_like(generated_samples_std) * torch.logspace(-2, 1, len(generated_samples_std)).to(generated_samples_std.device)[:, None]  # wider range
+                distortion_magnitude = torch.logspace(-1.5, 0.5, len(generated_samples_std)).to(generated_samples_std.device)[:, None]  # wider range
             else:
-                distortion = torch.randn_like(generated_samples_std) * self.config.discriminator.distortion_magnitude
+                distortion_magnitude = self.config.discriminator.distortion_magnitude
+
+            distortion = torch.randn_like(generated_samples_std) * distortion_magnitude * distortion_mask
 
         distorted_samples_std = (generated_samples_std + distortion).to(self.config.device)  # add jitter and return in standardized basis
 

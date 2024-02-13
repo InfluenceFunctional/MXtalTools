@@ -1,15 +1,15 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
-dataset_name: 'qm9_molecules_dataset.pkl' #'test_dataset.pkl' #
-misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy' #'misc_data_for_dataset.npy' #
+mode: gan  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
+dataset_name: 'test_dataset.pkl' #'qm9_molecules_dataset.pkl' #
+misc_dataset_name: 'misc_data_for_dataset.npy' #'misc_data_for_qm9_molecules_dataset.npy' #
 base_config_path: '/experiments/base.yaml'  # base config
-dataset_yaml_path: '/dataset/qm9_autoencoder.yaml' #'/dataset/full_regression.yaml' #
+dataset_yaml_path: '/dataset/full_discriminator.yaml' #'/dataset/qm9_autoencoder.yaml' #
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
-model_names: ['autoencoder']#, 'embedding_regressor']
+model_names: ['discriminator'] #, 'embedding_regressor']
 sweep_id: null #h38n3wfs
 sweep_path: null #'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep3/qm9_sweep3.yaml'
 
@@ -17,7 +17,7 @@ dataset:
   max_dataset_length: 10000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: molecule_rotational_constant_a
+  regression_target: crystal_packing_coefficient #molecule_rotational_constant_a
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -51,7 +51,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null #/cluster/best_autoencoder_autoencoder_tests_qm9_test20_1_02-02-11-33-00
+  autoencoder: null
   embedding_regressor: null
 
 discriminator_positional_noise: 0
@@ -199,25 +199,71 @@ embedding_regressor:
 
 # for GAN training
 generator:
-  # settings
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
-  train_vdw: True
-  train_adversarially: True
+  train_vdw: False
+  train_adversarially: False
   vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
   density_loss_func: l1  # 'l1' or 'mse'
   adversarial_loss_func: 'score'  #
   train_h_bond: False # (non-directional)
-  similarity_penalty: 0.5
+  similarity_penalty: 0
 
   #generator optimizer and model
-  optimizer: null
+  optimizer:
+    optimizer: adamw
+    init_lr: 5.0E-4
+    max_lr: 1.0E-3
+    min_lr: 1.0E-4
+    lr_schedule: True
+    beta1: 0.9 #0.9
+    beta2: 0.999 #0.999
+    weight_decay: 0.01
+    convergence_eps: 0.00001
+    lr_growth_lambda: 1.05
+    lr_shrink_lambda: 0.99
 
-  model: null
+  model:
+    num_fc_layers: 2
+    fc_depth: 128
+    activation: 'gelu'
+    fc_dropout_probability: 0.1
+    fc_norm_mode: layer
+    conditioning_mode: 'first_layer' # 'first_layer' only for now
+
+    prior: multivariate normal
+    prior_dimension: 12  # NOTE this must be 12 currently
+    radial_norm_factor: 5
+
+    conditioner:
+      graph_convolution_type: TransformerConv
+      graph_aggregator: combo
+      concat_mol_to_atom_features: False
+      activation: gelu
+      num_fc_layers: 4
+      fc_depth: 256
+      fc_norm_mode: layer
+      fc_dropout_probability: 0.1
+      graph_node_norm: 'graph layer'
+      graph_node_dropout: 0.1
+      graph_message_norm: null
+      graph_message_dropout: 0
+      num_attention_heads: 4
+      graph_message_depth: 64
+      graph_node_dims: 256
+      num_graph_convolutions: 2
+      graph_embedding_depth: 256
+      nodewise_fc_layers: 1
+      num_radial: 50
+      radial_function: gaussian
+      max_num_neighbors: 100
+      convolution_cutoff: 6
+      atom_type_embedding_dims: 5
+
 
 discriminator:
   # settings
-  train_adversarially: True
+  train_adversarially: False
   train_on_randn: True
   train_on_distorted: True
   use_classification_loss: True
@@ -226,6 +272,42 @@ discriminator:
   distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
   # discriminator optimizer and model
-  optimizer: null
+  optimizer:
+    optimizer: adamw
+    init_lr: 1.0E-3
+    max_lr: 1.0E-5
+    min_lr: 1.0E-5
+    lr_schedule: True
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 1
+    convergence_eps: 0.0001
+    lr_growth_lambda: 1.00
+    lr_shrink_lambda: 0.995
+    use_plateau_scheduler: False
 
-  model: null
+  model:
+    graph_convolution_type: TransformerConv
+    graph_aggregator: combo
+    concat_mol_to_atom_features: True
+    activation: gelu
+    num_fc_layers: 4
+    fc_depth: 256
+    fc_norm_mode: layer
+    fc_dropout_probability: 0.25
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0.25
+    graph_message_norm: null
+    graph_message_dropout: 0
+    num_attention_heads: 16
+    graph_message_depth: 128
+    graph_node_dims: 256
+    num_graph_convolutions: 4
+    graph_embedding_depth: 256
+    nodewise_fc_layers: 1
+    num_radial: 32
+    radial_function: bessel
+    max_num_neighbors: 100
+    convolution_cutoff: 6
+    atom_type_embedding_dims: 24
+    periodic_convolution_type: 'all_layers'  # or 'last_layer'
