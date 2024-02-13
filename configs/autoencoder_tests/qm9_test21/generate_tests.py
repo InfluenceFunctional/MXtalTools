@@ -27,10 +27,14 @@ config_list = [
     [4, 512, 0.05, False, 0, 0, 512, 512, 1, 4, True, .99, 10000, 5e-5, 0.5],  # 13 - ok at first then very rapid convergence, eventual overfit starting at ~90%
     # seems like low batch size and also good LR decay are important
     # try 1) slower batch increase, 2) low batch max, 3) lower LR min
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 1e-5, 0.5],  # 14
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 1e-5, 0.05],  # 15
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 5000, 1e-5, 0.05],  # 16
-    [4, 512, 0.05, True, 0, 0, 512, 512, 1, 4, True, .99, 500, 1e-5, 0.5],  # 17
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 1e-5, 0.5],  # 14 - 2nd best
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 1e-5, 0.05],  # 15 - new best
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 5000, 1e-5, 0.05],  # 16 - slightly better than 11
+    [4, 512, 0.05, True, 0, 0, 512, 512, 1, 4, True, .99, 500, 1e-5, 0.5],  # 17 - tied 2nd best
+    # LR peak is perhaps too high
+    # regardless of differences in configs, GPU/random noise gave them different final batch sizes, and the results track them well
+    # small batches, even lower LR minimum and maximum
+    # also we are ready to train with protons, proton replacement, and variational annealing
 
 ]
 

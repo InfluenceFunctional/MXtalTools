@@ -149,10 +149,10 @@ regressor:
     activation: gelu
     num_fc_layers: 4
     fc_depth: 512
-    fc_norm_mode: 'layer'
-    fc_dropout_probability: 0.1
-    graph_node_norm: 'graph layer'
-    graph_node_dropout: 0.1
+    fc_norm_mode: null #'layer'
+    fc_dropout_probability: 0
+    graph_node_norm: null #'graph layer'
+    graph_node_dropout: 0
     graph_message_norm: null
     graph_message_dropout: 0
     num_attention_heads: 32
