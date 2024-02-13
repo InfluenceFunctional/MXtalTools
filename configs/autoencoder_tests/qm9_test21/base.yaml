@@ -63,6 +63,7 @@ generate_sgs: ['P-1']  #["P-1","P21/c","P212121","C2/c"] # null -> will generate
 supercell_size: 5
 
 autoencoder:
+  infer_protons: False
   KLD_weight: 0.001
   KLD_threshold: 0.95
   random_fraction: 0

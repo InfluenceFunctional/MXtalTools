@@ -67,6 +67,7 @@ for ix1 in range(len(config_list)):
     config['batch_growth_increment'] = config_list[ix1][14]
     config['autoencoder']['optimizer']['max_lr'] = config_list[ix1][15]
     config['autoencoder']['model']['variational_encoder'] = config_list[ix1][16]
+    config['autoencoder']['infer_protons'] = config_list[ix1][17]
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
