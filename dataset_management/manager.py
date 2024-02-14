@@ -288,9 +288,14 @@ class DataManager:
 
     def get_regression_target(self):
         targets = self.dataset[self.regression_target]
-        targets = np.clip(targets, a_min=np.quantile(targets, 0.001), a_max=np.quantile(targets, 0.999))  # cut severe outliers
-        target_mean = self.standardization_dict[self.regression_target][0]
-        target_std = self.standardization_dict[self.regression_target][1]
+        targets = np.clip(targets, a_min=np.quantile(targets, 0.001), a_max=np.quantile(targets, 0.999))  # clip severe outliers
+
+        # this will exclude severe outliers from the statistics
+        targets_for_stats = np.clip(self.dataset[self.regression_target], a_min=np.quantile(self.dataset[self.regression_target], 0.1), a_max=np.quantile(targets, 0.9))  # clip severe outliers
+        target_mean = targets_for_stats.mean()
+        target_std = targets_for_stats.std()
+        # target_mean = self.standardization_dict[self.regression_target][0] # todo bring this back when we fix the standardization in the featurizer - some distributions are super weird
+        # target_std = self.standardization_dict[self.regression_target][1]
 
         return (targets - target_mean) / target_std
 

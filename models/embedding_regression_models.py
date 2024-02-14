@@ -33,7 +33,7 @@ class embedding_regressor(nn.Module):
                          seed=seed,
                          conditioning_mode=None,
                          equivariant=config.equivariant,
-                         vector_norm=config.v_norm_mode if config.equivariant else False,
+                         vector_norm=config.vector_norm if config.equivariant else None,
                          residue_v_to_s=True if config.equivariant else False,
                          )
 

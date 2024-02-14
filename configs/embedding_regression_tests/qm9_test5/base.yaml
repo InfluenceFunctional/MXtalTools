@@ -1,4 +1,4 @@
-machine: "local"  # or "cluster"
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: embedding_regression  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
@@ -14,7 +14,7 @@ sweep_id: null #h38n3wfs
 sweep_path: null #'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep3/qm9_sweep3.yaml'
 
 dataset:
-  max_dataset_length: 100
+  max_dataset_length: 1000000
   test_fraction: 0.2
   filter_protons: True
   regression_target: molecule_gap_energy # crystal_packing_coefficient
@@ -25,19 +25,19 @@ num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 25
 max_batch_size: 10000
-batch_growth_increment: 0.5 # fraction of batch size to grow by each epoch
+batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 100
+minimum_epochs: 1000
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 50  # for convergence checks
+history: 100  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  run_name: dev
-  experiment_tag: dev
+  run_name: qm9r_test5
+  experiment_tag: qm9r_test5
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 3  # how often to do detailed reporting with figures
   log_figures: True
 
 sample_steps: 100
@@ -51,7 +51,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test21_20_13-02-10-13-47 #/cluster/best_autoencoder_autoencoder_tests_qm9_test21_18_13-02-10-13-43
+  autoencoder: null
   embedding_regressor: null
 
 discriminator_positional_noise: 0
@@ -183,9 +183,9 @@ embedding_regressor:
     beta1: 0.9
     beta2: 0.999
     weight_decay: 1
-    convergence_eps: 0.0001
+    convergence_eps: 0.000001
     lr_growth_lambda: 1.00
-    lr_shrink_lambda: 0.995
+    lr_shrink_lambda: 0.99
     use_plateau_scheduler: False
 
   model:
