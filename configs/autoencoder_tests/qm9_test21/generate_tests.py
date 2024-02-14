@@ -6,40 +6,44 @@ import numpy as np
 base_config = load_yaml('base.yaml')
 
 # decoder layers, decoder points, weight decay, filter protons, positional noise, dropout, embedding_dim, bottleneck_dim, num_convs, num_nodewise,
-# ramp_depth, lr shrink lambda, max batch, min_lr, batch_growth_increment, max_lr, variational, guess protons
+# ramp_depth, lr shrink lambda, max batch, min_lr, batch_growth_increment, max_lr, variational, guess protons, KLD_threshold
 config_list = [
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 0 - converged
-    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 1 - converged too early
-    [4, 256, 0.05, True, 0, 0, 256, 256, 0, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 2  cancelled - flat
-    [4, 256, 0.05, False, 0, 0, 256, 256, 0, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 3  cancelled - flat
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 0 - converged
+    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 1 - converged too early
+    [4, 256, 0.05, True, 0, 0, 256, 256, 0, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 2  cancelled - flat
+    [4, 256, 0.05, False, 0, 0, 256, 256, 0, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 3  cancelled - flat
 
-    [4, 256, 0.05, True, 0, 0, 256, 256, 2, 2, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 4 - converged - ~worse than 0
-    [4, 256, 0.05, False, 0, 0, 256, 256, 2, 2, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 5 - converged too early - ~worse than 1
+    [4, 256, 0.05, True, 0, 0, 256, 256, 2, 2, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 4 - converged - ~worse than 0
+    [4, 256, 0.05, False, 0, 0, 256, 256, 2, 2, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 5 - converged too early - ~worse than 1
 
-    [4, 256, 0.1, True, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 6 - ~
-    [8, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 7 - ~
-    [4, 256, 0.05, True, 0, 0, 512, 512, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 8 - fast at first, then unstable, then OK
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, False, .999, 10000, 5e-5, 0.5, 5e-4, False, False],  # 9 - ~
+    [4, 256, 0.1, True, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 6 - ~
+    [8, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 7 - ~
+    [4, 256, 0.05, True, 0, 0, 512, 512, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 8 - fast at first, then unstable, then OK
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, False, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 9 - ~
 
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 10000, 5e-5, 0.5, 5e-4, False, False],  # 10 - better than prior runs
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 5e-5, 0.5, 5e-4, False, False],  # 11 - rapid training but levels out around .96
-    [4, 256, 0.05, True, 0, 0, 512, 128, 1, 4, True, .99, 10000, 5e-5, 0.5, 5e-4, False, False],  # 12 - same as 10
-    [4, 512, 0.05, False, 0, 0, 512, 512, 1, 4, True, .99, 10000, 5e-5, 0.5, 5e-4, False, False],  # 13 - ok at first then very rapid convergence, eventual overfit starting at ~90%
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 10 - better than prior runs
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 11 - rapid training but levels out around .96
+    [4, 256, 0.05, True, 0, 0, 512, 128, 1, 4, True, .99, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 12 - same as 10
+    [4, 512, 0.05, False, 0, 0, 512, 512, 1, 4, True, .99, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95],  # 13 - ok at first then very rapid convergence, eventual overfit starting at ~90%
     # seems like low batch size and also good LR decay are important
     # try 1) slower batch increase, 2) low batch max, 3) lower LR min
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 1e-5, 0.5, 5e-4, False, False],  # 14 - 2nd best
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 1e-5, 0.05, 5e-4, False, False],  # 15 - new best
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 5000, 1e-5, 0.05, 5e-4, False, False],  # 16 - slightly better than 11
-    [4, 512, 0.05, True, 0, 0, 512, 512, 1, 4, True, .99, 500, 1e-5, 0.5, 5e-4, False, False],  # 17 - tied 2nd best
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 1e-5, 0.5, 5e-4, False, False, 0.95],  # 14 - 2nd best
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 500, 1e-5, 0.05, 5e-4, False, False, 0.95],  # 15 - new best
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 5000, 1e-5, 0.05, 5e-4, False, False, 0.95],  # 16 - slightly better than 11
+    [4, 512, 0.05, True, 0, 0, 512, 512, 1, 4, True, .99, 500, 1e-5, 0.5, 5e-4, False, False, 0.95],  # 17 - tied 2nd best
     # LR peak is perhaps too high
     # regardless of differences in configs, GPU/random noise gave them different final batch sizes, and the results track them well
     # small batches, even lower LR minimum and maximum
     # also we are ready to train with protons, proton replacement, and variational annealing
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False],  # 18 - converges firmly to 0.975
-    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False],  # 19 - overfitting around 0.9
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, True, False],  # 20 - pretty beautiful convergence tbh
-    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, True],  # 21 - overfitting around 0.84
-
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False, 0.95],  # 18 - converges firmly to 0.975
+    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False, 0.95],  # 19 - overfitting around 0.9
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, True, False, 0.95],  # 20 - pretty beautiful convergence tbh
+    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, True, 0.95],  # 21 - overfitting around 0.84
+    # need to do better checkpointing on variational
+    # also would be nice if protonated models didn't overfit
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, True, False, 0.97],  # 22
+    [4, 256, 0.05, False, 0, 0, 128, 128, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False, 0.95],  # 23
+    [4, 256, 0.05, False, 0, 0, 128, 128, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, True, 0.95],  # 24
 ]
 
 np.random.seed(1)
@@ -68,6 +72,7 @@ for ix1 in range(len(config_list)):
     config['autoencoder']['optimizer']['max_lr'] = config_list[ix1][15]
     config['autoencoder']['model']['variational_encoder'] = config_list[ix1][16]
     config['autoencoder']['infer_protons'] = config_list[ix1][17]
+    config['autoencoder']['KLD_threshold'] = config_list[ix1][18]
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)

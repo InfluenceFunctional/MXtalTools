@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: embedding_regression  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
+mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
 dataset_name: 'qm9_molecules_dataset.pkl' # 'test_dataset.pkl' #
 misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy' # 'misc_data_for_dataset.npy' #
 base_config_path: '/experiments/base.yaml'  # base config
@@ -9,7 +9,7 @@ dataset_yaml_path: '/dataset/qm9_autoencoder.yaml' # '/dataset/full_discriminato
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
-model_names: ['autoencoder', 'embedding_regressor']
+model_names: ['autoencoder']#, 'embedding_regressor']
 sweep_id: null #h38n3wfs
 sweep_path: null #'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep3/qm9_sweep3.yaml'
 
@@ -96,7 +96,7 @@ autoencoder:
     use_plateau_scheduler: False
 
   model:
-    variational_encoder: False
+    variational_encoder: True
     encoder_type: 'equivariant' # or variant
     decoder_type: 'equivariant' # or variant
 

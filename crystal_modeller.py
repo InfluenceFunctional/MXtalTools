@@ -173,8 +173,9 @@ class Modeller:
                 model.cuda()
 
         self.optimizers_dict = \
-            {model_name:
-                 init_optimizer(model_name, self.config.__dict__[model_name].optimizer, model) for model_name, model in self.models_dict.items()}
+            {model_name: init_optimizer(model_name, self.config.__dict__[model_name].optimizer, model)
+             for model_name, model in self.models_dict.items()
+             }
 
         for model_name, model_path in self.config.model_paths.__dict__.items():
             if model_path is not None:
@@ -828,9 +829,15 @@ class Modeller:
             # for the purpose of convergence, we track the evaluation overlap rather than the loss, which is sigma-dependent
             # it's also expensive to compute so do it rarely
             overlap = (full_overlap / self_overlap).cpu().detach().numpy()
+
+            if self.config.autoencoder.model.variational_encoder:  # account for KLD in tracking loss
+                tracking_loss = (1 - overlap) + stats['embedding_KLD']
+            else:
+                tracking_loss = 1-overlap
+
             self.logger.update_current_losses('autoencoder', self.epoch_type,
-                                              1 - overlap.mean(),
-                                              1 - overlap)
+                                              tracking_loss.mean(),
+                                              tracking_loss)
 
             stats['evaluation_overlap'] = overlap.mean()
 
@@ -958,6 +965,7 @@ class Modeller:
                 if self.epoch_type == 'test':
                     if self.logger.test_stats['evaluation_overlap'][-100:].mean() > self.config.autoencoder.KLD_threshold:
                         self.config.autoencoder.KLD_weight *= 1.01
+                        wandb.log({'KLD_weight': self.config.autoencoder.KLD_weight})
 
     def preprocess_real_autoencoder_data(self, data, no_noise=False, orientation_override=None, noise_override=None):
         if not no_noise:
