@@ -35,10 +35,10 @@ config_list = [
     # regardless of differences in configs, GPU/random noise gave them different final batch sizes, and the results track them well
     # small batches, even lower LR minimum and maximum
     # also we are ready to train with protons, proton replacement, and variational annealing
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False],  # 18
-    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False],  # 19
-    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, True, False],  # 20
-    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, True],  # 21
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False],  # 18 - converges firmly to 0.975
+    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False],  # 19 - pretty beautiful convergence tbh
+    [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, True, False],  # 20 - overfitting around 0.9
+    [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, True],  # 21 - overfitting around 0.84
 
 ]
 

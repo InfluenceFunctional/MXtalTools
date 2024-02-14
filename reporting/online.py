@@ -1600,7 +1600,12 @@ def score_vs_distance_plot(wandb, pred_distance_dict, scores_dict):
     x = np.concatenate([scores_dict[stype] for stype in sample_types])
     y = np.log(np.abs(np.concatenate([pred_distance_dict[stype] for stype in sample_types])))
     xy = np.vstack([x, y])
-    z = get_point_density(xy, bins=200)
+
+    try:
+        z = get_point_density(xy, bins=200)
+    except:
+        z = np.ones(len(x))
+
     fig.add_trace(go.Scattergl(x=x, y=y, mode='markers', opacity=0.2, marker_color=z, showlegend=False), row=1, col=2)
 
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
