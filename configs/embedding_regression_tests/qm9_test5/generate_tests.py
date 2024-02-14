@@ -38,9 +38,9 @@ for ii in range(n_runs):
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ii)
     config['dataset']['regression_target'] = search_space['dataset']['regression_target'][ii//2]
     if ii % 2 == 0:
-        config['model_paths']['embedding_regressor'] = search_space['models'][0]
+        config['model_paths']['autoencoder'] = search_space['models'][0]
     else:
-        config['model_paths']['embedding_regressor'] = search_space['models'][1]
+        config['model_paths']['autoencoder'] = search_space['models'][1]
 
     with open(str(ii) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)

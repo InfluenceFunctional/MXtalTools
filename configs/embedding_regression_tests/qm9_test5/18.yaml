@@ -220,9 +220,9 @@ model_names:
 - autoencoder
 - embedding_regressor
 model_paths:
-  autoencoder: null
+  autoencoder: best_autoencoder_autoencoder_tests_qm9_test21_18_13-02-10-13-43
   discriminator: null
-  embedding_regressor: best_autoencoder_autoencoder_tests_qm9_test21_18_13-02-10-13-43
+  embedding_regressor: null
   generator: null
   regressor: null
 num_early_epochs: 0
