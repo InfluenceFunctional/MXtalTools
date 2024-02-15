@@ -253,7 +253,8 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=No
     return scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict, pred_distance_dict, true_distance_dict
 
 
-def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout):
+def discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict, layout):
+    fig_dict = {}
     plot_color_dict = {'CSD': ('rgb(250,150,50)'),
                        'Generator': ('rgb(100,50,0)'),
                        'Gaussian': ('rgb(0,50,0)'),
@@ -268,16 +269,33 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
 
     sample_source = np.concatenate([[stype for _ in range(len(scores_dict[stype]))] for stype in sample_types])
     scores_range = np.ptp(all_scores)
-    bandwidth1 = scores_range / 200
 
+    bandwidth1, fig, vdw_cutoff, viridis = score_vs_vdw_plot(all_scores, all_vdws, layout,
+                                                             plot_color_dict, sample_types, scores_dict,
+                                                             scores_range, vdw_penalty_dict)
+    fig_dict['Discriminator vs vdw scores'] = fig
+
+    '''
+    vs coeff
+    '''
+    fig = score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coeff_dict,
+                                plot_color_dict, sample_types, scores_dict, viridis)
+    fig_dict['Discriminator vs packing coefficient'] = fig
+
+    fig = combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source, vdw_cutoff)
+    fig_dict['Discriminator Scores Analysis'] = fig
+
+    return fig_dict
+
+
+def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_types, scores_dict, scores_range, vdw_penalty_dict):
+    bandwidth1 = scores_range / 200
     vdw_cutoff = min(np.quantile(all_vdws, 0.975), 3)
     bandwidth2 = vdw_cutoff / 200
     viridis = px.colors.sequential.Viridis
-
     scores_labels = sample_types
     fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)'),
                         specs=[[{}, {}], [{"colspan": 2}, None]], vertical_spacing=0.14)
-
     for i, label in enumerate(scores_labels):
         legend_label = label
         fig.add_trace(go.Violin(x=scores_dict[label], name=legend_label, line_color=plot_color_dict[label],
@@ -289,13 +307,10 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
                                 side='positive', orientation='h', width=4, meanline_visible=True,
                                 bandwidth=bandwidth2, points=False),
                       row=1, col=2)
-
     # fig.update_xaxes(col=2, row=1, range=[-3, 0])
-
     rrange = np.logspace(3, 0, len(viridis))
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
-
     fig.add_trace(go.Histogram2d(x=np.clip(all_scores, a_min=np.quantile(all_scores, 0.05), a_max=np.amax(all_scores)),
                                  y=-np.minimum(all_vdws, vdw_cutoff),
                                  showscale=False,
@@ -307,31 +322,24 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
                                      tickvals=[0, 1000, 10000]
                                  )),
                   row=2, col=1)
-
     fig.update_layout(showlegend=False, yaxis_showgrid=True)
     fig.update_xaxes(title_text='Model Score', row=1, col=1)
     fig.update_xaxes(title_text='vdW Score', row=1, col=2)
     fig.update_xaxes(title_text='Model Score', row=2, col=1)
     fig.update_yaxes(title_text='vdW Score', row=2, col=1)
-
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
-
     fig.layout.annotations[0].update(x=0.025)
     fig.layout.annotations[1].update(x=0.575)
-
     fig.layout.margin = layout.margin
-    wandb.log({'Discriminator vs vdw scores': fig})
+    return bandwidth1, fig, vdw_cutoff, viridis
 
-    '''
-    vs coeff
-    '''
+
+def score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coeff_dict, plot_color_dict, sample_types, scores_dict, viridis):
     bandwidth2 = 0.01
-
     scores_labels = sample_types
     fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)'),
                         specs=[[{}, {}], [{"colspan": 2}, None]], vertical_spacing=0.14)
-
     for i, label in enumerate(scores_labels):
         legend_label = label
         fig.add_trace(go.Violin(x=scores_dict[label], name=legend_label, line_color=plot_color_dict[label],
@@ -343,11 +351,9 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
                                 side='positive', orientation='h', width=4, meanline_visible=True,
                                 bandwidth=bandwidth2, points=False),
                       row=1, col=2)
-
     rrange = np.logspace(3, 0, len(viridis))
     cscale = [[1 / rrange[i], viridis[i]] for i in range(len(rrange))]
     cscale[0][0] = 0
-
     fig.add_trace(go.Histogram2d(x=np.clip(all_scores, a_min=np.quantile(all_scores, 0.05), a_max=np.amax(all_scores)),
                                  y=np.clip(all_coeffs, a_min=0, a_max=1),
                                  showscale=False,
@@ -359,25 +365,23 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
                                      tickvals=[0, 1000, 10000]
                                  )),
                   row=2, col=1)
-
     fig.update_layout(showlegend=False, yaxis_showgrid=True)
     fig.update_xaxes(title_text='Model Score', row=1, col=1)
     fig.update_xaxes(title_text='Packing Coefficient', row=1, col=2)
     fig.update_xaxes(title_text='Model Score', row=2, col=1)
     fig.update_yaxes(title_text='Packing Coefficient', row=2, col=1)
-
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
-
     fig.layout.annotations[0].update(x=0.025)
     fig.layout.annotations[1].update(x=0.575)
-
     fig.layout.margin = layout.margin
-    wandb.log({'Discriminator vs packing coefficient': fig})
+    return fig
 
-    '''
+
+def combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source, vdw_cutoff):
+    """
     # All in one
-    '''
+    """
     scatter_dict = {'vdw_score': -all_vdws.clip(max=vdw_cutoff), 'model_score': all_scores, 'packing_coefficient': all_coeffs.clip(min=0, max=1), 'sample_source': sample_source}
     df = pd.DataFrame.from_dict(scatter_dict)
     fig = px.scatter(df,
@@ -391,9 +395,7 @@ def discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coe
     fig.update_layout(xaxis_range=[-vdw_cutoff, 0.1], yaxis_range=[0, 1.1])
     fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
     fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
-    wandb.log({'Discriminator Scores Analysis': fig})
-
-    return None
+    return fig
 
 
 def functional_group_analysis_fig(scores_dict, tracking_features, layout, dataDims):
@@ -649,7 +651,7 @@ def plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_
     wandb.log({'Generator Loss Correlates': fig})
 
 
-def plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout):
+def plot_discriminator_score_correlates(dataDims, epoch_stats_dict, layout):
     correlates_dict = {}
     real_scores = epoch_stats_dict['discriminator_real_score']
     tracking_features = np.asarray(epoch_stats_dict['tracking_features'])
@@ -675,7 +677,7 @@ def plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layou
 
     fig.layout.margin = layout.margin
 
-    wandb.log({'Discriminator Score Correlates': fig})
+    return fig
 
 
 def get_BT_identifiers_inds(extra_test_dict):
@@ -1153,7 +1155,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         mol_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_volume')]
         mol_mass = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_mass')]
         target_density = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_density')]
-        target_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_cell_volume')]
+        target_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_cell_volume')] / multiplicity
         target_packing_coefficient = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_packing_coefficient')]
 
         if target_key == 'crystal_reduced_volume':
@@ -1173,7 +1175,10 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         loss_dict = {}
         fig_dict = {}
         fig = make_subplots(cols=3, rows=2, subplot_titles=['asym_unit_volume', 'packing_coefficient', 'density', 'asym_unit_volume error', 'packing_coefficient error', 'density error'])
-        for ind, (name, tgt_value, pred_value) in enumerate(zip(['asym_unit_volume', 'packing_coefficient', 'density'], [target_volume, target_packing_coefficient, target_density], [predicted_volume, predicted_packing_coefficient,
+        for ind, (name, tgt_value, pred_value) in enumerate(
+                zip(['asym_unit_volume', 'packing_coefficient', 'density'],
+                    [target_volume, target_packing_coefficient, target_density],
+                    [predicted_volume, predicted_packing_coefficient,
                                                                                                                                                                                       predicted_density])):
             for loss in losses:
                 if loss == 'abs_error':
@@ -1225,9 +1230,9 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         fig.update_xaxes(title_text='True Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4], tickformat=".1f")
         fig.update_xaxes(title_text='True Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
 
-        fig.update_xaxes(title_text='Packing Coefficient Error', row=2, col=2, dtick=0.05, tickformat=".2f")
-        fig.update_xaxes(title_text='Density Error (g/cm<sup>3</sup>)', row=2, col=3, dtick=0.1, tickformat=".1f")
-        fig.update_xaxes(title_text='AUnit Volume (A<sup>3</sup>)', row=2, col=1, dtick=250, tickformat=".0f")
+        fig.update_xaxes(title_text='Packing Coefficient Error', row=2, col=2)#, dtick=0.05, tickformat=".2f")
+        fig.update_xaxes(title_text='Density Error (g/cm<sup>3</sup>)', row=2)#, col=3, dtick=0.1, tickformat=".1f")
+        fig.update_xaxes(title_text='AUnit Volume (A<sup>3</sup>)', row=2, col=1)#, dtick=250, tickformat=".0f")
 
         fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
         fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
@@ -1462,7 +1467,7 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type,
                epoch_type + "_evaluation_typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_overall_overlap": (full_overlap / self_overlap).mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_matching_clouds_fraction": (torch.sum((1 - full_overlap) < 0.01) / data.num_nodes).cpu().detach().numpy(),
-               epoch_type + "_evaluation_overlap_loss": np.log10((1-(full_overlap / self_overlap).cpu().detach().numpy()).mean()),
+               epoch_type + "_evaluation_overlap_loss": np.log10((1 - (full_overlap / self_overlap).cpu().detach().numpy()).mean()),
                })
 
     if config.logger.log_figures:
@@ -1543,20 +1548,27 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=N
     -: scores distribution and vdw penalty by sample source
     -: loss correlates
     """
+    fig_dict = {}
     layout = plotly_setup(config)
-
     scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict, pred_distance_dict, true_distance_dict \
         = process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict)
 
-    discriminator_scores_plots(wandb, scores_dict, vdw_penalty_dict, packing_coeff_dict, layout)
-    plot_discriminator_score_correlates(dataDims, wandb, epoch_stats_dict, layout)
-    discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict, epoch_stats_dict, tracking_features_dict)
-    score_vs_distance_plot(wandb, pred_distance_dict, scores_dict)
+    fig_dict.update(discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict, layout))
+    fig_dict['Discriminator Score Correlates'] = plot_discriminator_score_correlates(dataDims, epoch_stats_dict, layout)
+    fig_dict['Distance Results'], dist_rvalue, dist_slope = discriminator_distances_plots(
+        pred_distance_dict, true_distance_dict, epoch_stats_dict)
+
+    fig_dict['Score vs. Distance'] = score_vs_distance_plot(pred_distance_dict, scores_dict)
+
+    #img_dict = {key: wandb.Image(fig) for key, fig in fig_dict.items()}
+    wandb.log(fig_dict)
+    wandb.log({"distance_R_value": dist_rvalue,
+               "distance_slope": dist_slope})
 
     return None
 
 
-def score_vs_distance_plot(wandb, pred_distance_dict, scores_dict):
+def score_vs_distance_plot(pred_distance_dict, scores_dict):
     sample_types = list(scores_dict.keys())
 
     fig = make_subplots(cols=2, rows=1)
@@ -1571,7 +1583,11 @@ def score_vs_distance_plot(wandb, pred_distance_dict, scores_dict):
     fig.add_trace(go.Scattergl(x=x, y=y, mode='markers', opacity=0.2, marker_color=z, showlegend=False), row=1, col=1)
 
     x = np.concatenate([scores_dict[stype] for stype in sample_types])
-    y = np.log(np.abs(np.concatenate([pred_distance_dict[stype] for stype in sample_types])))
+    y = np.concatenate([pred_distance_dict[stype] for stype in sample_types])
+    y = np.tanh(y * 10) + y
+    #y = np.sign(y) * np.sqrt(np.abs(y))
+    #y = np.log10(np.abs(y) + np.amin(y) + 1e-1)
+
     xy = np.vstack([x, y])
 
     try:
@@ -1584,46 +1600,13 @@ def score_vs_distance_plot(wandb, pred_distance_dict, scores_dict):
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_xaxes(title_text='Model Score')
-    fig.update_yaxes(title_text='log(abs(predicted distance))', row=1, col=2)
+    fig.update_yaxes(title_text='tanh(10*dist) + dist)', row=1, col=2)
     fig.update_yaxes(title_text='predicted distance', row=1, col=1)
 
-    wandb.log({'Score vs. Distance': fig})
+    return fig
 
 
-def discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict, epoch_stats_dict, tracking_features_dict):
-    # if epoch_stats_dict['discriminator_predicted_distortion'] is not None:
-    #     tgt_value = epoch_stats_dict['discriminator_true_distortion']
-    #     pred_value = epoch_stats_dict['discriminator_predicted_distortion']
-    #
-    #     # filter out 'true' samples
-    #     good_inds = tgt_value != 0
-    #     tgt_value_0 = tgt_value[good_inds]
-    #     pred_value_0 = pred_value[good_inds]
-    #
-    #     linreg_result = linregress(tgt_value_0, pred_value_0)
-    #
-    #     # predictions vs target trace
-    #     xline = np.linspace(max(min(tgt_value), min(pred_value)),
-    #                         min(max(tgt_value), max(pred_value)), 2)
-    #
-    #     xy = np.vstack([tgt_value, pred_value])
-    #     z = get_point_density(xy)
-    #
-    #     fig = go.Figure()
-    #     opacity = max(0.1, 1 - len(tgt_value) / 5e4)
-    #     fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, marker=dict(color=z), mode='markers', opacity=opacity, showlegend=False))
-    #     fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
-    #                   )
-    #
-    #     fig.update_layout(xaxis_title='Target Distortion', yaxis_title='Predicted Distortion')
-    #
-    #     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
-    #     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
-    #
-    #     wandb.log({"Distortion Results": fig,
-    #                "distortion_R_value": linreg_result.rvalue,
-    #                "distortion_slope": linreg_result.slope})
-
+def discriminator_distances_plots(pred_distance_dict, true_distance_dict, epoch_stats_dict):
     if epoch_stats_dict['discriminator_fake_predicted_distance'] is not None:
         tgt_value = np.concatenate(list(true_distance_dict.values()))
         pred_value = np.concatenate(list(pred_distance_dict.values()))
@@ -1639,7 +1622,7 @@ def discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict,
         xline = np.linspace(max(min(tgt_value), min(pred_value)),
                             min(max(tgt_value), max(pred_value)), 2)
 
-        opacity = max(0.1, 1 - len(tgt_value) / 5e4)
+        opacity = 0.35
 
         sample_sources = pred_distance_dict.keys()
         sample_source = np.concatenate([[stype for _ in range(len(pred_distance_dict[stype]))] for stype in sample_sources])
@@ -1654,17 +1637,14 @@ def discriminator_distances_plots(wandb, pred_distance_dict, true_distance_dict,
                          )
         fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=True, name='Diagonal', marker_color='rgba(0,0,0,1)'),
                       )
+        # fig.add_trace(go.Histogram2d(x=df['true_distance'], y=df['predicted_distance'], nbinsx=100, nbinsy=100, colorbar_dtick="log", showlegend=False))
 
         fig.update_layout(xaxis_title='Target Distance', yaxis_title='Predicted Distance')
 
         fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
         fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
 
-        wandb.log({"Distance Results": fig,
-                   "distance_R_value": linreg_result.rvalue,
-                   "distance_slope": linreg_result.slope})
-
-    return None
+    return fig, linreg_result.rvalue, linreg_result.slope
 
 
 def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, real_samples_dict, real_data, sym_info):

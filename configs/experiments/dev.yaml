@@ -1,23 +1,26 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
-dataset_name: 'qm9_molecules_dataset.pkl' # 'test_dataset.pkl' #
-misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy' # 'misc_data_for_dataset.npy' #
+mode: regression  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
+dataset_name: 'test_dataset.pkl' #
+#dataset_name: 'qm9_molecules_dataset.pkl' # 'test_dataset.pkl' #
+misc_dataset_name: 'misc_data_for_dataset.npy' #
+#misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy' # 'misc_data_for_dataset.npy' #
 base_config_path: '/experiments/base.yaml'  # base config
-dataset_yaml_path: '/dataset/qm9_autoencoder.yaml' # '/dataset/full_discriminator.yaml' #
+dataset_yaml_path: '/dataset/skinny_regression.yaml' #
+#dataset_yaml_path: '/dataset/qm9_autoencoder.yaml' # '/dataset/full_discriminator.yaml' #
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
-model_names: ['autoencoder']#, 'embedding_regressor']
+model_names: ['regressor']#, 'embedding_regressor']
 sweep_id: null #h38n3wfs
 sweep_path: null #'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep3/qm9_sweep3.yaml'
 
 dataset:
-  max_dataset_length: 100
+  max_dataset_length: 100000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: molecule_gap_energy # crystal_packing_coefficient
+  regression_target: crystal_reduced_volume
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -28,7 +31,7 @@ max_batch_size: 10000
 batch_growth_increment: 0.5 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 100
-max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 50  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
@@ -37,7 +40,7 @@ logger:
   run_name: dev
   experiment_tag: dev
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
   log_figures: True
 
 sample_steps: 100
@@ -48,7 +51,7 @@ seeds:
 
 # for reloading prior checkpoints
 model_paths:
-  discriminator: null
+  discriminator: null #/cluster/best_discriminator_experiments_benchmarks_big_multi_discriminator_14-02-09-19-48
   generator: null
   regressor: null
   autoencoder: null #/cluster/best_autoencoder_autoencoder_tests_qm9_test21_20_13-02-10-13-47 #/cluster/best_autoencoder_autoencoder_tests_qm9_test21_18_13-02-10-13-43
