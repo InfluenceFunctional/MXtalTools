@@ -16,7 +16,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: asym_unit_volume
+  regression_target: crystal_reduced_cell_volume
 
 # batching & convergence
 early_epochs_step_override: 5
