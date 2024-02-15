@@ -15,8 +15,8 @@ import torch.nn.functional as F
 
 from common.utils import get_point_density
 
-from common.geometry_calculations import cell_vol, compute_principal_moment_ratios
-from models.utils import compute_gaussian_overlap
+from common.geometry_calculations import cell_vol
+from models.utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, compute_full_evaluation_overlap
 
 blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
     'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
@@ -1453,18 +1453,10 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
 
 def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type,
                              molecule_radius_normalization):
-    collater = Collater(None, None)
-    data = collater(epoch_stats_dict['sample'])
-    decoded_data = collater(epoch_stats_dict['decoded_sample'])
-    nodewise_weights_tensor = decoded_data.aux_ind
 
-    true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=dataDims['num_atom_types']).float()
-
-    full_overlap, self_overlap = compute_full_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes)
-
-    coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes)
-
-    self_type_overlap, type_overlap = compute_type_evaluation_overlap(config, data, dataDims, decoded_data, nodewise_weights_tensor, true_nodes)
+    (coord_overlap, data, decoded_data, full_overlap,
+     self_coord_overlap, self_overlap, self_type_overlap, type_overlap) = (
+        autoencoder_decoder_sample_validation(config, dataDims, epoch_stats_dict))
 
     wandb.log({epoch_type + "_evaluation_positions_wise_overlap": (coord_overlap / self_coord_overlap).mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_typewise_overlap": (type_overlap / self_type_overlap).mean().cpu().detach().numpy(),
@@ -1487,43 +1479,20 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type,
     return None
 
 
-def compute_type_evaluation_overlap(config, data, dataDims, decoded_data, nodewise_weights_tensor, true_nodes):
-    type_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
-                                            nodewise_weights=nodewise_weights_tensor,
-                                            overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
-                                            type_distance_scaling=config.autoencoder.type_distance_scaling)
-    self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                 nodewise_weights=torch.ones_like(data.x)[:, 0],
-                                                 overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + dataDims['num_atom_types']],
-                                                 type_distance_scaling=config.autoencoder.type_distance_scaling,
-                                                 dist_to_self=True)
-    return self_type_overlap, type_overlap
+def autoencoder_decoder_sample_validation(config, dataDims, epoch_stats_dict):
+    collater = Collater(None, None)
+    data = collater(epoch_stats_dict['sample'])
 
+    decoded_data = collater(epoch_stats_dict['decoded_sample'])
 
-def compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes):
-    coord_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
-                                             nodewise_weights=nodewise_weights_tensor,
-                                             overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
-                                             type_distance_scaling=config.autoencoder.type_distance_scaling)
-    self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                  nodewise_weights=torch.ones_like(data.x)[:, 0],
-                                                  overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
-                                                  type_distance_scaling=config.autoencoder.type_distance_scaling,
-                                                  dist_to_self=True)
-    return coord_overlap, self_coord_overlap
+    nodewise_weights_tensor = decoded_data.aux_ind
 
+    true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=dataDims['num_atom_types']).float()
+    full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes, config)
+    coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes)
+    self_type_overlap, type_overlap = compute_type_evaluation_overlap(config, data, dataDims['num_atom_types'], decoded_data, nodewise_weights_tensor, true_nodes)
 
-def compute_full_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes):
-    full_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
-                                            nodewise_weights=nodewise_weights_tensor,
-                                            overlap_type='gaussian', log_scale=False,
-                                            type_distance_scaling=config.autoencoder.type_distance_scaling)
-    self_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                            nodewise_weights=torch.ones_like(data.x)[:, 0],
-                                            overlap_type='gaussian', log_scale=False,
-                                            type_distance_scaling=config.autoencoder.type_distance_scaling,
-                                            dist_to_self=True)
-    return full_overlap, self_overlap
+    return coord_overlap, data, decoded_data, full_overlap, self_coord_overlap, self_overlap, self_type_overlap, type_overlap
 
 
 def proxy_discriminator_analysis(epoch_stats_dict):
@@ -1594,7 +1563,11 @@ def score_vs_distance_plot(wandb, pred_distance_dict, scores_dict):
     x = np.concatenate([scores_dict[stype] for stype in sample_types])
     y = np.concatenate([pred_distance_dict[stype] for stype in sample_types])
     xy = np.vstack([x, y])
-    z = get_point_density(xy, bins=200)
+    try:
+        z = get_point_density(xy, bins=200)
+    except:
+        z = np.ones(len(xy))
+
     fig.add_trace(go.Scattergl(x=x, y=y, mode='markers', opacity=0.2, marker_color=z, showlegend=False), row=1, col=1)
 
     x = np.concatenate([scores_dict[stype] for stype in sample_types])

@@ -3,7 +3,7 @@ from models.GraphNeuralNetwork import GraphNeuralNetwork
 import torch
 import torch.nn as nn
 
-from models.components import MLP, construct_radial_graph, GlobalAggregation, Normalization
+from models.components import MLP, construct_radial_graph, GlobalAggregation
 
 from constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from models.utils import get_model_nans

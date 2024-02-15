@@ -34,7 +34,8 @@ from models.embedding_regression_models import embedding_regressor
 from models.generator_models import crystal_generator, independent_gaussian_model
 from models.regression_models import molecule_regressor
 from models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
-                          save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss, compute_num_h_bonds, slash_batch, compute_gaussian_overlap)
+                          save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss, compute_num_h_bonds, slash_batch, compute_gaussian_overlap, compute_type_evaluation_overlap, compute_coord_evaluation_overlap,
+                          compute_full_evaluation_overlap)
 from models.utils import (weight_reset, get_n_config)
 from models.vdw_overlap import vdw_overlap
 
@@ -48,7 +49,7 @@ from reporting.logger import Logger
 
 from common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict, batch_compute_dipole
 from common.geometry_calculations import batch_molecule_principal_axes_torch
-from reporting.online import compute_full_evaluation_overlap, autoencoder_embedding_tsnes, compute_coord_evaluation_overlap, compute_type_evaluation_overlap
+from reporting.online import autoencoder_embedding_tsnes
 
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
@@ -150,9 +151,9 @@ class Modeller:
         if self.config.mode == 'regression' or self.config.model_paths.regressor is not None:
             self.models_dict['regressor'] = molecule_regressor(self.config.seeds.model, self.config.regressor.model, self.dataDims)
         if self.config.mode == 'autoencoder' or self.config.model_paths.autoencoder is not None:
-            self.models_dict['autoencoder'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims)
+            self.models_dict['autoencoder'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims['num_atom_types'])
         if self.config.mode == 'embedding_regression':
-            self.models_dict['autoencoder'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims)
+            self.models_dict['autoencoder'] = point_autoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims['num_atom_types'])
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
                 param.requires_grad = False
             self.config.embedding_regressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
@@ -515,9 +516,10 @@ class Modeller:
         nodewise_weights_tensor = decoded_data.aux_ind
         true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
 
-        full_overlap, self_overlap = compute_full_evaluation_overlap(self.config, data, decoded_data, nodewise_weights_tensor, true_nodes)
+        full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes, self.config)
         coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(self.config, data, decoded_data, nodewise_weights_tensor, true_nodes)
-        self_type_overlap, type_overlap = compute_type_evaluation_overlap(self.config, data, self.dataDims, decoded_data, nodewise_weights_tensor, true_nodes)
+        self_type_overlap, type_overlap = compute_type_evaluation_overlap(self.config, data, self.dataDims['num_atom_types'],
+                                                                          decoded_data, nodewise_weights_tensor, true_nodes)
 
         Ip, Ipm, I = batch_molecule_principal_axes_torch([data.pos[data.batch == ind] for ind in range(data.num_graphs)])
 
@@ -675,6 +677,8 @@ class Modeller:
 
                         train_loader, test_loader = slash_batch(train_loader, test_loader,
                                                                 slash_fraction=0.25)  # shrink batch size
+                        wandb.log({'batch size': train_loader.batch_size})
+
                         torch.cuda.empty_cache()
                         self.config.grow_batch_size = False  # stop growing the batch for the rest of the run
                         prev_epoch_failed = True
@@ -823,7 +827,7 @@ class Modeller:
             # do evaluation on current sample and save this as our loss for tracking purposes
             nodewise_weights_tensor = decoded_data.aux_ind
             true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
-            full_overlap, self_overlap = compute_full_evaluation_overlap(self.config, data, decoded_data, nodewise_weights_tensor, true_nodes)
+            full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes, self.config)
 
             '''log losses and other tracking values'''
             # for the purpose of convergence, we track the evaluation overlap rather than the loss, which is sigma-dependent
@@ -1061,11 +1065,6 @@ class Modeller:
         graph_weights = data.mol_size / self.config.autoencoder.model.num_decoder_points
         nodewise_graph_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
         if self.config.autoencoder.independent_node_weights:
-            #  manual scatter softmax
-            # numerator = torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature)
-            # denominator = scatter(torch.exp(decoding[:, -1] / self.config.autoencoder.node_weight_temperature), decoded_data.batch)
-            # nodewise_weights = (numerator / denominator.repeat_interleave(self.config.autoencoder.model.num_decoder_points)) # fast graph-wise softmax with high temperature
-            # faster & more stable implementation
             nodewise_weights = scatter_softmax(decoding[:, -1] / self.config.autoencoder.node_weight_temperature, decoded_data.batch, dim=0)
             nodewise_weights_tensor = nodewise_weights * data.mol_size.repeat_interleave(self.config.autoencoder.model.num_decoder_points)  # appropriate graph weighting
         else:

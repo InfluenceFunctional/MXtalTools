@@ -44,6 +44,7 @@ class SupercellBuilder:
         supercell_data, cell_parameters, target_handedness = \
             self.move_cell_data_to_device(supercell_data, cell_parameters, target_handedness)
 
+        # assumes cell params arive appropriately pre-cleaned
         cell_lengths, cell_angles, mol_position, mol_rotation_i = (
             cell_parameters[:, :3], cell_parameters[:, 3:6], cell_parameters[:, 6:9], cell_parameters[:, 9:])
 

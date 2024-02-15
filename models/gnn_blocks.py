@@ -3,7 +3,7 @@ from torch import nn as nn
 from torch_geometric import nn as gnn
 from torch_scatter import scatter
 
-from models.components import Normalization, MLP
+from models.components import MLP
 from models.equivariant_TransformerConv import EquiVTransformerConv
 
 

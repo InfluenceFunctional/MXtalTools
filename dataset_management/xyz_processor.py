@@ -76,7 +76,7 @@ for chunk_ind, chunk in zip(chunk_inds, chunks_list[start_ind:stop_ind]):  # tod
                 molecule_dict['atom_partial_charges'] = atom_charges
 
                 molecule_dict['molecule_radius'] = np.amax(np.linalg.norm(molecule_dict['atom_coordinates'] - molecule_dict['atom_coordinates'].mean(0), axis=-1))
-                molecule_dict['molecule_volume'] = np.random.uniform(0)  # explicit dummy value
+                molecule_dict['molecule_volume'] = np.random.uniform(0)  # explicit dummy value  # todo
                 molecule_dict['molecule_mass'] = np.random.uniform(0)  # explicit dummy value
 
                 new_df = pd.DataFrame()

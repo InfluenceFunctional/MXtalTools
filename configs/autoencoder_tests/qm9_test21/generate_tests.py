@@ -42,8 +42,13 @@ config_list = [
     # need to do better checkpointing on variational
     # also would be nice if protonated models didn't overfit
     [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, True, False, 0.97],  # 22
-    [4, 256, 0.05, False, 0, 0, 128, 128, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False, 0.95],  # 23
-    [4, 256, 0.05, False, 0, 0, 128, 128, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, True, 0.95],  # 24
+    [4, 256, 0.05, False, 0, 0, 128, 128, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False, 0.95],  # 23 - overfits but at lower fidelity
+    [4, 256, 0.05, False, 0, 0, 128, 128, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, True, 0.95],  # 24 - overfits but at lower fidelity
+    # try to fit proton model
+    [4, 256, 0.05, False, 0, 0.1, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False, 0.95],  # 25
+    [4, 256, 0.05, False, 0.1, 0, 256, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False, 0.95],  # 26
+    [4, 256, 0.05, False, 0, .1, 512, 256, 1, 4, True, .99, 300, 5e-6, 0.05, 2e-4, False, False, 0.95],  # 27
+
 ]
 
 np.random.seed(1)

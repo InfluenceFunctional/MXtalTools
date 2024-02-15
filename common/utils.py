@@ -2,7 +2,6 @@ import numpy as np
 
 import torch
 from torch_scatter import scatter
-import pandas as pd
 from scipy.interpolate import interpn
 from typing import List, Optional
 import collections
@@ -41,16 +40,6 @@ def chunkify(lst: list, n: int):
     break up a list into n chunks of equal size (up to last chunk)
     """
     return [lst[i::n] for i in range(n)]
-
-
-def delete_from_dataframe(df: pd.DataFrame, inds):
-    """
-    delete rows "inds" from dataframe df
-    """
-    df.drop(index=inds, inplace=True)
-    df.reset_index(drop=True, inplace=True)
-
-    return df
 
 
 def torch_ptp(tensor: torch.tensor):

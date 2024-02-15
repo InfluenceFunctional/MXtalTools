@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from torch_geometric.loader import DataLoader
 import os
 
@@ -50,3 +51,13 @@ def update_dataloader_batch_size(loader, new_batch_size):
 def get_fraction(atomic_numbers, target: int):
     """get fraction of atomic numbers equal to target"""
     return np.sum(atomic_numbers == target) / len(atomic_numbers)
+
+
+def delete_from_dataframe(df: pd.DataFrame, inds):
+    """
+    delete rows "inds" from dataframe df
+    """
+    df.drop(index=inds, inplace=True)
+    df.reset_index(drop=True, inplace=True)
+
+    return df

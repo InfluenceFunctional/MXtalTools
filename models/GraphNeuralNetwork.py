@@ -1,10 +1,8 @@
 from models.basis_functions import GaussianEmbedding, BesselBasisLayer
 import torch
 import torch.nn as nn
-from models.components import Normalization
 
 from models.gnn_blocks import EmbeddingBlock, GC_Block, FC_Block
-from models.utils import get_model_nans
 
 
 class GraphNeuralNetwork(torch.nn.Module):

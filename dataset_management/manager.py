@@ -4,12 +4,12 @@ from tqdm import tqdm
 import os
 import numpy as np
 
-from common.utils import delete_from_dataframe, standardize_np
+from common.utils import standardize_np
 from constants.asymmetric_units import asym_unit_dict
 from constants.space_group_info import SYM_OPS
 from crystal_building.utils import build_unit_cell, batch_asymmetric_unit_pose_analysis_torch
 from dataset_management.CrystalData import CrystalData
-from dataset_management.utils import get_range_fraction, get_fraction
+from dataset_management.utils import get_range_fraction, get_fraction, delete_from_dataframe
 from constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, SYMBOLS
 
 
@@ -289,13 +289,8 @@ class DataManager:
     def get_regression_target(self):
         targets = self.dataset[self.regression_target]
         targets = np.clip(targets, a_min=np.quantile(targets, 0.001), a_max=np.quantile(targets, 0.999))  # clip severe outliers
-
-        # this will exclude severe outliers from the statistics
-        targets_for_stats = np.clip(self.dataset[self.regression_target], a_min=np.quantile(self.dataset[self.regression_target], 0.1), a_max=np.quantile(targets, 0.9))  # clip severe outliers
-        target_mean = targets_for_stats.mean()
-        target_std = targets_for_stats.std()
-        # target_mean = self.standardization_dict[self.regression_target][0] # todo bring this back when we fix the standardization in the featurizer - some distributions are super weird
-        # target_std = self.standardization_dict[self.regression_target][1]
+        target_mean = self.standardization_dict[self.regression_target][0] # fix the standardization in the featurizer - some distributions are super weird
+        target_std = self.standardization_dict[self.regression_target][1]
 
         return (targets - target_mean) / target_std
 

@@ -8,11 +8,11 @@ import torch
 
 
 class point_autoencoder(nn.Module):
-    def __init__(self, seed, config, dataDims):
+    def __init__(self, seed, config, num_atom_types):
         super(point_autoencoder, self).__init__()
         '''conditioning model'''
         cartesian_dimension = 3
-        self.num_classes = dataDims['num_atom_types']
+        self.num_classes = num_atom_types
         self.output_depth = self.num_classes + cartesian_dimension + 1
         self.num_nodes = config.num_decoder_points
 

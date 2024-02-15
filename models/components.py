@@ -1,7 +1,7 @@
 import sys
 
 import torch
-from torch import nn, nn as nn
+import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
 from torch_geometric import nn as gnn
@@ -10,6 +10,7 @@ from torch_scatter import scatter, scatter_softmax
 from models.asymmetric_radius_graph import asymmetric_radius_graph
 from models.global_attention_aggregation import AttentionalAggregation_w_alpha
 from models.vector_LayerNorm import VectorLayerNorm
+
 
 class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
     def __init__(self, layers, filters, input_dim, output_dim,
@@ -191,16 +192,16 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         if v is not None:
             v = self.v_init_layer(v)
 
-        #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc input layer {get_model_nans(self.init_layer)}"
+        # assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc input layer {get_model_nans(self.init_layer)}"
 
         for i, (norm, linear, activation, dropout) in enumerate(zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
             x, v = self.get_residues(i, x, v)
 
-            #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc residue output {get_model_nans(self.residue_adjust[i])}"
+            # assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc residue output {get_model_nans(self.residue_adjust[i])}"
 
             x = self.scalar_forward(i, activation, batch, dropout, linear, norm, x, v)
 
-            #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc linear output {get_model_nans(linear)}"
+            # assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc linear output {get_model_nans(linear)}"
 
             if self.equivariant:
                 v = self.vector_forward(i, x, v, batch)
@@ -231,7 +232,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
 
         return x, v
 
-    def scalar_forward(self,i, activation, batch, dropout, linear, norm, x, v):
+    def scalar_forward(self, i, activation, batch, dropout, linear, norm, x, v):
         res = x.clone()
         if v is not None:  # concatenate vector lengths to scalar values
             x = torch.cat([x,

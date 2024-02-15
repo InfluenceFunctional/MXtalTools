@@ -3,7 +3,6 @@ import sys
 import numpy as np
 from scipy.stats import linregress
 import torch
-import wandb
 from torch import optim, nn as nn
 from torch.nn import functional as F
 from torch.optim import lr_scheduler as lr_scheduler
@@ -76,7 +75,7 @@ def check_convergence(test_record, history, convergence_eps, epoch, minimum_epoc
             elif isinstance(train_record, np.ndarray):
                 train_record = train_record.copy()
 
-            test_train_ratio = test_record/train_record
+            test_train_ratio = test_record / train_record
             if test_train_ratio[-history:].mean() > overfit_tolerance:
                 print(f"Model Converged!: Overfit at {test_train_ratio[-history:].mean():.2f}")
                 return True
@@ -552,7 +551,6 @@ def slash_batch(train_loader, test_loader, slash_fraction):
     print('OOMOOMOOMOOMOOMOOMOOMOOMOOMOOM')
     print(f'Batch size slashed to {train_loader.batch_size} due to OOM')
     print('==============================')
-    wandb.log({'batch size': train_loader.batch_size})
 
     return train_loader, test_loader
 
@@ -617,3 +615,50 @@ def get_model_nans(model):
         return nans
     else:
         return 0
+
+
+def compute_type_evaluation_overlap(config, data, num_atom_types, decoded_data, nodewise_weights_tensor, true_nodes):
+    type_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
+                                            nodewise_weights=nodewise_weights_tensor,
+                                            overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + num_atom_types],
+                                            type_distance_scaling=config.autoencoder.type_distance_scaling)
+    self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
+                                                 nodewise_weights=torch.ones_like(data.x)[:, 0],
+                                                 overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + num_atom_types],
+                                                 type_distance_scaling=config.autoencoder.type_distance_scaling,
+                                                 dist_to_self=True)
+    return self_type_overlap, type_overlap
+
+
+def compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes):
+    coord_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
+                                             nodewise_weights=nodewise_weights_tensor,
+                                             overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
+                                             type_distance_scaling=config.autoencoder.type_distance_scaling)
+    self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
+                                                  nodewise_weights=torch.ones_like(data.x)[:, 0],
+                                                  overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
+                                                  type_distance_scaling=config.autoencoder.type_distance_scaling,
+                                                  dist_to_self=True)
+    return coord_overlap, self_coord_overlap
+
+
+def compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes, config=None, evaluation_sigma=None, type_distance_scaling=None):
+    assert config is not None or evaluation_sigma is not None
+    if config is not None:
+        sigma = config.autoencoder.evaluation_sigma
+        distance_scaling = config.autoencoder.type_distance_scaling
+    else:
+        sigma = evaluation_sigma
+        distance_scaling = type_distance_scaling
+
+    full_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, sigma,
+                                            nodewise_weights=nodewise_weights_tensor,
+                                            overlap_type='gaussian', log_scale=False,
+                                            type_distance_scaling=type_distance_scaling)
+    self_overlap = compute_gaussian_overlap(true_nodes, data, data, sigma,
+                                            nodewise_weights=torch.ones_like(data.x)[:, 0],
+                                            overlap_type='gaussian', log_scale=False,
+                                            type_distance_scaling=distance_scaling,
+                                            dist_to_self=True)
+    return full_overlap, self_overlap

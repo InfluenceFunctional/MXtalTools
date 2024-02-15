@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 
 from bulk_molecule_classification.classifier_constants import nic_ordered_class_names, identifier2form
 from bulk_molecule_classification.traj_analysis_figs import plot_classifier_pies, cluster_property_heatmap
-from common.utils import delete_from_dataframe
+from dataset_management.utils import delete_from_dataframe
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 
