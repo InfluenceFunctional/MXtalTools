@@ -14,9 +14,9 @@ sweep_id: null #h38n3wfs
 sweep_path: null #'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/autoencoder_tests/qm9_sweep3/qm9_sweep3.yaml'
 
 dataset:
-  max_dataset_length: 1000000
+  max_dataset_length: 100
   test_fraction: 0.2
-  filter_protons: True
+  filter_protons: False
   regression_target: molecule_gap_energy # crystal_packing_coefficient
 
 # batching & convergence
@@ -51,7 +51,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test21_20_13-02-10-13-47 #/cluster/best_autoencoder_autoencoder_tests_qm9_test21_18_13-02-10-13-43
+  autoencoder: null #/cluster/best_autoencoder_autoencoder_tests_qm9_test21_20_13-02-10-13-47 #/cluster/best_autoencoder_autoencoder_tests_qm9_test21_18_13-02-10-13-43
   embedding_regressor: null
 
 discriminator_positional_noise: 0

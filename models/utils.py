@@ -655,7 +655,7 @@ def compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor,
     full_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, sigma,
                                             nodewise_weights=nodewise_weights_tensor,
                                             overlap_type='gaussian', log_scale=False,
-                                            type_distance_scaling=type_distance_scaling)
+                                            type_distance_scaling=distance_scaling)
     self_overlap = compute_gaussian_overlap(true_nodes, data, data, sigma,
                                             nodewise_weights=torch.ones_like(data.x)[:, 0],
                                             overlap_type='gaussian', log_scale=False,
