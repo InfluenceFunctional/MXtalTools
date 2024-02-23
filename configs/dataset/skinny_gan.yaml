@@ -23,7 +23,7 @@ filter_conditions: [['crystal_z_prime','in',[1]],  # NOTE we can currently only 
                     ['molecule_is_spherical_top','in',[False]],
                     ['crystal_packing_coefficient','range',[0.55, 0.85]],
                     ['molecule_num_atoms','range',[3,100]],
-                    ['molecule_radius','range',[1,5]],
+                    ['molecule_radius','range',[1,100]],
                     ['asymmetric_unit_is_well_defined','in',[True]],
                     #['crystal_identifier', 'not_in', ['OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ','NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04','XAFQON','XAFQIH']],  # omit blind test 5 & 6 targets
                     #['crystal_space_group_number','in',[2,14,19]]
