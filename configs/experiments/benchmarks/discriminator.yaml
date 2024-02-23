@@ -4,7 +4,6 @@ dataset_name: 'dataset.pkl'
 extra_test_set_name: 'blind_test_dataset.pkl'
 base_config_path: '/experiments/base/discriminator.yaml'  # base config
 
-
 dataset:
   regression_target: crystal_reduced_volume
 

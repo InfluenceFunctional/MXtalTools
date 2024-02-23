@@ -138,7 +138,7 @@ generator:
   train_vdw: False
   train_adversarially: False
   train_h_bond: False # (non-directional)
-  canonical_conformer_orientation: 'random''
+  canonical_conformer_orientation: 'random'
 
   #generator optimizer and model
   optimizer: null

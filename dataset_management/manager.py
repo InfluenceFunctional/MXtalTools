@@ -291,7 +291,10 @@ class DataManager:
             targets = self.dataset[self.regression_target]
         else:
             self.regression_target = 'molecule_num_atoms'
-            targets = np.concatenate(self.dataset[self.regression_target])
+            if self.dataset_type == 'molecule':
+                targets = np.asarray(self.dataset[self.regression_target])
+            elif self.dataset_type == 'crystal':
+                targets = np.concatenate(self.dataset[self.regression_target])
 
         targets = np.clip(targets, a_min=np.quantile(targets, 0.001), a_max=np.quantile(targets, 0.999))  # clip severe outliers
         target_mean = self.standardization_dict[self.regression_target][0] # fix the standardization in the featurizer - some distributions are super weird
