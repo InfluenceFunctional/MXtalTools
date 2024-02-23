@@ -1,6 +1,6 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/autoencoder.yaml
+base_config_path: /experiments/base/discriminator.yaml
 
 sweep_id: null
 sweep_path: null
