@@ -57,6 +57,11 @@ class PointAutoencoder(nn.Module):
             x = encoding
 
         if self.variational:  # this appears to break equivariance but it's only because the lengths are changing
+            '''
+            here we enforce regularization only against the norms of the embedding vectors
+            the directions may not be / in practice are not randomly distributed, so generation based on random directions will not work
+            would require somehow to regularize also over directions (maybe over dot products) as well, but this is complicated/expensive
+            '''
             assert self.equivariant_encoder, "Variational autoencoder only implemented for equivariant encoder"
             mu = torch.linalg.norm(v, dim=1)
             log_sigma = x.clip(max=1)  # if this becomes large, we get Inf in next step
@@ -68,6 +73,7 @@ class PointAutoencoder(nn.Module):
             stochastic_weight = torch.linalg.norm(z * sigma[:, None, :] + mu[:, None, :], dim=1)  # parameterized distribution
             encoding = stochastic_weight[:, None, :] * v / (torch.linalg.norm(v, dim=1)[:, None, :] + 1e-3)  # rescale vector length by learned distribution
             self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution
+
         else:
             if self.equivariant_encoder:
                 encoding = v
@@ -75,7 +81,6 @@ class PointAutoencoder(nn.Module):
                 encoding = x
 
         assert torch.sum(torch.isnan(encoding)) == 0, f"NaN in encoder output {get_model_nans(self.encoder)}"
-        #assert torch.sum(torch.isfinite(encoding) == False) == 0, "Inf in encoder output"
 
         return encoding
 
