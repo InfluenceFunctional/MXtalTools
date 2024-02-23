@@ -298,7 +298,7 @@ def urea_interface_fig(traj_dict, stacked_plot=False):
         yanchor="top"
     ))
     fig.layout.margin.b = 425
-    fig.show()
+    fig.show(renderer='browser')
 
     return fig
 
@@ -412,7 +412,7 @@ def nic_clusters_fig(traj_dict1, traj_dict2, stacked_plot=False):
         yanchor="top"
     ))
     fig.layout.margin.b = 250
-    fig.show()
+    fig.show(renderer='browser')
     return fig
 
 
@@ -516,6 +516,6 @@ fig_dict['nic_trajectories'] = nic_clusters_fig(traj_dict1, traj_dict2)
 for key, fig in fig_dict.items():
     fig.write_image(key + '.png', scale=4)
 # for key, fig in fig_dict.items():
-#     fig.show()
+#     fig.show(renderer='browser')
 
 aa = 1

@@ -1,0 +1,55 @@
+
+
+regressor:
+  model:
+    graph_convolution_type: TransformerConv
+    graph_aggregator: 'softmax'
+    concat_mol_to_atom_features: True
+    activation: gelu
+    num_fc_layers: 4
+    fc_depth: 256
+    fc_norm_mode: 'layer'
+    fc_dropout_probability: 0.1
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0.1
+    graph_message_norm: null
+    graph_message_dropout: 0
+    num_attention_heads: 32
+    graph_message_depth: 128
+    graph_node_dims: 256
+    num_graph_convolutions: 4
+    graph_embedding_depth: 256
+    nodewise_fc_layers: 1
+    num_radial: 32
+    radial_function: bessel
+    max_num_neighbors: 100
+    convolution_cutoff: 6
+    atom_type_embedding_dims: 5
+
+
+discriminator:
+  model:
+    graph_convolution_type: TransformerConv
+    graph_aggregator: softmax
+    concat_mol_to_atom_features: True
+    activation: gelu
+    num_fc_layers: 4
+    fc_depth: 256
+    fc_norm_mode: layer
+    fc_dropout_probability: 0.1
+    graph_node_norm: 'graph layer'
+    graph_node_dropout: 0.1
+    graph_message_norm: null
+    graph_message_dropout: 0
+    num_attention_heads: 16
+    graph_message_depth: 128
+    graph_node_dims: 256
+    num_graph_convolutions: 4
+    graph_embedding_depth: 256
+    nodewise_fc_layers: 1
+    num_radial: 32
+    radial_function: bessel
+    max_num_neighbors: 100
+    convolution_cutoff: 6
+    atom_type_embedding_dims: 24
+    periodic_convolution_type: 'all_layers'  # or 'last_layer'

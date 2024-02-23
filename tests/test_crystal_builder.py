@@ -32,7 +32,6 @@ rotation_basis = 'spherical'
 
 
 class TestClass:
-
     @staticmethod
     def test_cell_parameterization_and_reconstruction():
         """

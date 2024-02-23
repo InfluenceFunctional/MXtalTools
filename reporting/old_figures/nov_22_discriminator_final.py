@@ -113,7 +113,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     fig.layout.margin = layout.margin
     fig.write_image('../paper1_figs/real_vs_fake_scores.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     '''
     5. BT scores distributions w aggregate inset
@@ -222,7 +222,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     fig.layout.margin = layout.margin
     fig.write_image('../paper1_figs/bt_submissions_distribution.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     '''
     7. Table of BT separation statistics
@@ -246,7 +246,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     fig.layout.margin = layout.margin
     fig.write_image('../paper1_figs/scores_separation_table.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     fig = go.Figure(data=go.Table(
         header=dict(values=['CSD Test Quantile', 'Fraction of Submissions']),
@@ -258,7 +258,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     fig.write_image('../paper1_figs/normed_scores_separation_table.png')
     fig.update_layout(title=dict(text="Normed Scores Fractions"))
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
     wandb.log({"Nice Normed Scores Separation Table": fig})
 
     wandb.log({"Scores Separation": submissions_fraction_below_csd_quantile})
@@ -310,7 +310,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     # fig.layout.margin = layout.margin
     # fig.write_image('../paper1_figs/scores_separation_table.png')
     # if config.machine == 'local':
-    #     fig.show()
+    #     fig.show(renderer='browser')
 
     fig = go.Figure()
     fig.add_trace(go.Scattergl(x=[f'{key} {fraction_dict[key]:.2f}' for key in sorted_functional_group_keys],
@@ -328,7 +328,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     fig.layout.margin = layout.margin
     fig.write_image('../paper1_figs/functional_group_scores.png', scale=2)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
     aa = 1
     '''
     9. Score vs. EMD on BT submissions
@@ -384,7 +384,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     fig.layout.margin.l = 90
     fig.write_image('../paper1_figs/scores_vs_emd.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     '''
     10. Interesting Group-wise analysis
@@ -466,7 +466,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     fig.layout.margin.b = 50
     fig.write_image('../paper1_figs/interesting_groups.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     '''
     S1. All group-wise analysis
@@ -511,7 +511,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
         fig.layout.margin.l = 60
         fig.write_image(f'../paper1_figs/groupwise_analysis_{i}.png', scale=4)
         if config.machine == 'local':
-            fig.show()
+            fig.show(renderer='browser')
 
     '''
     S2.  score correlates
@@ -608,7 +608,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
     fig.update_layout(showlegend=False)
     fig.write_image('../paper1_figs/scores_correlates.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     fig = go.Figure()
     label = 'Test Real'
@@ -637,7 +637,7 @@ def nov_22_paper_discriminator_plots(config, wandb):
 
     fig.write_image('../paper1_figs/ToC_discriminator.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     aa = 1
     return None

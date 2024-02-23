@@ -14,21 +14,18 @@ os.chdir('../')  # go up to main source directory
 source_dir = os.getcwd()
 
 
+def test_model_training(config_path):
+    os.chdir(source_dir)
+    user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
+    config = get_config(user_yaml_path=user_path, main_yaml_path=source_dir + config_path)
+    modeller = Modeller(config)
+    modeller.train_crystal_models()
+
+
 class TestClass:
     @staticmethod
-    def test_GAN():
-        os.chdir(source_dir)
-        config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/gan.yaml'
-        user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
-        config = get_config(user_yaml_path=user_path, main_yaml_path=config_path)
-        modeller = Modeller(config)
-        modeller.train_crystal_models()
-
-    @staticmethod
-    def test_regressor():
-        os.chdir(source_dir)
-        config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/regressor.yaml'
-        user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
-        config = get_config(user_yaml_path=user_path, main_yaml_path=config_path)
-        modeller = Modeller(config)
-        modeller.train_crystal_models()
+    def test_all_models():
+        for config_path in [r'/configs/test_configs/discriminator.yaml',
+                            r'/configs/test_configs/regressor.yaml',
+                            r'/configs/test_configs/autoencoder.yaml']:
+            test_model_training(config_path)

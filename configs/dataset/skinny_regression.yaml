@@ -16,7 +16,7 @@ filter_polymorphs: True
 filter_duplicate_molecules: True
 filter_conditions: [['crystal_z_prime','in',[1]],  # NOTE we can currently only process Z' == 1 in models
                     ['crystal_z_value','range',[1,32]],
-                    ['atom_atomic_numbers','range',[1,100]],
+                    ['atom_atomic_numbers','range', [1,100]],
                     ['crystal_packing_coefficient','range',[0.55, 0.85]],
                     ['molecule_num_atoms','range',[3,100]],
                     ['molecule_radius','range',[1,100]],
@@ -24,7 +24,7 @@ filter_conditions: [['crystal_z_prime','in',[1]],  # NOTE we can currently only 
 
 atom_feature_keys: [
 'atom_atomic_numbers',
-#'atom_mass',
+'atom_mass',
 #'atom_is_H_bond_donor',
 #'atom_is_H_bond_acceptor',
 #'atom_valence',
@@ -33,17 +33,17 @@ atom_feature_keys: [
 #'atom_chirality',
 #'atom_is_aromatic',
 #'atom_degree',
-#'atom_electronegativity',
+'atom_electronegativity',
 'atom_group',
 'atom_period'
 ]
 
 molecule_feature_keys : [
 #'molecule_freeSASA',
-#'molecule_mass',
+'molecule_mass',
 'molecule_num_atoms',
 #'molecule_num_rings',
-'molecule_volume',
+#'molecule_volume',
 #'molecule_num_donors',
 #'molecule_num_acceptors',
 #'molecule_polarity',

@@ -7,7 +7,7 @@ seed: 1
 max_dataset_length: 1000000
 save_dataset: False
 
-regression_target: 'crystal_packing_coefficient' # 'crystal_reduced_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
+regression_target: 'crystal_reduced_volume' # 'crystal_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
 single_molecule_dataset_identifier: null
 test_fraction: 0.2
 filter_protons: False
@@ -32,7 +32,7 @@ filter_conditions: [['crystal_z_prime','in',[1]],  # NOTE we can currently only 
 
 atom_feature_keys: [
 'atom_atomic_numbers',
-#'atom_mass',
+'atom_mass',
 #'atom_is_H_bond_donor',
 #'atom_is_H_bond_acceptor',
 #'atom_valence',
@@ -41,17 +41,17 @@ atom_feature_keys: [
 #'atom_chirality',
 #'atom_is_aromatic',
 #'atom_degree',
-#'atom_electronegativity',
+'atom_electronegativity',
 'atom_group',
 'atom_period'
 ]
 
 molecule_feature_keys : [
 #'molecule_freeSASA',
-#'molecule_mass',
+'molecule_mass',
 'molecule_num_atoms',
 #'molecule_num_rings',
-'molecule_volume',
+#'molecule_volume',
 #'molecule_num_donors',
 #'molecule_num_acceptors',
 #'molecule_polarity',

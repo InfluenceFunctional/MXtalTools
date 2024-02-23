@@ -1,6 +1,6 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/regressor.yaml
+base_config_path: /experiments/base/discriminator.yaml
 
 dataset:
   max_dataset_length: 100
@@ -9,8 +9,9 @@ grow_batch_size: True
 min_batch_size: 10
 minimum_epochs: 2
 max_epochs: 2 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
   sample_reporting_frequency: 1  # how often to do detailed reporting with figures
-  run_name: regressor_test
+  run_name: discriminator_test
   experiment_tag: test

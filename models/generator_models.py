@@ -12,9 +12,9 @@ from constants.asymmetric_units import asym_unit_dict
 from models.utils import clean_generator_output
 
 
-class crystal_generator(nn.Module):
+class CrystalGenerator(nn.Module):
     def __init__(self, seed, device, config, dataDims, sym_info):
-        super(crystal_generator, self).__init__()
+        super(CrystalGenerator, self).__init__()
 
         self.device = device
         self.symmetries_dict = sym_info

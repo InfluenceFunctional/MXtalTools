@@ -1,6 +1,6 @@
 import typing
 from typing import Optional, Tuple, Union
-
+import torch.nn.functional as F
 from torch import Tensor
 
 from torch_geometric.nn.conv import MessagePassing
@@ -94,8 +94,8 @@ class EquiVTransformerConv(MessagePassing):
 
         if self.lin_edge is not None:
             assert edge_attr is not None
-            edge_attr = self.lin_edge(edge_attr).view(-1, self.heads,
-                                                      self.out_channels)
+            edge_attr = F.sigmoid(self.lin_edge(edge_attr).view(-1, self.heads,
+                                                      self.out_channels))  # strictly positive so as not to flip any vector directions
 
         self._alpha = alpha
 

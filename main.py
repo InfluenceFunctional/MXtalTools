@@ -47,7 +47,7 @@ if __name__ == '__main__':
     else:
 
         predictor = Modeller(config)
-        if config.mode == 'gan' or config.mode == 'regression' or config.mode == 'autoencoder' or config.mode == 'embedding_regression':
+        if config.mode == 'discriminator' or config.mode == 'gan' or config.mode == 'regression' or config.mode == 'autoencoder' or config.mode == 'embedding_regression':
             predictor.train_crystal_models()
 
         elif config.mode == 'search':

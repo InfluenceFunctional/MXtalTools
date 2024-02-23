@@ -102,7 +102,7 @@ for ind in range(history,len(x)):
 fig = make_subplots(rows=1,cols=2)
 fig.add_scatter(x=x,y=np.log10(y),mode='markers',marker_color=condition.astype(float),row=1,col=1)
 fig.add_scatter(x=x,y=y,mode='markers',marker_color=condition.astype(float),row=1,col=2)
-fig.show()
+fig.show(renderer='browser')
 """
 
 

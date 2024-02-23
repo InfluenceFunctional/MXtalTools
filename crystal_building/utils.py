@@ -82,8 +82,8 @@ def unit_cell_to_convolution_cluster(reference_cell_list: list,
             successful_gconv = False
             extra_cutoff = 0
             while not successful_gconv:
-                # ignore atoms which are more than mol_radius + conv_cutoff + buffer
-                convolve_mol_inds = torch.where((mol_centroid_dists <= (ref_mol_radius + cutoff + extra_cutoff + 0.01)))[0]
+                # ignore atoms which are more than 2 * mol_radius + conv_cutoff + buffer
+                convolve_mol_inds = torch.where((mol_centroid_dists <= (2 * ref_mol_radius + cutoff + extra_cutoff + 0.01)))[0]
 
                 if len(convolve_mol_inds) <= 9:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
                     extra_cutoff += 1
@@ -346,7 +346,7 @@ def compute_principal_axes_list(coords_list):
     return Ip_axes_list
 
 
-def align_crystaldata_to_principal_axes(crystaldata, handedness):
+def align_crystaldata_to_principal_axes(crystaldata, handedness=None):
     """
     align principal inertial axes of molecules in a crystaldata object to the xyz or xy(-z) axes
     only works for geometric principal axes (all atoms mass = 1)

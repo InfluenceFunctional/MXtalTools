@@ -341,7 +341,7 @@ def violin_scores_plot2(config, wandb, layout, all_identifiers, scores_dict, BT_
                   line=dict(color=plot_color_dict['BT Submissions'], dash='dash'))
     fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
     fig.update_layout(xaxis_title='Model Score')
-    # fig.show()
+    # fig.show(renderer='browser')
     fig.update_layout(title='Scores and 0.01, 0.05, 0.1 quantiles')
     fig.update_layout(showlegend=False, legend_traceorder='reversed', yaxis_showgrid=True)
     fig.update_layout(xaxis_title='Model Score')
@@ -408,7 +408,7 @@ def functional_group_violin_plot(config, wandb, layout, scores_dict, tracking_fe
     # fig.update_layout(legend_traceorder='reversed', yaxis_showgrid=True)
     # fig.update_layout(xaxis_title='Model Score')
     # fig.update_layout(showlegend=False)
-    # fig.show()
+    # fig.show(renderer='browser')
 
     # wandb.log({'Functional Group Scores Distributions': fig})
 
@@ -654,7 +654,7 @@ def target_ranking_analysis(config, wandb, layout, identifiers_list, scores_dict
     fig.update_xaxes(title_text='Submission Rank', row=1, col=2)
     fig.update_xaxes(title_text='Submission Rank', row=1, col=3)
 
-    # fig.show()
+    # fig.show(renderer='browser')
     wandb.log({'Target Score Rankings': fig})
     return group, rankings, list_num
 

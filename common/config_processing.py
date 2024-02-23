@@ -124,16 +124,16 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
     main_config['dataset_path'] = user_config['paths'][machine_type + '_dataset_dir_path']
     main_config['checkpoint_dir_path'] = user_config['paths'][machine_type + '_checkpoint_dir_path']
     main_config['config_path'] = user_config['paths'][machine_type + '_config_path']
+
+    # update any missing values from base config
+    if 'base_config_path' in main_config.keys() and main_config['base_config_path'] is not None:
+        base_config_path = main_config['config_path'] + main_config['base_config_path']
+        base_config = load_yaml(base_config_path)
+        main_config = write_non_overlapping_configs(main_config, base_config)  # add elements from base into main if they are missing
+
     for model in main_config['model_paths'].keys():
         if main_config['model_paths'][model] is not None:
             main_config['model_paths'][model] = user_config['paths'][machine_type + '_checkpoints_path'] + main_config['model_paths'][model]
-
-    # update any missing values from base config
-    if 'base_config_path' in main_config.keys():
-        if main_config['base_config_path'] is not None:
-            base_config_path = main_config['config_path'] + main_config['base_config_path']
-            base_config = load_yaml(base_config_path)
-            main_config = write_non_overlapping_configs(main_config, base_config)
 
     # always save checkpoints on cluster
     if machine_type == 'cluster':

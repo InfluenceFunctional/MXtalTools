@@ -2,15 +2,22 @@ import torch.nn as nn
 from models.base_models import molecule_graph_model
 
 
-class molecule_regressor(nn.Module):
-    def __init__(self, seed, config, dataDims):
+class MoleculeRegressor(nn.Module):
+    def __init__(self, seed, config, dataDims=None, num_atom_features=None, num_molecule_features=None):
         """
         wrapper for molecule model, with appropriate I/O
         """
-        super(molecule_regressor, self).__init__()
+        if dataDims is not None:
+            n_atom_feats = dataDims['num_atom_features']
+            n_mol_feats = dataDims['num_molecule_features']
+        else:
+            n_atom_feats = num_atom_features
+            n_mol_feats = num_molecule_features
+
+        super(MoleculeRegressor, self).__init__()
         self.model = molecule_graph_model(
-            num_atom_feats=dataDims['num_atom_features'],
-            num_mol_feats=dataDims['num_molecule_features'],
+            num_atom_feats=n_atom_feats,
+            num_mol_feats=n_mol_feats,
             output_dimension=1,
             seed=seed,
             graph_aggregator=config.graph_aggregator,

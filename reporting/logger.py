@@ -81,7 +81,7 @@ class Logger:
                 if isinstance(self.current_losses[k1][k2], list):
                     self.current_losses[k1][k2] = np.asarray(self.current_losses[k1][k2])
 
-    def numpyize_stats_dict(self, epoch_type):
+    def concatenate_stats_dict(self, epoch_type):
         stat_dict = self.get_stat_dict(epoch_type)
         for _, (key, value) in enumerate(stat_dict.items()):
             if isinstance(value, list):
@@ -124,7 +124,16 @@ class Logger:
 
     def log_training_metrics(self):
         if self.log_figs_to_self:
+            # key metrics
             self.wandb.log(self.collate_current_metrics())
+
+            # loss histograms
+            for key in self.current_losses.keys():
+                if 'all_train' in self.current_losses[key].keys():
+                    self.wandb.log({key + '_train_loss_distribution': self.wandb.Histogram(self.current_losses[key]['all_train'])})
+
+                if 'all_test' in self.current_losses[key].keys():
+                    self.wandb.log({key + '_test_loss_distribution': self.wandb.Histogram(self.current_losses[key]['all_train'])})
 
     def collate_current_metrics(self):
         # general metrics

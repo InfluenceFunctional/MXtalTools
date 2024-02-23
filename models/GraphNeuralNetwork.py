@@ -29,6 +29,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                  outside_convolution_type='none',
                  equivariant_graph=False,
                  vector_norm=None,
+                 skip_embedding=False
                  ):
         super(GraphNeuralNetwork, self).__init__()
 
@@ -43,11 +44,15 @@ class GraphNeuralNetwork(torch.nn.Module):
         elif radial_embedding == 'gaussian':
             self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
 
-        self.init_node_embedding = EmbeddingBlock(node_embedding_depth,
-                                                  num_embedding_types,
-                                                  input_node_depth,
-                                                  embedding_hidden_dimension,
-                                                  )
+        if not skip_embedding:
+            self.init_node_embedding = EmbeddingBlock(node_embedding_depth,
+                                                      num_embedding_types,
+                                                      input_node_depth,
+                                                      embedding_hidden_dimension,
+                                                      )
+        else:
+            self.init_node_embedding = nn.Identity()
+
         if self.equivariant_graph:
             self.init_vector_embedding = nn.Linear(1, node_embedding_depth, bias=False)
 

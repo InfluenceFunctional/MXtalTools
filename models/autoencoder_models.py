@@ -7,9 +7,9 @@ from models.utils import get_model_nans
 import torch
 
 
-class point_autoencoder(nn.Module):
+class PointAutoencoder(nn.Module):
     def __init__(self, seed, config, num_atom_types):
-        super(point_autoencoder, self).__init__()
+        super(PointAutoencoder, self).__init__()
         '''conditioning model'''
         cartesian_dimension = 3
         self.num_classes = num_atom_types
@@ -39,10 +39,12 @@ class point_autoencoder(nn.Module):
             ramp_depth=config.decoder_ramp_depth,
         )
 
-    def forward(self, data):
+    def forward(self, data, return_encoding=False):
         encoding = self.encode(data)
-
-        return self.decode(encoding)
+        if return_encoding:
+            return self.decode(encoding), encoding
+        else:
+            return self.decode(encoding)
 
     def encode(self, data, z=None):
         """

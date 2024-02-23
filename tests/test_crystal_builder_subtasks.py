@@ -27,7 +27,7 @@ rotation_basis = 'spherical'
 class TestClass:
     def test_rotvec2rotmat(self):
         """
-        confirm transformation from rotvec to rotation matrix in cartesian and spherical bases
+        confirm transformation from rotvec to rotation matrix in cartesian and spherical base
         """
         '''check cartesian mode'''
         rotations = [Rotation.random() for _ in range(5)]
