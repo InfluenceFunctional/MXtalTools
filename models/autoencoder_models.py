@@ -63,14 +63,18 @@ class PointAutoencoder(nn.Module):
             would require somehow to regularize also over directions (maybe over dot products) as well, but this is complicated/expensive
             '''
             assert self.equivariant_encoder, "Variational autoencoder only implemented for equivariant encoder"
+
             mu = torch.linalg.norm(v, dim=1)
             log_sigma = x.clip(max=1)  # if this becomes large, we get Inf in next step
             sigma = torch.exp(0.5 * log_sigma)
+
             if z is None:
                 z = torch.randn((len(sigma), 3, sigma.shape[-1]), dtype=v.dtype, device=v.device)
             else:
                 assert z.ndim == 3, "Improper dimension for encoder latent noise"
+
             stochastic_weight = torch.linalg.norm(z * sigma[:, None, :] + mu[:, None, :], dim=1)  # parameterized distribution
+
             encoding = stochastic_weight[:, None, :] * v / (torch.linalg.norm(v, dim=1)[:, None, :] + 1e-3)  # rescale vector length by learned distribution
             self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution
 

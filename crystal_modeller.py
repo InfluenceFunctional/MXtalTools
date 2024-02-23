@@ -969,7 +969,7 @@ class Modeller:
         if not no_noise:
             if noise_override is not None:
                 data.pos += torch.randn_like(data.pos) * self.config.positional_noise.autoencoder
-            elif self.config.positional_noise.autoencoder > 0 and self.epoch_type == 'train':
+            elif self.config.positional_noise.autoencoder > 0 and self.epoch_type == 'train':  # todo duplicated logic here
                 data.pos += torch.randn_like(data.pos) * self.config.positional_noise.autoencoder
 
         if not self.models_dict['autoencoder'].fully_equivariant and orientation_override is None:
@@ -1015,7 +1015,7 @@ class Modeller:
                  'scaled_reconstruction_loss': (reconstruction_loss.mean() * self.config.autoencoder_sigma).detach(),
                  'mean_dist_loss': mean_dist_loss.detach(),
                  'sigma': self.config.autoencoder_sigma,
-                 'mean_self_overlap': self_likelihoods.mean().detach(),
+                 'mean_self_overlap': scatter(self_likelihoods, data.batch, reduce='mean').mean().detach(),
                  'matching_nodes_fraction': matching_nodes_fraction.detach(),
                  'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
                  'node_weight_constraining_loss': node_weight_constraining_loss.mean().detach(),

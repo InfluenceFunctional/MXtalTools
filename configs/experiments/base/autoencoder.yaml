@@ -36,7 +36,7 @@ logger:
   run_name: dev
   experiment_tag: dev
   mini_csp_frequency: 1 # unused here
-  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
   log_figures: True
 
 seeds:
@@ -55,7 +55,7 @@ positional_noise:
   discriminator: 0
   generator: 0
   regressor: 0
-  autoencoder: 0.05
+  autoencoder: 0
 
 generate_sgs: null
 supercell_size: 5

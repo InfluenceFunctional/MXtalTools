@@ -1,15 +1,15 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/autoencoder.yaml
+base_config_path: /experiments/base/embedding_regressor.yaml
 
 sweep_id: null
 sweep_path: null
 
 dataset:
-  max_dataset_length: 1000
+  max_dataset_length: 100000
   test_fraction: 0.2
-  filter_protons: False
-  regression_target: null
+  filter_protons: True
+  regression_target: molecule_gap_energy
 
 # batching & convergence
 early_epochs_step_override: 5

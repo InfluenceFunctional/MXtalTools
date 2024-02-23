@@ -1217,7 +1217,9 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
 
             row = 1
             col = ind % 3 + 1
-            fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=0.1, showlegend=False),
+            num_points = len(pred_value)
+            opacity = np.exp(-num_points / 10000)
+            fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity, showlegend=False),
                           row=row, col=col)
             fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
                           row=row, col=col)
@@ -1289,7 +1291,9 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         except:
             z = np.ones_like(tgt_value)
 
-        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=0.1, showlegend=False),
+        num_points = len(pred_value)
+        opacity = np.exp(-num_points/10000)
+        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity, showlegend=False),
                       row=1, col=1)
         fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
                       row=1, col=1)
