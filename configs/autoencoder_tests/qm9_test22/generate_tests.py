@@ -52,6 +52,7 @@ ind = 0
 for ix1 in range(len(config_list)):
 
     config = copy(base_config)
+    config['machine'] = 'cluster'
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ind)
 
     config['dataset']['filter_protons'] = config_list[ix1][0]

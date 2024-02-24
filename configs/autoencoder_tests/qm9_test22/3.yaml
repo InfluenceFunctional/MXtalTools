@@ -93,7 +93,7 @@ logger:
   mini_csp_frequency: 1
   run_name: dev_0_1_2_3
   sample_reporting_frequency: 10
-machine: local
+machine: cluster
 max_batch_size: 300
 max_epochs: 10000
 min_batch_size: 10
