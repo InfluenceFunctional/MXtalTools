@@ -23,3 +23,10 @@ logger:
   experiment_tag: benchmarks
   sample_reporting_frequency: 10  # how often to do detailed reporting with figures
   log_figures: True
+
+model_paths:
+  discriminator: null
+  generator: null
+  regressor: null
+  autoencoder: /best_autoencoder_experiments_benchmarks_0_23-02-12-19-08
+  embedding_regressor: null
