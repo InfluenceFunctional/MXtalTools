@@ -938,8 +938,7 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
                           scores_dict, BT_target_scores, BT_submission_scores,
                           tracking_features_dict, layout, tracking_features, dataDims, score_name='score')
 
-    min_value = np.concatenate(list(pred_distance_dict.values())).min()
-    dist2score = lambda x: np.exp(-x)
+    dist2score = lambda x: -np.log10(10**x - 1)
     distance_score_dict = {key: dist2score(value) for key, value in pred_distance_dict.items()}
     BT_target_dist_scores = dist2score(BT_target_scores)
     BT_submission_dist_scores = dist2score(BT_submission_distances)
@@ -970,7 +969,7 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
 
     # plot 1
     scores_range = np.ptp(scores_dict['CSD'])
-    bandwidth = scores_range / 100
+    bandwidth = scores_range / 200
 
     fig = make_subplots(cols=2, rows=2, horizontal_spacing=0.15, subplot_titles=('a)', 'b)', 'c)'),
                         specs=[[{"rowspan": 2}, {}], [None, {}]], vertical_spacing=0.12)
@@ -1003,7 +1002,7 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
     plot_color_dict['BT Submissions'] = ('rgb(50,150,250)')
 
     scores_range = np.ptp(scores_dict['CSD'])
-    bandwidth = scores_range / 50
+    bandwidth = scores_range / 200
 
     # test data
     fig.add_trace(go.Violin(x=scores_dict['CSD'], name='CSD Test',
@@ -1028,7 +1027,7 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
     normed_BT_target_scores = np.concatenate([normed_scores_dict[key] for key in normed_scores_dict.keys() if 'exp' in key])
     normed_BT_submission_scores = np.concatenate([normed_scores_dict[key] for key in normed_scores_dict.keys() if key in crystals_for_targets.keys()])
     scores_range = np.ptp(normed_scores_dict['CSD'])
-    bandwidth = scores_range / 50
+    bandwidth = scores_range / 200
 
     # test data
     fig.add_trace(go.Violin(x=normed_scores_dict['CSD'], name='CSD Test',
