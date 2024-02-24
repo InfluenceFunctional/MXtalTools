@@ -87,7 +87,7 @@ autoencoder:
     beta2: 0.999
     weight_decay: 0.05
     convergence_eps: 1.0E-5
-    lr_growth_lambda: 1.01
+    lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.99
     use_plateau_scheduler: False
 
@@ -100,22 +100,22 @@ autoencoder:
     embedding_depth: 512
     bottleneck_dim: 512
     graph_message_depth: 256  # must cleanly divide num_heads
-    num_attention_heads: 16
+    num_attention_heads: 64
     graph_aggregator: 'equivariant softmax'
     nodewise_fc_layers: 4
     activation: 'gelu'
-    num_decoder_layers: 1
+    num_decoder_layers: 4
     decoder_ramp_depth: True
-    num_decoder_points: 256
+    num_decoder_points: 512
 
     decoder_norm_mode: 'layer'
     graph_node_norm: 'graph layer'
     encoder_vector_norm: 'graph vector layer' #'graph vector layer'
     decoder_vector_norm: 'vector layer'
 
-    graph_node_dropout: 0.1
+    graph_node_dropout: 0.2
     graph_message_dropout: 0
-    decoder_dropout_probability: 0.1
+    decoder_dropout_probability: 0.2
 
     num_radial: 32
     radial_function: gaussian
