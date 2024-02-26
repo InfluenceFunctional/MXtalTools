@@ -7,7 +7,7 @@ from torch.distributions import MultivariateNormal, Uniform
 from constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from crystal_building.utils import clean_cell_params
 from models.components import MLP
-from models.base_models import molecule_graph_model
+from models.base_models import MoleculeGraphModel
 from constants.asymmetric_units import asym_unit_dict
 from models.utils import clean_generator_output
 
@@ -42,7 +42,7 @@ class CrystalGenerator(nn.Module):
         '''conditioning model'''
         torch.manual_seed(seed)
 
-        self.conditioner = molecule_graph_model(
+        self.conditioner = MoleculeGraphModel(
             num_atom_feats=dataDims['num_atom_features'],
             num_mol_feats=dataDims['num_molecule_features'],
             output_dimension=config.conditioner.graph_embedding_depth,

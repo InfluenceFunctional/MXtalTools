@@ -12,13 +12,78 @@ from models.global_attention_aggregation import AttentionalAggregation_w_alpha
 from models.vector_LayerNorm import VectorLayerNorm
 
 
+class Scalarizer(nn.Module):
+    def __init__(self, hidden_dim, embedding_dim, norm_mode, act_func, dropout=0):
+        super(Scalarizer, self).__init__()
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        self.embedding = nn.Linear(hidden_dim, embedding_dim, bias=False)
+        self.linear = nn.Linear(int(hidden_dim * (1 + embedding_dim)), hidden_dim, bias=True)
+        self.norm = Normalization(norm_mode, hidden_dim)
+        self.activation = Activation(act_func, hidden_dim)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, v):
+        """
+        extract scalar features from a batch of vectors [n_nodes, 3, k_channels]
+        combine vector norm with normed projections over a set of learned axes
+        """
+        norm = torch.linalg.norm(v, dim=1)
+        normed_v = v / (norm[:, None, :] + 1e-5)
+
+        directions = self.embedding(v)
+        normed_directions = directions / (torch.linalg.norm(directions, dim=1, keepdim=True) + 1e-5)
+
+        projections = torch.einsum('nik,nij->njk', normed_v, normed_directions)
+
+        v2 = torch.cat([norm, projections.reshape(v.shape[0], self.embedding_dim * self.hidden_dim)], dim=1)
+
+        return self.dropout(self.activation(self.norm(self.linear(v2))))
+
+
+class VectorActivation(nn.Module):
+    def __init__(self, hidden_dim, act_func):
+        super(VectorActivation, self).__init__()
+
+        self.embedding = nn.Linear(hidden_dim, 1, bias=False)
+        self.activation = Activation(act_func, hidden_dim)
+
+    def forward(self, v):
+        """
+        https://github.com/FlyingGiraffe/vnn/blob/master/models/vn_layers.py
+        """
+        direction = self.embedding(v)[..., -1]
+        normed_direction = direction / (torch.linalg.norm(direction, dim=1, keepdim=True) + 1e-5)
+
+        projection = torch.einsum('nik,ni->nk', v, normed_direction).clip(max=0)
+        correction = -self.activation(projection[..., None]) * normed_direction[:, None, :]
+
+        activated_output = v + correction.permute(0, 2, 1)
+
+        # tests # todo write equivariance check
+        # assert projection.max() <= 1
+        # assert projeciton.min() >= -1
+        # assert torch.einsum('nik,ni->nk', activated_output, normed_direction).min() >= 1e-3, "Vector Activation Failed"
+
+        return activated_output
+
+    '''
+    import numpy as np
+    import plotly.graph_objects as go
+    
+    fig = go.Figure()
+    fig.add_histogram(x=projection.flatten(),nbinsx=100)
+    fig.add_histogram(x=projection2.flatten(), nbinsx=100)
+    fig.show(renderer='browser')
+    '''
+
+
 class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
     def __init__(self, layers, filters, input_dim, output_dim,
                  activation='gelu', seed=0, dropout=0, conditioning_dim=0,
                  norm=None, bias=True, norm_after_linear=True,
                  conditioning_mode='concat_to_first',
                  equivariant=False,
-                 residue_v_to_s=False,
                  vector_output_dim=None,
                  vector_norm=None,
                  ramp_depth=False):
@@ -36,13 +101,11 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         self.bias = bias
         self.norm_after_linear = norm_after_linear
         self.equivariant = equivariant
-        self.residue_v_to_s = residue_v_to_s
         self.v_norm_mode = vector_norm
         self.ramp_depth = ramp_depth
         if self.v_norm_mode:
             assert self.equivariant
-        if residue_v_to_s:
-            assert self.equivariant
+
 
         torch.manual_seed(seed)
 
@@ -110,7 +173,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
 
         '''working layers'''
         self.fc_layers = torch.nn.ModuleList([
-            nn.Linear(self.n_filters[i] + (self.n_filters[i] if self.equivariant else 0),
+            nn.Linear(self.n_filters[i] + (self.v_n_filters[i] if self.equivariant else 0),
                       self.n_filters[i], bias=self.bias)
             for i in range(self.n_layers)
         ])
@@ -158,23 +221,23 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
             for i in range(self.n_layers)
         ])
         self.s_to_v_activations = torch.nn.ModuleList([  # use tanh as gating function rather than standard activation which is unbound
-            Activation('sigmoid', self.v_n_filters[i])  # positive outputs only to maintain equivariance (no vectors flipped)
+            Activation(self.activation, self.v_n_filters[i])  # positive outputs only to maintain equivariance (no vectors flipped)
             for i in range(self.n_layers)
         ])
         self.v_fc_norms = torch.nn.ModuleList([
             Normalization(self.v_norm_mode, self.v_n_filters[i])
             for i in range(self.n_layers)
         ])
-        self.vector_to_scalar_norm = torch.nn.ModuleList([
-            Normalization(self.norm_mode, self.n_filters[i])
-            for i in range(self.n_layers)
-        ])
-        self.vector_norm_to_scalar = torch.nn.ModuleList([
-            nn.Linear(self.v_n_filters[i], self.n_filters[i], bias=False)
+        self.vector_to_scalar = torch.nn.ModuleList([
+            Scalarizer(self.v_n_filters[i], 3, self.norm_mode, self.activation, self.dropout_p)
             for i in range(self.n_layers)
         ])
         self.scalar_to_vector_norm = torch.nn.ModuleList([
             Normalization(self.norm_mode, self.v_n_filters[i], bias=False)
+            for i in range(self.n_layers)
+        ])
+        self.vector_activation = torch.nn.ModuleList([
+            VectorActivation(self.v_n_filters[i], self.activation)
             for i in range(self.n_layers)
         ])
 
@@ -192,16 +255,10 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         if v is not None:
             v = self.v_init_layer(v)
 
-        # assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc input layer {get_model_nans(self.init_layer)}"
-
         for i, (norm, linear, activation, dropout) in enumerate(zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
             x, v = self.get_residues(i, x, v)
 
-            # assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc residue output {get_model_nans(self.residue_adjust[i])}"
-
             x = self.scalar_forward(i, activation, batch, dropout, linear, norm, x, v)
-
-            # assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc linear output {get_model_nans(linear)}"
 
             if self.equivariant:
                 v = self.vector_forward(i, x, v, batch)
@@ -235,10 +292,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
     def scalar_forward(self, i, activation, batch, dropout, linear, norm, x, v):
         res = x.clone()
         if v is not None:  # concatenate vector lengths to scalar values
-            x = torch.cat([x,
-                           self.vector_to_scalar_norm[i](
-                               self.vector_norm_to_scalar[i](
-                                   torch.linalg.norm(v, dim=1)))],
+            x = torch.cat([x, self.vector_to_scalar[i](v)],
                           dim=-1)
 
         if self.norm_after_linear:
@@ -254,28 +308,10 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
                 self.s_to_v_gating_layers[i](x))[:, None, :]
         )
         vector_mix = self.v_fc_norms[i](self.v_fc_layers[i](v), batch=batch)
+        vector_mix = self.vector_activation[i](vector_mix)
 
-        return 0.5 * (v + gating_factor * vector_mix)  # A(FC(x)) * FC(N(v))   # rescaling factor keeps norm from exploding
+        return v + gating_factor * vector_mix  # A(FC(x)) * FC(N(v))   # rescaling factor keeps norm from exploding
 
-
-'''
-equivariance test
->> linear scaling layer
-from scipy.spatial.transform import Rotation as R
-
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-
-v1 = v.clone()
-rotv1 = torch.einsum('ij, njk->nik', rmat, v1)
-
-y1 = v1 + F.tanh(self.s_to_v_gating_layers[i](x)[:, None, :]) * self.v_fc_layers[i](v1)
-y2 = rotv1 + F.tanh(self.s_to_v_gating_layers[i](x)[:, None, :]) * self.v_fc_layers[i](rotv1)
-
-roty1 = torch.einsum('ij, njk->nik', rmat, y1)
-
-print(torch.mean(torch.abs(y2 - roty1)))
-
-'''
 
 
 class Normalization(nn.Module):
@@ -312,18 +348,21 @@ class Normalization(nn.Module):
 class Activation(nn.Module):
     def __init__(self, activation_func, filters, *args, **kwargs):
         super().__init__()
-        if activation_func.lower() == 'relu':
-            self.activation = F.relu
-        elif activation_func.lower() == 'gelu':
-            self.activation = F.gelu
-        elif activation_func.lower() == 'kernel':  # rather expensive
-            self.activation = kernelActivation(n_basis=10, span=4, channels=filters)
-        elif activation_func.lower() == 'leaky relu':
-            self.activation = F.leaky_relu
-        elif activation_func.lower() == 'tanh':
-            self.activation = F.tanh
-        elif activation_func.lower() == 'sigmoid':
-            self.activation = F.sigmoid
+        if activation_func is not None:
+            if activation_func.lower() == 'relu':
+                self.activation = F.relu
+            elif activation_func.lower() == 'gelu':
+                self.activation = F.gelu
+            elif activation_func.lower() == 'kernel':  # rather expensive
+                self.activation = kernelActivation(n_basis=10, span=4, channels=filters)
+            elif activation_func.lower() == 'leaky relu':
+                self.activation = F.leaky_relu
+            elif activation_func.lower() == 'tanh':
+                self.activation = F.tanh
+            elif activation_func.lower() == 'sigmoid':
+                self.activation = F.sigmoid
+        elif activation_func is None:
+            self.activation = nn.Identity()
 
     def forward(self, x):
         return self.activation(x)
@@ -492,10 +531,10 @@ class GlobalAggregation(nn.Module):
         elif self.agg_func == 'mean sum':
             return (scatter(x, batch, dim_size=output_dim, dim=0, reduce='mean') +
                     scatter(x, batch, dim_size=output_dim, dim=0, reduce='sum'))
-        elif self.agg_func == 'equivariant max':
-            # assume the input is nx3xk dimensional. Imperfectly equivariant
-            agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)])
-            return scatter(x, batch, dim_size=output_dim, dim=0, reduce='max'), agg
+        # elif self.agg_func == 'equivariant max': # deprecated todo deprecate or rewrite
+        #     # assume the input is nx3xk dimensional. Imperfectly equivariant
+        #     agg = torch.stack([v[batch == bind][x[batch == bind].argmax(dim=0), :, torch.arange(v.shape[-1])] for bind in range(batch[-1] + 1)])
+        #     return scatter(x, batch, dim_size=output_dim, dim=0, reduce='max'), agg
         elif self.agg_func == 'softmax':
             weights = scatter_softmax(x, batch, dim=0)
             return scatter(weights * x, batch, dim_size=output_dim, dim=0, reduce='sum')

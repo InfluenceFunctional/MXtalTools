@@ -1,7 +1,6 @@
 from common.config_processing import load_yaml
 import yaml
 from copy import copy
-import numpy as np
 
 base_config = load_yaml('../../experiments/base/autoencoder.yaml')
 
@@ -15,35 +14,21 @@ config_list = [
         True, False, True, True,
         1, 1, 4, 'layer',
         512, 512, 512, 0.1,
-        0, 0.05, 0.001, 300,
+        0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 1: shallow - high KLD bad loss
-        True, False, True, True,
-        1, 1, 1, 'layer',
-        512, 512, 512, 0.1,
-        0, 0.05, 0.001, 300,
-        0.99, 0.05, 1e-6, 2e-4, 0.97
-    ],
-    [  # 2: deep with heavy bottleneck - OK
-        True, False, True, True,
-        4, 1, 4, 'layer',
-        512, 512, 128, 0.1,
-        0, 0.05, 0.001, 300,
-        0.99, 0.05, 1e-6, 2e-4, 0.97
-    ],
-    [  # 3: deeper with heavy bottleneck - worst
-        True, False, True, True,
-        8, 1, 4, 'layer',
-        512, 512, 128, 0.1,
-        0, 0.05, 0.001, 300,
-        0.99, 0.05, 1e-6, 2e-4, 0.97
-    ],
-    [  # 4: deep and narrow - good KLD, decent loss but best train loss - best overfit
+    [  # 1 deep and narrow w dropout
         True, False, True, True,
         8, 1, 4, None,
-        512, 128, 128, 0,
+        512, 128, 128, 0.1,
         0, 0.05, 0.001, 300,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 2: few points
+        True, False, True, True,
+        1, 1, 4, 'layer',
+        128, 512, 512, 0.1,
+        0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
 ]

@@ -1,7 +1,7 @@
 from torch import nn as nn
 
-from models.base_models import molecule_graph_model
-from models.components import MLP
+from models.base_models import MoleculeGraphModel
+from models.components import MLP, Scalarizer
 from models.utils import get_model_nans
 
 import torch
@@ -22,7 +22,9 @@ class PointAutoencoder(nn.Module):
         self.variational = config.variational_encoder
         self.bottleneck_dim = config.bottleneck_dim
 
-        self.encoder = point_encoder(seed, config)
+        self.encoder = PointEncoder(seed, config)
+
+        self.scalarizer = Scalarizer(config.bottleneck_dim, 3, None, None, 0)
 
         self.decoder = MLP(
             layers=config.num_decoder_layers,  # todo deprecate non equivariant encoder I/O
@@ -51,10 +53,8 @@ class PointAutoencoder(nn.Module):
         pass only the encoding
         """
         encoding = self.encoder(data)
-        if self.equivariant_encoder:
-            x, v = encoding  # extract vector component
-        else:
-            x = encoding
+
+        x, v = encoding  # extract vector component
 
         if self.variational:  # this appears to break equivariance but it's only because the lengths are changing
             '''
@@ -77,140 +77,39 @@ class PointAutoencoder(nn.Module):
 
             encoding = stochastic_weight[:, None, :] * v / (torch.linalg.norm(v, dim=1)[:, None, :] + 1e-3)  # rescale vector length by learned distribution
             self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution
-
         else:
-            if self.equivariant_encoder:
-                encoding = v
-            else:
-                encoding = x
+            encoding = v
 
         assert torch.sum(torch.isnan(encoding)) == 0, f"NaN in encoder output {get_model_nans(self.encoder)}"
 
         return encoding
 
-    '''
-    encoder equivariance test
-    from scipy.spatial.transform import Rotation as R
-
-    rmat = torch.tensor(R.random().as_matrix(), device=data.x.device, dtype=torch.float32)
-    
-    d1 = data.clone()
-    encoding = self.encoder(d1)
-    rotpos = torch.einsum('ij, nj->ni', rmat, d1.pos)
-    rotencoding = torch.einsum('ij, njk->nik', rmat, encoding)
-    d2 = d1.clone()
-    d2.pos = rotpos
-    
-    encoding2 = self.encoder(d2)
-    
-    print(torch.mean(torch.abs(encoding2 - rotencoding)))
-    print(torch.amax(torch.abs(encoding2 - rotencoding)))
-    '''
-
     def decode(self, encoding):
-        if self.decoder.equivariant:
-            '''encoding nx3xk'''
-            norm = torch.linalg.norm(encoding, dim=1)
-            decoding = self.decoder(x=norm,
-                                    v=encoding)
+        """encoding nx3xk"""
+        decoding = self.decoder(x=self.scalarizer(encoding),
+                                v=encoding)
 
-            scalar_decoding, vector_decoding = decoding
-            '''combine vector and scalar features to n*nodes x m'''
-            decoding = torch.cat([
-                vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_nodes, 3),
-                scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)],
-                dim=-1)
-        else:
-            '''encoding nxk'''
-            decoding = self.decoder(encoding)
-            '''decoding n x nodes*m to n*nodes x m'''
-            decoding = decoding.reshape(self.num_nodes * len(encoding), self.output_depth)
+        scalar_decoding, vector_decoding = decoding
+        '''combine vector and scalar features to n*nodes x m'''
+        decoding = torch.cat([
+            vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_nodes, 3),
+            scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)],
+            dim=-1)
 
         assert torch.sum(torch.isnan(encoding)) == 0, f"NaN in decoder output with {get_model_nans(self.decoder)}"
 
         return decoding
 
-    '''
-    >>> vector encoding equivariance test
-    
-    
-    
-    >>> vector decoding equivariance test
-    from scipy.spatial.transform import Rotation as R
-    
-    rmat = torch.tensor(R.random().as_matrix(),device=encoding.device, dtype=torch.float32)
-    
-    v1 = encoding.clone()
-    rotv1 = torch.einsum('ij, nkj->nki', rmat, v1)
-    
-    decoding = self.decoder(x=torch.linalg.norm(v1, dim=-1),
-                            v=v1.permute(0,2,1))
-    y1 = decoding[1]
-    
-    decoding = self.decoder(x=torch.linalg.norm(rotv1, dim=-1),
-                            v=rotv1.permute(0,2,1))
-    y2 = decoding[1]
-    
-    roty1 = torch.einsum('ij, njk->nik', rmat, y1)
-    
-    print(torch.mean(torch.abs(y2 - roty1)))
-    
-    >>> scalar decoding invariance test
-    from scipy.spatial.transform import Rotation as R
-    
-    rmat = torch.tensor(R.random().as_matrix(),device=encoding.device, dtype=torch.float32)
-    
-    v1 = encoding.clone()
-    rotv1 = torch.einsum('ij, nkj->nki', rmat, v1)
-    
-    decoding = self.decoder(x=torch.linalg.norm(v1, dim=-1),
-                            v=v1.permute(0,2,1))
-    y1 = decoding[0]
-    
-    decoding = self.decoder(x=torch.linalg.norm(rotv1, dim=-1),
-                            v=rotv1.permute(0,2,1))
-    y2 = decoding[0]
-    torch.mean(torch.abs(y1-y2))
-    
-    >>> including reshaping and recombination
-    from scipy.spatial.transform import Rotation as R
-    
-    rmat = torch.tensor(R.random().as_matrix(), device=encoding.device, dtype=torch.float32)
-    
-    v1 = encoding.clone()
-    rotv1 = torch.einsum('ij, nkj->nki', rmat, v1)
-    
-    decoding = self.decoder(x=torch.linalg.norm(v1, dim=-1),
-                            v=v1.permute(0, 2, 1))
-    
-    scalar_decoding, vector_decoding = decoding
-    vector_decoding = vector_decoding.permute(0,2,1).reshape(len(vector_decoding) * self.num_nodes, 3)
-    scalar_decoding = scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)
-    y1 = torch.cat([vector_decoding, scalar_decoding], dim=-1)[:, :3]
-    
-    decoding = self.decoder(x=torch.linalg.norm(rotv1, dim=-1),
-                            v=rotv1.permute(0, 2, 1))
-    
-    scalar_decoding, vector_decoding = decoding
-    vector_decoding = vector_decoding.permute(0,2,1).reshape(len(vector_decoding) * self.num_nodes, 3)
-    scalar_decoding = scalar_decoding.reshape(len(scalar_decoding) * self.num_nodes, self.output_depth - 3)
-    y2 = torch.cat([vector_decoding, scalar_decoding], dim=-1)[:, :3]
-    
-    roty1 = torch.einsum('ij, nj->ni', rmat, y1)
-    
-    print(torch.mean(torch.abs(roty1 - y2))) 
-    '''
 
-
-class point_encoder(nn.Module):
+class PointEncoder(nn.Module):
     def __init__(self, seed, config):
-        super(point_encoder, self).__init__()
-        self.model = molecule_graph_model(
+        super(PointEncoder, self).__init__()
+        self.model = MoleculeGraphModel(
             num_atom_feats=1,
             num_mol_feats=0,
             output_dimension=config.bottleneck_dim,
             seed=seed,
-            equivariant_graph=True if config.encoder_type == 'equivariant' else False,
+            equivariant_graph=True if config.encoder_type == 'equivariant' else False,  # todo deprecate invariant mode
             graph_aggregator=config.graph_aggregator,
             concat_pos_to_atom_features=True,
             concat_mol_to_atom_features=False,
@@ -242,32 +141,3 @@ class point_encoder(nn.Module):
 
     def forward(self, data):
         return self.model(data)
-
-
-"""
->>> cross product equivariance test
-from scipy.spatial.transform import Rotation as R
-
-rmat = torch.tensor(R.random().as_matrix(), device='cpu', dtype=torch.float32)
-
-v1 = torch.randn(10,3)
-encoding = torch.cross(v1[:5],v1[5:])
-v2 = torch.einsum('ij, nj->ni', rmat, v1)
-rotencoding = torch.einsum('ij, nj->ni', rmat, encoding)
-encoding2 = torch.cross(v2[:5],v2[5:])
-
-print(torch.mean(torch.abs(encoding2 - rotencoding)))
-print(torch.amax(torch.abs(encoding2 - rotencoding)))
-
-rmat = -rmat
-
-v1 = torch.randn(10,3)
-encoding = torch.cross(v1[:5],v1[5:])
-v2 = torch.einsum('ij, nj->ni', rmat, v1)
-rotencoding = torch.einsum('ij, nj->ni', rmat, encoding)
-encoding2 = torch.cross(v2[:5],v2[5:])
-
-print(torch.mean(torch.abs(encoding2 - rotencoding)))
-print(torch.amax(torch.abs(encoding2 - rotencoding)))
-
-"""

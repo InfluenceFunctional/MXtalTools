@@ -208,15 +208,3 @@ node_weights = np.concatenate((np.ones(9)*2, np.ones(len(G.nodes)-9)))
 nx.draw_kamada_kawai(G, arrows=True, node_size=node_weights * 100, edge_color=weights, linewidths = 1, width=weights, 
 edge_cmap=plt.cm.RdYlGn, node_color = node_weights, cmap=plt.cm.RdYlGn)
 '''
-
-'''
-equivariance test
-from scipy.spatial.transform import Rotation as R
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-embedding = self.init_vector_embedding(v[:, :, None]).permute(0, 2, 1)
-rotv = torch.einsum('ij, nkj -> nki', rmat, v[:, None, :])
-rotembedding = torch.einsum('ij, nkj -> nki', rmat, embedding)
-
-rotembedding2 = self.init_vector_embedding(rotv[:, 0, :, None]).permute(0,2,1)
-torch.sum(torch.abs(rotembedding - rotembedding2))
-'''

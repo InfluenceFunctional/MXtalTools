@@ -78,33 +78,6 @@ class GC_Block(torch.nn.Module):
             return self.message_to_node(x)
 
 
-'''
-equivariance test 
-
-> linear layer
-
-from scipy.spatial.transform import Rotation as R
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-embedding = self.vec_to_message(v).permute(0,2,1)
-rotv = torch.einsum('ij, nkj -> nki', rmat, v.permute(0,2,1)).permute(0,2,1)
-rotembedding = torch.einsum('ij, nkj -> nki', rmat, embedding)
-
-rotembedding2 = self.vec_to_message(rotv).permute(0,2,1)
-print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
-
-
-> graph convolution
-from scipy.spatial.transform import Rotation as R
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-embedding = self.V_GConv(self.vec_to_message(v), alpha, edge_index, edge_embedding)
-rotv = torch.einsum('ij, njk -> nik', rmat, v)
-rotembedding = torch.einsum('ij, njk -> nik', rmat, embedding)
-
-rotembedding2 = self.V_GConv(self.vec_to_message(rotv), alpha, edge_index, edge_embedding)
-print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
-'''
-
-
 # TODO deprecate
 # class EquivariantMessagePassing(nn.Module):
 #     def __init__(self, irreps, num_edge_attr):
@@ -172,25 +145,3 @@ class FC_Block(torch.nn.Module):
                           return_latent=return_latent,
                           batch=batch)
 
-
-'''
-equivariance test
-
->>> FC block
-from scipy.spatial.transform import Rotation as R
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-_, embedding = self.model(x,
-                          v=v,
-                          conditions=torch.linalg.norm(v, dim=1) if v is not None else None,
-                          return_latent=return_latent,
-                          batch=batch)
-rotv = torch.einsum('ij, njk -> nik', rmat, v)
-rotembedding = torch.einsum('ij, njk -> nik', rmat, embedding)
-
-_, rotembedding2 = self.model(x,
-                          v=rotv,
-                          conditions=torch.linalg.norm(v, dim=1) if v is not None else None,
-                          return_latent=return_latent,
-                          batch=batch)
-print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
-'''

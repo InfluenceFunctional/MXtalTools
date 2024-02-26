@@ -92,21 +92,21 @@ autoencoder:
     use_plateau_scheduler: False
 
   model:
-    variational_encoder: True
+    variational_encoder: False
     encoder_type: 'equivariant' # only equivariant now
     decoder_type: 'equivariant'
 
-    num_graph_convolutions: 1
-    embedding_depth: 512
-    bottleneck_dim: 512
-    graph_message_depth: 256  # must cleanly divide num_heads
-    num_attention_heads: 64
+    num_graph_convolutions: 2
+    embedding_depth: 256
+    bottleneck_dim: 256
+    graph_message_depth: 128  # must cleanly divide num_heads
+    num_attention_heads: 16
     graph_aggregator: 'equivariant softmax'
-    nodewise_fc_layers: 4
+    nodewise_fc_layers: 2
     activation: 'gelu'
     num_decoder_layers: 4
     decoder_ramp_depth: True
-    num_decoder_points: 512
+    num_decoder_points: 256
 
     decoder_norm_mode: 'layer'
     graph_node_norm: 'graph layer'
@@ -118,10 +118,10 @@ autoencoder:
     decoder_dropout_probability: 0.2
 
     num_radial: 32
-    radial_function: gaussian
+    radial_function: bessel
     max_num_neighbors: 100
     convolution_cutoff: 2
-    atom_type_embedding_dims: 5
+    atom_type_embedding_dims: 32
 
 regressor:
   optimizer: null

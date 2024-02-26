@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from bulk_molecule_classification.classifier_constants import num2atomicnum
 from common.utils import softmax_np
 from dataset_management.utils import delete_from_dataframe
-from models.base_models import molecule_graph_model
+from models.base_models import MoleculeGraphModel
 from bulk_molecule_classification.mol_classifier import MoleculeClassifier
 from common.geometry_calculations import coor_trans_matrix
 from bulk_molecule_classification.classifier_constants import defect_names
@@ -278,7 +278,7 @@ def pare_cluster_radius(cluster_atoms, cluster_coords, cluster_targets, max_clus
 
 
 def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth, num_forms, num_topologies, seed):
-    return molecule_graph_model(
+    return MoleculeGraphModel(
         num_atom_feats=1,
         output_dimension=num_forms + num_topologies,
         graph_aggregator='molwise',

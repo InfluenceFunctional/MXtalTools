@@ -1,13 +1,49 @@
 import os
+import torch
 
 from common.config_processing import get_config
 from crystal_modeller import Modeller
-from tests.test_model_training import source_dir
 
 
 def test_model_training(config_path):
+    source_dir = os.getcwd()
     os.chdir(source_dir)
     user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
     config = get_config(user_yaml_path=user_path, main_yaml_path=source_dir + config_path)
     modeller = Modeller(config)
     modeller.train_crystal_models()
+
+
+def check_tensor_similarity(t1, t2, eps=1e-4):
+    """
+    check that two tensors are sufficiently similar
+    """
+    diff = torch.mean(torch.abs(t1 - t2) / torch.abs(t2))
+    assert diff < eps, f"Difference is too large {diff:.5f}"
+
+
+def test_module_equivariance(v, rotation_matrix, module, batch=None, x=None):
+
+    rotated_vector_batch = torch.einsum('ij, njk -> nik', rotation_matrix, v)
+    if x is None:
+        if batch is None:
+            output = module(v)
+            output_from_rotated = module(rotated_vector_batch)
+        else:
+            output = module(v, batch=batch)
+            output_from_rotated = module(rotated_vector_batch, batch=batch)
+    else:
+        if batch is None:
+            output = module(x=x, v=v)
+            output_from_rotated = module(x=x, v=rotated_vector_batch)
+        else:
+            output = module(x=x, v=v, batch=batch)
+            output_from_rotated = module(x=x, v=rotated_vector_batch, batch=batch)
+
+    if isinstance(output, tuple):
+        output = output[1]
+        output_from_rotated = output_from_rotated[1]
+
+    rotated_output = torch.einsum('ij, njk -> nik', rotation_matrix, output)
+
+    return rotated_output, output_from_rotated

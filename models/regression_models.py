@@ -1,5 +1,5 @@
 import torch.nn as nn
-from models.base_models import molecule_graph_model
+from models.base_models import MoleculeGraphModel
 
 
 class MoleculeRegressor(nn.Module):
@@ -15,7 +15,7 @@ class MoleculeRegressor(nn.Module):
             n_mol_feats = num_molecule_features
 
         super(MoleculeRegressor, self).__init__()
-        self.model = molecule_graph_model(
+        self.model = MoleculeGraphModel(
             num_atom_feats=n_atom_feats,
             num_mol_feats=n_mol_feats,
             output_dimension=1,

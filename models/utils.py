@@ -10,7 +10,7 @@ from torch_scatter import scatter
 
 from common.geometry_calculations import cell_vol_torch
 from common.utils import softmax_np, components2angle
-from dataset_management.utils import update_dataloader_batch_size
+from dataset_management.dataloader_utils import update_dataloader_batch_size
 from models.asymmetric_radius_graph import radius
 
 

@@ -94,8 +94,7 @@ class EquiVTransformerConv(MessagePassing):
 
         if self.lin_edge is not None:
             assert edge_attr is not None
-            edge_attr = F.sigmoid(self.lin_edge(edge_attr).view(-1, self.heads,
-                                                      self.out_channels))  # strictly positive so as not to flip any vector directions
+            edge_attr = self.lin_edge(edge_attr).view(-1, self.heads, self.out_channels)
 
         self._alpha = alpha
 
@@ -110,41 +109,3 @@ class EquiVTransformerConv(MessagePassing):
         return (f'{self.__class__.__name__}({self.in_channels}, '
                 f'{self.out_channels}, heads={self.heads})')
 
-
-''' equivariance testing
-
->> message passing
-from scipy.spatial.transform import Rotation as R
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-embedding = self.propagate(edge_index, alpha=alpha, value=value,
-                             edge_attr=edge_attr)
-rotv = torch.einsum('ij, njlk -> nilk', rmat, value)
-rotembedding = torch.einsum('ij, njlk -> nilk', rmat, embedding)
-
-rotembedding2 = self.propagate(edge_index, alpha=alpha, value=rotv,
-                             edge_attr=edge_attr)
-print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
-
->> include view operation
-from scipy.spatial.transform import Rotation as R
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-embedding = self.propagate(edge_index, alpha=alpha, value=value,
-                             edge_attr=edge_attr).view(len(value), 3, self.heads*self.out_channels)
-rotv = torch.einsum('ij, njlk -> nilk', rmat, value)
-rotembedding = torch.einsum('ij, njk -> nik', rmat, embedding)
-
-rotembedding2 = self.propagate(edge_index, alpha=alpha, value=rotv,
-                             edge_attr=edge_attr).view(len(embedding), 3, self.heads*self.out_channels)
-print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
-
->> lin skip
-from scipy.spatial.transform import Rotation as R
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-embedding = self.lin_skip(x)
-rotv = torch.einsum('ij, njk -> nik', rmat, out)
-rotx = torch.einsum('ij, njk -> nik', rmat, x)
-rotembedding = torch.einsum('ij, njk -> nik', rmat, embedding)
-
-rotembedding2 = self.lin_skip(rotx)
-print(torch.mean(torch.abs(rotembedding - rotembedding2))/torch.mean(torch.abs(rotembedding)))
-'''

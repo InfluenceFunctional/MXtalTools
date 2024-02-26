@@ -11,10 +11,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy e
 n_chunks = 2  # too many chunks can cause problems e.g., if some have zero valid entries
 use_filenames_for_identifiers = False  # for blind test submissions & other cases where the identifiers are in the filenames rather than in the .cif itself
 filter_by_targets = False
-chunks_path = r'D:/crystal_datasets/acridin_chunks/'  # where you would like processed dataset chunks to be stored before collation into final dataset
+chunks_path = r'D:/crystal_datasets/aspirin_chunks/'  # where you would like processed dataset chunks to be stored before collation into final dataset
 
 chunk_prefix = ''
-cifs_path = r'D:\crystal_datasets\ACRIDIN_STRUCTURES/'
+cifs_path = r'D:\crystal_datasets\aspirin_zzp_1/'
 target_identifiers = None
 # target_identifiers = ['OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
 #     'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04']

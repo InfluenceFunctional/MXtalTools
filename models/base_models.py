@@ -9,7 +9,7 @@ from constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from models.utils import get_model_nans
 
 
-class molecule_graph_model(nn.Module):
+class MoleculeGraphModel(nn.Module):
     def __init__(self, num_atom_feats,
                  output_dimension,
                  graph_aggregator,
@@ -45,7 +45,7 @@ class molecule_graph_model(nn.Module):
                  vector_norm=None,
                  ):
 
-        super(molecule_graph_model, self).__init__()
+        super(MoleculeGraphModel, self).__init__()
 
         torch.manual_seed(seed)
         self.equivariant_graph = equivariant_graph
@@ -201,79 +201,6 @@ class molecule_graph_model(nn.Module):
             return output, extra_outputs
         else:
             return output
-
-    '''
-    equivariance test
-    x = x0.clone()
-    v = v0.clone()
-    from scipy.spatial.transform import Rotation as R
-    
-    rmat = torch.tensor(R.random().as_matrix(), device=x.device, dtype=torch.float32)
-    _, embedding = self.global_pool(x,
-                                    agg_batch,
-                                    v=v,
-                                    cluster=data.mol_ind if self.global_pool.agg_func == 'molwise' else None,
-                                    output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
-    
-    rotv = torch.einsum('ij, njk -> nik', rmat, v)
-    rotembedding = torch.einsum('ij, njk -> nik', rmat, embedding)
-    
-    _, rotembedding2 = self.global_pool(x,
-                                    agg_batch,
-                                    v=rotv,
-                                    cluster=data.mol_ind if self.global_pool.agg_func == 'molwise' else None,
-                                    output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
-    
-    print(torch.amax(torch.abs(rotembedding - rotembedding2)) / torch.mean(torch.abs(rotembedding)))
-    
-    
-    >>> full model
-    from scipy.spatial.transform import Rotation as R
-    
-    rmat = torch.tensor(R.random().as_matrix(), device=data.x.device, dtype=torch.float32)
-    
-    d1 = data.clone()
-    x = d1.x  # already cloned before it comes into this function
-    x = self.append_init_node_features(d1,
-                                       x)
-    x, v = self.graph_net(x,
-                              d1.pos,
-                              d1.batch,
-                              d1.ptr,
-                              edges_dict)
-    
-    
-    _, encoding = self.global_pool(x,
-                            agg_batch,
-                            v=v,
-                            cluster=d1.mol_ind if self.global_pool.agg_func == 'molwise' else None,
-                            output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
-    
-    
-    rotpos = torch.einsum('ij, nj->ni', rmat, d1.pos)
-    rotencoding = torch.einsum('ij, njk->nik', rmat, encoding)
-    d2 = d1.clone()
-    d2.pos = rotpos
-    
-    x = d2.x  # already cloned before it comes into this function
-    x = self.append_init_node_features(d2,
-                                       x)
-    x, v = self.graph_net(x,
-                              d2.pos,
-                              d2.batch,
-                              d2.ptr,
-                              edges_dict)
-    
-    _, encoding2 = self.global_pool(x,
-                            agg_batch,
-                            v=v,
-                            cluster=d2.mol_ind if self.global_pool.agg_func == 'molwise' else None,
-                            output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
-    
-    print(torch.mean(torch.abs(encoding2 - rotencoding)))
-    print(torch.amax(torch.abs(encoding2 - rotencoding)))
-    
-    '''
 
     def collect_extra_outputs(self, data, edges_dict, return_dists, return_latent, x):
         extra_outputs = {}

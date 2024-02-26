@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 import torch.nn.functional as F
-from models.base_models import molecule_graph_model
+from models.base_models import MoleculeGraphModel
 import torch
 
 
@@ -19,7 +19,7 @@ class CrystalDiscriminator(nn.Module):
             n_mol_feats = num_molecule_features
 
         super(CrystalDiscriminator, self).__init__()
-        self.model = molecule_graph_model(
+        self.model = MoleculeGraphModel(
             num_atom_feats=n_atom_feats,
             num_mol_feats=n_mol_feats,
             output_dimension=2 + 1,  # 2 for classification and 1 for distance regression

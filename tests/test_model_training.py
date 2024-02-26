@@ -9,10 +9,8 @@ from tests.utils import test_model_training
 
 # ====================================
 
-
 os.chdir('../')  # go up to main source directory
 source_dir = os.getcwd()
-
 
 class TestClass:
     @staticmethod

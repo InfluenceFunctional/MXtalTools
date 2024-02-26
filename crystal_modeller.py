@@ -44,7 +44,7 @@ from crystal_building.builder import SupercellBuilder
 from crystal_building.utils import update_crystal_symmetry_elements
 
 from dataset_management.manager import DataManager
-from dataset_management.utils import (get_dataloaders, update_dataloader_batch_size)
+from dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
 from reporting.logger import Logger
 
 from common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict, batch_compute_dipole
@@ -106,6 +106,39 @@ class Modeller:
 
             m2 = torch.sqrt(torch.ones(1) * 2) * torch.exp(torch.lgamma(torch.ones(1) * (ni + 1) / 2)) / torch.exp(torch.lgamma(torch.ones(1) * ni / 2))
             self.chi_scaling_factors[ind] = m1 / m2
+
+        ''' # the distributions for the independent spherical coordinates of randn distributed vectors in 3d - chi 3, sine, and uniform
+        import numpy as np
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        # sine distribution https://stats.libretexts.org/Bookshelves/Probability_Theory/Probability_Mathematical_Statistics_and_Stochastic_Processes_(Siegrist)/05%3A_Special_Distributions/5.27%3A_The_Sine_Distribution
+        
+        def to_spherical(vec):
+            """Converts a cartesian coordinate (x, y, z) into a spherical one (radius, theta, phi)."""
+            x, y, z = vec.T
+            r = np.linalg.norm(vec, axis=1)
+            theta = np.arctan2(np.sqrt(x * x + y * y), z)
+            phi = np.arctan2(y, x)
+            return r, theta, phi
+        
+        v = np.random.randn(100000,3)
+        r, theta, phi = to_spherical(v)
+        
+        x = np.linspace(0, np.pi, 1001)
+        
+        theta2 = np.arcsin(2*(x - np.pi/2)) + np.pi/2
+        fig = make_subplots(rows=1, cols=3, subplot_titles =['Radial Norm, Chi (3)','Polar Angle (sine)','Azimuthal Angle (uniform)'])
+        fig.add_histogram(x=r, nbinsx=100, histnorm='probability density', row=1, col=1)
+        fig.add_histogram(x=np.sqrt(np.random.chisquare(3.0, size=10000)), histnorm='probability density', row=1, col=1)
+        for value in [theta, theta2]:
+            fig.add_histogram(x=value,nbinsx=100,histnorm='probability density', row=1, col=2)
+        fig.add_scattergl(x=x, y=1/2*np.sin(x), row=1,col=2)
+        
+        fig.add_histogram(x=phi, nbinsx=100, histnorm='probability density', row=1, col=3)
+        fig.add_histogram(x=np.random.uniform(-np.pi,np.pi,size=10000), nbinsx=100, histnorm='probability density', row=1, col=3)
+        
+        fig.show(renderer='browser')
+        '''
 
     def prep_new_working_directory(self):
         """

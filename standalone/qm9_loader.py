@@ -5,7 +5,7 @@ requires numpy, torch, pandas, torch_geometric, torch_scatter, torch_cluster, sc
 """
 from common.config_processing import load_yaml, dict2namespace
 from dataset_management.manager import DataManager
-from dataset_management.utils import get_dataloaders
+from dataset_management.dataloader_utils import get_dataloaders
 
 datasets_path = 'D:/crystal_datasets/'
 dataset_name = '/qm9_molecules_dataset.pkl'
