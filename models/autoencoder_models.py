@@ -10,15 +10,15 @@ import torch
 class PointAutoencoder(nn.Module):
     def __init__(self, seed, config, num_atom_types):
         super(PointAutoencoder, self).__init__()
-        '''conditioning model'''
+        """
+        3D o3 equivariant multi-type point cloud autoencoder model
+        """
         cartesian_dimension = 3
         self.num_classes = num_atom_types
         self.output_depth = self.num_classes + cartesian_dimension + 1
         self.num_nodes = config.num_decoder_points
 
-        self.equivariant_encoder = config.encoder_type == 'equivariant'
-        self.equivariant_decoder = config.decoder_type == 'equivariant'
-        self.fully_equivariant = self.equivariant_encoder and self.equivariant_decoder
+        self.fully_equivariant = True
         self.variational = config.variational_encoder
         self.bottleneck_dim = config.bottleneck_dim
 
@@ -27,15 +27,15 @@ class PointAutoencoder(nn.Module):
         self.scalarizer = Scalarizer(config.bottleneck_dim, 3, None, None, 0)
 
         self.decoder = MLP(
-            layers=config.num_decoder_layers,  # todo deprecate non equivariant encoder I/O
-            filters=config.embedding_depth if self.equivariant_decoder else config.embedding_depth * 3,
-            input_dim=config.bottleneck_dim if self.equivariant_encoder else config.bottleneck_dim * 3,
-            output_dim=(self.output_depth - 3 if self.equivariant_decoder else 0) * self.num_nodes,
+            layers=config.num_decoder_layers,
+            filters=config.embedding_depth,
+            input_dim=config.bottleneck_dim,
+            output_dim=(self.output_depth - 3) * self.num_nodes,
             conditioning_dim=0,
             activation='gelu',
             norm=config.decoder_norm_mode,
             dropout=config.decoder_dropout_probability,
-            equivariant=config.decoder_type == 'equivariant',
+            equivariant=True,
             vector_output_dim=self.num_nodes,
             vector_norm=config.decoder_vector_norm,
             ramp_depth=config.decoder_ramp_depth,
@@ -49,39 +49,34 @@ class PointAutoencoder(nn.Module):
             return self.decode(encoding)
 
     def encode(self, data, z=None):
-        """
-        pass only the encoding
-        """
-        encoding = self.encoder(data)
 
-        x, v = encoding  # extract vector component
-
-        if self.variational:  # this appears to break equivariance but it's only because the lengths are changing
-            '''
-            here we enforce regularization only against the norms of the embedding vectors
-            the directions may not be / in practice are not randomly distributed, so generation based on random directions will not work
-            would require somehow to regularize also over directions (maybe over dot products) as well, but this is complicated/expensive
-            '''
-            assert self.equivariant_encoder, "Variational autoencoder only implemented for equivariant encoder"
-
-            mu = torch.linalg.norm(v, dim=1)
-            log_sigma = x.clip(max=1)  # if this becomes large, we get Inf in next step
-            sigma = torch.exp(0.5 * log_sigma)
-
-            if z is None:
-                z = torch.randn((len(sigma), 3, sigma.shape[-1]), dtype=v.dtype, device=v.device)
-            else:
-                assert z.ndim == 3, "Improper dimension for encoder latent noise"
-
-            stochastic_weight = torch.linalg.norm(z * sigma[:, None, :] + mu[:, None, :], dim=1)  # parameterized distribution
-
-            encoding = stochastic_weight[:, None, :] * v / (torch.linalg.norm(v, dim=1)[:, None, :] + 1e-3)  # rescale vector length by learned distribution
-            self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution
+        if self.variational:
+            encoding = self.variational_sampling(data, z)
         else:
-            encoding = v
+            _, encoding = self.encoder(data)
 
         assert torch.sum(torch.isnan(encoding)) == 0, f"NaN in encoder output {get_model_nans(self.encoder)}"
 
+        return encoding
+
+    def variational_sampling(self, data, z):
+        """
+        here we enforce regularization only against the norms of the embedding vectors
+        the directions may not be / in practice are not randomly distributed, so generation based on random directions will not work
+        would require somehow to regularize also over directions (maybe over dot products) as well
+        though this is also impossible in principle for flat molecules, since they cannot mix vectors out of plane
+        """
+        x, v = self.encoder(data)
+        mu = torch.linalg.norm(v, dim=1)
+        log_sigma = x.clip(max=1)  # if this becomes large, we get Inf in next step
+        sigma = torch.exp(0.5 * log_sigma)
+
+        if z is None:
+            z = torch.randn((len(sigma), 3, sigma.shape[-1]), dtype=v.dtype, device=v.device)
+
+        stochastic_weight = torch.linalg.norm(z * sigma[:, None, :] + mu[:, None, :], dim=1)  # parameterized distribution
+        encoding = stochastic_weight[:, None, :] * v / (torch.linalg.norm(v, dim=1)[:, None, :] + 1e-3)  # rescale vector length by learned distribution
+        self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution
         return encoding
 
     def decode(self, encoding):
@@ -109,7 +104,7 @@ class PointEncoder(nn.Module):
             num_mol_feats=0,
             output_dimension=config.bottleneck_dim,
             seed=seed,
-            equivariant_graph=True if config.encoder_type == 'equivariant' else False,  # todo deprecate invariant mode
+            equivariant_graph=True,
             graph_aggregator=config.graph_aggregator,
             concat_pos_to_atom_features=True,
             concat_mol_to_atom_features=False,

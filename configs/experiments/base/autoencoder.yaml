@@ -99,8 +99,8 @@ autoencoder:
     num_graph_convolutions: 2
     embedding_depth: 256
     bottleneck_dim: 256
-    graph_message_depth: 128  # must cleanly divide num_heads
-    num_attention_heads: 16
+    graph_message_depth: 128
+    num_attention_heads: 16  # must cleanly divide graph_message_depth
     graph_aggregator: 'equivariant softmax'
     nodewise_fc_layers: 2
     activation: 'gelu'
