@@ -17,7 +17,7 @@ config_list = [
         0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 1 deep and narrow w dropout
+    [  # 1 deep and narrow w dropout - NaN after 25 epochs. Rapid saturation to bad minimum in any case.
         True, False, True, True,
         8, 1, 4, None,
         512, 128, 128, 0.1,
@@ -29,6 +29,27 @@ config_list = [
         1, 1, 4, 'layer',
         128, 512, 512, 0.1,
         0, 0.05, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 3: big decoder shallow encoder
+        True, False, False, True,
+        4, 1, 1, 'layer',
+        512, 512, 512, 0.1,
+        0, 0.05, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 4: extra conv
+        True, False, False, True,
+        1, 2, 2, 'layer',
+        512, 512, 512, 0.1,
+        0, 0.05, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 5: no dropout or decoder regularization
+        True, False, False, True,
+        1, 1, 4, None,
+        512, 256, 256, 0,
+        0, 0.001, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
 ]
