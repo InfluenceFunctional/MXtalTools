@@ -48,7 +48,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null
+  autoencoder: null #/cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57  # no protons, non-variational
   embedding_regressor: null
 
 positional_noise:

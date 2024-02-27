@@ -24,32 +24,67 @@ config_list = [
         0, 0.05, 0.001, 300,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 2: few points
+    [  # 2: few points # not better
         True, False, True, True,
         1, 1, 4, 'layer',
         128, 512, 512, 0.1,
         0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 3: big decoder shallow encoder
+    [  # 3: big decoder shallow encoder  # very good some overfit
         True, False, False, True,
         4, 1, 1, 'layer',
         512, 512, 512, 0.1,
         0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 4: extra conv
+    [  # 4: extra conv # very good some overfit
         True, False, False, True,
         1, 2, 2, 'layer',
         512, 512, 512, 0.1,
         0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 5: no dropout or decoder regularization
+    [  # 5: no dropout or decoder regularization  # worst
         True, False, False, True,
         1, 1, 4, None,
         512, 256, 256, 0,
         0, 0.001, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 6
+        True, False, False, True,
+        1, 2, 2, 'layer',
+        512, 512, 512, 0.25,
+        0, 0.05, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 7
+        False, False, False, True,
+        1, 2, 2, 'layer',
+        512, 512, 512, 0.1,
+        0, 0.05, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 8
+        False, True, False, True,
+        1, 2, 2, 'layer',
+        512, 512, 512, 0.1,
+        0, 0.05, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 9
+        False, False, False, True,
+        2, 2, 2, 'layer',
+        512, 512, 512, 0.25,
+        0, 0.05, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 10
+        False, True, False, True,
+        2, 2, 2, 'layer',
+        512, 512, 512, 0.25,
+        0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
 ]

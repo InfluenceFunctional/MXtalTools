@@ -1,21 +1,22 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml
+mode: embedding
 
 sweep_id: null
 sweep_path: null
 
 dataset:
-  max_dataset_length: 10000
+  max_dataset_length: 1000000
   test_fraction: 0.2
-  filter_protons: False
+  filter_protons: True
   regression_target: molecule_gap_energy
 
 # batching & convergence
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 50
+min_batch_size: 500
 max_batch_size: 10000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
@@ -28,9 +29,9 @@ extra_test_period: 4 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 logger:
   sample_reporting_frequency: 2  # how often to do detailed reporting with figures
 
-model_paths:
-  discriminator: null #/cluster/best_discriminator_experiments_benchmarks_1_23-02-12-30-07
-  generator: null
-  regressor: null
-  autoencoder: null
-  embedding_regressor: null
+#model_paths:
+#  discriminator: null
+#  generator: null
+#  regressor: null
+#  autoencoder: null
+#  embedding_regressor: null

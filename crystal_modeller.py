@@ -541,10 +541,11 @@ class Modeller:
         data = self.preprocess_real_autoencoder_data(data, no_noise=True, orientation_override=None)
         data = data.to(self.device)
         encoding = self.models_dict['autoencoder'].encode(data.clone())
+        scalar_encoding = self.models_dict['autoencoder'].scalarizer(encoding)
         decoding = self.models_dict['autoencoder'].decode(encoding)
-        self.autoencoder_evaluation_sample_analysis(data, decoding, encoding)
+        self.autoencoder_evaluation_sample_analysis(data, decoding, encoding, scalar_encoding)
 
-    def autoencoder_evaluation_sample_analysis(self, data, decoding, encoding):
+    def autoencoder_evaluation_sample_analysis(self, data, decoding, encoding, scalar_encoding):
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
 
         nodewise_weights_tensor = decoded_data.aux_ind
@@ -560,12 +561,14 @@ class Modeller:
         stats_values = [data.tracking[:, ind].cpu().detach().numpy() for ind in range(data.tracking.shape[1])]
         stats_keys = self.dataDims['tracking_features']
         stats_values += [encoding.cpu().detach().numpy(),
-                         (full_overlap / self_overlap).cpu().detach().numpy(),
-                         (coord_overlap / self_coord_overlap).cpu().detach().numpy(),
-                         (self_type_overlap / type_overlap).cpu().detach().numpy(),
+                         scalar_encoding.cpu().detach().numpy(),
+                         scatter(full_overlap / self_overlap, data.batch, reduce='mean').cpu().detach().numpy(),
+                         scatter(coord_overlap / self_coord_overlap, data.batch, reduce='mean').cpu().detach().numpy(),
+                         scatter(self_type_overlap / type_overlap, data.batch, reduce='mean').cpu().detach().numpy(),
                          Ip.cpu().detach().numpy(),
                          Ipm.cpu().detach().numpy()]
         stats_keys += ['encoding',
+                       'scalar_encoding',
                        'evaluation_overlap',
                        'evaluation_coord_overlap',
                        'evaluation_type_overlap',

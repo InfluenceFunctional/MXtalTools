@@ -938,7 +938,7 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
                           scores_dict, BT_target_scores, BT_submission_scores,
                           tracking_features_dict, layout, tracking_features, dataDims, score_name='score')
 
-    dist2score = lambda x: -np.log10(10**x - 1)
+    dist2score = lambda x: -np.log10(10 ** x - 1)
     distance_score_dict = {key: dist2score(value) for key, value in pred_distance_dict.items()}
     BT_target_dist_scores = dist2score(BT_target_scores)
     BT_submission_dist_scores = dist2score(BT_submission_distances)
@@ -1291,7 +1291,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
             z = np.ones_like(tgt_value)
 
         num_points = len(pred_value)
-        opacity = np.exp(-num_points/10000)
+        opacity = np.exp(-num_points / 10000)
         fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity, showlegend=False),
                       row=1, col=1)
         fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
@@ -2081,34 +2081,15 @@ def autoencoder_embedding_map(stats_dict, max_num_samples=1000000):
     fig.show(renderer='browser')
     '''
 
-    def direction_coefficient(v):
-        """
-        norm vectors
-        take inner product
-        sum the gaussian-weighted dot product components
-        """
-        norms = np.linalg.norm(v, axis=1)
-        nv = v / (norms[:, None, :] + 1e-3)
-        dp = np.einsum('nik,nil->nkl', nv, nv)
-
-        return np.exp(-(1 - dp) ** 2).mean(-1)
-
-    vector_encodings = stats_dict['encoding'][:max_num_samples]
-
-    coeffs = []
-    for ind in range(len(vector_encodings) // 100 + 1):
-        coeffs.append(direction_coefficient(vector_encodings[ind * 100: (ind + 1) * 100]))
-    coeffs = np.concatenate(coeffs)
-
-    scalar_encodings = np.linalg.norm(vector_encodings, axis=1)
-    scalar_encodings = np.concatenate([scalar_encodings, coeffs], axis=1)
+    """embedding analysis"""
+    scalar_encodings = stats_dict['scalar_encoding'][:max_num_samples]
 
     import umap
 
     reducer = umap.UMAP(n_components=2,
                         metric='cosine',
-                        n_neighbors=10,
-                        min_dist=0.05)
+                        n_neighbors=100,
+                        min_dist=0.01)
 
     embedding = reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std())
     if 'principal_inertial_moments' in stats_dict.keys():
@@ -2124,25 +2105,34 @@ def autoencoder_embedding_map(stats_dict, max_num_samples=1000000):
             'molecule_principal_moment1', 'molecule_principal_moment2', 'molecule_principal_moment3',
             'molecule_Ip_ratio1', 'molecule_Ip_ratio2', 'molecule_Ip_ratio3'
         ]
-        n_rows = 4
+        n_rows = 5
     else:
         mol_keys = [
             'molecule_num_atoms', 'molecule_volume', 'molecule_mass',
             'molecule_C_fraction', 'molecule_N_fraction', 'molecule_O_fraction',
+            'evaluation_overlap', 'evaluation_coord_overlap', 'evaluation_type_overlap',
         ]
-        n_rows = 2
+        n_rows = 3
 
-    fig = make_subplots(cols=3, rows=n_rows, subplot_titles=mol_keys, horizontal_spacing=0.05, vertical_spacing=0.05)
-    for ind, mol_key in enumerate(mol_keys):
+    latents_keys = mol_keys + ['evaluation_overlap', 'evaluation_coord_overlap', 'evaluation_type_overlap']
+
+    fig = make_subplots(cols=3, rows=n_rows, subplot_titles=latents_keys, horizontal_spacing=0.05, vertical_spacing=0.05)
+    for ind, mol_key in enumerate(latents_keys):
         try:
             mol_feat = np.concatenate(stats_dict[mol_key])[:max_num_samples]
         except:
             mol_feat = stats_dict[mol_key][:max_num_samples]
+
+        if 'overlap' in mol_key:
+            mol_feat = np.log10(np.abs(1 - mol_feat))
+
+        normed_mol_feat = mol_feat - mol_feat.min()
+        normed_mol_feat /= normed_mol_feat.max()
         row = ind // 3 + 1
         col = ind % 3 + 1
         fig.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
                                    mode='markers',
-                                   marker_color=mol_feat / mol_feat.max(),
+                                   marker_color=normed_mol_feat,
                                    opacity=.1,
                                    marker_colorbar=dict(title=mol_key),
                                    marker_cmin=0, marker_cmax=1, marker_showscale=False,
@@ -2157,7 +2147,48 @@ def autoencoder_embedding_map(stats_dict, max_num_samples=1000000):
         fig.update_layout(coloraxis_showscale=False)
     fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
-    # fig.show(renderer='browser')
+
+    fig.show(renderer='browser')
+
     fig.write_image('embedding.png', width=1080, height=1080)
     wandb.log({'Latent Embedding Analysis': wandb.Image('embedding.png')})
+
+    """overlap correlates"""
+    score = np.concatenate(stats_dict['evaluation_overlap'])
+    correlates_dict = {}
+    for mol_key in mol_keys:
+        try:
+            mol_feat = np.concatenate(stats_dict[mol_key])[:max_num_samples]
+        except:
+            mol_feat = stats_dict[mol_key][:max_num_samples]
+        coeff = np.corrcoef(score, mol_feat, rowvar=False)[0, 1]
+        if np.abs(coeff) > 0.05:
+            correlates_dict[mol_key] = coeff
+
+    sort_inds = np.argsort(np.asarray([(correlates_dict[key]) for key in correlates_dict.keys()]))
+    keys_list = list(correlates_dict.keys())
+    sorted_correlates_dict = {keys_list[ind]: correlates_dict[keys_list[ind]] for ind in sort_inds}
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+                         y=list(sorted_correlates_dict.keys()),
+                         x=[corr for corr in sorted_correlates_dict.values()],
+                         textposition='auto',
+                         orientation='h',
+                         text=[corr for corr in sorted_correlates_dict.values()],
+                         ))
+
+    fig.update_layout(barmode='relative')
+    fig.update_traces(texttemplate='%{text:.2f}')
+    fig.update_yaxes(title_font=dict(size=24), tickfont=dict(size=24))
+    fig.show(renderer='browser')
+
+    """score distribution"""
+    fig = go.Figure()
+    fig.add_histogram(x=np.log10(1-np.abs(score)),
+                      nbinsx=500,
+                      marker_color='rgba(0,0,100,1)')
+    fig.update_layout(xaxis_title='log10(1-overlap)')
+    fig.show(renderer='browser')
+
     return None
