@@ -29,21 +29,49 @@ targets = ["molecule_rotational_constant_a",  # 0
 
 
 config_list = [
-    [  # 0: no protons baseline
+    [  # 0: no protons baseline - worst
         models[0], True, targets[7],
         64, 12, 0.1, 'layer'
     ],
-    [  # 1: no protons large
+    [  # 1: no protons large - second best
         models[0], True, targets[7],
         512, 12, 0.1, 'layer'
     ],
-    [  # 2: protons baseline
+    [  # 2: protons baseline - second best
         models[1], False, targets[7],
         64, 12, 0.1, 'layer'
     ],
-    [  # 3: protons large
+    [  # 3: protons large - by far the best
         models[1], False, targets[7],
         512, 12, 0.1, 'layer'
+    ],
+    [  # 3
+        models[1], False, targets[7],
+        256, 12, 0.1, 'layer'
+    ],
+    [  # 5
+        models[1], False, targets[7],
+        512, 12, 0.25, 'layer'
+    ],
+    [  # 6
+        models[1], False, targets[7],
+        512, 4, 0.1, 'layer'
+    ],
+    [  # 7
+        models[1], False, targets[7],
+        512, 12, 0.1, 'batch'
+    ],
+    [  # 8
+        models[1], False, targets[7],
+        512, 12, 0.1, 'layer'
+    ],
+    [  # 9
+        models[1], False, targets[7],
+        128, 20, 0.1, 'layer'
+    ],
+    [  # 10
+        models[1], False, targets[7],
+        1024, 4, 0.1, 'layer'
     ],
 ]
 

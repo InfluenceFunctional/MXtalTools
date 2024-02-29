@@ -32,11 +32,11 @@ embedding_regressor:
   optimizer:
     beta1: 0.9
     beta2: 0.999
-    convergence_eps: 1.0e-06
+    convergence_eps: 0.0001
     init_lr: 0.0001
-    lr_growth_lambda: 1.0
+    lr_growth_lambda: 1.1
     lr_schedule: true
-    lr_shrink_lambda: 0.99
+    lr_shrink_lambda: 0.95
     max_lr: 0.0005
     min_lr: 5.0e-06
     optimizer: adamw
@@ -55,7 +55,7 @@ generator:
   train_vdw: false
 gradient_norm_clip: 1
 grow_batch_size: true
-history: 100
+history: 50
 logger:
   experiment_tag: dev
   log_figures: true
@@ -66,7 +66,7 @@ machine: cluster
 max_batch_size: 2000
 max_epochs: 10000
 min_batch_size: 50
-minimum_epochs: 100
+minimum_epochs: 50
 misc_dataset_name: misc_data_for_qm9_molecules_dataset.npy
 mode: embedding_regression
 model_names:
