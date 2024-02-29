@@ -1,8 +1,8 @@
 import os
 import torch
 
-from common.config_processing import get_config
-from crystal_modeller import Modeller
+from mxtaltools.common.config_processing import get_config
+from mxtaltools.crystal_modeller import Modeller
 
 
 def test_model_training(config_path):

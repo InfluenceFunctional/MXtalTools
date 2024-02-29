@@ -3,11 +3,11 @@ import torch
 import torch.nn.functional as F
 
 from bulk_molecule_classification.classifier_constants import num2atomicnum
-from common.utils import softmax_np
-from dataset_management.utils import delete_from_dataframe
-from models.base_models import MoleculeGraphModel
+from mxtaltools.common.utils import softmax_np
+from mxtaltools.dataset_management.utils import delete_from_dataframe
+from mxtaltools.models.base_models import MoleculeGraphModel
 from bulk_molecule_classification.mol_classifier import MoleculeClassifier
-from common.geometry_calculations import coor_trans_matrix
+from mxtaltools.common.geometry_calculations import coor_trans_matrix
 from bulk_molecule_classification.classifier_constants import defect_names
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score

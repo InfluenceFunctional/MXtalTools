@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from common.utils import torch_ptp, softmax_np, earth_movers_distance_torch, earth_movers_distance_np, components2angle, angle2components, norm_circular_components
+from mxtaltools.common.utils import torch_ptp, softmax_np, earth_movers_distance_torch, earth_movers_distance_np, components2angle, angle2components, norm_circular_components
 
 
 def test_torch_ptp():

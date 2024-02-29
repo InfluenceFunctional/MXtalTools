@@ -3,9 +3,9 @@
 import numpy as np
 from ase.visualize import view
 from ase import Atoms
-from crystal_building.utils import build_unit_cell, unit_cell_to_convolution_cluster, fractional_transform_np
-from constants.space_group_info import SYM_OPS
-from common.geometry_calculations import coor_trans_matrix
+from mxtaltools.crystal_building.utils import build_unit_cell, unit_cell_to_convolution_cluster, fractional_transform_np
+from mxtaltools.constants.space_group_info import SYM_OPS
+from mxtaltools.common.geometry_calculations import coor_trans_matrix
 
 import torch
 

@@ -1,7 +1,7 @@
 """import statements"""
 import argparse, warnings
-from common.config_processing import get_config
-from crystal_modeller import Modeller
+from mxtaltools.common.config_processing import get_config
+from mxtaltools.modeller import Modeller
 import pandas as pd
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)  # ignore numpy error
@@ -27,7 +27,7 @@ if __name__ == '__main__':
     '''
     if config.sweep_id is None and config.sweep_path is not None:
         import wandb
-        from common.config_processing import load_yaml
+        from mxtaltools.common.config_processing import load_yaml
 
         sweep_config = load_yaml(config.sweep_path)
         config.sweep_id = wandb.sweep(sweep=sweep_config,
@@ -37,7 +37,7 @@ if __name__ == '__main__':
 
     if config.sweep_id is not None:
         import wandb
-        from common.config_processing import load_yaml
+        from mxtaltools.common.config_processing import load_yaml
 
         sweep_config = load_yaml(config.sweep_path)
         predictor = Modeller(config, sweep_config=sweep_config)

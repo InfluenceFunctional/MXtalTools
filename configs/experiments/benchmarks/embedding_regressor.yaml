@@ -13,7 +13,7 @@ min_batch_size: 100
 max_batch_size: 5000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 2000
+minimum_epochs: 500
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 100  # for convergence checks
 extra_test_period: 1
@@ -28,5 +28,5 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: /best_autoencoder_experiments_benchmarks_0_23-02-12-19-08
+  autoencoder: null #'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57'  # no protons
   embedding_regressor: null

@@ -1,4 +1,4 @@
-from common.config_processing import load_yaml
+from mxtaltools.common.config_processing import load_yaml
 import yaml
 from copy import copy
 
@@ -52,28 +52,28 @@ config_list = [
         0, 0.001, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 6
+    [  # 6 - slightly worse than 4
         True, False, False, True,
         1, 2, 2, 'layer',
         512, 512, 512, 0.25,
         0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 7
+    [  # 7 - good with minimal overfit
         False, False, False, True,
         1, 2, 2, 'layer',
         512, 512, 512, 0.1,
         0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 8
+    [  # 8 - worse than 7
         False, True, False, True,
         1, 2, 2, 'layer',
         512, 512, 512, 0.1,
         0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],
-    [  # 9
+    [  # 9 - worse than 7 with some overfit
         False, False, False, True,
         2, 2, 2, 'layer',
         512, 512, 512, 0.25,
@@ -84,6 +84,20 @@ config_list = [
         False, True, False, True,
         2, 2, 2, 'layer',
         512, 512, 512, 0.25,
+        0, 0.05, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 11: 4 with variational
+        True, False, True, True,
+        1, 2, 2, 'layer',
+        512, 512, 512, 0.1,
+        0, 0.05, 0.001, 500,
+        0.99, 0.05, 1e-6, 2e-4, 0.97
+    ],
+    [  # 12: 4 with variational - different - deeper train loss... worse RMSD? but doesn't hit .97 threshold
+        True, False, True, True,
+        2, 2, 2, 'layer',
+        256, 256, 128, 0.05,
         0, 0.05, 0.001, 500,
         0.99, 0.05, 1e-6, 2e-4, 0.97
     ],

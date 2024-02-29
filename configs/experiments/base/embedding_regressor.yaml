@@ -26,9 +26,9 @@ min_batch_size: 50
 max_batch_size: 2000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 50
+minimum_epochs: 100
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 50  # for convergence checks
+history: 100  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
@@ -50,7 +50,9 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: /cluster/best_autoencoder_experiments_benchmarks_0_23-02-12-19-08
+  autoencoder: null
+  #autoencoder: r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57',  # no protons
+  #autoencoder: r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'  # protons
   embedding_regressor: null
 
 positional_noise:
@@ -88,7 +90,7 @@ embedding_regressor:
     min_lr: 5.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
-    weight_decay: 0.05
+    weight_decay: 0.1
 
   model:
     depth: 128

@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 
-from models.GraphNeuralNetwork import EmbeddingBlock, GC_Block
-from models.basis_functions import BesselBasisLayer, GaussianEmbedding
-from models.components import MLP, construct_radial_graph, GlobalAggregation
+from mxtaltools.models.GraphNeuralNetwork import EmbeddingBlock, GC_Block
+from mxtaltools.models.basis_functions import BesselBasisLayer, GaussianEmbedding
+from mxtaltools.models.components import MLP, construct_radial_graph, GlobalAggregation
 
 
 class MoleculeClassifier(nn.Module):

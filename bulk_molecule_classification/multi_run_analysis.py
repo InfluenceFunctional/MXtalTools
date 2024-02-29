@@ -3,13 +3,13 @@ import pandas as pd
 import numpy as np
 import warnings
 
-# from reporting.cluster_figs import cluster_property_heatmap, collate_property_over_multiple_runs, plot_classifier_pies
+# from mxtaltools.reporting.cluster_figs import cluster_property_heatmap, collate_property_over_multiple_runs, plot_classifier_pies
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
 from bulk_molecule_classification.classifier_constants import nic_ordered_class_names, identifier2form
 from bulk_molecule_classification.traj_analysis_figs import plot_classifier_pies, cluster_property_heatmap
-from dataset_management.utils import delete_from_dataframe
+from mxtaltools.dataset_management.utils import delete_from_dataframe
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 

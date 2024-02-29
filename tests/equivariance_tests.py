@@ -17,14 +17,14 @@ import torch
 import numpy as np
 from torch_geometric.loader.dataloader import Collater
 
-from dataset_management.CrystalData import CrystalData
-from models.base_models import MoleculeGraphModel
-from models.components import MLP, GlobalAggregation
-from models.gnn_blocks import GC_Block
-from models.vector_LayerNorm import VectorLayerNorm
+from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.models.base_models import MoleculeGraphModel
+from mxtaltools.models.components import MLP, GlobalAggregation
+from mxtaltools.models.gnn_blocks import GC_Block
+from mxtaltools.models.vector_LayerNorm import VectorLayerNorm
 from tests.utils import check_tensor_similarity, test_module_equivariance
 from torch.nn import Linear
-from models.components import VectorActivation
+from mxtaltools.models.components import VectorActivation
 
 device = 'cpu'
 num_samples = 100

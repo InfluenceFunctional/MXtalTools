@@ -1,15 +1,15 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/autoencoder.yaml
-mode: embedding
+base_config_path: /experiments/base/embedding_regressor.yaml
+mode: embedding_regression
 
 sweep_id: null
 sweep_path: null
 
 dataset:
-  max_dataset_length: 1000000
+  max_dataset_length: 10000
   test_fraction: 0.2
-  filter_protons: True
+  filter_protons: False
   regression_target: molecule_gap_energy
 
 # batching & convergence
@@ -29,9 +29,14 @@ extra_test_period: 4 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 logger:
   sample_reporting_frequency: 2  # how often to do detailed reporting with figures
 
-#model_paths:
-#  discriminator: null
-#  generator: null
-#  regressor: null
-#  autoencoder: null
-#  embedding_regressor: null
+model_paths:
+  discriminator: null
+  generator: null
+  regressor: null
+  #autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57  # no protons, non-variational
+  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41  # protons, non-variational
+  #autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_8_27-02-15-35-51  # inferred protons, non-variational
+  embedding_regressor: null
+
+autoencoder:
+  infer_protons: False  # todo make this a property of the model

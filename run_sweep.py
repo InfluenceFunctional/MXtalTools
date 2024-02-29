@@ -1,5 +1,5 @@
 import wandb
-from common.config_processing import load_yaml
+from mxtaltools.common.config_processing import load_yaml
 
 sweep_configuration = load_yaml('/configs/autoencoder_tests/qm9_sweep1/qm9_sweep1.yaml')
 

@@ -1,12 +1,12 @@
 from torch_geometric.loader.dataloader import Collater
 
-from common.utils import compute_rdf_distance, init_sym_info
-from crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch, get_intra_mol_dists, clean_cell_params
-from models.crystal_rdf import crystal_rdf
-from crystal_modeller import Modeller
+from mxtaltools.common.utils import compute_rdf_distance, init_sym_info
+from mxtaltools.crystal_building.utils import batch_asymmetric_unit_pose_analysis_torch, get_intra_mol_dists, clean_cell_params
+from mxtaltools.models.crystal_rdf import crystal_rdf
+from mxtaltools.crystal_modeller import Modeller
 import numpy as np
 import torch
-from common.config_processing import get_config
+from mxtaltools.common.config_processing import get_config
 from tqdm import tqdm
 
 '''
@@ -157,7 +157,7 @@ class TestClass:
         assert all(rdf_dists < 1e-1)  # RDFs should be nearly identical
 
         '''  # optionally look at some cells
-        from models.utils import ase_mol_from_crystaldata
+        from mxtaltools.models.utils import ase_mol_from_crystaldata
         from ase.visualize import view
         crystal_number = 0
         mol1 = ase_mol_from_crystaldata(reference_supercells, crystal_number)
