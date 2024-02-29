@@ -4,8 +4,8 @@ from copy import copy
 
 base_config = load_yaml('../../experiments/base/embedding_regressor.yaml')
 
-models = [r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57',  # no protons
-          r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'  # protons
+models = [r'/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57',  # no protons
+          r'/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'  # protons
           ]
 
 targets = ["molecule_rotational_constant_a",  # 0

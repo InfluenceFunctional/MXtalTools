@@ -73,7 +73,7 @@ model_names:
 - autoencoder
 - embedding_regressor
 model_paths:
-  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57
+  autoencoder: /best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57
   discriminator: null
   embedding_regressor: null
   generator: null
