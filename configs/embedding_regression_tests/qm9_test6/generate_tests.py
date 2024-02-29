@@ -53,7 +53,7 @@ config_list = [
         models[1], False, targets[7],
         512, 12, 0.25, 'layer'
     ],
-    [  # 6
+    [  # 6 - best test
         models[1], False, targets[7],
         512, 4, 0.1, 'layer'
     ],
@@ -74,6 +74,11 @@ config_list = [
         1024, 4, 0.1, 'layer'
     ],
 ]
+
+for ind in range(len(targets)):
+    bb = copy(config_list[6])
+    bb[2] = targets[ind]
+    config_list.append(bb)
 
 ind = 0
 for ix1 in range(len(config_list)):
