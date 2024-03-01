@@ -192,14 +192,12 @@ class Modeller:
             self.models_dict['regressor'] = MoleculeRegressor(self.config.seeds.model, self.config.regressor.model, self.dataDims)
         if self.config.mode == 'autoencoder' or self.config.model_paths.autoencoder is not None:
             self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims['num_atom_types'])
-        if self.config.mode == 'embedding_regression':
+        if self.config.mode == 'embedding_regression' or self.config.model_paths.embedding_regressor is not None:
             self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model, self.config.autoencoder.model, self.dataDims['num_atom_types'])
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
                 param.requires_grad = False
             self.config.embedding_regressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
             self.models_dict['embedding_regressor'] = embedding_regressor(self.config.seeds.model, self.config.embedding_regressor.model,
-                                                                          prediction_type=self.config.embedding_regressor.prediction_type,
-                                                                          embedding_type=self.config.autoencoder.model.encoder_type,
                                                                           num_targets=self.config.embedding_regressor.num_targets
                                                                           )
             assert self.config.model_paths.autoencoder is not None  # must preload the encoder
@@ -540,6 +538,63 @@ class Modeller:
             fig.show(renderer='browser')
             '''
 
+    def embedding_regressor_analysis(self):
+        """prep workdir"""
+        self.source_directory = os.getcwd()
+        self.prep_new_working_directory()
+
+        self.train_models_dict = {
+            'discriminator': False,
+            'generator': False,
+            'regressor': False,
+            'autoencoder': True,
+            'embedding_regressor': True,
+        }
+
+        '''initialize datasets and useful classes'''
+        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=1)
+        num_params_dict = self.init_models()
+
+        self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
+        self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']
+        self.config.autoencoder.min_num_atoms = self.dataDims['min_molecule_num_atoms']
+        self.config.autoencoder.max_num_atoms = self.dataDims['max_molecule_num_atoms']
+
+        allowed_types = self.dataDims['allowed_atom_types']
+        type_translation_index = np.zeros(allowed_types.max()) - 1
+        for ind, atype in enumerate(allowed_types):
+            type_translation_index[atype - 1] = ind
+
+        self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.float32, device='cpu')
+
+        self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
+
+        with (wandb.init(config=self.config,
+                         project=self.config.wandb.project_name,
+                         entity=self.config.wandb.username,
+                         tags=[self.config.logger.experiment_tag],
+                         settings=wandb.Settings(code_dir="."))):
+            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+            wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
+            wandb.log(num_params_dict)
+            wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
+                       "Initial Batch Size": self.config.current_batch_size})
+
+            self.models_dict['autoencoder'].eval()
+            self.models_dict['embedding_regressor'].eval()
+            self.epoch_type = 'test'
+
+            with torch.no_grad():
+                for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+                    self.embedding_regression_step(data, update_weights=False)
+
+            # post epoch processing
+            self.logger.concatenate_stats_dict(self.epoch_type)
+
+            # save results
+            np.save(self.config.checkpoint_dir_path + self.config.model_paths.embedding_regressor.split('embedding_regressor')[-1],
+                    {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
+
     def autoencoder_embedding_step(self, data):
         data = self.preprocess_real_autoencoder_data(data, no_noise=True, orientation_override=None)
         data = data.to(self.device)
@@ -800,39 +855,8 @@ class Modeller:
 
         self.models_dict['autoencoder'].eval()
 
-        stats_keys = ['regressor_prediction', 'regressor_target', 'tracking_features']
-
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            data = self.preprocess_real_autoencoder_data(data, no_noise=True, orientation_override='random')
-            data = data.to(self.device)
-
-            embedding = self.models_dict['autoencoder'].encode(data)
-
-            if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
-                data.y = batch_compute_dipole(data.pos, data.batch, data.x[:, 0], self.electronegativity_tensor)
-
-            losses, predictions, targets = get_regression_loss(
-                self.models_dict['embedding_regressor'], embedding, data.y, self.dataDims['target_mean'], self.dataDims['target_std'])
-
-            if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
-                predictions = np.linalg.norm(predictions, axis=-1)
-                targets = np.linalg.norm(targets, axis=-1)
-
-            regression_loss = losses.mean()
-
-            if update_weights:
-                self.optimizers_dict['embedding_regressor'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-                regression_loss.backward()  # back-propagation
-                self.optimizers_dict['embedding_regressor'].step()  # update parameters
-
-            '''log losses and other tracking values'''
-            self.logger.update_current_losses('embedding_regressor', self.epoch_type,
-                                              regression_loss.cpu().detach().numpy(),
-                                              losses.cpu().detach().numpy())
-
-            stats_values = [predictions, targets]
-            self.logger.update_stats_dict(self.epoch_type, stats_keys, stats_values, mode='extend')
-            self.logger.update_stats_dict(self.epoch_type, 'tracking_features', data.tracking.cpu().detach().numpy(), mode='append')
+            self.embedding_regression_step(data, update_weights)
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -840,6 +864,37 @@ class Modeller:
 
         # post epoch processing
         self.logger.concatenate_stats_dict(self.epoch_type)
+
+    def embedding_regression_step(self, data, update_weights):
+        data = self.preprocess_real_autoencoder_data(data, no_noise=True, orientation_override='random')
+        data = data.to(self.device)
+        v_embedding = self.models_dict['autoencoder'].encode(data)
+        s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
+        # if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
+        #     data.y = batch_compute_dipole(data.pos, data.batch, data.x[:, 0], self.electronegativity_tensor)
+        #
+
+        predictions = self.models_dict['embedding_regressor'](s_embedding, v_embedding)[:, 0]
+        losses = F.smooth_l1_loss(predictions, data.y, reduction='none')
+        predictions = predictions.cpu().detach().numpy() * self.dataDims['target_std'] + self.dataDims['target_mean']
+        targets = data.y.cpu().detach().numpy() * self.dataDims['target_std'] + self.dataDims['target_mean']
+
+        if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
+            predictions = np.linalg.norm(predictions, axis=-1)
+            targets = np.linalg.norm(targets, axis=-1)
+        regression_loss = losses.mean()
+        if update_weights:
+            self.optimizers_dict['embedding_regressor'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+            regression_loss.backward()  # back-propagation
+            self.optimizers_dict['embedding_regressor'].step()  # update parameters
+        '''log losses and other tracking values'''
+        self.logger.update_current_losses('embedding_regressor', self.epoch_type,
+                                          regression_loss.cpu().detach().numpy(),
+                                          losses.cpu().detach().numpy())
+        stats_values = [predictions, targets]
+
+        self.logger.update_stats_dict(self.epoch_type, ['regressor_prediction', 'regressor_target'], stats_values, mode='extend')
+        self.logger.update_stats_dict(self.epoch_type, 'tracking_features', data.tracking.cpu().detach().numpy(), mode='append')
 
     def generate_random_point_cloud_batch(self, batch_size):
         """

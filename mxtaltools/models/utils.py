@@ -539,7 +539,7 @@ def decode_to_sph_rotvec(mol_orientations):
 
 
 def get_regression_loss(regressor, data, targets, mean, std):
-    predictions = regressor(data)[:, 0]  # TODO adapt for multi-target and vector learning
+    predictions = regressor(data)[:, 0]
     return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions.cpu().detach().numpy() * std + mean, targets.cpu().detach().numpy() * std + mean
 
 

@@ -7,20 +7,19 @@ from mxtaltools.models.components import MLP
 class embedding_regressor(nn.Module):
     """single property prediction head for pretrained embeddings"""
 
-    def __init__(self, seed, config, prediction_type, embedding_type, num_targets):
+    def __init__(self, seed, config, num_targets):
         super(embedding_regressor, self).__init__()
 
         self.equivariant = config.equivariant
-        self.embedding_type = embedding_type
-        self.prediction_type = prediction_type
+        self.prediction_type = 'scalar'
 
-        if prediction_type == 'scalar':
+        if self.prediction_type == 'scalar':
             self.output_dim = int(1 * num_targets)
-        elif prediction_type == 'vector':
-            if self.equivariant:
-                self.output_dim = int(1 * num_targets)
-            else:
-                self.output_dim = int(3 * num_targets)
+        # elif prediction_type == 'vector':
+        #     if self.equivariant:
+        #         self.output_dim = int(1 * num_targets)
+        #     else:
+        #         self.output_dim = int(3 * num_targets)
 
         # graph size model
         self.model = MLP(layers=config.num_layers,
@@ -36,22 +35,19 @@ class embedding_regressor(nn.Module):
                          vector_norm=config.vector_norm if config.equivariant else None,
                          )
 
-    def forward(self, embedding):
+    def forward(self, x, v=None):
 
         if self.equivariant:
-            if self.embedding_type == 'equivariant':
-                x, v = self.model(x=torch.linalg.norm(embedding, dim=1),
-                                  v=embedding,
-                                  )
-            else:
-                assert False, "Cannot do equivariant property prediction with non-equivariant embedding"
+            x, v = self.model(x=x,
+                              v=v,
+                              )
         else:
-            x = self.model(torch.linalg.norm(embedding, dim=1))
+            x = self.model(x)
 
-        if self.prediction_type == 'scalar':
-            return x
-        elif self.prediction_type == 'vector':
-            if self.equivariant:
-                return v.permute(0, 2, 1)
-            else:
-                return x.reshape(len(x), x.shape[-1] // 3, 3)
+        #if self.prediction_type == 'scalar':
+        return x
+        # elif self.prediction_type == 'vector':  # todo rewrite
+        #     if self.equivariant:
+        #         return v.permute(0, 2, 1)
+        #     else:
+        #         return x.reshape(len(x), x.shape[-1] // 3, 3)
