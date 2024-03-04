@@ -552,7 +552,7 @@ class Modeller:
         }
 
         '''initialize datasets and useful classes'''
-        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=1)
+        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
         num_params_dict = self.init_models()
 
         self.config.autoencoder_sigma = self.config.autoencoder.init_sigma

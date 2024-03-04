@@ -1,5 +1,5 @@
 from mxtaltools.common.config_processing import get_config
-from mxtaltools.crystal_modeller import Modeller
+from mxtaltools.modeller import Modeller
 from mxtaltools.crystal_building.utils import (rotvec2rotmat, build_unit_cell, scale_asymmetric_unit,
                                     align_crystaldata_to_principal_axes, batch_asymmetric_unit_pose_analysis_torch)
 from scipy.spatial.transform import Rotation

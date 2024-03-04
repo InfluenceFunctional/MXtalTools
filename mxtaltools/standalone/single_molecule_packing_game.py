@@ -12,7 +12,7 @@ warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
 from mxtaltools.common.config_processing import get_config
 from mxtaltools.common.geometry_calculations import compute_fractional_transform_torch
-from mxtaltools.crystal_modeller import Modeller
+from mxtaltools.modeller import Modeller
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from torch_geometric.loader.dataloader import Collater
 from mxtaltools.constants.space_group_info import SYM_OPS

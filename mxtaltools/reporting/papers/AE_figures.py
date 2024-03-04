@@ -5,6 +5,9 @@ from rdkit import Chem
 from rdkit.Chem import Draw
 import numpy as np
 from PIL import Image
+import os
+from scipy.interpolate import interpn
+from scipy.stats import linregress
 
 stats_dict_paths = [r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_4_26-02-22-29-57.npy',
                     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_7_27-02-14-34-41.npy',
@@ -15,6 +18,22 @@ stats_dict_names = ["Without Protons",
                     "Inferred Protons"]
 
 colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', len(stats_dict_paths), colortype='rgb')
+
+
+def get_point_density(xy, bins=500):
+    """
+    Scatter plot colored by 2d histogram
+    """
+    x, y = xy
+    data, x_e, y_e = np.histogram2d(x, y, bins=bins, density=True)
+    z = interpn((0.5 * (x_e[1:] + x_e[:-1]), 0.5 * (y_e[1:] + y_e[:-1])), data, np.vstack([x, y]).T, method="splinef2d",
+                bounds_error=False)
+
+    # To be sure to plot all data
+    z[np.where(np.isnan(z))] = 0.0
+    z -= z.min()
+    z /= z.max()
+    return z
 
 
 def RMSD_fig():
@@ -31,7 +50,8 @@ def RMSD_fig():
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
 
     bandwidth = 0.005
-    fig = make_subplots(rows=1, cols=2, subplot_titles=['(a) RMSD Distribution', '(b) RMSD Correlates'], column_widths=[0.75, 0.25], horizontal_spacing=0.15)
+    fig = make_subplots(rows=1, cols=2, subplot_titles=['(a) RMSD Distribution', '(b) RMSD Correlates'],
+                        column_widths=[0.75, 0.25], horizontal_spacing=0.15)
     for ind, run_name in enumerate(stats_dicts.keys()):
 
         stats_dict = stats_dicts[run_name]
@@ -50,7 +70,9 @@ def RMSD_fig():
         finite_x = x[np.isfinite(x)]
         print(finite_x.mean())
 
-        fig.add_annotation(x=0.4, y=ind + 0.3, showarrow=False, text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.0f}%', row=1, col=1)
+        fig.add_annotation(x=0.4, y=ind + 0.3, showarrow=False,
+                           text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.0f}%',
+                           row=1, col=1)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
             x=x, side='positive', orientation='h',
             bandwidth=bandwidth, width=4, showlegend=True, opacity=1,  # .5,
@@ -77,7 +99,8 @@ def RMSD_fig():
         ), row=1, col=2)
 
     fig.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
-    fig.update_layout(xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
+    fig.update_layout(
+        xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig.update_layout(yaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
     fig.update_layout(xaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
@@ -144,7 +167,8 @@ def add_mol_diagrams_to_rmsd_violin(fig, finite_x, ind, smiles):
 
 
 def mol_point_callout(fig2, xref, yref, ex, ey, embedding, smiles, imsize, row, col):
-    tr = np.argmin(np.linalg.norm(embedding - [xref, yref] + np.random.randn(len(embedding), embedding.shape[1]) * 0.05, axis=1))
+    tr = np.argmin(
+        np.linalg.norm(embedding - [xref, yref] + np.random.randn(len(embedding), embedding.shape[1]) * 0.05, axis=1))
     mol = Chem.MolFromSmiles(smiles[tr])
     Draw.MolToImageFile(mol, 'conformer.png')
     fig2.add_layout_image(dict(
@@ -174,10 +198,11 @@ def UMAP_fig(max_entries=10000000):
     for ind in range(len(stats_dict_paths)):
         d = np.load(stats_dict_paths[ind], allow_pickle=True).item()
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
+    run_name = "With Protons"
 
     import umap
     embeddings = []
-    for ind, run_name in enumerate(["Without Protons"]):  # stats_dicts.keys()):
+    for ind, run_name in enumerate([run_name]):  # stats_dicts.keys()):
         reducer = umap.UMAP(n_components=2,
                             metric='cosine',
                             n_neighbors=10,
@@ -185,9 +210,6 @@ def UMAP_fig(max_entries=10000000):
         scalar_encodings = stats_dicts[run_name]['scalar_encoding'][:max_entries]
 
         embeddings.append(reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std()))
-
-    ind = 0
-    run_name = "Without Protons"
 
     composition_coloration = np.stack([np.concatenate(stats_dicts[run_name]['molecule_C_fraction']),
                                        np.concatenate(stats_dicts[run_name]['molecule_N_fraction']),
@@ -197,7 +219,8 @@ def UMAP_fig(max_entries=10000000):
 
     composition_coloration = np.stack([np.concatenate(stats_dicts[run_name]['molecule_principal_moment_1']),
                                        np.concatenate(stats_dicts[run_name]['molecule_principal_moment_2']),
-                                       np.concatenate(stats_dicts[run_name]['molecule_principal_moment_3'])]).T[:max_entries]
+                                       np.concatenate(stats_dicts[run_name]['molecule_principal_moment_3'])]).T[
+                             :max_entries]
     point_colors2 = normalize_colors(composition_coloration)
     legend_entries2 = ["Ip1", "Ip2", "Ip3"]
 
@@ -209,9 +232,10 @@ def UMAP_fig(max_entries=10000000):
 
     fig2 = make_subplots(rows=1, cols=3, horizontal_spacing=.01)
     annotations_list = []
-    for ind2, (point_colors, legend_entries) in enumerate(zip([point_colors1, point_colors2, point_colors3], [legend_entries1, legend_entries2, legend_entries3])):
+    for ind2, (point_colors, legend_entries) in enumerate(
+            zip([point_colors1, point_colors2, point_colors3], [legend_entries1, legend_entries2, legend_entries3])):
 
-        embedding = embeddings[stats_dict_names.index(run_name)]
+        embedding = embeddings[0]
         embedding -= embedding.min(0)
         embedding /= embedding.max(0)
         fig2.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
@@ -236,15 +260,19 @@ def UMAP_fig(max_entries=10000000):
         for ix in np.linspace(0, 1, 8):
             for iy in np.linspace(0, 1, 8):
                 if ix == 0 or ix == 1 or iy == 0 or iy == 1:
-                    annotations_list.append(mol_point_callout(fig2, ix, iy, ex, ey, embedding, smiles, 0.125, row=1, col=ind2 + 1))
+                    annotations_list.append(
+                        mol_point_callout(fig2, ix, iy, ex, ey, embedding, smiles, 0.125, row=1, col=ind2 + 1))
 
-        fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers', marker_color=['rgb(255,0,0)'], name=legend_entries[0], showlegend=True, row=1, col=ind2 + 1)
-        fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers', marker_color=['rgb(0,255,0)'], name=legend_entries[1], showlegend=True, row=1, col=ind2 + 1)
-        fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers', marker_color=['rgb(0, 0,255)'], name=legend_entries[2], showlegend=True, row=1, col=ind2 + 1)
+        fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
+                           marker_color=['rgb(255,0,0)'], name=legend_entries[0], showlegend=True, row=1, col=ind2 + 1)
+        fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
+                           marker_color=['rgb(0,255,0)'], name=legend_entries[1], showlegend=True, row=1, col=ind2 + 1)
+        fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
+                           marker_color=['rgb(0, 0,255)'], name=legend_entries[2], showlegend=True, row=1, col=ind2 + 1)
 
     fig2.update_layout(annotations=annotations_list)
 
-    fig2.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig2.update_layout(plot_bgcolor='rgb(240,250,200)')
     fig2.update_yaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
     fig2.update_xaxes(linecolor='black', mirror=True,
@@ -274,7 +302,8 @@ def UMAP_fig(max_entries=10000000):
 def normalize_colors(composition_coloration):
     composition_coloration -= composition_coloration.mean(0)[None, :]
     composition_coloration /= composition_coloration.std(0)[None, :]
-    composition_coloration = np.clip(composition_coloration, a_min=np.quantile(composition_coloration, 0.05), a_max=np.quantile(composition_coloration, 0.95))
+    composition_coloration = np.clip(composition_coloration, a_min=np.quantile(composition_coloration, 0.05),
+                                     a_max=np.quantile(composition_coloration, 0.95))
     composition_coloration -= composition_coloration.min(0)
     composition_coloration /= composition_coloration.max(0)
     composition_coloration *= 255
@@ -282,9 +311,115 @@ def normalize_colors(composition_coloration):
     return point_colors
 
 
-fig = RMSD_fig()
-fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
-fig2 = UMAP_fig(max_entries=1000)
+def embedding_regression_figure():
+    os.chdir(r'C:\Users\mikem\crystals\CSP_runs\models')
+    elem = os.listdir()
+    ers = [thing for thing in elem if '_embedding_regression_' in thing]
+    target_names = ["molecule_rotational_constant_a",  # 0
+                    "molecule_rotational_constant_b",  # 1
+                    "molecule_rotational_constant_c",  # 2
+                    "molecule_dipole_moment",  # 3
+                    "molecule_isotropic_polarizability",  # 4
+                    "molecule_HOMO_energy",  # 5
+                    "molecule_LUMO_energy",  # 6
+                    "molecule_gap_energy",  # 7
+                    "molecule_el_spatial_extent",  # 8
+                    "molecule_zpv_energy",  # 9
+                    "molecule_internal_energy_0",  # 10
+                    "molecule_internal_energy_STP",  # 11
+                    "molecule_enthalpy_STP",  # 12
+                    "molecule_free_energy_STP",  # 13
+                    "molecule_heat_capacity_STP",  # 14
+                    ]
+    pretty_target_names = ["(a) Rotational Constant A /GHz",
+                           "(b) Rotational Constant B /GHz",
+                           "(c) Rotational Constant C /GHz",
+                           "(d) Dipole Moment /Deb",
+                           "(e) Iso. Polarizability /Bohr^3",
+                           "(f) HOMO Energy /Hartree",
+                           "(g) LUMO Energy /Hartree",
+                           "(h) Gap Energy /Hartree",
+                           "(i) Electronic Spatial Extent /Bohr^2",
+                           "(j) ZPV Energy /Hartree",
+                           "(k) Internal Energy (T=0) /Hartree",
+                           "(l) Internal Energy STP /Hartree",
+                           "(m) Enthalpy STP /Hartree",
+                           "(n) Free Energy STP /Hartree",
+                           "(o) Heat Capacity STP /cal mol^-1 K^-1"]
+
+    MAE_dict = {}
+    NMAE_dict = {}
+    R_dict = {}
+    for ind, (path, target_name) in enumerate(zip(ers, target_names)):
+        stats_dict = np.load(path, allow_pickle=True).item()['test_stats']
+        target = stats_dict['regressor_target']
+        prediction = stats_dict['regressor_prediction']
+
+        MAE = np.abs(target - prediction).mean()
+        NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
+
+        linreg_result = linregress(target, prediction)
+        R_value = linreg_result.rvalue
+        slope = linreg_result.slope
+        MAE_dict[target_name] = MAE
+        NMAE_dict[target_name] = NMAE
+        R_dict[target_name] = R_value
+
+    fig3 = make_subplots(cols=5, rows=3, subplot_titles=pretty_target_names, horizontal_spacing=0.04,
+                         vertical_spacing=0.075)
+
+    annotations = []
+    for ind, (path, target_name) in enumerate(zip(ers, target_names)):
+        stats_dict = np.load(path, allow_pickle=True).item()['test_stats']
+        target = stats_dict['regressor_target']
+        prediction = stats_dict['regressor_prediction']
+
+        xline = np.linspace(max(min(target), min(prediction)),
+                            min(max(target), max(prediction)), 2)
+
+        xy = np.vstack([target, prediction])
+        try:
+            z = get_point_density(xy, bins=1000)
+        except:
+            z = np.ones_like(target)
+
+        row = ind // 5 + 1
+        col = ind % 5 + 1
+        num_points = len(prediction)
+        opacity = 0.05  # np.exp(-num_points / 10000)
+        fig3.add_trace(go.Scattergl(x=target, y=prediction, mode='markers', marker=dict(color=z), opacity=opacity,
+                                    showlegend=False),
+                       row=row, col=col)
+        fig3.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                       row=row, col=col)
+
+        annotations.append(dict(xref="x" + str(ind + 1), yref="y" + str(ind + 1),
+                                x=np.amin(target) + np.ptp(target) * 0.2,
+                                y=np.amax(prediction) - np.ptp(prediction) * 0.2,
+                                showarrow=False,
+                                text=f"R={R_dict[target_name]:.2f} <br> MAE={MAE_dict[target_name]:.3g}"
+                                ))
+
+    fig3['layout']['annotations'] += tuple(annotations)
+    fig3.update_annotations(font=dict(size=18))
+    fig3.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig3.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
+    fig3.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
+    fig3.update_yaxes(linecolor='black', mirror=True,
+                      showgrid=True, zeroline=True)
+    fig3.update_xaxes(linecolor='black', mirror=True,
+                      showgrid=True, zeroline=True)
+    fig3.update_layout(font=dict(size=20))
+    fig3.show(renderer='browser')
+    return fig3
+
+
+#
+# fig = RMSD_fig()
+# fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+fig2 = UMAP_fig(max_entries=1000000)
 fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
+fig3 = embedding_regression_figure()
+fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
 
 aa = 1

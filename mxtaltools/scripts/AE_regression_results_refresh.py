@@ -28,7 +28,7 @@ targets = ["molecule_rotational_constant_a",  # 0
            "molecule_heat_capacity_STP",  # 14
            ]
 
-max_dataset_length = 1000
+max_dataset_length = 10000000
 
 for path, target in zip(regressor_paths, targets):
     os.chdir(r'C:\Users\mikem\OneDrive\NYU\CSD\MCryGAN')

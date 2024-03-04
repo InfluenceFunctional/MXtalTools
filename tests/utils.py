@@ -2,16 +2,17 @@ import os
 import torch
 
 from mxtaltools.common.config_processing import get_config
-from mxtaltools.crystal_modeller import Modeller
+from mxtaltools.modeller import Modeller
 
 
-def test_model_training(config_path):
+def train_model(config_path):
     source_dir = os.getcwd()
     os.chdir(source_dir)
     user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
     config = get_config(user_yaml_path=user_path, main_yaml_path=source_dir + config_path)
     modeller = Modeller(config)
     modeller.train_crystal_models()
+
 
 
 def check_tensor_similarity(t1, t2, eps=1e-4):
@@ -22,7 +23,7 @@ def check_tensor_similarity(t1, t2, eps=1e-4):
     assert diff < eps, f"Difference is too large {diff:.5f}"
 
 
-def test_module_equivariance(v, rotation_matrix, module, batch=None, x=None):
+def is_module_equivariant(v, rotation_matrix, module, batch=None, x=None): # todo rewrite with all kwargs
 
     rotated_vector_batch = torch.einsum('ij, njk -> nik', rotation_matrix, v)
     if x is None:

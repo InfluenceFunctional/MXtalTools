@@ -22,7 +22,7 @@ from mxtaltools.models.base_models import MoleculeGraphModel
 from mxtaltools.models.components import MLP, GlobalAggregation
 from mxtaltools.models.gnn_blocks import GC_Block
 from mxtaltools.models.vector_LayerNorm import VectorLayerNorm
-from tests.utils import check_tensor_similarity, test_module_equivariance
+from tests.utils import check_tensor_similarity, is_module_equivariant
 from torch.nn import Linear
 from mxtaltools.models.components import VectorActivation
 
@@ -38,7 +38,7 @@ rotation_matrix = torch.tensor(R.random().as_matrix(), device=device, dtype=torc
 def test_VectorActivation():
     module = VectorActivation(feature_depth, 'gelu')
     vector_batch = torch.randn(num_samples, 3, feature_depth)
-    rotated_output, output_from_rotated = test_module_equivariance(vector_batch, rotation_matrix, module)
+    rotated_output, output_from_rotated = is_module_equivariant(vector_batch, rotation_matrix, module)
 
     check_tensor_similarity(output_from_rotated, rotated_output)
 
@@ -47,7 +47,7 @@ def test_VectorActivation():
 def test_VectorLinear():
     module = Linear(feature_depth, feature_depth, bias=False)
     vector_batch = torch.randn(num_samples, 3, feature_depth)
-    rotated_output, output_from_rotated = test_module_equivariance(vector_batch, rotation_matrix, module)
+    rotated_output, output_from_rotated = is_module_equivariant(vector_batch, rotation_matrix, module)
 
     check_tensor_similarity(output_from_rotated, rotated_output)
 
@@ -60,7 +60,7 @@ def test_VectorLayerNorm():
         batch_inds = torch.tensor(
             np.random.choice(np.arange(num_graphs), size=num_samples), device=device, dtype=torch.long
         )
-        rotated_output, output_from_rotated = test_module_equivariance(vector_batch, rotation_matrix, module, batch=batch_inds)
+        rotated_output, output_from_rotated = is_module_equivariant(vector_batch, rotation_matrix, module, batch=batch_inds)
         check_tensor_similarity(output_from_rotated, rotated_output)
 
 
@@ -79,7 +79,7 @@ def test_EMLP():
     check_tensor_similarity(output_from_rotated, rotated_output)
 
     '''full model'''
-    rotated_output, output_from_rotated = test_module_equivariance(x=vector_batch.norm(dim=1), v=vector_batch, rotation_matrix=rotation_matrix, module=module)
+    rotated_output, output_from_rotated = is_module_equivariant(x=vector_batch.norm(dim=1), v=vector_batch, rotation_matrix=rotation_matrix, module=module)
     check_tensor_similarity(output_from_rotated, rotated_output)
 
 
@@ -89,7 +89,7 @@ def test_aggregators():
         module = GlobalAggregation(aggregator, feature_depth)
         vector_batch = torch.randn(num_samples, 3, feature_depth)
         batch_inds = torch.tensor(np.random.choice(np.arange(num_graphs), size=num_samples), device=device, dtype=torch.long)
-        rotated_output, output_from_rotated = test_module_equivariance(x=vector_batch.norm(dim=1), v=vector_batch, rotation_matrix=rotation_matrix, module=module, batch=batch_inds)
+        rotated_output, output_from_rotated = is_module_equivariant(x=vector_batch.norm(dim=1), v=vector_batch, rotation_matrix=rotation_matrix, module=module, batch=batch_inds)
 
         check_tensor_similarity(output_from_rotated, rotated_output)
 

@@ -5,7 +5,7 @@ NOTE: tends to take at least several minutes
 """
 import os
 
-from tests.utils import test_model_training
+from tests.utils import train_model
 
 # ====================================
 
@@ -19,4 +19,5 @@ class TestClass:
                             r'/configs/test_configs/regressor.yaml',
                             r'/configs/test_configs/autoencoder.yaml',
                             r'/configs/test_configs/embedding_regressor.yaml']:
-            test_model_training(config_path)
+            os.chdir(source_dir)
+            train_model(config_path)
