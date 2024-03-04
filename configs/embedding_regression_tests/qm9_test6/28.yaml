@@ -7,23 +7,7 @@ batch_growth_increment: 0.1
 checkpointing_loss_type: test
 dataset:
   filter_protons: false
-  max_dataset_length: !!python/object/apply:numpy.core.multiarray.scalar
-  - !!python/object/apply:numpy.dtype
-    args:
-    - f8
-    - false
-    - true
-    state: !!python/tuple
-    - 3
-    - <
-    - null
-    - null
-    - null
-    - -1
-    - -1
-    - 0
-  - !!binary |
-    2FBeQ3l5zEA=
+  max_dataset_length: 14578
   regression_target: molecule_gap_energy
   test_fraction: 0.2
 dataset_name: qm9_molecules_dataset.pkl

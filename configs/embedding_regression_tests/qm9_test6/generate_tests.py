@@ -87,7 +87,7 @@ dataset_sizes[-1] = 133000
 
 for ind in range(len(dataset_sizes)):
     bb = copy(config_list[6])
-    bb[7] = dataset_sizes[ind]
+    bb[7] = int(dataset_sizes[ind])
     config_list.append(bb)
 
 ind = 0
