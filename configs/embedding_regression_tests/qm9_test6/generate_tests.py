@@ -103,6 +103,7 @@ for ix1 in range(len(config_list)):
     config['embedding_regressor']['model']['num_layers'] = config_list[ix1][4]
     config['embedding_regressor']['model']['dropout'] = config_list[ix1][5]
     config['embedding_regressor']['model']['norm_mode'] = config_list[ix1][6]
+    config['dataset']['max_dataset_length'] = config_list[ix1][7]
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
