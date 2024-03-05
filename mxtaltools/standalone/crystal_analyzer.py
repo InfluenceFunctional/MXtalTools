@@ -100,20 +100,20 @@ class CrystalAnalyzer(torch.nn.Module):
 
             datapoints = [
                 CrystalData(
-                    x=atom_feats[ind],
+                    x=atom_feats_list[ind],
                     pos=coords_list[ind],
                     y=torch.ones(1),
                     tracking=torch.ones(1),
                     mult=torch.ones(1),
                     T_fc=torch.eye(3),
-                    mol_size=torch.ones(1) * len(atom_feats[ind]),
+                    mol_size=torch.ones(1) * len(atom_feats_list[ind]),
                 )
                 for ind in range(len(coords_list))
             ]
             data = self.collater(datapoints)
 
             if score_type in ['classifier', 'rdf_distance', 'heuristic']:
-                proposed_crystaldata = self.build_crystal(data, proposed_cell_params, proposed_sgs)
+                proposed_crystaldata = self.build_crystal(data, proposed_cell_params, proposed_sgs.long().tolist())
 
                 discriminator_output, pair_dist_dict = self.adversarial_score(proposed_crystaldata)
                 classification_score = softmax_and_score(discriminator_output[:, :2])
