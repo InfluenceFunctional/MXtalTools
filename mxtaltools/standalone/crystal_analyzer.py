@@ -97,10 +97,13 @@ class CrystalAnalyzer(torch.nn.Module):
                 atom_feats[:, 4] = self.atomic_masses[atoms]
                 atom_feats[:, 5] = self.atom_periods[atoms]
                 atom_feats_list.append(atom_feats)
-
+            # mol feats mass and num_atoms
             datapoints = [
                 CrystalData(
                     x=atom_feats_list[ind],
+                    mol_x=torch.tensor([atom_feats_list[ind][:, 1].sum(),
+                                        len(atom_feats_list[ind])],
+                                       dtype=torch.float32, device=self.device),
                     pos=coords_list[ind],
                     y=torch.ones(1),
                     tracking=torch.ones(1),

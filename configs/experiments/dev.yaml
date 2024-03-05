@@ -7,7 +7,7 @@ sweep_id: null
 sweep_path: null
 
 dataset:
-  max_dataset_length: 1000
+  max_dataset_length: 100
 #  test_fraction: 0.2
 #  filter_protons: False
 #  regression_target: molecule_gap_energy
