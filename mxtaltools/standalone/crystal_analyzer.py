@@ -68,11 +68,11 @@ class CrystalAnalyzer(torch.nn.Module):
         self.packing_std = 432.8356636345374
 
         self.supercell_builder = SupercellBuilder(device=self.device, rotation_basis='spherical')
-        self.vdw_radii = torch.tensor(VDW_RADII.values(), dtype=torch.float32, device=self.device)
-        self.atomic_masses = torch.tensor(ATOM_WEIGHTS.values(), dtype=torch.float32, device=self.device)
-        self.electronegativities = torch.tensor(ELECTRONEGATIVITY.values(), dtype=torch.float32, device=self.device)
-        self.atom_groups = torch.tensor(GROUP.values(), dtype=torch.float32, device=self.device)
-        self.atom_periods = torch.tensor(PERIOD.values(), dtype=torch.float32, device=self.device)
+        self.vdw_radii = torch.tensor(list(VDW_RADII.values()), dtype=torch.float32, device=self.device)
+        self.atomic_masses = torch.tensor(list(ATOM_WEIGHTS.values()), dtype=torch.float32, device=self.device)
+        self.electronegativities = torch.tensor(list(ELECTRONEGATIVITY.values()), dtype=torch.float32, device=self.device)
+        self.atom_groups = torch.tensor(list(GROUP.values()), dtype=torch.float32, device=self.device)
+        self.atom_periods = torch.tensor(list(PERIOD.values()), dtype=torch.float32, device=self.device)
 
         self.collater = Collater(0, 0)
 
