@@ -348,11 +348,12 @@ def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     return torch.sum(torch.cdist(donors_pos, acceptors_pos, p=2) < 3.3)
 
 
-def save_checkpoint(epoch, model, optimizer, config, save_path):
+def save_checkpoint(epoch, model, optimizer, config, save_path, dataDims):
     torch.save({'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'config': config},
+                'config': config,
+                'dataDims': dataDims},
                save_path)
     return None
 
@@ -525,8 +526,8 @@ def decode_to_sph_rotvec(mol_orientations):
     we bound the encodings for theta on 0-1 to restrict the range of theta to [0,pi/2]
     """
     theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
-    real_orientation_theta = components2angle(theta_encoding)
-    real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted [-pi,pi
+    real_orientation_theta = components2angle(theta_encoding)  # from the sigmoid, [0, pi]
+    real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted [-pi,pi]
     real_orientation_r = components2angle(mol_orientations[:, 4:6]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
 
     # clean_mol_orientations = torch.cat((

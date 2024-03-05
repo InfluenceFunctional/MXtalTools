@@ -1,53 +1,54 @@
-import os
-from datetime import datetime
-from argparse import Namespace
-#
-# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
-
-import sys
 import gc
+import os
+import sys
+from argparse import Namespace
+from datetime import datetime
+from distutils.dir_util import copy_tree
+from shutil import copy
 
+import numpy as np
 import torch
+import torch.nn as nn
 import torch.random
 import wandb
+from scipy.spatial.transform import Rotation as R
 from torch import backends
-import torch.nn as nn
-import numpy as np
-from tqdm import tqdm
-from shutil import copy
-from distutils.dir_util import copy_tree
 from torch.nn import functional as F
 from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter, scatter_softmax
-from scipy.spatial.transform import Rotation as R
+from tqdm import tqdm
 
-from mxtaltools.common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict, batch_compute_dipole
-from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY
+from mxtaltools.common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
+from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY
+from mxtaltools.crystal_building.builder import SupercellBuilder
+from mxtaltools.crystal_building.utils import (clean_cell_params, set_molecule_alignment)
+from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements
 from mxtaltools.csp.SampleOptimization import gradient_descent_sampling, mcmc_sampling
 from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
+from mxtaltools.dataset_management.manager import DataManager
 from mxtaltools.models.autoencoder_models import PointAutoencoder
 from mxtaltools.models.crystal_rdf import new_crystal_rdf
-
 from mxtaltools.models.discriminator_models import CrystalDiscriminator
 from mxtaltools.models.embedding_regression_models import embedding_regressor
 from mxtaltools.models.generator_models import independent_gaussian_model
 from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
-                                     save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss, compute_num_h_bonds, slash_batch, compute_gaussian_overlap, compute_type_evaluation_overlap,
+                                     save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss,
+                                     compute_num_h_bonds, slash_batch, compute_gaussian_overlap,
+                                     compute_type_evaluation_overlap,
                                      compute_coord_evaluation_overlap,
                                      compute_full_evaluation_overlap)
 from mxtaltools.models.utils import (weight_reset, get_n_config)
 from mxtaltools.models.vdw_overlap import vdw_overlap
-
-from mxtaltools.crystal_building.utils import (clean_cell_params, set_molecule_alignment)
-from mxtaltools.crystal_building.builder import SupercellBuilder
-from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements
-
-from mxtaltools.dataset_management.manager import DataManager
-from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
 from mxtaltools.reporting.logger import Logger
-from mxtaltools.reporting.online import decoder_agglomerative_clustering, extract_true_and_predicted_points, scaffolded_decoder_clustering
+from mxtaltools.reporting.online import decoder_agglomerative_clustering, extract_true_and_predicted_points, \
+    scaffolded_decoder_clustering
+
+
+#
+# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
 
 
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
@@ -1715,8 +1716,12 @@ class Modeller:
                 if np.average(self.logger.current_losses[model_name][f'mean_{loss_type_check}']) == np.amin(past_mean_losses):  # save if this is the best
                     print(f"Saving {model_name} checkpoint")
                     self.logger.save_stats_dict(prefix=f'best_{model_name}_')
-                    save_checkpoint(epoch, self.models_dict[model_name], self.optimizers_dict[model_name], self.config.__dict__[model_name].__dict__,
-                                    self.config.checkpoint_dir_path + f'best_{model_name}' + self.run_identifier)
+                    save_checkpoint(epoch,
+                                    self.models_dict[model_name],
+                                    self.optimizers_dict[model_name],
+                                    self.config.__dict__[model_name].__dict__,
+                                    self.config.checkpoint_dir_path + f'best_{model_name}' + self.run_identifier,
+                                    self.dataDims)
 
     def update_lr(self):
         for model_name in self.model_names:

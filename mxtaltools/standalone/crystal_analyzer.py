@@ -8,20 +8,22 @@ import yaml
 
 import torch
 import torch.nn.functional as F
+from torch_geometric.loader.dataloader import Collater
 
 from bulk_molecule_classification.utils import reload_model
 from mxtaltools.common.config_processing import dict2namespace
 from mxtaltools.common.geometry_calculations import cell_vol_torch
-from mxtaltools.constants.atom_properties import VDW_RADII
+from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.crystal_building.builder import SupercellBuilder
+from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.discriminator_models import CrystalDiscriminator
 from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import softmax_and_score
 from mxtaltools.models.vdw_overlap import vdw_overlap
 
-config_path = '/standalone/crystal_analyzer.yaml'
-discriminator_checkpoint_path = '/cluster/best_discriminator_experiments_benchmarks_multi_discriminator_15-02-12-25-55'
-volume_checkpoint_path = '/cluster/best_regressor_experiments_benchmarks_vol_regressor_15-02-12-25-32'
+config_path = 'mxtaltools/standalone/crystal_analyzer.yaml'
+discriminator_checkpoint_path = 'mxtaltools/standalone/discriminator_checkpoint'
+volume_checkpoint_path = 'mxtaltools/standalone/regressor_checkpoint'
 
 
 def load_yaml(path):
@@ -43,16 +45,19 @@ class CrystalAnalyzer(torch.nn.Module):
         self.config = dict2namespace(load_yaml(config_path))
         self.supercell_size = supercell_size
 
-        self.model = CrystalDiscriminator(seed=12345, config=self.config.discriminator.model, num_atom_features=4, num_molecule_features=2)
+        self.model = CrystalDiscriminator(seed=12345, config=self.config.discriminator.model, num_atom_features=4,
+                                          num_molecule_features=2)
         for param in self.model.parameters():  # freeze encoder
             param.requires_grad = False
         self.model = reload_model(self.model, device=self.device, optimizer=None, path=discriminator_checkpoint_path)
         self.model.eval()
 
-        self.volume_model = MoleculeRegressor(seed=12345, config=self.config.regressor.model, num_atom_features=4, num_molecule_features=2)
+        self.volume_model = MoleculeRegressor(seed=12345, config=self.config.regressor.model, num_atom_features=4,
+                                              num_molecule_features=2)
         for param in self.volume_model.parameters():  # freeze encoder
             param.requires_grad = False
-        self.volume_model = reload_model(self.volume_model, device=self.device, optimizer=None, path=volume_checkpoint_path)
+        self.volume_model = reload_model(self.volume_model, device=self.device, optimizer=None,
+                                         path=volume_checkpoint_path)
         self.volume_model.eval()
 
         self.packing_mean = 628.2591876500782
@@ -60,9 +65,42 @@ class CrystalAnalyzer(torch.nn.Module):
 
         self.supercell_builder = SupercellBuilder(device=self.device, rotation_basis='spherical')
         self.vdw_radii = VDW_RADII
+        self.atomic_masses = ATOM_WEIGHTS
+        self.electronegativities = ELECTRONEGATIVITY
+        self.atom_groups = GROUP
+        self.atom_periods = PERIOD
 
-    def forward(self, data, proposed_cell_params: torch.tensor, proposed_sgs: torch.tensor, score_type='heuristic', return_stats=False):
+        self.collater = Collater(0, 0)
+
+    def __call__(self, coords_list: list, atom_types_list: list, proposed_cell_params: torch.tensor,
+                 proposed_sgs: torch.tensor, score_type='heuristic', return_stats=False):
         with torch.no_grad():
+            # quick featurization
+            atom_feats_list = []  # todo add appropraite standardization
+            for ind, atoms in enumerate(atom_types_list):
+                atom_feats = torch.zeros(len(atoms), 6)
+                atom_feats[:, 0] = atoms
+                atom_feats[:, 1] = self.atomic_masses[atoms]
+                atom_feats[:, 2] = self.electronegativities[atoms]
+                atom_feats[:, 3] = self.vdw_radii[atoms]
+                atom_feats[:, 4] = self.atomic_masses[atoms]
+                atom_feats[:, 5] = self.atom_periods[atoms]
+                atom_feats_list.append(atom_feats)
+
+            datapoints = [
+                CrystalData(
+                    x=atom_feats[ind],
+                    pos=coords_list[ind],
+                    y=torch.ones(1),
+                    tracking=torch.ones(1),
+                    mult=torch.ones(1),
+                    T_fc=torch.eye(3),
+                    mol_size=torch.ones(1) * len(atom_feats[ind]),
+                )
+                for ind in range(len(coords_list))
+            ]
+            data = self.collater(datapoints)
+
             if score_type in ['classifier', 'rdf_distance', 'heuristic']:
                 proposed_crystaldata = self.build_crystal(data, proposed_cell_params, proposed_sgs)
 
@@ -70,10 +108,13 @@ class CrystalAnalyzer(torch.nn.Module):
                 classification_score = softmax_and_score(discriminator_output[:, :2])
                 predicted_distance = discriminator_output[:, -1]
 
-                sample_predicted_aunit_volume = self.compute_aunit_volume(proposed_cell_params, proposed_crystaldata.mult)
-                vdw_score = vdw_overlap(self.vdw_radii, crystaldata=proposed_crystaldata, return_score_only=True).cpu().detach().numpy()
+                sample_predicted_aunit_volume = self.compute_aunit_volume(proposed_cell_params,
+                                                                          proposed_crystaldata.mult)
+                vdw_score = vdw_overlap(self.vdw_radii, crystaldata=proposed_crystaldata,
+                                        return_score_only=True).cpu().detach().numpy()
                 model_predicted_aunit_volme = self.estimate_aunit_volume(data)
-                packing_loss = F.smooth_l1_loss(sample_predicted_aunit_volume, model_predicted_aunit_volme, reduction='none')
+                packing_loss = F.smooth_l1_loss(sample_predicted_aunit_volume, model_predicted_aunit_volme,
+                                                reduction='none')
 
                 heuristic_score = vdw_score * torch.exp(-packing_loss * 5)
 
@@ -101,7 +142,8 @@ class CrystalAnalyzer(torch.nn.Module):
                 data = self.preprocess(data, proposed_sgs)
                 sample_predicted_aunit_volume = self.compute_aunit_volume(data.cell_params, data.mult)
                 model_predicted_aunit_volme = self.estimate_aunit_volume(data)
-                packing_loss = F.smooth_l1_loss(sample_predicted_aunit_volume, model_predicted_aunit_volme, reduction='none')
+                packing_loss = F.smooth_l1_loss(sample_predicted_aunit_volume, model_predicted_aunit_volme,
+                                                reduction='none')
                 output = torch.exp(-5 * packing_loss)
 
                 if return_stats:

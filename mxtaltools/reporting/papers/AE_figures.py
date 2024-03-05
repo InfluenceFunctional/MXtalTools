@@ -414,12 +414,57 @@ def embedding_regression_figure():
     return fig3
 
 
+def regression_training_curve():
+    import numpy as np
+    dataset_sizes = np.linspace(1000, 130000, num=20)
+    dataset_sizes[-1] = 133000
+
+    x = dataset_sizes
+    y = np.asarray([
+        .2328,  # 26
+        .1815,  # 27
+        .1575,  # 28
+        .1419,  # 29
+        .1211,  # 30
+        .1181,  # 31
+        .09724,  # 32
+        .09459,  # 33
+        .09,  # 34
+        np.nan,  # 35
+        .07692,  # 36
+        0.06927,  # 37
+        0.06702,  # 38
+        0.06181,  # 39
+        0.05746,  # 40
+        0.05795,  # 41
+        0.05174,  # 42
+        0.04831,  # 43 \
+        0.04734,  # 44
+        0.04505  # 45
+
+    ])
+    fig4 = go.Figure()
+    fig4.add_scatter(x=x, y=y, mode='markers')
+
+    fig4.update_layout(xaxis_title='Training Set Size', yaxis_title='Best Test Loss')
+    fig4.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
+    fig4.update_layout(xaxis={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
+    fig4.update_layout(yaxis={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
+
+    fig4.update_layout(font=dict(size=24))
+    fig4.update_layout(yaxis_range=[0, 0.24])
+    fig4.show(renderer='browser')
+
+    return fig4
+
+
 #
 # fig = RMSD_fig()
 # fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
-fig2 = UMAP_fig(max_entries=1000000)
-fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
-fig3 = embedding_regression_figure()
-fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
-
+# fig2 = UMAP_fig(max_entries=1000000)
+# fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
+# fig3 = embedding_regression_figure()
+# fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+fig4 = regression_training_curve()
+fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=600, height=400)
 aa = 1

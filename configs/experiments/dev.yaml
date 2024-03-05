@@ -1,22 +1,22 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/embedding_regressor.yaml
-mode: embedding_regression
+base_config_path: /experiments/base/discriminator.yaml
+#mode: regression
 
 sweep_id: null
 sweep_path: null
 
 dataset:
-  max_dataset_length: 10000
-  test_fraction: 0.2
-  filter_protons: False
-  regression_target: molecule_gap_energy
+  max_dataset_length: 1000
+#  test_fraction: 0.2
+#  filter_protons: False
+#  regression_target: molecule_gap_energy
 
 # batching & convergence
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 500
+min_batch_size: 50
 max_batch_size: 10000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
@@ -34,7 +34,7 @@ model_paths:
   generator: null
   regressor: null
   #autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57  # no protons, non-variational
-  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41  # protons, non-variational
+  autoencoder: null # /cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41  # protons, non-variational
   #autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_8_27-02-15-35-51  # inferred protons, non-variational
   embedding_regressor: null
 
