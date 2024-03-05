@@ -9,6 +9,7 @@ import yaml
 import torch
 import torch.nn.functional as F
 from torch_geometric.loader.dataloader import Collater
+import numpy as np
 
 from bulk_molecule_classification.utils import reload_model
 from mxtaltools.common.config_processing import dict2namespace
@@ -68,11 +69,17 @@ class CrystalAnalyzer(torch.nn.Module):
         self.packing_std = 432.8356636345374
 
         self.supercell_builder = SupercellBuilder(device=self.device, rotation_basis='spherical')
-        self.vdw_radii = torch.tensor(list(VDW_RADII.values()), dtype=torch.float32, device=self.device)
-        self.atomic_masses = torch.tensor(list(ATOM_WEIGHTS.values()), dtype=torch.float32, device=self.device)
-        self.electronegativities = torch.tensor(list(ELECTRONEGATIVITY.values()), dtype=torch.float32, device=self.device)
-        self.atom_groups = torch.tensor(list(GROUP.values()), dtype=torch.float32, device=self.device)
-        self.atom_periods = torch.tensor(list(PERIOD.values()), dtype=torch.float32, device=self.device)
+        self.vdw_radii = torch.tensor(np.nan_to_num(list(VDW_RADII.values())).astype('float'), dtype=torch.float32,
+                                      device=self.device)
+        self.atomic_masses = torch.tensor(np.nan_to_num(list(ATOM_WEIGHTS.values())).astype('float'),
+                                          dtype=torch.float32,
+                                          device=self.device)
+        self.electronegativities = torch.tensor(np.nan_to_num(list(ELECTRONEGATIVITY.values())).astype('float'),
+                                                dtype=torch.float32, device=self.device)
+        self.atom_groups = torch.tensor(np.nan_to_num(list(GROUP.values())).astype('float'), dtype=torch.float32,
+                                        device=self.device)
+        self.atom_periods = torch.tensor(np.nan_to_num(list(PERIOD.values())).astype('float'), dtype=torch.float32,
+                                         device=self.device)
 
         self.collater = Collater(0, 0)
 
