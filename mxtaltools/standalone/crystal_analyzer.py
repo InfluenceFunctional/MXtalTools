@@ -21,9 +21,13 @@ from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import softmax_and_score
 from mxtaltools.models.vdw_overlap import vdw_overlap
 
-config_path = 'mxtaltools/standalone/crystal_analyzer.yaml'
-discriminator_checkpoint_path = 'mxtaltools/standalone/discriminator_checkpoint'
-volume_checkpoint_path = 'mxtaltools/standalone/regressor_checkpoint'
+
+import pathlib
+module_path = str(pathlib.Path(__file__).parent.resolve())
+
+config_path = module_path = '/crystal_analyzer.yaml'
+discriminator_checkpoint_path = module_path + '/discriminator_checkpoint'
+volume_checkpoint_path = module_path + '/regressor_checkpoint'
 
 
 def load_yaml(path):
