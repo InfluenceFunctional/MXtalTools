@@ -21,8 +21,8 @@ from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import softmax_and_score
 from mxtaltools.models.vdw_overlap import vdw_overlap
 
-
 import pathlib
+
 module_path = str(pathlib.Path(__file__).parent.resolve())
 
 config_path = module_path + '/crystal_analyzer.yaml'
@@ -53,15 +53,15 @@ class CrystalAnalyzer(torch.nn.Module):
                                           num_molecule_features=2)
         for param in self.model.parameters():  # freeze encoder
             param.requires_grad = False
-        self.model = reload_model(self.model, device=self.device, optimizer=None, path=discriminator_checkpoint_path)
+        self.model, _ = reload_model(self.model, device=self.device, optimizer=None, path=discriminator_checkpoint_path)
         self.model.eval()
 
         self.volume_model = MoleculeRegressor(seed=12345, config=self.config.regressor.model, num_atom_features=4,
                                               num_molecule_features=2)
         for param in self.volume_model.parameters():  # freeze encoder
             param.requires_grad = False
-        self.volume_model = reload_model(self.volume_model, device=self.device, optimizer=None,
-                                         path=volume_checkpoint_path)
+        self.volume_model, _ = reload_model(self.volume_model, device=self.device, optimizer=None,
+                                            path=volume_checkpoint_path)
         self.volume_model.eval()
 
         self.packing_mean = 628.2591876500782
