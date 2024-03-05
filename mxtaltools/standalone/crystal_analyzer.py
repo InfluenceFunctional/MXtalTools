@@ -25,7 +25,7 @@ from mxtaltools.models.vdw_overlap import vdw_overlap
 import pathlib
 module_path = str(pathlib.Path(__file__).parent.resolve())
 
-config_path = module_path = '/crystal_analyzer.yaml'
+config_path = module_path + '/crystal_analyzer.yaml'
 discriminator_checkpoint_path = module_path + '/discriminator_checkpoint'
 volume_checkpoint_path = module_path + '/regressor_checkpoint'
 
