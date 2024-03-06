@@ -52,13 +52,13 @@ class CrystalAnalyzer(torch.nn.Module):
         self.supercell_size = supercell_size
 
         # update configs from checkpoints
-        checkpoint = torch.load(discriminator_checkpoint_path)
+        checkpoint = torch.load(discriminator_checkpoint_path, map_location=self.device)
         model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
         self.config.discriminator.optimizer = model_config.optimizer
         self.config.discriminator.model = model_config.model
         self.d_dataDims = checkpoint['dataDims']
 
-        checkpoint = torch.load(volume_checkpoint_path)
+        checkpoint = torch.load(volume_checkpoint_path, map_location=self.device)
         model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
         self.config.regressor.optimizer = model_config.optimizer
         self.config.regressor.model = model_config.model
@@ -311,6 +311,7 @@ class test_crystal_analyzer():
 
 
 # tester = test_crystal_analyzer('cpu')
-# tester.score()
+# for _ in range(1000):
+#     tester.score()
 
 aa = 1
