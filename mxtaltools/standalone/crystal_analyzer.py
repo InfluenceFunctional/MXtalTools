@@ -10,6 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.loader.dataloader import Collater
 import numpy as np
+from argparse import Namespace
 
 from bulk_molecule_classification.utils import reload_model
 from mxtaltools.common.config_processing import dict2namespace
@@ -50,23 +51,41 @@ class CrystalAnalyzer(torch.nn.Module):
         self.config = dict2namespace(load_yaml(config_path))
         self.supercell_size = supercell_size
 
-        self.model = CrystalDiscriminator(seed=12345, config=self.config.discriminator.model, num_atom_features=4,
-                                          num_molecule_features=2)
+        # update configs from checkpoints
+        checkpoint = torch.load(discriminator_checkpoint_path)
+        model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
+        self.config.discriminator.optimizer = model_config.optimizer
+        self.config.discriminator.model = model_config.model
+        self.d_dataDims = checkpoint['dataDims']
+
+        checkpoint = torch.load(volume_checkpoint_path)
+        model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
+        self.config.regressor.optimizer = model_config.optimizer
+        self.config.regressor.model = model_config.model
+        self.r_dataDims = checkpoint['dataDims']
+
+        num_atom_features = 6
+        num_molecule_features = 2
+
+        self.model = CrystalDiscriminator(seed=12345, config=self.config.discriminator.model,
+                                          num_atom_features=num_atom_features,
+                                          num_molecule_features=num_molecule_features)
         for param in self.model.parameters():  # freeze encoder
             param.requires_grad = False
         self.model, _ = reload_model(self.model, device=self.device, optimizer=None, path=discriminator_checkpoint_path)
         self.model.eval()
 
-        self.volume_model = MoleculeRegressor(seed=12345, config=self.config.regressor.model, num_atom_features=4,
-                                              num_molecule_features=2)
+        self.volume_model = MoleculeRegressor(seed=12345, config=self.config.regressor.model,
+                                              num_atom_features=num_atom_features,
+                                              num_molecule_features=num_molecule_features)
         for param in self.volume_model.parameters():  # freeze encoder
             param.requires_grad = False
         self.volume_model, _ = reload_model(self.volume_model, device=self.device, optimizer=None,
                                             path=volume_checkpoint_path)
         self.volume_model.eval()
 
-        self.packing_mean = 628.2591876500782
-        self.packing_std = 432.8356636345374
+        self.auvol_mean = self.r_dataDims['target_mean']
+        self.auvol_std = self.r_dataDims['target_std']
 
         self.supercell_builder = SupercellBuilder(device=self.device, rotation_basis='spherical')
         self.vdw_radii = torch.tensor(np.nan_to_num(list(VDW_RADII.values())).astype('float'), dtype=torch.float32,
@@ -83,37 +102,28 @@ class CrystalAnalyzer(torch.nn.Module):
 
         self.collater = Collater(0, 0)
 
+        self.atom_standardization_vector = torch.zeros((num_atom_features, 2))
+        self.mol_standardization_vector = torch.zeros((num_molecule_features, 2))
+        for ind, key in enumerate(['atom_mass',
+                                   'atom_electronegativity',
+                                   'atom_vdW_radius',
+                                   'atom_group',
+                                   'atom_period']):
+            self.atom_standardization_vector[ind + 1, :] = torch.tensor(self.d_dataDims['standardization_dict'][key],
+                                                                        dtype=torch.float32, device=self.device)
+        # don't adjust atomic numbers
+        self.atom_standardization_vector[0, 0] = 0
+        self.atom_standardization_vector[0, 1] = 1
+
+        for ind, key in enumerate(['molecule_mass',
+                                   'molecule_num_atoms']):
+            self.mol_standardization_vector[ind, :] = torch.tensor(self.d_dataDims['standardization_dict'][key],
+                                                                   dtype=torch.float32, device=self.device)
+
     def __call__(self, coords_list: list, atom_types_list: list, proposed_cell_params: torch.tensor,
                  proposed_sgs: torch.tensor, score_type='heuristic', return_stats=False):
         with torch.no_grad():
-            # quick featurization
-            atom_feats_list = []  # todo add appropraite standardization
-            for ind, atoms in enumerate(atom_types_list):
-                atom_feats = torch.zeros(len(atoms), 6)
-                atom_feats[:, 0] = atoms
-                atom_feats[:, 1] = self.atomic_masses[atoms]
-                atom_feats[:, 2] = self.electronegativities[atoms]
-                atom_feats[:, 3] = self.vdw_radii[atoms]
-                atom_feats[:, 4] = self.atomic_masses[atoms]
-                atom_feats[:, 5] = self.atom_periods[atoms]
-                atom_feats_list.append(atom_feats)
-            # mol feats mass and num_atoms
-            datapoints = [
-                CrystalData(
-                    x=atom_feats_list[ind],
-                    mol_x=torch.tensor([atom_feats_list[ind][:, 1].sum(),
-                                        len(atom_feats_list[ind])],
-                                       dtype=torch.float32, device=self.device),
-                    pos=coords_list[ind],
-                    y=torch.ones(1),
-                    tracking=torch.ones(1),
-                    mult=torch.ones(1),
-                    T_fc=torch.eye(3),
-                    mol_size=torch.ones(1) * len(atom_feats_list[ind]),
-                )
-                for ind in range(len(coords_list))
-            ]
-            data = self.collater(datapoints)
+            data = self.prep_crystaldata(atom_types_list, coords_list)
 
             if score_type in ['classifier', 'rdf_distance', 'heuristic']:
                 proposed_crystaldata = self.build_crystal(data, proposed_cell_params, proposed_sgs.long().tolist())
@@ -125,12 +135,15 @@ class CrystalAnalyzer(torch.nn.Module):
                 sample_predicted_aunit_volume = self.compute_aunit_volume(proposed_cell_params,
                                                                           proposed_crystaldata.mult)
                 vdw_score = vdw_overlap(self.vdw_radii, crystaldata=proposed_crystaldata,
-                                        return_score_only=True).cpu().detach().numpy()
+                                        return_score_only=True)
                 model_predicted_aunit_volme = self.estimate_aunit_volume(data)
-                packing_loss = F.smooth_l1_loss(sample_predicted_aunit_volume, model_predicted_aunit_volme,
+
+                model_predicted_aunit_volume = torch.ones_like(model_predicted_aunit_volme) * (5*5*5/4)  # approximate for urea
+
+                packing_loss = F.smooth_l1_loss(sample_predicted_aunit_volume, model_predicted_aunit_volme[:, 0],
                                                 reduction='none')
 
-                heuristic_score = vdw_score * torch.exp(-packing_loss * 5)
+                heuristic_score = vdw_score + torch.exp(-packing_loss * 5)
 
                 if score_type == 'classifier':
                     output = classification_score
@@ -169,17 +182,53 @@ class CrystalAnalyzer(torch.nn.Module):
                 else:
                     return output
 
-    @staticmethod
-    def compute_aunit_volume(cell_params, multiplicity):
+    def prep_crystaldata(self, atom_types_list, coords_list):
+        # quick featurization
+        atom_feats_list = []  # todo add appropraite standardization
+        for ind, atoms in enumerate(atom_types_list):
+            atom_feats = torch.zeros(len(atoms), 6)
+            atom_feats[:, 0] = atoms
+            atom_feats[:, 1] = self.atomic_masses[atoms]
+            atom_feats[:, 2] = self.electronegativities[atoms]
+            atom_feats[:, 3] = self.vdw_radii[atoms]
+            atom_feats[:, 4] = self.atomic_masses[atoms]
+            atom_feats[:, 5] = self.atom_periods[atoms]
+            atom_feats_list.append(atom_feats)
+        # mol feats mass and num_atoms
+        datapoints = [
+            CrystalData(
+                x=atom_feats_list[ind],
+                mol_x=torch.tensor([atom_feats_list[ind][:, 1].sum(),
+                                    len(atom_feats_list[ind])],
+                                   dtype=torch.float32, device=self.device)[None, :],
+                pos=coords_list[ind],
+                y=torch.ones(1),
+                tracking=torch.ones(1),
+                mult=torch.ones(1),
+                T_fc=torch.eye(3),
+                mol_size=torch.ones(1) * len(atom_feats_list[ind]),
+            )
+            for ind in range(len(coords_list))
+        ]
+        data = self.collater(datapoints)
+
+        # standardize input
+        data.x = (data.x - self.atom_standardization_vector[:, 0]) / self.atom_standardization_vector[:, 1]
+        data.mol_x = (data.mol_x - self.mol_standardization_vector[:, 0]) / self.mol_standardization_vector[:, 1]
+
+        return data
+
+    def compute_aunit_volume(self, cell_params, multiplicity):
         volumes_list = []
         for i in range(len(cell_params)):
             volumes_list.append(cell_vol_torch(cell_params[i, 0:3], cell_params[i, 3:6]))
 
-        return cell_params / multiplicity
+        volumes_list = torch.tensor(volumes_list, dtype=torch.float32, device=self.device)
+        return volumes_list / multiplicity
 
     def estimate_aunit_volume(self, data):
-        model_packing_coeff = self.volume_model(data) * self.packing_std + self.packing_mean
-        return model_packing_coeff
+        model_aunit_volume = self.volume_model(data) * self.auvol_std + self.auvol_mean
+        return model_aunit_volume
 
     def build_crystal(self, data, proposed_cell_params, proposed_sgs):
         data = self.prep_molecule_data(data, proposed_cell_params, proposed_sgs)
@@ -208,3 +257,40 @@ class CrystalAnalyzer(torch.nn.Module):
         """
         output, extra_outputs = self.model(data.clone(), return_dists=True, return_latent=False)
         return output, extra_outputs['dists_dict']
+
+
+class test_crystal_analyzer():
+    def __init__(self, device):
+        self.device = device
+        self.analyzer = CrystalAnalyzer(device)
+
+        """specify urea"""
+        self.atom_coords = torch.tensor([
+            [-1.3042, - 0.0008, 0.0001],
+            [0.6903, - 1.1479, 0.0001],
+            [0.6888, 1.1489, 0.0001],
+            [- 0.0749, - 0.0001, - 0.0003],
+        ], dtype=torch.float32, device=self.device)
+        self.atom_coords -= self.atom_coords.mean(0)
+        self.atom_types = torch.tensor([8, 7, 6, 6], dtype=torch.long, device=self.device)
+
+    def score(self):
+        states = torch.tensor(np.random.uniform(0, 1, size=(10, 12)), dtype=torch.float32, device=self.device)
+        states = torch.cat([
+            torch.tensor(np.random.randint(1, 21, size=(10, 1)), dtype=torch.float32, device=self.device),
+            states],
+            dim=1)
+
+        score = self.analyzer([self.atom_coords for _ in range(len(states))],
+                              [self.atom_types for _ in range(len(states))],
+                              states[:, 1:],
+                              states[:, 0],
+                              score_type='heuristic')
+
+        aa = 1
+
+#
+# tester = test_crystal_analyzer('cpu')
+# tester.score()
+
+aa = 1

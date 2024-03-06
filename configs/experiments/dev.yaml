@@ -1,6 +1,6 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/discriminator.yaml
+base_config_path: /experiments/base/regressor.yaml
 #mode: regression
 
 sweep_id: null

@@ -7,21 +7,21 @@ import torch
 
 class CrystalDiscriminator(nn.Module):
     def __init__(self, seed, config, dataDims=None, num_atom_features=None, num_molecule_features=None):
-        '''
+        """
         wrapper for molecule model, with appropriate I/O
-        '''
+        """
         torch.manual_seed(seed)
         if dataDims is not None:
-            n_atom_feats = dataDims['num_atom_features']
-            n_mol_feats = dataDims['num_molecule_features']
+            num_atom_feats = dataDims['num_atom_features']
+            num_mol_feats = dataDims['num_molecule_features']
         else:
-            n_atom_feats = num_atom_features
-            n_mol_feats = num_molecule_features
+            num_atom_feats = num_atom_features
+            num_mol_feats = num_molecule_features
 
         super(CrystalDiscriminator, self).__init__()
         self.model = MoleculeGraphModel(
-            num_atom_feats=n_atom_feats,
-            num_mol_feats=n_mol_feats,
+            num_atom_feats=num_atom_feats,
+            num_mol_feats=num_mol_feats,
             output_dimension=2 + 1,  # 2 for classification and 1 for distance regression
             seed=seed,
             graph_aggregator=config.graph_aggregator,

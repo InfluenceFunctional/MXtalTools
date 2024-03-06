@@ -119,7 +119,10 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=No
     '''
     compute vdw radii respectfulness
     '''
-    vdw_radii_vector = torch.Tensor(list(vdw_radii.values())).to(dists.device)
+    if torch.is_tensor(vdw_radii):
+        vdw_radii_vector = vdw_radii
+    else:
+        vdw_radii_vector = torch.Tensor(list(vdw_radii.values())).to(dists.device)
     atom_radii = [vdw_radii_vector[elements[0]], vdw_radii_vector[elements[1]]]
     radii_sums = atom_radii[0] + atom_radii[1]
 
