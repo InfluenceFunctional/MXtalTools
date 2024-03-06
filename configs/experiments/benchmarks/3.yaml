@@ -1,32 +1,29 @@
 machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/embedding_regressor.yaml
+dataset_name: 'dataset.pkl'
+base_config_path: '/experiments/base/regressor.yaml'  # base config
 
 dataset:
-  filter_protons: True
+  max_dataset_length: 10000000
+  test_fraction: 0.2
+  regression_target: crystal_reduced_volume
 
 # batching & convergence
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 100
-max_batch_size: 5000
-batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
+min_batch_size: 25
+max_batch_size: 10000
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 2000
-max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+minimum_epochs: 1000
+max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 100  # for convergence checks
-extra_test_period: 1
+gradient_norm_clip: 1
 
 logger:
-  run_name: embedding_regressor
+  run_name: regressor
   experiment_tag: benchmarks
+  mini_csp_frequency: 5  # how often to run CSP-style search WIP
   sample_reporting_frequency: 10  # how often to do detailed reporting with figures
   log_figures: True
-
-model_paths:
-  discriminator: null
-  generator: null
-  regressor: null
-  autoencoder: /best_autoencoder_experiments_benchmarks_0_23-02-12-19-08
-  embedding_regressor: null

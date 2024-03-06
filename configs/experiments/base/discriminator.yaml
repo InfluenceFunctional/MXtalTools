@@ -89,7 +89,7 @@ discriminator:
   model:
     graph_convolution_type: TransformerConv
     graph_aggregator: softmax
-    concat_mol_to_atom_features: False
+    concat_mol_to_atom_features: True
     activation: gelu
     num_fc_layers: 4
     fc_depth: 256

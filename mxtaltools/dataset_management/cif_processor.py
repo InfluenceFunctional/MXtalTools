@@ -5,6 +5,7 @@ import tqdm
 import warnings
 from random import shuffle
 from mxtaltools.dataset_management.featurization_utils import extract_crystal_data, featurize_molecule, crystal_filter, chunkify
+import glob
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
 
@@ -23,7 +24,8 @@ target_identifiers = None
 # chunk_prefix = 'BT_6'
 # cifs_path = r'D:\crystal_datasets\blind_test_3-6_cifs\blind_test_6\gp5080sup2'
 os.chdir(cifs_path)
-cifs_list = os.listdir()
+#cifs_list = os.listdir()
+cifs_list = glob.glob(r'*/*.cif', recursive=True) + glob.glob('*.cif')  # plus any free dumps directly in this dir
 if target_identifiers is not None and filter_by_targets:
     target_cifs = [cif for cif in cifs_list if cif.split('.cif')[0] in target_identifiers]
     cifs_list = target_cifs
@@ -65,6 +67,20 @@ for chunk_ind, chunk in zip(chunk_inds, chunks_list[start_ind:stop_ind]):  # tod
                     molecules = []
                     for i_c, rd_mol in enumerate(rd_mols):  # one crystal may have Z prime molecules
                         molecules.append(featurize_molecule(crystal, rd_mol, mol_volumes[i_c], component_num=i_c))
+
+                    # check for custom metrics
+                    with open(cif_path, 'r') as f:
+                        text = f.read()
+
+                        if 'zzp' in text:
+                            lines = text.split('\n')
+                            for line_ind, line in enumerate(lines):
+                                if 'zzp' in line:
+                                    break
+                            prop_line = lines[line_ind + 2]
+                            crystal_dict['zzp_cost'] = prop_line.split()[0]
+                            crystal_dict['contact_overlap_cost'] = prop_line.split()[-1]
+
 
                     # the rest is boilerplate for indexing and saving each crystal as a new DataFrame row
                     crystal_keys = list(crystal_dict.keys())
