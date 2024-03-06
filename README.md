@@ -4,17 +4,9 @@
 
 ## Development from archived public [version](https://github.com/InfluenceFunctional/mcrytools_Nov_2022)
 
-
-## Reference
-TODO If you use this code in any future publications, please cite our work using
-
-## Table of contents 
-TODO write ToC
-
 ## 1. Installation
 1. Download the code from this repository via
 
-    todo confirm path names
 ```bash
 git clone git@github.com:InfluenceFunctional/MXtalTools.git MXtalTools
 ```
