@@ -4,7 +4,7 @@ regressor:
   model:
     graph_convolution_type: TransformerConv
     graph_aggregator: 'softmax'
-    concat_mol_to_atom_features: True
+    concat_mol_to_atom_features: False
     activation: gelu
     num_fc_layers: 4
     fc_depth: 256
@@ -31,7 +31,7 @@ discriminator:
   model:
     graph_convolution_type: TransformerConv
     graph_aggregator: softmax
-    concat_mol_to_atom_features: True
+    concat_mol_to_atom_features: False
     activation: gelu
     num_fc_layers: 4
     fc_depth: 256
