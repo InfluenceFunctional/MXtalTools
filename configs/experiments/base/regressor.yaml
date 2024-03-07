@@ -104,9 +104,9 @@ regressor:
     num_fc_layers: 4
     fc_depth: 256
     fc_norm_mode: 'layer'
-    fc_dropout_probability: 0.1
+    fc_dropout_probability: 0.05
     graph_node_norm: 'graph layer'
-    graph_node_dropout: 0.1
+    graph_node_dropout: 0.05
     graph_message_norm: null
     graph_message_dropout: 0
     num_attention_heads: 32
