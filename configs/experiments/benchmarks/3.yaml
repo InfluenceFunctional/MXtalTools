@@ -10,13 +10,13 @@ dataset:
 
 # batching & convergence
 early_epochs_step_override: 5
-num_early_epochs: 0
+num_early_epochs: 5
 grow_batch_size: True
-min_batch_size: 25
+min_batch_size: 10
 max_batch_size: 10000
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 1000
+minimum_epochs: 500
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 100  # for convergence checks
 gradient_norm_clip: 1
@@ -24,6 +24,5 @@ gradient_norm_clip: 1
 logger:
   run_name: regressor
   experiment_tag: benchmarks
-  mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 4  # how often to do detailed reporting with figures
   log_figures: True

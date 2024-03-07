@@ -22,7 +22,7 @@ dataset:
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 10
+min_batch_size: 50
 max_batch_size: 1000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
@@ -74,7 +74,7 @@ discriminator:
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 5.0E-5
+    init_lr: 1.0E-5
     max_lr: 1.0E-6
     min_lr: 5.0E-6
     lr_schedule: True
