@@ -136,14 +136,13 @@ class CrystalAnalyzer(torch.nn.Module):
                                                                           proposed_crystaldata.mult)
                 vdw_score = vdw_overlap(self.vdw_radii,
                                         crystaldata=proposed_crystaldata,
-                                        return_score_only=True)
-                model_predicted_aunit_volume = self.estimate_aunit_volume(data)
+                                        return_score_only=True,
+                                        loss_func='inv')
+                model_predicted_aunit_volume = self.estimate_aunit_volume(data)[:, 0]
 
                 model_predicted_aunit_volume = torch.ones_like(model_predicted_aunit_volume) * (5*5*5/4)  # approximate for urea
 
-                packing_loss = F.smooth_l1_loss((sample_predicted_aunit_volume - self.auvol_mean)/self.auvol_std,
-                                                (model_predicted_aunit_volume[:, 0] - self.auvol_mean)/self.auvol_std,
-                                                reduction='none')
+                packing_loss = torch.abs(sample_predicted_aunit_volume - model_predicted_aunit_volume) / torch.abs(model_predicted_aunit_volume)
 
                 heuristic_score = vdw_score / 10 - packing_loss * 10
 
@@ -163,6 +162,10 @@ class CrystalAnalyzer(torch.nn.Module):
 
                 if return_stats:
                     stats_dict = {
+                        'log_vdw_loss': np.log10(-vdw_score.cpu().detach().numpy()),
+                        'log_packing_loss': -np.log10(packing_loss.cpu().detach().numpy()),
+                        'vdw_loss': -vdw_score.cpu().detach().numpy(),
+                        'packing_loss': packing_loss.cpu().detach().numpy(),
                         'classification_score': classification_score.cpu().detach().numpy(),
                         'predicted_distance': predicted_distance.cpu().detach().numpy(),
                         'heuristic_score': heuristic_score.cpu().detach().numpy(),
