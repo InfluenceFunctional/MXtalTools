@@ -134,23 +134,28 @@ class CrystalAnalyzer(torch.nn.Module):
 
                 sample_predicted_aunit_volume = self.compute_aunit_volume(proposed_cell_params,
                                                                           proposed_crystaldata.mult)
-                vdw_score = vdw_overlap(self.vdw_radii,
-                                        crystaldata=proposed_crystaldata,
-                                        return_score_only=True,
-                                        loss_func='inv')
+                vdw_loss, vdw_score, _, _, _ = vdw_overlap(self.vdw_radii,
+                                                           crystaldata=proposed_crystaldata,
+                                                           return_score_only=False,
+                                                           loss_func='log')
                 model_predicted_aunit_volume = self.estimate_aunit_volume(data)[:, 0]
 
-                model_predicted_aunit_volume = torch.ones_like(model_predicted_aunit_volume) * (5*5*5/4)  # approximate for urea
+                model_predicted_aunit_volume = torch.ones_like(model_predicted_aunit_volume) * (
+                            5 * 5 * 5 / 4)  # approximate for urea
 
-                packing_loss = torch.abs(sample_predicted_aunit_volume - model_predicted_aunit_volume) / torch.abs(model_predicted_aunit_volume)
+                packing_loss = torch.abs(sample_predicted_aunit_volume - model_predicted_aunit_volume) / torch.abs(
+                    model_predicted_aunit_volume)
 
-                heuristic_score = vdw_score / 10 - packing_loss * 10
+                heuristic_score = vdw_score - packing_loss
 
                 ''' # check samples
                 from mxtaltools.common.ase_interface import crystals_to_ase_mols
+                
                 from ase.visualize import view
+                import ase
                 mols = crystals_to_ase_mols(proposed_crystaldata)
                 view(mols)
+                [ase.io.write(f'/home/mkilgour/crystal_samples/crystal_{i}.cif', mols[i]) for i in range(len(mols))]
                 '''
 
                 if score_type == 'classifier':
@@ -302,7 +307,7 @@ class test_crystal_analyzer():
             dim=1)
 
         states[:, 1:4] *= 20
-        states[:, 4:7] += torch.pi/2
+        states[:, 4:7] += torch.pi / 2
 
         score = self.analyzer([self.atom_coords for _ in range(len(states))],
                               [self.atom_types for _ in range(len(states))],
