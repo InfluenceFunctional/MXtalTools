@@ -1,0 +1,17 @@
+# WORK IN PROGRESS
+[tool.poetry]
+name = "mxtaltools"
+version = "0.1.0"
+description = "MXtalTools: Molecular Crystals Machine Learning Toolkit"
+authors = ["Michael <mjakilgour@gmail.com>"]
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: BSD-3",
+    "Operating System :: Windows, Linux",
+]
+
+[project.urls]
+Homepage = "https://github.com/InfluenceFunctional/MXtalTools"
+Issues = "https://github.com/InfluenceFunctional/MXtalTools/issues"
