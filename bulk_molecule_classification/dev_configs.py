@@ -81,7 +81,7 @@ base_config = {'run_name': 'dev',
                'fc_norm': 'layer',
                'num_fcs': 2,
                'num_epochs': 1000,
-               'dataset_size': 2000,
+               'dataset_size': 5000,
                'conv_cutoff': 6,
                'batch_size': 5,
                'reporting_frequency': 1,
@@ -124,7 +124,7 @@ config_list = [
     [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'hot'],  # 3
 ]
 
-test_name = 'March13'
+test_name = 'March13_2'
 for device in ['cuda']:  # , 'cpu']:
     for i in range(len(config_list)):
         for si in range(2):
