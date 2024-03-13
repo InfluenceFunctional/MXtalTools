@@ -11,22 +11,20 @@ dependencies:
   - pyg
   - pytorch
   - pytorch-cuda=12.1  # update with your CUDA version
-  #- plotly
-  #- wandb
-  #- numba
-  #- scipy
-  #- pandas
+  - plotly
+  - wandb
+  - scipy
+  - pandas
   - pip
   - tqdm
-  #- scikit-learn
-  #- ase
+  - scikit-learn
   - ovito=3.9.2
   - pip:  # note torch_scatter and torch_cluster are extremely specific about versions when installing on Windows
     - --find-links https://data.pyg.org/whl/torch-2.0.1+cu121.htm  # update with your torch and cuda version
     - torch_scatter
     - torch_cluster
     - torch_sparse
-    #- kaleido
+    - kaleido
 
 
 # pip install torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.0.1+cu118.htm  # update with your torch and cuda version

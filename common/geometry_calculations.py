@@ -144,7 +144,7 @@ def batch_molecule_principal_axes_torch(coords_list: list, skip_centring=False):
     for i in range(3):
         a, b, c = torch.stack([torch.zeros_like(direction[ind]), Ip_fin[ind, i]]).T.cpu().detach().numpy()
         fig.add_trace(go.Scatter3d(x=a, y=b, z=c))
-    fig.show()
+    fig.show(renderer='browser')
     '''
 
 

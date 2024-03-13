@@ -187,7 +187,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
         if config.logger.log_figures:
             wandb.log({'Cell Packing': fig})
         if (config.machine == 'local') and False:
-            fig.show()
+            fig.show(renderer='browser')
 
 
 def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=None):
@@ -1739,7 +1739,7 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
     if config.logger.log_figures:
         wandb.log({'Mini-CSP Scores': fig})
     if (config.machine == 'local') and False:
-        fig.show()
+        fig.show(renderer='browser')
 
     return None
 

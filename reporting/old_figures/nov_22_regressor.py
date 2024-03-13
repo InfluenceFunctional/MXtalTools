@@ -84,7 +84,7 @@ def nov_22_paper_regression_plots(config):
     fig.layout.margin = layout.margin
     fig.write_image('../paper1_figs/regression_topline.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     '''
     4-panel error distribution
@@ -143,7 +143,7 @@ def nov_22_paper_regression_plots(config):
 
     fig.write_image('../paper1_figs/regression_distributions.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     '''
     Error correlates
@@ -186,7 +186,7 @@ def nov_22_paper_regression_plots(config):
 
     fig.write_image('../paper1_figs/regression_correlates.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     '''
     need to isolate the samples which have bad predictions - 

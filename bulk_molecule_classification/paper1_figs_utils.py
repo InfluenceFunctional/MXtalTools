@@ -19,6 +19,121 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
     elif molecule_name == 'nicotinamide':
         n_images = 10
 
+    images, stits = get_embedding_images_and_names(molecule_name)
+
+    fig = make_subplots(rows=1, cols=4,
+                        subplot_titles=["(a) Graph Embedding",
+                                        "(b) GNN Final Layer",
+                                        "(c) SFC Input",
+                                        "(d) SFC Final Layer"],
+                        vertical_spacing=0.15,
+                        horizontal_spacing=0.05,
+                        )
+    embed_keys = ['Embeddings', 'Latents']
+
+    for ic, results_dict in enumerate([mk_results_dict, mk_results_dict, d_results_dict1, d_results_dict2]):
+        if ic == 0:
+            row = 1
+            col = 1
+            cind = 0
+        elif ic == 1:
+            row = 1
+            col = 2
+            cind = 1
+        elif ic == 2:
+            row = 1
+            col = 3
+            cind = 0
+        elif ic == 3:
+            row = 1
+            col = 4
+            cind = 1
+
+        num_samples = len(results_dict['Targets'])
+        sample_inds = np.random.choice(num_samples, size=min(max_samples, num_samples), replace=False)
+        from sklearn.manifold import TSNE
+
+        embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
+                         init='pca', perplexity=perplexity).fit_transform(results_dict[embed_keys[cind]][sample_inds])
+
+        target_colors = copy(COLORS)
+        melt_ind = len(ordered_classes)
+        target_colors[melt_ind - 1] = COLORS[-1]
+
+        for t_ind in range(len(ordered_classes)):
+            inds = np.argwhere((results_dict['Targets'][sample_inds] == t_ind)
+                               )[:, 0]
+
+            fig.add_trace(go.Scattergl(x=embedding[inds, 0] / np.amax(np.abs(embedding[:, 0])), y=embedding[inds, 1] / np.amax(np.abs(embedding[:, 1])),
+                                       mode='markers',
+                                       marker_size=5,
+                                       marker_color=target_colors[t_ind],
+                                       # legendgroup=ordered_classes[t_ind],
+                                       name=ordered_classes[t_ind],
+                                       showlegend=False,  # True if ic == 0 else False,
+                                       opacity=.65),
+                          row=row, col=col)
+
+    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig.update_yaxes(linecolor='black', mirror=True,
+                     showgrid=True, zeroline=True)  # , showticklabels=False)
+    fig.update_xaxes(linecolor='black', mirror=True,
+                     showgrid=True, zeroline=True)  # , showticklabels=False)
+
+    fig.update_layout(xaxis1_title='t-SNE 1',
+                      xaxis2_title='t-SNE 1',
+                      xaxis3_title='t-SNE 1',
+                      xaxis4_title='t-SNE 1',
+                      yaxis1_title='t-SNE 2',
+                      #yaxis2_title='tSNE2',
+                      #yaxis3_title='tSNE2',
+                      #yaxis4_title='tSNE2'
+    )
+    fig.update_layout(font=dict(size=FONTSIZE))
+    fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
+    fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
+
+    imsize = 0.55 if molecule_name == 'nicotinamide' else 0.7
+
+    if molecule_name == 'nicotinamide':
+        ylevels = [-0.65 - 0.5 * (ind % 2) for ind in range(n_images)]
+        xlevels = np.linspace(0.05, 0.95, n_images) #np.linspace(0.05, 0.95, int(np.ceil(n_images/2))).repeat(2)
+    elif molecule_name == 'urea':
+        ylevels = [-0.65 for ind in range(n_images)]
+        xlevels = np.linspace(0.05, .95, n_images)
+
+    for ind in range(n_images):
+
+        fig.add_layout_image(
+            dict(source=images[ind],
+                 y=ylevels[ind], x=xlevels[ind])
+        )
+        fig.add_annotation(y=ylevels[ind] + imsize*.6, x=xlevels[ind],
+                           text=stits[ind],
+                           showarrow=False,
+                           xref='paper',
+                           yref='paper',
+                           xanchor='center',
+                           yanchor='middle',
+                           font_size=int(FONTSIZE * 0.8))
+    fig.update_annotations(font_size=FONTSIZE)
+    fig.update_layout_images(dict(
+        xref="paper",
+        yref="paper",
+        sizex=imsize,
+        sizey=imsize,
+        xanchor="center",
+        yanchor="middle"
+    ))
+    if molecule_name == 'nicotinamide':
+        fig.layout.margin.b = 395
+    elif molecule_name == 'urea':
+        fig.layout.margin.b = 325
+    # fig.show(renderer='browser')
+    return fig
+
+
+def get_embedding_images_and_names(molecule_name):
     image_path = r'D:\crystals_extra\classifier_training\polymorph_images/'
     if molecule_name == 'nicotinamide':
         filenames = ['NICOAM13.png',
@@ -56,120 +171,10 @@ def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
                  'Form III',
                  'Form IV',
                  'Melt']
-
     from PIL import Image
-
     images = [Image.open(image_path + pathi) for pathi in filenames]
-    fig = make_subplots(rows=2, cols=2,
-                        subplot_titles=["(a) Graph Embedding",
-                                        "(b) GNN Final Layer",
-                                        "(c) SFC Input",
-                                        "(d) SFC Final Layer"],
-                        vertical_spacing=0.15,
-                        horizontal_spacing=0.05,
-                        )
 
-    embed_keys = ['Embeddings', 'Latents']
-
-    for ic, results_dict in enumerate([mk_results_dict, mk_results_dict, d_results_dict1, d_results_dict2]):
-        if ic == 0:
-            row = 1
-            col = 1
-            cind = 0
-        elif ic == 1:
-            row = 1
-            col = 2
-            cind = 1
-        elif ic == 2:
-            row = 2
-            col = 1
-            cind = 0
-        elif ic == 3:
-            row = 2
-            col = 2
-            cind = 1
-
-        num_samples = len(results_dict['Targets'])
-        sample_inds = np.random.choice(num_samples, size=min(max_samples, num_samples), replace=False)
-        from sklearn.manifold import TSNE
-
-        embedding = TSNE(n_components=2, learning_rate='auto', verbose=1, n_iter=20000,
-                         init='pca', perplexity=perplexity).fit_transform(results_dict[embed_keys[cind]][sample_inds])
-
-        target_colors = copy(COLORS)
-        melt_ind = len(ordered_classes)
-        target_colors[melt_ind - 1] = COLORS[-1]
-
-        for t_ind in range(len(ordered_classes)):
-            inds = np.argwhere((results_dict['Targets'][sample_inds] == t_ind)
-                               )[:, 0]
-
-            fig.add_trace(go.Scattergl(x=embedding[inds, 0] / np.amax(np.abs(embedding[:, 0])), y=embedding[inds, 1] / np.amax(np.abs(embedding[:, 1])),
-                                       mode='markers',
-                                       marker_size=5,
-                                       marker_color=target_colors[t_ind],
-                                       # legendgroup=ordered_classes[t_ind],
-                                       name=ordered_classes[t_ind],
-                                       showlegend=False,  # True if ic == 0 else False,
-                                       opacity=.65),
-                          row=row, col=col)
-
-    fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
-    fig.update_yaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)  # , showticklabels=False)
-    fig.update_xaxes(linecolor='black', mirror=True,
-                     showgrid=True, zeroline=True)  # , showticklabels=False)
-
-    fig.update_layout(#xaxis1_title='tSNE1',
-                      #xaxis2_title='tSNE1',
-                      xaxis3_title='tSNE1',
-                      xaxis4_title='tSNE1',
-                      yaxis1_title='tSNE2',
-                      #yaxis2_title='tSNE2',
-                      yaxis3_title='tSNE2',
-                      #yaxis4_title='tSNE2')
-    )
-    fig.update_layout(font=dict(size=FONTSIZE))
-    fig.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
-    fig.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
-
-    if molecule_name == 'nicotinamide':
-        ylevels = [-0.2 - 0.325 * (ind % 2) for ind in range(n_images)]
-        xlevels = np.linspace(-0.025, 0.875, int(np.ceil(n_images/2))).repeat(2)
-    elif molecule_name == 'urea':
-        ylevels = [-0.2 for ind in range(n_images)]
-        xlevels = np.linspace(-.1, 0.875, n_images)
-
-    imsize = 0.3 if molecule_name == 'nicotinamide' else 0.25
-    for ind in range(n_images):
-
-        fig.add_layout_image(
-            dict(source=images[ind],
-                 y=ylevels[ind], x=xlevels[ind])
-        )
-        fig.add_annotation(y=ylevels[ind] + 0.05, x=xlevels[ind] + 0.075,
-                           text=stits[ind],
-                           showarrow=False,
-                           xref='paper',
-                           yref='paper',
-                           xanchor='left',
-                           yanchor='top',
-                           font_size=int(FONTSIZE * 0.8))
-    fig.update_annotations(font_size=FONTSIZE)
-    fig.update_layout_images(dict(
-        xref="paper",
-        yref="paper",
-        sizex=imsize,
-        sizey=imsize,
-        xanchor="left",
-        yanchor="top"
-    ))
-    if molecule_name == 'nicotinamide':
-        fig.layout.margin.b = 375
-    elif molecule_name == 'urea':
-        fig.layout.margin.b = 275
-    # fig.show()
-    return fig
+    return images, stits
 
 
 def pretty_embedding(mk_results_dict,
@@ -486,40 +491,13 @@ def urea_interface_fig(sorted_molwise_results_dict, stacked_plot=False):
         yanchor="top"
     ))
     fig.layout.margin.b = 425
-    # fig.show()
+    # fig.show(renderer='browser')
 
     return fig
 
 
 def nic_clusters_fig(traj_dict1, traj_dict2):
-    from PIL import Image
-    image_paths = [r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0000.png',
-                   r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0100.png',
-                   r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0200.png',
-                   r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0300.png',
-                   r'C:\Users\mikem\crystals\classifier_runs/melt_nic_0000.png',
-                   r'C:\Users\mikem\crystals\classifier_runs/melt_nic_0005.png',
-                   r'C:\Users\mikem\crystals\classifier_runs/melt_nic_0010.png',
-                   r'C:\Users\mikem\crystals\classifier_runs/melt_nic_0050.png']
-    images = [Image.open(pathi) for pathi in image_paths]
-
-    def collect_unimportant_fractions(trajectory, keep_dims: list = None):
-        num_keep_dims = len(keep_dims)
-        toss_dims = [ind for ind in range(trajectory.shape[1]) if ind not in keep_dims]
-
-        collected_trajectory = np.zeros((len(trajectory), num_keep_dims + 1))
-        collected_trajectory[:, :num_keep_dims] = trajectory[:, keep_dims]
-        collected_trajectory[:, -1] = trajectory[:, toss_dims].sum(1)
-
-        return collected_trajectory
-
-    stable_traj_dict = {'inside_number': collect_unimportant_fractions(traj_dict1['inside_number'], [0, 9]),
-                        'outside_number': collect_unimportant_fractions(traj_dict1['outside_number'], [0, 9]), 'classes': ['I', 'Melt', 'Other'],
-                        'time_steps': traj_dict1['time_steps']}
-
-    melt_traj_dict = {'inside_number': collect_unimportant_fractions(traj_dict2['inside_number'], [0, 9]),
-                      'outside_number': collect_unimportant_fractions(traj_dict2['outside_number'], [0, 9]), 'classes': ['I', 'Melt', 'Other'],
-                      'time_steps': traj_dict2['time_steps']}
+    images, melt_traj_dict, stable_traj_dict = collect_images_and_data(traj_dict1, traj_dict2)
 
     colors_list = [[COLORS[0], COLORS[-1],
                     OTHER_COLOR],
@@ -541,7 +519,7 @@ def nic_clusters_fig(traj_dict1, traj_dict2):
             traj = traj_dict[key]
             for ind in range(3):
                 fig.add_trace(go.Scatter(x=traj_dict['time_steps'] / 1000000,
-                                         y=gaussian_filter1d(traj[:, ind], 2, mode='nearest'),
+                                         y=gaussian_filter1d(traj[:, ind], 2 if i3 == 0 else 0.2, mode='nearest'),
                                          name=traj_dict['classes'][ind],
                                          line_color=colors_list[i3][ind],
                                          mode='lines',
@@ -550,11 +528,12 @@ def nic_clusters_fig(traj_dict1, traj_dict2):
                                          stackgroup='one' if False else None),
                               row=i3 + 1, col=i2 + 1)
 
-    fig.update_xaxes(range=[-0.1, 5.1], zeroline=False)
+    fig.update_xaxes(range=[-0.1, 5.1], zeroline=True)
     fig.add_vline(x=-0.01, line_color='black')
     fig.update_xaxes(range=[-.0025, .525], row=2, col=1, zeroline=True)
     fig.update_xaxes(range=[-.0025, .525], row=2, col=2, zeroline=True)
-    fig.update_yaxes(rangemode='nonnegative')
+    fig.update_yaxes(range=[0, 50], row=1, col=1, zeroline=True)
+    fig.update_yaxes(range=[0, 50], row=1, col=2, zeroline=True)
 
     # fig.update_yaxes(range=[0, 1])
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
@@ -579,49 +558,83 @@ def nic_clusters_fig(traj_dict1, traj_dict2):
             for col in [1, 2]:
                 fig.add_vline(x=time, line_dash='dash', line_color='grey', row=row, col=col)
 
-    ylevel = .65
-    xlevels = np.linspace(-0.05, 0.86, 4)
+    imsize = 0.25
+    ylevel = .575
+    xlevels = np.linspace(0.1, 0.95, 4)
     stits = ['0 ns', '1 ns', '2 ns', '3 ns']
     for ind in range(4):
         fig.add_layout_image(
             dict(source=images[ind],
                  y=ylevel, x=xlevels[ind])
         )
-        fig.add_annotation(y=ylevel - 0.05, x=xlevels[ind] - 0.05,
+        fig.add_annotation(y=ylevel - 0.15, x=xlevels[ind],
                            text=stits[ind],
                            showarrow=False,
                            xref='paper',
                            yref='paper',
-                           xanchor='left',
-                           yanchor='top')
+                           xanchor='center',
+                           yanchor='middle')
 
     stits = ['0 ps', '50 ps', '100 ps', '500 ps']
-    ylevel = -0.1
+    ylevel = -0.225
     for ind in range(4):
         fig.add_layout_image(
             dict(source=images[ind + 4],
                  y=ylevel, x=xlevels[ind])
         )
-        fig.add_annotation(y=ylevel - 0.05, x=xlevels[ind] - 0.1,
+        fig.add_annotation(y=ylevel - 0.15, x=xlevels[ind],
                            text=stits[ind],
                            showarrow=False,
                            xref='paper',
                            yref='paper',
-                           xanchor='left',
-                           yanchor='top')
+                           xanchor='center',
+                           yanchor='middle')
 
     fig.update_layout_images(dict(
         xref="paper",
         yref="paper",
-        sizex=0.22,
-        sizey=0.22,
-        xanchor="left",
-        yanchor="top"
+        sizex=imsize,
+        sizey=imsize,
+        xanchor="center",
+        yanchor="middle"
     ))
 
     fig.layout.margin.b = 250
-    # fig.show()
+    # fig.show(renderer='browser')
     return fig
+
+
+def collect_images_and_data(traj_dict1, traj_dict2):
+    from PIL import Image
+    image_paths = [r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0000.png',
+                   r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0100.png',
+                   r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0200.png',
+                   r'C:\Users\mikem\crystals\classifier_runs/stable_nic_0300.png',
+                   r'C:\Users\mikem\crystals\classifier_runs/melt_nic_0000.png',
+                   r'C:\Users\mikem\crystals\classifier_runs/melt_nic_0005.png',
+                   r'C:\Users\mikem\crystals\classifier_runs/melt_nic_0010.png',
+                   r'C:\Users\mikem\crystals\classifier_runs/melt_nic_0050.png']
+    images = [Image.open(pathi) for pathi in image_paths]
+
+    def collect_unimportant_fractions(trajectory, keep_dims: list = None):
+        num_keep_dims = len(keep_dims)
+        toss_dims = [ind for ind in range(trajectory.shape[1]) if ind not in keep_dims]
+
+        collected_trajectory = np.zeros((len(trajectory), num_keep_dims + 1))
+        collected_trajectory[:, :num_keep_dims] = trajectory[:, keep_dims]
+        collected_trajectory[:, -1] = trajectory[:, toss_dims].sum(1)
+
+        return collected_trajectory
+
+    stable_traj_dict = {'inside_number': collect_unimportant_fractions(traj_dict1['inside_number'], [0, 9]),
+                        'outside_number': collect_unimportant_fractions(traj_dict1['outside_number'], [0, 9]),
+                        'classes': ['I', 'Melt', 'Other'],
+                        'time_steps': traj_dict1['time_steps']}
+    melt_traj_dict = {'inside_number': collect_unimportant_fractions(traj_dict2['inside_number'], [0, 9]),
+                      'outside_number': collect_unimportant_fractions(traj_dict2['outside_number'], [0, 9]),
+                      'classes': ['I', 'Melt', 'Other'],
+                      'time_steps': traj_dict2['time_steps']}
+    return images, melt_traj_dict, stable_traj_dict
 
 
 OTHER_COLOR = 'rgb(50, 50, 50)'

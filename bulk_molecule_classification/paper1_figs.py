@@ -5,7 +5,7 @@ from bulk_molecule_classification.classifier_constants import (nic_ordered_class
                                                                )
 from bulk_molecule_classification.paper1_figs_utils import (process_daisuke_dats, urea_interface_fig, nic_clusters_fig, combined_accuracy_fig, combined_embedding_fig, paper_form_accuracy_fig)
 
-max_tsne_samples = 1000
+max_tsne_samples = 100
 
 os.chdir(r'D:\crystals_extra\classifier_training\results')
 urea_eval_path = 'dev_urea_evaluation_results_feb6_dict.npy'
@@ -80,10 +80,10 @@ daisuke's cmats
 urea_results, nic_results = process_daisuke_dats()
 
 fig_dict['d_urea_form_cmat'], scores_dict['d_urea_form'] = paper_form_accuracy_fig(
-    urea_results, urea_ordered_class_names, [100, 200])
+    urea_results, urea_ordered_class_names, [100, 200])  # it only does > 100
 
 fig_dict['d_nic_form_cmat'], scores_dict['d_nic_form'] = paper_form_accuracy_fig(
-    nic_results, nic_ordered_class_names, [100, 350])
+    nic_results, nic_ordered_class_names, [100, 350])  # it only does > 100
 
 # '''
 # urea interface trajectory
@@ -106,14 +106,16 @@ for key, fig in fig_dict.items():
             fig.write_image(key + '.png', width=1920 // 2 + 100, height=1080 // 2)
         else:
             fig.write_image(key + '.png', width=1920 // 4, height=1080 // 2)
-    elif 'tSNE' in key:
-        fig.write_image(key + '.png', width=1920 // 1.5, height=1080//1.2)
+    elif 'tSNE' in key and 'urea' in key:
+        fig.write_image(key + '.png', width=1920, height=720)
+    elif 'tSNE' in key and 'nic' in key:
+        fig.write_image(key + '.png', width=1920, height=770)
     elif 'traj' in key:
         fig.write_image(key + '.png', width=960, height=900)
     else:
         fig.write_image(key + '.png', scale=4)
 for key, fig in fig_dict.items():
-    fig.show()
+    fig.show(renderer='browser')
 
 for item in scores_dict.items():
     print(item)

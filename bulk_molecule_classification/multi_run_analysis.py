@@ -17,26 +17,34 @@ warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 os.chdir(r'D:\crystals_extra\classifier_training\results')
 
 files = os.listdir()
-results_dicts = [file for file in files if 'analysis' in file and 'crystal_in_melt_test9' in file]
+test_name = 'crystal_in_melt_test10'
+sphere_radius = 20
+results_dicts = [file for file in files if 'analysis' in file and test_name in file]
 
 dfs = []
-useful_keys = ['Molecule_Temperature', 'Molecule_Type_Prediction', 'Centroid Radii']
+useful_keys = ['Molecule_Temperature', 'Molecule_Type_Prediction', 'Centroid Radii', 'equilibration_time', 'structure_identifier', 'max_sphere_radius', 'temperature']
 for ind, dict_path in tqdm(enumerate(results_dicts)):
-    dumps_dir = f'D:/crystals_extra/classifier_training/crystal_in_melt_test9/{int(dict_path.split("_")[-3])}/'
+    dumps_dir = f'D:/crystals_extra/classifier_training/{test_name}/{int(dict_path.split("_")[-3])}/'
     if os.path.exists(dumps_dir + 'run_config.npy'):
         run_config = np.load(dumps_dir + 'run_config.npy', allow_pickle=True).item()
+        results_dict = np.load(dict_path, allow_pickle=True).item()
+        results_dict.update(run_config)
+    else:
+        run_config = None
+        results_dict = np.load(dict_path, allow_pickle=True).item()
 
-    results_dict = np.load(dict_path, allow_pickle=True).item()
-    ldict = {key: [results_dict[key]] for key in useful_keys}
-    for key, value in run_config.items():
-        ldict[key] = [value]
+    if results_dict['max_sphere_radius'] == sphere_radius:
+        ldict = {key: [results_dict[key]] for key in useful_keys}
+        if run_config is not None:
+            for key, value in run_config.items():
+                ldict[key] = [value]
 
-    ldict['time_steps'] = [np.asarray([time[0] for time in results_dict['Molecule_Time_Step']])]
+        ldict['time_steps'] = [np.asarray([time[0] for time in results_dict['Molecule_Time_Step']])]
 
-    # for key, value in results_dict['eval_config'].items():
-    #     ldict[key] = [value]
+        # for key, value in results_dict['eval_config'].items():
+        #     ldict[key] = [value]
 
-    dfs.append(pd.DataFrame().from_dict(ldict))
+        dfs.append(pd.DataFrame().from_dict(ldict))
 
 results_df = pd.concat(dfs)
 results_df.reset_index(drop=True, inplace=True)
@@ -104,70 +112,112 @@ from _plotly_utils.colors import n_colors
 colors = n_colors('rgb(5,120,200)', 'rgb(250,50,5)', len(np.unique(results_df['temperature'])), colortype='rgb')
 temps = np.sort(np.unique(results_df['temperature']))
 temp_dict = {temp: ind for ind, temp in enumerate(temps)}
+#
+# sigma = 2
+#
+# fig = make_subplots(cols=2, rows=2, subplot_titles=['Raw Values', 'Normed against t=0'], horizontal_spacing=0.05, vertical_spacing=0.075)
+# for temp in temps:
+#     hit_temp=False
+#     for ind in range(len(results_df)):
+#         identifier = results_df['structure_identifier'][ind]
+#         form = identifier2form[identifier]
+#         form_ind = form - 1
+#         inside_radius = results_df['max_sphere_radius'][ind] - 6  # minus one convolution
+#
+#         if results_df['temperature'].iloc[ind] == temp:
+#             tstart = get_closest_prior_time(equil_time * 2.5, timesteps) + 1
+#
+#             inside_inds = [np.argwhere(results_df['Centroid Radii'].iloc[ind][t] < inside_radius)[:, 0] for t in range(tstart, len(timesteps))]
+#             inside_count = np.asarray([
+#                 np.sum(results_df['Molecule_Type_Prediction'].iloc[ind][t][inside_inds[t - tstart]].argmax(1) == 3)
+#                 for t in range(tstart, len(timesteps))
+#             ])
+#             x = results_df['time_steps'].iloc[ind][tstart:]
+#             y = inside_count
+#             fig.add_scatter(x=x / 1e6, y=gaussian_filter1d(y, sigma=sigma, mode='nearest'),
+#                             name=str(results_df['temperature'].iloc[ind]),
+#                             legendgroup=str(results_df['temperature'].iloc[ind]),
+#                             line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
+#                             showlegend=not hit_temp, row=1, col=1)
+#
+#             y = inside_count / inside_count[0]
+#             fig.add_scatter(x=x / 1e6, y=gaussian_filter1d(y, sigma=sigma, mode='nearest'),
+#                             name=str(results_df['temperature'].iloc[ind]),
+#                             legendgroup=str(results_df['temperature'].iloc[ind]),
+#                             line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
+#                             showlegend=False, row=1, col=2)
+#
+#             hit_temp=True
+#
+#             '''repeat for full trajectory'''
+#             tstart = 0
+#             inside_inds = [np.argwhere(results_df['Centroid Radii'].iloc[ind][t] < inside_radius)[:, 0] for t in range(tstart, len(timesteps))]
+#             inside_count = np.asarray([
+#                 np.sum(results_df['Molecule_Type_Prediction'].iloc[ind][t][inside_inds[t - tstart]].argmax(1) == 3)
+#                 for t in range(tstart, len(timesteps))
+#             ])
+#             x = results_df['time_steps'].iloc[ind][tstart:]
+#             y = inside_count
+#             fig.add_scatter(x=x / 1e6, y=gaussian_filter1d(y, sigma=sigma, mode='nearest'),
+#                             name=str(results_df['temperature'].iloc[ind]),
+#                             legendgroup=str(results_df['temperature'].iloc[ind]),
+#                             line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
+#                             showlegend=False, row=2, col=1)
+#
+#             y = inside_count / inside_count[0]
+#             fig.add_scatter(x=x / 1e6, y=gaussian_filter1d(y, sigma=sigma, mode='nearest'),
+#                             name=str(results_df['temperature'].iloc[ind]),
+#                             legendgroup=str(results_df['temperature'].iloc[ind]),
+#                             line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
+#                             showlegend=False, row=2, col=2)
+#
+# fig.update_xaxes(title='Time (ns)')
+# fig.update_yaxes(title='Num Molecules')
+#
+# for times in [equil_time * (i + 1) for i in range(3)]:
+#     fig.add_vline(x=times / 1e6, line_color='black', row=2, col=1)
+#     fig.add_vline(x=times / 1e6, line_color='black', row=2, col=2)
+#
+# fig.show(renderer='browser')
 
-sigma = 5
 
-fig = make_subplots(cols=2, rows=2, subplot_titles=['Raw Values', 'Normed against t=0'], horizontal_spacing=0.05, vertical_spacing=0.075)
+sigma = 1
+
+fig = go.Figure()
 for temp in temps:
+    xs = []
+    ys = []
     for ind in range(len(results_df)):
         identifier = results_df['structure_identifier'][ind]
         form = identifier2form[identifier]
         form_ind = form - 1
-        inside_radius = results_df['max_sphere_radius'][ind]
+        inside_radius = results_df['max_sphere_radius'][ind] - 6 - 6  # minus one convolution and molecule radius 6 - 3.5
 
         if results_df['temperature'].iloc[ind] == temp:
-            tstart = get_closest_prior_time(equil_time * 2.5, timesteps) + 1
-
-            inside_inds = [np.argwhere(results_df['Centroid Radii'].iloc[ind][t] < inside_radius)[:, 0] for t in range(tstart, len(timesteps))]
-            inside_count = np.asarray([
-                np.sum(results_df['Molecule_Type_Prediction'].iloc[ind][t][inside_inds[t - tstart]].argmax(1) == 3)
-                for t in range(tstart, len(timesteps))
-            ])
-            x = results_df['time_steps'].iloc[ind][tstart:]
-            y = inside_count
-            fig.add_scatter(x=x / 1e6, y=gaussian_filter1d(y, sigma=sigma, mode='nearest'),
-                            name=str(results_df['temperature'].iloc[ind]),
-                            legendgroup=str(results_df['temperature'].iloc[ind]),
-                            line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
-                            showlegend=ind % 2 == 0, row=1, col=1)
-
-            y = inside_count / inside_count[0]
-            fig.add_scatter(x=x / 1e6, y=gaussian_filter1d(y, sigma=sigma, mode='nearest'),
-                            name=str(results_df['temperature'].iloc[ind]),
-                            legendgroup=str(results_df['temperature'].iloc[ind]),
-                            line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
-                            showlegend=False, row=1, col=2)
-
-            '''repeat for full trajectory'''
             tstart = 0
             inside_inds = [np.argwhere(results_df['Centroid Radii'].iloc[ind][t] < inside_radius)[:, 0] for t in range(tstart, len(timesteps))]
             inside_count = np.asarray([
                 np.sum(results_df['Molecule_Type_Prediction'].iloc[ind][t][inside_inds[t - tstart]].argmax(1) == 3)
                 for t in range(tstart, len(timesteps))
             ])
-            x = results_df['time_steps'].iloc[ind][tstart:]
-            y = inside_count
-            fig.add_scatter(x=x / 1e6, y=gaussian_filter1d(y, sigma=sigma, mode='nearest'),
-                            name=str(results_df['temperature'].iloc[ind]),
-                            legendgroup=str(results_df['temperature'].iloc[ind]),
-                            line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
-                            showlegend=ind % 2 == 0, row=2, col=1)
+            xs.append(results_df['time_steps'].iloc[ind][tstart:])
+            ys.append(inside_count)
 
-            y = inside_count / inside_count[0]
-            fig.add_scatter(x=x / 1e6, y=gaussian_filter1d(y, sigma=sigma, mode='nearest'),
-                            name=str(results_df['temperature'].iloc[ind]),
-                            legendgroup=str(results_df['temperature'].iloc[ind]),
-                            line_color=colors[temp_dict[results_df['temperature'].iloc[ind]]],
-                            showlegend=False, row=2, col=2)
+    x = np.mean(np.stack(xs), axis=0) - equil_time * 4
+    y = np.mean(np.stack(ys), axis=0)
+    fig.add_scatter(x=x / 1e6, y=gaussian_filter1d(y, sigma=sigma, mode='nearest'),
+                    name=str(temp),
+                    legendgroup=str(temp),
+                    line_color=colors[temp_dict[temp]],
+                    showlegend=True)
 
 fig.update_xaxes(title='Time (ns)')
-fig.update_yaxes(title='Num Molecules')
+fig.update_yaxes(title='Num Unmelted Molecules')
 
-for times in [equil_time * (i + 1) for i in range(3)]:
-    fig.add_vline(x=times/1e6, line_color='black', row=2, col=1)
-    fig.add_vline(x=times/1e6, line_color='black', row=2, col=2)
+for times in [equil_time * (i + 1) for i in range(4)]:
+    fig.add_vline(x=(times - equil_time * 4) / 1e6, line_color='black')
 
-fig.show()
+fig.show(renderer='browser')
 aa = 1
 
 #

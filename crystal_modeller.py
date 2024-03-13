@@ -327,7 +327,7 @@ class Modeller:
             fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
                               xaxis_title='tSNE1', yaxis_title='tSNE2', xaxis_showticklabels=False, yaxis_showticklabels=False,
                               plot_bgcolor='rgba(0,0,0,0)')
-            fig.show()
+            fig.show(renderer='browser')
             aa = 1
 
     def train_crystal_models(self):
@@ -1732,7 +1732,7 @@ class Modeller:
                 col = j % 3 + 1
                 row = j // 3 + 1
                 fig.add_scattergl(y=combined_traj_dict[key][:, i], name=i, legendgroup=i, showlegend=True if j == 0 else False, row=row, col=col)
-        fig.show()
+        fig.show(renderer='browser')
 
         """
 

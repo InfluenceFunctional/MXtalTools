@@ -153,7 +153,7 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
     dataset_path = f'{datasets_path}{dataset_name}.pkl'
     output_dict_path = config['results_path'] + dataset_name + '_analysis'
 
-    if True: #not os.path.exists(output_dict_path + '.npy'):
+    if not os.path.exists(output_dict_path + '.npy'):
         loader, run_config = collect_trajectory_dataloader(config, dataset_path, dumps_dir)
         results_dict = classify_trajectory(classifier, config, device, loader)
         os.chdir(config['results_path'])
@@ -167,7 +167,12 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
         sorted_molwise_results_dict = np.load(output_dict_path + '.npy', allow_pickle=True).item()
         time_steps = np.asarray([time[0] for time in sorted_molwise_results_dict['Molecule_Time_Step']])
 
-    inside_radius, run_config = get_inside_radius(dumps_dir, run_config)
+    if 'max_sphere_radius' in sorted_molwise_results_dict.keys():
+        inside_radius = sorted_molwise_results_dict['max_sphere_radius']
+        run_config = sorted_molwise_results_dict
+    else:
+        inside_radius, run_config = get_inside_radius(dumps_dir, run_config)
+
     if dumps_dir == r'D:/crystals_extra/classifier_training/urea_melt_interface_T200':  # collect predictions to form I and IV or 'other'
         interface_mode = True
     else:
@@ -178,7 +183,7 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
         'urea' if config['mol_num_atoms'] == 8 else 'nicotinamide',
         interface_mode=interface_mode)
 
-    if os.path.exists(dumps_dir + 'run_config.npy'):
+    if run_config is not None:
         fig.update_layout(
             title=f"Form {identifier2form[run_config['structure_identifier']]}, "
                   f"Cluster Radius {run_config['max_sphere_radius']}A, "
@@ -195,7 +200,7 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
         print("Missing trajectory config")
 
     if not interface_mode:
-        fig2 = radial_form_timeseries(fig, inside_radius, sorted_molwise_results_dict, time_steps)
+        fig2 = radial_form_timeseries(inside_radius, sorted_molwise_results_dict, time_steps)
         fig2.write_image(f"{dataset_name}_Radial_Stability.png", width=1920, height=1080)
 
     fig.write_image(f"{dataset_name}_Trajectory_Analysis.png", scale=4)
@@ -218,7 +223,8 @@ def write_ovitos(dumps_dir, sorted_molwise_results_dict):
     except:
         pass
 
-def radial_form_timeseries(fig, inside_radius, sorted_molwise_results_dict, time_steps):
+
+def radial_form_timeseries(inside_radius, sorted_molwise_results_dict, time_steps):
     # type density vs radius over time
     from plotly.subplots import make_subplots
     import plotly.graph_objects as go

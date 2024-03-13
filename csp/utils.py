@@ -229,7 +229,7 @@ def sample_density_funnel_plot(config, wandb, num_crystals, identifiers, samplin
     if config.logger.log_figures:
         wandb.log({'Density Funnel': fig})
     if (config.machine == 'local') and False:
-        fig.show()
+        fig.show(renderer='browser')
 
     return None
 
@@ -257,7 +257,7 @@ def sample_rdf_funnel_plot(config, wandb, num_crystals, identifiers, reconstruct
     if config.logger.log_figures:
         wandb.log({'RDF Funnel': fig})
     if (config.machine == 'local') and False:
-        fig.show()
+        fig.show(renderer='browser')
 
     return None
 

@@ -44,6 +44,6 @@ def nice_dataset_analysis(config, dataset):
     fig.layout.margin = layout.margin
     fig.write_image('../paper1_figs/dataset_statistics.png', scale=4)
     if config.machine == 'local':
-        fig.show()
+        fig.show(renderer='browser')
 
     return None

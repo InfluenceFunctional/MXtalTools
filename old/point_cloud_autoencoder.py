@@ -269,7 +269,7 @@ with wandb.init(project='shape_encoding', entity='mkilgour', config=config):
                 opacity=0.5
             )))
         fig.update_layout(showlegend=True)
-        fig.show()
+        fig.show(renderer='browser')
         '''
 
         optimizer.zero_grad()
@@ -395,7 +395,7 @@ with wandb.init(project='shape_encoding', entity='mkilgour', config=config):
                 )
             )
             fig.layout.margin = layout.margin
-            # fig.show()
+            # fig.show(renderer='browser')
             wandb.log({"samples": fig})
 
 

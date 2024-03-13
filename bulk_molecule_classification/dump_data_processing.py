@@ -93,6 +93,9 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
             else:
                 assert False, "Trajectory directory is missing config file"
 
+            if '/' in run_config['structure_identifier']:
+                run_config['structure_identifier'] = run_config['structure_identifier'].split('/')[-1]
+
             temperature = run_config['temperature']
             form = identifier2form[run_config['structure_identifier']]
             gap_rate = run_config['gap_rate']

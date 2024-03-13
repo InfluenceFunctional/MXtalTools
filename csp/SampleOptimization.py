@@ -128,7 +128,7 @@ for i in range(scores_record.shape[1]):
     fig.add_scattergl(y=vdw_record[:,i], name=i, legendgroup=i, showlegend=False,row=1,col=2)
     fig.add_scattergl(y=packing_record[:,i], name=i, legendgroup=i, showlegend=False,row=2,col=1)
 
-fig.show()
+fig.show(renderer='browser')
 
 
 """
@@ -249,7 +249,7 @@ for i in range(scores_record.shape[1]):
     fig.add_scattergl(y=vdw_record[:,i], name=i, legendgroup=i, showlegend=False,row=1,col=2)
     fig.add_scattergl(y=packing_record[:,i], name=i, legendgroup=i, showlegend=False,row=2,col=1)
 
-fig.show()
+fig.show(renderer='browser')
 
 
 """

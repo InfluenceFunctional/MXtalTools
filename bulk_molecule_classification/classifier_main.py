@@ -4,7 +4,6 @@ import torch.optim as optim
 import wandb
 import argparse
 from bulk_molecule_classification.dev_configs import configs, dev
-from random import shuffle
 import torch
 import numpy as np
 
@@ -13,6 +12,7 @@ from bulk_molecule_classification.dataset_prep import collate_training_dataloade
 from bulk_molecule_classification.workflows import train_classifier, classifier_evaluation, trajectory_analysis
 from bulk_molecule_classification.classifier_constants import nic_class_names, nic_ordered_class_names, urea_class_names, urea_ordered_class_names
 from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
+from models.utils import get_n_config
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore ovito error
@@ -56,6 +56,9 @@ if __name__ == "__main__":
                                      config['num_fcs'], config['message_depth'],
                                      config['num_forms'], config['num_topologies'],
                                      config['seed'])
+    num_params = get_n_config(classifier)
+    print(f"Model has {num_params} parameters")
+
     classifier.to(config['device'])
     optimizer = optim.Adam(classifier.parameters(), lr=config['learning_rate'])
 

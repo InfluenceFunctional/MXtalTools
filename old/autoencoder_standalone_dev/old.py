@@ -70,7 +70,7 @@ def get_smoothed_density(coords, probs, smoother, hist_range, num_particle_types
     #         opacity=0.5
     #     )))
     # fig.update_layout(showlegend=True)
-    # fig.show()
+    # fig.show(renderer='browser')
 
 
 def get_reconstruction_likelihood_old(data, decoding, sigma: float = 1):
