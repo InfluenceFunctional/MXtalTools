@@ -9,7 +9,7 @@ max_tsne_samples = 100
 
 os.chdir(r'D:\crystals_extra\classifier_training\results')
 urea_eval_path = 'dev_urea_evaluation_results_feb6_dict.npy'
-nic_eval_path = 'dev_nic_evaluation_results_feb6_dict.npy'
+nic_eval_path = 'dev_nic_evaluation_results_march12_dict.npy'
 urea_interface_path = 'crystals_extra_classifier_training_urea_melt_interface_T200_analysis.npy'
 nic_traj_path1 = 'paper_nic_clusters2_1__analysis.npy'
 nic_traj_path2 = 'paper_nic_clusters2_7__analysis.npy'

@@ -38,33 +38,61 @@ form2index = {0: 4,
 index2form = {value: key for key, value in form2index.items()}
 
 type2num = {
-    'Ca1': 1,
-    'Ca2': 2,
-    'Ca': 3,
-    'C': 4,
-    'Nb': 5,
-    'N': 6,
-    'O': 7,
-    'Hn': 8,
-    'H4': 9,
-    'Ha': 10,
-    'H': 11,
-    'N1': 12,
-    'N2': 13,
+    'Ca1': 6,
+    'Ca2': 6,
+    'Ca': 6,
+    'C': 6,
+    'Nb': 7,
+    'N': 7,
+    'O': 8,
+    'Hn': 1,
+    'H4': 1,
+    'Ha': 1,
+    'H': 1,
+    'N1': 7,
+    'N2': 7,
+}
+#
+# num2atomicnum = {  # for nicotinamide
+#     1: 1,  # Ha
+#     2: 6,  # Hn
+#     3: 8,  # o
+#     4: 6,  # c
+#     5: 6,  # ca
+#     6: 7,  # N
+#     7: 7,  # nb
+#     8: 1,  # H4
+#     9: 6,  # ca1
+#     10: 6,  # ca2
+#     # 11: 1,  # H
+#     # 12: 7,  # n1
+#     # 13: 7  # n2
+# }
+# "old"
+# what we are actually using
+num2atomicnum = {  # for nicotinamide
+    1: 1,  #
+    8: 1,  #
+    2: 1,  #
+    6: 7,  #
+    7: 7,  #
+    4: 6,  #
+    5: 6,  #
+    3: 8,
+    9: 6,
+    10: 6,
 }
 
-num2atomicnum = {  # for nicotinamide
-    1: 6,
-    2: 6,
-    3: 6,
-    4: 6,
-    5: 7,
-    6: 7,
-    7: 8,
-    8: 1,
-    9: 1,
-    10: 1,
-    11: 1,
-    12: 7,
-    13: 7
-}
+# num2atomicnum_new = {  # for nicotinamide
+#     3: 1,  #
+#     5: 1,  #
+#     4: 1,  #
+#     6: 7,  #
+#     7: 7,  #
+#     1: 6,  #
+#     2: 6,  #
+#     8: 8,  #
+#     9: 6,
+#     10: 6,
+# }
+#

@@ -46,16 +46,20 @@ def process_dump(path):
                 newline = lines[1 + ind + ind2].split()
                 try:
                     atom_ind = int(newline[2])
+                    newline[2] = num2atomicnum[atom_ind]
                 except ValueError:
-                    atom_ind = int(type2num[newline[2]])
-
-                newline[2] = num2atomicnum[atom_ind]
+                    newline[2] = int(type2num[newline[2]])
+                    #newline[2] = num2atomicnum[atom_ind]
 
                 atom_data[ind2] = np.asarray(newline[:6]).astype(float)  # only want indices and positions
 
             frame_data = pd.DataFrame(atom_data, columns=headers)
             frame_data.attrs['cell_params'] = cell_params  # add attribute directly to dataframe
             frame_outputs[timestep] = frame_data
+            '''
+            types, counts = np.unique(frame_data['element'], return_counts=True)
+            print(counts / counts.min())
+            '''
         else:
             pass
 
@@ -73,32 +77,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
 
         for path in tqdm(dump_files):
             print(f"Processing dump {path}")
-            if os.path.exists('run_config.npy'):
-                run_config = np.load('run_config.npy', allow_pickle=True).item()
-            elif os.path.exists(path.split('\\')[0] + '/' + 'run_config.npy'):
-                run_config = np.load(path.split('\\')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
-            elif os.path.exists(path.split('/')[0] + '/' + 'run_config.npy'):
-                run_config = np.load(path.split('/')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
-            elif 'urea' in dumps_dir:
-                run_config = {'temperature': float(dumps_dir.split('T')[-1]),
-                              'gap_rate': 0}
-                if 'liq' in dumps_dir or 'interface' in dumps_dir:
-                    run_config['structure_identifier'] = 'UREA_Melt'
-                else:
-                    run_config['structure_identifier'] = path.replace('\\', '/').split('/')[0]
-            elif 'nicotinamide_liq' in dumps_dir or 'nic_liq' in dumps_dir:
-                run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
-            elif 'interface' in dumps_dir:
-                run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'UREA_Melt'}
-            else:
-                assert False, "Trajectory directory is missing config file"
-
-            if '/' in run_config['structure_identifier']:
-                run_config['structure_identifier'] = run_config['structure_identifier'].split('/')[-1]
-
-            temperature = run_config['temperature']
-            form = identifier2form[run_config['structure_identifier']]
-            gap_rate = run_config['gap_rate']
+            form, gap_rate, temperature = process_config(dumps_dir, path)
 
             trajectory_dict = process_dump(path)
 
@@ -134,8 +113,44 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
                 for key in new_dict.keys():
                     new_df[key] = [new_dict[key]]
 
+                if 'urea' in dumps_dir:
+                    types, counts = np.unique(np.concatenate(new_df['atom_type']), return_counts=True)
+                    ratios = counts / counts.min()
+                    assert (all(ratios == [4, 1, 2, 1])), "Incorrect balance of atom types for urea"
+                elif 'nic' in dumps_dir and 'defect' not in dumps_dir:
+                    types, counts = np.unique(np.concatenate(new_df['atom_type']), return_counts=True)
+                    ratios = counts / counts.min()
+                    assert (all(ratios == [6, 6, 2, 1])), "Incorrect balance of atom types for nicotinamide"
                 sample_df = pd.concat([sample_df, new_df])
 
     sample_df.to_pickle(dataset_path)
 
     return True
+
+
+def process_config(dumps_dir, path):
+    if os.path.exists('run_config.npy'):
+        run_config = np.load('run_config.npy', allow_pickle=True).item()
+    elif os.path.exists(path.split('\\')[0] + '/' + 'run_config.npy'):
+        run_config = np.load(path.split('\\')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
+    elif os.path.exists(path.split('/')[0] + '/' + 'run_config.npy'):
+        run_config = np.load(path.split('/')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
+    elif 'urea' in dumps_dir:
+        run_config = {'temperature': float(dumps_dir.split('T')[-1]),
+                      'gap_rate': 0}
+        if 'liq' in dumps_dir or 'interface' in dumps_dir:
+            run_config['structure_identifier'] = 'UREA_Melt'
+        else:
+            run_config['structure_identifier'] = path.replace('\\', '/').split('/')[0]
+    elif 'nicotinamide_liq' in dumps_dir or 'nic_liq' in dumps_dir:
+        run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
+    elif 'interface' in dumps_dir:
+        run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'UREA_Melt'}
+    else:
+        assert False, "Trajectory directory is missing config file"
+    if '/' in run_config['structure_identifier']:
+        run_config['structure_identifier'] = run_config['structure_identifier'].split('/')[-1]
+    temperature = run_config['temperature']
+    form = identifier2form[run_config['structure_identifier']]
+    gap_rate = run_config['gap_rate']
+    return form, gap_rate, temperature

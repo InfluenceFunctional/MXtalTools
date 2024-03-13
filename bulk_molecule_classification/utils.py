@@ -93,7 +93,7 @@ def convert_box_to_cell_params(box_params):
 def reindex_mols(dataset, i, mol_num_atoms):
     ref_coords = torch.Tensor(dataset.loc[i]['coordinates'][0])
     atoms = dataset.loc[i]['atom_type'][0]
-    atomic_numbers = torch.tensor([num2atomicnum[atom] for atom in atoms], dtype=torch.long)
+    atomic_numbers = torch.tensor(atoms, dtype=torch.long)
     num_molecules = (len(ref_coords)) // mol_num_atoms
     mol_ind = torch.tensor(dataset.loc[i]['mol_ind'][0], dtype=torch.long)
     assert num_molecules == len(torch.unique(mol_ind))
