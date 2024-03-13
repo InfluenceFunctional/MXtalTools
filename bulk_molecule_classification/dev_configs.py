@@ -118,17 +118,17 @@ base_config = {'run_name': 'dev',
 #     [1, 256, 128, 0.25, 'layer', 'layer', 2, 5000],  # 13
 # ]
 config_list = [
-    #[1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'cold'],  # 0
+    # [1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'cold'],  # 0
     [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'cold'],  # 1
-    #[1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'hot'],  # 2
+    # [1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'hot'],  # 2
     [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'hot'],  # 3
 ]
 
 test_name = 'March12'
 for device in ['cuda']:  # , 'cpu']:
     for i in range(len(config_list)):
-        for si in range(2):
-            for mol in range(0, 2):
+        for si in range(4):
+            for mol in range(1):
                 configs.append(copy(base_config))
                 configs[-1]['device'] = device
                 configs[-1]['seed'] = si
@@ -150,9 +150,8 @@ for device in ['cuda']:  # , 'cpu']:
                     configs[-1]['training_temps'] = [100, 200, 350]
                 elif mol == 0:
                     configs[-1]['run_name'] = f'nic_{test_name}_test{i}_{si}'
-                    configs[-1]['dataset_name'] = 'new_nic_full'
-                    configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'bulk_trajs3',
-                                                 'new_small_bulk']
+                    configs[-1]['dataset_name'] = 'new_nic_full_redo'
+                    configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'new_nic_bulk_small', 'new_nic_bulk_big']
                     configs[-1]['training_temps'] = [100, 350]
 aa = 1
 #
