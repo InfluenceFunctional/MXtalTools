@@ -121,14 +121,14 @@ config_list = [
     # [1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'cold'],  # 0
     [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'cold'],  # 1
     # [1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'hot'],  # 2
-    [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'hot'],  # 3
+    #[1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'hot'],  # 3
 ]
 
 test_name = 'March13_2'
 for device in ['cuda']:  # , 'cpu']:
     for i in range(len(config_list)):
-        for si in range(2):
-            for mol in range(2):
+        for si in range(2,6):
+            for mol in range(1):
                 configs.append(copy(base_config))
                 configs[-1]['device'] = device
                 configs[-1]['seed'] = si

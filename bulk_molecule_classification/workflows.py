@@ -66,6 +66,18 @@ def train_classifier(config, classifier, optimizer,
                     test_true_labels.append(sample.y.cpu().detach().numpy())
                     test_true_defects.append(sample.defect.cpu().detach().numpy())
 
+            '''look at samples
+            from common.ase_interface import ase_mol_from_crystaldata
+            from ase.visualize import view
+            
+            vis_sample = next(iter(train_loader))
+            vis_sample.x = vis_sample.x[:, None]
+            vis_sample.T_fc = vis_sample.T_fc.T
+            vis_sample.sg_ind = 1
+            mol = ase_mol_from_crystaldata(vis_sample, index=0)
+            view(mol)
+            '''
+
             test_record.append(np.mean(test_loss))
             if test_record[-1] == np.amin(test_record):
                 torch.save({'model_state_dict': classifier.state_dict(),
