@@ -8,12 +8,19 @@ What is ``MXtalTools``?
 
 .. _pytorch: https://pytorch.org/
 
-Table of Contents
--------
+.. automodule:: mxtaltools.common.utils
+    :members:
 
 .. toctree::
     :maxdepth: 2
+    :caption: Contents
 
     source/crystal_building
     source/dataset_creation
     source/installation
+
+Indices and tables
+==================
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
