@@ -44,9 +44,9 @@ class DataManager:
         else:  # for loading dataset on the fly
             self.dataset = override_dataset
             self.dataset_type = 'molecule'
-            # self.override_dataDims
-            # self.override std dict
-            # self.override target
+            # self.override_dataDims  # todo build a constant dataDims for the overall dataset (not just chunks) and ignore the one that comes out from get_dimension
+            # self.override std dict  # todo may not be necessary?
+            # self.override target    # todo add dummy value?, maybe just 'radius' but will need a mean and std just so the datapoint builder doesn't crash
 
         if filter_conditions is not None:
             bad_inds = self.get_dataset_filter_inds(filter_conditions)
