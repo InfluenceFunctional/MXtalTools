@@ -106,7 +106,6 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         if self.v_norm_mode:
             assert self.equivariant
 
-
         torch.manual_seed(seed)
 
         self.init_filters(filters, layers)
@@ -124,13 +123,15 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
             # self.n_filters = torch.linspace(self.input_dim, self.output_dim, self.n_layers).long().tolist()
             # log scaling for consistent growth ratio
             p = np.log(self.output_dim) / np.log(self.input_dim)
-            self.n_filters = [int(self.input_dim ** (1 + (p - 1) * (i / (self.n_layers)))) for i in range(self.n_layers)]
+            self.n_filters = [int(self.input_dim ** (1 + (p - 1) * (i / (self.n_layers)))) for i in
+                              range(self.n_layers)]
             residue_filters = [self.input_dim] + self.n_filters
             self.same_depth = False
         else:
             self.n_filters = [filters for _ in range(layers)]
 
-        if self.n_filters.count(self.n_filters[0]) != len(self.n_filters):  # if they are not all the same, we need residue adjustments
+        if self.n_filters.count(self.n_filters[0]) != len(
+                self.n_filters):  # if they are not all the same, we need residue adjustments
             self.same_depth = False
             self.residue_adjust = torch.nn.ModuleList([
                 nn.Linear(residue_filters[i], residue_filters[i + 1], bias=False)
@@ -150,12 +151,14 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
                 # self.n_filters = torch.linspace(self.input_dim, self.output_dim, self.n_layers).long().tolist()
                 # log scaling for consistent growth ratio
                 p = np.log(self.v_output_dim) / np.log(self.input_dim)
-                self.v_n_filters = [int(self.input_dim ** (1 + (p - 1) * (i / (self.n_layers)))) for i in range(self.n_layers)]
+                self.v_n_filters = [int(self.input_dim ** (1 + (p - 1) * (i / (self.n_layers)))) for i in
+                                    range(self.n_layers)]
                 residue_filters = [self.input_dim] + self.v_n_filters
             else:
                 self.v_n_filters = [filters for _ in range(layers)]
 
-            if self.n_filters.count(self.n_filters[0]) != len(self.n_filters):  # if they are not all the same, we need residue adjustments
+            if self.n_filters.count(self.n_filters[0]) != len(
+                    self.n_filters):  # if they are not all the same, we need residue adjustments
                 residue_filters[0] -= self.conditioning_dim
                 self.v_residue_adjust = torch.nn.ModuleList([
                     nn.Linear(residue_filters[i], residue_filters[i + 1], bias=False)
@@ -220,10 +223,12 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
             nn.Linear(self.n_filters[i], self.v_n_filters[i], bias=False)
             for i in range(self.n_layers)
         ])
-        self.s_to_v_activations = torch.nn.ModuleList([  # use tanh as gating function rather than standard activation which is unbound
-            Activation(self.activation, self.v_n_filters[i])  # positive outputs only to maintain equivariance (no vectors flipped)
-            for i in range(self.n_layers)
-        ])
+        self.s_to_v_activations = torch.nn.ModuleList(
+            [  # use tanh as gating function rather than standard activation which is unbound
+                Activation(self.activation, self.v_n_filters[i])
+                # positive outputs only to maintain equivariance (no vectors flipped)
+                for i in range(self.n_layers)
+            ])
         self.v_fc_norms = torch.nn.ModuleList([
             Normalization(self.v_norm_mode, self.v_n_filters[i])
             for i in range(self.n_layers)
@@ -255,7 +260,8 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         if v is not None:
             v = self.v_init_layer(v)
 
-        for i, (norm, linear, activation, dropout) in enumerate(zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
+        for i, (norm, linear, activation, dropout) in enumerate(
+                zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
             x, v = self.get_residues(i, x, v)
 
             x = self.scalar_forward(i, activation, batch, dropout, linear, norm, x, v)
@@ -313,7 +319,6 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         return v + gating_factor * vector_mix  # A(FC(x)) * FC(N(v))   # rescaling factor keeps norm from exploding
 
 
-
 class Normalization(nn.Module):
     def __init__(self, norm, filters, *args, **kwargs):
         super().__init__()
@@ -368,14 +373,17 @@ class Activation(nn.Module):
         return self.activation(x)
 
 
-class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation of activation as a linear combination of basis functions
+class kernelActivation(
+    nn.Module):  # a better (pytorch-friendly) implementation of activation as a linear combination of basis functions
     def __init__(self, n_basis, span, channels, *args, **kwargs):
         super(kernelActivation, self).__init__(*args, **kwargs)
 
         self.channels, self.n_basis = channels, n_basis
         # define the space of basis functions
-        self.register_buffer('dict', torch.linspace(-span, span, n_basis))  # positive and negative values for Dirichlet Kernel
-        gamma = 1 / (6 * (self.dict[-1] - self.dict[-2]) ** 2)  # optimum gaussian spacing parameter should be equal to 1/(6*spacing^2) according to KAFnet paper
+        self.register_buffer('dict',
+                             torch.linspace(-span, span, n_basis))  # positive and negative values for Dirichlet Kernel
+        gamma = 1 / (6 * (self.dict[-1] - self.dict[
+            -2]) ** 2)  # optimum gaussian spacing parameter should be equal to 1/(6*spacing^2) according to KAFnet paper
         self.register_buffer('gamma', torch.ones(1) * gamma)  #
 
         # self.register_buffer('dict', torch.linspace(0, n_basis-1, n_basis)) # positive values for ReLU kernel
@@ -398,7 +406,8 @@ class kernelActivation(nn.Module):  # a better (pytorch-friendly) implementation
 
     def forward(self, x):
         x = self.kernel(x).unsqueeze(-1).unsqueeze(-1)  # run activation, output shape batch, features, y, x, basis
-        x = x.reshape(x.shape[0], x.shape[1] * x.shape[2], x.shape[3], x.shape[4])  # concatenate basis functions with filters
+        x = x.reshape(x.shape[0], x.shape[1] * x.shape[2], x.shape[3],
+                      x.shape[4])  # concatenate basis functions with filters
         x = self.linear(x).squeeze(-1).squeeze(-1)  # apply linear coefficients and sum
 
         return x
@@ -411,17 +420,21 @@ def construct_radial_graph(pos, batch, ptr, cutoff, max_num_neighbors, aux_ind=N
     """
     if aux_ind is not None:
         inside_inds = torch.where(aux_ind == 0)[0]
-        outside_inds = torch.where(aux_ind == 1)[0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
+        outside_inds = torch.where(aux_ind == 1)[
+            0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
         inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
-        n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in range(len(ptr) - 1)]  # number of molecules in convolution region
+        n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in
+                     range(len(ptr) - 1)]  # number of molecules in convolution region
 
         # intramolecular edges
-        edge_index = asymmetric_radius_graph(pos, batch=batch, r=cutoff,  # intramolecular interactions - stack over range 3 convolutions
+        edge_index = asymmetric_radius_graph(pos, batch=batch, r=cutoff,
+                                             # intramolecular interactions - stack over range 3 convolutions
                                              max_num_neighbors=max_num_neighbors, flow='source_to_target',
                                              inside_inds=inside_inds, convolve_inds=inside_inds)
 
         # intermolecular edges
-        edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=cutoff,  # extra radius for intermolecular graph convolution
+        edge_index_inter = asymmetric_radius_graph(pos, batch=batch, r=cutoff,
+                                                   # extra radius for intermolecular graph convolution
                                                    max_num_neighbors=max_num_neighbors, flow='source_to_target',
                                                    inside_inds=inside_inds, convolve_inds=outside_inds)
 
@@ -431,7 +444,8 @@ def construct_radial_graph(pos, batch, ptr, cutoff, max_num_neighbors, aux_ind=N
     else:
 
         edge_index = gnn.radius_graph(pos, r=cutoff, batch=batch,
-                                      max_num_neighbors=max_num_neighbors, flow='source_to_target')  # note - requires batch be monotonically increasing
+                                      max_num_neighbors=max_num_neighbors,
+                                      flow='source_to_target')  # note - requires batch be monotonically increasing
 
         return {'edge_index': edge_index}
 
@@ -442,7 +456,8 @@ class GlobalAggregation(nn.Module):
     NOTE - I believe PyG might have a new built-in method which does exactly this
     """
 
-    def __init__(self, agg_func, depth):  # todo rewrite this with new pyg aggr class and/or custom functions (e.g., scatter)
+    def __init__(self, agg_func,
+                 depth):  # todo rewrite this with new pyg aggr class and/or custom functions (e.g., scatter)
         super(GlobalAggregation, self).__init__()
         self.agg_func = agg_func
         if agg_func == 'mean':
@@ -457,7 +472,8 @@ class GlobalAggregation(nn.Module):
             self.agg = gnn.Set2Set(in_channels=depth, processing_steps=4)
             self.agg_fc = nn.Linear(depth * 2, depth)  # condense to correct number of filters
         elif agg_func == 'simple combo':
-            self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
+            self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool,
+                              gnn.global_add_pool]  # simple aggregation functions
             self.agg_fc = MLP(
                 layers=1,
                 filters=depth,
@@ -468,7 +484,8 @@ class GlobalAggregation(nn.Module):
         elif agg_func == 'mean sum':  # todo add a max aggregator which picks max by vector length (equivariant!)
             pass
         elif agg_func == 'combo':
-            self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool, gnn.global_add_pool]  # simple aggregation functions
+            self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool,
+                              gnn.global_add_pool]  # simple aggregation functions
             self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(
                 MLP(input_dim=depth,
                     output_dim=1,
@@ -544,7 +561,8 @@ class GlobalAggregation(nn.Module):
                     scatter(weights[:, None, :] * v, batch, dim=0, dim_size=output_dim, reduce='sum'))
         elif self.agg_func == 'equivariant combo':
             scalar_agg, alpha = self.agg(x, batch, dim_size=output_dim, return_alpha=True)
-            agg1 = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation
+            agg1 = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim,
+                           reduce='sum')  # use the same attention weights for vector aggregation
             agg2 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='mean')
             agg3 = scatter(v, batch, dim_size=output_dim, dim=0, reduce='sum')
 
@@ -554,7 +572,8 @@ class GlobalAggregation(nn.Module):
                     batch=torch.arange(len(agg1), device=agg1.device, dtype=torch.long)))  # return num_graphsx3xk
         elif self.agg_func == 'equivariant attention':
             scalar_agg, alpha = self.agg(x, batch, dim_size=output_dim, return_alpha=True)
-            vector_agg = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim, reduce='sum')  # use the same attention weights for vector aggregation
+            vector_agg = scatter(alpha[:, 0, None, None] * v, batch, dim=0, dim_size=output_dim,
+                                 reduce='sum')  # use the same attention weights for vector aggregation
             return scalar_agg, vector_agg
         else:
             return self.agg(x, batch, size=output_dim)

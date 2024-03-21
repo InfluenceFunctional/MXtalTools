@@ -1,16 +1,17 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/regressor.yaml
+base_config_path: /experiments/base/autoencoder.yaml
 #mode: regression
 
 sweep_id: null
 sweep_path: null
 
 dataset:
-  max_dataset_length: 100
-#  test_fraction: 0.2
-#  filter_protons: False
-#  regression_target: molecule_gap_energy
+  max_dataset_length: 1000
+  test_fraction: 0.2
+  filter_protons: False
+  regression_target: molecule_gap_energy
+  refresh_interfal: -1  # reload a new chunk of a larger dataset, only setup for QM9/GEOM
 
 # batching & convergence
 early_epochs_step_override: 5

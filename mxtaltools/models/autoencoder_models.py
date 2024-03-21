@@ -24,8 +24,6 @@ class PointAutoencoder(nn.Module):
 
         self.encoder = PointEncoder(seed, config)
 
-        self.scalarizer = Scalarizer(config.bottleneck_dim, 3, None, None, 0)
-
         self.decoder = MLP(
             layers=config.num_decoder_layers,
             filters=config.embedding_depth,
@@ -40,6 +38,9 @@ class PointAutoencoder(nn.Module):
             vector_norm=config.decoder_vector_norm,
             ramp_depth=config.decoder_ramp_depth,
         )
+
+        self.scalarizer = Scalarizer(config.bottleneck_dim, 3, None, None, 0)
+        self.decoder.vector_to_scalar[0] = self.scalarizer
 
     def forward(self, data, return_encoding=False):
         encoding = self.encode(data)
@@ -81,8 +82,8 @@ class PointAutoencoder(nn.Module):
 
     def decode(self, encoding):
         """encoding nx3xk"""
-        decoding = self.decoder(x=self.scalarizer(encoding),
-                                v=encoding)
+        decoding = self.decoder(x=torch.zeros_like(encoding[:, 0, :]),#self.scalarizer(encoding),
+                                v=encoding)  # scalar input comes through scalarizer in first layer vector_to_scalar
 
         scalar_decoding, vector_decoding = decoding
         '''combine vector and scalar features to n*nodes x m'''
