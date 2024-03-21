@@ -8,7 +8,7 @@ What is ``MXtalTools``?
 
 .. _pytorch: https://pytorch.org/
 
-.. automodule:: mxtaltools.common.utils
+.. automodule:: mxtaltools.doc_test
     :members:
 
 .. toctree::
