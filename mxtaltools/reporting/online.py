@@ -184,7 +184,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
         fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)', showlegend=False))
 
         fig.layout.margin = layout.margin
-        fig.update_layout(xaxis_title='packing_target', yaxis_title='packing_prediction')
+        fig.update_layout(xaxis_title='Asymmetric Unit Volume Target', yaxis_title='Asymmetric Unit Volume Prediction')
 
         # #fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
         if config.logger.log_figures:
@@ -1109,15 +1109,17 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
     plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
-    cell_scatter(epoch_stats_dict, wandb, layout, extra_category='generated_space_group_numbers')
+    cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index=dataDims['tracking_features'].index('molecule_num_atoms'), extra_category='generated_space_group_numbers')
 
     return None
 
 
-def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
+def cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_category=None):
     model_scores = epoch_stats_dict['generator_adversarial_score']
-    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'], 'model_score': model_scores,
-                    'packing_coefficient': epoch_stats_dict['generator_packing_prediction'].clip(min=0, max=1)}
+    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'],
+                    'model_score': model_scores,
+                    'volume_per_atom': epoch_stats_dict['generator_packing_prediction']
+                                       /epoch_stats_dict['tracking_features'][:, num_atoms_index]}
     if extra_category is not None:
         scatter_dict[extra_category] = epoch_stats_dict[extra_category]
 
@@ -1126,7 +1128,7 @@ def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
     df = pd.DataFrame.from_dict(scatter_dict)
     if extra_category is not None:
         fig = px.scatter(df,
-                         x='vdw_score', y='packing_coefficient',
+                         x='vdw_score', y='volume_per_atom',
                          color='model_score', symbol=extra_category,
                          marginal_x='histogram', marginal_y='histogram',
                          range_color=(np.amin(model_scores), np.amax(model_scores)),
@@ -1136,15 +1138,14 @@ def cell_scatter(epoch_stats_dict, wandb, layout, extra_category=None):
 
     else:
         fig = px.scatter(df,
-                         x='vdw_score', y='packing_coefficient',
+                         x='vdw_score', y='volume_per_atom',
                          color='model_score',
                          marginal_x='histogram', marginal_y='histogram',
                          opacity=opacity
                          )
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
-    fig.update_layout(xaxis_range=[vdw_cutoff, 0.1], yaxis_range=[0, 1.1])
-    fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
+    fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
+    fig.update_layout(xaxis_range=[vdw_cutoff, 0.1], yaxis_range=[scatter_dict['volume_per_atom'].min(), scatter_dict['volume_per_atom'].max()])
     wandb.log({'Generator Samples': fig})
 
 

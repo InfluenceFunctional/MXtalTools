@@ -1,6 +1,6 @@
 """import statements"""
 import argparse, warnings
-from mxtaltools.common.config_processing import get_config
+from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
 import pandas as pd
 
@@ -18,7 +18,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     _, override_args = parser.parse_known_args()
 
-    config = get_config(override_args)
+    config = process_main_config(override_args)
 
     print("Args:\n" + "\n".join([f"    {k:20}: {v}" for k, v in vars(config).items()]))
 

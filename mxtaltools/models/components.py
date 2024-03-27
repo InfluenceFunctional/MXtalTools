@@ -14,6 +14,18 @@ from mxtaltools.models.vector_LayerNorm import VectorLayerNorm
 
 class Scalarizer(nn.Module):
     def __init__(self, hidden_dim, embedding_dim, norm_mode, act_func, dropout=0):
+        """
+        Generate a learned invariant representation of dimension :math:`(k)` from a list of vectors of dimension :math:`v=(k x 3)`.
+
+        Generate m vectors as a linear combination of the k vectors of v, take their normalized dot products with the components of v, concatenate to the norms of v, and linearly combine to the so-called scalarized representation of v.
+
+        Args:
+            hidden_dim (int): feature depth of input and output
+            embedding_dim (int): number of vectors to use for dot-product projection
+            norm_mode (str): type of normalization to use
+            act_func (str): type of activation to use
+            dropout (float): dropout probability
+        """
         super(Scalarizer, self).__init__()
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
@@ -24,10 +36,6 @@ class Scalarizer(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, v):
-        """
-        extract scalar features from a batch of vectors [n_nodes, 3, k_channels]
-        combine vector norm with normed projections over a set of learned axes
-        """
         norm = torch.linalg.norm(v, dim=1)
         normed_v = v / (norm[:, None, :] + 1e-5)
 
@@ -42,6 +50,18 @@ class Scalarizer(nn.Module):
 
 
 class VectorActivation(nn.Module):
+    r"""
+    Modified implementation of the vector activation function from https://github.com/FlyingGiraffe/vnn/blob/master/models/vn_layers.py
+
+    Generates an axis as a learned linear combination of input v, then the normalized overlaps of all the components of v.
+
+    Applies an activation function on the vector overlaps, such that, e.g., for ReLU activation, vectors with negative overlap are rotated to be perpendicular to the learned axis (zero overlap) and vectors with positive overlap are untouched.
+
+    Args:
+        hidden_dim (int): feature depth of input/output vectors, :math:`(k\times 3)`
+        act_func (str): activation function to apply to the normalized vector overlaps with the learned axis
+    """
+
     def __init__(self, hidden_dim, act_func):
         super(VectorActivation, self).__init__()
 
@@ -49,9 +69,6 @@ class VectorActivation(nn.Module):
         self.activation = Activation(act_func, hidden_dim)
 
     def forward(self, v):
-        """
-        https://github.com/FlyingGiraffe/vnn/blob/master/models/vn_layers.py
-        """
         direction = self.embedding(v)[..., -1]
         normed_direction = direction / (torch.linalg.norm(direction, dim=1, keepdim=True) + 1e-5)
 
@@ -78,15 +95,39 @@ class VectorActivation(nn.Module):
     '''
 
 
+# noinspection PyAttributeOutsideInit
 class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
+    r"""
+    Flexible multi-layer perceptron module, with several options.
+
+    Features an equivariance option which adds a second feature track for vectors. Vector operations are equivariant w.r.t., O(3) operations on the inputs.
+
+    Args:
+        layers (int): number of fully-connected layers
+        filters (int): feature depth with FC layers
+        input_dim (int): feature depth of inputs
+        output_dim (int): feature depth of outputs
+        activation (str): activation function
+        seed (int): random seed
+        dropout (float): dropout probability
+        conditioning_dim (int): dimension of optional conditioning vector for initial layer
+        conditioning_mode: 'concat_to_first' conditioning is done by concatenating conditioning vector to first layer input. There is currently no other option.
+        equivariant (bool): adds a second track for vector feature inputs and outputs, :math:`(batch, 3, k)`, which transform equivariantly
+        vector_output_dim (int): dimension of vector outputs
+        vector_norm (bool): whether to apply normalization to vector norms. Only graph layernorm and layernorm implemented.
+        ramp_depth (bool): whether to ramp the feature depth exponentially from input_dim to output_dim through the network
+    """
+
     def __init__(self, layers, filters, input_dim, output_dim,
                  activation='gelu', seed=0, dropout=0, conditioning_dim=0,
-                 norm=None, bias=True, norm_after_linear=True,
+                 norm=None, norm_after_linear=True, bias=True,
                  conditioning_mode='concat_to_first',
                  equivariant=False,
                  vector_output_dim=None,
                  vector_norm=None,
-                 ramp_depth=False):
+                 ramp_depth=False,
+                 vector_input_dim=None,
+                 v_to_s_combination='concatenate'):
         super(MLP, self).__init__()
         # initialize constants and layers
         self.n_layers = layers
@@ -94,6 +135,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         self.conditioning_dim = conditioning_dim
         self.output_dim = output_dim
         self.v_output_dim = vector_output_dim if vector_output_dim is not None else output_dim
+        self.v_input_dim = vector_input_dim if vector_input_dim is not None else input_dim
         self.input_dim = input_dim + conditioning_dim
         self.norm_mode = norm
         self.dropout_p = dropout
@@ -103,6 +145,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         self.equivariant = equivariant
         self.v_norm_mode = vector_norm
         self.ramp_depth = ramp_depth
+        self.v_to_s_combination = v_to_s_combination
         if self.v_norm_mode:
             assert self.equivariant
 
@@ -144,16 +187,17 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
             if isinstance(filters, list):
 
                 self.v_n_filters = filters
-                residue_filters = [self.input_dim] + self.v_n_filters
+                residue_filters = [self.v_input_dim] + self.v_n_filters
 
             elif self.ramp_depth:  # smoothly ramp feature depth across layers
                 # linear scaling
                 # self.n_filters = torch.linspace(self.input_dim, self.output_dim, self.n_layers).long().tolist()
-                # log scaling for consistent growth ratio
+
+                # exp scaling for consistent growth ratio
                 p = np.log(self.v_output_dim) / np.log(self.input_dim)
-                self.v_n_filters = [int(self.input_dim ** (1 + (p - 1) * (i / (self.n_layers)))) for i in
+                self.v_n_filters = [int(self.v_input_dim ** (1 + (p - 1) * (i / (self.n_layers)))) for i in
                                     range(self.n_layers)]
-                residue_filters = [self.input_dim] + self.v_n_filters
+                residue_filters = [self.v_input_dim] + self.v_n_filters
             else:
                 self.v_n_filters = [filters for _ in range(layers)]
 
@@ -176,7 +220,9 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
 
         '''working layers'''
         self.fc_layers = torch.nn.ModuleList([
-            nn.Linear(self.n_filters[i] + (self.v_n_filters[i] if self.equivariant else 0),
+            nn.Linear(self.n_filters[i] + (self.v_n_filters[i] if
+                                           (self.equivariant and self.v_to_s_combination == 'concatenate')
+                                           else 0),
                       self.n_filters[i], bias=self.bias)
             for i in range(self.n_layers)
         ])
@@ -192,7 +238,10 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         else:
             self.fc_norms = torch.nn.ModuleList([
                 Normalization(self.norm_mode,
-                              self.n_filters[i] + (self.n_filters[i] if self.equivariant else 0))
+                              self.n_filters[i] + (self.v_n_filters[i] if
+                                                   (self.equivariant and self.v_to_s_combination == 'concatenate')
+                                                   else 0)
+                              )
                 for i in range(self.n_layers)
             ])
         self.fc_dropouts = torch.nn.ModuleList([
@@ -209,8 +258,8 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
     def init_vector_transforms(self):
         """vector MLP layers"""
         '''input layer'''
-        if self.input_dim != self.n_filters[0]:
-            self.v_init_layer = nn.Linear(self.input_dim - self.conditioning_dim, self.v_n_filters[0], bias=False)
+        if self.v_input_dim != self.n_filters[0]:
+            self.v_init_layer = nn.Linear(self.v_input_dim - self.conditioning_dim, self.v_n_filters[0], bias=False)
         else:
             self.v_init_layer = nn.Identity()
 
@@ -238,7 +287,7 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
             for i in range(self.n_layers)
         ])
         self.scalar_to_vector_norm = torch.nn.ModuleList([
-            Normalization(self.norm_mode, self.v_n_filters[i], bias=False)
+            Normalization(self.norm_mode, self.v_n_filters[i])
             for i in range(self.n_layers)
         ])
         self.vector_activation = torch.nn.ModuleList([
@@ -297,9 +346,15 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
 
     def scalar_forward(self, i, activation, batch, dropout, linear, norm, x, v):
         res = x.clone()
-        if v is not None:  # concatenate vector lengths to scalar values
-            x = torch.cat([x, self.vector_to_scalar[i](v)],
-                          dim=-1)
+        if v is not None:
+            if self.v_to_s_combination == 'concatenate':
+                # concatenate vector lengths to scalar values
+                x = torch.cat([x, self.vector_to_scalar[i](v)],
+                              dim=-1)
+            elif self.v_to_s_combination == 'sum':
+                x = x + self.vector_to_scalar[i](v)
+            else:
+                assert False, f'{self.v_to_s_combination} not implemented'
 
         if self.norm_after_linear:
             x = res + dropout(activation(norm(linear(x), batch=batch)))
@@ -320,7 +375,15 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
 
 
 class Normalization(nn.Module):
-    def __init__(self, norm, filters, *args, **kwargs):
+    r"""
+    Wrapper module for several normalization options
+
+    Args:
+        norm (str): type of normalization function
+        filters (int): feature depth of objects to be normalized
+    """
+
+    def __init__(self, norm, filters):
         super().__init__()
         self.norm_type = norm
         if norm == 'batch':
@@ -351,7 +414,15 @@ class Normalization(nn.Module):
 
 
 class Activation(nn.Module):
-    def __init__(self, activation_func, filters, *args, **kwargs):
+    r"""
+    Wrapper module for several activation options
+
+    Args:
+        activation_func (str): type of activation function
+        filters (int): feature depth of objects to be normalized
+    """
+
+    def __init__(self, activation_func, filters):
         super().__init__()
         if activation_func is not None:
             if activation_func.lower() == 'relu':
@@ -359,7 +430,7 @@ class Activation(nn.Module):
             elif activation_func.lower() == 'gelu':
                 self.activation = F.gelu
             elif activation_func.lower() == 'kernel':  # rather expensive
-                self.activation = kernelActivation(n_basis=10, span=4, channels=filters)
+                self.activation = kernelActivation(n_basis=10, span=4, filters=filters)
             elif activation_func.lower() == 'leaky relu':
                 self.activation = F.leaky_relu
             elif activation_func.lower() == 'tanh':
@@ -373,12 +444,21 @@ class Activation(nn.Module):
         return self.activation(x)
 
 
-class kernelActivation(
-    nn.Module):  # a better (pytorch-friendly) implementation of activation as a linear combination of basis functions
-    def __init__(self, n_basis, span, channels, *args, **kwargs):
-        super(kernelActivation, self).__init__(*args, **kwargs)
+class kernelActivation(nn.Module):
+    r"""
+    Function for learning an activation function for every node in a given layer, as a linear combination of basis functions over a given span.
+    Uses nn.Conv1d groups option for efficient evaluation.
 
-        self.channels, self.n_basis = channels, n_basis
+    Args:
+        n_basis (int): number of basis functions
+        span (float): span over which to define localized basis functions
+        filters (int): feature depth of inputs to be activated
+    """
+
+    def __init__(self, n_basis, span, filters):
+        super(kernelActivation, self).__init__()
+
+        self.channels, self.n_basis = filters, n_basis
         # define the space of basis functions
         self.register_buffer('dict',
                              torch.linspace(-span, span, n_basis))  # positive and negative values for Dirichlet Kernel
@@ -391,7 +471,7 @@ class kernelActivation(
         # define module to learn parameters
         # 1d convolutions allow for grouping of terms, unlike nn.linear which is always fully-connected.
         # #This way should be fast and efficient, and play nice with pytorch optim
-        self.linear = nn.Conv1d(channels * n_basis, channels, kernel_size=(1, 1), groups=int(channels), bias=False)
+        self.linear = nn.Conv1d(filters * n_basis, filters, kernel_size=(1, 1), groups=int(filters), bias=False)
 
         # nn.init.normal(self.linear.weight.data, std=0.1)
 
@@ -413,10 +493,22 @@ class kernelActivation(
         return x
 
 
-def construct_radial_graph(pos, batch, ptr, cutoff, max_num_neighbors, aux_ind=None):
-    """
-    construct edge indices over a radial graph
-    optionally, compute intra (within ref_mol_inds) and inter (between ref_mol_inds and outside inds) edges
+def construct_radial_graph(pos: torch.FloatTensor, batch: torch.LongTensor,
+                           ptr: torch.LongTensor, cutoff: float,
+                           max_num_neighbors: int, aux_ind=None):
+    r"""
+    Construct edge indices over a radial graph.
+    Optionally, compute intra (within ref_mol_inds) and inter (between ref_mol_inds and outside inds) edges.
+    Args:
+        pos: node positions
+        batch: index of graph to which each node belongs
+        ptr: edges of batch
+        cutoff: maximum edge length
+        max_num_neighbors: maximum number of neighbors per node
+        aux_ind: optional auxiliary index for identifying "inside" and "outside" nodes
+
+    Returns:
+        dict: dictionary of edge information
     """
     if aux_ind is not None:
         inside_inds = torch.where(aux_ind == 0)[0]
@@ -450,14 +542,17 @@ def construct_radial_graph(pos, batch, ptr, cutoff, max_num_neighbors, aux_ind=N
         return {'edge_index': edge_index}
 
 
-class GlobalAggregation(nn.Module):
-    """
-    wrapper for several types of global aggregation functions
-    NOTE - I believe PyG might have a new built-in method which does exactly this
+class GlobalAggregation(nn.Module):  # TODO upgrade with new PyG aggregation module
+    r"""
+    Wrapper for several types of global aggregation functions
+
+    Args:
+        agg_func (str): aggregation function
+        filters (int): feature depth of input/output
     """
 
     def __init__(self, agg_func,
-                 depth):  # todo rewrite this with new pyg aggr class and/or custom functions (e.g., scatter)
+                 filters):  # todo rewrite this with new pyg aggr class and/or custom functions (e.g., scatter)
         super(GlobalAggregation, self).__init__()
         self.agg_func = agg_func
         if agg_func == 'mean':
@@ -467,62 +562,63 @@ class GlobalAggregation(nn.Module):
         elif agg_func == 'max':
             self.agg = gnn.global_max_pool
         elif agg_func == 'attention':
-            self.agg = gnn.GlobalAttention(nn.Sequential(nn.Linear(depth, depth), nn.LeakyReLU(), nn.Linear(depth, 1)))
+            self.agg = gnn.GlobalAttention(
+                nn.Sequential(nn.Linear(filters, filters), nn.LeakyReLU(), nn.Linear(filters, 1)))
         elif agg_func == 'set2set':
-            self.agg = gnn.Set2Set(in_channels=depth, processing_steps=4)
-            self.agg_fc = nn.Linear(depth * 2, depth)  # condense to correct number of filters
+            self.agg = gnn.Set2Set(in_channels=filters, processing_steps=4)
+            self.agg_fc = nn.Linear(filters * 2, filters)  # condense to correct number of filters
         elif agg_func == 'simple combo':
             self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool,
                               gnn.global_add_pool]  # simple aggregation functions
             self.agg_fc = MLP(
                 layers=1,
-                filters=depth,
-                input_dim=depth * (len(self.agg_list1)),
-                output_dim=depth,
+                filters=filters,
+                input_dim=filters * (len(self.agg_list1)),
+                output_dim=filters,
                 norm=None,
                 dropout=0)  # condense to correct number of filters
-        elif agg_func == 'mean sum':  # todo add a max aggregator which picks max by vector length (equivariant!)
+        elif agg_func == 'mean sum':
             pass
         elif agg_func == 'combo':
             self.agg_list1 = [gnn.global_max_pool, gnn.global_mean_pool,
                               gnn.global_add_pool]  # simple aggregation functions
             self.agg_list2 = nn.ModuleList([gnn.GlobalAttention(
-                MLP(input_dim=depth,
+                MLP(input_dim=filters,
                     output_dim=1,
                     layers=1,
-                    filters=depth,
+                    filters=filters,
                     activation='leaky relu',
                     norm=None),
             )])  # aggregation functions requiring parameters
             self.agg_fc = MLP(
                 layers=1,
-                filters=depth,
-                input_dim=depth * (len(self.agg_list1) + 1),
-                output_dim=depth,
+                filters=filters,
+                input_dim=filters * (len(self.agg_list1) + 1),
+                output_dim=filters,
                 norm=None,
                 dropout=0)  # condense to correct number of filters
         elif agg_func == 'molwise':
             self.agg = gnn.pool.max_pool_x
         elif agg_func == 'equivariant attention':
             self.agg = AttentionalAggregation_w_alpha(
-                MLP(input_dim=depth,
+                MLP(input_dim=filters,
                     output_dim=1,
                     layers=1,
-                    filters=depth,
+                    filters=filters,
                     activation='leaky relu',
                     norm=None)
             )
         elif agg_func == 'equivariant combo':
             self.agg = AttentionalAggregation_w_alpha(
-                MLP(input_dim=depth,
+                MLP(input_dim=filters,
                     output_dim=1,
                     layers=1,
-                    filters=depth,
+                    filters=filters,
                     activation='leaky relu',
                     norm=None)
             )
-            self.agg_norm = Normalization('graph vector layer', depth * 3)
-            self.agg_fc = nn.Linear(depth * 3, depth, bias=False)
+            self.agg_norm = Normalization('graph vector layer', filters * 3)
+            self.agg_fc = nn.Linear(filters * 3, filters, bias=False)
         elif agg_func is None:
             self.agg = nn.Identity()
 
@@ -577,22 +673,3 @@ class GlobalAggregation(nn.Module):
             return scalar_agg, vector_agg
         else:
             return self.agg(x, batch, size=output_dim)
-
-
-'''
-from scipy.spatial.transform import Rotation as R
-
-rmat = torch.tensor(R.random().as_matrix(),device=x.device, dtype=torch.float32)
-
-v1 = v.clone()
-rotv1 = torch.einsum('ij, njk->nik', rmat, v1)
-
-weights = scatter_softmax(torch.linalg.norm(v, dim=1), batch, dim=0)
-
-y1 = scatter(weights[:, None, :] * v1, batch, dim=0, dim_size=output_dim, reduce='sum')
-y2 = scatter(weights[:, None, :] * rotv1, batch, dim=0, dim_size=output_dim, reduce='sum')
-
-roty1 = torch.einsum('ij, njk->nik', rmat, y1)
-
-print(torch.mean(torch.abs(y2 - roty1)))
-'''

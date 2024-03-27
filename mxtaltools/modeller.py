@@ -33,7 +33,7 @@ from mxtaltools.models.autoencoder_models import PointAutoencoder
 from mxtaltools.models.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.discriminator_models import CrystalDiscriminator
 from mxtaltools.models.embedding_regression_models import embedding_regressor
-from mxtaltools.models.generator_models import independent_gaussian_model
+from mxtaltools.models.generator_models import independent_gaussian_model, CrystalGenerator
 from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
                                      save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss,
@@ -191,7 +191,8 @@ class Modeller:
         print("Initializing model(s) for " + self.config.mode)
         self.models_dict = {}
         if self.config.mode == 'gan' or self.config.mode == 'search':  # generator currently deprecated
-            # self.models_dict['generator'] = CrystalGenerator(self.config.seeds.model, self.device, self.config.generator.model, self.dataDims, self.sym_info)
+            self.models_dict['generator'] = CrystalGenerator(self.config.seeds.model, self.device,
+                                                             self.config.generator.model, self.dataDims, self.sym_info)
             self.models_dict['discriminator'] = CrystalDiscriminator(self.config.seeds.model,
                                                                      self.config.discriminator.model, self.dataDims)
         if self.config.mode == 'discriminator':
@@ -245,7 +246,7 @@ class Modeller:
                            self.models_dict.items()}
         [print(
             f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters')
-         for model_name in num_params_dict.keys()]
+            for model_name in num_params_dict.keys()]
         return num_params_dict
 
     def load_dataset_and_dataloaders(self, override_test_fraction=None, override_dataset=None):
@@ -850,11 +851,11 @@ class Modeller:
     def run_epoch(self, epoch_type, data_loader=None, update_weights=True, iteration_override=None):
         self.epoch_type = epoch_type
         if self.config.mode == 'gan' or self.config.mode == 'discriminator':
-            # if self.config.model_paths.regressor is not None:  # todo- de-deprecate with generator
-            #     self.models_dict['regressor'].eval()  # using this to suggest densities to the generator
+            if self.config.model_paths.regressor is not None:
+                self.models_dict['regressor'].eval()  # using this to suggest densities to the generator
 
             if self.train_models_dict['discriminator'] or self.train_models_dict['generator']:
-                self.discriminator_epoch(data_loader, update_weights, iteration_override)
+                self.gan_epoch(data_loader, update_weights, iteration_override)
 
         elif self.config.mode == 'regression':
             self.regression_epoch(data_loader, update_weights, iteration_override)
@@ -1054,7 +1055,7 @@ class Modeller:
         rotated_decoding[:, :3] = rotated_decoding_positions
         # first three dimensions should be equivariant and all trailing invariant
         decoder_equivariance_loss = (
-                    torch.abs(rotated_decoding[:, :3] - decoding2[:, :3]) / torch.abs(rotated_decoding[:, :3])).mean(-1)
+                torch.abs(rotated_decoding[:, :3] - decoding2[:, :3]) / torch.abs(rotated_decoding[:, :3])).mean(-1)
         return decoder_equivariance_loss
 
     def test_encoder_equivariance(self, data, rotations):
@@ -1277,14 +1278,14 @@ class Modeller:
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
-    def discriminator_epoch(self, data_loader=None, update_weights=True,
-                            iteration_override=None):
+    def gan_epoch(self, data_loader=None, update_weights=True,
+                  iteration_override=None):
 
         if update_weights:
-            # self.models_dict['generator'].train(True)
+            self.models_dict['generator'].train(True)
             self.models_dict['discriminator'].train(True)
         else:
-            # self.models_dict['generator'].eval()
+            self.models_dict['generator'].eval()
             self.models_dict['discriminator'].eval()
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
@@ -1300,7 +1301,7 @@ class Modeller:
             '''
             train_generator
             '''
-            # self.generator_step(data, i, update_weights)  # todo rewrite from temporarily deprecated
+            self.generator_step(data, i, update_weights)
             '''
             record some stats
             '''
@@ -1443,13 +1444,13 @@ class Modeller:
         get sample losses, do reporting, update gradients
         """
         if self.train_models_dict['generator']:
-            discriminator_raw_output, generated_samples, raw_samples, packing_loss, packing_prediction, packing_target, \
+            discriminator_raw_output, generated_samples, raw_samples, packing_loss, auv_prediction, auv_target, \
                 vdw_loss, vdw_score, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score = \
                 self.get_generator_losses(data)
 
             generator_losses, losses_stats = self.aggregate_generator_losses(
                 packing_loss, discriminator_raw_output, vdw_loss, vdw_score,
-                similarity_penalty, packing_prediction, packing_target, h_bond_score)
+                similarity_penalty, auv_prediction, auv_target, h_bond_score)
 
             generator_loss = generator_losses.mean()
 
@@ -1470,6 +1471,8 @@ class Modeller:
                 'raw_generated_cell_parameters': raw_samples
             }
             stats.update(losses_stats)
+
+            self.stats_to_cpu_np(stats)
 
             self.logger.update_stats_dict(self.epoch_type,
                                           list(stats.keys()),
@@ -1579,24 +1582,24 @@ class Modeller:
         if self.config.model_paths.regressor is not None:  # todo ensure we have a regressor predicting the right thing here - i.e., cell_volume vs packing coeff
             # predict the crystal density and feed it as an input to the generator
             with torch.no_grad():
-                standardized_target_packing_coeff = self.models_dict['regressor'](
+                standardized_target_aunit_volume = self.models_dict['regressor'](
                     mol_data.clone().detach().to(self.config.device)).detach()[:, 0]
         else:
-            target_packing_coeff = mol_data.tracking[:, self.t_i_d['crystal_packing_coefficient']]
-            standardized_target_packing_coeff = (
-                        (target_packing_coeff - self.std_dict['crystal_packing_coefficient'][0]) /
-                        self.std_dict['crystal_packing_coefficient'][1]).to(self.config.device)
+            target_aunit_volume = mol_data.tracking[:, self.t_i_d['crystal_reduced_volume']]
+            standardized_target_aunit_volume = (
+                    (target_aunit_volume - self.std_dict['crystal_reduced_volume'][0]) /
+                    self.std_dict['crystal_reduced_volume'][1]).to(self.config.device)
 
-        standardized_target_packing_coeff += torch.randn_like(
-            standardized_target_packing_coeff) * self.config.generator.packing_target_noise
+        standardized_target_aunit_volume += torch.randn_like(
+            standardized_target_aunit_volume) * self.config.generator.packing_target_noise
 
         # generate the samples
         [generated_samples, prior, condition, raw_samples] = self.models_dict['generator'].forward(
             n_samples=mol_data.num_graphs, molecule_data=mol_data.to(self.config.device).clone(),
             return_condition=True, return_prior=True, return_raw_samples=True,
-            target_packing=standardized_target_packing_coeff)
+            target_packing=standardized_target_aunit_volume)
 
-        return generated_samples, prior, standardized_target_packing_coeff, mol_data, raw_samples
+        return generated_samples, prior, standardized_target_aunit_volume, mol_data, raw_samples
 
     def get_generator_losses(self, data):
         """
@@ -1604,7 +1607,7 @@ class Modeller:
         """
 
         """get crystals"""
-        generated_samples, prior, standardized_target_packing, generator_data, raw_samples = (
+        generated_samples, prior, standardized_target_auv, generator_data, raw_samples = (
             self.get_generator_samples(data))
 
         supercell_data, generated_cell_volumes = (
@@ -1623,14 +1626,14 @@ class Modeller:
                                                    num_graphs=generator_data.num_graphs,
                                                    graph_sizes=generator_data.mol_size,
                                                    loss_func=self.config.generator.vdw_loss_func)
-        packing_loss, packing_prediction, packing_target, packing_csd = \
+        packing_loss, auv_prediction, auv_target, auv_csd = \
             self.generator_density_matching_loss(
-                standardized_target_packing, supercell_data, generated_samples,
+                standardized_target_auv, supercell_data, generated_samples,
                 precomputed_volumes=generated_cell_volumes, loss_func=self.config.generator.density_loss_func)
 
         return discriminator_raw_output, generated_samples.detach(), raw_samples.detach(), \
-            packing_loss, packing_prediction.detach(), \
-            packing_target.detach(), \
+            packing_loss, auv_prediction.detach(), \
+            auv_target.detach(), \
             vdw_loss, vdw_score, dist_dict, \
             supercell_data, similarity_penalty, h_bond_score
 
@@ -1857,8 +1860,9 @@ class Modeller:
 
     def compute_similarity_penalty(self, generated_samples, prior, raw_samples):
         """
-        punish batches in which the samples are too self-similar
-        or on the basis of their statistics
+        by hook or crook
+        force samples to be more diverse
+
         Parameters
         ----------
         generated_samples
@@ -1867,40 +1871,13 @@ class Modeller:
         Returns
         -------
         """
-        if len(generated_samples) >= 3:
-            # enforce that the distance between samples is similar to the distance between priors
-            # prior_dists = torch.cdist(prior, prior, p=2)
-            # std_samples = (generated_samples - self.lattice_means) / self.lattice_stds
-            # sample_dists = torch.cdist(std_samples, std_samples, p=2)
-            # prior_distance_penalty = F.smooth_l1_loss(input=sample_dists, target=prior_dists, reduction='none').mean(1)  # align distances to all other samples
-            #
-            # prior_variance = prior.var(dim=0)
-            # sample_variance = std_samples.var(dim=0)
-            # variance_penalty = F.smooth_l1_loss(input=sample_variance, target=prior_variance, reduction='none').mean().tile(len(prior))
+        # simply punish the model samples for deviating from the prior
+        # TODO shift the prior to be more appropriate for this task
+        # uniform angles
+        # standardize cell lengths by molecule size
 
-            # similarity_penalty = (prior_distance_penalty + variance_penalty)
-            sample_stds = generated_samples[:, [0, 1, 2, 6, 7, 8]].std(0)
-            sample_means = generated_samples[:, [0, 1, 2, 6, 7, 8]].mean(0)
-
-            raw_sample_stds = raw_samples[:, [3, 4, 5, 9, 10, 11]].std(0)
-            raw_sample_means = raw_samples[:, [3, 4, 5, 9, 10, 11]].mean(0)
-
-            # enforce similar distribution
-            standardization_losses = (
-                        F.smooth_l1_loss(sample_stds, self.lattice_stds[[0, 1, 2, 6, 7, 8]]) + F.smooth_l1_loss(
-                    sample_means, self.lattice_means[[0, 1, 2, 6, 7, 8]]) + \
-                        F.smooth_l1_loss(raw_sample_stds, self.lattice_stds[[3, 4, 5, 9, 10, 11]]) + F.smooth_l1_loss(
-                    raw_sample_means, self.lattice_means[[3, 4, 5, 9, 10, 11]]))
-            # enforce similar range of fractional centroids
-            mins = raw_samples[:, 6:9].amin(0)
-            maxs = raw_samples[:, 6:9].amax(0)
-            frac_range_losses = F.smooth_l1_loss(mins, torch.zeros_like(mins)) + F.smooth_l1_loss(maxs,
-                                                                                                  torch.ones_like(maxs))
-
-            similarity_penalty = (standardization_losses + frac_range_losses).tile(len(prior))
-        else:
-            similarity_penalty = None
-
+        # euclidean distance
+        similarity_penalty = ((prior - raw_samples) ** 2).sum(1).sqrt()
         return similarity_penalty
 
     def score_adversarially(self, supercell_data, discriminator_noise=None, return_latent=False):
@@ -1937,11 +1914,11 @@ class Modeller:
             return discriminator_score, dist_dict
 
     def aggregate_generator_losses(self, packing_loss, discriminator_raw_output, vdw_loss, vdw_score,
-                                   similarity_penalty, packing_prediction, packing_target, h_bond_score):
+                                   similarity_penalty, auv_prediction, auv_target, h_bond_score):
         generator_losses_list = []
         stats_keys, stats_values = [], []
         if packing_loss is not None:
-            packing_mae = np.abs(packing_prediction - packing_target) / packing_target
+            packing_mae = torch.abs(auv_prediction - auv_target) / auv_target
 
             if packing_mae.mean() < (
                     0.02 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
@@ -1954,16 +1931,17 @@ class Modeller:
 
             stats_keys += ['generator_packing_loss', 'generator_packing_prediction',
                            'generator_packing_target', 'generator_packing_mae']
-            stats_values += [packing_loss.detach() * self.packing_loss_coefficient, packing_prediction,
-                             packing_target, packing_mae]
+            stats_values += [packing_loss.detach() * self.packing_loss_coefficient,
+                             auv_prediction.detach(),
+                             auv_target.detach(),
+                             packing_mae.detach()]
 
             if True:  # enforce the target density all the time
                 generator_losses_list.append(packing_loss.float() * self.packing_loss_coefficient)
 
         if discriminator_raw_output is not None:
             if self.config.generator.adversarial_loss_func == 'hot softmax':
-                adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:,
-                                       1]  # high temp smears out the function over a wider range
+                adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:, 1]  # high temp smears out the function over a wider range
                 adversarial_score = softmax_and_score(discriminator_raw_output)
 
             elif self.config.generator.adversarial_loss_func == 'minimax':
@@ -2017,7 +1995,6 @@ class Modeller:
                     print('similarity penalty was none')
 
         generator_losses = torch.sum(torch.stack(generator_losses_list), dim=0)
-        self.logger.update_stats_dict(self.epoch_type, stats_keys, stats_values, mode='extend')
 
         return generator_losses, {key: value for key, value in zip(stats_keys, stats_values)}
 
@@ -2252,7 +2229,7 @@ class Modeller:
 
         return h_bond_loss_f
 
-    def generator_density_matching_loss(self, standardized_target_packing,
+    def generator_density_matching_loss(self, standardized_target_auv,
                                         data, raw_sample,
                                         precomputed_volumes=None, loss_func='mse'):
         """
@@ -2267,22 +2244,28 @@ class Modeller:
         else:
             volumes = precomputed_volumes
 
-        generated_packing_coeffs = data.mult * data.mol_volume / volumes
-        standardized_gen_packing_coeffs = (generated_packing_coeffs - self.std_dict['crystal_packing_coefficient'][0]) / \
-                                          self.std_dict['crystal_packing_coefficient'][1]
+        # generated_packing_coeffs = data.mult * data.mol_volume / volumes
+        generated_auvs = volumes / data.mult
+        # standardized_gen_packing_coeffs = (generated_packing_coeffs - self.std_dict['crystal_packing_coefficient'][0]) / \
+        #                                   self.std_dict['crystal_packing_coefficient'][1]
+        standardized_gen_auvs = (generated_auvs - self.std_dict['crystal_reduced_volume'][0]) / \
+                                          self.std_dict['crystal_reduced_volume'][1]
+        #
+        # target_packing_coeffs = standardized_target_auv * self.std_dict['crystal_packing_coefficient'][1] + \
+        #                         self.std_dict['crystal_packing_coefficient'][0]
+        target_auvs = standardized_target_auv * self.std_dict['crystal_reduced_volume'][1] + \
+                      self.std_dict['crystal_reduced_volume'][0]
 
-        target_packing_coeffs = standardized_target_packing * self.std_dict['crystal_packing_coefficient'][1] + \
-                                self.std_dict['crystal_packing_coefficient'][0]
-
-        csd_packing_coeffs = data.tracking[:, self.t_i_d['crystal_packing_coefficient']]
+        #csd_packing_coeffs = data.tracking[:, self.t_i_d['crystal_packing_coefficient']]
+        csd_auvs = data.tracking[:, self.t_i_d['crystal_reduced_volume']]
 
         # compute loss vs the target
         if loss_func == 'mse':
-            packing_loss = F.mse_loss(standardized_gen_packing_coeffs, standardized_target_packing,
+            packing_loss = F.mse_loss(standardized_gen_auvs, standardized_target_auv,
                                       reduction='none')  # allow for more error around the minimum
         elif loss_func == 'l1':
-            packing_loss = F.smooth_l1_loss(standardized_gen_packing_coeffs, standardized_target_packing,
+            packing_loss = F.smooth_l1_loss(standardized_gen_auvs, standardized_target_auv,
                                             reduction='none')
         else:
             assert False, "Must pick from the set of implemented packing loss functions 'mse', 'l1'"
-        return packing_loss, generated_packing_coeffs, target_packing_coeffs, csd_packing_coeffs
+        return packing_loss, generated_auvs, target_auvs, csd_auvs
