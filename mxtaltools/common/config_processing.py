@@ -132,7 +132,7 @@ def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=
         main_config = write_non_overlapping_configs(main_config, base_config)  # add elements from base into main if they are missing
 
     # update any missing values from the all-inclusive base config
-    base_config = load_yaml(os.getcwd() + '/configs/experiments/full_base.yaml')
+    base_config = load_yaml(main_config['config_path'] + '/experiments/full_base.yaml')
     main_config = write_non_overlapping_configs(main_config, base_config)  # add elements from base into main if they are missing
 
     for model in main_config['model_paths'].keys():

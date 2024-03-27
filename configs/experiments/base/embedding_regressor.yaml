@@ -50,9 +50,9 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null
+  #autoencoder: null  # must provide a checkpoint for embedding regression
   #autoencoder: r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57',  # no protons
-  #autoencoder: r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'  # protons
+  autoencoder: '/cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'  # protons
   embedding_regressor: null
 
 positional_noise:
@@ -66,14 +66,8 @@ supercell_size: 5
 
 autoencoder:
   init_sigma: 0.15
-  # discriminator optimizer and model
   optimizer: null
   model: null
-
-regressor:
-  optimizer: null
-  model: null
-
 
 embedding_regressor:
   prediction_type: scalar

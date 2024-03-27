@@ -190,12 +190,13 @@ class Modeller:
 
         print("Initializing model(s) for " + self.config.mode)
         self.models_dict = {}
-        if self.config.mode == 'gan' or self.config.mode == 'search':  # generator currently deprecated
+        if self.config.mode == 'gan' or self.config.mode == 'search':
             self.models_dict['generator'] = CrystalGenerator(self.config.seeds.model, self.device,
                                                              self.config.generator.model, self.dataDims, self.sym_info)
             self.models_dict['discriminator'] = CrystalDiscriminator(self.config.seeds.model,
                                                                      self.config.discriminator.model, self.dataDims)
         if self.config.mode == 'discriminator':
+            self.models_dict['generator'] = nn.Linear(1,1)
             self.models_dict['discriminator'] = CrystalDiscriminator(self.config.seeds.model,
                                                                      self.config.discriminator.model, self.dataDims)
         if self.config.mode == 'regression' or self.config.model_paths.regressor is not None:

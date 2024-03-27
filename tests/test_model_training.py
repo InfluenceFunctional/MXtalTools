@@ -18,6 +18,8 @@ class TestClass:
         for config_path in [r'/configs/test_configs/discriminator.yaml',
                             r'/configs/test_configs/regressor.yaml',
                             r'/configs/test_configs/autoencoder.yaml',
-                            r'/configs/test_configs/embedding_regressor.yaml']:
+                            #r'/configs/test_configs/embedding_regressor.yaml',  # need new benchmark checkpoint
+                            r'/configs/test_configs/generator.yaml'
+                            ]:
             os.chdir(source_dir)
             train_model(config_path)
