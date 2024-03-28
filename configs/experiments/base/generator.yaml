@@ -128,7 +128,7 @@ generator:
   #generator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 1.0E-4
+    init_lr: 5.0E-5
     max_lr: 5.0E-4
     min_lr: 1.0E-5
     lr_schedule: True
