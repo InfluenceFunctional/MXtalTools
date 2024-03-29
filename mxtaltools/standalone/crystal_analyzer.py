@@ -50,7 +50,7 @@ class CrystalAnalyzer(torch.nn.Module):
         self.device = device
         self.config = dict2namespace(load_yaml(config_path))
         self.supercell_size = supercell_size
-        self.mol_asym_unit_vol = 5 * 5 * 5 / 4  # more forgiving #(5 * 5 * 5 / 4)  # approximate urea volume
+        self.mol_asym_unit_vol = 63.33  # approximate urea asym unit volume
 
         # update configs from checkpoints
         checkpoint = torch.load(discriminator_checkpoint_path, map_location=self.device)
