@@ -4,7 +4,7 @@ refresh model results for Autoencoder paper
 import os
 import yaml
 
-from mxtaltools.common.config_processing import load_yaml, get_config
+from mxtaltools.common.config_processing import load_yaml, process_main_config
 from mxtaltools.modeller import Modeller
 
 ae_path = r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'
@@ -44,7 +44,7 @@ for path, target in zip(regressor_paths, targets):
         yaml.dump(config, outfile, default_flow_style=False)
 
     override_args = ['--user', 'mkilgour', '--yaml_config', r'C:\Users\mikem\OneDrive\NYU\CSD\MCryGAN\configs/analyses/analysis.yaml']
-    config = get_config(override_args)
+    config = process_main_config(override_args)
 
     predictor = Modeller(config)
     predictor.embedding_regressor_analysis()

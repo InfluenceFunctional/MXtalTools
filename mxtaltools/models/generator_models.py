@@ -6,6 +6,7 @@ from torch.distributions import MultivariateNormal, Uniform
 
 from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from mxtaltools.crystal_building.utils import clean_cell_params
+from mxtaltools.models.autoencoder_models import PointEncoder
 from mxtaltools.models.components import MLP
 from mxtaltools.models.base_models import MoleculeGraphModel
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
@@ -42,20 +43,22 @@ class CrystalGenerator(nn.Module):
         '''conditioning model'''
         torch.manual_seed(seed)
 
+        # equivalent to equivariant point encoder model
         self.conditioner = MoleculeGraphModel(
             num_atom_feats=dataDims['num_atom_features'],
             num_mol_feats=dataDims['num_molecule_features'],
             output_dimension=config.conditioner.graph_embedding_depth,
             seed=seed,
+            equivariant_graph=True,
             graph_aggregator=config.conditioner.graph_aggregator,
             concat_pos_to_atom_features=True,
-            concat_mol_to_atom_features=config.conditioner.concat_mol_to_atom_features,
-            concat_crystal_to_atom_features=True,
+            concat_mol_to_atom_features=False,
+            concat_crystal_to_atom_features=False,
             activation=config.conditioner.activation,
-            num_fc_layers=config.conditioner.num_fc_layers,
-            fc_depth=config.conditioner.fc_depth,
-            fc_norm_mode=config.conditioner.fc_norm_mode,
-            fc_dropout_probability=config.conditioner.fc_dropout_probability,
+            num_fc_layers=0,
+            fc_depth=0,
+            fc_norm_mode=None,
+            fc_dropout_probability=None,
             graph_node_norm=config.conditioner.graph_node_norm,
             graph_node_dropout=config.conditioner.graph_node_dropout,
             graph_message_dropout=config.conditioner.graph_message_dropout,
@@ -71,38 +74,53 @@ class CrystalGenerator(nn.Module):
             convolution_cutoff=config.conditioner.convolution_cutoff,
             atom_type_embedding_dims=config.conditioner.atom_type_embedding_dims,
             periodic_structure=False,
-            outside_convolution_type='none'
+            outside_convolution_type='none',
+            cartesian_dimension=3,
+            vector_norm='graph vector layer' if config.conditioner.graph_node_norm == 'graph layer' else None,
         )
 
         '''
         generator model
         '''
-        self.model = MLP(layers=config.num_fc_layers,
-                         filters=config.fc_depth,
-                         norm=config.fc_norm_mode,
-                         dropout=config.fc_dropout_probability,
-                         input_dim=self.latent_dim,
-                         output_dim=12 + 3,  # 3 extra dimensions for angle decoder
-                         conditioning_dim=config.conditioner.graph_embedding_depth + SG_FEATURE_TENSOR.shape[1] + 1,  # include crystal information for the generator and the target packing coeff
-                         seed=seed,
-                         conditioning_mode=config.conditioning_mode,
-                         )
+        self.model = MLP(
+            layers=config.num_fc_layers,
+            filters=config.fc_depth,
+            input_dim=self.latent_dim + SG_FEATURE_TENSOR.shape[1] + 1,
+            # include crystal information for the generator and the target packing coeff
+            output_dim=12 + 3,  # 3 extra dimensions for angle decoder
+            conditioning_dim=0,
+            activation='gelu',
+            conditioning_mode=None,
+            norm=config.fc_norm_mode,
+            dropout=config.fc_dropout_probability,
+            equivariant=True,
+            vector_output_dim=3,  # opt for rotvec output
+            vector_input_dim=config.conditioner.graph_embedding_depth,
+            vector_norm=config.fc_norm_mode,
+            ramp_depth=False,
+            v_to_s_combination='sum'
+        )
 
     def sample_latent(self, n_samples):
         # return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
         return self.prior.sample((n_samples,)).to(self.device)
 
-    def forward(self, n_samples, molecule_data, z=None, return_condition=False, return_prior=False, return_raw_samples=False, target_packing=0):
+    def forward(self, n_samples, molecule_data, z=None, return_condition=False, return_prior=False,
+                return_raw_samples=False, target_packing=0):
         if z is None:  # sample random numbers from prior distribution
             z = self.sample_latent(n_samples)
 
         molecule_data.pos = molecule_data.pos / self.radial_norm_factor
-        molecule_encoding = self.conditioner(molecule_data)
-        molecule_encoding = torch.cat((molecule_encoding,
-                                       torch.tensor(self.SG_FEATURE_TENSOR[molecule_data.sg_ind], dtype=torch.float32, device=molecule_data.x.device),
-                                       target_packing[:, None]), dim=-1)
+        _, molecule_encoding = self.conditioner(molecule_data)
+        scalar_input = torch.cat((
+            z,
+            torch.tensor(self.SG_FEATURE_TENSOR[molecule_data.sg_ind],
+                         dtype=torch.float32,
+                         device=molecule_data.x.device),
+            target_packing[:, None]), dim=-1)
 
-        samples = self.model(z, conditions=molecule_encoding)
+        # conditioning goes to vector track, noise and crystal information to scalar track
+        samples, _ = self.model(scalar_input, v=molecule_encoding)  # omit vector outputs for now
 
         clean_samples = clean_cell_params(samples, molecule_data.sg_ind, self.lattice_means, self.lattice_stds,
                                           self.symmetries_dict, self.asym_unit_dict, destandardize=True, mode='soft')
@@ -154,7 +172,9 @@ class independent_gaussian_model(nn.Module):
         try:
             self.prior = MultivariateNormal(means, torch.Tensor(cov_mat))  # apply standardization
         except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
-            self.prior = MultivariateNormal(loc=means, covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(cov_mat).diagonal())
+            self.prior = MultivariateNormal(loc=means,
+                                            covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(
+                                                cov_mat).diagonal())
 
     def forward(self, num_samples, data=None, sg_ind=None):
         """
@@ -167,10 +187,11 @@ class independent_gaussian_model(nn.Module):
         else:
             sg_ind = data.sg_ind
 
-        samples = self.prior.sample((num_samples,)) # samples in the destandardied 'real' basis
+        samples = self.prior.sample((num_samples,))  # samples in the destandardied 'real' basis
         final_samples = clean_cell_params(samples, sg_ind, self.means, self.stds,
                                           self.symmetries_dict, self.asym_unit_dict,
-                                          rescale_asymmetric_unit=True, destandardize=False, mode='soft').to(self.device)
+                                          rescale_asymmetric_unit=True, destandardize=False, mode='soft').to(
+            self.device)
 
         return final_samples
 

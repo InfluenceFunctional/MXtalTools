@@ -13,6 +13,7 @@ from mxtaltools.dataset_management.utils import get_range_fraction, get_fraction
 from mxtaltools.constants.atom_properties import SYMBOLS
 
 
+# noinspection PyAttributeOutsideInit
 class DataManager:
     def __init__(self, datasets_path, device='cpu', mode='standard', chunks_path=None, seed=0):
         self.datapoints = None
@@ -36,9 +37,16 @@ class DataManager:
 
     def load_dataset_for_modelling(self, config, dataset_name, misc_dataset_name, override_length=None,
                                    filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False,
-                                   filter_protons=False):
+                                   filter_protons=False, override_dataset: pd.DataFrame = None):
 
-        self.load_dataset_and_misc_data(dataset_name, misc_dataset_name)
+        if override_dataset is None:
+            self.load_dataset_and_misc_data(dataset_name, misc_dataset_name)
+        else:  # for loading dataset on the fly
+            self.dataset = override_dataset
+            self.dataset_type = 'molecule'
+            # self.override_dataDims  # todo build a constant dataDims for the overall dataset (not just chunks) and ignore the one that comes out from get_dimension
+            # self.override std dict  # todo may not be necessary?
+            # self.override target    # todo add dummy value?, maybe just 'radius' but will need a mean and std just so the datapoint builder doesn't crash
 
         if filter_conditions is not None:
             bad_inds = self.get_dataset_filter_inds(filter_conditions)

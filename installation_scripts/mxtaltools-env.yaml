@@ -31,3 +31,18 @@ dependencies:
     - torch_cluster
     - torch_sparse
     - kaleido
+
+numpy
+ase
+scipy
+tqdm
+yaml
+pyyaml
+pandas
+wandb
+plotly
+scikit-learn
+e3nn
+pillow
+msgpack
+ovito

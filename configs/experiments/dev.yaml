@@ -1,33 +1,34 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/regressor.yaml
-#mode: regression
+base_config_path: /experiments/base/generator.yaml
+dataset_name: 'dataset.pkl'
 
 sweep_id: null
 sweep_path: null
 
 dataset:
-  max_dataset_length: 100
-#  test_fraction: 0.2
-#  filter_protons: False
-#  regression_target: molecule_gap_energy
+  max_dataset_length: 10000000
+  test_fraction: 0.2
+  filter_protons: False  # only relevant for datasets containing protons in the first place
+  #regression_target: crystal_packing_coefficient
+  refresh_interval: -1  # reload a new chunk of a larger dataset, only setup for QM9/GEOM
 
 # batching & convergence
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 50
-max_batch_size: 10000
-batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
+min_batch_size: 10
+max_batch_size: 1000
+batch_growth_increment: 0.5 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 100
-max_epochs: 1000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 50  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 4 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  sample_reporting_frequency: 2  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
 
 model_paths:
   discriminator: null

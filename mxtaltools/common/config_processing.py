@@ -1,6 +1,6 @@
 from argparse import Namespace
 from pathlib import Path
-
+import os
 import yaml
 
 
@@ -85,7 +85,7 @@ def write_non_overlapping_configs(c1, c2):
     """
     for key in c2.keys():
         if key in c1.keys():
-            if isinstance(c1[key], dict):
+            if isinstance(c1[key], dict) and isinstance(c2[key], dict):
                 c1[key] = write_non_overlapping_configs(c1[key], c2[key])
 
         elif key not in c1.keys():
@@ -94,7 +94,7 @@ def write_non_overlapping_configs(c1, c2):
     return c1
 
 
-def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
+def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
     """
     Combines YAML configuration file, command line arguments and default arguments into
     a single configuration dictionary.
@@ -125,11 +125,15 @@ def get_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
     main_config['checkpoint_dir_path'] = user_config['paths'][machine_type + '_checkpoint_dir_path']
     main_config['config_path'] = user_config['paths'][machine_type + '_config_path']
 
-    # update any missing values from base config
+    # update any missing values from this type of base config
     if 'base_config_path' in main_config.keys() and main_config['base_config_path'] is not None:
         base_config_path = main_config['config_path'] + main_config['base_config_path']
         base_config = load_yaml(base_config_path)
         main_config = write_non_overlapping_configs(main_config, base_config)  # add elements from base into main if they are missing
+
+    # update any missing values from the all-inclusive base config
+    base_config = load_yaml(main_config['config_path'] + '/experiments/full_base.yaml')
+    main_config = write_non_overlapping_configs(main_config, base_config)  # add elements from base into main if they are missing
 
     for model in main_config['model_paths'].keys():
         if main_config['model_paths'][model] is not None:

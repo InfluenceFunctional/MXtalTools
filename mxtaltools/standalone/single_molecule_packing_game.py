@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore", category=UserWarning)  # ignore w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
-from mxtaltools.common.config_processing import get_config
+from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.common.geometry_calculations import compute_fractional_transform_torch
 from mxtaltools.modeller import Modeller
 from mxtaltools.dataset_management.CrystalData import CrystalData
@@ -62,7 +62,7 @@ mol_data = CrystalData(
     mol_size=5)
 
 '''init cell generator - uses gaussian noise and dataset statistics to propose crystal parameters'''
-config = get_config(user_yaml_path=user_path, main_yaml_path=config_path)
+config = process_main_config(user_yaml_path=user_path, main_yaml_path=config_path)
 
 supercell_size = 5
 rotation_basis = 'spherical'

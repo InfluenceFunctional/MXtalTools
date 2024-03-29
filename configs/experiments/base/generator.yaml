@@ -1,14 +1,14 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
-mode: gan  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
+mode: gan  #  or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
 dataset_name: 'test_dataset.pkl' #
 misc_dataset_name: 'misc_data_for_dataset.npy' #
 dataset_yaml_path: '/dataset/skinny_gan.yaml' #
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
-model_names: ['discriminator', 'generator', 'regressor']
+model_names: ['generator', 'discriminator']
 sweep_id: null
 sweep_path: null
 
@@ -16,13 +16,13 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: crystal_reduced_volume #
+  refresh_interval: -1
 
 # batching & convergence
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 10
+min_batch_size: 50
 max_batch_size: 1000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
@@ -30,13 +30,13 @@ minimum_epochs: 50
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 50  # for convergence checks
 gradient_norm_clip: 1
-extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+extra_test_period: 4 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
   run_name: dev
   experiment_tag: dev
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 2  # how often to do detailed reporting with figures
   log_figures: True
 
 sample_steps: 100
@@ -59,15 +59,15 @@ positional_noise:
   regressor: 0
   autoencoder: 0
 
-generate_sgs: null
+generate_sgs: ['P1']
 supercell_size: 5
 
 
 discriminator:
   # settings
   train_adversarially: False
-  train_on_randn: True
-  train_on_distorted: True
+  train_on_randn: False
+  train_on_distorted: False
   use_classification_loss: True
   use_rdf_distance_loss: True
   distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
@@ -113,22 +113,6 @@ discriminator:
     atom_type_embedding_dims: 24
     periodic_convolution_type: 'all_layers'  # or 'last_layer'
 
-
-autoencoder:
-  optimizer: null
-
-  model: null
-
-regressor:
-  optimizer: null
-  model: null
-
-
-embedding_regressor:
-  optimizer: null
-  model: null
-
-
 # for GAN training
 generator:
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
@@ -144,26 +128,49 @@ generator:
   #generator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 5.0E-4
-    max_lr: 1.0E-3
-    min_lr: 1.0E-4
+    init_lr: 5.0E-5
+    max_lr: 5.0E-4
+    min_lr: 1.0E-5
     lr_schedule: True
     beta1: 0.9 #0.9
     beta2: 0.999 #0.999
-    weight_decay: 0.01
+    weight_decay: 0.05
     convergence_eps: 0.00001
     lr_growth_lambda: 1.05
-    lr_shrink_lambda: 0.99
+    lr_shrink_lambda: 0.995
+    use_plateau_scheduler: False
 
   model:
-    num_fc_layers: 2
+    num_fc_layers: 4
     fc_depth: 128
     activation: 'gelu'
     fc_dropout_probability: 0.1
     fc_norm_mode: layer
-    conditioning_mode: 'first_layer' # 'first_layer' only for now
 
     prior: multivariate normal
     prior_dimension: 12  # NOTE this must be 12 currently
     radial_norm_factor: 5
+
+    conditioner:
+      graph_convolution_type: TransformerConv
+      graph_aggregator: 'equivariant softmax'
+      concat_mol_to_atom_features: False
+      activation: gelu
+      graph_node_norm: 'graph layer'
+      graph_node_dropout: 0.1
+      graph_message_norm: null
+      graph_message_dropout: 0
+      num_attention_heads: 16
+      graph_message_depth: 128
+      graph_node_dims: 256
+      num_graph_convolutions: 2
+      graph_embedding_depth: 256
+      nodewise_fc_layers: 1
+      num_radial: 50
+      radial_function: gaussian
+      max_num_neighbors: 100
+      convolution_cutoff: 6
+      atom_type_embedding_dims: 5
+
+
 

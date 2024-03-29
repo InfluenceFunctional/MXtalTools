@@ -30,9 +30,10 @@ def get_point_density(xy, bins=500):
                 bounds_error=False)
 
     # To be sure to plot all data
-    z[np.where(np.isnan(z))] = 0.0
+    z = np.nan_to_num(z, posinf=0, neginf=0, nan=0)
     z -= z.min()
     z /= z.max()
+
     return z
 
 
@@ -217,19 +218,37 @@ def UMAP_fig(max_entries=10000000):
     point_colors1 = normalize_colors(composition_coloration)
     legend_entries1 = ["Carbon Enriched", "Nitrogen Enriched", "Oxygen Enriched"]
 
-    PR_triangle_points = np.asarray([[1,1], [0,1], [0.5, 0]])
-    PR1 = np.concatenate(stats_dicts[run_name]['molecule_principal_moment_1'])/np.concatenate(stats_dicts[run_name]['molecule_principal_moment_2'])
-    PR2 = np.concatenate(stats_dicts[run_name]['molecule_principal_moment_1'])/np.concatenate(stats_dicts[run_name]['molecule_principal_moment_3'])
-    #fig = go.Figure(go.Scattergl(x=PR1, y=PR2, mode='markers', opacity=0.5)).show()
+    PR_triangle_points = np.asarray([[1, 1], [0, 1], [0.5, 0.5]])
+
+    # conventional principal ratios - our convention agreeing with QMUGS
+    PR1 = np.concatenate(stats_dicts[run_name]['molecule_principal_moment_2']) / (np.concatenate(
+        stats_dicts[run_name]['molecule_principal_moment_3']))# + 1e-3)
+    PR1 = np.nan_to_num(PR1, posinf=0, neginf=0)
+    PR1 /= np.quantile(PR1, 0.9999)
+    PR2 = np.concatenate(stats_dicts[run_name]['molecule_principal_moment_1']) / (np.concatenate(
+        stats_dicts[run_name]['molecule_principal_moment_3']))# + 1e-3)
+    PR2 = np.nan_to_num(PR2)
+    PR2 /= np.quantile(PR2, 0.9999)
+    #
+    # xy = np.vstack([PR1, PR2])
+    # try:
+    #     z = get_point_density(xy, bins=100)
+    #     z[np.isnan(z)] = 0
+    # except:
+    #     z = np.ones_like(PR1)
+    #
+    # fig = go.Figure(go.Scattergl(x=PR2, y=PR1, mode='markers', opacity=0.25, marker_color=z))
+    # fig.update_layout(xaxis_title='I1/I3', yaxis_title='I2/I1', xaxis_range=[0, 1.1], yaxis_range=[.4, 1.1])
+    # fig.show()
 
     PR_stack = np.concatenate([PR1[:, None], PR2[:, None]], axis=1)
-    sphere_like = 1/np.linalg.norm(PR_triangle_points[0] - PR_stack, axis=1)
-    disc_like = 1/np.linalg.norm(PR_triangle_points[1] - PR_stack, axis=1)
-    rod_like = 1/np.linalg.norm(PR_triangle_points[2] - PR_stack, axis=1)
+    sphere_like = -np.linalg.norm(PR_triangle_points[0] - PR_stack, axis=1)
+    disc_like = -np.linalg.norm(PR_triangle_points[1] - PR_stack, axis=1)
+    rod_like = -np.linalg.norm(PR_triangle_points[2] - PR_stack, axis=1)
 
     composition_coloration = np.stack([sphere_like, disc_like, rod_like]).T[:max_entries]
     point_colors2 = normalize_colors(composition_coloration)
-    legend_entries2 = ["Sphere-like", "Disc-Like", "Rod-Like"]
+    legend_entries2 = ["Sphere-like", "Rod-Like", "Disc-Like"]
 
     composition_coloration = np.stack([np.concatenate(stats_dicts[run_name]['molecule_num_rings']),
                                        np.concatenate(stats_dicts[run_name]['molecule_num_rotatable_bonds']),
@@ -455,7 +474,8 @@ def regression_training_curve():
 
     fig4.update_layout(xaxis_title='Training Set Size', yaxis_title='Best Test Loss')
     fig4.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
-    fig4.update_layout(xaxis={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
+    fig4.update_layout(
+        xaxis={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig4.update_layout(yaxis={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
     fig4.update_layout(font=dict(size=24))
@@ -469,7 +489,7 @@ def regression_training_curve():
 # fig = RMSD_fig()
 # fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 fig2 = UMAP_fig(max_entries=1000000)
-#fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
+# fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
 # fig3 = embedding_regression_figure()
 # fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
 # fig4 = regression_training_curve()

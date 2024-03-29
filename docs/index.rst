@@ -8,9 +8,6 @@ What is ``MXtalTools``?
 
 .. _pytorch: https://pytorch.org/
 
-.. automodule:: mxtaltools.common.utils
-    :members:
-
 .. toctree::
     :maxdepth: 2
     :caption: Contents

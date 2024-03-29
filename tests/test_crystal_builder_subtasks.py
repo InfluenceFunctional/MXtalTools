@@ -1,4 +1,4 @@
-from mxtaltools.common.config_processing import get_config
+from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
 from mxtaltools.crystal_building.utils import (rotvec2rotmat, build_unit_cell, scale_asymmetric_unit,
                                     align_crystaldata_to_principal_axes, batch_asymmetric_unit_pose_analysis_torch)
@@ -13,7 +13,7 @@ run tests on subtasks of the supercell builder
 '''load test dataset'''
 config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/crystal_building.yaml'
 user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
-config = get_config(user_yaml_path=user_path, main_yaml_path=config_path)
+config = process_main_config(user_yaml_path=user_path, main_yaml_path=config_path)
 modeller = Modeller(config)
 _, data_loader, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)
 modeller.init_gaussian_generator()

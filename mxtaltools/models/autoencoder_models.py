@@ -24,8 +24,6 @@ class PointAutoencoder(nn.Module):
 
         self.encoder = PointEncoder(seed, config)
 
-        self.scalarizer = Scalarizer(config.bottleneck_dim, 3, None, None, 0)
-
         self.decoder = MLP(
             layers=config.num_decoder_layers,
             filters=config.embedding_depth,
@@ -41,6 +39,9 @@ class PointAutoencoder(nn.Module):
             ramp_depth=config.decoder_ramp_depth,
         )
 
+        self.scalarizer = Scalarizer(config.bottleneck_dim, 3, None, None, 0)
+        self.decoder.vector_to_scalar[0] = self.scalarizer
+
     def forward(self, data, return_encoding=False):
         encoding = self.encode(data)
         if return_encoding:
@@ -49,7 +50,6 @@ class PointAutoencoder(nn.Module):
             return self.decode(encoding)
 
     def encode(self, data, z=None):
-
         if self.variational:
             encoding = self.variational_sampling(data, z)
         else:
@@ -60,7 +60,7 @@ class PointAutoencoder(nn.Module):
         return encoding
 
     def variational_sampling(self, data, z):
-        """
+        """  # TODO reconsider / rewrite mathematical issues here
         here we enforce regularization only against the norms of the embedding vectors
         the directions may not be / in practice are not randomly distributed, so generation based on random directions will not work
         would require somehow to regularize also over directions (maybe over dot products) as well
@@ -74,15 +74,17 @@ class PointAutoencoder(nn.Module):
         if z is None:
             z = torch.randn((len(sigma), 3, sigma.shape[-1]), dtype=v.dtype, device=v.device)
 
-        stochastic_weight = torch.linalg.norm(z * sigma[:, None, :] + mu[:, None, :], dim=1)  # parameterized distribution
-        encoding = stochastic_weight[:, None, :] * v / (torch.linalg.norm(v, dim=1)[:, None, :] + 1e-3)  # rescale vector length by learned distribution
+        stochastic_weight = torch.linalg.norm(z * sigma[:, None, :] + mu[:, None, :],
+                                              dim=1)  # parameterized distribution
+        encoding = stochastic_weight[:, None, :] * v / (
+                    torch.linalg.norm(v, dim=1)[:, None, :] + 1e-3)  # rescale vector length by learned distribution
         self.kld = (sigma ** 2 + mu ** 2 - log_sigma - 0.5)  # KL divergence of embedded distribution
         return encoding
 
     def decode(self, encoding):
         """encoding nx3xk"""
-        decoding = self.decoder(x=self.scalarizer(encoding),
-                                v=encoding)
+        decoding = self.decoder(x=torch.zeros_like(encoding[:, 0, :]),  # self.scalarizer(encoding),
+                                v=encoding)  # scalar input comes through scalarizer in first layer vector_to_scalar
 
         scalar_decoding, vector_decoding = decoding
         '''combine vector and scalar features to n*nodes x m'''

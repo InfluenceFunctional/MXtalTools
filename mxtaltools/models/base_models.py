@@ -151,12 +151,13 @@ class MoleculeGraphModel(nn.Module):
 
         x = data.x  # already cloned before it comes into this function
         x = self.append_init_node_features(data, x)
-        x = self.graph_net(x, data.pos,
-                           data.batch, data.ptr,
+        x = self.graph_net(x,
+                           data.pos,
+                           data.batch,
+                           data.ptr,
                            edges_dict)  # get graph encoding
         if self.equivariant_graph:
             x, v = x
-            # assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn scalar output {get_model_nans(self.graph_net)}"
 
             x, v = self.global_pool(x,
                                     agg_batch,
@@ -165,7 +166,6 @@ class MoleculeGraphModel(nn.Module):
                                     output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
         else:
             v = None
-            # torch.sum(torch.isnan(v)) == 0, f"NaN in gnn vector output {get_model_nans(self.graph_net)}"
 
             x = self.global_pool(x,
                                  agg_batch,
@@ -173,14 +173,13 @@ class MoleculeGraphModel(nn.Module):
                                  cluster=data.mol_ind if self.global_pool.agg_func == 'molwise' else None,
                                  output_dim=data.num_graphs)  # aggregate atoms to molecule / graph representation
 
-        # assert torch.sum(torch.isnan(x)) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
-
         if v is not None:
             assert torch.sum(torch.isnan(v)) == 0, f"NaN in gnn pool vector output {get_model_nans(self.graph_net)}"
 
         if self.num_fc_layers > 0:
             gmlp_out = self.gnn_mlp(x, v=v,
-                                    conditions=self.mol_fc(data.mol_x) if self.mol_fc is not None else None  # add graph-wise features
+                                    conditions=self.mol_fc(data.mol_x) if self.mol_fc is not None else None
+                                    # add graph-wise features
                                     )
             if self.equivariant_graph:
                 x, v = gmlp_out
@@ -207,9 +206,13 @@ class MoleculeGraphModel(nn.Module):
         if return_dists:
             extra_outputs['dists_dict'] = edges_dict
             if 'edge_index_inter' in edges_dict.keys():
-                extra_outputs['dists_dict']['intermolecular_dist'] = (data.pos[edges_dict['edge_index_inter'][0]] - data.pos[edges_dict['edge_index_inter'][1]]).pow(2).sum(dim=-1).sqrt()
+                extra_outputs['dists_dict']['intermolecular_dist'] = (
+                            data.pos[edges_dict['edge_index_inter'][0]] - data.pos[
+                        edges_dict['edge_index_inter'][1]]).pow(2).sum(dim=-1).sqrt()
                 extra_outputs['dists_dict']['intermolecular_dist_batch'] = data.batch[edges_dict['edge_index_inter'][0]]
-                extra_outputs['dists_dict']['intermolecular_dist_atoms'] = [data.x[edges_dict['edge_index_inter'][0], 0].long(), data.x[edges_dict['edge_index_inter'][1], 0].long()]
+                extra_outputs['dists_dict']['intermolecular_dist_atoms'] = [
+                    data.x[edges_dict['edge_index_inter'][0], 0].long(),
+                    data.x[edges_dict['edge_index_inter'][1], 0].long()]
                 extra_outputs['dists_dict']['intermolecular_dist_inds'] = edges_dict['edge_index_inter']
         if return_latent:
             extra_outputs['final_activation'] = x.cpu().detach().numpy()
@@ -229,7 +232,7 @@ class MoleculeGraphModel(nn.Module):
                 # x = torch.cat((x, rad[:, None], sh), dim=-1)
 
                 rad = torch.linalg.norm(data.pos, dim=1)
-                x = torch.cat((x, rad[:, None], data.pos / rad[:, None]), dim=-1)  # radii and normed directions
+                x = torch.cat((x, rad[:, None], data.pos / (rad[:, None] + 1e-5)), dim=-1)  # radii and normed directions
             else:
                 x = torch.cat((x, data.pos), dim=-1)
 
@@ -240,7 +243,8 @@ class MoleculeGraphModel(nn.Module):
                           dim=-1)
         if self.concat_crystal_to_atom_features:
             nodes_per_graph = torch.diff(data.ptr)
-            crystal_features = torch.tensor(self.SG_FEATURE_TENSOR[data.sg_ind], dtype=torch.float32, device=data.x.device)
+            crystal_features = torch.tensor(self.SG_FEATURE_TENSOR[data.sg_ind], dtype=torch.float32,
+                                            device=data.x.device)
             x = torch.cat((x,
                            torch.repeat_interleave(crystal_features, nodes_per_graph, 0)),
                           dim=-1)
