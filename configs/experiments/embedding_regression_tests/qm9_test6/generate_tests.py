@@ -2,7 +2,7 @@ from mxtaltools.common.config_processing import load_yaml
 import yaml
 from copy import copy
 
-base_config = load_yaml('../../experiments/base/embedding_regressor.yaml')
+base_config = load_yaml('../../base/embedding_regressor.yaml')
 
 models = [r'/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57',  # no protons
           r'/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'  # protons

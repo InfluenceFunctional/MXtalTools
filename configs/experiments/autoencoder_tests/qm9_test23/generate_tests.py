@@ -2,7 +2,7 @@ from mxtaltools.common.config_processing import load_yaml
 import yaml
 from copy import copy
 
-base_config = load_yaml('../../experiments/base/autoencoder.yaml')
+base_config = load_yaml('../../base/autoencoder.yaml')
 
 # filter_protons, infer protons, variational, ramp depth
 # decoder layers, conv layers, nodewise layers, decoder norm

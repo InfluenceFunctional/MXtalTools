@@ -3,7 +3,7 @@ import yaml
 from copy import copy
 import numpy as np
 
-base_config = load_yaml('../../experiments/base/autoencoder.yaml')
+base_config = load_yaml('../../base/autoencoder.yaml')
 
 # filter_protons, infer protons, variational, ramp depth
 # decoder layers, conv layers, nodewise layers, decoder norm
