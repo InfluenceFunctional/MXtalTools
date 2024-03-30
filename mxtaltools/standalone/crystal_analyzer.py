@@ -50,6 +50,7 @@ class CrystalAnalyzer(torch.nn.Module):
         self.device = device
         self.config = dict2namespace(load_yaml(config_path))
         self.supercell_size = supercell_size
+        self.mol_asym_unit_vol = 63.33  # approximate urea asym unit volume
 
         # update configs from checkpoints
         checkpoint = torch.load(discriminator_checkpoint_path, map_location=self.device)
@@ -74,6 +75,7 @@ class CrystalAnalyzer(torch.nn.Module):
             param.requires_grad = False
         self.model, _ = reload_model(self.model, device=self.device, optimizer=None, path=discriminator_checkpoint_path)
         self.model.eval()
+        self.model.to(self.device)
 
         self.volume_model = MoleculeRegressor(seed=12345, config=self.config.regressor.model,
                                               num_atom_features=num_atom_features,
@@ -83,6 +85,7 @@ class CrystalAnalyzer(torch.nn.Module):
         self.volume_model, _ = reload_model(self.volume_model, device=self.device, optimizer=None,
                                             path=volume_checkpoint_path)
         self.volume_model.eval()
+        self.volume_model.to(self.device)
 
         self.auvol_mean = self.r_dataDims['target_mean']
         self.auvol_std = self.r_dataDims['target_std']
@@ -102,8 +105,8 @@ class CrystalAnalyzer(torch.nn.Module):
 
         self.collater = Collater(0, 0)
 
-        self.atom_standardization_vector = torch.zeros((num_atom_features, 2))
-        self.mol_standardization_vector = torch.zeros((num_molecule_features, 2))
+        self.atom_standardization_vector = torch.zeros((num_atom_features, 2), device=self.device)
+        self.mol_standardization_vector = torch.zeros((num_molecule_features, 2), device=self.device)
         for ind, key in enumerate(['atom_mass',
                                    'atom_electronegativity',
                                    'atom_vdW_radius',
@@ -137,11 +140,11 @@ class CrystalAnalyzer(torch.nn.Module):
                 vdw_loss, vdw_score, _, _, _ = vdw_overlap(self.vdw_radii,
                                                            crystaldata=proposed_crystaldata,
                                                            return_score_only=False,
-                                                           loss_func='log')
+                                                           loss_func='inv')
                 model_predicted_aunit_volume = self.estimate_aunit_volume(data)[:, 0]
 
                 model_predicted_aunit_volume = torch.ones_like(model_predicted_aunit_volume) * (
-                            5 * 5 * 5 / 4)  # approximate for urea
+                    self.mol_asym_unit_vol)  # approximate for urea
 
                 packing_loss = torch.abs(sample_predicted_aunit_volume - model_predicted_aunit_volume) / torch.abs(
                     model_predicted_aunit_volume)
@@ -174,6 +177,7 @@ class CrystalAnalyzer(torch.nn.Module):
                         'classification_score': classification_score.cpu().detach().numpy(),
                         'predicted_distance': predicted_distance.cpu().detach().numpy(),
                         'heuristic_score': heuristic_score.cpu().detach().numpy(),
+                        'log_heuristic_loss': np.log10(-heuristic_score.cpu().detach().numpy()),
                         'predicted_packing_coeff': sample_predicted_aunit_volume.cpu().detach().numpy(),
                         'model_packing_coeff': model_predicted_aunit_volume.cpu().detach().numpy(),
                         'vdw_score': vdw_score.cpu().detach().numpy(),
@@ -181,23 +185,25 @@ class CrystalAnalyzer(torch.nn.Module):
                     return output, stats_dict
                 else:
                     return output
-
-            elif score_type == 'density':
-                data = self.preprocess(data, proposed_sgs)
-                sample_predicted_aunit_volume = self.compute_aunit_volume(data.cell_params, data.mult)
-                model_predicted_aunit_volume = self.estimate_aunit_volume(data)
-                packing_loss = F.smooth_l1_loss(sample_predicted_aunit_volume, model_predicted_aunit_volume,
-                                                reduction='none')
-                output = torch.exp(-5 * packing_loss)
-
-                if return_stats:
-                    stats_dict = {
-                        'predicted_packing_coeff': sample_predicted_aunit_volume.cpu().detach().numpy(),
-                        'model_packing_coeff': model_predicted_aunit_volume.cpu().detach().numpy(),
-                    }
-                    return output, stats_dict
-                else:
-                    return output
+            else:
+                assert False
+            #
+            # elif score_type == 'density':
+            #     data = self.preprocess(data, proposed_sgs)
+            #     sample_predicted_aunit_volume = self.compute_aunit_volume(data.cell_params, data.mult)
+            #     model_predicted_aunit_volume = self.estimate_aunit_volume(data)
+            #     packing_loss = F.smooth_l1_loss(sample_predicted_aunit_volume, model_predicted_aunit_volume,
+            #                                     reduction='none')
+            #     output = torch.exp(-5 * packing_loss)
+            #
+            #     if return_stats:
+            #         stats_dict = {
+            #             'predicted_packing_coeff': sample_predicted_aunit_volume.cpu().detach().numpy(),
+            #             'model_packing_coeff': model_predicted_aunit_volume.cpu().detach().numpy(),
+            #         }
+            #         return output, stats_dict
+            #     else:
+            #         return output
 
     def prep_crystaldata(self, atom_types_list, coords_list):
         # quick featurization
@@ -228,7 +234,7 @@ class CrystalAnalyzer(torch.nn.Module):
             for ind in range(len(coords_list))
         ]
         data = self.collater(datapoints)
-
+        data.to(self.device)
         # standardize input
         data.x = (data.x - self.atom_standardization_vector[:, 0]) / self.atom_standardization_vector[:, 1]
         data.mol_x = (data.mol_x - self.mol_standardization_vector[:, 0]) / self.mol_standardization_vector[:, 1]
