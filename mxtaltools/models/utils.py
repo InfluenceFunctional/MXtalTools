@@ -378,7 +378,9 @@ def get_n_config(model):
     return pp
 
 
-def clean_generator_output(samples=None, lattice_lengths=None, lattice_angles=None, mol_positions=None, mol_orientations=None, lattice_means=None, lattice_stds=None, destandardize=True, mode='soft'):
+def clean_generator_output(samples=None, lattice_lengths=None, lattice_angles=None,
+                           mol_positions=None, mol_orientations=None,
+                           lattice_means=None, lattice_stds=None, destandardize=True, mode='soft'):
     """
     convert from raw model output to the actual cell parameters with appropriate bounds
     considering raw outputs to be in the standardized basis, we destandardize, then enforce bounds
@@ -526,17 +528,26 @@ def decode_to_sph_rotvec(mol_orientations):
     we bound the encodings for theta on 0-1 to restrict the range of theta to [0,pi/2]
     """
     theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
-    real_orientation_theta = components2angle(theta_encoding)  # from the sigmoid, [0, pi]
+    real_orientation_theta = components2angle(theta_encoding)  # from the sigmoid, [0, pi/2]
     real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted [-pi,pi]
     real_orientation_r = components2angle(mol_orientations[:, 4:6]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
 
-    # clean_mol_orientations = torch.cat((
-    #     real_orientation_theta[:, None],
-    #     real_orientation_phi[:, None],
-    #     real_orientation_r[:, None]
-    # ), dim=-1)
-
     return real_orientation_theta[:, None], real_orientation_phi[:, None], real_orientation_r[:, None]
+
+def decode_to_sph_rotvec2(mol_orientation_components):
+    """
+    each angle is predicted with 2 params
+    we bound the encodings for theta on 0-1 to restrict the range of theta to [0,pi/2]
+
+    identical to the above, but considering theta as a simple scalar
+    [n, 5] input to [n, 3] output
+    """
+    # theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
+    # real_orientation_theta = components2angle(theta_encoding)  # from the sigmoid, [0, pi/2]
+    real_orientation_phi = components2angle(mol_orientation_components[:, 1:3])  # unrestricted [-pi,pi]
+    real_orientation_r = components2angle(mol_orientation_components[:, 3:5]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
+
+    return mol_orientation_components[:, 0, None], real_orientation_phi[:, None], real_orientation_r[:, None]
 
 
 def get_regression_loss(regressor, data, targets, mean, std):
