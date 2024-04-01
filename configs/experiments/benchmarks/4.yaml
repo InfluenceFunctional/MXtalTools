@@ -7,6 +7,8 @@ base_config_path: '/experiments/base/generator.yaml'  # base config
 dataset:
   regression_target: crystal_reduced_volume
 
+generate_sgs: ['P21/c','P-1','C2/c','P212121']
+
 # batching & convergence
 early_epochs_step_override: 5
 num_early_epochs: 0

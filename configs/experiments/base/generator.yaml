@@ -59,7 +59,7 @@ positional_noise:
   regressor: 0
   autoencoder: 0
 
-generate_sgs: ['P1']
+generate_sgs: null
 supercell_size: 5
 
 
