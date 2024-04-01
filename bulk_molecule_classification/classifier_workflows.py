@@ -4,12 +4,12 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from bulk_molecule_classification.classifier_constants import form2index, identifier2form, urea_ordered_class_names, nic_ordered_class_names
-from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
+from constants.classifier_constants import form2index, identifier2form, urea_ordered_class_names, nic_ordered_class_names
+from common.dump_data_processing import generate_dataset_from_dumps
 
-from bulk_molecule_classification.traj_analysis_figs import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig, process_trajectory_data
-from bulk_molecule_classification.utils import get_loss, classifier_reporting, record_step_results, process_trajectory_results_dict
-from bulk_molecule_classification.dataset_prep import collect_to_traj_dataloaders
+from bulk_molecule_classification.analyses.traj_analysis_figs import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig, process_trajectory_data
+from common.mol_classifier_utils import get_loss, classifier_reporting, record_step_results, process_trajectory_results_dict
+from bulk_molecule_classification.classifier_dataset_prep import collect_to_traj_dataloaders
 
 
 def train_classifier(config, classifier, optimizer,
@@ -165,7 +165,7 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
     dataset_path = f'{datasets_path}{dataset_name}.pkl'
     output_dict_path = config['results_path'] + dataset_name + '_analysis'
 
-    if not os.path.exists(output_dict_path + '.npy'):
+    if True: #not os.path.exists(output_dict_path + '.npy'):
         loader, run_config = collect_trajectory_dataloader(config, dataset_path, dumps_dir)
         results_dict = classify_trajectory(classifier, config, device, loader)
         os.chdir(config['results_path'])
@@ -222,7 +222,7 @@ def trajectory_analysis(config, classifier, wandb, device, dumps_dir):
 
 def write_ovitos(dumps_dir, sorted_molwise_results_dict):
     try:
-        from bulk_molecule_classification.ovito_utils import write_ovito_xyz
+        from common.ovito_utils import write_ovito_xyz
         dataset_name = '_'.join(dumps_dir.split('/')[-3:])
 
         write_ovito_xyz(sorted_molwise_results_dict['Coordinates'],

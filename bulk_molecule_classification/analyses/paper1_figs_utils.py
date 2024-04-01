@@ -7,8 +7,6 @@ from plotly.subplots import make_subplots
 from scipy.ndimage import gaussian_filter1d
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
-from bulk_molecule_classification.traj_analysis_figs import process_trajectory_data
-
 
 def combined_embedding_fig(mk_results_dict, d_results_dict1, d_results_dict2,
                            ordered_classes, molecule_name,
@@ -418,6 +416,7 @@ def combined_accuracy_fig(results_dict, ordered_classes, temp_series):
     fig.update_yaxes(title_text="True Class", row=1, col=1)
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
     fig.update_layout(font=dict(size=FONTSIZE))
+    fig.update_annotations(font_size=28)
 
     return fig, scores
 
@@ -469,7 +468,7 @@ def urea_interface_fig(sorted_molwise_results_dict, stacked_plot=False):
     fig.add_vline(x=-0.01, line_color='black')
     ylevel = -0.25
     xlevels = np.linspace(-0.1, 0.9, len(images))
-    stits = ['0', '250 ns', '500 ns', '750 ns', '1 ps']
+    stits = ['0', '250 fs', '500 fs', '750 fs', '1 ps']
     for ind in range(len(images)):
         fig.add_layout_image(
             dict(source=images[ind],
@@ -532,8 +531,8 @@ def nic_clusters_fig(traj_dict1, traj_dict2):
     fig.add_vline(x=-0.01, line_color='black')
     fig.update_xaxes(range=[-.0025, .525], row=2, col=1, zeroline=True)
     fig.update_xaxes(range=[-.0025, .525], row=2, col=2, zeroline=True)
-    fig.update_yaxes(range=[0, 50], row=1, col=1, zeroline=True)
-    fig.update_yaxes(range=[0, 50], row=1, col=2, zeroline=True)
+    fig.update_yaxes(rangemode='tozero', row=1, col=1, zeroline=True)
+    fig.update_yaxes(rangemode='tozero', row=1, col=2, zeroline=True)
 
     # fig.update_yaxes(range=[0, 1])
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')

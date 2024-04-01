@@ -1,18 +1,21 @@
 import numpy as np
 import os
 
-from bulk_molecule_classification.classifier_constants import (nic_ordered_class_names, urea_ordered_class_names,
-                                                               )
-from bulk_molecule_classification.paper1_figs_utils import (process_daisuke_dats, urea_interface_fig, nic_clusters_fig, combined_accuracy_fig, combined_embedding_fig, paper_form_accuracy_fig)
+from constants.classifier_constants import (nic_ordered_class_names, urea_ordered_class_names,
+                                            )
+from bulk_molecule_classification.analyses.paper1_figs_utils import (process_daisuke_dats, urea_interface_fig, nic_clusters_fig, combined_accuracy_fig, combined_embedding_fig, paper_form_accuracy_fig)
 
 max_tsne_samples = 100
 
 os.chdir(r'D:\crystals_extra\classifier_training\results')
 urea_eval_path = 'dev_urea_evaluation_results_feb6_dict.npy'
-nic_eval_path = 'dev_nic_evaluation_results_march12_dict.npy'
+#nic_eval_path = 'dev_nic_evaluation_results_march13_seed2_dict.npy'
+nic_eval_path = 'dev_nic_evaluation_results_march13_seed0_dict.npy'
 urea_interface_path = 'crystals_extra_classifier_training_urea_melt_interface_T200_analysis.npy'
-nic_traj_path1 = 'paper_nic_clusters2_1__analysis.npy'
-nic_traj_path2 = 'paper_nic_clusters2_7__analysis.npy'
+# nic_traj_path1 = 'paper_nic_clusters2_1__analysis.npy' # 15 Angstrom radius
+# nic_traj_path2 = 'paper_nic_clusters2_7__analysis.npy'
+nic_traj_path1 = 'paper_nic_clusters2_2__analysis.npy' # 17 Angstrom radius
+nic_traj_path2 = 'paper_nic_clusters2_8__analysis.npy'
 d_nic_tsne_path1 = 'daisuke_nic_tsne1.npy'  # raw input
 d_nic_tsne_path2 = 'daisuke_nic_tsne2.npy'  # scaled
 d_nic_tsne_path3 = 'daisuke_nic_tsne3.npy'  # embedding
@@ -29,27 +32,27 @@ results_dict = np.load(urea_eval_path, allow_pickle=True).item()
 
 fig_dict['urea_cmat'], scores_dict['urea'] = combined_accuracy_fig(
     results_dict, urea_ordered_class_names, [100, 200, 350])
-
-'''
-urea tSNE
-'''
-d_urea_embed_dict2 = np.load(d_urea_tsne_path2, allow_pickle=True)
-d_urea_embed_dict3 = np.load(d_urea_tsne_path3, allow_pickle=True)
-old2new = {3: 0,  # reindex urea targets
-           4: 1,
-           5: 2,
-           0: 3,
-           6: 4,
-           1: 5,
-           2: 6}
-d_urea_embed_dict2['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict2['Targets']])
-d_urea_embed_dict3['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict3['Targets']])
-d_urea_embed_dict2['Embeddings'] = d_urea_embed_dict2['Latents']
-
-fig_dict['urea_tSNE'] = combined_embedding_fig(
-    results_dict, d_urea_embed_dict2, d_urea_embed_dict3, urea_ordered_class_names,
-    max_samples=max_tsne_samples, perplexity=30, molecule_name='urea'
-)
+#
+# '''
+# urea tSNE
+# '''
+# d_urea_embed_dict2 = np.load(d_urea_tsne_path2, allow_pickle=True)
+# d_urea_embed_dict3 = np.load(d_urea_tsne_path3, allow_pickle=True)
+# old2new = {3: 0,  # reindex urea targets
+#            4: 1,
+#            5: 2,
+#            0: 3,
+#            6: 4,
+#            1: 5,
+#            2: 6}
+# d_urea_embed_dict2['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict2['Targets']])
+# d_urea_embed_dict3['Targets'] = np.asarray([old2new[tgt] for tgt in d_urea_embed_dict3['Targets']])
+# d_urea_embed_dict2['Embeddings'] = d_urea_embed_dict2['Latents']
+#
+# fig_dict['urea_tSNE'] = combined_embedding_fig(
+#     results_dict, d_urea_embed_dict2, d_urea_embed_dict3, urea_ordered_class_names,
+#     max_samples=max_tsne_samples, perplexity=30, molecule_name='urea'
+# )
 del results_dict
 
 '''
@@ -60,17 +63,17 @@ results_dict = np.load(nic_eval_path, allow_pickle=True).item()
 fig_dict['nic_cmat'], scores_dict['nic'] = combined_accuracy_fig(
     results_dict, nic_ordered_class_names, [100, 350])
 
-'''
-nic tSNE
-'''
-d_nic_embed_dict2 = np.load(d_nic_tsne_path2, allow_pickle=True).item()
-d_nic_embed_dict3 = np.load(d_nic_tsne_path3, allow_pickle=True).item()
-d_nic_embed_dict2['Embeddings'] = d_nic_embed_dict2['Latents']
-
-fig_dict['nicotinamide_tSNE'] = combined_embedding_fig(
-    results_dict, d_nic_embed_dict2, d_nic_embed_dict3, nic_ordered_class_names,
-    max_samples=max_tsne_samples, perplexity=30, molecule_name='nicotinamide'
-)
+# '''
+# nic tSNE
+# '''
+# d_nic_embed_dict2 = np.load(d_nic_tsne_path2, allow_pickle=True).item()
+# d_nic_embed_dict3 = np.load(d_nic_tsne_path3, allow_pickle=True).item()
+# d_nic_embed_dict2['Embeddings'] = d_nic_embed_dict2['Latents']
+#
+# fig_dict['nicotinamide_tSNE'] = combined_embedding_fig(
+#     results_dict, d_nic_embed_dict2, d_nic_embed_dict3, nic_ordered_class_names,
+#     max_samples=max_tsne_samples, perplexity=30, molecule_name='nicotinamide'
+# )
 
 del results_dict
 
@@ -114,8 +117,8 @@ for key, fig in fig_dict.items():
         fig.write_image(key + '.png', width=960, height=900)
     else:
         fig.write_image(key + '.png', scale=4)
-for key, fig in fig_dict.items():
-    fig.show(renderer='browser')
+# for key, fig in fig_dict.items():
+#     fig.show(renderer='browser')
 
 for item in scores_dict.items():
     print(item)

@@ -2,12 +2,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from bulk_molecule_classification.classifier_constants import num2atomicnum
 from common.utils import delete_from_dataframe, softmax_np
-from models.base_models import molecule_graph_model
-from bulk_molecule_classification.mol_classifier import MoleculeClassifier
+from models.mol_classifier import MoleculeClassifier
 from common.geometry_calculations import coor_trans_matrix
-from bulk_molecule_classification.classifier_constants import defect_names
+from constants.classifier_constants import defect_names
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
@@ -15,6 +13,7 @@ import plotly.graph_objects as go
 
 def convert_box_to_cell_params(box_params):
     """
+    LAMMPS periodic box style
     ITEM: BOX BOUNDS xy xz yz
     xlo_bound xhi_bound xy
     ylo_bound yhi_bound xz
@@ -278,41 +277,41 @@ def pare_cluster_radius(cluster_atoms, cluster_coords, cluster_targets, max_clus
     cluster_targets = cluster_targets[good_mols]
     return cluster_atoms, cluster_coords, cluster_targets
 
-
-def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth, num_forms, num_topologies, seed):
-    return molecule_graph_model(
-        num_atom_feats=1,
-        output_dimension=num_forms + num_topologies,
-        graph_aggregator='molwise',
-        concat_pos_to_atom_features=False,
-        concat_mol_to_atom_features=False,
-        concat_crystal_to_atom_features=False,
-        activation='gelu',
-        num_mol_feats=0,
-        num_fc_layers=num_fcs,
-        fc_depth=embedding_depth,
-        fc_dropout_probability=dropout,
-        fc_norm_mode=fc_norm,
-        graph_node_norm=graph_norm,
-        graph_node_dropout=dropout,
-        graph_message_norm=None,
-        graph_message_dropout=0,
-        num_radial=32,
-        num_attention_heads=4,
-        graph_message_depth=message_depth,
-        graph_node_dims=embedding_depth,
-        num_graph_convolutions=num_convs,
-        graph_embedding_depth=embedding_depth,
-        nodewise_fc_layers=1,
-        radial_function='bessel',
-        max_num_neighbors=100,
-        convolution_cutoff=conv_cutoff,
-        atom_type_embedding_dims=5,
-        seed=seed,
-        periodic_structure=False,
-        outside_convolution_type='none',
-        graph_convolution_type='TransformerConv',
-    )
+# DEPRECATED
+# def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth, num_forms, num_topologies, seed):
+#     return molecule_graph_model(
+#         num_atom_feats=1,
+#         output_dimension=num_forms + num_topologies,
+#         graph_aggregator='molwise',
+#         concat_pos_to_atom_features=False,
+#         concat_mol_to_atom_features=False,
+#         concat_crystal_to_atom_features=False,
+#         activation='gelu',
+#         num_mol_feats=0,
+#         num_fc_layers=num_fcs,
+#         fc_depth=embedding_depth,
+#         fc_dropout_probability=dropout,
+#         fc_norm_mode=fc_norm,
+#         graph_node_norm=graph_norm,
+#         graph_node_dropout=dropout,
+#         graph_message_norm=None,
+#         graph_message_dropout=0,
+#         num_radial=32,
+#         num_attention_heads=4,
+#         graph_message_depth=message_depth,
+#         graph_node_dims=embedding_depth,
+#         num_graph_convolutions=num_convs,
+#         graph_embedding_depth=embedding_depth,
+#         nodewise_fc_layers=1,
+#         radial_function='bessel',
+#         max_num_neighbors=100,
+#         convolution_cutoff=conv_cutoff,
+#         atom_type_embedding_dims=5,
+#         seed=seed,
+#         periodic_structure=False,
+#         outside_convolution_type='none',
+#         graph_convolution_type='TransformerConv',
+#     )
 
 
 def new_init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth, num_forms, num_topologies, seed):

@@ -5,7 +5,7 @@ from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
-from bulk_molecule_classification.paper1_figs_utils import COLORS, FONTSIZE, LEGEND_FONTSIZE
+from bulk_molecule_classification.analyses.paper1_figs_utils import COLORS, FONTSIZE, LEGEND_FONTSIZE
 
 
 def embedding_fig(results_dict, ordered_classes, max_samples=1000, perplexity=30):

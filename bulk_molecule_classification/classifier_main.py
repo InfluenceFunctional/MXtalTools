@@ -3,15 +3,15 @@ import warnings
 import torch.optim as optim
 import wandb
 import argparse
-from bulk_molecule_classification.dev_configs import configs, dev
+from configs.mol_classifier_configs import configs, dev
 import torch
 import numpy as np
 
-from bulk_molecule_classification.utils import (reload_model, new_init_classifier)
-from bulk_molecule_classification.dataset_prep import collate_training_dataloaders
-from bulk_molecule_classification.workflows import train_classifier, classifier_evaluation, trajectory_analysis
-from bulk_molecule_classification.classifier_constants import nic_class_names, nic_ordered_class_names, urea_class_names, urea_ordered_class_names
-from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
+from common.mol_classifier_utils import (reload_model, new_init_classifier)
+from bulk_molecule_classification.classifier_dataset_prep import collate_training_dataloaders
+from bulk_molecule_classification.classifier_workflows import train_classifier, classifier_evaluation, trajectory_analysis
+from constants.classifier_constants import nic_class_names, nic_ordered_class_names, urea_class_names, urea_ordered_class_names
+from common.dump_data_processing import generate_dataset_from_dumps
 from models.utils import get_n_config
 
 warnings.filterwarnings("ignore", category=FutureWarning)  # ignore numpy error

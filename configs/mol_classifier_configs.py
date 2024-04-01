@@ -15,15 +15,14 @@ dev = {'run_name': 'dev_nic',
        'conv_cutoff': 6,
        'batch_size': 5,
        'reporting_frequency': 1,
-       'train_model': True,
-       'trajs_to_analyze_list': None,
-       # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [1, 2, 7]],
+       'train_model': False,
+       'trajs_to_analyze_list': None,  # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [1, 2, 7]],
        # [f'D:/crystals_extra/classifier_training/crystal_in_melt_test10/{ind}/' for ind in range(0, 48)],
-       # [f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in range(12)],
+           #[f'D:/crystals_extra/classifier_training/paper_nic_clusters2/{ind}/' for ind in [2, 8]],
        # [f'D:/crystals_extra/defect_clusters_6/{num}/' for num in defect_clusters_6_pure_nic_runs] +
        # [f'D:/crystals_extra/defect_clusters_5_rerun/{num}/' for num in defect_clusters_5_rerun_pure_nic_runs],
-       'do_classifier_evaluation': False,
-       'classifier_path': None, #'C:/Users/mikem/crystals/classifier_runs/nic_March12_test0_0_best_classifier_checkpoint',
+       'do_classifier_evaluation': True,
+       'classifier_path': 'C:/Users/mikem/crystals/classifier_runs/nic_March13_2_test0_0_best_classifier_checkpoint',
        # 'C:/Users/mikem/crystals/classifier_runs/nic_Feb2_test2_1_best_classifier_checkpoint',  # test1 for cold test2 for hot
        # 'C:/Users/mikem/crystals/classifier_runs/dev_nic_best_hot_classifier_checkpoint', #'C:/Users/mikem/crystals/classifier_runs/nic_test0_3_best_classifier_checkpoint',
        'learning_rate': 1e-4,
@@ -32,12 +31,13 @@ dev = {'run_name': 'dev_nic',
        'dumps_dirs': ['new_small_nic_liq_T350', 'nicotinamide_liq', 'new_nic_bulk_small', 'new_nic_bulk_big'],
        # ['new_small_nic_liq_T350', 'nicotinamide_liq', 'bulk_trajs3', 'new_small_bulk'],  # ['new_small_bulk'], #
        'training_temps': [100, 350],
-       'dataset_name': 'new_nic_full_redo_check',  # 'nicotinamide_trajectories_dataset_100_350_vf', # 'small_nic_test', #
+       'dataset_name': 'new_nic_full_redo_check',
+       # 'nicotinamide_trajectories_dataset_100_350_vf', # 'small_nic_test', #
        'runs_path': r'C:/Users/mikem/crystals/classifier_runs/',
        'results_path': r'D:\crystals_extra\classifier_training\results/',
        'device': 'cuda',
        'seed': 1}
-#
+
 #
 # dev = {'run_name': 'dev_urea',
 #        'dataset_temperature': 'cold',
@@ -121,13 +121,13 @@ config_list = [
     # [1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'cold'],  # 0
     [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'cold'],  # 1
     # [1, 256, 128, 0.25, 'layer', 'layer', 2, 1000, 'hot'],  # 2
-    #[1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'hot'],  # 3
+    # [1, 256, 128, 0.5, 'layer', 'layer', 2, 1000, 'hot'],  # 3
 ]
 
 test_name = 'March13_2'
 for device in ['cuda']:  # , 'cpu']:
     for i in range(len(config_list)):
-        for si in range(2,6):
+        for si in range(2, 6):
             for mol in range(1):
                 configs.append(copy(base_config))
                 configs[-1]['device'] = device
@@ -151,7 +151,8 @@ for device in ['cuda']:  # , 'cpu']:
                 elif mol == 0:
                     configs[-1]['run_name'] = f'nic_{test_name}_test{i}_{si}'
                     configs[-1]['dataset_name'] = 'new_nic_full_redo_check'
-                    configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'new_nic_bulk_small', 'new_nic_bulk_big']
+                    configs[-1]['dumps_dirs'] = ['new_small_nic_liq_T350', 'nicotinamide_liq', 'new_nic_bulk_small',
+                                                 'new_nic_bulk_big']
                     configs[-1]['training_temps'] = [100, 350]
 aa = 1
 #

@@ -5,20 +5,32 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from bulk_molecule_classification.classifier_constants import identifier2form, type2num
+from constants.classifier_constants import identifier2form, type2num
+from constants.atom_properties import ATOM_WEIGHTS
+
+
+def atom_mass_to_atom_num(atom_mass):
+    weights_array = np.asarray(list(ATOM_WEIGHTS.values()))
+    atom_index = np.argmin(np.abs(atom_mass - weights_array))
+    return atom_index  # weights array indexes from 0
 
 
 def process_dump(path):
-    if path == 'traj_urea_interface.dump':
-        num2atomicnum = {1: 1,
-                         2: 8,
-                         3: 6,
-                         4: 7,
-                         5: 7,
-                         }
+    if os.path.exists('new_system.data') or os.path.exists(
+            'system.data'):  # pull atom indices straight out of the definition file
+        num2atomicnum = extract_atom_indexing()
 
     else:
-        from bulk_molecule_classification.classifier_constants import num2atomicnum
+        if path == 'traj_urea_interface.dump':
+            num2atomicnum = {1: 1,
+                             2: 8,
+                             3: 6,
+                             4: 7,
+                             5: 7,
+                             }
+
+        else:
+            from constants.classifier_constants import num2atomicnum
 
     file = open(path, 'r')
     lines = file.readlines()
@@ -49,7 +61,7 @@ def process_dump(path):
                     newline[2] = num2atomicnum[atom_ind]
                 except ValueError:
                     newline[2] = int(type2num[newline[2]])
-                    #newline[2] = num2atomicnum[atom_ind]
+                    # newline[2] = num2atomicnum[atom_ind]
 
                 atom_data[ind2] = np.asarray(newline[:6]).astype(float)  # only want indices and positions
 
@@ -66,18 +78,47 @@ def process_dump(path):
     return frame_outputs
 
 
+def extract_atom_indexing():
+    if os.path.exists('new_system.data'):
+        filepath = 'new_system.data'
+    else:
+        filepath = 'system.data'
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
+        for ind, line in enumerate(lines):
+            if 'Mass' in line:
+                mass_ind = ind
+                break
+
+        for ind, line in enumerate(lines):
+            if 'Atoms' in line:
+                atom_block_ind = ind
+                break
+
+        mass_block = lines[mass_ind + 1:atom_block_ind - 1]
+        num2atomicnum = {}
+        for line in mass_block:
+            if line == '\n':
+                pass
+            else:
+                index, atom_mass = line.split(' ')[0:2]
+                num2atomicnum[int(index)] = int(atom_mass_to_atom_num(float(atom_mass)))
+    return num2atomicnum
+
+
 def generate_dataset_from_dumps(dumps_dirs, dataset_path):
     sample_df = pd.DataFrame()  # todo add capability to grow this object iteratively in case it crashes midway through generation
     for dumps_dir in dumps_dirs:
         os.chdir(dumps_dir)
-        dump_files = glob.glob(r'*/*.dump', recursive=True) + glob.glob('*.dump')  # plus any free dumps directly in this dir
+        dump_files = glob.glob(r'*/*.dump', recursive=True) + glob.glob(
+            '*.dump')  # plus any free dumps directly in this dir
 
         if len(dump_files) == 0:
             assert False
 
         for path in tqdm(dump_files):
             print(f"Processing dump {path}")
-            form, gap_rate, temperature = process_config(dumps_dir, path)
+            form, gap_rate, temperature = process_LAMMPS_run_config(dumps_dir, path)
 
             trajectory_dict = process_dump(path)
 
@@ -128,7 +169,7 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
     return True
 
 
-def process_config(dumps_dir, path):
+def process_LAMMPS_run_config(dumps_dir, path):
     if os.path.exists('run_config.npy'):
         run_config = np.load('run_config.npy', allow_pickle=True).item()
     elif os.path.exists(path.split('\\')[0] + '/' + 'run_config.npy'):

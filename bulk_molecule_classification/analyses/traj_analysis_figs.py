@@ -1,10 +1,10 @@
 import numpy as np
-from _plotly_utils.colors import sample_colorscale
 from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
-from bulk_molecule_classification.classifier_constants import defect_names, nic_ordered_class_names, urea_ordered_class_names, form2index, index2form, identifier2form
+from constants.classifier_constants import defect_names, nic_ordered_class_names, urea_ordered_class_names, \
+    identifier2form
 import plotly
 from scipy.ndimage import gaussian_filter1d
 
