@@ -159,7 +159,7 @@ class CrystalAnalyzer(torch.nn.Module):
                 elif score_type == 'heuristic':
                     output = heuristic_score
 
-                sort_inds = torch.argsort(predicted_distance)[:n_top_k].cpu().detach().numpy()  # save top 10 samples (10 smallest distances)
+                sort_inds = torch.argsort(heuristic_score)[-n_top_k:].cpu().detach().numpy()  # save top 10 samples (10 smallest distances)
                 mols = [ase_mol_from_crystaldata(proposed_crystaldata,
                                                  index=ind,
                                                  exclusion_level='distance',
