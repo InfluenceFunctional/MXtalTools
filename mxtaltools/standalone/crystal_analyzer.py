@@ -149,7 +149,7 @@ class CrystalAnalyzer(torch.nn.Module):
                 # something finnicky with packing loss prediction right now - substitute for maximal density
                 atom_volumes = 4/3 * self.vdw_radii[data.x[:, 0].long()] ** 3
                 sum_of_spheres_volume = scatter(atom_volumes, data.batch, reduce='sum') / 2  # crudely add spherical volumes and make a lower bound
-                packing_loss = F.relu(sample_auv - sum_of_spheres_volume) / torch.diff(data.ptr) / 10  # loss coefficient of 1/10 relative to vdW
+                packing_loss = F.relu(sample_auv - sum_of_spheres_volume) / torch.diff(data.ptr) / 50  # loss coefficient of 1/10 relative to vdW
                 heuristic_score = - vdw_loss - packing_loss
 
                 if score_type == 'classifier':
@@ -159,7 +159,7 @@ class CrystalAnalyzer(torch.nn.Module):
                 elif score_type == 'heuristic':
                     output = heuristic_score
 
-                sort_inds = torch.argsort(predicted_distance)[:n_top_k].cpu().detach().numpy()  # save top 10 samples (10 smallest distances)
+                sort_inds = torch.argsort(heuristic_score)[-n_top_k:].cpu().detach().numpy()  # save top 10 samples (10 smallest distances)
                 mols = [ase_mol_from_crystaldata(proposed_crystaldata,
                                                  index=ind,
                                                  exclusion_level='distance',
