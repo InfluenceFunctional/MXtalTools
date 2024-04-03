@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 
 from bulk_molecule_classification.classifier_constants import form2index, identifier2form
-from bulk_molecule_classification.dump_data_processing import generate_dataset_from_dumps
+from bulk_molecule_classification.deprecated.dump_data_processing import generate_dataset_from_dumps
 
 from bulk_molecule_classification.traj_analysis_figs import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig
 from bulk_molecule_classification.utils import get_loss, classifier_reporting, record_step_results, process_trajectory_results_dict

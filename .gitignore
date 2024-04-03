@@ -3,3 +3,5 @@ __pycache__/
 /parallelTest.py
 /old/processDatasetChunks.py
 /req.out
+/old/
+/wandb/

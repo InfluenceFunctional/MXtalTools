@@ -1,0 +1,42 @@
+#First, define the dataset by a series of conditions in format [key, type, [elements]]
+#where type is in not_in or range and elements are [min, max], or a list of discrete values
+#
+#Then, specify the features which will be fed to models in training
+
+seed: 1
+max_dataset_length: 1000000
+save_dataset: False
+
+regression_target: null # 'crystal_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
+single_molecule_dataset_identifier: null
+test_fraction: 0.2
+
+sample_from_trajectory: True # true for random selection from dataset, false for contiguous analysis e.g., of a single trajectory
+trajs_to_analyze_list: null
+
+dumps_dirs: ['new_small_nic_liq_T350', 'nicotinamide_liq', 'new_nic_bulk_small', 'new_nic_bulk_big']
+
+filter_conditions: [['train_temperature','in',[100]],
+                    ['test_temperature','in',[350]],
+                    ['early_time_to_omig', 'in', [0]],
+                    ['late_time_to_omit', 'in', [0]],
+                    ['max_box_volume', 'in', [10000]],
+                    ['min_box_volume', 'in', [0]],
+                    ['periodic','in',[True, False]],
+                    ['allowed_forms','in',['NICOAM13','melt']],
+
+                    ]
+
+atom_feature_keys: [
+'atom_atomic_numbers',
+'atom_mass',
+'atom_vdW_radius',
+'atom_electronegativity',
+'atom_group',
+'atom_period'
+]
+
+molecule_feature_keys : [
+'molecule_mass',
+'molecule_num_atoms'
+]
