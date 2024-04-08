@@ -144,7 +144,7 @@ def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=
         main_config['save_checkpoints'] = True
 
     # load dataset config - but do not overwrite any settings from main config
-    dataset_yaml_path = Path(main_config['config_path'] + main_config['dataset_yaml_path'])
+    dataset_yaml_path = Path(main_config['config_path'] + '/dataset/' + main_config['dataset_yaml_path'])
     dataset_config = load_yaml(dataset_yaml_path)
     if 'dataset' in main_config.keys():
         for key in dataset_config.keys():

@@ -3,7 +3,8 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from bulk_molecule_classification.utils import filter_mols, convert_box_to_cell_params, reindex_mols, reindex_molecules, force_molecules_into_box, pare_cluster_radius, compute_mol_radii, identify_surface_molecules, pare_fragmented_molecules
+from bulk_molecule_classification import filter_mols, convert_box_to_cell_params, reindex_mols, reindex_molecules, force_molecules_into_box, pare_cluster_radius, \
+    identify_surface_molecules, pare_fragmented_molecules
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders
 

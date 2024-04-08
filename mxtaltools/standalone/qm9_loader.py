@@ -17,7 +17,8 @@ class QM9Loader:
     def __init__(self, device):
         self.device = device
         self.data_manager = DataManager(device=self.device,
-                                        datasets_path=datasets_path)
+                                        datasets_path=datasets_path,
+                                        dataset_type = 'molecule')
 
         self.dataset_config = dict2namespace(load_yaml(dataset_yaml_path))
 

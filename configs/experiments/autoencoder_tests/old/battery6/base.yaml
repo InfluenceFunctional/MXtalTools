@@ -4,7 +4,7 @@ anomaly_detection: False  # DEPRECATED slows down the code
 mode: autoencoder  # 'gan' for crystal generator AND/OR discriminator or 'regression' for molecule property prediction or 'figures' or 'autoencoder' or 'search' WIP
 dataset_name: 'dataset.pkl'  # dataset.pkl is large test_dataset.pkl is slow for faster prototyping
 misc_dataset_name: 'misc_data_for_dataset.npy'  # contains necessary standardizations. Leave as-is in general
-dataset_yaml_path: '/dataset/full_autoencoder.yaml'  # path within configs to .yaml which defines dataset filtering
+dataset_yaml_path: '/full_autoencoder.yaml'  # path within configs to .yaml which defines dataset filtering
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: train  # will save a new checkpoint when a minimum of this is reached

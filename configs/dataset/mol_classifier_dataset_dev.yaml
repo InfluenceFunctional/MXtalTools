@@ -14,17 +14,15 @@ test_fraction: 0.2
 sample_from_trajectory: True # true for random selection from dataset, false for contiguous analysis e.g., of a single trajectory
 trajs_to_analyze_list: null
 
-dumps_dirs: ['new_small_nic_liq_T350', 'nicotinamide_liq', 'new_nic_bulk_small', 'new_nic_bulk_big']
+dataset_type: 'mol_cluster'
+dumps_dirs: ['acridine_test/']
 
-filter_conditions: [['train_temperature','in',[100]],
-                    ['test_temperature','in',[350]],
-                    ['early_time_to_omig', 'in', [0]],
-                    ['late_time_to_omit', 'in', [0]],
-                    ['max_box_volume', 'in', [10000]],
-                    ['min_box_volume', 'in', [0]],
-                    ['periodic','in',[True, False]],
-                    ['allowed_forms','in',['NICOAM13','melt']],
-
+filter_polymorphs: False
+filter_duplicate_molecules: False
+filter_conditions: [#['temperature','range',[200, 400]],
+                    ['time_step', 'range', [10000, 1000000000000]],
+                    ['cluster_type','in',['supercell']],
+                    #['structure_identifier','in',['acridine/Form2', 'melt']],
                     ]
 
 atom_feature_keys: [
@@ -33,10 +31,10 @@ atom_feature_keys: [
 'atom_vdW_radius',
 'atom_electronegativity',
 'atom_group',
-'atom_period'
+'atom_period',
+'molecule_mass',
+'molecule_num_atoms'
 ]
 
 molecule_feature_keys : [
-'molecule_mass',
-'molecule_num_atoms'
 ]

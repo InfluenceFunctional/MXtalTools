@@ -640,6 +640,8 @@ class GlobalAggregation(nn.Module):  # TODO upgrade with new PyG aggregation mod
         elif self.agg_func is None:
             return x  # do nothing
         elif self.agg_func == 'molwise':
+            if cluster.ndim > 1:
+                cluster = cluster[0, :]  # usually a single cluster - if in the future a batch of clusters, reindex molecules accordingly
             return self.agg(cluster=cluster, batch=batch, x=x)[0]
         elif self.agg_func == 'mean sum':
             return (scatter(x, batch, dim_size=output_dim, dim=0, reduce='mean') +

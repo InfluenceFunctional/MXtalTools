@@ -5,7 +5,7 @@ mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'emb
 dataset_name: 'qm9_molecules_dataset.pkl'
 misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
 base_config_path: '/experiments/base.yaml'  # base config
-dataset_yaml_path: '/dataset/qm9_autoencoder.yaml'
+dataset_yaml_path: '/qm9_autoencoder.yaml'
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: False # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached

@@ -1,10 +1,10 @@
 import numpy as np
-from _plotly_utils.colors import sample_colorscale
 from plotly import graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
-from bulk_molecule_classification.classifier_constants import defect_names, nic_ordered_class_names, urea_ordered_class_names, form2index, index2form, identifier2form
+from mxtaltools.constants.classifier_constants import defect_names, nic_ordered_class_names, urea_ordered_class_names, \
+    identifier2form
 import plotly
 from scipy.ndimage import gaussian_filter1d
 
@@ -185,40 +185,31 @@ def all_accuracy_fig(results_dict, ordered_classes, temp_series):  # todo fix cl
     return fig, scores
 
 
-def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, molecule_type, inside_radius=None, interface_mode=False):
+def classifier_trajectory_analysis_fig(traj_dict, time_steps, molecule_type, interface_mode=False):
     if molecule_type == 'urea':
         ordered_class_names = urea_ordered_class_names + ['Uncertain']
-        mol_num_atoms = 8
+        num_classes = 7
     elif molecule_type == 'nicotinamide':
         ordered_class_names = nic_ordered_class_names + ['Uncertain']
-        mol_num_atoms = 15
+        num_classes = 10
+
+    if interface_mode:
+        num_classes = 3
+        ordered_class_names = ['I', 'IV', 'Other']
 
     stacked_plot = True
     colors = None
-    inside_mode = 'radius'
-
-    if interface_mode:
-        ordered_class_names = ['I', 'IV', 'Other']
-        stacked_plot = False
-        colors = ['rgb(50, 50, 150)', 'rgb(50, 150, 50)', 'rgb(150, 50, 50)']
-        inside_radius = 20
-        inside_mode = 'z'
-
-    num_classes = len(ordered_class_names)
-
-    """trajectory analysis figure"""
-    traj_dict = process_trajectory_data(
-        inside_radius, mol_num_atoms, num_classes,
-        ordered_class_names, sorted_molwise_results_dict, time_steps, inside_mode=inside_mode)
 
     if colors is None:
         colors = plotly.colors.DEFAULT_PLOTLY_COLORS + ['rgb(50, 50, 50)']
+
     sigma = min(5, len(traj_dict['overall_number']) / 100)
     fig = make_subplots(cols=3, rows=1,
                         subplot_titles=['All Molecules',
                                         'Core' if not interface_mode else 'Interface',
                                         'Surface' if not interface_mode else 'Bulk'],
                         x_title="Time (ns)", y_title="Form Fraction")
+
     for i2, key in enumerate(['overall_fraction', 'inside_fraction', 'outside_fraction']):
         traj = traj_dict[key]
         for ind in range(num_classes):
@@ -260,7 +251,7 @@ def classifier_trajectory_analysis_fig(sorted_molwise_results_dict, time_steps, 
     fig2.update_yaxes(range=[0, 1])
     fig2.update_layout(xaxis_title="Time (ns)", yaxis_title='Form Prediction')
 
-    return fig, fig2, traj_dict
+    return fig, fig2
 
 
 def process_trajectory_data(inside_radius, mol_num_atoms, num_classes, ordered_class_names, sorted_molwise_results_dict, time_steps, inside_mode='radius'):

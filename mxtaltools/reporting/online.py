@@ -10,14 +10,17 @@ from sklearn.cluster import AgglomerativeClustering
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+from sklearn.metrics import roc_auc_score, f1_score, confusion_matrix
 from torch import scatter
 from torch_scatter import scatter
 import torch.nn.functional as F
 
-from mxtaltools.common.utils import get_point_density
+from mxtaltools.common.utils import get_point_density, softmax_np
 
 from mxtaltools.common.geometry_calculations import cell_vol
-from mxtaltools.models.utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, compute_full_evaluation_overlap
+from mxtaltools.constants.mol_classifier_constants import polymorph2form
+from mxtaltools.models.utils import compute_type_evaluation_overlap, compute_coord_evaluation_overlap, \
+    compute_full_evaluation_overlap
 
 blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
     'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
@@ -289,7 +292,8 @@ def discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict
     return fig_dict
 
 
-def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_types, scores_dict, scores_range, vdw_penalty_dict):
+def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_types, scores_dict, scores_range,
+                      vdw_penalty_dict):
     bandwidth1 = scores_range / 200
     vdw_cutoff = min(np.quantile(all_vdws, 0.975), 3)
     bandwidth2 = vdw_cutoff / 200
@@ -336,7 +340,8 @@ def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_type
     return bandwidth1, fig, vdw_cutoff, viridis
 
 
-def score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coeff_dict, plot_color_dict, sample_types, scores_dict, viridis):
+def score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coeff_dict, plot_color_dict, sample_types,
+                          scores_dict, viridis):
     bandwidth2 = 0.01
     scores_labels = sample_types
     fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)'),
@@ -383,7 +388,8 @@ def combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source
     """
     # All in one
     """
-    scatter_dict = {'vdw_score': -all_vdws.clip(max=vdw_cutoff), 'model_score': all_scores, 'packing_coefficient': all_coeffs.clip(min=0, max=1), 'sample_source': sample_source}
+    scatter_dict = {'vdw_score': -all_vdws.clip(max=vdw_cutoff), 'model_score': all_scores,
+                    'packing_coefficient': all_coeffs.clip(min=0, max=1), 'sample_source': sample_source}
     df = pd.DataFrame.from_dict(scatter_dict)
     fig = px.scatter(df,
                      x='vdw_score', y='packing_coefficient',
@@ -420,9 +426,11 @@ def functional_group_analysis_fig(scores_dict, tracking_features, layout, dataDi
     if len(sorted_functional_group_keys) > 0:
         fig = go.Figure()
         fig.add_trace(go.Scattergl(x=[f'{key}_{fraction_dict[key]:.2f}' for key in sorted_functional_group_keys],
-                                   y=[np.average(scores_dict['CSD'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
+                                   y=[np.average(scores_dict['CSD'][functional_group_inds[key]]) for key in
+                                      sorted_functional_group_keys],
                                    error_y=dict(type='data',
-                                                array=[np.std(scores_dict['CSD'][functional_group_inds[key]]) for key in sorted_functional_group_keys],
+                                                array=[np.std(scores_dict['CSD'][functional_group_inds[key]]) for key in
+                                                       sorted_functional_group_keys],
                                                 visible=True
                                                 ),
                                    showlegend=False,
@@ -444,7 +452,8 @@ def group_wise_analysis_fig(identifiers_list, crystals_for_targets, scores_dict,
     group = {}
     list_num = {}
     for label in ['XXII', 'XXIII', 'XXVI']:
-        target_identifiers[label] = [identifiers_list[crystals_for_targets[label][n]] for n in range(len(crystals_for_targets[label]))]
+        target_identifiers[label] = [identifiers_list[crystals_for_targets[label][n]] for n in
+                                     range(len(crystals_for_targets[label]))]
         rankings[label] = []
         group[label] = []
         list_num[label] = []
@@ -462,7 +471,8 @@ def group_wise_analysis_fig(identifiers_list, crystals_for_targets, scores_dict,
         ['Brandenburg XXII', 'Brandenburg XXIII', 'Brandenburg XXVI']),  # , 'Facelli XXII']),
                         x_title='Model Score')
 
-    quantiles = [np.quantile(normed_scores_dict['CSD'], 0.01), np.quantile(normed_scores_dict['CSD'], 0.05), np.quantile(normed_scores_dict['CSD'], 0.1)]
+    quantiles = [np.quantile(normed_scores_dict['CSD'], 0.01), np.quantile(normed_scores_dict['CSD'], 0.05),
+                 np.quantile(normed_scores_dict['CSD'], 0.1)]
 
     for ii, label in enumerate(['XXII', 'XXIII', 'XXVI']):
         good_inds = np.where(np.asarray(group[label]) == 'Brandenburg')[0]
@@ -530,7 +540,8 @@ def score_correlates_fig(scores_dict, dataDims, tracking_features, layout):
                 ('asymmetric_unit' not in dataDims['tracking_features'][i]):
             if (np.average(tracking_features[:, i] != 0) > 0.05) and \
                     (dataDims['tracking_features'][i] != 'crystal_z_prime') and \
-                    (dataDims['tracking_features'][i] != 'molecule_is_asymmetric_top'):  # if we have at least 1# relevance
+                    (dataDims['tracking_features'][
+                         i] != 'molecule_is_asymmetric_top'):  # if we have at least 1# relevance
                 corr = np.corrcoef(scores_dict['CSD'], tracking_features[:, i], rowvar=False)[0, 1]
                 if np.abs(corr) > 0.05:
                     features.append(dataDims['tracking_features'][i])
@@ -565,7 +576,8 @@ def score_correlates_fig(scores_dict, dataDims, tracking_features, layout):
 
     g_loss_dict = {feat: corr for feat, corr in zip(features_sorted, g_loss_correlations)}
 
-    fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=('a) Molecule & Crystal Features', 'b) Atom Fractions', 'c) Functional Groups Count'), x_title='R Value')
+    fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=(
+        'a) Molecule & Crystal Features', 'b) Atom Fractions', 'c) Functional Groups Count'), x_title='R Value')
 
     crystal_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' not in key]
     atom_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' in key]
@@ -575,7 +587,8 @@ def score_correlates_fig(scores_dict, dataDims, tracking_features, layout):
         y=crystal_keys,
         x=[g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in crystal_keys],
         orientation='h',
-        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in crystal_keys]).astype('float16'),
+        text=np.asarray([g for i, (feat, g) in enumerate(g_loss_dict.items()) if feat in crystal_keys]).astype(
+            'float16'),
         textposition='auto',
         texttemplate='%{text:.2}',
         marker=dict(color='rgba(100,0,0,1)')
@@ -701,7 +714,8 @@ def get_BT_identifiers_inds(extra_test_dict):
     return crystals_for_targets, target_identifiers_inds
 
 
-def get_BT_scores(crystals_for_targets, target_identifiers_inds, extra_test_dict, tracking_features_dict, scores_dict, vdw_penalty_dict, distance_dict, dataDims, test_epoch_stats_dict):
+def get_BT_scores(crystals_for_targets, target_identifiers_inds, extra_test_dict, tracking_features_dict, scores_dict,
+                  vdw_penalty_dict, distance_dict, dataDims, test_epoch_stats_dict):
     bt_score_correlates = {}
     for target in crystals_for_targets.keys():  # run the analysis for each target
         if target_identifiers_inds[target] != []:  # record target data
@@ -710,11 +724,15 @@ def get_BT_scores(crystals_for_targets, target_identifiers_inds, extra_test_dict
             scores = extra_test_dict['discriminator_real_score'][target_index]
             scores_dict[target + '_exp'] = scores[None]
 
-            tracking_features_dict[target + '_exp'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_index][None, :].T)}
+            tracking_features_dict[target + '_exp'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
+                                                                                      extra_test_dict[
+                                                                                          'tracking_features'][
+                                                                                          target_index][None, :].T)}
 
             vdw_penalty_dict[target + '_exp'] = extra_test_dict['real_vdw_penalty'][target_index][None]
 
-            distance_dict[target + '_exp'] = extra_test_dict['discriminator_real_predicted_distance'][target_index][None]
+            distance_dict[target + '_exp'] = extra_test_dict['discriminator_real_predicted_distance'][target_index][
+                None]
 
             wandb.log({f'Average_{target}_exp_score': np.average(scores)})
 
@@ -722,7 +740,9 @@ def get_BT_scores(crystals_for_targets, target_identifiers_inds, extra_test_dict
             target_indices = crystals_for_targets[target]
             scores = extra_test_dict['discriminator_real_score'][target_indices]
             scores_dict[target] = scores
-            tracking_features_dict[target] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'][target_indices].T)}
+            tracking_features_dict[target] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
+                                                                             extra_test_dict['tracking_features'][
+                                                                                 target_indices].T)}
 
             vdw_penalty_dict[target] = extra_test_dict['real_vdw_penalty'][target_indices]
 
@@ -746,14 +766,14 @@ def get_BT_scores(crystals_for_targets, target_identifiers_inds, extra_test_dict
     features = []
     for j in range(dataDims['num_tracking_features']):  # not that interesting
         features.append(dataDims['tracking_features'][j])
-        loss_correlations[j] = np.corrcoef(scores_dict['CSD'], test_epoch_stats_dict['tracking_features'][:, j], rowvar=False)[0, 1]
+        loss_correlations[j] = \
+            np.corrcoef(scores_dict['CSD'], test_epoch_stats_dict['tracking_features'][:, j], rowvar=False)[0, 1]
     bt_score_correlates['CSD'] = loss_correlations
 
     return scores_dict, vdw_penalty_dict, distance_dict, bt_score_correlates
 
 
 def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_stats_dict):
-
     crystals_for_targets, target_identifiers_inds = get_BT_identifiers_inds(extra_test_dict)
 
     '''
@@ -775,9 +795,11 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
 
     # collect all BT targets & submissions into single dicts
     BT_target_scores = np.asarray([scores_dict[key] for key in scores_dict.keys() if 'exp' in key])
-    BT_submission_scores = np.concatenate([scores_dict[key] for key in scores_dict.keys() if key in crystals_for_targets.keys()])
+    BT_submission_scores = np.concatenate(
+        [scores_dict[key] for key in scores_dict.keys() if key in crystals_for_targets.keys()])
     BT_target_distances = np.asarray([pred_distance_dict[key] for key in pred_distance_dict.keys() if 'exp' in key])
-    BT_submission_distances = np.concatenate([pred_distance_dict[key] for key in pred_distance_dict.keys() if key in crystals_for_targets.keys()])
+    BT_submission_distances = np.concatenate(
+        [pred_distance_dict[key] for key in pred_distance_dict.keys() if key in crystals_for_targets.keys()])
 
     wandb.log({'Average BT submission score': np.average(BT_submission_scores)})
     wandb.log({'Average BT target score': np.average(BT_target_scores)})
@@ -796,15 +818,19 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
         BT_target_distances, BT_submission_distances
 
 
-def BT_separation_tables(layout, scores_dict, BT_submission_scores, crystals_for_targets, normed_scores_dict, normed_BT_submission_scores):
+def BT_separation_tables(layout, scores_dict, BT_submission_scores, crystals_for_targets, normed_scores_dict,
+                         normed_BT_submission_scores):
     vals = [0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.5]
     quantiles = np.quantile(scores_dict['CSD'], vals)
-    submissions_fraction_below_csd_quantile = {value: np.average(BT_submission_scores < cutoff) for value, cutoff in zip(vals, quantiles)}
+    submissions_fraction_below_csd_quantile = {value: np.average(BT_submission_scores < cutoff) for value, cutoff in
+                                               zip(vals, quantiles)}
 
     normed_quantiles = np.quantile(normed_scores_dict['CSD'], vals)
-    normed_submissions_fraction_below_csd_quantile = {value: np.average(normed_BT_submission_scores < cutoff) for value, cutoff in zip(vals, normed_quantiles)}
+    normed_submissions_fraction_below_csd_quantile = {value: np.average(normed_BT_submission_scores < cutoff) for
+                                                      value, cutoff in zip(vals, normed_quantiles)}
 
-    submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + '_exp']) for key in crystals_for_targets.keys() if key in scores_dict.keys()}
+    submissions_fraction_below_target = {key: np.average(scores_dict[key] < scores_dict[key + '_exp']) for key in
+                                         crystals_for_targets.keys() if key in scores_dict.keys()}
     submissions_average_below_target = np.average(list(submissions_fraction_below_target.values()))
 
     fig1 = go.Figure(data=go.Table(
@@ -950,11 +976,12 @@ def discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_tes
     return None
 
 
-def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers_inds, scores_dict, BT_target_scores, BT_submission_scores, tracking_features_dict, layout):
-
+def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers_inds, scores_dict, BT_target_scores,
+                                        BT_submission_scores, tracking_features_dict, layout):
     lens = [len(val) for val in crystals_for_targets.values()]
     targets_list = list(target_identifiers_inds.values())
-    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', max(np.count_nonzero(lens), sum([1 for ll in targets_list if ll != []])), colortype='rgb')
+    colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)',
+                      max(np.count_nonzero(lens), sum([1 for ll in targets_list if ll != []])), colortype='rgb')
 
     plot_color_dict = {'Train Real': 'rgb(250,50,50)',
                        'CSD': 'rgb(250,150,50)',
@@ -986,13 +1013,18 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
             else:
                 name_label = label
             if 'exp' in label:
-                fig.add_trace(go.Violin(x=scores_dict[label], name=name_label, line_color=plot_color_dict[label], side='positive', orientation='h', width=6),
-                              row=1, col=1)
+                fig.add_trace(
+                    go.Violin(x=scores_dict[label], name=name_label, line_color=plot_color_dict[label], side='positive',
+                              orientation='h', width=6),
+                    row=1, col=1)
             else:
-                fig.add_trace(go.Violin(x=scores_dict[label], name=name_label, line_color=plot_color_dict[label], side='positive', orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False),
-                              row=1, col=1)
+                fig.add_trace(
+                    go.Violin(x=scores_dict[label], name=name_label, line_color=plot_color_dict[label], side='positive',
+                              orientation='h', width=4, meanline_visible=True, bandwidth=bandwidth, points=False),
+                    row=1, col=1)
 
-    good_scores = np.concatenate([score for i, (key, score) in enumerate(scores_dict.items()) if key not in ['Gaussian', 'Distorted']])
+    good_scores = np.concatenate(
+        [score for i, (key, score) in enumerate(scores_dict.items()) if key not in ['Gaussian', 'Distorted']])
     fig.update_xaxes(range=[np.amin(good_scores), np.amax(good_scores)], row=1, col=1)
 
     # plot2 inset
@@ -1006,16 +1038,20 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
 
     # test data
     fig.add_trace(go.Violin(x=scores_dict['CSD'], name='CSD Test',
-                            line_color=plot_color_dict['CSD'], side='positive', orientation='h', width=1.5, meanline_visible=True, bandwidth=bandwidth, points=False), row=1, col=2)
+                            line_color=plot_color_dict['CSD'], side='positive', orientation='h', width=1.5,
+                            meanline_visible=True, bandwidth=bandwidth, points=False), row=1, col=2)
 
     # BT distribution
     fig.add_trace(go.Violin(x=BT_target_scores, name='BT Targets',
-                            line_color=plot_color_dict['BT Targets'], side='positive', orientation='h', width=1.5, meanline_visible=True, bandwidth=bandwidth / 100, points=False), row=1, col=2)
+                            line_color=plot_color_dict['BT Targets'], side='positive', orientation='h', width=1.5,
+                            meanline_visible=True, bandwidth=bandwidth / 100, points=False), row=1, col=2)
     # Submissions
     fig.add_trace(go.Violin(x=BT_submission_scores, name='BT Submissions',
-                            line_color=plot_color_dict['BT Submissions'], side='positive', orientation='h', width=1.5, meanline_visible=True, bandwidth=bandwidth, points=False), row=1, col=2)
+                            line_color=plot_color_dict['BT Submissions'], side='positive', orientation='h', width=1.5,
+                            meanline_visible=True, bandwidth=bandwidth, points=False), row=1, col=2)
 
-    quantiles = [np.quantile(scores_dict['CSD'], 0.01), np.quantile(scores_dict['CSD'], 0.05), np.quantile(scores_dict['CSD'], 0.1)]
+    quantiles = [np.quantile(scores_dict['CSD'], 0.01), np.quantile(scores_dict['CSD'], 0.05),
+                 np.quantile(scores_dict['CSD'], 0.1)]
     fig.add_vline(x=quantiles[0], line_dash='dash', line_color=plot_color_dict['CSD'], row=1, col=2)
     fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['CSD'], row=1, col=2)
     fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['CSD'], row=1, col=2)
@@ -1024,23 +1060,29 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
     for key in normed_scores_dict.keys():
         normed_scores_dict[key] = normed_scores_dict[key] / tracking_features_dict[key]['molecule_num_atoms']
 
-    normed_BT_target_scores = np.concatenate([normed_scores_dict[key] for key in normed_scores_dict.keys() if 'exp' in key])
-    normed_BT_submission_scores = np.concatenate([normed_scores_dict[key] for key in normed_scores_dict.keys() if key in crystals_for_targets.keys()])
+    normed_BT_target_scores = np.concatenate(
+        [normed_scores_dict[key] for key in normed_scores_dict.keys() if 'exp' in key])
+    normed_BT_submission_scores = np.concatenate(
+        [normed_scores_dict[key] for key in normed_scores_dict.keys() if key in crystals_for_targets.keys()])
     scores_range = np.ptp(normed_scores_dict['CSD'])
     bandwidth = scores_range / 200
 
     # test data
     fig.add_trace(go.Violin(x=normed_scores_dict['CSD'], name='CSD Test',
-                            line_color=plot_color_dict['CSD'], side='positive', orientation='h', width=1.5, meanline_visible=True, bandwidth=bandwidth, points=False), row=2, col=2)
+                            line_color=plot_color_dict['CSD'], side='positive', orientation='h', width=1.5,
+                            meanline_visible=True, bandwidth=bandwidth, points=False), row=2, col=2)
 
     # BT distribution
     fig.add_trace(go.Violin(x=normed_BT_target_scores, name='BT Targets',
-                            line_color=plot_color_dict['BT Targets'], side='positive', orientation='h', width=1.5, meanline_visible=True, bandwidth=bandwidth / 100, points=False), row=2, col=2)
+                            line_color=plot_color_dict['BT Targets'], side='positive', orientation='h', width=1.5,
+                            meanline_visible=True, bandwidth=bandwidth / 100, points=False), row=2, col=2)
     # Submissions
     fig.add_trace(go.Violin(x=normed_BT_submission_scores, name='BT Submissions',
-                            line_color=plot_color_dict['BT Submissions'], side='positive', orientation='h', width=1.5, meanline_visible=True, bandwidth=bandwidth, points=False), row=2, col=2)
+                            line_color=plot_color_dict['BT Submissions'], side='positive', orientation='h', width=1.5,
+                            meanline_visible=True, bandwidth=bandwidth, points=False), row=2, col=2)
 
-    quantiles = [np.quantile(normed_scores_dict['CSD'], 0.01), np.quantile(normed_scores_dict['CSD'], 0.05), np.quantile(normed_scores_dict['CSD'], 0.1)]
+    quantiles = [np.quantile(normed_scores_dict['CSD'], 0.01), np.quantile(normed_scores_dict['CSD'], 0.05),
+                 np.quantile(normed_scores_dict['CSD'], 0.1)]
     fig.add_vline(x=quantiles[0], line_dash='dash', line_color=plot_color_dict['CSD'], row=2, col=2)
     fig.add_vline(x=quantiles[1], line_dash='dash', line_color=plot_color_dict['CSD'], row=2, col=2)
     fig.add_vline(x=quantiles[2], line_dash='dash', line_color=plot_color_dict['CSD'], row=2, col=2)
@@ -1109,7 +1151,9 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
     plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
-    cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index=dataDims['tracking_features'].index('molecule_num_atoms'), extra_category='generated_space_group_numbers')
+    cell_scatter(epoch_stats_dict, wandb, layout,
+                 num_atoms_index=dataDims['tracking_features'].index('molecule_num_atoms'),
+                 extra_category='generated_space_group_numbers')
 
     return None
 
@@ -1119,7 +1163,7 @@ def cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_categor
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'],
                     'model_score': model_scores,
                     'volume_per_atom': epoch_stats_dict['generator_packing_prediction']
-                                       /epoch_stats_dict['tracking_features'][:, num_atoms_index]}
+                                       / epoch_stats_dict['tracking_features'][:, num_atoms_index]}
     if extra_category is not None:
         scatter_dict[extra_category] = epoch_stats_dict[extra_category]
 
@@ -1145,7 +1189,8 @@ def cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_categor
                          )
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
-    fig.update_layout(xaxis_range=[vdw_cutoff, 0.1], yaxis_range=[scatter_dict['volume_per_atom'].min(), scatter_dict['volume_per_atom'].max()])
+    fig.update_layout(xaxis_range=[vdw_cutoff, 0.1],
+                      yaxis_range=[scatter_dict['volume_per_atom'].min(), scatter_dict['volume_per_atom'].max()])
     wandb.log({'Generator Samples': fig})
 
 
@@ -1156,12 +1201,16 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     prediction = np.asarray(epoch_stats_dict['regressor_prediction'])
 
     if 'crystal' in dataDims['regression_target']:
-        multiplicity = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_symmetry_multiplicity')]
+        multiplicity = epoch_stats_dict['tracking_features'][:,
+                       dataDims['tracking_features'].index('crystal_symmetry_multiplicity')]
         mol_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_volume')]
         mol_mass = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('molecule_mass')]
-        target_density = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_density')]
-        target_volume = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_cell_volume')] / multiplicity
-        target_packing_coefficient = epoch_stats_dict['tracking_features'][:, dataDims['tracking_features'].index('crystal_packing_coefficient')]
+        target_density = epoch_stats_dict['tracking_features'][:,
+                         dataDims['tracking_features'].index('crystal_density')]
+        target_volume = epoch_stats_dict['tracking_features'][:,
+                        dataDims['tracking_features'].index('crystal_cell_volume')] / multiplicity
+        target_packing_coefficient = epoch_stats_dict['tracking_features'][:,
+                                     dataDims['tracking_features'].index('crystal_packing_coefficient')]
 
         """
         asym_unit_volume = mol_volume / packing_coefficient
@@ -1184,7 +1233,8 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         loss_dict = {}
         fig_dict = {}
         fig = make_subplots(cols=3, rows=2, subplot_titles=['asym_unit_volume', 'packing_coefficient', 'density',
-                                                            'asym_unit_volume error', 'packing_coefficient error', 'density error'])
+                                                            'asym_unit_volume error', 'packing_coefficient error',
+                                                            'density error'])
         for ind, (name, tgt_value, pred_value) in enumerate(
                 zip(['asym_unit_volume', 'packing_coefficient', 'density'],
                     [target_volume, target_packing_coefficient, target_density],
@@ -1219,7 +1269,8 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
             col = ind % 3 + 1
             num_points = len(pred_value)
             opacity = np.exp(-num_points / 10000)
-            fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity, showlegend=False),
+            fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity,
+                                       showlegend=False),
                           row=row, col=col)
             fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
                           row=row, col=col)
@@ -1234,12 +1285,16 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
                           row=row, col=col)
         #
         fig.update_yaxes(title_text='Predicted AUnit Volume (A<sup>3</sup>)', row=1, col=1, dtick=500, tickformat=".0f")
-        fig.update_yaxes(title_text='Predicted Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4], tickformat=".1f")
-        fig.update_yaxes(title_text='Predicted Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
+        fig.update_yaxes(title_text='Predicted Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4],
+                         tickformat=".1f")
+        fig.update_yaxes(title_text='Predicted Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8],
+                         tickformat=".2f")
 
         fig.update_xaxes(title_text='True AUnit Volume (A<sup>3</sup>)', row=1, col=1, dtick=500, tickformat=".0f")
-        fig.update_xaxes(title_text='True Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4], tickformat=".1f")
-        fig.update_xaxes(title_text='True Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8], tickformat=".2f")
+        fig.update_xaxes(title_text='True Density (g/cm<sup>3</sup>)', row=1, col=3, dtick=0.5, range=[0.8, 4],
+                         tickformat=".1f")
+        fig.update_xaxes(title_text='True Packing Coefficient', row=1, col=2, dtick=0.05, range=[0.55, 0.8],
+                         tickformat=".2f")
 
         fig.update_xaxes(title_text='Packing Coefficient Error', row=2, col=2)  # , dtick=0.05, tickformat=".2f")
         fig.update_xaxes(title_text='Density Error (g/cm<sup>3</sup>)', row=2)  # , col=3, dtick=0.1, tickformat=".1f")
@@ -1254,7 +1309,9 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         correlate losses with molecular features
         """  # todo convert the below to a function
         fig = make_correlates_plot(np.asarray(epoch_stats_dict['tracking_features']),
-                                   np.abs(target_packing_coefficient - predicted_packing_coefficient) / target_packing_coefficient, dataDims)
+                                   np.abs(
+                                       target_packing_coefficient - predicted_packing_coefficient) / target_packing_coefficient,
+                                   dataDims)
         fig_dict['Regressor Loss Correlates'] = fig
     else:
 
@@ -1293,7 +1350,8 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
 
         num_points = len(pred_value)
         opacity = np.exp(-num_points / 10000)
-        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity, showlegend=False),
+        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity,
+                                   showlegend=False),
                       row=1, col=1)
         fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
                       row=1, col=1)
@@ -1343,7 +1401,8 @@ def make_correlates_plot(tracking_features, values, dataDims):
                 ('asymmetric_unit' not in dataDims['tracking_features'][i]):
             if (np.average(tracking_features[:, i] != 0) > 0.05) and \
                     (dataDims['tracking_features'][i] != 'crystal_z_prime') and \
-                    (dataDims['tracking_features'][i] != 'molecule_is_asymmetric_top'):  # if we have at least 1# relevance
+                    (dataDims['tracking_features'][
+                         i] != 'molecule_is_asymmetric_top'):  # if we have at least 1# relevance
                 corr = np.corrcoef(values, tracking_features[:, i], rowvar=False)[0, 1]
                 if np.abs(corr) > 0.05:
                     features.append(dataDims['tracking_features'][i])
@@ -1380,7 +1439,8 @@ def make_correlates_plot(tracking_features, values, dataDims):
 
     if len(loss_correlates_dict) != 0:
 
-        fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=('a) Molecule & Crystal Features', 'b) Atom Fractions', 'c) Functional Groups Count'), x_title='R Value')
+        fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.14, subplot_titles=(
+            'a) Molecule & Crystal Features', 'b) Atom Fractions', 'c) Functional Groups Count'), x_title='R Value')
 
         crystal_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' not in key]
         atom_keys = [key for key in features_sorted_cleaned if 'count' not in key and 'fraction' in key]
@@ -1390,7 +1450,9 @@ def make_correlates_plot(tracking_features, values, dataDims):
             y=crystal_keys,
             x=[g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in crystal_keys],
             orientation='h',
-            text=np.asarray([g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in crystal_keys]).astype('float16'),
+            text=np.asarray(
+                [g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in crystal_keys]).astype(
+                'float16'),
             textposition='auto',
             texttemplate='%{text:.2}',
             marker=dict(color='rgba(100,0,0,1)')
@@ -1399,16 +1461,19 @@ def make_correlates_plot(tracking_features, values, dataDims):
             y=[feat.replace('molecule_', '') for feat in features_sorted_cleaned if feat in atom_keys],
             x=[g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in atom_keys],
             orientation='h',
-            text=np.asarray([g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in atom_keys]).astype('float16'),
+            text=np.asarray(
+                [g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in atom_keys]).astype('float16'),
             textposition='auto',
             texttemplate='%{text:.2}',
             marker=dict(color='rgba(0,0,100,1)')
         ), row=1, col=2)
         fig.add_trace(go.Bar(
-            y=[feat.replace('molecule_', '').replace('_count', '') for feat in features_sorted_cleaned if feat in mol_keys],
+            y=[feat.replace('molecule_', '').replace('_count', '') for feat in features_sorted_cleaned if
+               feat in mol_keys],
             x=[g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in mol_keys],
             orientation='h',
-            text=np.asarray([g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in mol_keys]).astype('float16'),
+            text=np.asarray([g for i, (feat, g) in enumerate(loss_correlates_dict.items()) if feat in mol_keys]).astype(
+                'float16'),
             textposition='auto',
             texttemplate='%{text:.2}',
             marker=dict(color='rgba(0,100,0,1)')
@@ -1422,7 +1487,8 @@ def make_correlates_plot(tracking_features, values, dataDims):
         fig.layout.annotations[1].update(x=0.45)
         fig.layout.annotations[2].update(x=0.88)
 
-        fig.update_xaxes(range=[np.amin(list(loss_correlates_dict.values())), np.amax(list(loss_correlates_dict.values()))])
+        fig.update_xaxes(
+            range=[np.amin(list(loss_correlates_dict.values())), np.amax(list(loss_correlates_dict.values()))])
         # fig.update_layout(width=1200, height=400)
         fig.update_layout(showlegend=False)
 
@@ -1432,7 +1498,8 @@ def make_correlates_plot(tracking_features, values, dataDims):
     return fig
 
 
-def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, test_epoch_stats_dict, extra_test_dict=None):
+def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, test_epoch_stats_dict,
+                       extra_test_dict=None):
     """
     Do analysis and upload results to w&b
     """
@@ -1440,25 +1507,37 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
     # test_epoch_stats_dict = rec[1]
     # extra_test_dict = rec[2]
     # dataDims = rec[0]
+    if test_epoch_stats_dict is not None:
+        if config.mode == 'gan' or config.mode == 'discriminator':
+            if 'final_generated_cell_parameters' in test_epoch_stats_dict.keys():
+                cell_params_analysis(config, dataDims, wandb, test_loader, test_epoch_stats_dict)
 
-    if (test_epoch_stats_dict is not None) and (config.mode == 'gan' or config.mode == 'discriminator'):
-        if 'final_generated_cell_parameters' in test_epoch_stats_dict.keys():
-            cell_params_analysis(config, dataDims, wandb, test_loader, test_epoch_stats_dict)
+            if config.generator.train_vdw or config.generator.train_adversarially:
+                cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
 
-        if config.generator.train_vdw or config.generator.train_adversarially:
-            cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
+            if config.discriminator.train_on_distorted or config.discriminator.train_on_randn or config.discriminator.train_adversarially:
+                discriminator_analysis(config, dataDims, test_epoch_stats_dict, extra_test_dict)
 
-        if config.discriminator.train_on_distorted or config.discriminator.train_on_randn or config.discriminator.train_adversarially:
-            discriminator_analysis(config, dataDims, test_epoch_stats_dict, extra_test_dict)
+        elif config.mode == 'regression' or config.mode == 'embedding_regression':
+            log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
-    elif config.mode == 'regression' or config.mode == 'embedding_regression':
-        log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
+        elif config.mode == 'autoencoder':
+            log_autoencoder_analysis(config, dataDims, train_epoch_stats_dict,
+                                     'train', config.autoencoder.molecule_radius_normalization)
+            log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict,
+                                     'test', config.autoencoder.molecule_radius_normalization)
 
-    elif config.mode == 'autoencoder':
-        log_autoencoder_analysis(config, dataDims, train_epoch_stats_dict,
-                                 'train', config.autoencoder.molecule_radius_normalization)
-        log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict,
-                                 'test', config.autoencoder.molecule_radius_normalization)
+        elif config.mode == 'polymorph_classification':
+            classifier_reporting(true_labels=train_epoch_stats_dict['true_labels'],
+                                 probs=np.stack(train_epoch_stats_dict['probs']),
+                                 ordered_class_names=polymorph2form['acridine'],
+                                 wandb=wandb,
+                                 epoch_type='train')
+            classifier_reporting(true_labels=np.stack(test_epoch_stats_dict['true_labels']),
+                                 probs=np.stack(test_epoch_stats_dict['probs']),
+                                 ordered_class_names=polymorph2form['acridine'],
+                                 wandb=wandb,
+                                 epoch_type='test')
 
         # todo rewrite this - it's extremely slow and doesn't always work
         # combined_stats_dict = train_epoch_stats_dict.copy()
@@ -1481,25 +1560,51 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
     return None
 
 
+def classifier_reporting(true_labels, probs, ordered_class_names, wandb, epoch_type):
+    present_classes = np.unique(true_labels)
+    present_class_names = [ordered_class_names[ind] for ind in present_classes]
+
+    type_probs = softmax_np(probs[:, list(present_classes.astype(int))])
+    predicted_class = np.argmax(type_probs, axis=1)
+
+    train_score = roc_auc_score(true_labels, type_probs, multi_class='ovo')
+    train_f1_score = f1_score(true_labels, predicted_class, average='micro')
+    train_cmat = confusion_matrix(true_labels, predicted_class, normalize='true')
+    fig = go.Figure(go.Heatmap(z=train_cmat, x=present_class_names, y=present_class_names))
+    fig.update_layout(xaxis=dict(title="Predicted Forms"),
+                      yaxis=dict(title="True Forms")
+                      )
+
+    wandb.log({f"{epoch_type} ROC_AUC": train_score,
+               f"{epoch_type} F1 Score": train_f1_score,
+               f"{epoch_type} 1-ROC_AUC": 1 - train_score,
+               f"{epoch_type} 1-F1 Score": 1 - train_f1_score,
+               f"{epoch_type} Confusion Matrix": fig})
+
+
 def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type,
                              molecule_radius_normalization):
-
     (coord_overlap, data, decoded_data, full_overlap,
      self_coord_overlap, self_overlap, self_type_overlap, type_overlap) = (
         autoencoder_decoder_sample_validation(config, dataDims, epoch_stats_dict))
 
     overall_overlap = scatter(full_overlap / self_overlap, data.batch, reduce='mean').cpu().detach().numpy()
-    evaluation_overlap_loss = scatter(F.smooth_l1_loss(self_overlap, full_overlap, reduction='none'), data.batch, reduce='mean')
+    evaluation_overlap_loss = scatter(F.smooth_l1_loss(self_overlap, full_overlap, reduction='none'), data.batch,
+                                      reduce='mean')
 
-    wandb.log({epoch_type + "_evaluation_positions_wise_overlap": scatter(coord_overlap / self_coord_overlap, data.batch, reduce='mean').mean().cpu().detach().numpy(),
-               epoch_type + "_evaluation_typewise_overlap": scatter(type_overlap / self_type_overlap, data.batch, reduce='mean').mean().cpu().detach().numpy(),
+    wandb.log({epoch_type + "_evaluation_positions_wise_overlap": scatter(coord_overlap / self_coord_overlap,
+                                                                          data.batch,
+                                                                          reduce='mean').mean().cpu().detach().numpy(),
+               epoch_type + "_evaluation_typewise_overlap": scatter(type_overlap / self_type_overlap, data.batch,
+                                                                    reduce='mean').mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_overall_overlap": overall_overlap.mean(),
                epoch_type + "_evaluation_matching_clouds_fraction": (np.sum(1 - overall_overlap) < 0.01).mean(),
                epoch_type + "_evaluation_overlap_loss": evaluation_overlap_loss.mean().cpu().detach().numpy(),
                })
 
     if config.logger.log_figures:
-        fig, fig2, rmsd, max_dist, tot_overlap = gaussian_3d_overlap_plots(data, decoded_data, dataDims['num_atom_types'],
+        fig, fig2, rmsd, max_dist, tot_overlap = gaussian_3d_overlap_plots(data, decoded_data,
+                                                                           dataDims['num_atom_types'],
                                                                            molecule_radius_normalization)
         wandb.log({
             epoch_type + "_pointwise_sample_distribution": fig,
@@ -1522,15 +1627,19 @@ def autoencoder_decoder_sample_validation(config, dataDims, epoch_stats_dict):
     nodewise_weights_tensor = decoded_data.aux_ind
 
     true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=dataDims['num_atom_types']).float()
-    full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes, config)
-    coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes)
-    self_type_overlap, type_overlap = compute_type_evaluation_overlap(config, data, dataDims['num_atom_types'], decoded_data, nodewise_weights_tensor, true_nodes)
+    full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor,
+                                                                 true_nodes, config)
+    coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(config, data, decoded_data,
+                                                                         nodewise_weights_tensor, true_nodes)
+    self_type_overlap, type_overlap = compute_type_evaluation_overlap(config, data, dataDims['num_atom_types'],
+                                                                      decoded_data, nodewise_weights_tensor, true_nodes)
 
     return coord_overlap, data, decoded_data, full_overlap, self_coord_overlap, self_overlap, self_type_overlap, type_overlap
 
 
 def proxy_discriminator_analysis(epoch_stats_dict):
-    tgt_value = np.concatenate((epoch_stats_dict['discriminator_real_score'], epoch_stats_dict['discriminator_fake_score']))
+    tgt_value = np.concatenate(
+        (epoch_stats_dict['discriminator_real_score'], epoch_stats_dict['discriminator_fake_score']))
     pred_value = np.concatenate((epoch_stats_dict['proxy_real_score'], epoch_stats_dict['proxy_fake_score']))
 
     num_real_samples = len(epoch_stats_dict['discriminator_real_score'])
@@ -1553,8 +1662,11 @@ def proxy_discriminator_analysis(epoch_stats_dict):
 
     fig = go.Figure()
     opacity = max(0.1, 1 - len(tgt_value) / 5e4)
-    for inds, name, symbol in zip([csd_inds, randn_inds, distorted_inds, generator_inds], ['CSD', 'Gaussian', 'Distorted', 'Generated'], ['circle', 'square', 'diamond', 'cross']):
-        fig.add_trace(go.Scattergl(x=tgt_value[inds], y=pred_value[inds], mode='markers', marker=dict(color=z[inds]), opacity=opacity, showlegend=True, name=name, marker_symbol=symbol),
+    for inds, name, symbol in zip([csd_inds, randn_inds, distorted_inds, generator_inds],
+                                  ['CSD', 'Gaussian', 'Distorted', 'Generated'],
+                                  ['circle', 'square', 'diamond', 'cross']):
+        fig.add_trace(go.Scattergl(x=tgt_value[inds], y=pred_value[inds], mode='markers', marker=dict(color=z[inds]),
+                                   opacity=opacity, showlegend=True, name=name, marker_symbol=symbol),
                       )
 
     fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
@@ -1621,7 +1733,8 @@ def score_vs_distance_plot(pred_distance_dict, scores_dict):
     except:
         z = np.ones(len(x))
 
-    fig.add_trace(go.Scattergl(x=x, y=y + 1e-16, mode='markers', opacity=0.2, marker_color=z, showlegend=False), row=1, col=2)
+    fig.add_trace(go.Scattergl(x=x, y=y + 1e-16, mode='markers', opacity=0.2, marker_color=z, showlegend=False), row=1,
+                  col=2)
 
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
@@ -1651,7 +1764,8 @@ def discriminator_distances_plots(pred_distance_dict, true_distance_dict, epoch_
         opacity = 0.35
 
         sample_sources = pred_distance_dict.keys()
-        sample_source = np.concatenate([[stype for _ in range(len(pred_distance_dict[stype]))] for stype in sample_sources])
+        sample_source = np.concatenate(
+            [[stype for _ in range(len(pred_distance_dict[stype]))] for stype in sample_sources])
         scatter_dict = {'true_distance': tgt_value, 'predicted_distance': pred_value, 'sample_source': sample_source}
         df = pd.DataFrame.from_dict(scatter_dict)
         fig = px.scatter(df,
@@ -1701,11 +1815,12 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
             for k in range(n_space_groups):
                 sample_score = all_sample_score[space_groups == unique_space_groups[k]]
 
-                fig.add_trace(go.Violin(x=sample_score, y=[str(real_data.csd_identifier[j]) for _ in range(len(sample_score))],
-                                        side='positive', orientation='h', width=2, line_color=colors[k],
-                                        meanline_visible=True, bandwidth=bandwidth1, opacity=opacity,
-                                        name=unique_space_groups[k], legendgroup=unique_space_groups[k], showlegend=False),
-                              row=row, col=col)
+                fig.add_trace(
+                    go.Violin(x=sample_score, y=[str(real_data.csd_identifier[j]) for _ in range(len(sample_score))],
+                              side='positive', orientation='h', width=2, line_color=colors[k],
+                              meanline_visible=True, bandwidth=bandwidth1, opacity=opacity,
+                              name=unique_space_groups[k], legendgroup=unique_space_groups[k], showlegend=False),
+                    row=row, col=col)
 
             fig.add_trace(go.Violin(x=[real_score], y=[str(real_data.csd_identifier[j])], line_color=real_color,
                                     side='positive', orientation='h', width=2, meanline_visible=True,
@@ -1716,7 +1831,8 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
 
         unique_space_group_inds = np.unique(generated_samples_dict['space group'].flatten())
         n_space_groups = len(unique_space_group_inds)
-        space_groups = np.asarray([sym_info['space_groups'][sg] for sg in generated_samples_dict['space group'].flatten()])
+        space_groups = np.asarray(
+            [sym_info['space_groups'][sg] for sg in generated_samples_dict['space group'].flatten()])
         unique_space_groups = np.asarray([sym_info['space_groups'][sg] for sg in unique_space_group_inds])
 
         if real_data.num_graphs > 1:
@@ -1725,8 +1841,11 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
 
                 fig.add_trace(go.Violin(x=all_sample_score, y=['all samples' for _ in range(len(all_sample_score))],
                                         side='positive', orientation='h', width=2, line_color=colors[k],
-                                        meanline_visible=True, bandwidth=np.ptp(generated_samples_dict[label].flatten()) / 100, opacity=opacity,
-                                        name=unique_space_groups[k], legendgroup=unique_space_groups[k], showlegend=True if i == 0 else False),
+                                        meanline_visible=True,
+                                        bandwidth=np.ptp(generated_samples_dict[label].flatten()) / 100,
+                                        opacity=opacity,
+                                        name=unique_space_groups[k], legendgroup=unique_space_groups[k],
+                                        showlegend=True if i == 0 else False),
                               row=row, col=col)
 
     layout = go.Layout(
@@ -1737,7 +1856,8 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
             t=100,  # top margin
         )
     )
-    fig.update_xaxes(row=1, col=scores_labels.index('vdw overlap') + 1, range=[0, np.minimum(1, generated_samples_dict['vdw overlap'].flatten().max())])
+    fig.update_xaxes(row=1, col=scores_labels.index('vdw overlap') + 1,
+                     range=[0, np.minimum(1, generated_samples_dict['vdw overlap'].flatten().max())])
 
     fig.update_layout(yaxis_showgrid=True)  # legend_traceorder='reversed',
 
@@ -1769,7 +1889,9 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
         ), row=row, col=col)
         for cc, cutoff in enumerate([0, 0.5, 0.95]):
             colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', 3, colortype='rgb')
-            good_inds = np.argwhere(generated_samples_dict['score'][crystal_ind] > np.quantile(generated_samples_dict['score'][crystal_ind], cutoff))[:, 0]
+            good_inds = np.argwhere(
+                generated_samples_dict['score'][crystal_ind] > np.quantile(generated_samples_dict['score'][crystal_ind],
+                                                                           cutoff))[:, 0]
             fig.add_trace(go.Violin(
                 x=generated_samples_dict['cell params'][crystal_ind, :, i][good_inds],
                 bandwidth=bandwidth,
@@ -1790,7 +1912,6 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
 
 
 def gaussian_3d_overlap_plots(data, decoded_data, max_point_types, molecule_radius_normalization):
-
     fig = swarm_vs_tgt_fig(data, decoded_data, max_point_types)
 
     """ weighted gaussian mixture combination """
@@ -1799,16 +1920,23 @@ def gaussian_3d_overlap_plots(data, decoded_data, max_point_types, molecule_radi
     tot_overlaps = np.zeros_like(rmsds)
     for ind in range(data.num_graphs):
         if ind == 0:
-            rmsds[ind], max_dists[ind], tot_overlaps[ind], fig2 = scaffolded_decoder_clustering(ind, data, decoded_data, molecule_radius_normalization, max_point_types, return_fig=True)
+            rmsds[ind], max_dists[ind], tot_overlaps[ind], fig2 = scaffolded_decoder_clustering(ind, data, decoded_data,
+                                                                                                molecule_radius_normalization,
+                                                                                                max_point_types,
+                                                                                                return_fig=True)
         else:
-            rmsds[ind], max_dists[ind], tot_overlaps[ind] = scaffolded_decoder_clustering(ind, data, decoded_data, molecule_radius_normalization, max_point_types, return_fig=False)
+            rmsds[ind], max_dists[ind], tot_overlaps[ind] = scaffolded_decoder_clustering(ind, data, decoded_data,
+                                                                                          molecule_radius_normalization,
+                                                                                          max_point_types,
+                                                                                          return_fig=False)
 
-    return fig, fig2, np.mean(rmsds[np.isfinite(rmsds)]), np.mean(max_dists[np.isfinite(max_dists)]), tot_overlaps.mean()
+    return fig, fig2, np.mean(rmsds[np.isfinite(rmsds)]), np.mean(
+        max_dists[np.isfinite(max_dists)]), tot_overlaps.mean()
 
 
 def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cutoff):
-
-    ag = AgglomerativeClustering(n_clusters=None, metric='euclidean', linkage='complete', distance_threshold=intrapoint_cutoff).fit_predict(points_pred[:, :3])
+    ag = AgglomerativeClustering(n_clusters=None, metric='euclidean', linkage='complete',
+                                 distance_threshold=intrapoint_cutoff).fit_predict(points_pred[:, :3])
     n_clusters = len(np.unique(ag))
     pred_particle_weights = np.zeros(n_clusters)
     pred_particles = np.zeros((n_clusters, points_pred.shape[1]))
@@ -1820,7 +1948,8 @@ def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cut
         pred_particles[ind] = np.sum(collected_particle_weights[:, None] * collected_particles, axis=0)
 
     '''aggregate any 'floaters' or low-probability particles into their nearest neighbors'''
-    single_node_weight = np.amax(pred_particle_weights)  # the largest particle weight as set as the norm against which to measure other particles
+    single_node_weight = np.amax(
+        pred_particle_weights)  # the largest particle weight as set as the norm against which to measure other particles
     # if there is a double particle, this will fail - but then the decoding is bad anyway
     weak_particles = np.argwhere(pred_particle_weights < single_node_weight / 2).flatten()
     ind = 0
@@ -1829,8 +1958,11 @@ def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cut
         dmat = cdist(particle[None, :], pred_particles[:, :3])
         dmat[dmat == 0] = 100
         nearest_neighbor = np.argmin(dmat)
-        pred_particles[nearest_neighbor] = pred_particles[nearest_neighbor] * pred_particle_weights[nearest_neighbor] + pred_particles[weak_particles[ind]] * pred_particle_weights[weak_particles[ind]]
-        pred_particle_weights[nearest_neighbor] = pred_particle_weights[nearest_neighbor] + pred_particle_weights[weak_particles[ind]]
+        pred_particles[nearest_neighbor] = pred_particles[nearest_neighbor] * pred_particle_weights[nearest_neighbor] + \
+                                           pred_particles[weak_particles[ind]] * pred_particle_weights[
+                                               weak_particles[ind]]
+        pred_particle_weights[nearest_neighbor] = pred_particle_weights[nearest_neighbor] + pred_particle_weights[
+            weak_particles[ind]]
         pred_particles = np.delete(pred_particles, weak_particles[ind], axis=0)
         pred_particle_weights = np.delete(pred_particle_weights, weak_particles[ind], axis=0)
         weak_particles = np.argwhere(pred_particle_weights < 0.5).flatten()
@@ -1853,7 +1985,8 @@ def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cut
     return pred_particles, pred_particle_weights  # , rmsd, max_dist # todo add flags around unequal weights
 
 
-def scaffolded_decoder_clustering(graph_ind, data, decoded_data, molecule_radius_normalization, num_classes, return_fig=True):  # todo parallelize over samples
+def scaffolded_decoder_clustering(graph_ind, data, decoded_data, molecule_radius_normalization, num_classes,
+                                  return_fig=True):  # todo parallelize over samples
     (pred_particles, pred_particle_weights, points_true) = (
         decoder_scaffolded_clustering(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes))
 
@@ -1871,7 +2004,8 @@ def decoder_scaffolded_clustering(data, decoded_data, graph_ind, molecule_radius
     """"""
     '''extract true and predicted points'''
     coords_true, coords_pred, points_true, points_pred, sample_weights = (
-        extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes, to_numpy=True))
+        extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes,
+                                          to_numpy=True))
 
     '''get minimum true bond lengths'''
     intra_distmat = cdist(points_true, points_true) + np.eye(len(points_true)) * 10
@@ -1898,7 +2032,8 @@ def compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles,
     all_targets_matched = len(np.unique(matched_particle_inds)) == len(points_true)
     matched_particles = pred_particles[matched_particle_inds]
     matched_dists = np.linalg.norm(points_true[:, :3] - matched_particles[:, :3], axis=1)
-    if all_targets_matched and np.amax(np.abs(1 - pred_particle_weights)) < weight_threshold:  # +/- X% of 100% probability mass on site
+    if all_targets_matched and np.amax(
+            np.abs(1 - pred_particle_weights)) < weight_threshold:  # +/- X% of 100% probability mass on site
         rmsd = matched_dists.mean()
         max_dist = matched_dists.max()
     else:
@@ -1907,10 +2042,12 @@ def compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles,
     return matched_particles, max_dist, rmsd
 
 
-def extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes, to_numpy=False):
+def extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes,
+                                      to_numpy=False):
     coords_true = data.pos[data.batch == graph_ind] * molecule_radius_normalization
     coords_pred = decoded_data.pos[decoded_data.batch == graph_ind] * molecule_radius_normalization
-    points_true = torch.cat([coords_true, F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=num_classes)], dim=1)
+    points_true = torch.cat(
+        [coords_true, F.one_hot(data.x[data.batch == graph_ind][:, 0].long(), num_classes=num_classes)], dim=1)
     points_pred = torch.cat([coords_pred, decoded_data.x[decoded_data.batch == graph_ind]], dim=1)
     sample_weights = decoded_data.aux_ind[decoded_data.batch == graph_ind]
 
@@ -1925,22 +2062,28 @@ def extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_ra
 def swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights, pred_particles, points_true):
     fig2 = go.Figure()
     colors = (
-        'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+        'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)',
+        'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
         'rgb(165, 170, 153)')
     for j in range(len(points_true)):
         vec = np.stack([matched_particles[j, :3], points_true[j, :3]])
-        fig2.add_trace(go.Scatter3d(x=vec[:, 0], y=vec[:, 1], z=vec[:, 2], mode='lines', line_color='black', showlegend=False))
+        fig2.add_trace(
+            go.Scatter3d(x=vec[:, 0], y=vec[:, 1], z=vec[:, 2], mode='lines', line_color='black', showlegend=False))
     for j in range(pred_particles.shape[-1] - 4):
         ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
         pred_type_inds = np.argwhere(pred_particles[:, 3:].argmax(1) == j)[:, 0]
-        fig2.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
-                                    mode='markers', marker_color=colors[j], marker_size=12, marker_line_width=8, marker_line_color='black',
+        fig2.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1],
+                                    z=points_true[ref_type_inds][:, 2],
+                                    mode='markers', marker_color=colors[j], marker_size=12, marker_line_width=8,
+                                    marker_line_color='black',
                                     opacity=0.6,
                                     showlegend=True if (j == 0 and graph_ind == 0) else False,
                                     name=f'True type', legendgroup=f'True type'
                                     ))
-        fig2.add_trace(go.Scatter3d(x=pred_particles[pred_type_inds][:, 0], y=pred_particles[pred_type_inds][:, 1], z=pred_particles[pred_type_inds][:, 2],
-                                    mode='markers', marker_color=colors[j], marker_size=6, marker_line_width=8, marker_line_color='white', showlegend=True,
+        fig2.add_trace(go.Scatter3d(x=pred_particles[pred_type_inds][:, 0], y=pred_particles[pred_type_inds][:, 1],
+                                    z=pred_particles[pred_type_inds][:, 2],
+                                    mode='markers', marker_color=colors[j], marker_size=6, marker_line_width=8,
+                                    marker_line_color='white', showlegend=True,
                                     marker_symbol='diamond',
                                     name=f'Predicted type {j}'))
     fig2.update_layout(title=f"Overlapping Mass {pred_particle_weights.mean():.3f}")
@@ -1950,7 +2093,8 @@ def swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights,
 def swarm_vs_tgt_fig(data, decoded_data, max_point_types):
     cmax = 1
     fig = go.Figure()  # scatter all the true & predicted points, colorweighted by atom type
-    colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+    colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)',
+              'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
               'rgb(165, 170, 153)'] * 10
     colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
     graph_ind = 0
@@ -1959,16 +2103,21 @@ def swarm_vs_tgt_fig(data, decoded_data, max_point_types):
     for j in range(max_point_types):
         ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
 
-        pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
+        pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[
+            decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
 
-        fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1], z=points_true[ref_type_inds][:, 2],
-                                   mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
+        fig.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1],
+                                   z=points_true[ref_type_inds][:, 2],
+                                   mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5,
+                                   marker_line_color='black',
                                    showlegend=True if (j == 0 and graph_ind == 0) else False,
                                    name=f'True type', legendgroup=f'True type'
                                    ))
 
         fig.add_trace(go.Scatter3d(x=points_pred[:, 0], y=points_pred[:, 1], z=points_pred[:, 2],
-                                   mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, marker_line_color='white',
+                                   mode='markers',
+                                   marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax,
+                                               cmin=0), opacity=1, marker_line_color='white',
                                    showlegend=True,
                                    name=f'Predicted type {j}'
                                    ))
@@ -2097,9 +2246,15 @@ def autoencoder_embedding_map(stats_dict, max_num_samples=1000000):
         stats_dict['molecule_principal_moment1'] = stats_dict['principal_inertial_moments'][:, 0]
         stats_dict['molecule_principal_moment2'] = stats_dict['principal_inertial_moments'][:, 2]
         stats_dict['molecule_principal_moment3'] = stats_dict['principal_inertial_moments'][:, 2]
-        stats_dict['molecule_Ip_ratio1'] = stats_dict['principal_inertial_moments'][:, 0] / stats_dict['principal_inertial_moments'][:, 1]
-        stats_dict['molecule_Ip_ratio2'] = stats_dict['principal_inertial_moments'][:, 0] / stats_dict['principal_inertial_moments'][:, 2]
-        stats_dict['molecule_Ip_ratio3'] = stats_dict['principal_inertial_moments'][:, 1] / stats_dict['principal_inertial_moments'][:, 2]
+        stats_dict['molecule_Ip_ratio1'] = stats_dict['principal_inertial_moments'][:, 0] / stats_dict[
+                                                                                                'principal_inertial_moments'][
+                                                                                            :, 1]
+        stats_dict['molecule_Ip_ratio2'] = stats_dict['principal_inertial_moments'][:, 0] / stats_dict[
+                                                                                                'principal_inertial_moments'][
+                                                                                            :, 2]
+        stats_dict['molecule_Ip_ratio3'] = stats_dict['principal_inertial_moments'][:, 1] / stats_dict[
+                                                                                                'principal_inertial_moments'][
+                                                                                            :, 2]
         mol_keys = [
             'molecule_num_atoms', 'molecule_volume', 'molecule_mass',
             'molecule_C_fraction', 'molecule_N_fraction', 'molecule_O_fraction',
@@ -2117,7 +2272,8 @@ def autoencoder_embedding_map(stats_dict, max_num_samples=1000000):
 
     latents_keys = mol_keys + ['evaluation_overlap', 'evaluation_coord_overlap', 'evaluation_type_overlap']
 
-    fig = make_subplots(cols=3, rows=n_rows, subplot_titles=latents_keys, horizontal_spacing=0.05, vertical_spacing=0.05)
+    fig = make_subplots(cols=3, rows=n_rows, subplot_titles=latents_keys, horizontal_spacing=0.05,
+                        vertical_spacing=0.05)
     for ind, mol_key in enumerate(latents_keys):
         try:
             mol_feat = np.concatenate(stats_dict[mol_key])[:max_num_samples]
@@ -2172,12 +2328,12 @@ def autoencoder_embedding_map(stats_dict, max_num_samples=1000000):
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-                         y=list(sorted_correlates_dict.keys()),
-                         x=[corr for corr in sorted_correlates_dict.values()],
-                         textposition='auto',
-                         orientation='h',
-                         text=[corr for corr in sorted_correlates_dict.values()],
-                         ))
+        y=list(sorted_correlates_dict.keys()),
+        x=[corr for corr in sorted_correlates_dict.values()],
+        textposition='auto',
+        orientation='h',
+        text=[corr for corr in sorted_correlates_dict.values()],
+    ))
 
     fig.update_layout(barmode='relative')
     fig.update_traces(texttemplate='%{text:.2f}')
@@ -2186,7 +2342,7 @@ def autoencoder_embedding_map(stats_dict, max_num_samples=1000000):
 
     """score distribution"""
     fig = go.Figure()
-    fig.add_histogram(x=np.log10(1-np.abs(score)),
+    fig.add_histogram(x=np.log10(1 - np.abs(score)),
                       nbinsx=500,
                       marker_color='rgba(0,0,100,1)')
     fig.update_layout(xaxis_title='log10(1-overlap)')

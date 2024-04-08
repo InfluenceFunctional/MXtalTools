@@ -7,7 +7,7 @@ from random import shuffle
 from mxtaltools.common.geometry_calculations import compute_principal_axes_np
 from mxtaltools.common.utils import chunkify
 import numpy as np
-from mxtaltools.constants.atom_properties import NUMBERS, ATOM_WEIGHTS, VDW_RADII, SYMBOLS, ELECTRONEGATIVITY, PERIOD, GROUP
+from mxtaltools.constants.atom_properties import ATOMIC_NUMBERS, ATOM_WEIGHTS, VDW_RADII, ATOMIC_SYMBOLS, ELECTRONEGATIVITY, PERIOD, GROUP
 from rdkit import Chem as Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
 
@@ -21,7 +21,7 @@ HAcceptorSmarts = Chem.MolFromSmarts(
     '$([nH0,o,s;+0])]')
 
 vdw_radii_dict = VDW_RADII
-element_symbols_dict = SYMBOLS
+element_symbols_dict = ATOMIC_SYMBOLS
 electronegativity_dict = ELECTRONEGATIVITY
 period_dict = PERIOD
 group_dict = GROUP
@@ -86,7 +86,7 @@ for chunk_ind, chunk in zip(chunk_inds, chunks_list[start_ind:stop_ind]):  # tod
 
                 for ind, line in enumerate(atoms_block_text):
                     line = line.split('\t')
-                    atom_types[ind] = int(NUMBERS[line[0]])
+                    atom_types[ind] = int(ATOMIC_NUMBERS[line[0]])
                     atom_coords[ind, :] = float(line[1]), float(line[2]), float(line[3])
                     atom_charges[ind] = float(line[4])
 

@@ -5,7 +5,7 @@ import warnings
 from random import shuffle
 from mxtaltools.common.utils import chunkify
 import numpy as np
-from mxtaltools.constants.atom_properties import NUMBERS
+from mxtaltools.constants.atom_properties import ATOMIC_NUMBERS
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
 
@@ -46,7 +46,7 @@ for chunk_ind in chunk_inds:
                     if in_atom_block:
                         if atom_ind < num_atoms:
                             splitline = line.split()
-                            atoms_array[atom_ind] = [NUMBERS[splitline[3]], float(splitline[0]), float(splitline[1]), float(splitline[2])]
+                            atoms_array[atom_ind] = [ATOMIC_NUMBERS[splitline[3]], float(splitline[0]), float(splitline[1]), float(splitline[2])]
                             atom_ind += 1
                         else:
                             molecule_dict['atom_coordinates'] = atoms_array[:, 1:]

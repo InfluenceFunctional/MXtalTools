@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from bulk_molecule_classification.classifier_constants import identifier2form, type2num
+from bulk_molecule_classification import identifier2form, type2num
 
 
 def process_dump(path):
@@ -18,7 +18,7 @@ def process_dump(path):
                          }
 
     else:
-        from bulk_molecule_classification.classifier_constants import num2atomicnum
+        from bulk_molecule_classification import num2atomicnum
 
     file = open(path, 'r')
     lines = file.readlines()
@@ -63,7 +63,7 @@ def process_dump(path):
 
 
 def generate_dataset_from_dumps(dumps_dirs, dataset_path):
-    sample_df = pd.DataFrame()  # todo add capability to grow this object iteratively in case it crashes midway through generation
+    sample_df = pd.DataFrame()
     for dumps_dir in dumps_dirs:
         os.chdir(dumps_dir)
         dump_files = glob.glob(r'*/*.dump', recursive=True) + glob.glob('*.dump')  # plus any free dumps directly in this dir
@@ -72,24 +72,9 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
             assert False
 
         for path in tqdm(dump_files):
-            print(f"Processing dump {path}")
+            print(f"Processing dump {path}") # todo clean up all this nonsense
             if os.path.exists('run_config.npy'):
                 run_config = np.load('run_config.npy', allow_pickle=True).item()
-            elif os.path.exists(path.split('\\')[0] + '/' + 'run_config.npy'):
-                run_config = np.load(path.split('\\')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
-            elif os.path.exists(path.split('/')[0] + '/' + 'run_config.npy'):
-                run_config = np.load(path.split('/')[0] + '/' + 'run_config.npy', allow_pickle=True).item()
-            elif 'urea' in dumps_dir:
-                run_config = {'temperature': float(dumps_dir.split('T')[-1]),
-                              'gap_rate': 0}
-                if 'liq' in dumps_dir or 'interface' in dumps_dir:
-                    run_config['structure_identifier'] = 'UREA_Melt'
-                else:
-                    run_config['structure_identifier'] = path.replace('\\', '/').split('/')[0]
-            elif 'nicotinamide_liq' in dumps_dir or 'nic_liq' in dumps_dir:
-                run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'NIC_Melt'}
-            elif 'interface' in dumps_dir:
-                run_config = {'temperature': 350, 'gap_rate': 0, 'structure_identifier': 'UREA_Melt'}
             else:
                 assert False, "Trajectory directory is missing config file"
 

@@ -4,12 +4,12 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from bulk_molecule_classification.classifier_constants import form2index, identifier2form
-from bulk_molecule_classification.deprecated.dump_data_processing import generate_dataset_from_dumps
+from bulk_molecule_classification import form2index, identifier2form
+from bulk_molecule_classification import generate_dataset_from_dumps
 
-from bulk_molecule_classification.traj_analysis_figs import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig
-from bulk_molecule_classification.utils import get_loss, classifier_reporting, record_step_results, process_trajectory_results_dict
-from bulk_molecule_classification.dataset_prep import collect_to_traj_dataloaders
+from bulk_molecule_classification import embedding_fig, form_accuracy_fig, defect_accuracy_fig, all_accuracy_fig, classifier_trajectory_analysis_fig
+from bulk_molecule_classification import get_loss, classifier_reporting, record_step_results, process_trajectory_results_dict
+from bulk_molecule_classification import collect_to_traj_dataloaders
 
 
 def train_classifier(config, classifier, optimizer,
@@ -148,7 +148,7 @@ def classifier_evaluation(config, classifier, train_loader, test_loader,
 
 def trajectory_analysis(config, classifier, run_name, wandb, device, dumps_dir):
 
-    from bulk_molecule_classification.ovito_utils import write_ovito_xyz
+    from bulk_molecule_classification import write_ovito_xyz
     dataset_name = '_'.join(dumps_dir.split('/')[-3:])
     datasets_path = config['datasets_path']
     dataset_path = f'{datasets_path}{dataset_name}.pkl'

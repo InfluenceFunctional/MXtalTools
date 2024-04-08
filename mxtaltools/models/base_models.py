@@ -6,7 +6,7 @@ import torch.nn as nn
 from mxtaltools.models.components import MLP, construct_radial_graph, GlobalAggregation
 
 from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
-from mxtaltools.models.utils import get_model_nans
+from mxtaltools.models.utils import get_model_nans, argwhere_minimum_image_convention_edges
 
 
 class MoleculeGraphModel(nn.Module):
@@ -135,14 +135,19 @@ class MoleculeGraphModel(nn.Module):
             else:
                 self.v_output_fc = nn.Identity()
 
-    def forward(self, data, edges_dict=None, return_latent=False, return_dists=False):
+    def forward(self, data, edges_dict=None, return_latent=False, return_dists=False, return_embedding=False):
         if edges_dict is None:  # option to rebuild radial graph
-            edges_dict = construct_radial_graph(data.pos,
-                                                data.batch,
-                                                data.ptr,
-                                                self.convolution_cutoff,
-                                                self.max_num_neighbors,
-                                                aux_ind=data.aux_ind)
+            if data.periodic:
+                edges_dict = argwhere_minimum_image_convention_edges(
+                    data.num_graphs, data.pos, data.T_fc, self.convolution_cutoff)
+            else:
+                edges_dict = construct_radial_graph(data.pos,
+                                                    data.batch,
+                                                    data.ptr,
+                                                    self.convolution_cutoff,
+                                                    self.max_num_neighbors,
+                                                    aux_ind=data.aux_ind,
+                                                    )
 
         if self.graph_net.outside_convolution_type != 'none':
             agg_batch = edges_dict['inside_batch']
@@ -156,6 +161,12 @@ class MoleculeGraphModel(nn.Module):
                            data.batch,
                            data.ptr,
                            edges_dict)  # get graph encoding
+
+        if return_embedding:
+            embedding = x.clone()
+        else:
+            embedding = None
+
         if self.equivariant_graph:
             x, v = x
 
@@ -188,34 +199,31 @@ class MoleculeGraphModel(nn.Module):
 
         output = (self.output_fc(x), self.v_output_fc(v)) if self.equivariant_graph else self.output_fc(x)
 
-        # if self.equivariant_graph:
-        # assert torch.sum(torch.isnan(output[0])) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
-        # assert torch.sum(torch.isnan(output[1])) == 0, f"NaN in gnn pool vector output {get_model_nans(self.graph_net)}"
-        # else:
-        # assert torch.sum(torch.isnan(output)) == 0, f"NaN in gnn pool output {get_model_nans(self.graph_net)}"
-
-        extra_outputs = self.collect_extra_outputs(data, edges_dict, return_dists, return_latent, x)
+        extra_outputs = self.collect_extra_outputs(data, edges_dict, return_dists, return_latent, return_embedding, x,
+                                                   embedding)
 
         if len(extra_outputs) > 0:
             return output, extra_outputs
         else:
             return output
 
-    def collect_extra_outputs(self, data, edges_dict, return_dists, return_latent, x):
+    def collect_extra_outputs(self, data, edges_dict, return_dists, return_latent, return_embedding, x, embedding):
         extra_outputs = {}
         if return_dists:
             extra_outputs['dists_dict'] = edges_dict
             if 'edge_index_inter' in edges_dict.keys():
                 extra_outputs['dists_dict']['intermolecular_dist'] = (
-                            data.pos[edges_dict['edge_index_inter'][0]] - data.pos[
-                        edges_dict['edge_index_inter'][1]]).pow(2).sum(dim=-1).sqrt()
+                        data.pos[edges_dict['edge_index_inter'][0]] - data.pos[
+                    edges_dict['edge_index_inter'][1]]).pow(2).sum(dim=-1).sqrt()
                 extra_outputs['dists_dict']['intermolecular_dist_batch'] = data.batch[edges_dict['edge_index_inter'][0]]
                 extra_outputs['dists_dict']['intermolecular_dist_atoms'] = [
                     data.x[edges_dict['edge_index_inter'][0], 0].long(),
                     data.x[edges_dict['edge_index_inter'][1], 0].long()]
                 extra_outputs['dists_dict']['intermolecular_dist_inds'] = edges_dict['edge_index_inter']
         if return_latent:
-            extra_outputs['final_activation'] = x.cpu().detach().numpy()
+            extra_outputs['final_activation'] = x.detach()
+        if return_embedding:
+            extra_outputs['graph_embedding'] = embedding.detach()
         return extra_outputs
 
     def append_init_node_features(self, data, x):
@@ -232,7 +240,8 @@ class MoleculeGraphModel(nn.Module):
                 # x = torch.cat((x, rad[:, None], sh), dim=-1)
 
                 rad = torch.linalg.norm(data.pos, dim=1)
-                x = torch.cat((x, rad[:, None], data.pos / (rad[:, None] + 1e-5)), dim=-1)  # radii and normed directions
+                x = torch.cat((x, rad[:, None], data.pos / (rad[:, None] + 1e-5)),
+                              dim=-1)  # radii and normed directions
             else:
                 x = torch.cat((x, data.pos), dim=-1)
 

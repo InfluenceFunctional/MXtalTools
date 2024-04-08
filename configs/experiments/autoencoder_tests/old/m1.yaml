@@ -4,7 +4,7 @@ anomaly_detection: False  # slows down the code
 mode: autoencoder  # 'gan' or 'regression' or 'figures' or 'embedding' or 'sampling' WIP
 dataset_name: 'dataset.pkl'
 misc_dataset_name: 'misc_data_for_dataset.npy'
-dataset_yaml_path: '/dataset/small_autoencoder.yaml'
+dataset_yaml_path: '/small_autoencoder.yaml'
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 

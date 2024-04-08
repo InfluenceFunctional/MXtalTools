@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter1d
 
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 
-from bulk_molecule_classification.classifier_constants import nic_ordered_class_names, urea_ordered_class_names, defect_names
+from bulk_molecule_classification import nic_ordered_class_names, urea_ordered_class_names, defect_names
 
 os.chdir(r'D:\crystals_extra\classifier_training\results')
 urea_eval_path = 'dev_urea_evaluation_results_dict.npy'

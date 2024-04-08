@@ -15,7 +15,7 @@ from scipy.spatial.transform import Rotation as R
 from torch import backends
 from torch.nn import functional as F
 from torch_geometric.loader.dataloader import Collater
-from torch_scatter import scatter, scatter_softmax
+from torch_scatter import scatter
 from tqdm import tqdm
 
 from mxtaltools.common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict
@@ -25,7 +25,6 @@ from mxtaltools.crystal_building.builder import SupercellBuilder
 from mxtaltools.crystal_building.utils import (clean_cell_params, set_molecule_alignment)
 from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements
 from mxtaltools.csp.SampleOptimization import gradient_descent_sampling, mcmc_sampling
-from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
 from mxtaltools.dataset_management.manager import DataManager
 from mxtaltools.dataset_management.process_GEOM import geom_msgpack_to_minimal_dataset
@@ -34,13 +33,14 @@ from mxtaltools.models.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.discriminator_models import CrystalDiscriminator
 from mxtaltools.models.embedding_regression_models import embedding_regressor
 from mxtaltools.models.generator_models import independent_gaussian_model, CrystalGenerator
+from mxtaltools.models.mol_classifier import PolymorphClassifier
 from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
                                      save_checkpoint, set_lr, cell_vol_torch, init_optimizer, get_regression_loss,
                                      compute_num_h_bonds, slash_batch, compute_gaussian_overlap,
                                      compute_type_evaluation_overlap,
                                      compute_coord_evaluation_overlap,
-                                     compute_full_evaluation_overlap)
+                                     compute_full_evaluation_overlap, get_node_weights)
 from mxtaltools.models.utils import (weight_reset, get_n_config)
 from mxtaltools.models.vdw_overlap import vdw_overlap
 from mxtaltools.reporting.logger import Logger
@@ -48,15 +48,9 @@ from mxtaltools.reporting.online import decoder_agglomerative_clustering, extrac
     scaffolded_decoder_clustering
 
 
-#
-# os.environ['CUDA_LAUNCH_BLOCKING'] = "1" # slows down runtime
-
-
 # https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
 # https://dictionary.iucr.org/Sohncke_groups#:~:text=Sohncke%20groups%20are%20the%20three,in%20the%20chiral%20space%20groups.
 
-
-# noinspection PyAttributeOutsideInit
 class Modeller:
     """
     main class which handles everything
@@ -196,7 +190,7 @@ class Modeller:
             self.models_dict['discriminator'] = CrystalDiscriminator(self.config.seeds.model,
                                                                      self.config.discriminator.model, self.dataDims)
         if self.config.mode == 'discriminator':
-            self.models_dict['generator'] = nn.Linear(1,1)
+            self.models_dict['generator'] = nn.Linear(1, 1)
             self.models_dict['discriminator'] = CrystalDiscriminator(self.config.seeds.model,
                                                                      self.config.discriminator.model, self.dataDims)
         if self.config.mode == 'regression' or self.config.model_paths.regressor is not None:
@@ -216,6 +210,11 @@ class Modeller:
                                                                           num_targets=self.config.embedding_regressor.num_targets
                                                                           )
             assert self.config.model_paths.autoencoder is not None  # must preload the encoder
+
+        if self.config.mode == 'polymorph_classification':
+            self.models_dict['polymorph_classifier'] = PolymorphClassifier(self.config.seeds.model,
+                                                                           self.config.polymorph_classifier.model,
+                                                                           self.dataDims)
 
         null_models = {name: nn.Linear(1, 1) for name in self.model_names if
                        name not in self.models_dict.keys()}  # initialize null models
@@ -259,7 +258,8 @@ class Modeller:
 
         """load and filter dataset"""
         data_manager = DataManager(device=self.device,
-                                   datasets_path=self.config.dataset_path)
+                                   datasets_path=self.config.dataset_path,
+                                   config=self.config.dataset)
         data_manager.load_dataset_for_modelling(
             config=self.config.dataset,
             dataset_name=self.config.dataset_name,
@@ -301,7 +301,8 @@ class Modeller:
 
             # omit blind test 5 & 6 targets
             extra_data_manager = DataManager(device=self.device,
-                                             datasets_path=self.config.dataset_path
+                                             datasets_path=self.config.dataset_path,
+                                             config=self.config.dataset
                                              )
             extra_data_manager.load_dataset_for_modelling(
                 config=self.config.dataset,
@@ -410,8 +411,9 @@ class Modeller:
         decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(
             self.config.autoencoder.model.num_decoder_points).to(self.config.device)
 
-        nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = self.get_node_weights(data, decoded_data,
-                                                                                                  decoding)
+        nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = \
+            get_node_weights(data, decoded_data, decoding, self.config.autoencoder.model.num_decoder_points,
+                             self.config.autoencoder.node_weight_temperature)
 
         decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
         decoded_data.aux_ind = nodewise_weights_tensor
@@ -714,11 +716,19 @@ class Modeller:
                 'regressor': self.config.mode == 'regression',
                 'autoencoder': self.config.mode == 'autoencoder',
                 'embedding_regressor': self.config.mode == 'embedding_regression',
+                'polymorph_classifier': self.config.mode == 'polymorph_classification',
             }
 
             '''initialize datasets and useful classes'''
             train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
-            self.init_gaussian_generator()
+            if self.train_models_dict['discriminator']:
+                self.init_gaussian_generator()
+            if self.config.mode == 'polymorph_classification':
+                train_loader = update_dataloader_batch_size(train_loader, 1)
+                test_loader = update_dataloader_batch_size(test_loader, 1)
+                if extra_test_loader is not None:
+                    extra_test_loader = update_dataloader_batch_size(extra_test_loader, 1)
+
             num_params_dict = self.init_models()
 
             '''initialize some training metrics'''
@@ -729,11 +739,9 @@ class Modeller:
             for key in flat_config_dict.keys():
                 if 'path' in str(type(flat_config_dict[key])).lower():
                     flat_config_dict[key] = str(flat_config_dict[key])
-
             self.config.__dict__.update(flat_config_dict)
 
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
-
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
             wandb.log(num_params_dict)
             wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
@@ -753,7 +761,7 @@ class Modeller:
                     # todo alternate between GEOM and qm9 with some frequency
                     # todo also keep track of where we are through GEOM and move through it at each iteration
                     self.new_dataset = geom_msgpack_to_minimal_dataset(
-                        'GEOM_crude.msgpack', self.config.dataset_path, self.config.dataset.max_dataset_length)
+                        'DRUGS_crude.msgpack', self.config.dataset_path, self.config.dataset.max_dataset_length)
                     train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders(
                         override_dataset=self.new_dataset)
                     del self.new_dataset
@@ -866,6 +874,9 @@ class Modeller:
 
         elif self.config.mode == 'embedding_regression':
             self.embedding_regression_epoch(data_loader, update_weights, iteration_override)
+
+        elif self.config.mode == 'polymorph_classification':
+            self.polymorph_classification_epoch(data_loader, update_weights, iteration_override)
 
     def embedding_regression_epoch(self, data_loader, update_weights, iteration_override):
         if update_weights:
@@ -1154,8 +1165,10 @@ class Modeller:
         decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(
             self.config.autoencoder.model.num_decoder_points).to(self.config.device)
 
-        nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = self.get_node_weights(data, decoded_data,
-                                                                                                  decoding)
+        nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = \
+            get_node_weights(data, decoded_data, decoding,
+                             self.config.autoencoder.model.num_decoder_points,
+                             self.config.autoencoder.node_weight_temperature)
 
         decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
         decoded_data.aux_ind = nodewise_weights_tensor
@@ -1229,17 +1242,6 @@ class Modeller:
 
         return nodewise_reconstruction_loss, nodewise_type_loss, reconstruction_loss, self_likelihoods
 
-    def get_node_weights(self, data, decoded_data, decoding):
-        graph_weights = data.mol_size / self.config.autoencoder.model.num_decoder_points
-        nodewise_graph_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
-
-        nodewise_weights = scatter_softmax(decoding[:, -1] / self.config.autoencoder.node_weight_temperature,
-                                           decoded_data.batch, dim=0)
-        nodewise_weights_tensor = nodewise_weights * data.mol_size.repeat_interleave(
-            self.config.autoencoder.model.num_decoder_points)  # appropriate graph weighting
-
-        return nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
-
     def regression_epoch(self, data_loader, update_weights=True, iteration_override=None):
         if update_weights:
             self.models_dict['regressor'].train(True)
@@ -1270,6 +1272,53 @@ class Modeller:
 
             stats_values = [predictions, targets]
             self.logger.update_stats_dict(self.epoch_type, stats_keys, stats_values, mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, 'tracking_features', data.tracking.cpu().detach().numpy(),
+                                          mode='append')
+
+            if iteration_override is not None:
+                if i >= iteration_override:
+                    break  # stop training early - for debugging purposes
+
+        self.logger.concatenate_stats_dict(self.epoch_type)
+
+    def polymorph_classification_epoch(self, data_loader, update_weights=True, iteration_override=None):
+        if update_weights:
+            self.models_dict['polymorph_classifier'].train(True)
+        else:
+            self.models_dict['polymorph_classifier'].eval()
+
+        stats_keys = ['true_labels', 'probs', 'periodic']
+
+        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+            if self.config.positional_noise.polymorph_classifier > 0:
+                data.pos += torch.randn_like(data.pos) * self.config.positional_noise.polymorph_classifier
+
+            data = data.to(self.device)
+            output, extra_outputs = self.models_dict['polymorph_classifier'](data, return_latent=True,
+                                                                             return_embedding=True)
+            loss = (F.cross_entropy(output[:, :self.dataDims['num_polymorphs']], data.y, reduction='none'))  # +
+            #F.cross_entropy(output[:, self.dataDims['num_polymorphs']:], data.defect))
+
+            if update_weights:
+                loss.mean().backward()
+                if i % data_loader.batch_size == 0 or i == len(
+                        data_loader) - 1:  # use gradient accumulation for synthetically larger batch sizes
+                    self.optimizers_dict['polymorph_classifier'].step()  # update parameters
+                    self.optimizers_dict['polymorph_classifier'].zero_grad(
+                        set_to_none=True)  # reset gradients from previous passes
+
+            '''log losses and other tracking values'''
+            self.logger.update_current_losses('polymorph_classifier', self.epoch_type,
+                                              loss.mean().cpu().detach().numpy(),
+                                              loss.cpu().detach().numpy())
+
+            stats_values = [data.y.detach(), output.detach(), data.periodic]
+            stats = {key: value for key, value in zip(stats_keys, stats_values)}
+            self.stats_to_cpu_np(stats)
+            self.logger.update_stats_dict(self.epoch_type,
+                                          list(stats.keys()),
+                                          list(stats.values()),
+                                          mode='extend')
             self.logger.update_stats_dict(self.epoch_type, 'tracking_features', data.tracking.cpu().detach().numpy(),
                                           mode='append')
 
@@ -1942,7 +1991,8 @@ class Modeller:
 
         if discriminator_raw_output is not None:
             if self.config.generator.adversarial_loss_func == 'hot softmax':
-                adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:, 1]  # high temp smears out the function over a wider range
+                adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:,
+                                       1]  # high temp smears out the function over a wider range
                 adversarial_score = softmax_and_score(discriminator_raw_output)
 
             elif self.config.generator.adversarial_loss_func == 'minimax':
@@ -2250,14 +2300,14 @@ class Modeller:
         # standardized_gen_packing_coeffs = (generated_packing_coeffs - self.std_dict['crystal_packing_coefficient'][0]) / \
         #                                   self.std_dict['crystal_packing_coefficient'][1]
         standardized_gen_auvs = (generated_auvs - self.std_dict['crystal_reduced_volume'][0]) / \
-                                          self.std_dict['crystal_reduced_volume'][1]
+                                self.std_dict['crystal_reduced_volume'][1]
         #
         # target_packing_coeffs = standardized_target_auv * self.std_dict['crystal_packing_coefficient'][1] + \
         #                         self.std_dict['crystal_packing_coefficient'][0]
         target_auvs = standardized_target_auv * self.std_dict['crystal_reduced_volume'][1] + \
                       self.std_dict['crystal_reduced_volume'][0]
 
-        #csd_packing_coeffs = data.tracking[:, self.t_i_d['crystal_packing_coefficient']]
+        # csd_packing_coeffs = data.tracking[:, self.t_i_d['crystal_packing_coefficient']]
         csd_auvs = data.tracking[:, self.t_i_d['crystal_reduced_volume']]
 
         # compute loss vs the target

@@ -2,13 +2,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from bulk_molecule_classification.classifier_constants import num2atomicnum
-from mxtaltools.common.utils import softmax_np
 from mxtaltools.dataset_management.utils import delete_from_dataframe
-from mxtaltools.models.base_models import MoleculeGraphModel
-from bulk_molecule_classification.mol_classifier import MoleculeClassifier
+from mxtaltools.common.utils import softmax_np
+from mxtaltools.models.mol_classifier import PolymorphClassifier
 from mxtaltools.common.geometry_calculations import coor_trans_matrix
-from bulk_molecule_classification.classifier_constants import defect_names
+from mxtaltools.constants.classifier_constants import defect_names
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
@@ -16,6 +14,7 @@ import plotly.graph_objects as go
 
 def convert_box_to_cell_params(box_params):
     """
+    LAMMPS periodic box style
     ITEM: BOX BOUNDS xy xz yz
     xlo_bound xhi_bound xy
     ylo_bound yhi_bound xz
@@ -94,8 +93,8 @@ def convert_box_to_cell_params(box_params):
 def reindex_mols(dataset, i, mol_num_atoms):
     ref_coords = torch.Tensor(dataset.loc[i]['coordinates'][0])
     atoms = dataset.loc[i]['atom_type'][0]
-    atomic_numbers = torch.tensor([num2atomicnum[atom] for atom in atoms], dtype=torch.long)
-    num_molecules = (len(ref_coords)) // mol_num_atoms
+    atomic_numbers = torch.tensor(atoms, dtype=torch.long)
+    num_molecules = (len(ref_coords)) // mol_num_atoms  # todo this must be adaptive e.g., inclusive of defects
     mol_ind = torch.tensor(dataset.loc[i]['mol_ind'][0], dtype=torch.long)
     assert num_molecules == len(torch.unique(mol_ind))
     return atomic_numbers, mol_ind, num_molecules, ref_coords
@@ -115,7 +114,8 @@ def filter_mols(dataset, dataset_path, early_only, filter_early, melt_only, no_m
         dataset = delete_from_dataframe(dataset, bad_inds)
         dataset = dataset.reset_index().drop(columns='index')
     if filter_early:
-        bad_inds = np.argwhere(np.asarray(dataset['time_step']) <= int(1e4))[:, 0]  # filter first 10ps steps for equilibration
+        bad_inds = np.argwhere(np.asarray(dataset['time_step']) <= int(1e4))[:,
+                   0]  # filter first 10ps steps for equilibration
         print(f"Early filter killed {len(bad_inds)} out of {len(dataset)} samples")
 
         dataset = delete_from_dataframe(dataset, bad_inds)
@@ -171,7 +171,8 @@ def filter_mols(dataset, dataset_path, early_only, filter_early, melt_only, no_m
             dataset = dataset.reset_index().drop(columns='index')
     # forms = np.sort(np.unique(dataset['form']))
     # forms2tgt = {form: i for i, form in enumerate(forms)}
-    targets = np.asarray(dataset['form']) - 1  # no longer need to reindex, as we have this now managed through the constants
+    targets = np.asarray(
+        dataset['form']) - 1  # no longer need to reindex, as we have this now managed through the constants
     # this will throw an error later if the combined dataset is missing any forms, but it shouldn't be missing any forms in general
     # so that's fine
     # set high temperature samples to 'melted' class
@@ -215,6 +216,19 @@ def identify_surface_molecules(cluster_coords, cluster_targets, conv_cutoff, goo
 
 
 def pare_fragmented_molecules(cluster_atoms, cluster_coords, cluster_targets, pare_fragmented):
+    """
+    Identify molecules which are fragmented, or split across a periodic boundary, and delete them.
+
+    Fragmented molecules are identified as having significanly larger molecular radii than normal.
+    Args:
+        cluster_atoms:
+        cluster_coords:
+        cluster_targets:
+        pare_fragmented:
+
+    Returns:
+
+    """
     mol_centroids = cluster_coords.mean(1)
     intramolecular_centroid_dists = torch.linalg.norm(mol_centroids[:, None, :] - cluster_coords, dim=2)
     mol_radii = intramolecular_centroid_dists.amax(1)
@@ -255,11 +269,14 @@ def reindex_molecules(atomic_numbers, i, mol_ind, num_molecules, ref_coords, tar
     return cluster_atoms, cluster_coords, cluster_targets
 
 
-def force_molecules_into_box(T_fc_list, cluster_coords, i):
+def force_molecules_into_box(T_fc_list, cluster_coords, i, periodic):
     """
-    will have no effect on fragmented molecules or
+    will fail on fragmented molecules or
     molecules otherwise wrapped
     """
+    # recenter about zero
+    if periodic:  # don't do this for clusters or other floating objects
+        cluster_coords -= cluster_coords.amin((0, 1))[None, None, :]
     mol_centroids = cluster_coords.mean(1)
     frac_mol_centroids = mol_centroids @ torch.linalg.inv(T_fc_list[i].T)
     adjustment_fractional_vector = -torch.floor(frac_mol_centroids)
@@ -275,66 +292,6 @@ def pare_cluster_radius(cluster_atoms, cluster_coords, cluster_targets, max_clus
     cluster_atoms = cluster_atoms[good_mols]
     cluster_targets = cluster_targets[good_mols]
     return cluster_atoms, cluster_coords, cluster_targets
-
-
-def init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth, num_forms, num_topologies, seed):
-    return MoleculeGraphModel(
-        num_atom_feats=1,
-        output_dimension=num_forms + num_topologies,
-        graph_aggregator='molwise',
-        concat_pos_to_atom_features=False,
-        concat_mol_to_atom_features=False,
-        concat_crystal_to_atom_features=False,
-        activation='gelu',
-        num_mol_feats=0,
-        num_fc_layers=num_fcs,
-        fc_depth=embedding_depth,
-        fc_dropout_probability=dropout,
-        fc_norm_mode=fc_norm,
-        graph_node_norm=graph_norm,
-        graph_node_dropout=dropout,
-        graph_message_norm=None,
-        graph_message_dropout=0,
-        num_radial=32,
-        num_attention_heads=4,
-        graph_message_depth=message_depth,
-        graph_node_dims=embedding_depth,
-        num_graph_convolutions=num_convs,
-        graph_embedding_depth=embedding_depth,
-        nodewise_fc_layers=1,
-        radial_function='bessel',
-        max_num_neighbors=100,
-        convolution_cutoff=conv_cutoff,
-        atom_type_embedding_dims=5,
-        seed=seed,
-        periodic_structure=False,
-        outside_convolution_type='none',
-        graph_convolution_type='TransformerConv',
-    )
-
-
-def new_init_classifier(conv_cutoff, num_convs, embedding_depth, dropout, graph_norm, fc_norm, num_fcs, message_depth, num_forms, num_topologies, seed):
-    return MoleculeClassifier(
-        input_node_depth=1,
-        node_embedding_depth=embedding_depth,
-        nodewise_fc_layers=1,
-        message_depth=message_depth,
-        num_blocks=num_convs,
-        nodewise_norm=graph_norm,
-        nodewise_dropout=dropout,
-        num_fcs=num_fcs,
-        fc_norm=fc_norm,
-        output_dimension=num_forms + num_topologies,
-        activation='gelu',
-        num_radial=32,
-        graph_embedding_depth=embedding_depth,
-        radial_embedding='bessel',
-        max_num_neighbors=100,
-        cutoff=conv_cutoff,
-        embedding_hidden_dimension=5,
-        seed=seed,
-        convolution_type='TransformerConv',
-    )
 
 
 def classifier_reporting(true_labels, true_defects, probs, class_names, ordered_class_names, wandb, epoch_type):
@@ -385,7 +342,8 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
     includes fix for potential dataparallel issue
     """
     checkpoint = torch.load(path, map_location=device)
-    if list(checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+    if list(checkpoint['model_state_dict'])[0][
+       0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
         for i in list(checkpoint['model_state_dict']):
             checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
 
@@ -397,7 +355,7 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
     return model, optimizer
 
 
-def record_step_results(results_dict, output, sample, data, latents_dict, step, config, index_offset=0):
+def record_step_results(results_dict, output, sample, data, latents, embeddings, step, config, index_offset=0):
     if results_dict is None:
         results_dict = {'Temperature': [],
                         'Time_Step': [],
@@ -412,14 +370,16 @@ def record_step_results(results_dict, output, sample, data, latents_dict, step, 
                         'Atom_Types': [],
                         'Molecule_Index': [],
                         'Molecule_Centroids': [],
-                        'Coordination_Numbers': []}
+                        'Coordination_Numbers': [],
+                        'Embeddings': []}
 
     results_dict['Loss'].append(get_loss(output, sample, config['num_forms']).cpu().detach().numpy())
     results_dict['Type_Prediction'].append(F.softmax(output[:, :config['num_forms']], dim=1).cpu().detach().numpy())
     results_dict['Defect_Prediction'].append(F.softmax(output[:, config['num_forms']:], dim=1).cpu().detach().numpy())
     results_dict['Targets'].append(sample.y.cpu().detach().numpy())
     results_dict['Defects'].append(sample.defect.cpu().detach().numpy())
-    results_dict['Latents'].append(latents_dict['final_activation'])
+    results_dict['Latents'].append(latents.cpu().detach().numpy())  # ['final_activation'])
+    results_dict['Embeddings'].append(embeddings.cpu().detach().numpy())
     results_dict['Temperature'].append(np.ones(len(sample.y)) * data.tracking[0][0])
     results_dict['Time_Step'].append(np.ones(len(sample.y)) * data.tracking[0][1])
     results_dict['Sample_Index'].append(np.ones(len(sample.y)) * step + index_offset)
@@ -459,6 +419,14 @@ def process_trajectory_results_dict(results_dict, loader, mol_num_atoms):
     sorted_molwise_results_dict = {}
     for key in molwise_results_dict.keys():
         sorted_molwise_results_dict[key] = [molwise_results_dict[key][ind] for ind in sort_inds]
+
+    centroid_dists = []
+    for ind in range(len(sorted_molwise_results_dict['Coordinates'])):
+        coords = sorted_molwise_results_dict['Coordinates'][ind]
+        centroids = coords.reshape(coords.shape[0] // mol_num_atoms, mol_num_atoms, 3).mean(1)
+        centroid_dists.append(np.linalg.norm(centroids - centroids.mean(0), axis=1))
+
+    sorted_molwise_results_dict['Centroid Radii'] = centroid_dists
 
     return sorted_molwise_results_dict, np.asarray(time_inds)[sort_inds]
 

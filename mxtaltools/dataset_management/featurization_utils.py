@@ -5,7 +5,7 @@ from rdkit.Chem import Descriptors, rdMolDescriptors, Fragments, rdFreeSASA
 from scipy.spatial.distance import cdist
 
 from mxtaltools.common.geometry_calculations import compute_principal_axes_np, coor_trans_matrix
-from mxtaltools.constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, SYMBOLS
+from mxtaltools.constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, ATOMIC_SYMBOLS
 from mxtaltools.constants.space_group_info import SPACE_GROUPS
 from mxtaltools.dataset_management.utils import get_fraction
 
@@ -14,7 +14,7 @@ fingerprint_generator = AllChem.GetMorganGenerator(radius=2, includeChirality=Fa
 
 '''set up some constants'''
 vdw_radii_dict = VDW_RADII
-element_symbols_dict = SYMBOLS
+element_symbols_dict = ATOMIC_SYMBOLS
 electronegativity_dict = ELECTRONEGATIVITY
 period_dict = PERIOD
 group_dict = GROUP

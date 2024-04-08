@@ -115,7 +115,6 @@ class GraphNeuralNetwork(torch.nn.Module):
             v = self.init_vector_embedding(v[:, :, None])
             x = self.init_node_embedding(x)  # embed atomic numbers & compute initial atom-wise feature vector
             x, v = self.zeroth_fc_block(x=x, v=v, batch=batch)
-
         else:
             x, v = self.init_node_embedding(z), None  # embed atomic numbers & compute initial atom-wise feature vector
             x = self.zeroth_fc_block(x=x, v=v, batch=batch)
@@ -157,14 +156,14 @@ class GraphNeuralNetwork(torch.nn.Module):
             else:
                 assert v is None, "Vector embeddings not yet set up for periodic graphs"
                 x[inside_inds] = x[inside_inds] + fc(x[inside_inds], batch=batch[inside_inds])  # update only the inside inds
-                x = self.manually_periodize(inside_batch, inside_inds, n, n_repeats, ptr, x)
+                x = self.periodize_molecular_crystal(inside_batch, inside_inds, n, n_repeats, ptr, x)
 
         if v is not None:
             return self.output_layer(x), self.v_output_layer(v)
         else:
             return self.output_layer(x)
 
-    def manually_periodize(self, inside_batch, inside_inds, n, n_repeats, ptr, x):
+    def periodize_molecular_crystal(self, inside_batch, inside_inds, n, n_repeats, ptr, x):
         for ii in range(len(ptr) - 1):  # enforce periodicity for each crystal, assuming invariant node features
             x[ptr[ii]:ptr[ii + 1], :] = x[inside_inds[inside_batch == ii]].repeat(n_repeats[ii], 1)  # copy the first unit cell to all periodic images
         if n == len(self.interaction_blocks) - 1:
@@ -174,7 +173,11 @@ class GraphNeuralNetwork(torch.nn.Module):
     def get_edge_info(self, edges_dict, pos):
         if self.outside_convolution_type == 'none':  # assumes input with inside-outside structure, and enforces periodicity after each convolution
             edge_index = edges_dict['edge_index']
-            dist, rbf = self.get_geom_embedding(edge_index, pos)
+            if 'dists' in edges_dict.keys():  # previously generated distances - e.g., for periodic MIC
+                dist = edges_dict['dists']
+                rbf = self.rbf(dist)
+            else:
+                dist, rbf = self.get_geom_embedding(edge_index, pos)
             edge_index_inter, inside_batch, inside_inds, n_repeats, rbf_inter = None, None, None, None, None
             assert not self.periodize_inside_nodes, "Cannot periodize to outside nodes if there are no outside nodes"
         elif self.outside_convolution_type == 'all_layers':

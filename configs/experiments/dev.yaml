@@ -1,13 +1,13 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/generator.yaml
-dataset_name: 'dataset.pkl'
+base_config_path: /experiments/base/polymorph_classifier.yaml
+#dataset_name: 'test_dataset.pkl'
 
 sweep_id: null
 sweep_path: null
 
 dataset:
-  max_dataset_length: 10000000
+  max_dataset_length: 500
   test_fraction: 0.2
   filter_protons: False  # only relevant for datasets containing protons in the first place
   #regression_target: crystal_packing_coefficient
@@ -16,9 +16,9 @@ dataset:
 # batching & convergence
 early_epochs_step_override: 5
 num_early_epochs: 0
-grow_batch_size: True
-min_batch_size: 10
-max_batch_size: 1000
+grow_batch_size: False
+min_batch_size: 5
+max_batch_size: 5
 batch_growth_increment: 0.5 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 100

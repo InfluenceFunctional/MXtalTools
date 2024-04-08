@@ -23,3 +23,8 @@ paths:
 
  # default config if not specified on command line
   yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/experiments/dev.yaml'
+
+  # paths for polymorph classification only
+  local_classifier_results_path: 'D:\crystals_extra\classifier_training\results/'
+
+  cluster_classifier_results_path: '/vast/mk8347/molecule_clusters/results/'

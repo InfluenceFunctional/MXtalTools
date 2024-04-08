@@ -6,7 +6,7 @@ mode: null  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_
 dataset_name: 'qm9_molecules_dataset.pkl' # 'test_dataset.pkl' #
 #misc_dataset_name: 'misc_data_for_dataset.npy' #
 misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy' # 'misc_data_for_dataset.npy' #
-#dataset_yaml_path: '/dataset/skinny_regression.yaml' #
+#dataset_yaml_path: '/skinny_regression.yaml' #
 dataset_yaml_path: null #'/dataset/qm9_autoencoder.yaml' # '/dataset/full_discriminator.yaml' #
 base_config_path: null #'/experiments/base.yaml'  # base config
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
@@ -57,6 +57,7 @@ model_paths:
   regressor: null
   autoencoder: null
   embedding_regressor: null
+  polymorph_classifier: null
 
 positional_noise:
   discriminator: 0
@@ -123,6 +124,12 @@ discriminator:
   use_rdf_distance_loss: False
   distortion_magnitude: -1 # -1 for wide range test # noise for distorted generation
 
+  # discriminator optimizer and model
+  optimizer: null
+  model: null
+
+
+polymorph_classifier:
   # discriminator optimizer and model
   optimizer: null
   model: null

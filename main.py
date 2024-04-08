@@ -45,9 +45,13 @@ if __name__ == '__main__':
         wandb.agent(config.sweep_id, project="MXtalTools", function=predictor.train_crystal_models, count=1)
 
     else:
-
         predictor = Modeller(config)
-        if config.mode == 'discriminator' or config.mode == 'gan' or config.mode == 'regression' or config.mode == 'autoencoder' or config.mode == 'embedding_regression':
+        if (config.mode == 'discriminator'
+                or config.mode == 'gan'
+                or config.mode == 'regression'
+                or config.mode == 'autoencoder'
+                or config.mode == 'embedding_regression'
+                or config.mode == 'polymorph_classification'):
             predictor.train_crystal_models()
 
         elif config.mode == 'search':
