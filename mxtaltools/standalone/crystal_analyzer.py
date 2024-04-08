@@ -13,7 +13,7 @@ from torch_scatter import scatter
 from argparse import Namespace
 import torch.nn.functional as F
 
-from bulk_molecule_classification.utils import reload_model
+from bulk_molecule_classification import reload_model
 from mxtaltools.common.config_processing import dict2namespace
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.common.geometry_calculations import cell_vol_torch
