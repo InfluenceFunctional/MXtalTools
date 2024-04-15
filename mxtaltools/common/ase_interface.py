@@ -4,12 +4,16 @@ from ase import Atoms
 from ase.spacegroup import crystal as ase_crystal
 
 
-def crystals_to_ase_mols(crystaldata, max_ind=np.inf, highlight_aux=False, exclusion_level='distance', inclusion_distance=4, return_crystal = False):
-    return [ase_mol_from_crystaldata(crystaldata, ii, highlight_canonical_conformer=highlight_aux, exclusion_level=exclusion_level, inclusion_distance=inclusion_distance, return_crystal = return_crystal)
+def crystals_to_ase_mols(crystaldata, max_ind=np.inf, highlight_aux=False, exclusion_level='distance',
+                         inclusion_distance=4, return_crystal=False):
+    return [ase_mol_from_crystaldata(crystaldata, ii, highlight_canonical_conformer=highlight_aux,
+                                     exclusion_level=exclusion_level, inclusion_distance=inclusion_distance,
+                                     return_crystal=return_crystal)
             for ii in range(min(max_ind, crystaldata.num_graphs))]
 
 
-def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=False, exclusion_level=None, inclusion_distance=4, return_crystal=False):
+def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=False, exclusion_level=None,
+                             inclusion_distance=4, return_crystal=False):
     """
     generate an ASE Atoms object from a crystaldata object, up to certain exclusions
     optionally highlight atoms in the asymmetric unit
@@ -35,8 +39,11 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
         mol_size = data.mol_size[index]
         num_molecules = int((data.ptr[index + 1] - data.ptr[index]) / mol_size)
 
-        molecule_centroids = torch.stack([torch.mean(data.pos[data.ptr[index] + int(mol_size * multiplier):data.ptr[index] + int(mol_size * multiplier + 1)], dim=0)
-                                          for multiplier in range(num_molecules)])
+        molecule_centroids = torch.stack(
+            [torch.mean(
+                data.pos[data.ptr[index] + int(mol_size * multiplier):data.ptr[index] + int(mol_size * multiplier + 1)],
+                dim=0)
+             for multiplier in range(num_molecules)])
 
         fractional_centroids = torch.inner(torch.linalg.inv(data.T_fc[index]), molecule_centroids).T
 
@@ -73,7 +80,8 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
         canonical_conformer_inds = torch.where(crystal_inds == 0)[0]
         mol_centroid = crystal_coords[canonical_conformer_inds].mean(0)
         mol_radius = torch.max(torch.cdist(mol_centroid[None], crystal_coords[canonical_conformer_inds], p=2))
-        in_range_inds = torch.where((torch.cdist(mol_centroid[None], crystal_coords, p=2) < (mol_radius + inclusion_distance))[0])[0]
+        in_range_inds = \
+        torch.where((torch.cdist(mol_centroid[None], crystal_coords, p=2) < (mol_radius + inclusion_distance))[0])[0]
         atom_inds = atom_inds[in_range_inds]
         coords = crystal_coords[in_range_inds].cpu().detach().numpy()
     else:

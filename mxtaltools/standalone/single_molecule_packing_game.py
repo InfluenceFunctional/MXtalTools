@@ -103,7 +103,7 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space grou
             cell_parameters[:, 0:3] *= scaling_factor[:, None]
 
             '''build supercells'''
-            supercells, cell_volumes = modeller.supercell_builder.build_supercells(
+            supercells, cell_volumes = modeller.supercell_builder.build_zp1_supercells(
                 molecule_data=mol_batch,
                 cell_parameters=cell_parameters,
                 supercell_size=1,
@@ -139,7 +139,7 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space grou
                 collater = Collater(None, None)
                 mol_batch = collater([mol_data for _ in range(len(rebuild_samples))])
 
-                unit_cells, cell_volumes = modeller.supercell_builder.build_supercells(
+                unit_cells, cell_volumes = modeller.supercell_builder.build_zp1_supercells(
                     molecule_data=mol_batch,
                     cell_parameters=rebuild_samples,
                     supercell_size=0,

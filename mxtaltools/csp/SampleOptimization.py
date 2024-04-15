@@ -70,7 +70,7 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
                                                )
 
             supercell_data, cell_volumes = \
-                supercell_builder.build_supercells(
+                supercell_builder.build_zp1_supercells(
                     crystal_batch, cleaned_sample,
                     supercell_size, cutoff,
                     align_to_standardized_orientation=True,
@@ -161,7 +161,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
                                                              )
 
                 proposed_crystals, cell_volumes = \
-                    supercell_builder.build_supercells(
+                    supercell_builder.build_zp1_supercells(
                         crystal_batch, cleaned_proposed_samples,
                         supercell_size, cutoff,
                         align_to_standardized_orientation=True,
@@ -205,7 +205,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
                                                      )
 
                 proposed_crystals, cell_volumes = \
-                    supercell_builder.build_supercells(
+                    supercell_builder.build_zp1_supercells(
                         crystal_batch, proposed_samples,
                         supercell_size, cutoff,
                         align_to_standardized_orientation=True,

@@ -63,7 +63,7 @@ class TestClass:
         updated_params[:, 9:12] = rotation  # overwrite to canonical parameters
         # supercell_data.asym_unit_handedness = mol_handedness
 
-        rebuilt_supercells, _ = supercell_builder.build_supercells(
+        rebuilt_supercells, _ = supercell_builder.build_zp1_supercells(
             molecule_data=test_crystals,
             cell_parameters=updated_params,
             align_to_standardized_orientation=True,
@@ -118,7 +118,7 @@ class TestClass:
                                           symmetries_dict, supercell_builder.asym_unit_dict,
                                           rescale_asymmetric_unit=False, destandardize=False, mode='hard')
 
-        all_sg_supercells, _ = supercell_builder.build_supercells(
+        all_sg_supercells, _ = supercell_builder.build_zp1_supercells(
             molecule_data=mol_batch,
             cell_parameters=final_samples,
             align_to_standardized_orientation=False,
@@ -177,7 +177,7 @@ class TestClass:
             supercell_size=supercell_size, pare_to_convolution_cluster=True)
 
         distorted_params = test_crystals.cell_params / 2
-        rebuilt_supercells, _ = supercell_builder.build_supercells(
+        rebuilt_supercells, _ = supercell_builder.build_zp1_supercells(
             test_crystals, distorted_params,
             align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
             graph_convolution_cutoff=6,

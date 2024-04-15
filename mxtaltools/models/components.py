@@ -495,7 +495,8 @@ class kernelActivation(nn.Module):
 
 def construct_radial_graph(pos: torch.FloatTensor, batch: torch.LongTensor,
                            ptr: torch.LongTensor, cutoff: float,
-                           max_num_neighbors: int, aux_ind=None):
+                           max_num_neighbors: int, aux_ind=None,
+                           mol_ind=None):
     r"""
     Construct edge indices over a radial graph.
     Optionally, compute intra (within ref_mol_inds) and inter (between ref_mol_inds and outside inds) edges.
@@ -506,13 +507,18 @@ def construct_radial_graph(pos: torch.FloatTensor, batch: torch.LongTensor,
         cutoff: maximum edge length
         max_num_neighbors: maximum number of neighbors per node
         aux_ind: optional auxiliary index for identifying "inside" and "outside" nodes
+        mol_ind: optional index for the identity of the molecule a given atom is inside, for when there are multiple molecules per asymmetric unit, or in a cluster of molecules
 
     Returns:
         dict: dictionary of edge information
+
+
     """
-    if aux_ind is not None:
-        inside_inds = torch.where(aux_ind == 0)[0]
-        outside_inds = torch.where(aux_ind == 1)[
+    if aux_ind is not None:  # there is an 'inside' 'outside' distinction
+        inside_bool = aux_ind == 0
+        outside_bool = aux_ind == 1
+        inside_inds = torch.where(inside_bool)[0]
+        outside_inds = torch.where(outside_bool)[
             0]  # atoms which are not in the asymmetric unit but which we will convolve - pre-excluding many from outside the cutoff
         inside_batch = batch[inside_inds]  # get the feature vectors we want to repeat
         n_repeats = [int(torch.sum(batch == ii) / torch.sum(inside_batch == ii)) for ii in
@@ -529,6 +535,22 @@ def construct_radial_graph(pos: torch.FloatTensor, batch: torch.LongTensor,
                                                    # extra radius for intermolecular graph convolution
                                                    max_num_neighbors=max_num_neighbors, flow='source_to_target',
                                                    inside_inds=inside_inds, convolve_inds=outside_inds)
+
+        # for zp>1 systems, we also need to generate intermolecular edges within the asymmetric unit
+        if mol_ind is not None:
+            # for each inside molecule, get its edges to the Z'-1 other 'inside' symmetry units
+            unique_mol_inds = torch.unique(mol_ind)
+            for zp in unique_mol_inds:
+                inside_nodes = torch.where(inside_bool * (mol_ind == zp))[0]
+                outside_nodes = torch.where(inside_bool * (mol_ind != zp))[0]
+
+                # intramolecular edges
+                edge_index_inter = torch.cat([edge_index_inter,
+                                              asymmetric_radius_graph(
+                                                  pos, batch=batch, r=cutoff,
+                                                  max_num_neighbors=max_num_neighbors, flow='source_to_target',
+                                                  inside_inds=inside_nodes, convolve_inds=outside_nodes)],
+                                             dim=1)
 
         return {'edge_index': edge_index, 'edge_index_inter': edge_index_inter, 'inside_inds': inside_inds,
                 'outside_inds': outside_inds, 'inside_batch': inside_batch, 'n_repeats': n_repeats}
@@ -641,7 +663,8 @@ class GlobalAggregation(nn.Module):  # TODO upgrade with new PyG aggregation mod
             return x  # do nothing
         elif self.agg_func == 'molwise':
             if cluster.ndim > 1:
-                cluster = cluster[0, :]  # usually a single cluster - if in the future a batch of clusters, reindex molecules accordingly
+                cluster = cluster[0,
+                          :]  # usually a single cluster - if in the future a batch of clusters, reindex molecules accordingly
             return self.agg(cluster=cluster, batch=batch, x=x)[0]
         elif self.agg_func == 'mean sum':
             return (scatter(x, batch, dim_size=output_dim, dim=0, reduce='mean') +

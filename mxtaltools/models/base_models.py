@@ -137,9 +137,10 @@ class MoleculeGraphModel(nn.Module):
 
     def forward(self, data, edges_dict=None, return_latent=False, return_dists=False, return_embedding=False):
         if edges_dict is None:  # option to rebuild radial graph
-            if data.periodic:
-                edges_dict = argwhere_minimum_image_convention_edges(
-                    data.num_graphs, data.pos, data.T_fc, self.convolution_cutoff)
+            if hasattr(data, 'periodic'):  # only works one a time right now  # to parallelize
+                if data.periodic:
+                    edges_dict = argwhere_minimum_image_convention_edges(
+                        data.num_graphs, data.pos, data.T_fc, self.convolution_cutoff)
             else:
                 edges_dict = construct_radial_graph(data.pos,
                                                     data.batch,
@@ -147,6 +148,7 @@ class MoleculeGraphModel(nn.Module):
                                                     self.convolution_cutoff,
                                                     self.max_num_neighbors,
                                                     aux_ind=data.aux_ind,
+                                                    mol_ind=data.mol_ind,
                                                     )
 
         if self.graph_net.outside_convolution_type != 'none':

@@ -333,7 +333,7 @@ def rebuild_topk_crystals(scores_list, scores_dict, real_samples_dict, sampling_
 
             real_data_i = update_crystal_symmetry_elements(real_data_i, best_samples_space_groups[:, n], supercell_builder.symmetries_dict, randomize_sgs=False)
 
-            fake_supercell_data = supercell_builder.build_supercells(
+            fake_supercell_data = supercell_builder.build_zp1_supercells(
                 real_data_i,
                 torch.tensor(best_samples[:, n, :], device=real_data_i.x.device, dtype=torch.float32),
                 config.supercell_size,
@@ -496,15 +496,15 @@ def sample_clustering(supercell_builder, config, sampling_dict, collater, extra_
     big_single_mol_data = DEPRECATED_write_sg_to_all_crystals('P-1', supercell_builder.dataDims, big_single_mol_data,
                                                               supercell_builder.symmetries_dict, sym_ops_list)
 
-    best_cells, _ = supercell_builder.build_supercells(big_single_mol_data,
-                                                          torch.tensor(best_samples_to_build, device='cuda',
+    best_cells, _ = supercell_builder.build_zp1_supercells(big_single_mol_data,
+                                                           torch.tensor(best_samples_to_build, device='cuda',
                                                                             dtype=torch.float32),
-                                                          supercell_size=config.supercell_size,
-                                                          graph_convolution_cutoff=config.discriminator.graph_convolution_cutoff,
-                                                          align_to_standardized_orientation=True,
-                                                          skip_cell_cleaning=True,
-                                                          rescale_asymmetric_unit=False,
-                                                          standardized_sample=True, )
+                                                           supercell_size=config.supercell_size,
+                                                           graph_convolution_cutoff=config.discriminator.graph_convolution_cutoff,
+                                                           align_to_standardized_orientation=True,
+                                                           skip_cell_cleaning=True,
+                                                           rescale_asymmetric_unit=False,
+                                                           standardized_sample=True, )
 
     assert np.mean(np.abs(best_cells.cell_params.cpu().detach().numpy() - (
             best_samples_to_build * supercell_builder.dataDims['lattice_stds'] +

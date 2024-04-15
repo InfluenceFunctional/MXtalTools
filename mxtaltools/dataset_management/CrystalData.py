@@ -74,7 +74,7 @@ class CrystalData(BaseData):
                  aux_ind: OptTensor = None, mol_size: OptTensor = None,
                  csd_identifier: OptTensor = None, mol_volume: OptTensor = None,
                  asym_unit_handedness: OptTensor = None, symmetry_operators: OptTensor = None,
-                 mol_ind: OptTensor = None,
+                 mol_ind: OptTensor = None, periodic=None,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
@@ -119,7 +119,6 @@ class CrystalData(BaseData):
             self.symmetry_operators = symmetry_operators
         if mol_ind is not None:
             self.mol_ind = mol_ind
-
 
         for key, value in kwargs.items():
             setattr(self, key, value)

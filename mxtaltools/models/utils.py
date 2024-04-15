@@ -290,12 +290,12 @@ def undo_1d_bound(x: torch.tensor, x_span, x_center, mode='soft'):
         raise ValueError("bound must be of type 'soft'")
 
 
-def reload_model(model, optimizer, path, reload_optimizer=False):
+def reload_model(model, device, optimizer, path, reload_optimizer=False):
     """
     load model and state dict from path
     includes fix for potential dataparallel issue
     """
-    checkpoint = torch.load(path)
+    checkpoint = torch.load(path, map_location=device)
     if list(checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
         for i in list(checkpoint['model_state_dict']):
             checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)

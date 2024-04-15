@@ -5,7 +5,7 @@ from mxtaltools.models.base_models import MoleculeGraphModel
 import torch
 
 
-class CrystalDiscriminator(nn.Module):
+class MolCrystal(nn.Module):
     def __init__(self, seed, config, dataDims=None, num_atom_features=None, num_molecule_features=None):
         """
         wrapper for molecule model, with appropriate I/O
@@ -18,7 +18,7 @@ class CrystalDiscriminator(nn.Module):
             num_atom_feats = num_atom_features
             num_mol_feats = num_molecule_features
 
-        super(CrystalDiscriminator, self).__init__()
+        super(MolCrystal, self).__init__()
         self.model = MoleculeGraphModel(
             num_atom_feats=num_atom_feats,
             num_mol_feats=num_mol_feats,

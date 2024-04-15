@@ -30,7 +30,7 @@ from mxtaltools.dataset_management.manager import DataManager
 from mxtaltools.dataset_management.process_GEOM import geom_msgpack_to_minimal_dataset
 from mxtaltools.models.autoencoder_models import PointAutoencoder
 from mxtaltools.models.crystal_rdf import new_crystal_rdf
-from mxtaltools.models.discriminator_models import CrystalDiscriminator
+from mxtaltools.models.discriminator_models import MolCrystal
 from mxtaltools.models.embedding_regression_models import embedding_regressor
 from mxtaltools.models.generator_models import independent_gaussian_model, CrystalGenerator
 from mxtaltools.models.mol_classifier import PolymorphClassifier
@@ -187,12 +187,12 @@ class Modeller:
         if self.config.mode == 'gan' or self.config.mode == 'search':
             self.models_dict['generator'] = CrystalGenerator(self.config.seeds.model, self.device,
                                                              self.config.generator.model, self.dataDims, self.sym_info)
-            self.models_dict['discriminator'] = CrystalDiscriminator(self.config.seeds.model,
-                                                                     self.config.discriminator.model, self.dataDims)
+            self.models_dict['discriminator'] = MolCrystal(self.config.seeds.model,
+                                                           self.config.discriminator.model, self.dataDims)
         if self.config.mode == 'discriminator':
             self.models_dict['generator'] = nn.Linear(1, 1)
-            self.models_dict['discriminator'] = CrystalDiscriminator(self.config.seeds.model,
-                                                                     self.config.discriminator.model, self.dataDims)
+            self.models_dict['discriminator'] = MolCrystal(self.config.seeds.model,
+                                                           self.config.discriminator.model, self.dataDims)
         if self.config.mode == 'regression' or self.config.model_paths.regressor is not None:
             self.models_dict['regressor'] = MoleculeRegressor(self.config.seeds.model, self.config.regressor.model,
                                                               self.dataDims)
@@ -1545,7 +1545,7 @@ class Modeller:
             self.generate_discriminator_negatives(data, i,
                                                   orientation=self.config.generator.canonical_conformer_orientation)
 
-        fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_supercells(
+        fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_zp1_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
             self.config.discriminator.model.convolution_cutoff,
             align_to_standardized_orientation=(negative_type != 'generated'),  # take generator samples as-given
@@ -1661,7 +1661,7 @@ class Modeller:
             self.get_generator_samples(data))
 
         supercell_data, generated_cell_volumes = (
-            self.supercell_builder.build_supercells(
+            self.supercell_builder.build_zp1_supercells(
                 generator_data, generated_samples, self.config.supercell_size,
                 self.config.discriminator.model.convolution_cutoff,
                 align_to_standardized_orientation=False
@@ -2210,7 +2210,7 @@ class Modeller:
         best_inds = np.argmax(sampling_dict['score'], axis=0)
         best_samples = sampling_dict['std_cell_params'][best_inds, np.arange(batch.num_graphs), :]
         supercell_data, _ = \
-            self.supercell_builder.build_supercells(
+            self.supercell_builder.build_zp1_supercells(
                 batch, torch.tensor(best_samples, dtype=torch.float32, device=batch.x.device),
                 5, 6,
                 align_to_standardized_orientation=True,
