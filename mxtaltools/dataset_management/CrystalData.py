@@ -20,8 +20,15 @@ from torch_geometric.data.data import BaseData
 
 
 class CrystalData(BaseData):
-    r"""
-    Data type specifically for molecular crystal graphs.
+    r"""A data object describing a homogeneous graph.
+    The data object can hold node-level, link-level and graph-level attributes.
+    In general, :class:`~torch_geometric.data.Data` tries to mimic the
+    behaviour of a regular Python dictionary.
+    In addition, it provides useful functionality for analyzing graph
+    structures, and provides basic PyTorch tensor functionalities.
+    See `here <https://pytorch-geometric.readthedocs.io/en/latest/notes/
+    introduction.html#data-handling-of-graphs>`__ for the accompanying
+    tutorial.
 
     x: atom-wise node features for asymmetric unit
     pos: node positions typically cartesian space, for asymmetric unit
