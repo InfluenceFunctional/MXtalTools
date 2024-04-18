@@ -1816,13 +1816,13 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
                 sample_score = all_sample_score[space_groups == unique_space_groups[k]]
 
                 fig.add_trace(
-                    go.Violin(x=sample_score, y=[str(real_data.csd_identifier[j]) for _ in range(len(sample_score))],
+                    go.Violin(x=sample_score, y=[str(real_data.identifier[j]) for _ in range(len(sample_score))],
                               side='positive', orientation='h', width=2, line_color=colors[k],
                               meanline_visible=True, bandwidth=bandwidth1, opacity=opacity,
                               name=unique_space_groups[k], legendgroup=unique_space_groups[k], showlegend=False),
                     row=row, col=col)
 
-            fig.add_trace(go.Violin(x=[real_score], y=[str(real_data.csd_identifier[j])], line_color=real_color,
+            fig.add_trace(go.Violin(x=[real_score], y=[str(real_data.identifier[j])], line_color=real_color,
                                     side='positive', orientation='h', width=2, meanline_visible=True,
                                     name="Experiment", showlegend=True if (i == 0 and j == 0) else False),
                           row=row, col=col)

@@ -322,6 +322,33 @@ def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.te
     coeffs = crystal_multiplicity * mol_volumes / cell_volumes
     return coeffs
 
+def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.tensor, crystal_multiplicity: torch.tensor):
+    """
+    @param cell_params: cell parameters using our standard scheme 0-5 are a,b,c,alpha,beta,gamma
+    @param mol_volumes: molumes in cubic angstrom of each single molecule
+    @param crystal_multiplicity: Z value for each crystal
+    @return: crystal packing coefficient
+    """
+    volumes_list = []
+    for i in range(len(cell_params)):
+        volumes_list.append(cell_vol_torch(cell_params[i, 0:3], cell_params[i, 3:6]))
+    cell_volumes = torch.stack(volumes_list)
+    coeffs = crystal_multiplicity * mol_volumes / cell_volumes
+    return coeffs
+
+def compute_dummy_packing_coefficient(cell_params: torch.tensor, mol_radii: torch.tensor, crystal_multiplicity: torch.tensor):
+    """
+    @param cell_params: cell parameters using our standard scheme 0-5 are a,b,c,alpha,beta,gamma
+    @param mol_volumes: molumes in cubic angstrom of each single molecule
+    @param crystal_multiplicity: Z value for each crystal
+    @return: crystal packing coefficient
+    """
+    volumes_list = []
+    for i in range(len(cell_params)):
+        volumes_list.append(cell_vol_torch(cell_params[i, 0:3], cell_params[i, 3:6]))
+    cell_volumes = torch.stack(volumes_list)
+    mol_volumes = 4/3*mol_radii**3/2  # a dummy value
+    return crystal_multiplicity * mol_volumes / cell_volumes
 
 def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     """
@@ -702,12 +729,12 @@ def argwhere_minimum_image_convention_edges(num_graphs, pos, T_fc, cutoff):
 
 
 def get_node_weights(data, decoded_data, decoding, num_decoder_points, node_weight_temperature):
-    graph_weights = data.mol_size / num_decoder_points
+    graph_weights = data.num_atoms / num_decoder_points
     nodewise_graph_weights = graph_weights.repeat_interleave(num_decoder_points)
 
     nodewise_weights = scatter_softmax(decoding[:, -1] / node_weight_temperature,
                                        decoded_data.batch, dim=0)
-    nodewise_weights_tensor = nodewise_weights * data.mol_size.repeat_interleave(
+    nodewise_weights_tensor = nodewise_weights * data.num_atoms.repeat_interleave(
         num_decoder_points)  # appropriate graph weighting
 
     return nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor

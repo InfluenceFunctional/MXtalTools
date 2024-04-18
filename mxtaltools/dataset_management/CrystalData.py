@@ -20,109 +20,68 @@ from torch_geometric.data.data import BaseData
 
 
 class CrystalData(BaseData):
-    r"""A data object describing a homogeneous graph.
-    The data object can hold node-level, link-level and graph-level attributes.
-    In general, :class:`~torch_geometric.data.Data` tries to mimic the
-    behaviour of a regular Python dictionary.
-    In addition, it provides useful functionality for analyzing graph
-    structures, and provides basic PyTorch tensor functionalities.
-    See `here <https://pytorch-geometric.readthedocs.io/en/latest/notes/
-    introduction.html#data-handling-of-graphs>`__ for the accompanying
-    tutorial.
+    r"""
+    Data type specifically for molecular crystal graphs.
 
-    .. code-block:: python
+    x: atom-wise node features for asymmetric unit
+    pos: node positions typically cartesian space, for asymmetric unit
+    mol_x: molecule-wise features
 
-        from torch_geometric.data import Data
+    y: graph-wise target features - e.g., regression or classification targets
 
-        data = Data(x=x, edge_index=edge_index, ...)
 
-        # Add additional arguments to `data`:
-        data.train_idx = torch.tensor([...], dtype=torch.long)
-        data.test_mask = torch.tensor([...], dtype=torch.bool)
+    tracking: array of graph-wise features for tracking & analysis
+    smiles: SMILES strings of molecule in crystal
+    mol_size: number of nodes per molecule
+    csd_identifier: unique identifier string for this crystal structure
+    mol_volume: volume of a single molecule # TODO deprecate this is unreliably computed
 
-        # Analyzing the graph structure:
-        data.num_nodes
-        >>> 23
+    sg_ind: space group index 1-230. Always assume general Wyckhoff positions
+    # todo add z_prime
+    T_fc: fractional-cartesian transform matrix, transpose of box vectors
+    ref_cell_pos: node positions for the full unit cell in format [Z, n_atoms, 3]
+    cell_params: 12D cell parameters # TOTO unify formatting between intrinsic and extrinsic methods  # todo issue for Z'>1
+    asym_unit_handendess: handedness of the molecule in the asymmetric unit, according to our principal inertial handedness convention  # todo issue for Z'>1
+    mult: Z/Z', the symmetry multiplicity of the crystal. A feature of the space group.
+    symmetry_operators: list of symmetry operations to generate the crystal from asymmetric unit. Only necessary when using nonstandard SG settings, like data from the CSD.
 
-        data.is_directed()
-        >>> False
+    aux_ind: auxiliary index for determining nodes which are canonical vs symmetry images
+    mol_ind: auxiliary index identify which of the Z' molecules each atom is a part of
 
-        # PyTorch tensor functionality:
-        data = data.pin_memory()
-        data = data.to('cuda:0', non_blocking=True)
-
-    Args:
-        x (Tensor, optional): Node feature matrix with shape :obj:`[num_nodes,
-            num_node_features]`. (default: :obj:`None`)
-        edge_index (LongTensor, optional): Graph connectivity in COO format
-            with shape :obj:`[2, num_edges]`. (default: :obj:`None`)
-        edge_attr (Tensor, optional): Edge feature matrix with shape
-            :obj:`[num_edges, num_edge_features]`. (default: :obj:`None`)
-        y (Tensor, optional): Graph-level or node-level ground-truth labels
-            with arbitrary shape. (default: :obj:`None`)
-        pos (Tensor, optional): Node position matrix with shape
-            :obj:`[num_nodes, num_dimensions]`. (default: :obj:`None`)
-        **kwargs (optional): Additional attributes.
     """
-    def __init__(self, x: OptTensor = None, edge_index: OptTensor = None,
-                 edge_attr: OptTensor = None, y: OptTensor = None,
-                 pos: OptTensor = None, mult: OptTensor = None,
-                 mol_x: OptTensor = None,
-                 tracking: OptTensor = None, sg_ind: OptTensor = None,
-                 smiles: OptTensor = None, ref_cell_pos: OptTensor = None,
-                 cell_params: OptTensor = None, T_fc: OptTensor = None,
-                 aux_ind: OptTensor = None, mol_size: OptTensor = None,
-                 csd_identifier: OptTensor = None, mol_volume: OptTensor = None,
-                 asym_unit_handedness: OptTensor = None, symmetry_operators: OptTensor = None,
-                 mol_ind: OptTensor = None,
+    def __init__(self, x: OptTensor = None,
+                 edge_index: OptTensor = None,
+                 edge_attr: OptTensor = None,
+                 y: OptTensor = None,
+                 pos: OptTensor = None,
+                 aux_ind: OptTensor = None,
+                 periodic: bool = False,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
 
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
         if x is not None:
             self.x = x
+            self.num_atoms = len(x)
         if edge_index is not None:
             self.edge_index = edge_index
         if edge_attr is not None:
             self.edge_attr = edge_attr
         if y is not None:
             self.y = y
-        if mol_x is not None:
-            self.mol_x = mol_x
         if pos is not None:
             self.pos = pos
-        if mult is not None:
-            self.mult = mult
-        if sg_ind is not None:
-            self.sg_ind = sg_ind
-        if tracking is not None:
-            self.tracking = tracking
-        if smiles is not None:
-            self.smiles = smiles
-        if ref_cell_pos is not None:
-            self.ref_cell_pos = ref_cell_pos
-        if cell_params is not None:
-            self.cell_params = cell_params
-        if T_fc is not None:
-            self.T_fc = T_fc
+            centroid = pos.mean(dim=0)
+            self.radius = torch.amax(torch.linalg.norm(pos-centroid, dim=1))
         if aux_ind is not None:
             self.aux_ind = aux_ind
-        if mol_size is not None:
-            self.mol_size = mol_size
-        if csd_identifier is not None:
-            self.csd_identifier = csd_identifier
-        if mol_volume is not None:
-            self.mol_volume = mol_volume
-        if asym_unit_handedness is not None:
-            self.asym_unit_handedness = asym_unit_handedness
-        if symmetry_operators is not None:
-            self.symmetry_operators = symmetry_operators
-        if mol_ind is not None:
-            self.mol_ind = mol_ind
-
-
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+        if periodic is not None:
+            self.periodic = False
+            if periodic:
+                assert hasattr(self, 'T_fc'), "Periodic structures must have be initialized with box vectors"
 
     def __getattr__(self, key: str) -> Any:
         if '_store' not in self.__dict__:
@@ -437,68 +396,13 @@ class CrystalData(BaseData):
     def batch(self) -> Any:
         return self['batch'] if 'batch' in self._store else None
 
-    '''
-    custom crystal features
-    '''
-    @property
-    def mol_x(self) -> Any:
-        return self['mol_x'] if 'mol_x' in self._store else None
-
-    @property
-    def mult(self) -> Any:
-        return self['mult'] if 'mult' in self._store else None
-
-    @property
-    def sg_ind(self) -> Any:
-        return self['sg_ind'] if 'sg_ind' in self._store else None
-
-    @property
-    def tracking(self) -> Any:
-        return self['tracking'] if 'tracking' in self._store else None
-
-    @property
-    def smiles(self) -> Any:
-        return self['smiles'] if 'smiles' in self._store else None
-
-    @property
-    def ref_cell_pos(self) -> Any:
-        return self['ref_cell_pos'] if 'ref_cell_pos' in self._store else None
-
-    @property
-    def cell_params(self) -> Any:
-        return self['cell_params'] if 'cell_params' in self._store else None
-
-    @property
-    def T_fc(self) -> Any:
-        return self['T_fc'] if 'T_fc' in self._store else None
-
     @property
     def aux_ind(self) -> Any:
         return self['aux_ind'] if 'aux_ind' in self._store else None
 
     @property
-    def mol_size(self) -> Any:
-        return self['mol_size'] if 'mol_size' in self._store else None
-
-    @property
-    def csd_identifier(self) -> Any:
-        return self['csd_identifier'] if 'csd_identifier' in self._store else None
-
-    @property
-    def mol_volume(self) -> Any:
-        return self['mol_volume'] if 'mol_volume' in self._store else None
-
-    @property
-    def asym_unit_handedness(self) -> Any:
-        return self['asym_unit_handedness'] if 'asym_unit_handedness' in self._store else None
-
-    @property
-    def symmetry_operators(self) -> Any:
-        return self['symmetry_operators'] if 'symmetry_operators' in self._store else None
-
-    @property
-    def mol_ind(self) -> Any:
-        return self['mol_ind'] if 'mol_ind' in self._store else None
+    def periodic(self) -> Any:
+        return self['periodic'] if 'periodic' in self._store else None
 
     # Deprecated functions ####################################################
 

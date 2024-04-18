@@ -137,7 +137,8 @@ class MoleculeGraphModel(nn.Module):
 
     def forward(self, data, edges_dict=None, return_latent=False, return_dists=False, return_embedding=False):
         if edges_dict is None:  # option to rebuild radial graph
-            if data.periodic:
+            if all(data.periodic):  # todo only currently works for single graph data objects
+                assert data.num_graphs == 1, "MIC Periodic graphs not supported for more than one graph per data object"
                 edges_dict = argwhere_minimum_image_convention_edges(
                     data.num_graphs, data.pos, data.T_fc, self.convolution_cutoff)
             else:

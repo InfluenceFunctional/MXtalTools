@@ -143,7 +143,7 @@ class DataManager:
         self.datapoints = self.generate_training_datapoints()
 
         if self.single_molecule_dataset_identifier is not None:  # make dataset a bunch of the same molecule  # todo surely this can be done more intelligently
-            identifiers = [item.csd_identifier for item in self.datapoints]
+            identifiers = [item.identifier for item in self.datapoints]
             index = identifiers.index(
                 self.single_molecule_dataset_identifier)  # PIQTOY # VEJCES reasonably flat molecule # NICOAM03 from the paper fig
             new_datapoints = [self.datapoints[index] for i in range(self.dataset_length)]
@@ -328,7 +328,7 @@ class DataManager:
                 self.dataset[f'molecule_atom_heavier_than_{znum}_fraction'] = np.asarray(
                     [get_range_fraction(atom_list, [znum, 200]) for atom_list in self.dataset['atom_atomic_numbers']])
 
-    def get_regression_target(self):
+    def get_target(self):
         if self.regression_target is not None:
             targets = self.dataset[self.regression_target]
 
@@ -491,69 +491,84 @@ class DataManager:
 
     def generate_training_datapoints(self):
         tracking_features = self.gather_tracking_features()
-        lattice_features = self.get_cell_features()
-        targets = self.get_regression_target()
+        targets = self.get_target()
         molecule_features_array = self.concatenate_molecule_features()
         atom_features_list = self.concatenate_atom_features()
+        cell_features = self.get_cell_features()
 
+        self.drop_parsed_columns()
+
+        atom_coords = np.asarray(self.dataset['atom_coordinates'])
+
+        if self.dataset_type == 'crystal':
+            pos_list = [torch.tensor(atom_coords[i], dtype=torch.float32)[0] for i in range(len(self.dataset))]
+            mult_ind = self.tracking_keys.index('crystal_symmetry_multiplicity')
+            sg_ind_value_ind = self.tracking_keys.index('crystal_space_group_number')
+
+            extra_features = {
+                'cell_params': torch.tensor(cell_features, dtype=torch.float32)[:, None, :],
+                'symmetry_operators': self.dataset['crystal_symmetry_operators'],
+                'identifier': self.dataset['crystal_identifier'],
+                'T_fc': torch.tensor(self.dataset['crystal_fc_transform'])[:, None, :, :],
+                'ref_cell_pos': [np.asarray(self.dataset['crystal_unit_cell_coordinates'][ind]) for ind in
+                                 range(len(self.dataset))],
+                'mol_x': torch.tensor(molecule_features_array, dtype=torch.float32)[:, None, :],
+                'tracking': torch.tensor(tracking_features, dtype=torch.float32)[:, None, :],
+                'mult': torch.tensor(tracking_features[:, mult_ind], dtype=torch.long),
+                'sg_ind': torch.tensor(tracking_features[:, sg_ind_value_ind], dtype=torch.long),
+                'asym_unit_handedness': torch.tensor(self.dataset['asymmetric_unit_handedness'],
+                                                     dtype=torch.float32).flatten(),
+            }
+
+        elif self.dataset_type == 'molecule':
+            pos_list = [torch.tensor(atom_coords[i], dtype=torch.float32) for i in range(len(self.dataset))]
+
+            extra_features = {
+                'smiles': self.dataset['molecule_smiles'],
+                'tracking': torch.tensor(tracking_features)[:, None, :],
+            }
+
+        elif self.dataset_type == 'mol_cluster':
+            pos_list = [torch.tensor(atom_coords[i], dtype=torch.float32)[0] for i in range(len(self.dataset))]
+
+            molwise_targets = []
+            for ind in range(len(self.dataset)):
+                molwise_targets.append(
+                    torch.tensor(self.dataset.loc[ind]['polymorph_index'], dtype=torch.long).repeat(
+                        len(self.dataset.loc[ind]['mol_ind']))
+                )
+
+            extra_features = {
+                'tracking': torch.tensor(
+                    np.stack([np.concatenate(self.dataset['temperature'])[:, 0], self.dataset['time_step']]).T)[:, None, :],
+                'mol_y': molwise_targets,
+                'T_fc': torch.tensor(self.dataset['crystal_fc_transform'])[:, None, :],
+                'periodic': torch.tensor(np.asarray(self.dataset['cluster_type'] == 'supercell')),
+                'mol_ind': [torch.tensor(self.dataset['mol_ind'][ind][0],dtype=torch.long) for ind in range(len(self.dataset))],
+            }
+
+            self.num_polymorphs = len(polymorph2form[self.dataset['structure_identifier'][0].split('/')[0]])
+        else:
+            assert False, f"{self.dataset_type} not supported"
+
+        self.dataset = None  # save on RAM
+
+        datapoints = []
+        for i in tqdm(range(self.dataset_length)):
+            datapoints.append(
+                CrystalData(x=torch.tensor(atom_features_list[i], dtype=torch.float32),
+                            pos=pos_list[i],
+                            y=targets[i],
+                            **{key: value[i] for key, value in extra_features.items()}
+                            ))
+        return datapoints
+
+    def drop_parsed_columns(self):
         combined_keys = self.atom_keys + self.molecule_keys + self.crystal_keys
         self.dataset.drop(columns=[key for key in combined_keys if key in self.dataset.columns],
                           inplace=True)  # delete encoded columns to save on RAM
         self.dataset.drop(columns=[key for key in self.tracking_keys if key in self.dataset.columns],
                           inplace=True)  # some of these are duplicates of above
-
-        periodic_list = np.asarray([False for _ in range(len(self.dataset))])
-        mol_ind_list = np.asarray([None for _ in range(len(self.dataset))])
-        atom_coords = np.asarray(self.dataset['atom_coordinates'])
-
-        if self.dataset_type == 'crystal':
-            unit_cell_coords = self.dataset['crystal_unit_cell_coordinates']
-            T_fc_list = self.dataset['crystal_fc_transform']
-            crystal_identifier = self.dataset['crystal_identifier']
-            asym_unit_handedness = self.dataset['asymmetric_unit_handedness']
-            symmetry_ops = self.dataset['crystal_symmetry_operators']
-            smiles_list = [_ for _ in range(len(symmetry_ops))]
-        elif self.dataset_type == 'molecule':
-            unit_cell_coords = torch.ones(len(self.dataset))
-            T_fc_list = torch.ones(len(self.dataset))
-            crystal_identifier = torch.ones(len(self.dataset))
-            asym_unit_handedness = torch.ones(len(self.dataset))
-            symmetry_ops = torch.ones(len(self.dataset))
-            smiles_list = self.dataset['molecule_smiles']
-        elif self.dataset_type == 'mol_cluster':
-            unit_cell_coords = torch.ones(len(self.dataset))
-            T_fc_list = self.dataset['crystal_fc_transform']
-            crystal_identifier = torch.ones(len(self.dataset))
-            asym_unit_handedness = torch.ones(len(self.dataset))
-            symmetry_ops = torch.ones(len(self.dataset))
-            smiles_list = ['' for _ in range(len(self.dataset))]
-            tracking_features = np.stack(
-                [np.concatenate(self.dataset['temperature'])[:, 0], self.dataset['time_step']]).T
-            targets = []
-            for ind in range(len(self.dataset)):
-                targets.append(
-                    torch.tensor(self.dataset.loc[ind]['polymorph_index'], dtype=torch.long).repeat(len(self.dataset.loc[ind]['mol_ind']))
-                )
-            self.num_polymorphs = len(polymorph2form[self.dataset['structure_identifier'][0].split('/')[0]])
-            periodic_list = np.asarray(self.dataset['cluster_type'] == 'supercell')
-            mol_ind_list = self.dataset['mol_ind']
-
-        self.dataset = None  # save on RAM
-        return self.make_datapoints(atom_coords=atom_coords,
-                                    # todo make this more dynamic - pass extra features as kwargs
-                                    atom_features_list=atom_features_list,
-                                    mol_features=molecule_features_array,
-                                    targets=targets,
-                                    tracking_features=tracking_features,
-                                    reference_cells=unit_cell_coords,
-                                    lattice_features=lattice_features,
-                                    T_fc_list=T_fc_list,
-                                    identifiers=crystal_identifier,
-                                    asymmetric_unit_handedness=asym_unit_handedness,
-                                    crystal_symmetries=symmetry_ops,
-                                    smiles_list=smiles_list,
-                                    periodic_list=periodic_list,
-                                    mol_ind_list=mol_ind_list)
 
     def make_datapoints(self, atom_coords, atom_features_list, mol_features,
                         targets, tracking_features, reference_cells, lattice_features,
@@ -627,7 +642,7 @@ class DataManager:
     def load_dataset_and_misc_data(self, dataset_name, misc_dataset_name):
         self.dataset = pd.read_pickle(self.datasets_path + dataset_name)
 
-        if not os.path.exists(self.datasets_path + 'misc_data_for_' + dataset_name):
+        if not os.path.exists(self.datasets_path + 'misc_data_for_' + dataset_name) and (misc_dataset_name is None):
             self.get_dataset_standardization_statistics()  # standardize for this dataset specifically
             np.save(self.datasets_path + 'misc_data_for_' + dataset_name,
                     {'standardization_dict': self.standardization_dict})

@@ -40,7 +40,8 @@ from mxtaltools.models.utils import (reload_model, init_schedulers, softmax_and_
                                      compute_num_h_bonds, slash_batch, compute_gaussian_overlap,
                                      compute_type_evaluation_overlap,
                                      compute_coord_evaluation_overlap,
-                                     compute_full_evaluation_overlap, get_node_weights)
+                                     compute_full_evaluation_overlap, get_node_weights,
+                                     compute_dummy_packing_coefficient)
 from mxtaltools.models.utils import (weight_reset, get_n_config)
 from mxtaltools.models.vdw_overlap import vdw_overlap
 from mxtaltools.reporting.logger import Logger
@@ -1296,7 +1297,7 @@ class Modeller:
             data = data.to(self.device)
             output, extra_outputs = self.models_dict['polymorph_classifier'](data, return_latent=True,
                                                                              return_embedding=True)
-            loss = (F.cross_entropy(output[:, :self.dataDims['num_polymorphs']], data.y, reduction='none'))  # +
+            loss = (F.cross_entropy(output[:, :self.dataDims['num_polymorphs']], data.mol_y, reduction='none'))  # +
             #F.cross_entropy(output[:, self.dataDims['num_polymorphs']:], data.defect))
 
             if update_weights:
@@ -1312,7 +1313,7 @@ class Modeller:
                                               loss.mean().cpu().detach().numpy(),
                                               loss.cpu().detach().numpy())
 
-            stats_values = [data.y.detach(), output.detach(), data.periodic]
+            stats_values = [data.mol_y.detach(), output.detach(), data.periodic]
             stats = {key: value for key, value in zip(stats_keys, stats_values)}
             self.stats_to_cpu_np(stats)
             self.logger.update_stats_dict(self.epoch_type,
@@ -1357,7 +1358,7 @@ class Modeller:
             '''
             self.logger.update_stats_dict(self.epoch_type, 'tracking_features', data.tracking.cpu().detach().numpy(),
                                           mode='append')
-            self.logger.update_stats_dict(self.epoch_type, 'identifiers', data.csd_identifier, mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, 'identifiers', data.identifier, mode='extend')
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -1568,12 +1569,14 @@ class Modeller:
         discriminator_output_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(
             fake_supercell_data, return_latent=True)
 
-        '''recompute packing coeffs'''
-        real_packing_coeffs = compute_packing_coefficient(cell_params=real_supercell_data.cell_params,
-                                                          mol_volumes=real_supercell_data.mol_volume,
+        '''recompute packing coeffs'''  # todo get rid of these - we're not using mol_volume anymore
+
+
+        real_packing_coeffs = compute_dummy_packing_coefficient(cell_params=real_supercell_data.cell_params,
+                                                          mol_radii=real_supercell_data.radius,
                                                           crystal_multiplicity=real_supercell_data.mult)
-        fake_packing_coeffs = compute_packing_coefficient(cell_params=fake_supercell_data.cell_params,
-                                                          mol_volumes=fake_supercell_data.mol_volume,
+        fake_packing_coeffs = compute_dummy_packing_coefficient(cell_params=fake_supercell_data.cell_params,
+                                                          mol_radii=fake_supercell_data.radius,
                                                           crystal_multiplicity=fake_supercell_data.mult)
 
         '''distances'''
@@ -1589,7 +1592,7 @@ class Modeller:
 
             rdf_dists = torch.zeros(real_supercell_data.num_graphs, device=self.config.device, dtype=torch.float32)
             for i in range(real_supercell_data.num_graphs):
-                rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr) / real_supercell_data.mol_size[
+                rdf_dists[i] = compute_rdf_distance(real_rdf[i], fake_rdf[i], rr) / real_supercell_data.num_atoms[
                     i]  # divides out the trivial size correlation
         else:
             rdf_dists = torch.randn(real_supercell_data.num_graphs, device=self.config.device,
@@ -1674,7 +1677,7 @@ class Modeller:
         vdw_loss, vdw_score, _, _, _ = vdw_overlap(self.vdw_radii,
                                                    dist_dict=dist_dict,
                                                    num_graphs=generator_data.num_graphs,
-                                                   graph_sizes=generator_data.mol_size,
+                                                   graph_sizes=generator_data.num_atoms,
                                                    loss_func=self.config.generator.vdw_loss_func)
         packing_loss, auv_prediction, auv_target, auv_csd = \
             self.generator_density_matching_loss(

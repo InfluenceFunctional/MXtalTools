@@ -7,10 +7,11 @@ sweep_id: null
 sweep_path: null
 
 dataset:
-  max_dataset_length: 500
+  max_dataset_length: 1000
   test_fraction: 0.2
   filter_protons: False  # only relevant for datasets containing protons in the first place
-  #regression_target: crystal_packing_coefficient
+  #regression_target: crystal_reduced_volume
+  #regression_target: molecule_gap_energy
   refresh_interval: -1  # reload a new chunk of a larger dataset, only setup for QM9/GEOM
 
 # batching & convergence
@@ -25,7 +26,7 @@ minimum_epochs: 100
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 50  # for convergence checks
 gradient_norm_clip: 1
-extra_test_period: 4 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
   sample_reporting_frequency: 5  # how often to do detailed reporting with figures

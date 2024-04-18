@@ -32,7 +32,7 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
 
     elif exclusion_level == 'unit cell':
         # assume that by construction the first Z molecules are the ones in the unit cell
-        mol_size = data.mol_size[index]
+        mol_size = data.num_atoms[index]
         num_molecules = int((data.ptr[index + 1] - data.ptr[index]) / mol_size)
 
         molecule_centroids = torch.stack([torch.mean(data.pos[data.ptr[index] + int(mol_size * multiplier):data.ptr[index] + int(mol_size * multiplier + 1)], dim=0)

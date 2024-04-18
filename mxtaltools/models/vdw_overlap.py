@@ -25,7 +25,7 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
     if graph_sizes is not None:
         mol_sizes = graph_sizes
     elif crystaldata is not None:
-        mol_sizes = crystaldata.mol_size
+        mol_sizes = crystaldata.num_atoms
     else:
         assert False
 

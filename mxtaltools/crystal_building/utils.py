@@ -646,7 +646,7 @@ def find_coord_in_box_np(coords, box, epsilon=0):
 def get_intra_mol_dists(cell_data, ind):
     # assumes molecules are indexed sequentially in blocks
     coords = cell_data.pos[cell_data.batch == ind]
-    coords = coords.reshape(len(coords) // int(cell_data.mol_size[ind]), int(cell_data.mol_size[ind]), 3)
+    coords = coords.reshape(len(coords) // int(cell_data.num_atoms[ind]), int(cell_data.num_atoms[ind]), 3)
     return torch.stack([torch.cdist(coords[i], coords[i]) for i in range(len(coords))])
 
 

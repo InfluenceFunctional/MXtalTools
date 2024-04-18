@@ -124,10 +124,10 @@ class Qm9Autoencoder(torch.nn.Module):
         return decoded_data
 
     def get_node_weights(self, data, decoded_data, decoding):
-        graph_weights = data.mol_size / self.config.autoencoder.model.num_decoder_points
+        graph_weights = data.num_atoms / self.config.autoencoder.model.num_decoder_points
         nodewise_graph_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
         nodewise_weights = scatter_softmax(decoding[:, -1] / self.config.autoencoder.node_weight_temperature, decoded_data.batch, dim=0)
-        nodewise_weights_tensor = nodewise_weights * data.mol_size.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
+        nodewise_weights_tensor = nodewise_weights * data.num_atoms.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
 
         return nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
 

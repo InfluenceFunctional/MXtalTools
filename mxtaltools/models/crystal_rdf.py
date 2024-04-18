@@ -96,13 +96,13 @@ def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bi
         all_atom_inds = []
         # abs_atom_inds = []
         for i in range(crystaldata.num_graphs):
-            # all_atom_inds.append(torch.arange(crystal_data.mol_size[i]).tile(int((crystal_data.batch == i).sum() // crystal_data.mol_size[i])))
+            # all_atom_inds.append(torch.arange(crystal_data.num_atoms[i]).tile(int((crystal_data.batch == i).sum() // crystal_data.num_atoms[i])))
             # assume only that the order of atoms is patterned in all images
-            canonical_conformer_coords = crystaldata.pos[crystaldata.ptr[i]:crystaldata.ptr[i] + int(crystaldata.mol_size[i])]
+            canonical_conformer_coords = crystaldata.pos[crystaldata.ptr[i]:crystaldata.ptr[i] + int(crystaldata.num_atoms[i])]
             centroid = canonical_conformer_coords.mean(0)
             mol_dists = torch.linalg.norm(canonical_conformer_coords - centroid[None, :], dim=-1)
             inds = torch.argsort(mol_dists)
-            all_atom_inds.append(inds.tile(int((crystaldata.batch == i).sum() // crystaldata.mol_size[i])))
+            all_atom_inds.append(inds.tile(int((crystaldata.batch == i).sum() // crystaldata.num_atoms[i])))
 
         atom_inds = torch.cat(all_atom_inds)
 
@@ -111,7 +111,7 @@ def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bi
         ind = 0
         for n in range(crystaldata.num_graphs):
             # all possible combinations of unique atoms on this graph
-            atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystaldata.mol_size[n])), 2)))
+            atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystaldata.num_atoms[n])), 2)))
             rdfs_dict_list.append(atom_pairs)  # record the pairs for reporting purposes
 
             in_crystal_inds = torch.where(edge_in_crystal_number == n)[0]  # atom indices in this crystal
@@ -217,11 +217,11 @@ def get_atomwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_cr
     all_atom_inds = []
     for i in range(crystaldata.num_graphs):
         # assume only that the order of atoms is patterned in all images
-        canonical_conformer_coords = crystaldata.pos[crystaldata.ptr[i]:crystaldata.ptr[i] + int(crystaldata.mol_size[i])]
+        canonical_conformer_coords = crystaldata.pos[crystaldata.ptr[i]:crystaldata.ptr[i] + int(crystaldata.num_atoms[i])]
         centroid = canonical_conformer_coords.mean(0)
         mol_dists = torch.linalg.norm(canonical_conformer_coords - centroid[None, :], dim=-1)
         inds = torch.argsort(mol_dists)
-        all_atom_inds.append(inds.tile(int((crystaldata.batch == i).sum() // crystaldata.mol_size[i])))
+        all_atom_inds.append(inds.tile(int((crystaldata.batch == i).sum() // crystaldata.num_atoms[i])))
 
     atom_inds = torch.cat(all_atom_inds)
 
@@ -230,7 +230,7 @@ def get_atomwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_cr
     relevant_atoms_dists_list = []
     for n in range(crystaldata.num_graphs):
         # all possible combinations of unique atoms on this graph
-        atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystaldata.mol_size[n])), 2)))
+        atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystaldata.num_atoms[n])), 2)))
         rdfs_dict_list.append(atom_pairs)  # record the pairs for reporting purposes
 
         in_crystal_inds = torch.where(edge_in_crystal_number == n)[0]  # atom indices in this crystal

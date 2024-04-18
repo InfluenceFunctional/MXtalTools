@@ -36,7 +36,7 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
     sampling dict containing scores and samples
 
     """
-
+    assert False, "This is deprecated - rewrite this function"
     sample = torch.tensor(crystal_batch.cell_params.clone(), device=crystal_batch.x.device, requires_grad=True, dtype=torch.float32)
     optimizer = optimizer_func([sample], lr=lr)
 
@@ -85,7 +85,7 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
                                             dist_dict=dist_dict['dists_dict'],
                                             num_graphs=crystal_batch.num_graphs,
                                             return_score_only=True,
-                                            graph_sizes=supercell_data.mol_size).cpu().detach().numpy()
+                                            graph_sizes=supercell_data.num_atoms).cpu().detach().numpy()
 
             scores_record[s_ind] = score.cpu().detach().numpy()
             samples_record[s_ind] = supercell_data.cell_params.cpu().detach().numpy()
@@ -175,7 +175,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
                                                    dist_dict=proposed_dist_dict['dists_dict'],
                                                    num_graphs=crystal_batch.num_graphs,
                                                    return_score_only=True,
-                                                   graph_sizes=proposed_crystals.mol_size).cpu().detach().numpy()
+                                                   graph_sizes=proposed_crystals.num_atoms).cpu().detach().numpy()
 
                 score_difference = scores_record[s_ind - 1] - proposed_sample_scores
                 acceptance_ratio = np.minimum(
@@ -219,7 +219,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
                                                    dist_dict=proposed_dist_dict['dists_dict'],
                                                    num_graphs=crystal_batch.num_graphs,
                                                    return_score_only=True,
-                                                   graph_sizes=proposed_crystals.mol_size).cpu().detach().numpy()
+                                                   graph_sizes=proposed_crystals.num_atoms).cpu().detach().numpy()
 
                 packing_coeffs = (proposed_crystals.mult * proposed_crystals.mol_volume / cell_volumes).cpu().detach().numpy()
 

@@ -181,7 +181,7 @@ def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supe
         pens = normed_vdw_overlaps[i].cpu().detach()
         fig.add_trace(go.Violin(x=pens[pens != 0], side='positive', orientation='h',
                                 bandwidth=0.01, width=1, showlegend=False, opacity=1,
-                                name=f'{best_supercells.csd_identifier[i]} : ' + f'SG={sym_info["space_groups"][int(best_supercells.sg_ind[i])]} <br /> ' +
+                                name=f'{best_supercells.identifier[i]} : ' + f'SG={sym_info["space_groups"][int(best_supercells.sg_ind[i])]} <br /> ' +
                                      f'c_t={target_packing[i]:.2f} c_p={generated_packing_coeffs[i]:.2f} <br /> ' +
                                      f'tot_norm_ov={-vdw_score[i]:.2f} <br />' +
                                      f'Score={best_scores_dict["score"][i, -1]:.2f}'
@@ -264,7 +264,7 @@ def sample_rdf_funnel_plot(config, wandb, num_crystals, identifiers, reconstruct
 
 def save_3d_structure_examples(wandb, generated_supercell_examples):
     num_samples = min(25, generated_supercell_examples.num_graphs)
-    identifiers = [generated_supercell_examples.csd_identifier[i] for i in range(num_samples)]
+    identifiers = [generated_supercell_examples.identifier[i] for i in range(num_samples)]
     sgs = [str(int(generated_supercell_examples.sg_ind[i])) for i in range(num_samples)]
 
     crystals = [ase_mol_from_crystaldata(generated_supercell_examples, highlight_canonical_conformer=False,

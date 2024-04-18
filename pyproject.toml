@@ -5,45 +5,51 @@ version = "0.1.0"
 description = "MXtalTools: Molecular Crystals Machine Learning Toolkit"
 authors = ["Michael Kilgour <mjakilgour@gmail.com>"]
 readme = "README.md"
-requires-python = ">=3.7"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "License :: BSD-3",
     "Operating System :: Windows, Linux",
 ]
 
 [tool.poetry.urls]
-repository = "https://github.com/InfluenceFunctional/MXtalTools"
-issues = "https://github.com/InfluenceFunctional/MXtalTools/issues"
-# documentation = 
+"repository" = "https://github.com/InfluenceFunctional/MXtalTools"
+"issues" = "https://github.com/InfluenceFunctional/MXtalTools/issues"
+"documentation" = "https://mxtaltools.readthedocs.io/en/latest/index.html"
 
-keywords = ["molecular crystal", "molecular material", "graph neural network"]
+#keywords = ["molecular crystal", "molecular material", "graph neural network"]
 
 [tool.poetry.dependencies]
-python = "^3.7"
-dependencies = [
-  "numpy",
-  "scipy",
-  "scikit-learn",
-  "torch>=2.0.1",
-  "pyg",
-  "torch_scatter",
-  "torch_cluster",
-  "torch_sparse",
-  "wandb",
-  "tqdm",
-  "ase",
-  "pytest",
-  "numba",
-  "plotly",
-  "kaleido",
-]
+python = "^3.9"
+ase="^3.22.1"
+kaleido="^0.2.1"
+matplotlib="^3.7.2"
+numba="^0.58.0"
+numpy="^1.25.2"
+pandas="^2.1.1"
+pathtools="^0.1.2"
+Pillow="^10.0.1"
+pip="^23.3.1"
+plotly="^5.17.0"
+pytest="^8.0.0"
+PyYAML="^6.0.1"
+scikit-learn="^1.2.2"
+scipy="^1.11.3"
+torch="^2.1.0"
+torch-cluster="^1.6.3"
+torch_geometric="^2.4.0"
+torch-scatter="^2.1.2"
+torch-sparse="^0.6.18"
+torch-spline-conv="^1.2.2"
+tqdm="^4.66.1"
+umap-learn="^0.5.5"
+wandb="^0.15.12"
 
-exclude = [
-  "old",
-]
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
