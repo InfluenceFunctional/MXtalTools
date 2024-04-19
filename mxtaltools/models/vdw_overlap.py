@@ -16,7 +16,7 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
         atomic_numbers = dist_dict['intermolecular_dist_atoms']
         batch_numbers = dist_dict['intermolecular_dist_batch']
 
-    abs_overlaps, normed_overlaps = raw_vdw_overlap(
+    abs_overlaps, normed_overlaps, lj_potentials = raw_vdw_overlap(
         vdw_radii, crystaldata=crystaldata,
         dists=dists, batch_numbers=batch_numbers, atomic_numbers=atomic_numbers,
         num_graphs=num_graphs
@@ -59,6 +59,11 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
                     1 / (-torch.minimum(0.99 * torch.ones_like(normed_overlaps[ii]), normed_overlaps[ii]) + 1) - 1
                 ) for ii in range(num_graphs)]
             )) / mol_sizes
+    elif loss_func == 'lj':  # mean LJ energy per molecule, with exponential rescaling to convert to an unnormalized probability
+        vdw_loss = torch.nan_to_num(
+            torch.stack(
+                [torch.sum(1 - torch.exp(-(1 + lj_potentials[ii]))) for ii in range(num_graphs)]
+            )) / mol_sizes
     else:
         print(f'{loss_func} is not a valid loss function for vdw penalty')
         sys.exit()
@@ -82,7 +87,9 @@ def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomi
         return vdw_loss, vdw_score, max_overlaps, abs_overlaps, normed_overlaps
 
 
-def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=None, num_graphs=None, crystaldata=None):
+def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None,
+                    atomic_numbers=None, num_graphs=None,
+                    crystaldata=None):
     if crystaldata is not None:  # extract distances from the crystal
         if crystaldata.aux_ind is not None:
             in_inds = torch.where(crystaldata.aux_ind == 0)[0]
@@ -107,7 +114,7 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=No
         dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
         elements = [crystaldata.x[edges[0], 0].long().to(dists.device), crystaldata.x[edges[1], 0].long().to(dists.device)]
         num_graphs = crystaldata.num_graphs
-        molecule_sizes = torch.diff(crystaldata.ptr)
+        #molecule_sizes = torch.diff(crystaldata.ptr)
     elif dists is not None:  # precomputed intermolecular crystal distances
         crystal_number = batch_numbers
         elements = atomic_numbers
@@ -129,4 +136,11 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None, atomic_numbers=No
     penalties = F.relu(radii_sums - dists)  # only punish positives (meaning overlaps)
     normed_penalties = F.relu((radii_sums - dists) / radii_sums)  # norm overlaps against internuclear distances
 
-    return [penalties[crystal_number == ii] for ii in range(num_graphs)], [normed_penalties[crystal_number == ii] for ii in range(num_graphs)]
+    """effective lennard jones potential"""  # todo functionalize and provide as separate option
+    sigma_r6 = torch.pow(radii_sums / dists, 6)
+    sigma_r12 = torch.pow(sigma_r6, 2)
+    pot = 4 * 1 * (sigma_r12 - sigma_r6)
+
+    return ([penalties[crystal_number == ii] for ii in range(num_graphs)],
+            [normed_penalties[crystal_number == ii] for ii in range(num_graphs)],
+            [pot[crystal_number == ii] for ii in range(num_graphs)])
