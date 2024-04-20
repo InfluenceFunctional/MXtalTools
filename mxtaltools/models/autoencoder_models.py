@@ -1,18 +1,34 @@
 from torch import nn as nn
 
-from mxtaltools.models.base_models import MoleculeGraphModel
-from mxtaltools.models.components import MLP, Scalarizer
+from mxtaltools.models.base_graph_model import BaseGraphModel
+from mxtaltools.models.molecule_graph_model import MoleculeGraphModel
+from mxtaltools.models.components import Scalarizer, MLP
 from mxtaltools.models.utils import get_model_nans
 
 import torch
 
 
-class PointAutoencoder(nn.Module):
-    def __init__(self, seed, config, num_atom_types):
+# noinspection PyAttributeOutsideInit
+class PointAutoencoder(BaseGraphModel):
+    def __init__(self, seed, config, num_atom_types,
+                 dataDims=None,
+                 num_atom_features=None, num_molecule_features=None,
+                 node_standardization_tensor: torch.tensor = None,
+                 graph_standardization_tensor: torch.tensor = None
+                 ):
         super(PointAutoencoder, self).__init__()
         """
         3D o3 equivariant multi-type point cloud autoencoder model
+        Mo3ENN
         """
+
+        torch.manual_seed(seed)
+        self.get_data_stats(dataDims,
+                            graph_standardization_tensor,
+                            node_standardization_tensor,
+                            num_atom_features,
+                            num_molecule_features)
+
         cartesian_dimension = 3
         self.num_classes = num_atom_types
         self.output_depth = self.num_classes + cartesian_dimension + 1
@@ -42,14 +58,23 @@ class PointAutoencoder(nn.Module):
         self.scalarizer = Scalarizer(config.bottleneck_dim, 3, None, None, 0)
         self.decoder.vector_to_scalar[0] = self.scalarizer
 
-    def forward(self, data, return_encoding=False):
+    def forward(self, data,
+                return_encoding=False,
+                skip_standardization=False):
+
+        if not skip_standardization:
+            self.standardize(data)
+
         encoding = self.encode(data)
         if return_encoding:
             return self.decode(encoding), encoding
         else:
             return self.decode(encoding)
 
-    def encode(self, data, z=None):
+    def encode(self, data, z=None, skip_standardization=False):
+        if not skip_standardization:
+            self.standardize(data)
+
         if self.variational:
             encoding = self.variational_sampling(data, z)
         else:
@@ -102,37 +127,20 @@ class PointEncoder(nn.Module):
     def __init__(self, seed, config):
         super(PointEncoder, self).__init__()
         self.model = MoleculeGraphModel(
-            num_atom_feats=1,
+            input_node_dim=1,
             num_mol_feats=0,
-            output_dimension=config.bottleneck_dim,
+            output_dim=config.bottleneck_dim,
             seed=seed,
-            equivariant_graph=True,
+            equivariant=True,
             graph_aggregator=config.graph_aggregator,
-            concat_pos_to_atom_features=True,
-            concat_mol_to_atom_features=False,
-            concat_crystal_to_atom_features=False,
+            concat_pos_to_node_dim=True,
+            concat_mol_to_node_dim=False,
+            concat_crystal_to_node_dim=False,
             activation=config.activation,
-            num_fc_layers=0,
-            fc_depth=0,
-            fc_norm_mode=None,
-            fc_dropout_probability=None,
-            graph_node_norm=config.graph_node_norm,
-            graph_node_dropout=config.graph_node_dropout,
-            graph_message_dropout=config.graph_message_dropout,
-            num_attention_heads=config.num_attention_heads,
-            graph_message_depth=config.graph_message_depth,
-            graph_node_dims=config.embedding_depth,
-            num_graph_convolutions=config.num_graph_convolutions,
-            graph_embedding_depth=config.embedding_depth,
-            nodewise_fc_layers=config.nodewise_fc_layers,
-            num_radial=config.num_radial,
-            radial_function=config.radial_function,
-            max_num_neighbors=config.max_num_neighbors,
-            convolution_cutoff=config.convolution_cutoff,
-            atom_type_embedding_dims=config.atom_type_embedding_dims,
-            periodic_structure=False,
+            fc_config=config.fc,
+            graph_config=config.graph,
+            periodize_inside_nodes=False,
             outside_convolution_type='none',
-            cartesian_dimension=3,
             vector_norm=config.encoder_vector_norm,
         )
 

@@ -94,7 +94,7 @@ def write_non_overlapping_configs(c1, c2):
     return c1
 
 
-def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=None):
+def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=None, machine=None):
     """
     Combines YAML configuration file, command line arguments and default arguments into
     a single configuration dictionary.
@@ -119,7 +119,11 @@ def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=
                 main_config[arg] = override_args.__dict__[arg]
 
     # generate machine-appropriate paths
-    machine_type = main_config['machine']
+    if machine is not None:
+        machine_type = machine
+    else:
+        machine_type = main_config['machine']
+
     main_config['workdir'] = user_config['paths'][machine_type + '_workdir_path']
     main_config['dataset_path'] = user_config['paths'][machine_type + '_dataset_dir_path']
     main_config['checkpoint_dir_path'] = user_config['paths'][machine_type + '_checkpoint_dir_path']

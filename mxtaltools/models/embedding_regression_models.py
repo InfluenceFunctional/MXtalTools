@@ -1,30 +1,25 @@
 import torch
-import torch.nn as nn
 
+from mxtaltools.models.base_graph_model import BaseGraphModel
 from mxtaltools.models.components import MLP
 
 
-class embedding_regressor(nn.Module):
+class EmbeddingRegressor(BaseGraphModel):
     """single property prediction head for pretrained embeddings"""
 
-    def __init__(self, seed, config, num_targets):
-        super(embedding_regressor, self).__init__()
+    def __init__(self, seed, config, num_targets: int = 1):
+        super(EmbeddingRegressor, self).__init__()
+
+        torch.manual_seed(seed)
 
         self.equivariant = config.equivariant
         self.prediction_type = 'scalar'
+        self.output_dim = int(1 * num_targets)
 
-        if self.prediction_type == 'scalar':
-            self.output_dim = int(1 * num_targets)
-        # elif prediction_type == 'vector':
-        #     if self.equivariant:
-        #         self.output_dim = int(1 * num_targets)
-        #     else:
-        #         self.output_dim = int(3 * num_targets)
-
-        # graph size model
+        # regression model
         self.model = MLP(layers=config.num_layers,
-                         filters=config.depth,
-                         norm=config.norm_mode,
+                         filters=config.hidden_dim,
+                         norm=config.norm,
                          dropout=config.dropout,
                          input_dim=config.bottleneck_dim,
                          output_dim=self.output_dim,
@@ -36,6 +31,8 @@ class embedding_regressor(nn.Module):
                          )
 
     def forward(self, x, v=None):
+        """no need to do standardization, inputs are raw outputs from autoencoder model
+        """
 
         if self.equivariant:
             x, v = self.model(x=x,
@@ -44,10 +41,4 @@ class embedding_regressor(nn.Module):
         else:
             x = self.model(x)
 
-        #if self.prediction_type == 'scalar':
         return x
-        # elif self.prediction_type == 'vector':  # todo rewrite
-        #     if self.equivariant:
-        #         return v.permute(0, 2, 1)
-        #     else:
-        #         return x.reshape(len(x), x.shape[-1] // 3, 3)

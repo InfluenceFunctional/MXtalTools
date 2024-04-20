@@ -1,44 +1,46 @@
-import torch.nn as nn
+import torch
 
-from mxtaltools.models.base_models import MoleculeGraphModel
+from mxtaltools.models.base_graph_model import BaseGraphModel
+from mxtaltools.models.molecule_graph_model import MoleculeGraphModel
 
 
-class PolymorphClassifier(nn.Module):
-    def __init__(self, seed, config, dataDims: dict):  # todo convert this to our standard molecule graph model
+class PolymorphClassifier(BaseGraphModel):
+    def __init__(self, seed, config,
+                 dataDims: dict,
+                 num_atom_features: int = None,
+                 num_molecule_features: int = None,
+                 node_standardization_tensor: torch.tensor = None,
+                 graph_standardization_tensor: torch.tensor = None
+                 ):
         super(PolymorphClassifier, self).__init__()
+
+        torch.manual_seed(seed)
+        self.get_data_stats(dataDims,
+                            graph_standardization_tensor,
+                            node_standardization_tensor,
+                            num_atom_features,
+                            num_molecule_features)
+
         self.model = MoleculeGraphModel(
-            num_atom_feats=dataDims['num_atom_features'],
+            input_node_dim=dataDims['num_atom_features'],
             num_mol_feats=0,
-            output_dimension=dataDims['num_polymorphs'] + dataDims['num_topologies'],
+            output_dim=dataDims['num_polymorphs'] + dataDims['num_topologies'],
             seed=seed,
             graph_aggregator='molwise',
-            concat_pos_to_atom_features=False,
-            concat_mol_to_atom_features=False,
-            concat_crystal_to_atom_features=False,
             activation=config.activation,
-            num_fc_layers=config.num_fc_layers,
-            fc_depth=config.graph_embedding_depth,
-            fc_norm_mode=config.fc_norm_mode,
-            fc_dropout_probability=config.fc_dropout_probability,
-            graph_node_norm=config.graph_node_norm,
-            graph_node_dropout=config.graph_node_dropout,
-            graph_message_dropout=0,
-            num_attention_heads=config.num_attention_heads,
-            graph_message_depth=config.graph_message_depth,
-            graph_node_dims=config.graph_embedding_depth,
-            num_graph_convolutions=config.num_graph_convolutions,
-            graph_embedding_depth=config.graph_embedding_depth,
-            nodewise_fc_layers=config.nodewise_fc_layers,
-            num_radial=config.num_radial,
-            radial_function=config.radial_function,
-            max_num_neighbors=config.max_num_neighbors,
-            convolution_cutoff=config.convolution_cutoff,
-            atom_type_embedding_dims=config.atom_type_embedding_dims,
+            fc_config=config.fc,
+            graph_config=config.graph,
             outside_convolution_type='none'
         )
 
-    def forward(self, data, return_dists=False, return_latent=False, return_embedding=False):
-        return self.model(data, return_dists=return_dists, return_latent=return_latent, return_embedding=return_embedding)
+    def forward(self, data, return_dists=False, return_latent=False, return_embedding=False, skip_standardization=False):
+        if not skip_standardization:
+            data = self.standardize(data)
+
+        return self.model(data,
+                          return_dists=return_dists,
+                          return_latent=return_latent,
+                          return_embedding=return_embedding)
 
 
     #

@@ -69,21 +69,28 @@ polymorph_classifier:
     use_plateau_scheduler: False
 
   model:
-    num_fc_layers: 4
-    fc_depth: 256
-    fc_norm_mode: layer
-    fc_dropout_probability: 0.25
-    graph_node_norm: 'graph layer'
-    graph_node_dropout: 0.25
-    num_attention_heads: 16
-    graph_message_depth: 128
-    graph_node_dims: 256
-    num_graph_convolutions: 2
-    graph_embedding_depth: 256
-    nodewise_fc_layers: 1
-    convolution_cutoff: 6
     activation: 'gelu'
-    num_radial: 32
-    radial_function: 'bessel'
-    max_num_neighbors: 100
-    atom_type_embedding_dims: 10
+
+    graph:
+      node_dim: 256
+      message_dim: 128
+      num_attention_heads: 16
+      embedding_dim: 256
+      num_convs: 4
+      fcs_per_gc: 1
+      num_radial: 32
+      num_input_classes: 101
+      norm: 'graph layer'
+      dropout: 0.05
+
+      atom_type_embedding_dim: 32
+      radial_embedding: 'bessel'
+      cutoff: 6
+      max_num_neighbors: 100
+      envelope_exponent: 5
+
+    fc:
+      hidden_dim: 256
+      num_layers: 4
+      dropout: 0.05
+      norm: 'layer'

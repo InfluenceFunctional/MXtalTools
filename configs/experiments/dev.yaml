@@ -1,17 +1,12 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/generator.yaml
+base_config_path: /experiments/base/regressor.yaml
 dataset_name: 'test_dataset.pkl'
 
-sweep_id: null
-sweep_path: null
-
 dataset:
-  max_dataset_length: 1000
+  max_dataset_length: 10000
   test_fraction: 0.2
   filter_protons: False  # only relevant for datasets containing protons in the first place
-  #regression_target: crystal_reduced_volume
-  #regression_target: molecule_gap_energy
   refresh_interval: -1  # reload a new chunk of a larger dataset, only setup for QM9/GEOM
 
 # batching & convergence
@@ -35,12 +30,10 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  #autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57  # no protons, non-variational
-  autoencoder: null # /cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41  # protons, non-variational
-  #autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_8_27-02-15-35-51  # inferred protons, non-variational
+  autoencoder: null
   embedding_regressor: null
 
-generate_sgs: ['P-1','C2/c','P21/c','P212121']
+#generate_sgs: ['P-1','C2/c','P21/c','P212121']
 
 autoencoder:
   infer_protons: False  # todo make this a property of the model

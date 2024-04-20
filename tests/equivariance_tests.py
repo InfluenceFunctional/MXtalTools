@@ -18,9 +18,9 @@ import numpy as np
 from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.dataset_management.CrystalData import CrystalData
-from mxtaltools.models.base_models import MoleculeGraphModel
-from mxtaltools.models.components import MLP, GlobalAggregation
-from mxtaltools.models.gnn_blocks import GC_Block
+from mxtaltools.models.molecule_graph_model import MoleculeGraphModel
+from mxtaltools.models.components import GlobalAggregation, MLP
+from mxtaltools.models.gnn_blocks import GCBlock
 from mxtaltools.models.vector_LayerNorm import VectorLayerNorm
 from tests.utils import check_tensor_similarity, is_module_equivariant
 from torch.nn import Linear
@@ -96,8 +96,8 @@ def test_aggregators():
 
 @torch.no_grad()
 def test_graph_convolution():
-    module = GC_Block(message_depth=feature_depth, node_embedding_depth=feature_depth, radial_dim=10,
-                      dropout=0, heads=4, equivariant=True)
+    module = GCBlock(message_depth=feature_depth, node_embedding_depth=feature_depth, radial_dim=10,
+                     dropout=0, heads=4, equivariant=True)
     vector_batch = torch.randn(num_samples, 3, feature_depth)
     batch_inds = torch.tensor(np.random.choice(np.arange(num_graphs), size=num_samples), device=device, dtype=torch.long)
     edge_index = torch.stack([
@@ -114,33 +114,33 @@ def test_graph_convolution():
 
 @torch.no_grad()
 def test_equivariant_graph():
-    module = MoleculeGraphModel(num_atom_feats=1,
+    module = MoleculeGraphModel(input_node_dim=1,
                                 num_mol_feats=0,
-                                output_dimension=feature_depth,
-                                equivariant_graph=True,
+                                output_dim=feature_depth,
+                                equivariant=True,
                                 graph_aggregator='equivariant softmax',
-                                concat_pos_to_atom_features=True,
-                                concat_mol_to_atom_features=False,
-                                concat_crystal_to_atom_features=False,
+                                concat_pos_to_node_dim=True,
+                                concat_mol_to_node_dim=False,
+                                concat_crystal_to_node_dim=False,
                                 activation='gelu',
-                                num_fc_layers=0,
-                                fc_depth=0,
-                                fc_norm_mode=None,
-                                fc_dropout_probability=None,
-                                graph_node_norm='graph layer',
-                                graph_node_dropout=0,
+                                fc_num_layers=0,
+                                fc_hidden_dim=0,
+                                fc_norm=None,
+                                fc_dropout=None,
+                                graph_norm='graph layer',
+                                graph_dropout=0,
                                 graph_message_dropout=0,
-                                graph_message_depth=feature_depth,
-                                graph_node_dims=feature_depth,
-                                num_graph_convolutions=2,
-                                graph_embedding_depth=feature_depth,
-                                nodewise_fc_layers=2,
-                                num_radial=10,
-                                radial_function='bessel',
-                                max_num_neighbors=100,
-                                convolution_cutoff=2,
-                                atom_type_embedding_dims=5,
-                                periodic_structure=False,
+                                graph_message_dim=feature_depth,
+                                graph_node_dim=feature_depth,
+                                graph_num_convs=2,
+                                graph_embedding_dim=feature_depth,
+                                graph_fcs_per_gc=2,
+                                graph_num_radial=10,
+                                graph_radial_function='bessel',
+                                graph_max_num_neighbors=100,
+                                graph_convolution_cutoff=2,
+                                graph_atom_type_embedding_dim=5,
+                                periodize_inside_nodes=False,
                                 outside_convolution_type='none',
                                 cartesian_dimension=3,
                                 vector_norm='graph vector layer',

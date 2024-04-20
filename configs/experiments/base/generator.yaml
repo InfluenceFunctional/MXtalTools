@@ -141,36 +141,39 @@ generator:
     use_plateau_scheduler: False
 
   model:
-    num_fc_layers: 4
-    fc_depth: 128
-    activation: 'gelu'
-    fc_dropout_probability: 0.1
-    fc_norm_mode: layer
-
     prior: multivariate normal
     prior_dimension: 12  # NOTE this must be 12 currently
     radial_norm_factor: 5
+    graph_aggregator: 'softmax'
+    activation: 'gelu'
 
     conditioner:
-      graph_convolution_type: TransformerConv
-      graph_aggregator: 'equivariant softmax'
-      concat_mol_to_atom_features: False
-      activation: gelu
-      graph_node_norm: 'graph layer'
-      graph_node_dropout: 0.1
-      graph_message_norm: null
-      graph_message_dropout: 0
-      num_attention_heads: 16
-      graph_message_depth: 128
-      graph_node_dims: 256
-      num_graph_convolutions: 2
-      graph_embedding_depth: 256
-      nodewise_fc_layers: 1
-      num_radial: 50
-      radial_function: gaussian
-      max_num_neighbors: 100
-      convolution_cutoff: 6
-      atom_type_embedding_dims: 5
+      graph:
+        node_dim: 256
+        message_dim: 128
+        num_attention_heads: 16
+        embedding_dim: 256
+        num_convs: 4
+        fcs_per_gc: 1
+        num_radial: 32
+        num_input_classes: 101
+        norm: 'graph layer'
+        dropout: 0.05
 
+        atom_type_embedding_dim: 32
+        radial_embedding: 'bessel'
+        cutoff: 6
+        max_num_neighbors: 100
+        envelope_exponent: 5
 
+      fc:
+        hidden_dim: 256
+        num_layers: 0
+        dropout: 0.05
+        norm: 'layer'
 
+      generator:
+        hidden_dim: 256
+        num_layers: 4
+        dropout: 0.05
+        norm: 'layer'

@@ -6,18 +6,30 @@ from torch.distributions import MultivariateNormal, Uniform
 
 from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from mxtaltools.crystal_building.utils import clean_cell_params
-from mxtaltools.models.autoencoder_models import PointEncoder
+from mxtaltools.models.base_graph_model import BaseGraphModel
 from mxtaltools.models.components import MLP
-from mxtaltools.models.base_models import MoleculeGraphModel
+from mxtaltools.models.molecule_graph_model import MoleculeGraphModel
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.models.utils import clean_generator_output
 
 
-class CrystalGenerator(nn.Module):
-    def __init__(self, seed, device, config, dataDims, sym_info):
+class CrystalGenerator(BaseGraphModel):
+    def __init__(self, seed, device, config, dataDims, sym_info,
+                 num_atom_features: int = None,
+                 num_molecule_features: int = None,
+                 node_standardization_tensor: torch.tensor = None,
+                 graph_standardization_tensor: torch.tensor = None
+                 ):
         super(CrystalGenerator, self).__init__()
 
         self.device = device
+        torch.manual_seed(seed)
+        self.get_data_stats(dataDims,
+                            graph_standardization_tensor,
+                            node_standardization_tensor,
+                            num_atom_features,
+                            num_molecule_features)
+
         self.symmetries_dict = sym_info
         self.lattice_means = torch.tensor(dataDims['lattice_means'], dtype=torch.float32, device=device)
         self.lattice_stds = torch.tensor(dataDims['lattice_stds'], dtype=torch.float32, device=device)
@@ -45,37 +57,20 @@ class CrystalGenerator(nn.Module):
 
         # equivalent to equivariant point encoder model
         self.conditioner = MoleculeGraphModel(
-            num_atom_feats=dataDims['num_atom_features'],
-            num_mol_feats=dataDims['num_molecule_features'],
-            output_dimension=config.conditioner.graph_embedding_depth,
+            input_node_dim=self.num_atom_feats,
+            num_mol_feats=self.num_mol_feats,
+            output_dim=config.conditioner.graph_embedding_depth,
             seed=seed,
-            equivariant_graph=True,
+            equivariant=True,
             graph_aggregator=config.conditioner.graph_aggregator,
-            concat_pos_to_atom_features=True,
-            concat_mol_to_atom_features=False,
-            concat_crystal_to_atom_features=False,
+            concat_pos_to_node_dim=True,
+            concat_mol_to_node_dim=False,
+            concat_crystal_to_node_dim=False,
             activation=config.conditioner.activation,
-            num_fc_layers=0,
-            fc_depth=0,
-            fc_norm_mode=None,
-            fc_dropout_probability=None,
-            graph_node_norm=config.conditioner.graph_node_norm,
-            graph_node_dropout=config.conditioner.graph_node_dropout,
-            graph_message_dropout=config.conditioner.graph_message_dropout,
-            num_attention_heads=config.conditioner.num_attention_heads,
-            graph_message_depth=config.conditioner.graph_message_depth,
-            graph_node_dims=config.conditioner.graph_node_dims,
-            num_graph_convolutions=config.conditioner.num_graph_convolutions,
-            graph_embedding_depth=config.conditioner.graph_embedding_depth,
-            nodewise_fc_layers=config.conditioner.nodewise_fc_layers,
-            num_radial=config.conditioner.num_radial,
-            radial_function=config.conditioner.radial_function,
-            max_num_neighbors=config.conditioner.max_num_neighbors,
-            convolution_cutoff=config.conditioner.convolution_cutoff,
-            atom_type_embedding_dims=config.conditioner.atom_type_embedding_dims,
-            periodic_structure=False,
+            fc_config=config.conditioner.fc,
+            graph_config=config.conditioner.graph,
+            periodize_inside_nodes=False,
             outside_convolution_type='none',
-            cartesian_dimension=3,
             vector_norm='graph vector layer' if config.conditioner.graph_node_norm == 'graph layer' else None,
         )
 
@@ -83,20 +78,20 @@ class CrystalGenerator(nn.Module):
         generator model
         '''
         self.model = MLP(
-            layers=config.num_fc_layers,
-            filters=config.fc_depth,
+            layers=config.generator.num_layers,
+            filters=config.generator.hidden_dim,
             input_dim=self.latent_dim + SG_FEATURE_TENSOR.shape[1] + 1,
             # include crystal information for the generator and the target packing coeff
             output_dim=12 + 3,  # 3 extra dimensions for angle decoder
             conditioning_dim=0,
             activation='gelu',
             conditioning_mode=None,
-            norm=config.fc_norm_mode,
-            dropout=config.fc_dropout_probability,
+            norm=config.generator.norm,
+            dropout=config.generator.dropout,
             equivariant=True,
             vector_output_dim=3,  # opt for rotvec output
             vector_input_dim=config.conditioner.graph_embedding_depth,
-            vector_norm=config.fc_norm_mode,
+            vector_norm=config.generator.norm,
             ramp_depth=False,
             v_to_s_combination='sum'
         )
@@ -106,12 +101,17 @@ class CrystalGenerator(nn.Module):
         return self.prior.sample((n_samples,)).to(self.device)
 
     def forward(self, n_samples, molecule_data, z=None, return_condition=False, return_prior=False,
-                return_raw_samples=False, target_packing=0):
+                return_raw_samples=False, target_packing=0, skip_standardization=False):
+
+        if not skip_standardization:
+            molecule_data = self.standardize(molecule_data)
+
         if z is None:  # sample random numbers from prior distribution
             z = self.sample_latent(n_samples)
 
         molecule_data.pos = molecule_data.pos / self.radial_norm_factor
         _, molecule_encoding = self.conditioner(molecule_data)
+
         scalar_input = torch.cat((
             z,
             torch.tensor(self.SG_FEATURE_TENSOR[molecule_data.sg_ind],
@@ -144,9 +144,9 @@ class CrystalGenerator(nn.Module):
             return clean_samples
 
 
-class independent_gaussian_model(nn.Module):
+class IndependentGaussianGenerator(nn.Module):
     def __init__(self, input_dim, means, stds, sym_info, device, cov_mat=None):
-        super(independent_gaussian_model, self).__init__()
+        super(IndependentGaussianGenerator, self).__init__()
 
         self.device = device
         self.input_dim = input_dim

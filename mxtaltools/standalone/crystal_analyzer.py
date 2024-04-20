@@ -13,12 +13,13 @@ from torch_scatter import scatter
 from argparse import Namespace
 import torch.nn.functional as F
 
-from mxtaltools.common.config_processing import dict2namespace
+from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.common.geometry_calculations import cell_vol_torch
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.crystal_building.builder import SupercellBuilder
 from mxtaltools.dataset_management.CrystalData import CrystalData
+from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.models.discriminator_models import MolCrystal
 from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import softmax_and_score, reload_model
@@ -43,55 +44,73 @@ def load_yaml(path):
     return target_dict
 
 
+# noinspection PyAttributeOutsideInit
 class CrystalAnalyzer(torch.nn.Module):
     def __init__(self,
-                 device, supercell_size=5):
+                 device,
+                 machine='local',
+                 supercell_size=5):
         super(CrystalAnalyzer, self).__init__()
 
         self.device = device
-        self.config = dict2namespace(load_yaml(config_path))
+        self.machine = machine
+
+        self.config = process_main_config(None,
+                                          user_yaml_path='../../configs/users/mkilgour.yaml',
+                                          main_yaml_path='../../configs/standalone/crystal_analyzer.yaml',
+                                          machine=machine)
+        #self.config = dict2namespace(load_yaml(config_path))
         self.supercell_size = supercell_size
-        self.mol_asym_unit_vol = 63.33  # approximate urea asym unit volume
 
-        # update configs from checkpoints
-        checkpoint = torch.load(discriminator_checkpoint_path, map_location=self.device)
-        model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
-        self.config.discriminator.optimizer = model_config.optimizer
-        self.config.discriminator.model = model_config.model
-        self.d_dataDims = checkpoint['dataDims']
+        num_atom_features, num_molecule_features = self.load_models()
 
-        checkpoint = torch.load(volume_checkpoint_path, map_location=self.device)
-        model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
-        self.config.regressor.optimizer = model_config.optimizer
-        self.config.regressor.model = model_config.model
-        self.r_dataDims = checkpoint['dataDims']
+        self.load_atom_properties()
+        self.generate_standardization_vectors(num_atom_features, num_molecule_features)
 
-        num_atom_features = 6
-        num_molecule_features = 2
+        self.collater = Collater(0, 0)
+        self.supercell_builder = SupercellBuilder(device=self.device, rotation_basis='spherical')
+        #
+        # data_manager = DataManager(device=self.device,
+        #                            datasets_path=self.config.dataset_path,
+        #                            config=self.config.dataset)
+        # data_manager.load_dataset_and_misc_data(
+        #     dataset_name=self.config.dataset_name,
+        #     misc_dataset_name=self.config.misc_dataset_name,
+        # )
+        # data_manager.dataset_filtration(self.config.dataset.filter_conditions,
+        #                                 False, False, False)
+        #
+        # self.dataset = data_manager.dataset[  # todo translate to 'states' format
+        #     ['atom_coordinates', 'atom_atomic_numbers',
+        #      'molecule_mass', 'molecule_num_atoms',
+        #      'crystal_space_group_number', 'crystal_z_prime',
+        #      'crystal_space_group_setting', 'crystal_symmetry_multiplicity',
+        #      'crystal_identifier',
+        #      'crystal_lattice_a', 'crystal_lattice_b', 'crystal_lattice_c',
+        #      'crystal_lattice_alpha', 'crystal_lattice_beta', 'crystal_lattice_gamma',
+        #      'asymmetric_unit_centroid_x', 'asymmetric_unit_centroid_y', 'asymmetric_unit_centroid_z',
+        #      'asymmetric_unit_rotvec_theta', 'asymmetric_unit_rotvec_phi', 'asymmetric_unit_rotvec_r',
+        #      'asymmetric_unit_handedness', 'asymmetric_unit_is_well_defined']]
 
-        self.model = MolCrystal(seed=12345, config=self.config.discriminator.model,
-                                num_atom_features=num_atom_features,
-                                num_molecule_features=num_molecule_features)
-        for param in self.model.parameters():  # freeze encoder
-            param.requires_grad = False
-        self.model, _ = reload_model(self.model, device=self.device, optimizer=None, path=discriminator_checkpoint_path)
-        self.model.eval()
-        self.model.to(self.device)
+        #del data_manager
 
-        self.volume_model = MoleculeRegressor(seed=12345, config=self.config.regressor.model,
-                                              num_atom_features=num_atom_features,
-                                              num_molecule_features=num_molecule_features)
-        for param in self.volume_model.parameters():  # freeze encoder
-            param.requires_grad = False
-        self.volume_model, _ = reload_model(self.volume_model, device=self.device, optimizer=None,
-                                            path=volume_checkpoint_path)
-        self.volume_model.eval()
-        self.volume_model.to(self.device)
+    def generate_standardization_vectors(self, num_atom_features, num_molecule_features):
+        self.atom_standardization_vector = torch.zeros((num_atom_features, 2), device=self.device)
+        self.mol_standardization_vector = torch.zeros((num_molecule_features, 2), device=self.device)
+        self.atom_standardization_vector = torch.tensor(
+            [self.d_dataDims['standardization_dict'][feat] for feat in self.d_dataDims['atom_features']],
+            dtype=torch.float32, device=self.device)
+        # don't adjust atomic numbers
+        self.atom_standardization_vector[0, 0] = 0
+        self.atom_standardization_vector[0, 1] = 1
+        self.mol_standardization_vector = torch.tensor(
+            [self.d_dataDims['standardization_dict'][feat] for feat in self.d_dataDims['molecule_features']],
+            dtype=torch.float32, device=self.device)
 
         self.auvol_mean = self.r_dataDims['target_mean']
         self.auvol_std = self.r_dataDims['target_std']
 
-        self.supercell_builder = SupercellBuilder(device=self.device, rotation_basis='spherical')
+    def load_atom_properties(self):
         self.vdw_radii = torch.tensor(np.nan_to_num(list(VDW_RADII.values())).astype('float'), dtype=torch.float32,
                                       device=self.device)
         self.atomic_masses = torch.tensor(np.nan_to_num(list(ATOM_WEIGHTS.values())).astype('float'),
@@ -104,21 +123,39 @@ class CrystalAnalyzer(torch.nn.Module):
         self.atom_periods = torch.tensor(np.nan_to_num(list(PERIOD.values())).astype('float'), dtype=torch.float32,
                                          device=self.device)
 
-        self.collater = Collater(0, 0)
+    def load_models(self):
+        # update configs from checkpoints
+        checkpoint = torch.load(discriminator_checkpoint_path, map_location=self.device)
+        model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
+        self.config.discriminator.optimizer = model_config.optimizer
+        self.config.discriminator.model = model_config.model
+        self.d_dataDims = checkpoint['dataDims']
+        checkpoint = torch.load(volume_checkpoint_path, map_location=self.device)
+        model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
+        self.config.regressor.optimizer = model_config.optimizer
+        self.config.regressor.model = model_config.model
+        self.r_dataDims = checkpoint['dataDims']
+        num_atom_features = 6
+        num_molecule_features = 2
+        self.model = MolCrystal(seed=12345, config=self.config.discriminator.model,
+                                num_atom_features=num_atom_features,
+                                num_molecule_features=num_molecule_features)
+        for param in self.model.parameters():  # freeze score model
+            param.requires_grad = False
+        self.model, _ = reload_model(self.model, device=self.device, optimizer=None, path=discriminator_checkpoint_path)
+        self.model.eval()
+        self.model.to(self.device)
+        self.volume_model = MoleculeRegressor(seed=12345, config=self.config.regressor.model,
+                                              num_atom_features=num_atom_features,
+                                              num_molecule_features=num_molecule_features)
+        for param in self.volume_model.parameters():  # freeze volume model
+            param.requires_grad = False
+        self.volume_model, _ = reload_model(self.volume_model, device=self.device, optimizer=None,
+                                            path=volume_checkpoint_path)
+        self.volume_model.eval()
+        self.volume_model.to(self.device)
 
-        self.atom_standardization_vector = torch.zeros((num_atom_features, 2), device=self.device)
-        self.mol_standardization_vector = torch.zeros((num_molecule_features, 2), device=self.device)
-
-        self.atom_standardization_vector = torch.tensor(
-            [self.d_dataDims['standardization_dict'][feat] for feat in self.d_dataDims['atom_features']],
-            dtype=torch.float32, device=self.device)
-        # don't adjust atomic numbers
-        self.atom_standardization_vector[0, 0] = 0
-        self.atom_standardization_vector[0, 1] = 1
-
-        self.mol_standardization_vector = torch.tensor(
-            [self.d_dataDims['standardization_dict'][feat] for feat in self.d_dataDims['molecule_features']],
-            dtype=torch.float32, device=self.device)
+        return num_atom_features, num_molecule_features
 
     def __call__(self, coords_list: list,
                  atom_types_list: list,
@@ -150,9 +187,11 @@ class CrystalAnalyzer(torch.nn.Module):
                 target_auv = self.estimate_aunit_volume(data)[:, 0]
                 # packing_loss = (F.smooth_l1_loss(target_auv, sample_auv, reduction='none')/target_auv)
                 # something finicky with packing loss prediction right now - substitute for maximal density
-                atom_volumes = 4/3 * self.vdw_radii[data.x[:, 0].long()] ** 3
-                sum_of_spheres_volume = scatter(atom_volumes, data.batch, reduce='sum') / 2  # crudely add spherical volumes and make a lower bound
-                packing_loss = F.relu(sample_auv - sum_of_spheres_volume) / torch.diff(data.ptr) / 50  # loss coefficient of 1/10 relative to vdW
+                atom_volumes = 4 / 3 * self.vdw_radii[data.x[:, 0].long()] ** 3
+                sum_of_spheres_volume = scatter(atom_volumes, data.batch,
+                                                reduce='sum') / 2  # crudely add spherical volumes and make a lower bound
+                packing_loss = F.relu(sample_auv - sum_of_spheres_volume) / torch.diff(
+                    data.ptr) / 50  # loss coefficient of 1/10 relative to vdW
                 heuristic_score = - vdw_loss - packing_loss
 
                 if score_type == 'classifier':
@@ -163,7 +202,8 @@ class CrystalAnalyzer(torch.nn.Module):
                     output = heuristic_score
 
                 if return_stats:
-                    sort_inds = torch.argsort(heuristic_score)[-n_top_k:].cpu().detach().numpy()  # save top 10 samples (10 smallest distances)
+                    sort_inds = torch.argsort(heuristic_score)[
+                                -n_top_k:].cpu().detach().numpy()  # save top 10 samples (10 smallest distances)
                     mols = [ase_mol_from_crystaldata(proposed_crystaldata,
                                                      index=ind,
                                                      exclusion_level='distance',
@@ -269,3 +309,6 @@ class CrystalAnalyzer(torch.nn.Module):
         """
         output, extra_outputs = self.model(data.clone(), return_dists=True, return_latent=False)
         return output, extra_outputs['dists_dict']
+
+
+analyzer = CrystalAnalyzer(device='cpu')

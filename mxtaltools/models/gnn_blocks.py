@@ -8,24 +8,25 @@ from mxtaltools.models.equivariant_TransformerConv import EquiVTransformerConv
 
 
 class EmbeddingBlock(torch.nn.Module):
-    def __init__(self, node_embedding_depth, num_input_classes, num_scalar_input_features, type_embedding_dimension):
+    def __init__(self, init_node_embedding_dim, num_input_classes, num_scalar_input_features, atom_type_embedding_dim):
         super(EmbeddingBlock, self).__init__()
 
-        self.embeddings = nn.Embedding(num_input_classes + 1, type_embedding_dimension)
-        self.linear = nn.Linear(type_embedding_dimension + num_scalar_input_features - 1, node_embedding_depth)
+        self.embeddings = nn.Embedding(num_input_classes + 1, atom_type_embedding_dim)
+        self.linear = nn.Linear(atom_type_embedding_dim + num_scalar_input_features - 1, init_node_embedding_dim)
 
     def forward(self, x):
         if x.dim() == 1:
             x = x.unsqueeze(1)  # make dim 1 explicit
 
-        embedding = self.embeddings(x[:, 0].long())  # always embed the first dimension only (by convention, atomic number)
+        embedding = self.embeddings(
+            x[:, 0].long())  # always embed the first dimension only (by convention, atomic number)
 
         concat_vec = torch.cat([embedding, x[:, 1:]], dim=-1)
 
         return self.linear(concat_vec)
 
 
-class GC_Block(torch.nn.Module):
+class GCBlock(torch.nn.Module):
     def __init__(self,
                  message_depth,
                  node_embedding_depth,
@@ -33,7 +34,7 @@ class GC_Block(torch.nn.Module):
                  dropout=0,
                  heads=1,
                  equivariant=False):
-        super(GC_Block, self).__init__()
+        super(GCBlock, self).__init__()
         self.embed_edge = nn.Linear(radial_dim, radial_dim, bias=False)
         self.equivariant = equivariant
         if equivariant:
@@ -47,7 +48,8 @@ class GC_Block(torch.nn.Module):
             self.message_to_vec = nn.Linear(message_depth, node_embedding_depth, bias=False)
 
         self.node_to_message = nn.Linear(node_embedding_depth, message_depth, bias=False)
-        self.message_to_node = nn.Linear(message_depth, node_embedding_depth, bias=False)  # don't want to send spurious messages, though it probably doesn't matter anyway
+        self.message_to_node = nn.Linear(message_depth, node_embedding_depth, bias=False)
+
         assert message_depth % heads == 0
         self.GConv = gnn.TransformerConv(
             in_channels=message_depth,
@@ -61,7 +63,7 @@ class GC_Block(torch.nn.Module):
     def embed_edge_attrs(self, edge_attr):
         return self.embed_edge(edge_attr)
 
-    def forward(self, x, v, edge_attr, edge_index, batch):
+    def forward(self, x, v, edge_attr, edge_index):
         # convolve
         edge_embedding = self.embed_edge_attrs(edge_attr)
         x, (_, alpha) = self.GConv(
@@ -78,43 +80,7 @@ class GC_Block(torch.nn.Module):
             return self.message_to_node(x)
 
 
-# TODO deprecate
-# class EquivariantMessagePassing(nn.Module):
-#     def __init__(self, irreps, num_edge_attr):
-#         super(EquivariantMessagePassing, self).__init__()
-#         self.convolution = o3.FullyConnectedTensorProduct(
-#             irreps_in1=irreps,
-#             irreps_in2=o3.Irreps(f'{num_edge_attr}x0e'),
-#             irreps_out=irreps,
-#             internal_weights=True,
-#         )
-#
-#     def forward(self, x, edge_index, edge_attrs):
-#         messages = self.convolution(x[edge_index[0]], edge_attrs)
-#
-#         return scatter(messages, edge_index[1], dim=0, dim_size=len(x), reduce='mean')  # simple mean aggregation - radial attention may be possible
-
-
-class MPConv(torch.nn.Module):  # todo refactor and add a transformer version
-    def __init__(self, in_channels, out_channels, edge_dim, dropout=0, norm=None, activation='leaky relu'):
-        super(MPConv, self).__init__()
-
-        self.MLP = MLP(layers=4,
-                       filters=out_channels,
-                       input_dim=in_channels * 2 + edge_dim,
-                       dropout=dropout,
-                       norm=norm,
-                       output_dim=out_channels,
-                       activation=activation,
-                       )
-
-    def forward(self, x, edge_index, edge_attr):
-        m = self.MLP(torch.cat((x[edge_index[0]], x[edge_index[1]], edge_attr), dim=-1))
-
-        return scatter(m, edge_index[1], dim=0, dim_size=len(x))  # send directional messages from i to j, enforcing the size of the output dimension
-
-
-class FC_Block(torch.nn.Module):
+class FCBlock(torch.nn.Module):
     def __init__(self,
                  nodewise_fc_layers,
                  node_embedding_depth,
@@ -124,7 +90,7 @@ class FC_Block(torch.nn.Module):
                  equivariant=False,
                  vector_norm=None,
                  ):
-        super(FC_Block, self).__init__()
+        super(FCBlock, self).__init__()
         self.equivariant = equivariant
 
         self.model = MLP(layers=nodewise_fc_layers,
@@ -145,3 +111,26 @@ class FC_Block(torch.nn.Module):
                           return_latent=return_latent,
                           batch=batch)
 
+
+class OutputBlock(torch.nn.Module):
+    def __init__(self, node_dim, embedding_dim, equivariant_graph):
+
+        super().__init__()
+        self.equivariant_graph = equivariant_graph
+
+        if self.equivariant_graph:
+            if node_dim != embedding_dim:
+                self.v_output_layer = nn.Linear(node_dim, embedding_dim, bias=False)
+            else:
+                self.v_output_layer = nn.Identity()
+
+        if node_dim != embedding_dim:
+            self.output_layer = nn.Linear(node_dim, embedding_dim, bias=False)
+        else:
+            self.output_layer = nn.Identity()
+
+    def forward(self, x, v):
+        if v is not None:
+            return self.output_layer(x), self.v_output_layer(v)
+        else:
+            return self.output_layer(x)

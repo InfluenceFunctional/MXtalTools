@@ -87,9 +87,9 @@ embedding_regressor:
     weight_decay: 0.1
 
   model:
-    depth: 128
+    hidden_dim: 128
     dropout: 0.1
     equivariant: true
-    norm_mode: layer
+    norm: layer
     num_layers: 12
     vector_norm: 'vector layer'

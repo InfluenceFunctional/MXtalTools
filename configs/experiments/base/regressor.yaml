@@ -4,7 +4,7 @@ anomaly_detection: False  # slows down the code
 mode: regression  # 'gan' or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
 dataset_name: 'test_dataset.pkl' #
 misc_dataset_name: 'misc_data_for_dataset.npy' #
-dataset_yaml_path: '/skinny_gan.yaml' #
+dataset_yaml_path: '/skinny_regression.yaml' #
 extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
@@ -67,7 +67,7 @@ supercell_size: 5
 regressor:
   optimizer:
     optimizer: adamw
-    init_lr: 1.0E-4
+    init_lr: 1.0E-3
     max_lr: 1.0E-5
     min_lr: 1.0E-5
     lr_schedule: True
@@ -80,27 +80,32 @@ regressor:
     use_plateau_scheduler: False
 
   model:
-    graph_convolution_type: TransformerConv
     graph_aggregator: 'softmax'
-    concat_mol_to_atom_features: True
+
+    graph:
+      node_dim: 256
+      message_dim: 128
+      num_attention_heads: 16
+      embedding_dim: 256
+      num_convs: 4
+      fcs_per_gc: 1
+      num_radial: 32
+      num_input_classes: 101
+      norm: 'graph layer'
+      dropout: 0.05
+
+      atom_type_embedding_dim: 32
+      radial_embedding: 'bessel'
+      cutoff: 6
+      max_num_neighbors: 100
+      envelope_exponent: 5
+
+    fc:
+      hidden_dim: 256
+      num_layers: 4
+      dropout: 0.05
+      norm: 'layer'
+
     activation: gelu
-    num_fc_layers: 4
-    fc_depth: 256
-    fc_norm_mode: 'layer'
-    fc_dropout_probability: 0.05
-    graph_node_norm: 'graph layer'
-    graph_node_dropout: 0.05
-    graph_message_norm: null
-    graph_message_dropout: 0
-    num_attention_heads: 32
-    graph_message_depth: 128
-    graph_node_dims: 256
-    num_graph_convolutions: 4
-    graph_embedding_depth: 256
-    nodewise_fc_layers: 1
-    num_radial: 32
-    radial_function: bessel
-    max_num_neighbors: 100
-    convolution_cutoff: 6
-    atom_type_embedding_dims: 5
+
 

@@ -4,10 +4,7 @@ from tqdm import tqdm
 import os
 import numpy as np
 
-from mxtaltools.common.mol_classifier_utils import convert_box_to_cell_params
-from mxtaltools.common.utils import standardize_np
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
-from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
 from mxtaltools.constants.space_group_info import SYM_OPS
 from mxtaltools.crystal_building.utils import build_unit_cell, batch_asymmetric_unit_pose_analysis_torch
@@ -48,15 +45,20 @@ class DataManager:
         print(f'Collecting {num_chunks} dataset chunks')
         self.dataset = pd.concat([pd.read_pickle(chunk) for chunk in chunks], ignore_index=True)
 
-    def load_dataset_for_modelling(self, config, dataset_name, misc_dataset_name, override_length=None,
-                                   filter_conditions=None, filter_polymorphs=False, filter_duplicate_molecules=False,
-                                   filter_protons=False, override_dataset: pd.DataFrame = None):
+    def load_dataset_for_modelling(self, config, dataset_name, misc_dataset_name,
+                                   override_length=None,
+                                   filter_conditions=None,
+                                   filter_polymorphs=False,
+                                   filter_duplicate_molecules=False,
+                                   filter_protons=False,
+                                   override_dataset: pd.DataFrame = None):
 
         if override_dataset is None:
-            self.dataset_type = 'mol_cluster'
+            self.dataset_type = 'mol_cluster'  # todo clean up this logic
 
             if not os.path.exists(self.datasets_path + dataset_name) and 'dumps_dirs' in config.__dict__.keys():
                 # convert dump files to a combined dataframe
+
                 generate_dataset_from_dumps([self.datasets_path + dir_name for dir_name in config.dumps_dirs],
                                             self.datasets_path + dataset_name)
 
@@ -64,6 +66,7 @@ class DataManager:
         else:  # for loading dataset on the fly
             self.dataset = override_dataset
             self.dataset_type = 'molecule'
+            self.rebuild_indices()
             # self.override_dataDims  # todo build a constant dataDims for the overall dataset (not just chunks) and ignore the one that comes out from get_dimension
             # self.override std dict  # todo may not be necessary?
             # self.override target    # todo add dummy value?, maybe just 'radius' but will need a mean and std just so the datapoint builder doesn't crash
@@ -184,7 +187,14 @@ class DataManager:
             self.tracking_keys = []
 
     def get_data_dimensions(self):
+
+        node_standardization_vector = np.asarray([[self.standardization_dict[feat] for feat in self.atom_keys]])[0]
+        node_standardization_vector[0, :] = [0, 1]  # don't standardize atomic numbers - always first entry
+        graph_standardization_vector = np.asarray([[self.standardization_dict[feat] for feat in self.molecule_keys]])[0]
+
         dim = {
+            'node_standardization_vector': node_standardization_vector,
+            'graph_standardization_vector': graph_standardization_vector,
             'standardization_dict': self.standardization_dict,
             'dataset_length': self.dataset_length,
 
@@ -440,19 +450,22 @@ class DataManager:
         for column_ind, key in enumerate(self.atom_keys):
             for i in range(self.dataset_length):
                 if self.dataset_type == 'crystal' or self.dataset_type == 'mol_cluster':
-                    feature_vector = np.asarray(self.dataset[key][i])[
-                        0]  # all atom features are lists-of-lists, for Z'=1 always just take the first element
+                    # all atom features are lists-of-lists, for Z'=1 always just take the first element
+                    feature_vector = np.asarray(self.dataset[key][i])[0]
                 elif self.dataset_type == 'molecule':
-                    feature_vector = np.asarray(self.dataset[key][
-                                                    i])  # all atom features are lists-of-lists, for Z'=1 always just take the first element
-
-                if key == 'atom_atomic_numbers':
-                    pass
-                elif feature_vector.dtype == bool:
-                    pass
+                    # all atom features are lists-of-lists, for Z'=1 always just take the first element
+                    feature_vector = np.asarray(self.dataset[key][i])
                 else:
-                    feature_vector = standardize_np(feature_vector, known_mean=self.standardization_dict[key][0],
-                                                    known_std=self.standardization_dict[key][1])
+                    assert False, f"{self.dataset_type} is not an implemented dataset type"
+
+                # NOTE we are doing standardization inside the models now
+                # if key == 'atom_atomic_numbers':
+                #     pass
+                # elif feature_vector.dtype == bool:
+                #     pass
+                # else:
+                #     feature_vector = standardize_np(feature_vector, known_mean=self.standardization_dict[key][0],
+                #                                     known_std=self.standardization_dict[key][1])
 
                 assert np.sum(np.isnan(feature_vector)) == 0
                 atom_features_list[i][:, column_ind] = feature_vector
@@ -477,12 +490,13 @@ class DataManager:
             if isinstance(feature_vector[0], list):  # feature vector is an array of lists
                 feature_vector = np.concatenate(feature_vector)
 
-            if feature_vector.dtype == bool:
-                pass
-            else:
-                feature_vector = standardize_np(feature_vector,
-                                                known_mean=self.standardization_dict[key][0],
-                                                known_std=self.standardization_dict[key][1])
+            # doing this inside models now
+            # if feature_vector.dtype == bool:
+            #     pass
+            # else:
+            #     feature_vector = standardize_np(feature_vector,
+            #                                     known_mean=self.standardization_dict[key][0],
+            #                                     known_std=self.standardization_dict[key][1])
 
             molecule_feature_array[:, column_ind] = feature_vector
 
@@ -642,14 +656,16 @@ class DataManager:
     def load_dataset_and_misc_data(self, dataset_name, misc_dataset_name):
         self.dataset = pd.read_pickle(self.datasets_path + dataset_name)
 
-        if not os.path.exists(self.datasets_path + 'misc_data_for_' + dataset_name) and (misc_dataset_name is None):
-            self.get_dataset_standardization_statistics()  # standardize for this dataset specifically
-            np.save(self.datasets_path + 'misc_data_for_' + dataset_name,
-                    {'standardization_dict': self.standardization_dict})
-        else:
-            misc_data_dict = np.load(self.datasets_path + misc_dataset_name, allow_pickle=True).item()
-            self.dataset_type = 'molecule' if 'qm9' in dataset_name.lower() else 'crystal'
-            self.standardization_dict = misc_data_dict['standardization_dict']
+        ##if not os.path.exists(self.datasets_path + 'misc_data_for_' + dataset_name) and (misc_dataset_name is None):
+        self.get_dataset_standardization_statistics()  # standardize for this dataset specifically
+        self.dataset_type = 'molecule' if 'qm9' in dataset_name.lower() else 'crystal'
+
+            # np.save(self.datasets_path + 'misc_data_for_' + dataset_name,
+            #         {'standardization_dict': self.standardization_dict})
+        # else:
+        #     misc_data_dict = np.load(self.datasets_path + misc_dataset_name, allow_pickle=True).item()
+        #     self.dataset_type = 'molecule' if 'qm9' in dataset_name.lower() else 'crystal'
+        #     self.standardization_dict = misc_data_dict['standardization_dict']
 
         if 'blind_test' in dataset_name:
             self.mode = 'blind test'

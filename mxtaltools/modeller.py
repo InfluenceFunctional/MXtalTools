@@ -26,13 +26,13 @@ from mxtaltools.crystal_building.utils import (clean_cell_params, set_molecule_a
 from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements
 from mxtaltools.csp.SampleOptimization import gradient_descent_sampling, mcmc_sampling
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
-from mxtaltools.dataset_management.manager import DataManager
+from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.process_GEOM import geom_msgpack_to_minimal_dataset
 from mxtaltools.models.autoencoder_models import PointAutoencoder
 from mxtaltools.models.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.discriminator_models import MolCrystal
-from mxtaltools.models.embedding_regression_models import embedding_regressor
-from mxtaltools.models.generator_models import independent_gaussian_model, CrystalGenerator
+from mxtaltools.models.embedding_regression_models import EmbeddingRegressor
+from mxtaltools.models.generator_models import IndependentGaussianGenerator, CrystalGenerator
 from mxtaltools.models.mol_classifier import PolymorphClassifier
 from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import (reload_model, init_schedulers, softmax_and_score, compute_packing_coefficient,
@@ -200,16 +200,16 @@ class Modeller:
         if self.config.mode == 'autoencoder' or self.config.model_paths.autoencoder is not None:
             self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model, self.config.autoencoder.model,
                                                                self.dataDims['num_atom_types'])
-        if self.config.mode == 'embedding_regression' or self.config.model_paths.embedding_regressor is not None:
+        if self.config.mode == 'embedding_regression' or self.config.model_paths.EmbeddingRegressor is not None:
             self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model, self.config.autoencoder.model,
                                                                self.dataDims['num_atom_types'])
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
                 param.requires_grad = False
-            self.config.embedding_regressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
-            self.models_dict['embedding_regressor'] = embedding_regressor(self.config.seeds.model,
-                                                                          self.config.embedding_regressor.model,
-                                                                          num_targets=self.config.embedding_regressor.num_targets
-                                                                          )
+            self.config.EmbeddingRegressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
+            self.models_dict['embedding_regressor'] = EmbeddingRegressor(self.config.seeds.model,
+                                                                         self.config.EmbeddingRegressor.model,
+                                                                         num_targets=self.config.EmbeddingRegressor.num_targets
+                                                                         )
             assert self.config.model_paths.autoencoder is not None  # must preload the encoder
 
         if self.config.mode == 'polymorph_classification':
@@ -595,7 +595,7 @@ class Modeller:
 
             # save results
             np.save(self.config.checkpoint_dir_path +
-                    self.config.model_paths.embedding_regressor.split('embedding_regressor')[-1],
+                    self.config.model_paths.EmbeddingRegressor.split('embedding_regressor')[-1],
                     {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
     def autoencoder_embedding_step(self, data):
@@ -911,7 +911,7 @@ class Modeller:
         predictions = predictions.cpu().detach().numpy() * self.dataDims['target_std'] + self.dataDims['target_mean']
         targets = data.y.cpu().detach().numpy() * self.dataDims['target_std'] + self.dataDims['target_mean']
 
-        if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
+        if self.config.EmbeddingRegressor.prediction_type == 'vector':  # this is quite fast
             predictions = np.linalg.norm(predictions, axis=-1)
             targets = np.linalg.norm(targets, axis=-1)
         regression_loss = losses.mean()
@@ -1647,10 +1647,7 @@ class Modeller:
             standardized_target_aunit_volume) * self.config.generator.packing_target_noise
 
         # generate the samples
-        [generated_samples, prior, condition, raw_samples] = self.models_dict['generator'].forward(
-            n_samples=mol_data.num_graphs, molecule_data=mol_data.to(self.config.device).clone(),
-            return_condition=True, return_prior=True, return_raw_samples=True,
-            target_packing=standardized_target_aunit_volume)
+        [generated_samples, prior, condition, raw_samples] = self.models_dict['generator'].forward()
 
         return generated_samples, prior, standardized_target_aunit_volume, mol_data, raw_samples
 
@@ -1705,12 +1702,12 @@ class Modeller:
         init gaussian generator for cell parameter sampling
         we don't always use it but it's very cheap so just do it every time
         '''
-        self.gaussian_generator = independent_gaussian_model(input_dim=self.dataDims['num_lattice_features'],
-                                                             means=self.dataDims['lattice_means'],
-                                                             stds=self.dataDims['lattice_stds'],
-                                                             sym_info=self.sym_info,
-                                                             device=self.config.device,
-                                                             cov_mat=self.dataDims['lattice_cov_mat'])
+        self.gaussian_generator = IndependentGaussianGenerator(input_dim=self.dataDims['num_lattice_features'],
+                                                               means=self.dataDims['lattice_means'],
+                                                               stds=self.dataDims['lattice_stds'],
+                                                               sym_info=self.sym_info,
+                                                               device=self.config.device,
+                                                               cov_mat=self.dataDims['lattice_cov_mat'])
 
     def what_generators_to_use(self, override_randn, override_distorted, override_adversarial):
         """
