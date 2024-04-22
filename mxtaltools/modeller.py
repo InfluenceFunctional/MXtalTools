@@ -200,7 +200,7 @@ class Modeller:
         if self.config.mode == 'autoencoder' or self.config.model_paths.autoencoder is not None:
             self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model, self.config.autoencoder.model,
                                                                self.dataDims['num_atom_types'])
-        if self.config.mode == 'embedding_regression' or self.config.model_paths.EmbeddingRegressor is not None:
+        if self.config.mode == 'embedding_regression' or self.config.model_paths.embedding_regressor is not None:
             self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model, self.config.autoencoder.model,
                                                                self.dataDims['num_atom_types'])
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder

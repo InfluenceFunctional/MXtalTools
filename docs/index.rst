@@ -12,9 +12,13 @@ What is ``MXtalTools``?
     :maxdepth: 2
     :caption: Contents
 
+    source/installation
     source/crystal_building
     source/dataset_creation
-    source/installation
+    source/model_training
+    source/model_deployment
+    source/models
+    source/model_components
 
 Indices and tables
 ==================
