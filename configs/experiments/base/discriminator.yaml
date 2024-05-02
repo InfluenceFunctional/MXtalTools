@@ -2,10 +2,10 @@ machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: discriminator  #  or 'regression' or 'figures' or 'autoencoder' or 'embedding_regression' or 'sampling' WIP or 'embedding' 'mol_generation' WIP
-dataset_name: 'test_dataset.pkl' #
+dataset_name: 'test_dataset.pt' #
 misc_dataset_name: 'misc_data_for_dataset.npy' #
 dataset_yaml_path: '/skinny_discriminator.yaml' #
-extra_test_set_name: 'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
+extra_test_set_name: null #'test_blind_test_dataset.pkl'  #'acridin_dataset.pkl' #'test_blind_test_dataset.pkl'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
 model_names: ['discriminator']
@@ -17,7 +17,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: crystal_reduced_volume #
+  regression_target: null #
 
 # batching & convergence
 early_epochs_step_override: 5

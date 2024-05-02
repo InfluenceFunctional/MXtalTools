@@ -73,9 +73,11 @@ class Logger:
         return stat_dict
 
     def update_stats_dict(self, epoch_type, keys, values, mode='extend'):
-        if type(keys) != list:
+        keys_type = type({}.keys())
+        values_type = type({}.values())
+        if type(keys) == keys_type:
             keys = list(keys)
-        if type(values) != list:
+        if type(values) != values_type:
             values = list(values)
         stat_dict = self.get_stat_dict(epoch_type)
         stat_dict = update_stats_dict(stat_dict, keys, values, mode=mode)

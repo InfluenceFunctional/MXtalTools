@@ -3,7 +3,7 @@ device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml
 
 dataset:
-  filter_protons: True
+  filter_protons: False
 
 # batching & convergence
 early_epochs_step_override: 5

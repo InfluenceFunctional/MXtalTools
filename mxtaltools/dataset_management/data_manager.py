@@ -153,8 +153,8 @@ class DataManager:
             print(
                 "Duplicate molecule filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
             self.rebuild_crystal_indices()
-        if filter_protons:  # could be done in the above filtering, but a useful separate utility function in some cases
-            self.filter_protons()
+        # if filter_protons:  # could be done in the above filtering, but a useful separate utility function in some cases
+        #     self.filter_protons()
         self.times['dataset_filtering_end'] = time()
 
     def filter_protons(self):
@@ -253,8 +253,8 @@ class DataManager:
 
 
         else:  # need have something just to fill the space
+            self.target_mean, self.target_std = 0, 1
             return None
-
 
     # target_list = [
     #     "molecule_rotational_constant_a",

@@ -48,7 +48,10 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
     n_crystal_features = 12
     # slightly expensive to do this every time
     dataset_cell_distribution = np.asarray(
-        [train_loader.dataset[ii].cell_params[0].cpu().detach().numpy() for ii in range(len(train_loader.dataset))])
+        [torch.cat([train_loader.dataset[ii].cell_lengths[0],
+                    train_loader.dataset[ii].cell_angles[0],
+                    train_loader.dataset[ii].pose_params0[0]], dim=0)
+        for ii in range(len(train_loader.dataset))])
 
     cleaned_samples = epoch_stats_dict['final_generated_cell_parameters']
     if 'raw_generated_cell_parameters' in epoch_stats_dict.keys():

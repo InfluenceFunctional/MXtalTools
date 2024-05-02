@@ -238,7 +238,7 @@ class Modeller:
                                                                int(torch.sum(self.autoencoder_type_index != -1)),
                                                                self.autoencoder_type_index,
                                                                self.config.autoencoder.molecule_radius_normalization,
-                                                               infer_protons = self.config.autoencoder.infer_protons
+                                                               infer_protons=self.config.autoencoder.infer_protons
                                                                )
         if self.config.mode == 'embedding_regression' or self.config.model_paths.embedding_regressor is not None:
             self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model,
@@ -324,7 +324,8 @@ class Modeller:
         if self.train_models_dict['autoencoder'] or self.train_models_dict[
             'embedding_regressor']:  # todo change this to 'if autoencoder exists' or some proxy
             self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
-            self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius']['max']
+            self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius'][
+                'max']
 
             allowed_types = np.array(self.dataDims['allowed_atom_types'])
             type_translation_index = np.zeros(allowed_types.max() + 1) - 1
@@ -655,7 +656,7 @@ class Modeller:
         full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor,
                                                                      true_nodes,
                                                                      sigma=self.config.autoencoder.evaluation_sigma,
-                                                                     distance_scaling = self.config.autoencoder.type_distance_scaling
+                                                                     distance_scaling=self.config.autoencoder.type_distance_scaling
                                                                      )
         coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(self.config, data, decoded_data,
                                                                              nodewise_weights_tensor, true_nodes)
@@ -853,7 +854,8 @@ class Modeller:
                     prev_epoch_failed = False
 
                 except RuntimeError as e:  # if we do hit OOM, slash the batch size
-                    if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
+                    if "CUDA out of memory" in str(
+                            e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
                         if prev_epoch_failed:
                             gc.collect()  # TODO not clear to me that this is effective
 
@@ -999,7 +1001,8 @@ class Modeller:
 
     def autoencoder_step(self, data, update_weights, step, last_step=False):
         input_cloud = self.fix_autoencoder_protonation(data)
-
+        if self.config.dataset.filter_protons:
+            data = input_cloud.clone()  # deprotonate the reference as well for analysis
         decoding, encoding = self.models_dict['autoencoder'](input_cloud, return_encoding=True)
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
 
@@ -1014,8 +1017,8 @@ class Modeller:
         self.autoencoder_stats_and_reporting(data, decoded_data, encoding, last_step, stats, step)
 
     def fix_autoencoder_protonation(self, data):
-        if self.config.autoencoder.infer_protons:  # delete protons from input to model, but keep for analysis
-            heavy_atom_inds = torch.argwhere(data.x != 0)[:, 0]
+        if self.config.autoencoder.infer_protons or self.config.dataset.filter_protons:  # delete protons from input to model, but keep for analysis
+            heavy_atom_inds = torch.argwhere(data.x != 1)[:, 0]  # protons are atom type 1
             input_cloud = data.clone()
             input_cloud.x = input_cloud.x[heavy_atom_inds]
             input_cloud.pos = input_cloud.pos[heavy_atom_inds]
@@ -1147,14 +1150,15 @@ class Modeller:
         if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:
             # and we more self-overlap than desired
             if self.epoch_type == 'test':  # the overlap we ultimately care about is in the Test
-                if np.abs(1 - self.logger.test_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps.test:
+                if np.abs(1 - self.logger.test_stats['mean_self_overlap'][
+                              -100:]).mean() > self.config.autoencoder.overlap_eps.test:
                     # tighten the target distribution
                     self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
         # if we have way too much overlap, just tighten right away
-        if np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.max_overlap_threshold:
+        if np.abs(1 - self.logger.train_stats['mean_self_overlap'][
+                      -100:]).mean() > self.config.autoencoder.max_overlap_threshold:
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
-
 
     def preprocess_real_autoencoder_data(self, data, no_noise=False, orientation_override=None, noise_override=None):
         if not no_noise:
@@ -1194,7 +1198,9 @@ class Modeller:
         # node radius constraining loss
         decoded_dists = torch.linalg.norm(decoded_data.pos, dim=1)
         constraining_loss = scatter(
-            F.relu(decoded_dists - torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes, dim=0)),
+            F.relu(
+                decoded_dists - torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes,
+                                                        dim=0)),
             decoded_data.batch, reduce='mean')
 
         # node weight constraining loss
@@ -1245,7 +1251,8 @@ class Modeller:
     def get_reconstruction_loss(self, data, decoded_data, nodewise_weights):
         true_node_one_hot = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
 
-        decoder_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, decoded_data, self.config.autoencoder_sigma,
+        decoder_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, decoded_data,
+                                                       self.config.autoencoder_sigma,
                                                        nodewise_weights=decoded_data.aux_ind,
                                                        overlap_type='gaussian', log_scale=False,
                                                        type_distance_scaling=self.config.autoencoder.type_distance_scaling)
@@ -1259,9 +1266,9 @@ class Modeller:
         per_graph_true_types = scatter(
             true_node_one_hot, data.batch[:, None], dim=0, reduce='mean')
         per_graph_pred_types = scatter(
-            decoded_data.x * nodewise_weights[:, None], decoded_data.batch[:, None], dim=0,reduce='sum')
+            decoded_data.x * nodewise_weights[:, None], decoded_data.batch[:, None], dim=0, reduce='sum')
 
-        nodewise_type_loss = (F.binary_cross_entropy(per_graph_pred_types,per_graph_true_types) -
+        nodewise_type_loss = (F.binary_cross_entropy(per_graph_pred_types, per_graph_true_types) -
                               F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
 
         nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
@@ -1377,8 +1384,8 @@ class Modeller:
             '''
             record some stats
             '''
-            self.logger.update_stats_dict(self.epoch_type, 'identifiers', data.identifier, mode='extend')
-            self.logger.update_stats_dict(self.epoch_type, 'smiles', data.smiles, mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, ['identifiers'], data.identifier, mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, ['smiles'], data.smiles, mode='extend')
 
             if iteration_override is not None:
                 if i >= iteration_override:

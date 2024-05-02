@@ -15,11 +15,11 @@ filter_protons: False
 filter_polymorphs: True
 filter_duplicate_molecules: True
 filter_conditions: [['crystal_z_prime','in', [1]],  # NOTE we can currently only process Z' == 1 in models
-                    #['crystal_symmetry_operations_are_nonstandard','in',[False]],
+                    ['crystal_symmetry_operations_are_nonstandard','in',[False]],
                     ['max_atomic_number','range',[1,100]],
                     ['molecule_num_atoms','range',[3,100]],
                     #['molecule_radius','range',[1,5]],
-                    #['asymmetric_unit_is_well_defined','in',[True]],
+                    ['asymmetric_unit_is_well_defined','in',[True]],
                     ['reduced_volume_fraction', 'range',[0.75, 1.15]],
                     #['crystal_space_group_number','in',[2,14,19]]
                     ]
