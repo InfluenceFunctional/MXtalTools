@@ -5,7 +5,7 @@ base_config_path: /experiments/base/autoencoder.yaml
 extra_test_set_name: null
 
 dataset:
-  max_dataset_length: 500
+  max_dataset_length: 500000000
   test_fraction: 0.2
   filter_protons: True  # only relevant for datasets containing protons in the first place
   refresh_interval: -1  # reload a new chunk of a larger dataset, only setup for QM9/GEOM

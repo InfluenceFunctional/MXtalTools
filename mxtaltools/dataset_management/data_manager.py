@@ -141,18 +141,21 @@ class DataManager:
             bad_inds = self.get_dataset_filter_inds(filter_conditions)
             self.dataset = filter_batch_graphwise(self.dataset, keep_index=None, delete_index=bad_inds)
             print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
-            self.rebuild_crystal_indices()
+            if self.dataset_type == 'crystal':
+                self.rebuild_crystal_indices()
         if filter_polymorphs:
             bad_inds = self.filter_polymorphs()
             self.dataset = filter_batch_graphwise(self.dataset, keep_index=None, delete_index=bad_inds)
             print("Polymorph filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
-            self.rebuild_crystal_indices()
+            if self.dataset_type == 'crystal':
+                self.rebuild_crystal_indices()
         if filter_duplicate_molecules:
             bad_inds = self.filter_duplicate_molecules()
             self.dataset = filter_batch_graphwise(self.dataset, keep_index=None, delete_index=bad_inds)
             print(
                 "Duplicate molecule filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
-            self.rebuild_crystal_indices()
+            if self.dataset_type == 'crystal':
+                self.rebuild_crystal_indices()
         # if filter_protons:  # could be done in the above filtering, but a useful separate utility function in some cases
         #     self.filter_protons()
         self.times['dataset_filtering_end'] = time()

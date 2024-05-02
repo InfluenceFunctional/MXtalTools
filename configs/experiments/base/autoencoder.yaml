@@ -23,9 +23,9 @@ dataset:
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 10
+min_batch_size: 25
 max_batch_size: 500
-batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 2000
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
@@ -61,11 +61,16 @@ positional_noise:
 generate_sgs: null
 supercell_size: 5
 
+# decoder layers 1, decoder points 256, weight decay 0.05, positional noise 0, dropout 0.5,
+#  embedding_dim 512, bottleneck_dim 512, num_convs 1, num_nodewise 4,
+# ramp_depth True, lr shrink lambda .99, max batch 300, min_lr 5e-6, batch_growth_increment 0.05,
+# max_lr 2e-4, decoder norm mode layer, overlap_eps
+
 autoencoder:
   infer_protons: False
   type_distance_scaling: 0.5
   init_sigma: 1
-  evaluation_sigma: 0.1
+  evaluation_sigma: 0.3
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   overlap_eps:
@@ -76,7 +81,7 @@ autoencoder:
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 1.0E-4
+    init_lr: 5.0E-5
     encoder_init_lr: 5.0E-5
     decoder_init_lr: 5.0E-5
     max_lr: 2.0E-4
@@ -87,26 +92,26 @@ autoencoder:
     weight_decay: 0.05
     convergence_eps: 1.0E-5
     lr_growth_lambda: 1.05
-    lr_shrink_lambda: 0.99
+    lr_shrink_lambda: 0.995
     use_plateau_scheduler: False
 
   model:
-    bottleneck_dim: 256
+    bottleneck_dim: 512
     encoder:
       activation: 'gelu'
       graph:
-        node_dim: 256
+        node_dim: 512
         message_dim: 128
         num_attention_heads: 16
-        embedding_dim: 256
+        embedding_dim: 512
         num_convs: 2
         fcs_per_gc: 2
         num_radial: 32
         norm: 'graph layer'
-        dropout: 0.2
+        dropout: 0.1
 
         atom_type_embedding_dim: 32
-        radial_embedding: 'bessel'
+        radial_embedding: 'gaussian'
         cutoff: 10
         max_num_neighbors: 100
         envelope_exponent: 5
@@ -121,9 +126,9 @@ autoencoder:
     decoder:
       activation: 'gelu'
       fc:
-        hidden_dim: 256
-        num_layers: 4
-        dropout: 0.2
+        hidden_dim: 512
+        num_layers: 1
+        dropout: 0.1
         norm: 'layer'
       num_nodes: 256
       ramp_depth: True

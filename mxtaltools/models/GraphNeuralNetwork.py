@@ -104,7 +104,6 @@ class GraphNeuralNetwork(torch.nn.Module):
         else:
             x = self.zeroth_fc_block(x=x, v=v, batch=batch)
 
-
         (edge_index, edge_index_inter,
          inside_batch, inside_inds,
          n_repeats,
@@ -128,7 +127,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                 else:
                     x = x + fc(x, v=v, batch=batch)
 
-                assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc_block output {get_model_nans(self.fc_blocks)}"
+                #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc_block output {get_model_nans(self.fc_blocks)}"
 
             else:
                 assert v is None, "Vector embeddings not set up for periodic molecular crystal graph convolutions"
