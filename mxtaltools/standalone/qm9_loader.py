@@ -24,9 +24,7 @@ class QM9Loader:
 
     def load_dataset(self, max_dataset_length=None):
         self.data_manager.load_dataset_for_modelling(
-            config=self.dataset_config,
             dataset_name=dataset_name,
-            misc_dataset_name=misc_dataset_name,
             filter_conditions=self.dataset_config.filter_conditions,
             filter_polymorphs=self.dataset_config.filter_polymorphs,
             filter_duplicate_molecules=self.dataset_config.filter_duplicate_molecules,

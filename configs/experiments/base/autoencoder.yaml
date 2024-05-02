@@ -2,7 +2,7 @@ machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: autoencoder
-dataset_name: 'qm9_molecules_dataset.pkl'
+dataset_name: 'qm9_molecules_dataset.pt'
 misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
 dataset_yaml_path: '/qm9_autoencoder.yaml' # '/dataset/full_discriminator.yaml' #
 extra_test_set_name: null
@@ -13,10 +13,11 @@ sweep_id: null
 sweep_path: null
 
 dataset:
+  type: 'molecule'
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: True
-  regression_target: molecule_gap_energy
+  regression_target: gap_energy
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -62,11 +63,9 @@ supercell_size: 5
 
 autoencoder:
   infer_protons: False
-  KLD_weight: 0.001
-  KLD_threshold: 0.97
   type_distance_scaling: 0.5
-  init_sigma: 0.15
-  evaluation_sigma: 0.05
+  init_sigma: 1
+  evaluation_sigma: 0.1
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   overlap_eps:
@@ -92,33 +91,42 @@ autoencoder:
     use_plateau_scheduler: False
 
   model:
-    variational_encoder: False
-    encoder_type: 'equivariant' # only equivariant now
-    decoder_type: 'equivariant'
-
-    num_graph_convolutions: 2
-    embedding_depth: 256
     bottleneck_dim: 256
-    graph_message_depth: 128
-    num_attention_heads: 16  # must cleanly divide graph_message_depth
-    graph_aggregator: 'equivariant softmax'
-    nodewise_fc_layers: 2
-    activation: 'gelu'
-    num_decoder_layers: 4
-    decoder_ramp_depth: True
-    num_decoder_points: 256
+    encoder:
+      activation: 'gelu'
+      graph:
+        node_dim: 256
+        message_dim: 128
+        num_attention_heads: 16
+        embedding_dim: 256
+        num_convs: 2
+        fcs_per_gc: 2
+        num_radial: 32
+        norm: 'graph layer'
+        dropout: 0.2
 
-    decoder_norm_mode: 'layer'
-    graph_node_norm: 'graph layer'
-    encoder_vector_norm: 'graph vector layer' #'graph vector layer'
-    decoder_vector_norm: 'vector layer'
+        atom_type_embedding_dim: 32
+        radial_embedding: 'bessel'
+        cutoff: 10
+        max_num_neighbors: 100
+        envelope_exponent: 5
+      fc: # dummy
+        hidden_dim: 256
+        num_layers: 0
+        dropout: 0
+        norm: null
+      vector_norm: 'graph vector layer'
+      graph_aggregator: 'equivariant softmax'
 
-    graph_node_dropout: 0.2
-    graph_message_dropout: 0
-    decoder_dropout_probability: 0.2
+    decoder:
+      activation: 'gelu'
+      fc:
+        hidden_dim: 256
+        num_layers: 4
+        dropout: 0.2
+        norm: 'layer'
+      num_nodes: 256
+      ramp_depth: True
+      vector_norm: 'vector layer'
 
-    num_radial: 32
-    radial_function: bessel
-    max_num_neighbors: 100
-    convolution_cutoff: 2
-    atom_type_embedding_dims: 32
+

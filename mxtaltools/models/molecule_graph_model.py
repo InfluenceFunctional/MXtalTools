@@ -121,10 +121,11 @@ class MoleculeGraphModel(nn.Module):
 
     def forward(self, data, edges_dict=None, return_latent=False, return_dists=False, return_embedding=False):
         if edges_dict is None:  # option to rebuild radial graph
-            if all(data.periodic):  # todo only currently works for batches containing a single graph
-                assert data.num_graphs == 1, "MIC Periodic graphs not supported for more than one graph per data object"
-                edges_dict = argwhere_minimum_image_convention_edges(
-                    data.num_graphs, data.pos, data.T_fc, self.convolution_cutoff)
+            if hasattr(data, 'periodic'):
+                if all(data.periodic):  # todo only currently works for batches containing a single graph
+                    assert data.num_graphs == 1, "MIC Periodic graphs not supported for more than one graph per data object"
+                    edges_dict = argwhere_minimum_image_convention_edges(
+                        data.num_graphs, data.pos, data.T_fc, self.convolution_cutoff)
             else:
                 edges_dict = construct_radial_graph(data.pos,
                                                     data.batch,
@@ -213,6 +214,8 @@ class MoleculeGraphModel(nn.Module):
         return extra_outputs
 
     def append_init_node_features(self, data, x):
+        if x.ndim == 1:
+            x = x[:, None]
         if self.concat_pos_to_node_dim:
             if self.equivariant:
                 # append radial position as scalar feature

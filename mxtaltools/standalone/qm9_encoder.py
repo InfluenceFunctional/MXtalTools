@@ -25,7 +25,7 @@ config_path = '../standalone/qm9_encoder.yaml'
 # checkpoint_path = 'C:/Users/mikem/crystals/CSP_runs/models/cluster/best_autoencoder_autoencoder_tests_qm9_test21_43_17-02-20-55-35'  # without protons
 checkpoint_path = 'C:/Users/mikem/crystals/CSP_runs/models/cluster/best_autoencoder_autoencoder_tests_qm9_test21_39_17-02-09-19-00'  # with protons
 
-
+# todo confirm this still works
 def load_yaml(path):
     yaml_path = Path(path)
     assert yaml_path.exists()
@@ -103,7 +103,7 @@ class Qm9Autoencoder(torch.nn.Module):
 
             true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.num_atom_types).float()
             full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes,
-                                                                         evaluation_sigma=0.05, type_distance_scaling=0.5)
+                                                                         sigma=0.05, distance_scaling=0.5)
 
             fidelity = 1 - torch.abs(1 - full_overlap / self_overlap).cpu().detach().numpy()  # higher is better
 
@@ -116,7 +116,7 @@ class Qm9Autoencoder(torch.nn.Module):
         decoded_data = data.clone()
         decoded_data.pos = decoding[:, :3]
         decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(
-            self.config.autoencoder.model.num_decoder_points).to(self.device)
+            self.config.autoencoder.model.num_decoder_nodes).to(self.device)
         nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = self.get_node_weights(
             data, decoded_data, decoding)
         decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
@@ -124,10 +124,10 @@ class Qm9Autoencoder(torch.nn.Module):
         return decoded_data
 
     def get_node_weights(self, data, decoded_data, decoding):
-        graph_weights = data.num_atoms / self.config.autoencoder.model.num_decoder_points
-        nodewise_graph_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
+        graph_weights = data.num_atoms / self.config.autoencoder.model.num_decoder_nodes
+        nodewise_graph_weights = graph_weights.repeat_interleave(self.config.autoencoder.model.num_decoder_nodes)
         nodewise_weights = scatter_softmax(decoding[:, -1] / self.config.autoencoder.node_weight_temperature, decoded_data.batch, dim=0)
-        nodewise_weights_tensor = nodewise_weights * data.num_atoms.repeat_interleave(self.config.autoencoder.model.num_decoder_points)
+        nodewise_weights_tensor = nodewise_weights * data.num_atoms.repeat_interleave(self.config.autoencoder.model.num_decoder_nodes)
 
         return nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
 

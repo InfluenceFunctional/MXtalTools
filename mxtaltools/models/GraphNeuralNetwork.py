@@ -99,7 +99,11 @@ class GraphNeuralNetwork(torch.nn.Module):
 
         x, v = self.init_node_embeddings(z)
 
-        x = self.zeroth_fc_block(x=x, v=v, batch=batch)
+        if self.equivariant:
+            x, v = self.zeroth_fc_block(x=x, v=v, batch=batch)
+        else:
+            x = self.zeroth_fc_block(x=x, v=v, batch=batch)
+
 
         (edge_index, edge_index_inter,
          inside_batch, inside_inds,

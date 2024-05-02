@@ -7,7 +7,7 @@ seed: 1
 max_dataset_length: 10000000
 save_dataset: False
 dataset_type: 'molecule'
-regression_target: 'molecule_gap_energy' # 'crystal_reduced_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
+regression_target: 'gap_energy' # 'crystal_reduced_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
 single_molecule_dataset_identifier: null
 test_fraction: 0.2
 
@@ -16,13 +16,6 @@ filter_duplicate_molecules: False
 filter_protons: False
 filter_conditions: null
 
-atom_feature_keys: [
-'atom_atomic_numbers'
-]
-
-molecule_feature_keys : [
-'molecule_num_atoms',
-]
 #
 #"molecule_num_atoms": int(text[0]),
 #"identifier": int(props[0].split()[1]),

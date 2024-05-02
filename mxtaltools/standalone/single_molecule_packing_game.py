@@ -78,7 +78,7 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space grou
         sym_ops = SYM_OPS[sg_ind] * 1
         mol_data.sg_ind = sg_ind
         mol_data.symmetry_operators = sym_ops
-        mol_data.mult = len(sym_ops)
+        mol_data.sym_mult = len(sym_ops)
 
         "generate batch"
         collater = Collater(None, None)
@@ -135,7 +135,7 @@ for sg_search_index, sg_ind in enumerate(SGS_TO_SEARCH):  # loop over space grou
                 sym_ops = SYM_OPS[rebuild_sg] * 1
                 mol_data.sg_ind = rebuild_sg
                 mol_data.symmetry_operators = sym_ops
-                mol_data.mult = len(sym_ops)
+                mol_data.sym_mult = len(sym_ops)
                 collater = Collater(None, None)
                 mol_batch = collater([mol_data for _ in range(len(rebuild_samples))])
 

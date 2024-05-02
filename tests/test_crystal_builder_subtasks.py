@@ -1,7 +1,7 @@
 from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
-from mxtaltools.crystal_building.utils import (rotvec2rotmat, build_unit_cell, scale_asymmetric_unit,
-                                    align_crystaldata_to_principal_axes, batch_asymmetric_unit_pose_analysis_torch)
+from mxtaltools.crystal_building.utils import (rotvec2rotmat, aunit2unit_cell, scale_asymmetric_unit,
+                                               align_molecules_to_principal_axes, batch_asymmetric_unit_pose_analysis_torch)
 from scipy.spatial.transform import Rotation
 from mxtaltools.common.geometry_calculations import sph2rotvec, rotvec2sph, batch_molecule_principal_axes_torch
 import numpy as np
@@ -31,19 +31,19 @@ class TestClass:
         """
         '''check cartesian mode'''
         rotations = [Rotation.random() for _ in range(5)]
-        rvecs = torch.stack([torch.Tensor(rotation.as_rotvec()) for rotation in rotations])
+        rotvecs = torch.stack([torch.Tensor(rotation.as_rotvec()) for rotation in rotations])
 
-        rvecs2 = sph2rotvec(rotvec2sph(rvecs))
-        assert (rvecs - rvecs2).abs().mean() < 1e-4
+        rotvecs2 = sph2rotvec(rotvec2sph(rotvecs))
+        assert (rotvecs - rotvecs2).abs().mean() < 1e-4
 
-        rotmats = rotvec2rotmat(rvecs, basis='cartesian')
+        rotmats = rotvec2rotmat(rotvecs, basis='cartesian')
         check_rotmats = torch.stack([torch.Tensor(rotation.as_matrix()) for rotation in rotations])
         assert (rotmats - check_rotmats).abs().mean() < 1e-4
 
         '''check spherical mode'''
         rotations = [Rotation.random() for _ in range(5)]
-        rvecs = rotvec2sph(torch.stack([torch.Tensor(rotation.as_rotvec()) for rotation in rotations]))
-        rotmats = rotvec2rotmat(rvecs, basis='spherical')
+        rotvecs = rotvec2sph(torch.stack([torch.Tensor(rotation.as_rotvec()) for rotation in rotations]))
+        rotmats = rotvec2rotmat(rotvecs, basis='spherical')
         check_rotmats = torch.stack([torch.Tensor(rotation.as_matrix()) for rotation in rotations])
         assert (rotmats - check_rotmats).abs().mean() < 1e-4
 
@@ -52,14 +52,14 @@ class TestClass:
     # todo doesn't currently work - have to set the pos argument as the canonical conformer which is not necessarily true
     def WIP_build_unit_cell(self):
         test_unit_cells = \
-            build_unit_cell(test_crystals.mult.clone(),
+            aunit2unit_cell(test_crystals.sym_mult.clone(),
                             [test_crystals.pos[test_crystals.batch == ii] for ii in range(test_crystals.num_graphs)],
                             test_crystals.T_fc.clone(),
                             torch.linalg.inv(test_crystals.T_fc),
                             [torch.Tensor(test_crystals.symmetry_operators[ii]) for ii in range(test_crystals.num_graphs)]
                             )
 
-        disagreements = torch.stack([(test_unit_cells[ii] - test_crystals.ref_cell_pos[ii]).abs().sum() for ii in range(test_crystals.num_graphs)])
+        disagreements = torch.stack([(test_unit_cells[ii] - test_crystals.unit_cell_pos[ii]).abs().sum() for ii in range(test_crystals.num_graphs)])
         assert disagreements.mean() < 1e-4
         return None
 
@@ -77,14 +77,14 @@ class TestClass:
         then check that this is what happened
         '''
 
-        aligned_test_crystals = align_crystaldata_to_principal_axes(test_crystals.clone(),
-                                                                    handedness=test_crystals.asym_unit_handedness)
+        aligned_test_crystals = align_molecules_to_principal_axes(test_crystals.clone(),
+                                                                  handedness=test_crystals.aunit_handedness)
         aligned_principal_axes, _, _ = \
             batch_molecule_principal_axes_torch(
                 [aligned_test_crystals.pos[test_crystals.batch == ii] for ii in range(test_crystals.num_graphs)])
 
         alignment_check = torch.eye(3).tile(aligned_test_crystals.num_graphs, 1, 1)
-        alignment_check[:, 0, 0] = test_crystals.asym_unit_handedness
+        alignment_check[:, 0, 0] = test_crystals.aunit_handedness
 
         assert torch.mean(torch.abs(alignment_check - aligned_principal_axes)) < 1e-4
         return None
@@ -93,7 +93,7 @@ class TestClass:
     def WIP_batch_asymmetric_unit_pose_analysis(self):
         positions, orientations, handedness, well_defined_asym_unit, canonical_conformer_coords = (
             batch_asymmetric_unit_pose_analysis_torch(
-                unit_cell_coords_list=[torch.Tensor(test_crystals.ref_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
+                unit_cell_coords_list=[torch.Tensor(test_crystals.unit_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
                 sg_ind_list=test_crystals.sg_ind,
                 asym_unit_dict=supercell_builder.asym_unit_dict,
                 T_fc_list=test_crystals.T_fc,
@@ -105,6 +105,6 @@ class TestClass:
         '''confirm cell params agree with dataset construction'''
         assert (positions - test_crystals.cell_params[:, 6:9]).abs().mean() < 1e-4
         assert (orientations - test_crystals.cell_params[:, 9:12]).abs().mean() < 1e-4
-        assert (handedness - test_crystals.asym_unit_handedness).abs().mean() < 1e-4
+        assert (handedness - test_crystals.aunit_handedness).abs().mean() < 1e-4
 
         return None

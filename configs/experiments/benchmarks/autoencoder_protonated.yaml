@@ -3,14 +3,14 @@ device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml
 
 dataset:
-  filter_protons: False
+  filter_protons: True
 
 # batching & convergence
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 100
-max_batch_size: 500
+max_batch_size: 300
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 2000
@@ -21,5 +21,5 @@ extra_test_period: 1
 logger:
   run_name: autoencoder
   experiment_tag: benchmarks
-  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
   log_figures: True

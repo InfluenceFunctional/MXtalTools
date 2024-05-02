@@ -51,7 +51,7 @@ class TestClass:
         '''
         position, rotation, handedness, well_defined_asym_unit, canonical_coords_list = \
             batch_asymmetric_unit_pose_analysis_torch(
-                [torch.Tensor(test_crystals.ref_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
+                [torch.Tensor(test_crystals.unit_cell_pos[ii]) for ii in range(test_crystals.num_graphs)],
                 torch.Tensor(test_crystals.sg_ind),
                 supercell_builder.asym_unit_dict,
                 torch.Tensor(test_crystals.T_fc),
@@ -61,13 +61,13 @@ class TestClass:
 
         updated_params = test_crystals.cell_params.clone()
         updated_params[:, 9:12] = rotation  # overwrite to canonical parameters
-        # supercell_data.asym_unit_handedness = mol_handedness
+        # supercell_data.aunit_handedness = mol_handedness
 
         rebuilt_supercells, _ = supercell_builder.build_zp1_supercells(
             molecule_data=test_crystals,
             cell_parameters=updated_params,
             align_to_standardized_orientation=True,
-            target_handedness=reference_supercells.asym_unit_handedness,
+            target_handedness=reference_supercells.aunit_handedness,
             graph_convolution_cutoff=6,
             supercell_size=supercell_size,
             pare_to_convolution_cluster=True)
@@ -107,7 +107,7 @@ class TestClass:
         mol_batch.sg_ind = torch.arange(1, 231)
         for i in range(230):
             mol_batch.symmetry_operators[i] = supercell_builder.sym_ops[i + 1]
-            mol_batch.mult[i] = len(mol_batch.symmetry_operators[i])
+            mol_batch.sym_mult[i] = len(mol_batch.symmetry_operators[i])
 
         all_params = torch.ones((230, 12), dtype=torch.float32, device=supercell_builder.device) / 2
         all_params[:, 3:6] = torch.pi / 2  # valid in most SGs
@@ -179,7 +179,7 @@ class TestClass:
         distorted_params = test_crystals.cell_params / 2
         rebuilt_supercells, _ = supercell_builder.build_zp1_supercells(
             test_crystals, distorted_params,
-            align_to_standardized_orientation=True, target_handedness=reference_supercells.asym_unit_handedness,
+            align_to_standardized_orientation=True, target_handedness=reference_supercells.aunit_handedness,
             graph_convolution_cutoff=6,
             supercell_size=supercell_size, pare_to_convolution_cluster=True)
 

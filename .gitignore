@@ -5,3 +5,4 @@ __pycache__/
 /req.out
 /old/
 /wandb/
+/bulk_molecule_classification/

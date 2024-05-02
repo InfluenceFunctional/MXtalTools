@@ -37,7 +37,8 @@ class Logger:
                 self.current_losses[key][loss] = []
 
         if not hasattr(self, 'loss_record'):  # initialize it just once
-            self.loss_record = {k1: {k2: [] for k2 in self.current_losses[k1].keys() if 'mean' in k2} for k1 in self.current_losses.keys()}
+            self.loss_record = {k1: {k2: [] for k2 in self.current_losses[k1].keys() if 'mean' in k2} for k1 in
+                                self.current_losses.keys()}
 
     def reset_for_new_epoch(self, epoch, batch_size):
         self.init_loss_records()
@@ -72,6 +73,10 @@ class Logger:
         return stat_dict
 
     def update_stats_dict(self, epoch_type, keys, values, mode='extend'):
+        if type(keys) != list:
+            keys = list(keys)
+        if type(values) != list:
+            values = list(values)
         stat_dict = self.get_stat_dict(epoch_type)
         stat_dict = update_stats_dict(stat_dict, keys, values, mode=mode)
 
@@ -80,6 +85,17 @@ class Logger:
             for k2 in self.current_losses[k1].keys():
                 if isinstance(self.current_losses[k1][k2], list):
                     self.current_losses[k1][k2] = np.asarray(self.current_losses[k1][k2])
+
+    def log_times(self, times: dict):
+        elapsed_times = {}
+        for start_key in times.keys():
+            if isinstance(times[start_key], dict):
+                self.log_times(times[start_key])
+            elif 'start' in start_key:
+                end_key = start_key.split('_start')[0] + '_end'
+                if end_key in times.keys():
+                    elapsed_times[start_key.split('_start')[0]] = times[end_key] - times[start_key]
+        self.wandb.log(elapsed_times)
 
     def concatenate_stats_dict(self, epoch_type):
         stat_dict = self.get_stat_dict(epoch_type)
@@ -110,12 +126,14 @@ class Logger:
     def check_model_convergence(self):
         self.converged_flags = {model_name: check_convergence(self.loss_record[model_name]['mean_test'],
                                                               self.config.history,
-                                                              self.config.__dict__[model_name].optimizer.convergence_eps,
+                                                              self.config.__dict__[
+                                                                  model_name].optimizer.convergence_eps,
                                                               self.epoch,
                                                               self.config.minimum_epochs,
                                                               self.config.overfit_tolerance,
                                                               train_record=self.loss_record[model_name]['mean_train'])
-                                for model_name in self.model_names if self.config.__dict__[model_name].optimizer is not None}
+                                for model_name in self.model_names if
+                                self.config.__dict__[model_name].optimizer is not None}
 
     def log_fig_dict(self, fig_dict):
         if self.log_figs_to_self:
@@ -133,10 +151,12 @@ class Logger:
             # loss histograms
             for key in self.current_losses.keys():
                 if 'all_train' in self.current_losses[key].keys():
-                    self.wandb.log({key + '_train_loss_distribution': self.wandb.Histogram(self.current_losses[key]['all_train'])})
+                    self.wandb.log(
+                        {key + '_train_loss_distribution': self.wandb.Histogram(self.current_losses[key]['all_train'])})
 
                 if 'all_test' in self.current_losses[key].keys():
-                    self.wandb.log({key + '_test_loss_distribution': self.wandb.Histogram(self.current_losses[key]['all_train'])})
+                    self.wandb.log(
+                        {key + '_test_loss_distribution': self.wandb.Histogram(self.current_losses[key]['all_train'])})
 
     def collate_current_metrics(self):
         # general metrics
@@ -151,7 +171,8 @@ class Logger:
         # losses
         for key in self.current_losses.keys():
             for key2 in self.current_losses[key].keys():
-                if isinstance(self.current_losses[key][key2], np.ndarray) and (len(self.current_losses[key][key2] > 0)):  # log 'best' metrics
+                if isinstance(self.current_losses[key][key2], np.ndarray) and (
+                len(self.current_losses[key][key2] > 0)):  # log 'best' metrics
                     if 'train' in key2:
                         ttype = 'train'
                     elif 'test' in key2:
@@ -192,4 +213,5 @@ class Logger:
     def log_epoch_analysis(self, test_loader):
         """sometimes do detailed reporting"""
         if (self.epoch % self.sample_reporting_frequency) == 0:
-            detailed_reporting(self.config, self.dataDims, test_loader, self.train_stats, self.test_stats, extra_test_dict=self.extra_stats)
+            detailed_reporting(self.config, self.dataDims, test_loader,
+                               self.train_stats, self.test_stats, extra_test_dict=self.extra_stats)

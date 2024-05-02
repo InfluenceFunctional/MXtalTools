@@ -158,7 +158,7 @@ def test_equivariant_graph():
                                       y=torch.ones(1),
                                       mol_x=None,
                                       tracking=None,
-                                      ref_cell_pos=None,  # won't collate properly as a torch tensor - must leave as np array
+                                      unit_cell_pos=None,  # won't collate properly as a torch tensor - must leave as np array
                                       mult=None,
                                       sg_ind=None,
                                       cell_params=None,
@@ -175,7 +175,7 @@ def test_equivariant_graph():
                                           y=torch.ones(1),
                                           mol_x=None,
                                           tracking=None,
-                                          ref_cell_pos=None,  # won't collate properly as a torch tensor - must leave as np array
+                                          unit_cell_pos=None,  # won't collate properly as a torch tensor - must leave as np array
                                           mult=None,
                                           sg_ind=None,
                                           cell_params=None,

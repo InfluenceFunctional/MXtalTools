@@ -7,22 +7,22 @@ from mxtaltools.models.molecule_graph_model import MoleculeGraphModel
 class PolymorphClassifier(BaseGraphModel):
     def __init__(self, seed, config,
                  dataDims: dict,
-                 num_atom_features: int = None,
-                 num_molecule_features: int = None,
-                 node_standardization_tensor: torch.tensor = None,
-                 graph_standardization_tensor: torch.tensor = None
+                 atom_features: list,
+                 molecule_features: list,
+                 node_standardization_tensor: torch.tensor,
+                 graph_standardization_tensor: torch.tensor,
                  ):
         super(PolymorphClassifier, self).__init__()
 
         torch.manual_seed(seed)
-        self.get_data_stats(dataDims,
-                            graph_standardization_tensor,
+        self.get_data_stats(atom_features,
+                            molecule_features,
                             node_standardization_tensor,
-                            num_atom_features,
-                            num_molecule_features)
+                            graph_standardization_tensor)
+
 
         self.model = MoleculeGraphModel(
-            input_node_dim=dataDims['num_atom_features'],
+            input_node_dim=self.n_atom_feats,
             num_mol_feats=0,
             output_dim=dataDims['num_polymorphs'] + dataDims['num_topologies'],
             seed=seed,

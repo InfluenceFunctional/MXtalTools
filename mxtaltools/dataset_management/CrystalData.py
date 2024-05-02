@@ -15,12 +15,58 @@ from torch_geometric.typing import EdgeType, NodeType, OptTensor
 from torch_geometric.utils import subgraph
 from torch_geometric.data.data import BaseData
 
+from mxtaltools.constants.space_group_info import SYM_OPS
+
 
 ###############################################################################
 
 
+def cell_parameters_to_box_vectors(opt: str,
+                                   cell_lengths: torch.tensor,
+                                   cell_angles: torch.tensor,
+                                   return_vol: bool = False):
+    """
+    Initially borrowed from Nikos
+    Quickly convert from cell lengths and angles to fractional transform matrices fractional->cartesian or cartesian->fractional
+    """
+    ''' Calculate cos and sin of cell angles '''
+    cos_a = torch.cos(cell_angles)
+    sin_a = torch.sin(cell_angles)
+
+    ''' Calculate volume of the unit cell '''
+    val = 1.0 - cos_a[0] ** 2 - cos_a[1] ** 2 - cos_a[2] ** 2 + 2.0 * cos_a[0] * cos_a[1] * cos_a[2]
+    vol = torch.sign(val) * cell_lengths[0] * cell_lengths[1] * cell_lengths[2] * torch.sqrt(
+        torch.abs(val))  # technically a signed quanitity
+
+    ''' Setting the transformation matrix '''
+    m = torch.zeros((3, 3))
+    if opt == 'c_to_f':
+        ''' Converting from cartesian to fractional '''
+        m[0, 0] = 1.0 / cell_lengths[0]
+        m[0, 1] = -cos_a[2] / cell_lengths[0] / sin_a[2]
+        m[0, 2] = cell_lengths[1] * cell_lengths[2] * (cos_a[0] * cos_a[2] - cos_a[1]) / vol / sin_a[2]
+        m[1, 1] = 1.0 / cell_lengths[1] / sin_a[2]
+        m[1, 2] = cell_lengths[0] * cell_lengths[2] * (cos_a[1] * cos_a[2] - cos_a[0]) / vol / sin_a[2]
+        m[2, 2] = cell_lengths[0] * cell_lengths[1] * sin_a[2] / vol
+    elif opt == 'f_to_c':
+        ''' Converting from fractional to cartesian '''
+        m[0, 0] = cell_lengths[0]
+        m[0, 1] = cell_lengths[1] * cos_a[2]
+        m[0, 2] = cell_lengths[2] * cos_a[1]
+        m[1, 1] = cell_lengths[1] * sin_a[2]
+        m[1, 2] = cell_lengths[2] * (cos_a[0] - cos_a[1] * cos_a[2]) / sin_a[2]
+        m[2, 2] = vol / cell_lengths[0] / cell_lengths[1] / sin_a[2]
+
+    # todo create m in a single-step
+    if return_vol:
+        return m, torch.abs(vol)
+    else:
+        return m
+
+
+# noinspection PyPropertyAccess
 class CrystalData(BaseData):
-    r"""A data object describing a homogeneous graph.
+    r"""A data object describing a homogeneous graph.  # todo update docstring
     The data object can hold node-level, link-level and graph-level attributes.
     In general, :class:`~torch_geometric.data.Data` tries to mimic the
     behaviour of a regular Python dictionary.
@@ -36,7 +82,6 @@ class CrystalData(BaseData):
 
     y: graph-wise target features - e.g., regression or classification targets
 
-
     tracking: array of graph-wise features for tracking & analysis
     smiles: SMILES strings of molecule in crystal
     mol_size: number of nodes per molecule
@@ -46,9 +91,9 @@ class CrystalData(BaseData):
     sg_ind: space group index 1-230. Always assume general Wyckhoff positions
     # todo add z_prime
     T_fc: fractional-cartesian transform matrix, transpose of box vectors
-    ref_cell_pos: node positions for the full unit cell in format [Z, n_atoms, 3]
+    unit_cell_pos: node positions for the full unit cell in format [Z, n_atoms, 3]
     cell_params: 12D cell parameters # TOTO unify formatting between intrinsic and extrinsic methods  # todo issue for Z'>1
-    asym_unit_handendess: handedness of the molecule in the asymmetric unit, according to our principal inertial handedness convention  # todo issue for Z'>1
+    aunit_handendess: handedness of the molecule in the asymmetric unit, according to our principal inertial handedness convention  # todo issue for Z'>1
     mult: Z/Z', the symmetry multiplicity of the crystal. A feature of the space group.
     symmetry_operators: list of symmetry operations to generate the crystal from asymmetric unit. Only necessary when using nonstandard SG settings, like data from the CSD.
 
@@ -56,13 +101,28 @@ class CrystalData(BaseData):
     mol_ind: auxiliary index identify which of the Z' molecules each atom is a part of
 
     """
-    def __init__(self, x: OptTensor = None,
+
+    def __init__(self,
+                 x: OptTensor = None,
+                 graph_x: OptTensor = None,
                  edge_index: OptTensor = None,
                  edge_attr: OptTensor = None,
                  y: OptTensor = None,
                  pos: OptTensor = None,
                  aux_ind: OptTensor = None,
-                 periodic: bool = False,
+                 mol_ind: OptTensor = None,
+                 cell_lengths: OptTensor = torch.ones(3),
+                 cell_angles: OptTensor = torch.ones(3) * torch.pi / 2,
+                 z_prime: int = 0,
+                 sg_ind: int = 1,  # default to P1
+                 pose_parameters: list = [],
+                 smiles: str = None,
+                 identifier: str = None,
+                 nonstandard_symmetry: bool = False,
+                 unit_cell_pos: torch.tensor = None,
+                 symmetry_operators: list = None,
+                 aunit_handedness: list = None,
+                 is_well_defined: bool = True,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
@@ -70,9 +130,12 @@ class CrystalData(BaseData):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+        # fix node & graph attributes
         if x is not None:
             self.x = x
             self.num_atoms = len(x)
+        if graph_x is not None:
+            self.graph_x = graph_x
         if edge_index is not None:
             self.edge_index = edge_index
         if edge_attr is not None:
@@ -81,14 +144,67 @@ class CrystalData(BaseData):
             self.y = y
         if pos is not None:
             self.pos = pos
-            centroid = pos.mean(dim=0)
-            self.radius = torch.amax(torch.linalg.norm(pos-centroid, dim=1))
+            if self.radius is None:
+                centroid = pos.mean(dim=0)
+                self.radius = torch.amax(torch.linalg.norm(pos - centroid, dim=1))
+
+        # fix helper indices
         if aux_ind is not None:
             self.aux_ind = aux_ind
-        if periodic is not None:
-            self.periodic = False
-            if periodic:
-                assert hasattr(self, 'T_fc'), "Periodic structures must have be initialized with box vectors"
+            assert len(aux_ind) == len(x)
+        if mol_ind is not None:
+            self.mol_ind = mol_ind
+            assert len(mol_ind) == len(x)
+
+        # fix symmetries
+        self.sg_ind = sg_ind
+        if nonstandard_symmetry:  # set as list fo correct collation behavior
+            self.symmetry_operators = symmetry_operators
+            self.nonstandard_symmetry = True
+        else: # standard symmetry
+            self.symmetry_operators = np.stack(SYM_OPS[sg_ind])
+            self.nonstandard_symmetry = False
+
+        self.sym_mult = len(self.symmetry_operators)
+        self.z_prime = z_prime
+
+        # fix box
+        self.cell_lengths = cell_lengths[None, ...]
+        self.cell_angles = cell_angles[None, ...]
+        if all(cell_lengths == torch.ones(3)):  # if we are going with the default box
+            self.T_fc, self.T_cf = torch.eye(3), torch.eye(3)
+            self.cell_volume = 1
+        else:
+            self.T_fc, self.cell_volume = (
+                cell_parameters_to_box_vectors('f_to_c', cell_lengths, cell_angles, return_vol=True))
+            self.T_fc = self.T_fc[None, ...]
+            self.T_cf = torch.linalg.inv(self.T_fc[0])[None, ...]
+        self.reduced_volume = self.cell_volume / self.sym_mult
+
+        # fix molecule poses
+        assert len(pose_parameters) == z_prime
+        if z_prime > 0:
+            for zp in range(4):
+                setattr(self, f'pose_params{zp}', torch.ones(6)[None, ...])  # fill with dummy values
+            for zp in range(z_prime):  # fill with any real values
+                setattr(self, f'pose_params{zp}', pose_parameters[zp][None, ...])
+
+        # fix identifiers
+        if smiles is not None:
+            self.smiles = smiles
+        if identifier is not None:
+            self.identifier = identifier
+
+        # record prebuilt unit cell coordinates
+        if unit_cell_pos is not None:
+            self.unit_cell_pos = unit_cell_pos.numpy()  # if it's saved as a tensor, we get problems in collation
+            assert unit_cell_pos.shape == (self.sym_mult, len(x), 3)
+
+        if aunit_handedness is not None:
+            self.aunit_handedness = aunit_handedness
+
+        if is_well_defined is not None:
+            self.is_well_defined = is_well_defined
 
     def __getattr__(self, key: str) -> Any:
         if '_store' not in self.__dict__:
@@ -352,6 +468,10 @@ class CrystalData(BaseData):
         return self._store.num_node_features
 
     @property
+    def device(self):
+        return self.x.device
+
+    @property
     def num_features(self) -> int:
         r"""Returns the number of features per node in the graph.
         Alias for :py:attr:`~num_node_features`."""
@@ -380,6 +500,10 @@ class CrystalData(BaseData):
         return self['x'] if 'x' in self._store else None
 
     @property
+    def graph_x(self) -> Any:
+        return self['graph_x'] if 'graph_x' in self._store else None
+
+    @property
     def edge_index(self) -> Any:
         return self['edge_index'] if 'edge_index' in self._store else None
 
@@ -400,6 +524,10 @@ class CrystalData(BaseData):
         return self['pos'] if 'pos' in self._store else None
 
     @property
+    def radius(self) -> Any:
+        return self['radius'] if 'radius' in self._store else None
+
+    @property
     def batch(self) -> Any:
         return self['batch'] if 'batch' in self._store else None
 
@@ -408,8 +536,68 @@ class CrystalData(BaseData):
         return self['aux_ind'] if 'aux_ind' in self._store else None
 
     @property
-    def periodic(self) -> Any:
-        return self['periodic'] if 'periodic' in self._store else None
+    def mol_ind(self) -> Any:
+        return self['mol_ind'] if 'mol_ind' in self._store else None
+
+    @property
+    def sg_ind(self) -> Any:
+        return self['sg_ind'] if 'sg_ind' in self._store else None
+
+    @property
+    def z_prime(self) -> Any:
+        return self['z_prime'] if 'z_prime' in self._store else None
+
+    @property
+    def symmetry_operators(self) -> Any:
+        return self['symmetry_operators'] if 'symmetry_operators' in self._store else None
+
+    @property
+    def cell_lengths(self) -> Any:
+        return self['cell_lengths'] if 'cell_lengths' in self._store else None
+
+    @property
+    def cell_angles(self) -> Any:
+        return self['cell_angles'] if 'cell_angles' in self._store else None
+
+    @property
+    def T_fc(self) -> Any:
+        return self['T_fc'] if 'T_fc' in self._store else None
+
+    @property
+    def identifier(self) -> Any:
+        return self['identifier'] if 'identifier' in self._store else None
+
+    @property
+    def cell_volume(self) -> Any:
+        return self['cell_volume'] if 'cell_volume' in self._store else None
+
+    @property
+    def reduced_volume(self) -> Any:
+        return self['reduced_volume'] if 'reduced_volume' in self._store else None
+
+    @property
+    def smiles(self) -> Any:
+        return self['smiles'] if 'smiles' in self._store else None
+
+    @property
+    def identifier(self) -> Any:
+        return self['identifier'] if 'identifier' in self._store else None
+
+    @property
+    def unit_cell_pos(self) -> Any:
+        return self['unit_cell_pos'] if 'unit_cell_pos' in self._store else None
+
+    @property
+    def aunit_handedness(self) -> Any:
+        return self['aunit_handedness'] if 'aunit_handedness' in self._store else None
+
+    @property
+    def is_well_defined(self) -> Any:
+        return self['is_well_defined'] if 'is_well_defined' in self._store else None
+
+    @property
+    def nonstandard_symmetry(self) -> Any:
+        return self['nonstandard_symmetry'] if 'nonstandard_symmetry' in self._store else None
 
     # Deprecated functions ####################################################
 

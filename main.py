@@ -42,7 +42,7 @@ if __name__ == '__main__':
         sweep_config = load_yaml(config.sweep_path)
         predictor = Modeller(config, sweep_config=sweep_config)
 
-        wandb.agent(config.sweep_id, project="MXtalTools", function=predictor.train_crystal_models, count=1)
+        wandb.agent(config.sweep_id, project="MXtalTools", function=predictor.train_models, count=1)
 
     else:
         predictor = Modeller(config)
@@ -52,7 +52,7 @@ if __name__ == '__main__':
                 or config.mode == 'autoencoder'
                 or config.mode == 'embedding_regression'
                 or config.mode == 'polymorph_classification'):
-            predictor.train_crystal_models()
+            predictor.train_models()
 
         elif config.mode == 'search':
             _, dataloader, _ = predictor.load_dataset_and_dataloaders(override_test_fraction=1)

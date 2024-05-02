@@ -171,7 +171,7 @@ def sample_wise_overlaps_and_summary_plot(config, wandb, num_crystals, best_supe
         volumes_list.append(
             cell_vol_torch(best_supercells.cell_params[i, 0:3], best_supercells.cell_params[i, 3:6]))
     volumes = torch.stack(volumes_list)
-    generated_packing_coeffs = (best_supercells.mult * best_supercells.tracking[:,
+    generated_packing_coeffs = (best_supercells.sym_mult * best_supercells.tracking[:,
                                                     mol_volume_ind] / volumes).cpu().detach().numpy()
     target_packing = (best_supercells.y * config.dataDims['target_std'] + config.dataDims[
         'target_mean']).cpu().detach().numpy()

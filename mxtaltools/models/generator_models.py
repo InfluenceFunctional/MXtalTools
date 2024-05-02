@@ -14,25 +14,27 @@ from mxtaltools.models.utils import clean_generator_output
 
 
 class CrystalGenerator(BaseGraphModel):
-    def __init__(self, seed, device, config, dataDims, sym_info,
-                 num_atom_features: int = None,
-                 num_molecule_features: int = None,
-                 node_standardization_tensor: torch.tensor = None,
-                 graph_standardization_tensor: torch.tensor = None
+    def __init__(self, seed, device, config, sym_info,
+                 atom_features: list,
+                 molecule_features: list,
+                 node_standardization_tensor: torch.tensor,
+                 graph_standardization_tensor: torch.tensor,
+                 lattice_means: torch.tensor,
+                 lattice_stds: torch.tensor,
                  ):
         super(CrystalGenerator, self).__init__()
 
         self.device = device
         torch.manual_seed(seed)
-        self.get_data_stats(dataDims,
-                            graph_standardization_tensor,
+        self.get_data_stats(atom_features,
+                            molecule_features,
                             node_standardization_tensor,
-                            num_atom_features,
-                            num_molecule_features)
+                            graph_standardization_tensor)
+
 
         self.symmetries_dict = sym_info
-        self.lattice_means = torch.tensor(dataDims['lattice_means'], dtype=torch.float32, device=device)
-        self.lattice_stds = torch.tensor(dataDims['lattice_stds'], dtype=torch.float32, device=device)
+        self.lattice_means = torch.tensor(lattice_means, dtype=torch.float32, device=device)
+        self.lattice_stds = torch.tensor(lattice_stds, dtype=torch.float32, device=device)
         self.radial_norm_factor = config.radial_norm_factor
 
         # initialize asymmetric unit dict

@@ -4,9 +4,9 @@ from torch_geometric.loader.dataloader import Collater
 from mxtaltools.common.utils import init_sym_info
 from mxtaltools.crystal_building.utils import \
     (update_supercell_data, unit_cell_to_convolution_cluster,
-     align_crystaldata_to_principal_axes,
+     align_molecules_to_principal_axes,
      batch_asymmetric_unit_pose_analysis_torch, set_sym_ops,
-     rotvec2rotmat, build_unit_cell, generate_sorted_fractional_translations)
+     rotvec2rotmat, aunit2unit_cell, generate_sorted_fractional_translations)
 from mxtaltools.common.geometry_calculations import compute_fractional_transform_torch, sph2rotvec
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 
@@ -20,8 +20,8 @@ class SupercellBuilder:
         self.sym_ops = self.symmetries_dict['sym_ops']  # list of symmetry operations
         self.device = device
         self.numpy_asym_unit_dict = asym_unit_dict.copy()
-        self.asym_unit_dict = asym_unit_dict.copy()
         self.rotation_basis = rotation_basis
+        self.asym_unit_dict = asym_unit_dict.copy()
         for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 
@@ -41,13 +41,8 @@ class SupercellBuilder:
 
         molecule_data = molecule_data.clone()
         num_crystals = molecule_data.num_graphs
-        # infer maximum z prime value
-        max_z_prime_explicit = max(z_primes_list)  # the maximum value proposed
-        max_z_prime_params = (cell_parameters.shape[1] - 6) // 6  # the maximal value, from the given parameterization
-        tot_molecules = sum(z_primes_list)
 
-        molwise_data, molwise_parameters = self.expand_integer_zp_molecule_data(cell_parameters, molecule_data,
-                                                                                tot_molecules, z_primes_list)
+        molwise_data, molwise_parameters = self.unzip_zp_molecules(cell_parameters, molecule_data, z_primes_list)
 
         # generate unit cells for each effective Z'=1 crystal
         (T_cf_list, T_fc_list, atomic_number_list, canonical_conformer_coords_list,
@@ -56,8 +51,8 @@ class SupercellBuilder:
                 align_to_standardized_orientation, molwise_parameters, molwise_data, target_handedness))
 
         # apply symmetry ops to build unit cell
-        unit_cell_coords_list = build_unit_cell(
-            molwise_data.mult, canonical_conformer_coords_list, T_fc_list,
+        unit_cell_coords_list = aunit2unit_cell(
+            molwise_data.sym_mult, canonical_conformer_coords_list, T_fc_list,
             T_cf_list, sym_ops_list)
 
         if not skip_refeaturization:  # if the mol position is outside the asym unit, the below params will not correspond to the inputs
@@ -75,7 +70,7 @@ class SupercellBuilder:
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             unit_cell_to_convolution_cluster(
                 combined_unit_cell_coords_list, cell_vector_list,
-                combined_T_fc_list, combined_atomic_number_list, molecule_data.mult,
+                combined_T_fc_list, combined_atomic_number_list, molecule_data.sym_mult,
                 supercell_scale=supercell_size,
                 cutoff=graph_convolution_cutoff,
                 sorted_fractional_translations=self.sorted_fractional_translations,
@@ -138,15 +133,17 @@ class SupercellBuilder:
 
         return combined_T_fc_list, combined_atomic_number_list, combined_unit_cell_coords_list, mol_sizes, mol_ind_list
 
-    def expand_integer_zp_molecule_data(self, cell_parameters, molecule_data, tot_molecules, z_primes_list):
+    def unzip_zp_molecules(self, cell_parameters, molecule_data, z_primes_list):
         # generate a batch of effective zp=1 molecules
+        tot_molecules = sum(z_primes_list)
+
         molwise_data = []
         molwise_parameters = torch.zeros((tot_molecules, 12), dtype=torch.float32, device=self.device)
         molwise_sg_inds = torch.zeros((tot_molecules), dtype=torch.long, device=self.device)
         molwise_sym_ops = []
         mol_ind = 0
         for ind, zp in enumerate(z_primes_list):
-            molwise_data.extend([molecule_data[ind] for z in range(zp)])
+            molwise_data.extend([molecule_data[ind] for z in range(zp)])  # duplicates the same molecule twice
             for ind2 in range(zp):  # assume zp elements are ordered as [6 box params, 6 mol params1, 6 mol params2,...]
                 molwise_parameters[mol_ind] = torch.cat(
                     [cell_parameters[ind, :6],
@@ -180,8 +177,11 @@ class SupercellBuilder:
             align_to_standardized_orientation, cell_parameters, molecule_data, target_handedness)
 
         # apply symmetry ops to build unit cell
-        unit_cell_coords_list = build_unit_cell(supercell_data.mult, canonical_conformer_coords_list, T_fc_list,
-                                                T_cf_list, sym_ops_list)
+        unit_cell_coords_list = aunit2unit_cell(supercell_data.sym_mult,
+                                                canonical_conformer_coords_list,
+                                                T_fc_list,
+                                                T_cf_list,
+                                                sym_ops_list)
 
         #assert torch.sum(torch.isnan(torch.cat([elem.flatten() for elem in unit_cell_coords_list]))) == 0, f"{cell_parameters}, {coords_list}, {canonical_conformer_coords_list}"
 
@@ -192,7 +192,7 @@ class SupercellBuilder:
         cell_vector_list = T_fc_list.permute(0, 2, 1)
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             unit_cell_to_convolution_cluster(
-                unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.mult,
+                unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.sym_mult,
                 supercell_scale=supercell_size,
                 cutoff=graph_convolution_cutoff,
                 sorted_fractional_translations=self.sorted_fractional_translations,
@@ -224,7 +224,7 @@ class SupercellBuilder:
         rotations_list = rotvec2rotmat(mol_rotation)
 
         if align_to_standardized_orientation:  # align canonical conformers principal axes to cartesian axes - not usually done here, but allowed
-            supercell_data = align_crystaldata_to_principal_axes(supercell_data, handedness=target_handedness)
+            supercell_data = align_molecules_to_principal_axes(supercell_data, handedness=target_handedness)
 
         # get molecule information
         atomic_number_list, coords_list = [], []
@@ -256,7 +256,7 @@ class SupercellBuilder:
         # if not all(asym_unit_is_well_defined):  # todo solve this
         #     print("Warning: Some built crystals have ill defined asymmetric units")
         supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
-        supercell_data.asym_unit_handedness = mol_handedness
+        supercell_data.aunit_handedness = mol_handedness
         # if align_to_standardized_orientation:  # typically issue of handedness of the asymmetric unit
         #     if (torch.amax(torch.sum(torch.abs(mol_orientations - mol_rotation_i), dim=1)) > 1e-2 or
         #             torch.amax(torch.sum(torch.abs(mol_positions - mol_position), dim=1)) > 1e-2):  # in the spherical basis
@@ -289,14 +289,14 @@ class SupercellBuilder:
 
         cell_vector_list = supercell_data.T_fc.permute(0, 2, 1)  # confirmed this is the right way to do this
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            unit_cell_to_convolution_cluster(supercell_data.ref_cell_pos, cell_vector_list,
-                                             supercell_data.T_fc, atoms_list, supercell_data.mult,
+            unit_cell_to_convolution_cluster(supercell_data.unit_cell_pos, cell_vector_list,
+                                             supercell_data.T_fc, atoms_list, supercell_data.sym_mult,
                                              supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
                                              sorted_fractional_translations=self.sorted_fractional_translations,
                                              pare_to_convolution_cluster=pare_to_convolution_cluster)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list,
-                                               supercell_data.ref_cell_pos)
+                                               supercell_data.unit_cell_pos)
 
         return supercell_data.to(self.device)
 

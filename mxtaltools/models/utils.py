@@ -30,7 +30,8 @@ def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr):
     return optimizer, lr
 
 
-def check_convergence(test_record, history, convergence_eps, epoch, minimum_epochs, overfit_tolerance, train_record=None):
+def check_convergence(test_record, history, convergence_eps, epoch, minimum_epochs, overfit_tolerance,
+                      train_record=None):
     """
     check if we are converged
     condition: test loss has increased or levelled out over the last several epochs
@@ -146,9 +147,11 @@ def init_optimizer(model_name, optim_config, model, amsgrad=False, freeze_params
             params_dict = model.parameters()
 
     if optimizer.lower() == 'adam':
-        optimizer = optim.Adam(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        optimizer = optim.Adam(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2),
+                               weight_decay=weight_decay)
     elif optimizer.lower() == 'adamw':
-        optimizer = optim.AdamW(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2), weight_decay=weight_decay)
+        optimizer = optim.AdamW(params_dict, amsgrad=amsgrad, lr=init_lr, betas=(beta1, beta2),
+                                weight_decay=weight_decay)
     elif optimizer.lower() == 'sgd':
         optimizer = optim.SGD(params_dict, lr=init_lr, momentum=momentum, weight_decay=weight_decay)
     else:
@@ -230,15 +233,18 @@ def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, cor
             correction = 0
 
         if isinstance(raw_classwise_output, np.ndarray):
-            softmax_output = softmax_np(raw_classwise_output.astype('float64'), temperature)[:, 1].astype('float64')  # values get too close to zero for float32
+            softmax_output = softmax_np(raw_classwise_output.astype('float64'), temperature)[:, 1].astype(
+                'float64')  # values get too close to zero for float32
             tanned = np.tan((softmax_output - 0.5) * np.pi)
-            sign = (raw_classwise_output[:, 1] > raw_classwise_output[:, 0]) * 2 - 1  # values very close to zero can realize a sign error
+            sign = (raw_classwise_output[:, 1] > raw_classwise_output[:,
+                                                 0]) * 2 - 1  # values very close to zero can realize a sign error
             return sign * np.log10(correction + np.abs(tanned))  # new factor of 1+ conditions the function about zero
 
         elif torch.is_tensor(raw_classwise_output):
             softmax_output = F.softmax(raw_classwise_output / temperature, dim=-1)[:, 1]
             tanned = torch.tan((softmax_output - 0.5) * torch.pi)
-            sign = (raw_classwise_output[:, 1] > raw_classwise_output[:, 0]) * 2 - 1  # values very close to zero can realize a sign error
+            sign = (raw_classwise_output[:, 1] > raw_classwise_output[:,
+                                                 0]) * 2 - 1  # values very close to zero can realize a sign error
             return sign * torch.log10(correction + torch.abs(tanned))
 
 
@@ -296,7 +302,8 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
     includes fix for potential dataparallel issue
     """
     checkpoint = torch.load(path, map_location=device)
-    if list(checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+    if list(checkpoint['model_state_dict'])[0][
+       0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
         for i in list(checkpoint['model_state_dict']):
             checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
 
@@ -308,7 +315,8 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
     return model, optimizer
 
 
-def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.tensor, crystal_multiplicity: torch.tensor):
+def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.tensor,
+                                crystal_multiplicity: torch.tensor):
     """
     @param cell_params: cell parameters using our standard scheme 0-5 are a,b,c,alpha,beta,gamma
     @param mol_volumes: molumes in cubic angstrom of each single molecule
@@ -322,7 +330,9 @@ def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.te
     coeffs = crystal_multiplicity * mol_volumes / cell_volumes
     return coeffs
 
-def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.tensor, crystal_multiplicity: torch.tensor):
+
+def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.tensor,
+                                crystal_multiplicity: torch.tensor):
     """
     @param cell_params: cell parameters using our standard scheme 0-5 are a,b,c,alpha,beta,gamma
     @param mol_volumes: molumes in cubic angstrom of each single molecule
@@ -336,19 +346,30 @@ def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.te
     coeffs = crystal_multiplicity * mol_volumes / cell_volumes
     return coeffs
 
-def compute_dummy_packing_coefficient(cell_params: torch.tensor, mol_radii: torch.tensor, crystal_multiplicity: torch.tensor):
+
+def compute_reduced_volume_fraction(cell_lengths: torch.tensor,
+                                    cell_angles: torch.tensor,
+                                    atom_radii: torch.tensor,
+                                    batch: torch.tensor,
+                                    crystal_multiplicity: torch.tensor):
     """
-    @param cell_params: cell parameters using our standard scheme 0-5 are a,b,c,alpha,beta,gamma
-    @param mol_volumes: molumes in cubic angstrom of each single molecule
-    @param crystal_multiplicity: Z value for each crystal
-    @return: crystal packing coefficient
+
+    Args:
+        cell_lengths:
+        cell_angles:
+        atom_radii:
+        crystal_multiplicity:
+
+    Returns: asymmetric unit volume / sum of vdw volumes - so-called 'reduced volume fraction'
+
     """
-    volumes_list = []
-    for i in range(len(cell_params)):
-        volumes_list.append(cell_vol_torch(cell_params[i, 0:3], cell_params[i, 3:6]))
-    cell_volumes = torch.stack(volumes_list)
-    mol_volumes = 4/3*mol_radii**3/2  # a dummy value
-    return crystal_multiplicity * mol_volumes / cell_volumes
+
+    cell_volumes = torch.zeros(len(cell_lengths), dtype=torch.float32, device=cell_lengths.device)
+    for i in range(len(cell_lengths)):  # todo switch to the parallel version of this function
+        cell_volumes[i] = cell_vol_torch(cell_lengths[i], cell_angles[i])
+
+    return (cell_volumes / crystal_multiplicity) / scatter(4 / 3 * torch.pi * atom_radii ** 3, batch, reduce='sum')
+
 
 def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     """
@@ -366,7 +387,8 @@ def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     outside_inds = torch.where(supercell_data.aux_ind[batch_inds] == 1)[0]
 
     # identify and count canonical conformer acceptors and intermolecular donors
-    canonical_conformer_acceptors_inds = torch.where(supercell_data.x[batch_inds[canonical_conformers_inds], atom_acceptor_ind] == 1)[0]
+    canonical_conformer_acceptors_inds = \
+        torch.where(supercell_data.x[batch_inds[canonical_conformers_inds], atom_acceptor_ind] == 1)[0]
     outside_donors_inds = torch.where(supercell_data.x[batch_inds[outside_inds], atom_donor_ind] == 1)[0]
 
     donors_pos = supercell_data.pos[batch_inds[outside_inds[outside_donors_inds]]]
@@ -386,7 +408,8 @@ def save_checkpoint(epoch, model, optimizer, config, save_path, dataDims):
 
 
 def weight_reset(m):
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.Conv3d) or isinstance(m, nn.ConvTranspose3d):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.Conv3d) or isinstance(m,
+                                                                                                      nn.ConvTranspose3d):
         m.reset_parameters()
 
 
@@ -423,7 +446,8 @@ def clean_generator_output(samples=None, lattice_lengths=None, lattice_angles=No
     '''destandardize & decode angles'''
     if destandardize:
         real_lattice_lengths = lattice_lengths * lattice_stds[:3] + lattice_means[:3]
-        real_lattice_angles = lattice_angles * lattice_stds[3:6] + lattice_means[3:6]  # not bothering to encode as an angle
+        real_lattice_angles = lattice_angles * lattice_stds[3:6] + lattice_means[
+                                                                   3:6]  # not bothering to encode as an angle
         real_mol_positions = mol_positions * lattice_stds[6:9] + lattice_means[6:9]
         if mol_orientations.shape[-1] == 3:
             real_mol_orientations = mol_orientations * lattice_stds[9:] + lattice_means[9:]
@@ -437,9 +461,11 @@ def clean_generator_output(samples=None, lattice_lengths=None, lattice_angles=No
 
     if mol_orientations.shape[-1] == 6:
         theta, phi, r_i = decode_to_sph_rotvec(real_mol_orientations)
-    elif mol_orientations.shape[-1] == 3:  # already have angles, no need to decode  # todo deprecate - we will only use spherical components in future
+    elif mol_orientations.shape[
+        -1] == 3:  # already have angles, no need to decode  # todo deprecate - we will only use spherical components in future
         if mode is not None:
-            theta = enforce_1d_bound(real_mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4, mode=mode)[:, None]
+            theta = enforce_1d_bound(real_mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4,
+                                     mode=mode)[:, None]
             phi = enforce_1d_bound(real_mol_orientations[:, 1], x_span=torch.pi, x_center=0, mode=mode)[:, None]
             r_i = enforce_1d_bound(real_mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi, mode=mode)[:, None]
         else:
@@ -452,10 +478,13 @@ def clean_generator_output(samples=None, lattice_lengths=None, lattice_angles=No
         if mode == 'soft':
             clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.1) + 0.1  # smoothly enforces positive nonzero
         elif mode == 'hard':
-            clean_lattice_lengths = torch.maximum(F.relu(real_lattice_lengths), torch.ones_like(real_lattice_lengths))  # harshly enforces positive nonzero
+            clean_lattice_lengths = torch.maximum(F.relu(real_lattice_lengths), torch.ones_like(
+                real_lattice_lengths))  # harshly enforces positive nonzero
 
-        clean_lattice_angles = enforce_1d_bound(real_lattice_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode=mode)  # range from (0,pi) with 20% limit to prevent too-skinny cells
-        clean_mol_positions = enforce_1d_bound(real_mol_positions, 0.5, 0.5, mode=mode)  # enforce fractional centroids between 0 and 1
+        clean_lattice_angles = enforce_1d_bound(real_lattice_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2,
+                                                mode=mode)  # range from (0,pi) with 20% limit to prevent too-skinny cells
+        clean_mol_positions = enforce_1d_bound(real_mol_positions, 0.5, 0.5,
+                                               mode=mode)  # enforce fractional centroids between 0 and 1
     else:  # do nothing
         clean_lattice_lengths, clean_lattice_angles, clean_mol_positions = real_lattice_lengths, real_lattice_angles, real_mol_positions
 
@@ -557,9 +586,11 @@ def decode_to_sph_rotvec(mol_orientations):
     theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
     real_orientation_theta = components2angle(theta_encoding)  # from the sigmoid, [0, pi/2]
     real_orientation_phi = components2angle(mol_orientations[:, 2:4])  # unrestricted [-pi,pi]
-    real_orientation_r = components2angle(mol_orientations[:, 4:6]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
+    real_orientation_r = components2angle(
+        mol_orientations[:, 4:6]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
 
     return real_orientation_theta[:, None], real_orientation_phi[:, None], real_orientation_r[:, None]
+
 
 def decode_to_sph_rotvec2(mol_orientation_components):
     """
@@ -572,14 +603,18 @@ def decode_to_sph_rotvec2(mol_orientation_components):
     # theta_encoding = F.sigmoid(mol_orientations[:, 0:2])  # restrict to positive quadrant
     # real_orientation_theta = components2angle(theta_encoding)  # from the sigmoid, [0, pi/2]
     real_orientation_phi = components2angle(mol_orientation_components[:, 1:3])  # unrestricted [-pi,pi]
-    real_orientation_r = components2angle(mol_orientation_components[:, 3:5]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
+    real_orientation_r = components2angle(mol_orientation_components[:,
+                                          3:5]) + torch.pi  # shift from [-pi,pi] to [0, 2pi]  # want vector to have a positive norm
 
     return mol_orientation_components[:, 0, None], real_orientation_phi[:, None], real_orientation_r[:, None]
 
 
 def get_regression_loss(regressor, data, targets, mean, std):
-    predictions = regressor(data)[:, 0]
-    return F.smooth_l1_loss(predictions, targets, reduction='none'), predictions.cpu().detach().numpy() * std + mean, targets.cpu().detach().numpy() * std + mean
+    predictions = regressor(data).flatten()
+    assert targets.shape == predictions.shape
+    return (F.smooth_l1_loss(predictions, targets, reduction='none'),
+            predictions.detach() * std + mean,
+            targets.detach() * std + mean)
 
 
 def slash_batch(train_loader, test_loader, slash_fraction):
@@ -595,7 +630,8 @@ def slash_batch(train_loader, test_loader, slash_fraction):
 
 
 def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type, nodewise_weights,
-                             dist_to_self=False, log_scale=False, isolate_dimensions: list = None, type_distance_scaling=0.1):
+                             dist_to_self=False, log_scale=False, isolate_dimensions: list = None,
+                             type_distance_scaling=0.1):
     """
     same as previous version
     except atom type differences are treated as high dimensional distances
@@ -612,7 +648,8 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
         ref_points = ref_points[:, isolate_dimensions[0]:isolate_dimensions[1]]
         pred_points = pred_points[:, isolate_dimensions[0]:isolate_dimensions[1]]
 
-    edges = radius(ref_points, pred_points, 2, max_num_neighbors=100, batch_x=data.batch, batch_y=decoded_data.batch)  # this step is slower than before
+    edges = radius(ref_points, pred_points, 2, max_num_neighbors=100, batch_x=data.batch,
+                   batch_y=decoded_data.batch)  # this step is slower than before
     dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
 
     if overlap_type == 'gaussian':
@@ -625,7 +662,8 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
         assert False, f"{overlap_type} is not an implemented overlap function"
 
     scaled_overlap = overlap * nodewise_weights[edges[0]]  # reweight appropriately
-    nodewise_overlap = scatter(scaled_overlap, edges[1], reduce='sum', dim_size=data.num_nodes)  # this one is much, much faster
+    nodewise_overlap = scatter(scaled_overlap, edges[1], reduce='sum',
+                               dim_size=data.num_nodes)  # this one is much, much faster
 
     if log_scale:
         return torch.log(nodewise_overlap)
@@ -659,11 +697,13 @@ def get_model_nans(model):
 def compute_type_evaluation_overlap(config, data, num_atom_types, decoded_data, nodewise_weights_tensor, true_nodes):
     type_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
                                             nodewise_weights=nodewise_weights_tensor,
-                                            overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + num_atom_types],
+                                            overlap_type='gaussian', log_scale=False,
+                                            isolate_dimensions=[3, 3 + num_atom_types],
                                             type_distance_scaling=config.autoencoder.type_distance_scaling)
     self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                 nodewise_weights=torch.ones_like(data.x)[:, 0],
-                                                 overlap_type='gaussian', log_scale=False, isolate_dimensions=[3, 3 + num_atom_types],
+                                                 nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
+                                                 overlap_type='gaussian', log_scale=False,
+                                                 isolate_dimensions=[3, 3 + num_atom_types],
                                                  type_distance_scaling=config.autoencoder.type_distance_scaling,
                                                  dist_to_self=True)
     return self_type_overlap, type_overlap
@@ -675,28 +715,22 @@ def compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weight
                                              overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
                                              type_distance_scaling=config.autoencoder.type_distance_scaling)
     self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                  nodewise_weights=torch.ones_like(data.x)[:, 0],
+                                                  nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
                                                   overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
                                                   type_distance_scaling=config.autoencoder.type_distance_scaling,
                                                   dist_to_self=True)
     return coord_overlap, self_coord_overlap
 
 
-def compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes, config=None, evaluation_sigma=None, type_distance_scaling=None):
-    assert config is not None or evaluation_sigma is not None
-    if config is not None:
-        sigma = config.autoencoder.evaluation_sigma
-        distance_scaling = config.autoencoder.type_distance_scaling
-    else:
-        sigma = evaluation_sigma
-        distance_scaling = type_distance_scaling
+def compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes,
+                                    sigma=None, distance_scaling=None):
 
     full_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, sigma,
                                             nodewise_weights=nodewise_weights_tensor,
                                             overlap_type='gaussian', log_scale=False,
                                             type_distance_scaling=distance_scaling)
     self_overlap = compute_gaussian_overlap(true_nodes, data, data, sigma,
-                                            nodewise_weights=torch.ones_like(data.x)[:, 0],
+                                            nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
                                             overlap_type='gaussian', log_scale=False,
                                             type_distance_scaling=distance_scaling,
                                             dist_to_self=True)
@@ -728,13 +762,25 @@ def argwhere_minimum_image_convention_edges(num_graphs, pos, T_fc, cutoff):
     return {'edge_index': edge_index, 'dists': dist}
 
 
-def get_node_weights(data, decoded_data, decoding, num_decoder_points, node_weight_temperature):
-    graph_weights = data.num_atoms / num_decoder_points
-    nodewise_graph_weights = graph_weights.repeat_interleave(num_decoder_points)
+def get_node_weights(data, decoded_data, decoding, num_decoder_nodes, node_weight_temperature):
+    # per-atom weights of each graph
+    graph_weights = data.num_atoms / num_decoder_nodes
+    # cast to num_decoder_nodes
 
+    nodewise_graph_weights = graph_weights.repeat_interleave(num_decoder_nodes)
+
+    # softmax over decoding weight dimension
     nodewise_weights = scatter_softmax(decoding[:, -1] / node_weight_temperature,
                                        decoded_data.batch, dim=0)
+
+    # reweigh against the number of atoms
     nodewise_weights_tensor = nodewise_weights * data.num_atoms.repeat_interleave(
-        num_decoder_points)  # appropriate graph weighting
+        num_decoder_nodes)
 
     return nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
+
+
+def dict_of_tensors_to_cpu_numpy(stats):
+    for key, value in stats.items():
+        if torch.is_tensor(value):
+            stats[key] = value.cpu().numpy()

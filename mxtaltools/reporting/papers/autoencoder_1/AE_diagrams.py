@@ -8,8 +8,8 @@ from scipy.spatial.distance import cdist
 from tqdm import tqdm
 
 from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
-from mxtaltools.crystal_building.utils import align_crystaldata_to_principal_axes
-from mxtaltools.reporting.online import swarm_vs_tgt_fig, scaffolded_decoder_clustering
+from mxtaltools.crystal_building.utils import align_molecules_to_principal_axes
+from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering, swarm_vs_tgt_fig
 
 
 def crude_2d_gaussian():
@@ -113,7 +113,7 @@ def process_flat_molecule(loader, flat_ind, encoder):
     data.pos /= encoder.config.autoencoder.molecule_radius_normalization
     data.x = encoder.autoencoder_type_index[data.x.long() - 1]
     # align it to x-y plane
-    data = align_crystaldata_to_principal_axes(data, 1)
+    data = align_molecules_to_principal_axes(data, 1)
     # print(f"Un-flat by {data.pos[:, 2].abs().sum().numpy():.2f}")
     return data
 

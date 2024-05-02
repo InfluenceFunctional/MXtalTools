@@ -74,7 +74,7 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
                     crystal_batch, cleaned_sample,
                     supercell_size, cutoff,
                     align_to_standardized_orientation=True,
-                    target_handedness=crystal_batch.asym_unit_handedness)
+                    target_handedness=crystal_batch.aunit_handedness)
 
             output, dist_dict = discriminator(supercell_data.clone().cuda(), return_dists=True)
 
@@ -90,7 +90,7 @@ def gradient_descent_sampling(discriminator, crystal_batch, supercell_builder,
             scores_record[s_ind] = score.cpu().detach().numpy()
             samples_record[s_ind] = supercell_data.cell_params.cpu().detach().numpy()
             loss_record[s_ind] = loss.cpu().detach().numpy()
-            packing_record[s_ind] = (supercell_data.mult * supercell_data.mol_volume / cell_volumes).cpu().detach().numpy()
+            packing_record[s_ind] = (supercell_data.sym_mult * supercell_data.mol_volume / cell_volumes).cpu().detach().numpy()
 
             loss.mean().backward()  # compute gradients
             optimizer.step()  # apply grad
@@ -165,7 +165,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
                         crystal_batch, cleaned_proposed_samples,
                         supercell_size, cutoff,
                         align_to_standardized_orientation=True,
-                        target_handedness=crystal_batch.asym_unit_handedness)
+                        target_handedness=crystal_batch.aunit_handedness)
 
                 output, proposed_dist_dict = discriminator(proposed_crystals.clone().cuda(), return_dists=True)
 
@@ -184,7 +184,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
                 )
                 accept_flags = alpha_randoms[s_ind] < acceptance_ratio
 
-                packing_coeffs = (proposed_crystals.mult * proposed_crystals.mol_volume / cell_volumes).cpu().detach().numpy()
+                packing_coeffs = (proposed_crystals.sym_mult * proposed_crystals.mol_volume / cell_volumes).cpu().detach().numpy()
 
                 samples_record[s_ind] = samples_record[s_ind - 1]
                 samples_record[s_ind, accept_flags] = proposed_crystals.cell_params[accept_flags].cpu().detach().numpy()
@@ -209,7 +209,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
                         crystal_batch, proposed_samples,
                         supercell_size, cutoff,
                         align_to_standardized_orientation=True,
-                        target_handedness=crystal_batch.asym_unit_handedness)
+                        target_handedness=crystal_batch.aunit_handedness)
 
                 output, proposed_dist_dict = discriminator(proposed_crystals.clone().cuda(), return_dists=True)
 
@@ -221,7 +221,7 @@ def mcmc_sampling(discriminator, crystal_batch, supercell_builder,
                                                    return_score_only=True,
                                                    graph_sizes=proposed_crystals.num_atoms).cpu().detach().numpy()
 
-                packing_coeffs = (proposed_crystals.mult * proposed_crystals.mol_volume / cell_volumes).cpu().detach().numpy()
+                packing_coeffs = (proposed_crystals.sym_mult * proposed_crystals.mol_volume / cell_volumes).cpu().detach().numpy()
 
                 samples_record[s_ind] = proposed_crystals.cell_params.cpu().detach().numpy()
                 scores_record[s_ind] = proposed_sample_scores

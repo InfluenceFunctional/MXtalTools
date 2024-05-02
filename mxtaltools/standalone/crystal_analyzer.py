@@ -20,7 +20,7 @@ from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTR
 from mxtaltools.crystal_building.builder import SupercellBuilder
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.data_manager import DataManager
-from mxtaltools.models.discriminator_models import MolCrystal
+from mxtaltools.models.crystal_models import MolCrystal
 from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import softmax_and_score, reload_model
 from mxtaltools.models.vdw_overlap import vdw_overlap
@@ -183,7 +183,7 @@ class CrystalAnalyzer(torch.nn.Module):
                                                            return_score_only=False,
                                                            loss_func='inv')
 
-                sample_auv = self.compute_aunit_volume(proposed_cell_params, proposed_crystaldata.mult)
+                sample_auv = self.compute_aunit_volume(proposed_cell_params, proposed_crystaldata.sym_mult)
                 target_auv = self.estimate_aunit_volume(data)[:, 0]
                 # packing_loss = (F.smooth_l1_loss(target_auv, sample_auv, reduction='none')/target_auv)
                 # something finicky with packing loss prediction right now - substitute for maximal density
@@ -286,10 +286,10 @@ class CrystalAnalyzer(torch.nn.Module):
         # todo add parameter safety assertions
         proposed_crystaldata, proposed_cell_volumes = self.supercell_builder.build_integer_zp_supercells(
             data, proposed_cell_params, self.supercell_size,
-            self.config.discriminator.model.convolution_cutoff,
+            self.config.discriminator.model.graph.cutoff,
             z_primes_list=proposed_zps,
             align_to_standardized_orientation=False,
-            target_handedness=data.asym_unit_handedness,
+            target_handedness=data.aunit_handedness,
             skip_refeaturization=True,
         )
         return proposed_crystaldata
@@ -298,7 +298,7 @@ class CrystalAnalyzer(torch.nn.Module):
         data.symmetry_operators = [self.supercell_builder.symmetries_dict['sym_ops'][ind] for ind in proposed_sgs]
         data.sg_ind = proposed_sgs
         data.cell_params = proposed_cell_params
-        data.mult = torch.tensor([
+        data.sym_mult = torch.tensor([
             len(sym_op) for sym_op in data.symmetry_operators
         ], device=data.x.device, dtype=torch.long)
         return data

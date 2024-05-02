@@ -11,6 +11,7 @@ from mxtaltools.common.mol_classifier_utils import convert_box_to_cell_params
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, ATOMIC_NUMBERS, VDW_RADII, ELECTRONEGATIVITY, GROUP, \
     PERIOD
 from mxtaltools.constants.mol_classifier_constants import MOLECULE_NUM_ATOMS, MOLECULE_MASSES, structure2polymorph
+from mxtaltools.dataset_management.utils import flatten_dataframe
 
 
 def process_thermo_data():
@@ -359,5 +360,6 @@ def generate_dataset_from_dumps(dumps_dirs, dataset_path):
 
     os.remove(interim_path)
     sample_df.reset_index(drop=True, inplace=True)
+    sample_df = flatten_dataframe(sample_df)
     sample_df.to_pickle(dataset_path)
     return True

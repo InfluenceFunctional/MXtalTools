@@ -3,7 +3,7 @@
 import numpy as np
 from ase.visualize import view
 from ase import Atoms
-from mxtaltools.crystal_building.utils import build_unit_cell, unit_cell_to_convolution_cluster, fractional_transform_np
+from mxtaltools.crystal_building.utils import aunit2unit_cell, unit_cell_to_convolution_cluster, fractional_transform_np
 from mxtaltools.constants.space_group_info import SYM_OPS
 from mxtaltools.common.geometry_calculations import coor_trans_matrix
 
@@ -83,7 +83,7 @@ symmetry_operations[3] = np.array(
 mol_species = species + species[1:]
 crystal_species = mol_species * 2
 
-unit_cell = build_unit_cell(torch.tensor([len(symmetry_operations)], dtype=int),
+unit_cell = aunit2unit_cell(torch.tensor([len(symmetry_operations)], dtype=int),
                             [torch.Tensor(fractional_transform_np(fractional_coords, T_fc))],
                             torch.Tensor(T_fc)[None, :, :],
                             torch.Tensor(T_cf)[None, :, :],
