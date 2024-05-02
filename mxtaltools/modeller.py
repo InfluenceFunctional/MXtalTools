@@ -1024,7 +1024,8 @@ class Modeller:
             input_cloud.pos = input_cloud.pos[heavy_atom_inds]
             input_cloud.batch = input_cloud.batch[heavy_atom_inds]
             a, b = torch.unique(input_cloud.batch, return_counts=True)
-            input_cloud.ptr = torch.cat([torch.zeros(1, device=self.device), torch.cumsum(b, dim=0)])
+            input_cloud.ptr = torch.cat([torch.zeros(1, device=self.device), torch.cumsum(b, dim=0)]).long()
+            input_cloud.num_atoms = torch.diff(input_cloud.ptr).long()
         else:
             input_cloud = data.clone()
         return input_cloud
