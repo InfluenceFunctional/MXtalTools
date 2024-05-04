@@ -79,7 +79,6 @@ class DataManager:
         for chunk in tqdm(chunks):
             if '.pkl' in chunk:
                 self.dataset.extend(torch.load(chunk))
-        self.dataset = self.collater(self.dataset)
 
     def load_dataset_for_modelling(self, dataset_name,
                                    override_length=None,
@@ -127,54 +126,52 @@ class DataManager:
 
         self.get_cell_cov_mat()
         self.assign_targets()
-        self.present_atom_types = torch.unique(self.dataset.x).tolist()
+        self.present_atom_types = torch.unique(torch.cat([elem.x for elem in self.dataset])).tolist()
         self.dataDims = self.get_data_dimensions()
 
-        if self.dataset.x.ndim == 1:
-            self.dataset.x = self.dataset.x[:, None]
+        for ind in range(len(self.dataset)):
+            if self.dataset[ind].x.ndim == 1:
+                self.dataset[ind].x = self.dataset[ind].x[:, None]
 
     def truncate_and_shuffle_dataset(self, override_length):
+        """defines train/test split as well as overall dataset size"""
         self.times['dataset_shuffle_start'] = time()
         # get dataset length & shuffle
         self.max_dataset_length = override_length if override_length is not None else self.config.max_dataset_length
         self.dataset_length = min(len(self.dataset), self.max_dataset_length)
         inds_to_keep = list(np.random.choice(len(self.dataset), self.dataset_length, replace=False))
-        self.dataset = self.collater(self.dataset[inds_to_keep])
+        self.dataset = [self.dataset[ind] for ind in inds_to_keep]
         self.times['dataset_shuffle_end'] = time()
 
     def assign_targets(self):
         self.times['dataset_targets_assignment_start'] = time()
-        target = self.get_target()
-        if self.dataset.y is None:  # necessary workaround if we don't have a y property preset
-            if target is not None:  # have to assign new properties separately and re-collate
-                self.dataset = self.dataset.to_data_list()
-                for ind in range(len(target)):
-                    self.dataset[ind].y = target[ind]
-
-                self.dataset = self.collater([elem for elem in self.dataset])
-        else:  # this is dramatically faster
-            self.dataset.y = target
+        targets = self.get_target()  # todo assign targets element-by-element in data list rather than as batch, omitting collation
+        for ind in range(len(self.dataset)):
+            self.dataset[ind].y = targets[ind]
         self.times['dataset_targets_assignment_end'] = time()
 
     def dataset_filtration(self, filter_conditions, filter_duplicate_molecules, filter_polymorphs):
         self.times['dataset_filtering_start'] = time()
         if filter_conditions is not None:
             bad_inds = self.get_dataset_filter_inds(filter_conditions)
-            self.dataset = filter_batch_graphwise(self.dataset, keep_index=None, delete_index=bad_inds)
+            good_inds = [ind for ind in range(len(self.dataset)) if ind not in bad_inds]
+            self.dataset = [self.dataset[ind] for ind in good_inds]
             print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
             if self.dataset_type == 'crystal':
                 self.rebuild_crystal_indices()
 
         if filter_polymorphs:
             bad_inds = self.filter_polymorphs()
-            self.dataset = filter_batch_graphwise(self.dataset, keep_index=None, delete_index=bad_inds)
+            good_inds = [ind for ind in range(len(self.dataset)) if ind not in bad_inds]
+            self.dataset = [self.dataset[ind] for ind in good_inds]
             print("Polymorph filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
             if self.dataset_type == 'crystal':
                 self.rebuild_crystal_indices()
 
         if filter_duplicate_molecules:
             bad_inds = self.filter_duplicate_molecules()
-            self.dataset = filter_batch_graphwise(self.dataset, keep_index=None, delete_index=bad_inds)
+            good_inds = [ind for ind in range(len(self.dataset)) if ind not in bad_inds]
+            self.dataset = [self.dataset[ind] for ind in good_inds]
             print(
                 "Duplicate molecule filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
             if self.dataset_type == 'crystal':
@@ -186,7 +183,7 @@ class DataManager:
     def filter_protons(self):
         init_len = self.dataset.num_nodes
         keep_bools = self.dataset.x == 1
-        self.dataset = filter_graph_nodewise(self.dataset, keep_bools)
+        self.dataset = filter_graph_nodewise(self.dataset, keep_bools)  # this is broken with our custom datatype
         print(f"Proton filter removed {init_len - self.dataset.num_nodes} atoms leaving {self.dataset.num_nodes}")
 
     def get_data_dimensions(self):
@@ -241,16 +238,14 @@ class DataManager:
         return dim
 
     def get_target(self):
-
-        if self.regression_target is not None:
+        if self.regression_target is not None:  # todo rewrite as data list method
             if self.regression_target == 'crystal_reduced_volume_fraction':
-                targets = (self.dataset.reduced_volume /
-                           scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[self.dataset.x] ** 3, self.dataset.batch))
+                targets = self.get_reduced_volume_fraction()
             elif self.regression_target == 'crystal_reduced_volume':
-                targets = self.dataset.reduced_volume
+                targets = torch.tensor([elem.reduced_volume for elem in self.dataset])
             elif self.regression_target in qm9_targets_list:
                 target_ind = qm9_targets_list.index(self.regression_target)
-                targets = self.dataset.y[:, target_ind]
+                targets = torch.tensor([elem.y[:, target_ind] for elem in self.dataset])
             else:
                 assert False, "Unrecognized regression target"
 
@@ -265,7 +260,14 @@ class DataManager:
 
         else:  # need have something just to fill the space
             self.target_mean, self.target_std = 0, 1
-            return None
+            return [0 for _ in range(len(self.dataset))]
+
+    def get_reduced_volume_fraction(self):
+        red_vol = torch.tensor([elem.reduced_volume for elem in self.dataset])
+        atom_volumes = torch.tensor(
+            [torch.sum(4 / 3 * torch.pi * self.vdw_radii_tensor[elem.x] ** 3) for elem in self.dataset])
+        targets = red_vol / atom_volumes
+        return targets
 
     # target_list = [
     #     "molecule_rotational_constant_a",
@@ -299,7 +301,10 @@ class DataManager:
         """
         compute full covariance matrix, in raw basis
         """
-        cell_params = torch.cat([self.dataset.cell_lengths, self.dataset.cell_angles, self.dataset.pose_params0], dim=1)
+        cell_params = torch.zeros((len(self.dataset), 12), dtype=torch.float32)
+        for ind in range(len(self.dataset)):
+            cell_params[ind] = torch.cat(
+                [self.dataset[ind].cell_lengths, self.dataset[ind].cell_angles, self.dataset[ind].pose_params0], dim=1)
         self.covariance_matrix = np.cov(cell_params, rowvar=False)
 
         for i in range(len(self.covariance_matrix)):  # ensure it's well-conditioned
@@ -313,6 +318,12 @@ class DataManager:
     def load_training_dataset(self, dataset_name):
         self.times['dataset_loading_start'] = time()
         self.dataset = torch.load(self.datasets_path + dataset_name)
+
+        if 'batch' in str(type(self.dataset)):  # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches
+            self.dataset = self.dataset.to_data_list()
+            print("Dataset is in pre-collated format, which slows down initial loading!")
+
+        """get miscellaneous data"""
         self.misc_dataset = np.load(
             self.datasets_path + 'misc_data_for_' + dataset_name[:-3].split('test_')[-1] + '.npy',
             allow_pickle=True).item()
@@ -330,17 +341,20 @@ class DataManager:
     def process_new_dataset(self, new_dataset_name, test_dataset_size: int = 10000):
         self.load_chunks()
 
-        misc_data_dict = self.extract_misc_stats_and_indices()
-
-        # save smaller test dataset
-        np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
         ints = list(
-            np.random.choice(min(len(self.dataset), test_dataset_size), min(len(self.dataset), test_dataset_size),
+            np.random.choice(min(len(self.dataset), test_dataset_size),
+                             min(len(self.dataset), test_dataset_size),
                              replace=False))
-        torch.save(self.dataset[ints].to_data_list(), self.datasets_path + 'test_' + new_dataset_name + '.pt')
+        torch.save(self.dataset[ints], self.datasets_path + 'test_' + new_dataset_name + '.pt')
 
         # save full dataset
-        torch.save(self.dataset.to_data_list(), self.datasets_path + new_dataset_name + '.pt')
+        torch.save(self.dataset, self.datasets_path + new_dataset_name + '.pt')
+
+        # collation here so we don't slow down saving above
+        self.dataset = self.collater(self.dataset)
+        misc_data_dict = self.extract_misc_stats_and_indices()
+        # save smaller test dataset
+        np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
 
     def extract_misc_stats_and_indices(self):
         misc_data_dict = {
@@ -387,14 +401,14 @@ class DataManager:
         some crystals have multiple molecules, and we do batch analysis of molecules with a separate indexing scheme
         connect the crystal identifier-wise and mol-wise indexing with the following dicts
         """
-        # print("Generating mol-to-crystal mapping")
+        # print("Generating mol-to-crystal mapping")  # todo replace below with data-list based method
         mol_index = 0
         crystal_to_mol_dict = {}
         mol_to_crystal_dict = {}
-        for index, identifier in enumerate(self.dataset.identifier):
-            identifier = str(identifier)
+        for index in range(len(self.dataset)):
+            identifier = str(self.dataset[index].identifier)
             crystal_to_mol_dict[identifier] = []
-            for _ in range(int(self.dataset.z_prime[index])):  # assumes integer Z'
+            for _ in range(int(self.dataset[index].z_prime)):  # assumes integer Z'
                 crystal_to_mol_dict[identifier].append(mol_index)
                 mol_to_crystal_dict[mol_index] = identifier
                 mol_index += 1
@@ -411,9 +425,9 @@ class DataManager:
         # print("getting unique molecule fingerprints")
         fingerprints = []
         for z1 in range(len(self.dataset)):
-            zp = int(self.dataset.z_prime[z1])
+            zp = int(self.dataset[z1].z_prime)
             for ind in range(zp):
-                fingerprints.append(self.dataset.fingerprint[z1][2048 * ind:2048 * (ind + 1)])
+                fingerprints.append(self.dataset[z1].fingerprint[2048 * ind:2048 * (ind + 1)])
         fps = np.stack(fingerprints)
 
         unique_fps, inverse_map = np.unique(fps, axis=0, return_inverse=True)
@@ -435,8 +449,8 @@ class DataManager:
 
         if self.mode == 'standard':  #
             crystal_to_identifier = {}
-            for i in tqdm(range(len(self.dataset.identifier))):
-                item = str(self.dataset.identifier[i])
+            for i in tqdm(range(len(self.dataset))):
+                item = str(self.dataset[i].identifier)
                 if item[-1].isdigit():
                     item = item[:-2]  # cut off 2 trailing digits, if any - always 2 in the CSD
                 if item not in crystal_to_identifier.keys():
@@ -448,8 +462,8 @@ class DataManager:
                                   'XXI', 'XXII', 'XXIII', 'XXIV', 'XXV', 'XXVI', 'XXVII', 'XXVIII', 'XXIX', 'XXX']
 
             crystal_to_identifier = {key: [] for key in blind_test_targets}
-            for i in tqdm(range(len(self.dataset.identifier))):
-                item = self.dataset.identifier[i]
+            for i in tqdm(range(len(self.dataset))):
+                item = self.dataset[i].identifier
                 for j in range(
                         len(blind_test_targets)):  # go in reverse to account for roman numerals system of duplication
                     if blind_test_targets[-1 - j] in item:
@@ -478,24 +492,6 @@ class DataManager:
         conditions in the format [column_name, condition_type, [min, max] or [set]]
         condition_type in ['range','in','not_in']
         """
-        #
-        # blind_test_identifiers = [
-        #     'OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ',
-        #     'NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04',
-        #     "COUMAR01", "COUMAR02", "COUMAR10", "COUMAR11", "COUMAR12", "COUMAR13",
-        #     "COUMAR14", "COUMAR15", "COUMAR16", "COUMAR17",  # Z'!=1 or some other weird thing
-        #     "COUMAR18", "COUMAR19"
-        # ]
-
-        # test_conditions = [
-        #     ['molecule_mass', 'range', [0, 300]],
-        #     ['crystal_space_group_setting', 'not_in', [2]],
-        #     ['crystal_space_group_number', 'in', [1, 2, 14, 19]],
-        #     ['atom_atomic_numbers', 'range', [0, 20]],
-        #     ['crystal_is_organic', 'in', [True]],
-        #     ['molecule_is_symmetric_top', 'not_in', [True]]
-        # ]
-
         print('Filtering dataset starting from {} samples'.format(len(self.dataset)))
         bad_inds = []  # indices to be filtered
 
@@ -543,29 +539,28 @@ class DataManager:
 
         return bad_inds
 
-    def get_condition_values(self, condition_key):
+    def get_condition_values(self, condition_key):  # todo convert from batch back to data lists
         if condition_key == 'crystal_z_prime':
-            values = self.dataset.z_prime
+            values = torch.tensor([elem.z_prime for elem in self.dataset])
         elif condition_key == 'asymmetric_unit_is_well_defined':
-            values = self.dataset.is_well_defined
+            values = torch.tensor([elem.is_well_defined for elem in self.dataset])
         elif condition_key == 'crystal_symmetry_operations_are_nonstandard':
-            values = self.dataset.nonstandard_symmetry
+            values = torch.tensor([elem.nonstandard_symmetry for elem in self.dataset])
         elif condition_key == 'max_atomic_number':
             # always take the largest value - this is what we are practically filtering
-            values = scatter(self.dataset.x, self.dataset.batch, reduce='max')
+            values = torch.tensor([elem.x.amax() for elem in self.dataset])
         elif condition_key == 'molecule_num_atoms':
-            values = self.dataset.num_atoms
+            values = torch.tensor([elem.num_atoms for elem in self.dataset])
         elif condition_key == 'molecule_radius':
-            values = self.dataset.radius
+            values = torch.tensor([elem.radius for elem in self.dataset])
         elif condition_key == 'crystal_space_group_number':
-            values = self.dataset.sg_ind
+            values = torch.tensor([elem.sg_ind for elem in self.dataset])
         elif condition_key == 'crystal_identifier':
-            values = self.dataset.identifier
+            values = [elem.identifier for elem in self.dataset]
         elif condition_key == 'reduced_volume_fraction':
             # ratio of asymmetric unit volume to the sum of atomwise volumes
             # a very coarse proxy for packing coefficient
-            values = (self.dataset.reduced_volume /
-                      scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[self.dataset.x] ** 3, self.dataset.batch))
+            values = self.get_reduced_volume_fraction()
         else:
             assert False, f"{condition_key} is not implemented as a filterable item"
 
@@ -600,7 +595,7 @@ class DataManager:
         # the representative structure will be randomly sampled from all available identical molecules
         # we will add all others to 'bad_inds', and filter them out at our leisure
         #print('Selecting representative structures from duplicate molecules')
-        index_to_identifier_dict = {str(ident): ind for ind, ident in enumerate(self.dataset.identifier)}
+        index_to_identifier_dict = {str(elem.identifier): ind for ind, elem in enumerate(self.dataset)}
         bad_inds = []
         for ind, (key, value) in enumerate(self.unique_molecules_dict.items()):
             if len(value) > 1:  # if there are multiple molecules

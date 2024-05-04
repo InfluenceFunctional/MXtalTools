@@ -41,7 +41,7 @@ def filter_batch_graphwise(data, keep_index=None, delete_index=None):
 
     Returns: pyg data batch
 
-    """
+    """  # todo replace with list method without collation
     assert keep_index is not None or delete_index is not None
     collater = Collater(None, None)
     if keep_index is not None:

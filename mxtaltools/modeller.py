@@ -1132,6 +1132,7 @@ class Modeller:
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
             data = data.to(self.device)
+
             data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
             self.autoencoder_step(input_data, data, update_weights, step=i, last_step=i == len(data_loader) - 1)
 

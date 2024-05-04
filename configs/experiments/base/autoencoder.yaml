@@ -68,9 +68,9 @@ supercell_size: 5
 
 autoencoder:
   infer_protons: False
-  type_distance_scaling: 1
-  init_sigma: 1
-  evaluation_sigma: 0.3
+  type_distance_scaling: 3.5
+  init_sigma: 1.05
+  evaluation_sigma: 0.35
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   overlap_eps:

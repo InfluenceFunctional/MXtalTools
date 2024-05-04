@@ -1,7 +1,7 @@
 # collate dataset from processed chunks
 from mxtaltools.dataset_management.data_manager import DataManager
 
-'CSD crystal dataset'
+# 'CSD crystal dataset'
 # miner = DataManager(device='cpu',
 #                     datasets_path=r"D:\crystal_datasets/",
 #                     chunks_path=r"D:\crystal_datasets/CSD_featurized_chunks/",
