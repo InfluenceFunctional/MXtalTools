@@ -28,7 +28,7 @@ from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements
 from mxtaltools.csp.SampleOptimization import gradient_descent_sampling, mcmc_sampling
 from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
-from mxtaltools.dataset_management.process_GEOM import geom_msgpack_to_minimal_dataset
+#from mxtaltools.dataset_management.process_GEOM import geom_msgpack_to_minimal_dataset
 from mxtaltools.models.autoencoder_models import PointAutoencoder
 from mxtaltools.models.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.crystal_models import MolCrystal
@@ -38,7 +38,7 @@ from mxtaltools.models.mol_classifier import PolymorphClassifier
 from mxtaltools.models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import (reload_model, init_schedulers, softmax_and_score, save_checkpoint, set_lr,
                                      cell_vol_torch, init_optimizer, get_regression_loss,
-                                     compute_num_h_bonds, slash_batch, compute_gaussian_overlap,
+                                     slash_batch, compute_gaussian_overlap,
                                      compute_type_evaluation_overlap,
                                      compute_coord_evaluation_overlap,
                                      compute_full_evaluation_overlap, get_node_weights,
@@ -48,10 +48,6 @@ from mxtaltools.models.vdw_overlap import vdw_overlap
 from mxtaltools.reporting.logger import Logger
 from mxtaltools.reporting.ae_reporting import decoder_agglomerative_clustering, scaffolded_decoder_clustering, \
     extract_true_and_predicted_points
-
-
-# https://www.ruppweb.org/Xray/tutorial/enantio.htm non enantiogenic groups
-# https://dictionary.iucr.org/Sohncke_groups#:~:text=Sohncke%20groups%20are%20the%20three,in%20the%20chiral%20space%20groups.
 
 
 # noinspection PyAttributeOutsideInit
@@ -636,7 +632,7 @@ class Modeller:
                     {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
     def autoencoder_embedding_step(self, data):
-        data = self.preprocess_real_autoencoder_data(data, no_noise=True, orientation_override=None)
+        data = self.preprocess_ae_inputs(data, no_noise=True, orientation_override=None)
         data = data.to(self.device)
 
         input_cloud = self.fix_autoencoder_protonation(data)
@@ -939,7 +935,7 @@ class Modeller:
         self.logger.concatenate_stats_dict(self.epoch_type)
 
     def embedding_regression_step(self, data, update_weights):
-        data = self.preprocess_real_autoencoder_data(data, no_noise=True, orientation_override='random')
+        data = self.preprocess_ae_inputs(data, no_noise=True, orientation_override='random')
         data = data.to(self.device)
         v_embedding = self.models_dict['autoencoder'].encode(data)
         s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
@@ -999,11 +995,10 @@ class Modeller:
     #
     #     return data
 
-    def autoencoder_step(self, data, update_weights, step, last_step=False):
-        input_cloud = self.fix_autoencoder_protonation(data)
-        if self.config.dataset.filter_protons:
-            data = input_cloud.clone()  # deprotonate the reference as well for analysis
-        decoding, encoding = self.models_dict['autoencoder'](input_cloud, return_encoding=True)
+    def autoencoder_step(self, input_data, data, update_weights, step, last_step=False):
+        if self.config.dataset.filter_protons and not self.models_dict['autoencoder'].inferring_protons:
+            data = input_data.clone()  # deprotonate the reference if we are not inferring protons
+        decoding, encoding = self.models_dict['autoencoder'](input_data, return_encoding=True)
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
 
         autoencoder_loss = autoencoder_losses.mean()
@@ -1016,8 +1011,8 @@ class Modeller:
 
         self.autoencoder_stats_and_reporting(data, decoded_data, encoding, last_step, stats, step)
 
-    def fix_autoencoder_protonation(self, data):
-        if self.config.autoencoder.infer_protons or self.config.dataset.filter_protons:  # delete protons from input to model, but keep for analysis
+    def fix_autoencoder_protonation(self, data, override_deprotonate=False):
+        if self.config.autoencoder.infer_protons or self.config.dataset.filter_protons or override_deprotonate:
             heavy_atom_inds = torch.argwhere(data.x != 1)[:, 0]  # protons are atom type 1
             input_cloud = data.clone()
             input_cloud.x = input_cloud.x[heavy_atom_inds]
@@ -1028,6 +1023,7 @@ class Modeller:
             input_cloud.num_atoms = torch.diff(input_cloud.ptr).long()
         else:
             input_cloud = data.clone()
+
         return input_cloud
 
     def autoencoder_stats_and_reporting(self, data, decoded_data, encoding, last_step, stats, step):
@@ -1135,9 +1131,9 @@ class Modeller:
             self.models_dict['autoencoder'].eval()
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            data = self.preprocess_real_autoencoder_data(data, no_noise=self.epoch_type == 'test')
             data = data.to(self.device)
-            self.autoencoder_step(data, update_weights, step=i, last_step=i == len(data_loader) - 1)
+            data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
+            self.autoencoder_step(input_data, data, update_weights, step=i, last_step=i == len(data_loader) - 1)
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -1161,19 +1157,27 @@ class Modeller:
                       -100:]).mean() > self.config.autoencoder.max_overlap_threshold:
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
-    def preprocess_real_autoencoder_data(self, data, no_noise=False, orientation_override=None, noise_override=None):
+    def preprocess_ae_inputs(self, data, no_noise=False, orientation_override=None, noise_override=None):
+        # atomwise random noise
         if not no_noise:
             if noise_override is not None:
                 data.pos += torch.randn_like(data.pos) * self.config.positional_noise.autoencoder
-            elif self.config.positional_noise.autoencoder > 0 and self.epoch_type == 'train':  # todo duplicated logic here
+            elif self.config.positional_noise.autoencoder > 0:
                 data.pos += torch.randn_like(data.pos) * self.config.positional_noise.autoencoder
 
-        if not self.models_dict['autoencoder'].fully_equivariant and orientation_override is None:
-            data = set_molecule_alignment(data, mode='random', right_handed=False, include_inversion=True)
-        elif orientation_override is not None:
+        # random global roto-inversion
+        if orientation_override is not None:
             data = set_molecule_alignment(data, mode=orientation_override, right_handed=False, include_inversion=True)
 
-        return data
+        # optionally, deprotonate
+        input_data = self.fix_autoencoder_protonation(data)
+
+        # subtract mean OF THE INPUT from BOTH reference and input
+        centroids = scatter(input_data.pos, input_data.batch, reduce='mean', dim=0)
+        data.pos -= torch.repeat_interleave(centroids, data.num_atoms, dim=0, output_size=data.num_nodes)
+        input_data.pos -= torch.repeat_interleave(centroids, input_data.num_atoms, dim=0, output_size=input_data.num_nodes)
+
+        return data, input_data
 
     def compute_autoencoder_loss(self, decoding, data):
         """

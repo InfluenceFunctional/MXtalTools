@@ -2,13 +2,11 @@
 import argparse, warnings
 from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
-import pandas as pd
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=DeprecationWarning)  # ignore numpy error
 warnings.filterwarnings("ignore", category=UserWarning)  # ignore w&b error
 warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
 # ====================================
 if __name__ == '__main__':

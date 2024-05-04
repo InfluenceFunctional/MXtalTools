@@ -96,7 +96,7 @@ class Logger:
             elif 'start' in start_key:
                 end_key = start_key.split('_start')[0] + '_end'
                 if end_key in times.keys():
-                    elapsed_times[start_key.split('_start')[0]] = times[end_key] - times[start_key]
+                    elapsed_times[start_key.split('_start')[0] + '_time'] = times[end_key] - times[start_key]
         self.wandb.log(elapsed_times)
 
     def concatenate_stats_dict(self, epoch_type):

@@ -2,14 +2,18 @@ import numpy as np
 import torch
 from ase import Atoms
 from ase.spacegroup import crystal as ase_crystal
+from ase.visualize import view
 
 
-def crystals_to_ase_mols(crystaldata, max_ind=np.inf, highlight_aux=False, exclusion_level='distance',
-                         inclusion_distance=4, return_crystal=False):
-    return [ase_mol_from_crystaldata(crystaldata, ii, highlight_canonical_conformer=highlight_aux,
+def crystals_to_ase_mols(crystaldata, max_ind=np.inf, highlight_aux=False, exclusion_level=None,
+                         inclusion_distance=4, return_crystal=False, show_mols=False):
+    mols = [ase_mol_from_crystaldata(crystaldata, ii, highlight_canonical_conformer=highlight_aux,
                                      exclusion_level=exclusion_level, inclusion_distance=inclusion_distance,
                                      return_crystal=return_crystal)
             for ii in range(min(max_ind, crystaldata.num_graphs))]
+    if show_mols:
+        view(mols)
+    return mols
 
 
 def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=False, exclusion_level=None,

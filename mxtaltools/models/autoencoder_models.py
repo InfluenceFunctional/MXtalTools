@@ -51,9 +51,9 @@ class PointAutoencoder(BaseGraphModel):
             return decoding
 
     def encode(self, data):
-        # subtract mean
-        centroids = scatter(data.pos, data.batch, reduce='mean', dim=0)
-        data.pos -= torch.repeat_interleave(centroids, data.num_atoms, dim=0, output_size=data.num_nodes)
+        # # subtract mean
+        # centroids = scatter(data.pos, data.batch, reduce='mean', dim=0)
+        # data.pos -= torch.repeat_interleave(centroids, data.num_atoms, dim=0, output_size=data.num_nodes)
         # normalize radii
         data.pos /= self.radial_normalization
         _, encoding = self.encoder(data)

@@ -1,7 +1,7 @@
 """
 script for standalone loading of QM9 dataset
 
-requires numpy, torch, pandas, torch_geometric, torch_scatter, torch_cluster, scipy, tqdm
+requires numpy, torch, torch_geometric, torch_scatter, torch_cluster, scipy, tqdm
 """
 from mxtaltools.common.config_processing import load_yaml, dict2namespace
 from mxtaltools.dataset_management.data_manager import DataManager

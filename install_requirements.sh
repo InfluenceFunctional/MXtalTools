@@ -12,6 +12,5 @@ python -m pip install torch_scatter torch_sparse torch_cluster torch_spline_conv
 
 # non-torch packages
 python -m pip install ase kaleido matplotlib msgpack numpy pandas pillow plotly pyyaml scikit-learn tqdm umap-learn wandb
-python -m pip install 'polars[numpy, pandas]'
 
 # optionally install CSD if you have licence / need to access / process new crystal datasets

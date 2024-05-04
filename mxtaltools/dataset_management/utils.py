@@ -6,19 +6,29 @@ from torch import Tensor
 from torch_geometric.loader.dataloader import Collater
 
 
-def filter_graph_nodewise(data, keep_bools):
-    """
+def filter_graph_nodewise(data, keep_index=None, delete_index=None):
+    """ # NOTE this does not work because of our custom data structure
     Function to get subgraph of data. Effectively filtering by nodes.
     Args:
         data: pyg data batch
-        keep_bools: boolean or indexes of which nodes should be kept
+        keep_index: boolean or indexes of which nodes should be kept
 
     Returns:
 
+    Parameters
+    ----------
+    data
+    keep_index
+    delete_index
+
     """
+    assert keep_index is not None or delete_index is not None
+    if keep_index is None and delete_index is not None:
+        keep_index = [ind for ind in range(len(data)) if ind not in delete_index]
+
     if data.edge_index is None:
         data.edge_index = torch.arange(2)  # necessary dummy
-    return data.subgraph(keep_bools)
+    return data.subgraph(keep_index)
 
 
 def filter_batch_graphwise(data, keep_index=None, delete_index=None):

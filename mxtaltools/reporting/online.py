@@ -390,7 +390,7 @@ def combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source
     """
     scatter_dict = {'vdw_score': -all_vdws.clip(max=vdw_cutoff), 'model_score': all_scores,
                     'packing_coefficient': all_coeffs.clip(min=0, max=1), 'sample_source': sample_source}
-    df = pd.DataFrame.from_dict(scatter_dict)
+    df = pd.DataFrame.from_dict(scatter_dict)  # todo do without pandas so we can get it out of requirements
     fig = px.scatter(df,
                      x='vdw_score', y='packing_coefficient',
                      color='model_score', symbol='sample_source',

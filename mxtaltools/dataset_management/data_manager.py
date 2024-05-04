@@ -1,4 +1,3 @@
-import pandas as pd
 import torch
 from tqdm import tqdm
 import os
@@ -12,10 +11,24 @@ from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTR
 from mxtaltools.dataset_management.utils import basic_stats, filter_graph_nodewise, \
     filter_batch_graphwise
 
+qm9_targets_list = ["rotational_constant_a",
+                    "rotational_constant_b",
+                    "rotational_constant_c",
+                    "dipole_moment",
+                    "isotropic_polarizability",
+                    "HOMO_energy",
+                    "LUMO_energy",
+                    "gap_energy",
+                    "el_spatial_extent",
+                    "zpv_energy",
+                    "internal_energy_0",
+                    "internal_energy_STP",
+                    "enthalpy_STP",
+                    "free_energy_STP",
+                    "heat_capacity_STP"]
 
-# noinspection PyAttributeOutsideInit,PyTypeChecker
 
-
+# noinspection PyAttributeOutsideInit
 class DataManager:
     def __init__(self,
                  datasets_path,
@@ -37,8 +50,12 @@ class DataManager:
         else:
             self.dataset_type = config.type
 
-        np.random.seed(seed=seed if config is None else config.seed)  # for certain random sampling ops
+        if self.config is not None:
+            self.regression_target = self.config.regression_target if 'regression_target' in self.config.__dict__.keys() else None
+            self.sample_from_trajectory = self.config.sample_from_trajectory if 'sample_from_trajectory' in self.config.__dict__.keys() else None
 
+        np.random.seed(seed=seed if config is None else config.seed)  # for certain random sampling ops
+        torch.manual_seed(seed=seed if config is None else config.seed)
         self.collater = Collater(None, None)
 
         self.asym_unit_dict = asym_unit_dict.copy()
@@ -81,7 +98,7 @@ class DataManager:
             filter_conditions:
             filter_polymorphs:
             filter_duplicate_molecules:
-            filter_protons:
+            filter_protons:  # todo deprecate this
             override_dataset:
 
         Returns:
@@ -104,38 +121,42 @@ class DataManager:
             # self.override std dict  # todo may not be necessary?
             # self.override target    # todo add dummy value?, maybe just 'radius' but will need a mean and std just so the datapoint builder doesn't crash
 
-        self.dataset_filtration(filter_conditions, filter_duplicate_molecules, filter_polymorphs, filter_protons)
+        self.dataset_filtration(filter_conditions, filter_duplicate_molecules, filter_polymorphs)
 
-        self.regression_target = self.config.regression_target if 'regression_target' in self.config.__dict__.keys() else None
-        self.sample_from_trajectory = self.config.sample_from_trajectory if 'sample_from_trajectory' in self.config.__dict__.keys() else None
-
-        self.times['dataset_final_prep_start'] = time()
-        # get dataset length & shuffle
-        self.max_dataset_length = override_length if override_length is not None else self.config.max_dataset_length
-        self.dataset_length = min(len(self.dataset), self.max_dataset_length)
-        inds_to_keep = list(np.random.choice(len(self.dataset), self.dataset_length, replace=False))
-        self.dataset = self.collater(self.dataset[inds_to_keep])
-
-        self.present_atom_types = torch.unique(self.dataset.x).tolist()
+        self.truncate_and_shuffle_dataset(override_length)
 
         self.get_cell_cov_mat()
-
-        target = self.get_target()
-        if target is not None:  # have to assign new properties separately and re-collate
-            self.dataset = self.dataset.to_data_list()
-            for ind in range(len(target)):
-                self.dataset[ind].y = target[ind]
-
-            self.dataset = self.collater([elem for elem in self.dataset])
-
+        self.assign_targets()
+        self.present_atom_types = torch.unique(self.dataset.x).tolist()
         self.dataDims = self.get_data_dimensions()
 
         if self.dataset.x.ndim == 1:
             self.dataset.x = self.dataset.x[:, None]
 
-        self.times['dataset_final_prep_end'] = time()
+    def truncate_and_shuffle_dataset(self, override_length):
+        self.times['dataset_shuffle_start'] = time()
+        # get dataset length & shuffle
+        self.max_dataset_length = override_length if override_length is not None else self.config.max_dataset_length
+        self.dataset_length = min(len(self.dataset), self.max_dataset_length)
+        inds_to_keep = list(np.random.choice(len(self.dataset), self.dataset_length, replace=False))
+        self.dataset = self.collater(self.dataset[inds_to_keep])
+        self.times['dataset_shuffle_end'] = time()
 
-    def dataset_filtration(self, filter_conditions, filter_duplicate_molecules, filter_polymorphs, filter_protons):
+    def assign_targets(self):
+        self.times['dataset_targets_assignment_start'] = time()
+        target = self.get_target()
+        if self.dataset.y is None:  # necessary workaround if we don't have a y property preset
+            if target is not None:  # have to assign new properties separately and re-collate
+                self.dataset = self.dataset.to_data_list()
+                for ind in range(len(target)):
+                    self.dataset[ind].y = target[ind]
+
+                self.dataset = self.collater([elem for elem in self.dataset])
+        else:  # this is dramatically faster
+            self.dataset.y = target
+        self.times['dataset_targets_assignment_end'] = time()
+
+    def dataset_filtration(self, filter_conditions, filter_duplicate_molecules, filter_polymorphs):
         self.times['dataset_filtering_start'] = time()
         if filter_conditions is not None:
             bad_inds = self.get_dataset_filter_inds(filter_conditions)
@@ -143,12 +164,14 @@ class DataManager:
             print("Filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
             if self.dataset_type == 'crystal':
                 self.rebuild_crystal_indices()
+
         if filter_polymorphs:
             bad_inds = self.filter_polymorphs()
             self.dataset = filter_batch_graphwise(self.dataset, keep_index=None, delete_index=bad_inds)
             print("Polymorph filtering removed {} samples, leaving {}".format(len(bad_inds), len(self.dataset)))
             if self.dataset_type == 'crystal':
                 self.rebuild_crystal_indices()
+
         if filter_duplicate_molecules:
             bad_inds = self.filter_duplicate_molecules()
             self.dataset = filter_batch_graphwise(self.dataset, keep_index=None, delete_index=bad_inds)
@@ -218,21 +241,7 @@ class DataManager:
         return dim
 
     def get_target(self):
-        qm9_targets_list = ["rotational_constant_a",
-                            "rotational_constant_b",
-                            "rotational_constant_c",
-                            "dipole_moment",
-                            "isotropic_polarizability",
-                            "HOMO_energy",
-                            "LUMO_energy",
-                            "gap_energy",
-                            "el_spatial_extent",
-                            "zpv_energy",
-                            "internal_energy_0",
-                            "internal_energy_STP",
-                            "enthalpy_STP",
-                            "free_energy_STP",
-                            "heat_capacity_STP"]
+
         if self.regression_target is not None:
             if self.regression_target == 'crystal_reduced_volume_fraction':
                 targets = (self.dataset.reduced_volume /
@@ -253,7 +262,6 @@ class DataManager:
                 self.target_std = 1
 
             return (targets - self.target_mean) / self.target_std
-
 
         else:  # need have something just to fill the space
             self.target_mean, self.target_std = 0, 1
@@ -329,10 +337,10 @@ class DataManager:
         ints = list(
             np.random.choice(min(len(self.dataset), test_dataset_size), min(len(self.dataset), test_dataset_size),
                              replace=False))
-        torch.save(self.collater(self.dataset[ints]), self.datasets_path + 'test_' + new_dataset_name + '.pt')
+        torch.save(self.dataset[ints].to_data_list(), self.datasets_path + 'test_' + new_dataset_name + '.pt')
 
         # save full dataset
-        torch.save(self.dataset, self.datasets_path + new_dataset_name + '.pt')
+        torch.save(self.dataset.to_data_list(), self.datasets_path + new_dataset_name + '.pt')
 
     def extract_misc_stats_and_indices(self):
         misc_data_dict = {

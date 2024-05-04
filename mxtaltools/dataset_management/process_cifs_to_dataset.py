@@ -117,6 +117,7 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                         aunit_handedness=[int(handedness_list[zp]) for zp in range(int(crystal_dict['z_prime']))],
                         is_well_defined=is_well_defined,
                         fingerprint=np.concatenate([np.array(mol['molecule_fingerprint']) for mol in molecules]),
+                        y=torch.ones(1),  # this dummy variable helps us later on - save us having to rebuild the dataset at runtime
                     )
 
                     data_list.append(crystaldata)

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-
+# todo reload and write as dict OR deprecate, as I don't think we're using this anywhere
 def loadSpaceGroups():
     """
     generate dataframe containing all space groups info
