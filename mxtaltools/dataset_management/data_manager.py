@@ -348,7 +348,7 @@ class DataManager:
             np.random.choice(min(len(self.dataset), test_dataset_size),
                              min(len(self.dataset), test_dataset_size),
                              replace=False))
-        torch.save(self.dataset[ints], self.datasets_path + 'test_' + new_dataset_name + '.pt')
+        torch.save([self.dataset[ind] for ind in ints], self.datasets_path + 'test_' + new_dataset_name + '.pt')
 
         # save full dataset
         torch.save(self.dataset, self.datasets_path + new_dataset_name + '.pt')

@@ -212,7 +212,7 @@ class Logger:
 
         return metrics_to_log
 
-    def log_epoch_analysis(self, test_loader):
+    def log_detailed_analysis(self, test_loader):
         """sometimes do detailed reporting"""
         if (self.epoch % self.sample_reporting_frequency) == 0:
             detailed_reporting(self.config, self.dataDims, test_loader,

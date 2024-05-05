@@ -181,7 +181,6 @@ def converging_gaussians_fig():
         for ind, (sigma, noise) in enumerate(zip(sigmas, noises)):
             scaled_data, decoded_data, overlap = get_decoding(data.clone(), encoder, noise)
             rmsd, max_dist, weight_mean = scaffolded_decoder_clustering(0, scaled_data, decoded_data,
-                                                                        loader.dataDims['max_molecule_radius'],
                                                                         num_atom_types,
                                                                         return_fig=False)
             overlaps.append(overlap)
@@ -201,7 +200,6 @@ def converging_gaussians_fig():
         for ind, (sigma, noise) in enumerate(zip(sigmas, noises)):
             scaled_data, decoded_data, _ = get_decoding(data.clone(), encoder, noise)
             rmsd, max_dist, weight_mean = scaffolded_decoder_clustering(0, scaled_data, decoded_data,
-                                                                        loader.dataDims['max_molecule_radius'],
                                                                         num_atom_types,
                                                                         return_fig=False)
             for j in range(num_atom_types):
@@ -314,7 +312,6 @@ else:
 for ind, (sigma, noise) in enumerate(tqdm(zip(sigmas, noises))):
     scaled_data, decoded_data, overlap = get_decoding(data.clone(), encoder, noise)
     rmsd, max_dist, weight_mean = scaffolded_decoder_clustering(0, scaled_data, decoded_data,
-                                                                loader.dataDims['max_molecule_radius'],
                                                                 num_atom_types,
                                                                 return_fig=False)
     fig = go.Figure()

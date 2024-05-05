@@ -23,7 +23,7 @@ dataset:
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 25
+min_batch_size: 10
 max_batch_size: 500
 batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
@@ -61,16 +61,11 @@ positional_noise:
 generate_sgs: null
 supercell_size: 5
 
-# decoder layers 1, decoder points 256, weight decay 0.05, positional noise 0, dropout 0.5,
-#  embedding_dim 512, bottleneck_dim 512, num_convs 1, num_nodewise 4,
-# ramp_depth True, lr shrink lambda .99, max batch 300, min_lr 5e-6, batch_growth_increment 0.05,
-# max_lr 2e-4, decoder norm mode layer, overlap_eps
-
 autoencoder:
   infer_protons: False
-  type_distance_scaling: 3.5
-  init_sigma: 0.15 #1.05
-  evaluation_sigma: 0.05 #0.35
+  type_distance_scaling: 0.5
+  init_sigma: 1.05  # real-space valued
+  evaluation_sigma: 0.35  # real-space valued
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   overlap_eps:
@@ -111,8 +106,8 @@ autoencoder:
         dropout: 0.1
 
         atom_type_embedding_dim: 32
-        radial_embedding: 'gaussian'
-        cutoff: 10
+        radial_embedding: 'bessel'
+        cutoff: 14  # real space
         max_num_neighbors: 100
         envelope_exponent: 5
       fc: # dummy

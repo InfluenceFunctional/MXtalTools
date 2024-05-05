@@ -51,7 +51,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
         [torch.cat([train_loader.dataset[ii].cell_lengths[0],
                     train_loader.dataset[ii].cell_angles[0],
                     train_loader.dataset[ii].pose_params0[0]], dim=0)
-        for ii in range(len(train_loader.dataset))])
+         for ii in range(len(train_loader.dataset))])
 
     cleaned_samples = epoch_stats_dict['final_generated_cell_parameters']
     if 'raw_generated_cell_parameters' in epoch_stats_dict.keys():
@@ -1479,25 +1479,26 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type, mol
     type_translation_index = np.zeros(allowed_types.max() + 1) - 1
     for ind, atype in enumerate(allowed_types):
         type_translation_index[atype] = ind
-    autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device='cpu')
+    type_index_tensor = torch.tensor(type_translation_index, dtype=torch.long, device='cpu')
 
     # get samples
     data = epoch_stats_dict['sample'][0]
-    data.x = autoencoder_type_index[data.x[:, 0].long()]
+    data.x = type_index_tensor[data.x[:, 0].long()]
     decoded_data = epoch_stats_dict['decoded_sample'][0]
 
     # compute various distribution overlaps
     (coord_overlap, full_overlap,
      self_coord_overlap, self_overlap, self_type_overlap, type_overlap) = (
         autoencoder_decoder_sample_validation(data, decoded_data, config, dataDims, epoch_stats_dict))
+
     overall_overlap = scatter(full_overlap / self_overlap, data.batch, reduce='mean').cpu().detach().numpy()
     evaluation_overlap_loss = scatter(F.smooth_l1_loss(self_overlap, full_overlap, reduction='none'), data.batch,
                                       reduce='mean')
 
     wandb.log({epoch_type + "_evaluation_positions_wise_overlap":
-                   scatter(coord_overlap / self_coord_overlap,data.batch,reduce='mean').mean().cpu().detach().numpy(),
+                   scatter(coord_overlap / self_coord_overlap, data.batch, reduce='mean').mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_typewise_overlap":
-                   scatter(type_overlap / self_type_overlap, data.batch,reduce='mean').mean().cpu().detach().numpy(),
+                   scatter(type_overlap / self_type_overlap, data.batch, reduce='mean').mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_overall_overlap": overall_overlap.mean(),
                epoch_type + "_evaluation_matching_clouds_fraction": (np.sum(1 - overall_overlap) < 0.01).mean(),
                epoch_type + "_evaluation_overlap_loss": evaluation_overlap_loss.mean().cpu().detach().numpy(),
@@ -1856,5 +1857,3 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
 #                                        ), row=row, col=col)
 #     fig.update_coloraxes(cmin=0, cmax=cmax, autocolorscale=False, colorscale='viridis')
 #     return fig
-
-

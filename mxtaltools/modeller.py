@@ -477,7 +477,6 @@ class Modeller:
             fig = go.Figure()
             coords_true, coords_pred, points_true, points_pred, sample_weights = (
                 extract_true_and_predicted_points(data, decoded_data, graph_ind,
-                                                  self.config.autoencoder.molecule_radius_normalization,
                                                   self.dataDims['num_atom_types'], to_numpy=True))
 
             glom_points_pred, glom_pred_weights = decoder_agglomerative_clustering(points_pred, sample_weights, 0.75)
@@ -835,7 +834,7 @@ class Modeller:
                     self.logger.numpyize_current_losses()
                     self.logger.update_loss_record()
                     self.logger.log_training_metrics()
-                    self.logger.log_epoch_analysis(test_loader)
+                    self.logger.log_detailed_analysis(test_loader)
                     self.logger.check_model_convergence()
                     self.times['reporting_end'] = time()
 
@@ -998,6 +997,7 @@ class Modeller:
     def autoencoder_step(self, input_data, data, update_weights, step, last_step=False):
         if self.config.dataset.filter_protons and not self.models_dict['autoencoder'].inferring_protons:
             data = input_data.clone()  # deprotonate the reference if we are not inferring protons
+
         decoding, encoding = self.models_dict['autoencoder'](input_data, return_encoding=True)
         autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
 
@@ -1041,10 +1041,11 @@ class Modeller:
                                       mode='append')
 
     def detailed_autoencoder_step_analysis(self, data, decoded_data, stats):
-        '''equivariance checks'''
+        # equivariance checks
         encoder_equivariance_loss, decoder_equivariance_loss = self.equivariance_test(data.clone())
         stats['encoder_equivariance_loss'] = encoder_equivariance_loss.mean().detach()
         stats['decoder_equivariance_loss'] = decoder_equivariance_loss.mean().detach()
+
         # do evaluation on current sample and save this as our loss for tracking purposes
         nodewise_weights_tensor = decoded_data.aux_ind
         true_nodes = F.one_hot(self.models_dict['autoencoder'].atom_embedding_vector[data.x[:, 0].long()],
@@ -1063,8 +1064,7 @@ class Modeller:
         self.logger.update_current_losses('autoencoder', self.epoch_type,
                                           tracking_loss.mean().cpu().detach().numpy(),
                                           tracking_loss.cpu().detach().numpy())
-        data.pos *= self.models_dict['autoencoder'].radial_normalization
-        decoded_data.pos *= self.models_dict['autoencoder'].radial_normalization
+
         self.logger.update_stats_dict(self.epoch_type,
                                       ['sample', 'decoded_sample'],
                                       [data.cpu().detach(), decoded_data.cpu().detach()
@@ -1134,7 +1134,7 @@ class Modeller:
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
             data = data.to(self.device)
-            data.pos = data.pos / self.models_dict['autoencoder'].radial_normalization
+            #data.pos = data.pos / self.models_dict['autoencoder'].radial_normalization
 
             data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
             self.autoencoder_step(input_data, data, update_weights, step=i, last_step=i == len(data_loader) - 1)
@@ -1179,7 +1179,8 @@ class Modeller:
         # subtract mean OF THE INPUT from BOTH reference and input
         centroids = scatter(input_data.pos, input_data.batch, reduce='mean', dim=0)
         data.pos -= torch.repeat_interleave(centroids, data.num_atoms, dim=0, output_size=data.num_nodes)
-        input_data.pos -= torch.repeat_interleave(centroids, input_data.num_atoms, dim=0, output_size=input_data.num_nodes)
+        input_data.pos -= torch.repeat_interleave(centroids, input_data.num_atoms, dim=0,
+                                                  output_size=input_data.num_nodes)
 
         return data, input_data
 
@@ -1208,8 +1209,8 @@ class Modeller:
         decoded_dists = torch.linalg.norm(decoded_data.pos, dim=1)
         constraining_loss = scatter(
             F.relu(
-                decoded_dists - 1), #torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes,
-                                   #                     dim=0)),
+                decoded_dists - self.models_dict['autoencoder'].radial_normalization), #torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes,
+                                                        #dim=0)),
             decoded_data.batch, reduce='mean')
 
         # node weight constraining loss

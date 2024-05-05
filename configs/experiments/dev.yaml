@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml
-#dataset_name: 'test_dataset.pt'
+dataset_name: 'test_qm9_molecules_dataset.pt' #'test_dataset.pt'
 extra_test_set_name: null
 
 dataset:

@@ -18,7 +18,8 @@ def autoencoder_decoder_sample_validation(data, decoded_data, config, dataDims, 
     # compute overlaps with evaluation settings
     nodewise_weights_tensor = decoded_data.aux_ind
     true_nodes = F.one_hot(data.x.long(), num_classes=dataDims['num_atom_types']).float()
-    full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor,
+    full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data,
+                                                                 nodewise_weights_tensor,
                                                                  true_nodes,
                                                                  sigma=config.autoencoder.evaluation_sigma,
                                                                  distance_scaling=config.autoencoder.type_distance_scaling
@@ -42,12 +43,10 @@ def gaussian_3d_overlap_plots(data, decoded_data, max_point_types, molecule_radi
     for ind in range(data.num_graphs):
         if ind == 0:
             rmsds[ind], max_dists[ind], tot_overlaps[ind], fig2 = scaffolded_decoder_clustering(ind, data, decoded_data,
-                                                                                                molecule_radius_normalization,
                                                                                                 max_point_types,
                                                                                                 return_fig=True)
         else:
             rmsds[ind], max_dists[ind], tot_overlaps[ind] = scaffolded_decoder_clustering(ind, data, decoded_data,
-                                                                                          molecule_radius_normalization,
                                                                                           max_point_types,
                                                                                           return_fig=False)
 
@@ -106,10 +105,10 @@ def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cut
     return pred_particles, pred_particle_weights  # , rmsd, max_dist # todo add flags around unequal weights
 
 
-def scaffolded_decoder_clustering(graph_ind, data, decoded_data, molecule_radius_normalization, num_classes,
+def scaffolded_decoder_clustering(graph_ind, data, decoded_data, num_classes,
                                   return_fig=True):  # todo parallelize over samples
     (pred_particles, pred_particle_weights, points_true) = (
-        decoder_scaffolded_clustering(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes))
+        decoder_scaffolded_clustering(data, decoded_data, graph_ind, num_classes))
 
     matched_particles, max_dist, rmsd = compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles)
 
@@ -121,11 +120,11 @@ def scaffolded_decoder_clustering(graph_ind, data, decoded_data, molecule_radius
         return rmsd, max_dist, pred_particle_weights.mean()
 
 
-def decoder_scaffolded_clustering(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes):
+def decoder_scaffolded_clustering(data, decoded_data, graph_ind, num_classes):
     """"""
     '''extract true and predicted points'''
     coords_true, coords_pred, points_true, points_pred, sample_weights = (
-        extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes,
+        extract_true_and_predicted_points(data, decoded_data, graph_ind, num_classes,
                                           to_numpy=True))
 
     '''get minimum true bond lengths'''
@@ -163,11 +162,11 @@ def compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles,
     return matched_particles, max_dist, rmsd
 
 
-def extract_true_and_predicted_points(data, decoded_data, graph_ind, molecule_radius_normalization, num_classes,
+def extract_true_and_predicted_points(data, decoded_data, graph_ind, num_classes,
                                       to_numpy=False):
 
-    coords_true = data.pos[data.batch == graph_ind] * molecule_radius_normalization
-    coords_pred = decoded_data.pos[decoded_data.batch == graph_ind] * molecule_radius_normalization
+    coords_true = data.pos[data.batch == graph_ind]
+    coords_pred = decoded_data.pos[decoded_data.batch == graph_ind]
     points_true = torch.cat(
         [coords_true, F.one_hot(data.x[data.batch == graph_ind].long(), num_classes=num_classes)], dim=1)
     points_pred = torch.cat([coords_pred, decoded_data.x[decoded_data.batch == graph_ind]], dim=1)

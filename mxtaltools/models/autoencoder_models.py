@@ -34,6 +34,7 @@ class PointAutoencoder(BaseGraphModel):
         self.bottleneck_dim = config.bottleneck_dim
         self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
 
+        config.encoder.graph.cutoff = config.encoder.graph.cutoff / self.radial_normalization  # normalize the graph cutoff from real space to normed space
         self.encoder = PointEncoder(seed, config.encoder, config.bottleneck_dim)
         self.decoder = PointDecoder(seed, config.decoder, config.bottleneck_dim, self.output_depth, self.num_decoder_nodes)
         self.scalarizer = Scalarizer(config.bottleneck_dim, self.cartesian_dimension, None, None, 0)
@@ -44,7 +45,7 @@ class PointAutoencoder(BaseGraphModel):
         decoding = self.decode(encoding)
 
         # de-normalize predicted node positions
-        #decoding = torch.cat([decoding[:, :self.cartesian_dimension] * self.radial_normalization, decoding[:, self.cartesian_dimension:]], dim=1)
+        decoding = torch.cat([decoding[:, :self.cartesian_dimension] * self.radial_normalization, decoding[:, self.cartesian_dimension:]], dim=1)
         if return_encoding:
             return decoding, encoding
         else:
@@ -55,7 +56,7 @@ class PointAutoencoder(BaseGraphModel):
         # centroids = scatter(data.pos, data.batch, reduce='mean', dim=0)
         # data.pos -= torch.repeat_interleave(centroids, data.num_atoms, dim=0, output_size=data.num_nodes)
         # normalize radii
-        #data.pos /= self.radial_normalization
+        data.pos /= self.radial_normalization
         _, encoding = self.encoder(data)
 
         # assert torch.sum(torch.isnan(encoding)) == 0, f"NaN in encoder output {get_model_nans(self.encoder)}"
