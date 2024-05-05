@@ -127,6 +127,9 @@ class DataManager:
         self.get_cell_cov_mat()
         self.assign_targets()
         self.present_atom_types = torch.unique(torch.cat([elem.x for elem in self.dataset])).tolist()
+        if filter_protons:
+            if 1 in self.present_atom_types:
+                self.present_atom_types.remove(1)
         self.dataDims = self.get_data_dimensions()
 
         for ind in range(len(self.dataset)):

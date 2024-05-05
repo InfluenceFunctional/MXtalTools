@@ -1063,6 +1063,8 @@ class Modeller:
         self.logger.update_current_losses('autoencoder', self.epoch_type,
                                           tracking_loss.mean().cpu().detach().numpy(),
                                           tracking_loss.cpu().detach().numpy())
+        data.pos *= self.models_dict['autoencoder'].radial_normalization
+        decoded_data.pos *= self.models_dict['autoencoder'].radial_normalization
         self.logger.update_stats_dict(self.epoch_type,
                                       ['sample', 'decoded_sample'],
                                       [data.cpu().detach(), decoded_data.cpu().detach()
@@ -1132,6 +1134,7 @@ class Modeller:
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
             data = data.to(self.device)
+            data.pos = data.pos / self.models_dict['autoencoder'].radial_normalization
 
             data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
             self.autoencoder_step(input_data, data, update_weights, step=i, last_step=i == len(data_loader) - 1)
@@ -1205,8 +1208,8 @@ class Modeller:
         decoded_dists = torch.linalg.norm(decoded_data.pos, dim=1)
         constraining_loss = scatter(
             F.relu(
-                decoded_dists - torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes,
-                                                        dim=0)),
+                decoded_dists - 1), #torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes,
+                                   #                     dim=0)),
             decoded_data.batch, reduce='mean')
 
         # node weight constraining loss
