@@ -1879,8 +1879,9 @@ class Modeller:
             if self.train_models_dict[model_name]:
                 loss_record = self.logger.loss_record[model_name][f'mean_{loss_type_check}']
                 past_mean_losses = [np.mean(record) for record in loss_record]  # load all prior epoch losses
-                if np.average(self.logger.current_losses[model_name][f'mean_{loss_type_check}']) == np.amin(
-                        past_mean_losses):  # save if this is the best
+                current_loss = np.average(self.logger.current_losses[model_name][f'mean_{loss_type_check}'])
+
+                if current_loss <= np.amin(past_mean_losses):  # if current mean loss beats all prior epochs
                     print(f"Saving {model_name} checkpoint")
                     self.logger.save_stats_dict(prefix=f'best_{model_name}_')
                     save_checkpoint(epoch,

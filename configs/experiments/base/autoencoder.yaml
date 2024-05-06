@@ -63,7 +63,7 @@ supercell_size: 5
 
 autoencoder:
   infer_protons: False
-  type_distance_scaling: 3.5
+  type_distance_scaling: 2
   init_sigma: 1.05  # real-space valued
   evaluation_sigma: 0.35  # real-space valued
   sigma_lambda: 0.99
