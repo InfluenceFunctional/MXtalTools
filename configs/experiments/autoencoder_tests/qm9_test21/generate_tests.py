@@ -6,7 +6,7 @@ import numpy as np
 base_config = load_yaml('base.yaml')
 
 # decoder layers, decoder points, weight decay, filter protons, positional noise, dropout, embedding_dim, bottleneck_dim, num_convs, num_nodewise,
-# ramp_depth, lr shrink lambda, max batch, min_lr, batch_growth_increment, max_lr, variational, guess protons, KLD_threshold, decoder norm mode, overlap_eps
+# ramp_depth, lr shrink lambda, max batch, min_lr, batch_growth_increment, max_lr, variational, guess protons, KLD_threshold, decoder    norm mode, overlap_eps
 config_list = [
     [4, 256, 0.05, True, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95, 'layer', 0.001],  # 0 - converged
     [4, 256, 0.05, False, 0, 0, 256, 256, 1, 4, True, .999, 10000, 5e-5, 0.5, 5e-4, False, False, 0.95, 'layer', 0.001],  # 1 - converged too early

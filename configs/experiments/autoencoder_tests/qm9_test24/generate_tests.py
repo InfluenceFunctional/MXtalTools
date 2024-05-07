@@ -109,6 +109,162 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 256
                 }}}},
+    {  # less dropout
+        'seeds': {'model': 1},
+        'dataset': {'filter_protons': True},
+        'autoencoder': {
+            'infer_protons': False,
+            'type_distance_scaling': 2,
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0.05,
+                        'cutoff': 14,
+                        'norm': 'graph layer'}},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 1,
+                        'dropout': 0.051,
+                        'norm': 'layer'},
+                    'num_nodes': 256
+                }}}},
+    {  # less dropout new seed
+        'seeds': {'model': 2},
+        'dataset': {'filter_protons': True},
+        'autoencoder': {
+            'infer_protons': False,
+            'type_distance_scaling': 2,
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0.05,
+                        'cutoff': 14,
+                        'norm': 'graph layer'}},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 1,
+                        'dropout': 0.05,
+                        'norm': 'layer'},
+                    'num_nodes': 256
+                }}}},
+    {  # thick message
+        'seeds': {'model': 1},
+        'dataset': {'filter_protons': True},
+        'autoencoder': {
+            'infer_protons': False,
+            'type_distance_scaling': 2,
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 256,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0.1,
+                        'cutoff': 14,
+                        'norm': 'graph layer'}},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 1,
+                        'dropout': 0.1,
+                        'norm': 'layer'},
+                    'num_nodes': 256
+                }}}},
+    {  # thick message new seed
+        'seeds': {'model': 2},
+        'dataset': {'filter_protons': True},
+        'autoencoder': {
+            'infer_protons': False,
+            'type_distance_scaling': 2,
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 256,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0.1,
+                        'cutoff': 14,
+                        'norm': 'graph layer'}},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 1,
+                        'dropout': 0.1,
+                        'norm': 'layer'},
+                    'num_nodes': 256
+                }}}},
+    {  # short cutoff
+        'seeds': {'model': 1},
+        'dataset': {'filter_protons': True},
+        'autoencoder': {
+            'infer_protons': False,
+            'type_distance_scaling': 2,
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0.1,
+                        'cutoff': 7,
+                        'norm': 'graph layer'}},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 1,
+                        'dropout': 0.1,
+                        'norm': 'layer'},
+                    'num_nodes': 256
+                }}}},
+    {  # short cutoff new seed
+        'seeds': {'model': 2},
+        'dataset': {'filter_protons': True},
+        'autoencoder': {
+            'infer_protons': False,
+            'type_distance_scaling': 2,
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0.1,
+                        'cutoff': 7,
+                        'norm': 'graph layer'}},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 1,
+                        'dropout': 0.1,
+                        'norm': 'layer'},
+                    'num_nodes': 256
+                }}}},
 ]
 
 
