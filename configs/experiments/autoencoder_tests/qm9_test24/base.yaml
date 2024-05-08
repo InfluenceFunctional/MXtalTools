@@ -79,7 +79,7 @@ autoencoder:
     init_lr: 5.0E-5
     encoder_init_lr: 5.0E-5
     decoder_init_lr: 5.0E-5
-    max_lr: 5.0E-4
+    max_lr: 2.0E-4
     min_lr: 1.0E-6
     lr_schedule: True
     beta1: 0.9
@@ -87,7 +87,7 @@ autoencoder:
     weight_decay: 0.05
     convergence_eps: 1.0E-5
     lr_growth_lambda: 1.05
-    lr_shrink_lambda: 0.99
+    lr_shrink_lambda: 0.995
     use_plateau_scheduler: False
 
   model:
@@ -96,17 +96,17 @@ autoencoder:
       activation: 'gelu'
       graph:
         node_dim: 512
-        message_dim: 256
-        num_attention_heads: 64
+        message_dim: 128
+        num_attention_heads: 16
         embedding_dim: 512
-        num_convs: 1
-        fcs_per_gc: 4
+        num_convs: 2
+        fcs_per_gc: 2
         num_radial: 32
         norm: 'graph layer'
         dropout: 0.1
 
         atom_type_embedding_dim: 32
-        radial_embedding: 'gaussian'
+        radial_embedding: 'bessel'
         cutoff: 14  # real space
         max_num_neighbors: 100
         envelope_exponent: 5

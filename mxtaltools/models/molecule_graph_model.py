@@ -1,4 +1,4 @@
-from mxtaltools.models.GraphNeuralNetwork import GraphNeuralNetwork
+from mxtaltools.models.graph_neural_network import GraphNeuralNetwork
 
 import torch
 import torch.nn as nn

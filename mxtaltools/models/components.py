@@ -478,7 +478,9 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
             assert self.equivariant
 
         torch.manual_seed(seed)
-
+        # addition of two normally distributed 3-vectors increases the norm by roughly this factor on average
+        # divide this out to combat vector elongation & poor gradient flow
+        self.vector_addition_rescaling_factor = 1.6
         self.init_filters(filters, layers)
         self.init_scalar_transforms()
         if equivariant:
@@ -699,4 +701,4 @@ class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom meth
         vector_mix = self.v_fc_norms[i](self.v_fc_layers[i](v), batch=batch)
         vector_mix = self.vector_activation[i](vector_mix)
 
-        return v + gating_factor * vector_mix  # A(FC(x)) * FC(N(v))   # rescaling factor keeps norm from exploding
+        return (v + gating_factor * vector_mix)/self.vector_addition_rescaling_factor  # A(FC(x)) * FC(N(v))   # rescaling factor keeps norm from exploding

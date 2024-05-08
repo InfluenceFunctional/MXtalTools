@@ -38,6 +38,7 @@ class GraphNeuralNetwork(torch.nn.Module):
         self.periodize_inside_nodes = periodize_inside_nodes
         self.outside_convolution_type = outside_convolution_type
         self.equivariant = equivariant
+        self.vector_addition_rescaling_factor = 1.6
 
         if radial_embedding == 'bessel':
             self.rbf = BesselBasisLayer(num_radial, cutoff, envelope_exponent)
@@ -114,7 +115,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                 x_res, v_res = x.clone(), v.clone()
                 x, v = convolution(x, v, rbf, edge_index)
                 x = x + x_res
-                v = v + v_res
+                v = (v + v_res)/self.vector_addition_rescaling_factor
             else:
                 x = x + convolution(x, v, rbf, edge_index)
 
@@ -123,7 +124,7 @@ class GraphNeuralNetwork(torch.nn.Module):
                     x_res, v_res = x.clone(), v.clone()
                     x, v = fc(x, v=v, batch=batch)
                     x = x + x_res
-                    v = v + v_res
+                    v = (v + v_res)/self.vector_addition_rescaling_factor
                 else:
                     x = x + fc(x, v=v, batch=batch)
 
