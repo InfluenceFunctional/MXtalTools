@@ -2,6 +2,7 @@ machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml
 dataset_name: 'test_qm9_molecules_dataset.pt' #'test_dataset.pt'
+#mode: embedding
 extra_test_set_name: null
 
 dataset:
@@ -31,7 +32,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null #'best_autoencoder_experiments_dev_06-05-16-17-50'
+  autoencoder: null #/cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_10_07-05-21-32-31 # no protons
   embedding_regressor: null
 
 #generate_sgs: ['P-1','C2/c','P21/c','P212121']

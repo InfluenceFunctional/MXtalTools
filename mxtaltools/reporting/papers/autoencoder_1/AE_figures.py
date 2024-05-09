@@ -9,15 +9,26 @@ import os
 from scipy.interpolate import interpn
 from scipy.stats import linregress
 
-stats_dict_paths = [r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_4_26-02-22-29-57.npy',
-                    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_7_27-02-14-34-41.npy',
-                    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_8_27-02-15-35-51.npy']
+
+stats_dict_paths = [
+    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_10_07-05-21-32-31.npy',
+    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_10_07-05-21-32-31.npy',
+    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_10_07-05-21-32-31.npy',
+    ]
+# best results from previous runs
+# stats_dict_paths = [r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_4_26-02-22-29-57.npy',
+#                     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_7_27-02-14-34-41.npy',
+#                     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_8_27-02-15-35-51.npy']
 
 stats_dict_names = ["Without Protons",
                     "With Protons",
                     "Inferred Protons"]
 
 colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', len(stats_dict_paths), colortype='rgb')
+
+def get_fraction(atomic_numbers, target: int):
+    """get fraction of atomic numbers equal to target"""
+    return np.sum(atomic_numbers == target) / len(atomic_numbers)
 
 
 def get_point_density(xy, bins=500):
@@ -51,20 +62,10 @@ def RMSD_fig():
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
 
     bandwidth = 0.005
-    fig = make_subplots(rows=1, cols=2, subplot_titles=['(a) RMSD Distribution', '(b) RMSD Correlates'],
-                        column_widths=[0.75, 0.25], horizontal_spacing=0.15)
+    fig = make_subplots(rows=1, cols=1)
     for ind, run_name in enumerate(stats_dicts.keys()):
 
         stats_dict = stats_dicts[run_name]
-        mol_keys = [key for key in stats_dict.keys() if 'molecule_' in key]
-        mol_keys.remove('molecule_smiles')
-        mol_keys.remove('molecule_halogen_count')
-        mol_keys.remove('molecule_alkyl_halide_count')
-
-        try:
-            smiles = np.concatenate(stats_dict['molecule_smiles'])
-        except:
-            smiles = stats_dict['molecule_smiles']
 
         x = np.concatenate(stats_dict['scaffold_rmsds'])
         unmatched = np.mean(np.isinf(x))
@@ -84,36 +85,20 @@ def RMSD_fig():
             points=False),
             row=1, col=1
         )
-        add_mol_diagrams_to_rmsd_violin(fig, finite_x, ind, smiles)
-
-        correlates_dict, keys_list2 = compute_rmsd_correlates(mol_keys, stats_dict, x)
-
-        fig.add_trace(go.Bar(
-            y=[keys_list2[entry] for entry in list(correlates_dict.keys())],
-            x=[corr for corr in correlates_dict.values()],
-            textposition='auto',
-            orientation='h',
-            showlegend=False,
-            # text=[corr for corr in correlates_dict.values()],
-            # texttemplate='%{text:.2f}',
-            marker_color=colors[ind],
-        ), row=1, col=2)
 
     fig.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
     fig.update_layout(
         xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig.update_layout(yaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
-    fig.update_layout(xaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
-    fig.update_layout(xaxis1_range=[-0.15, 0.9])
+    fig.update_layout(xaxis1_range=[0, 0.9])
     fig.update_layout(font=dict(size=24))
     fig.update_xaxes(title_font=dict(size=20), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_layout(violingap=0, violinmode='overlay')
     fig.update_layout(legend_traceorder='reversed')  # , yaxis_showgrid=True)
-    fig.update_layout(xaxis1_title='RSMD (Angstrom)', xaxis2_title="Correlation Coefficient")
+    fig.update_layout(xaxis1_title='RSMD (Angstrom)')
     fig.update_layout(xaxis1_tick0=0, xaxis1_dtick=0.05)
-    fig.update_layout(xaxis2_tick0=0, xaxis2_dtick=0.05)
 
     fig.show(renderer='browser')
     return fig
@@ -201,32 +186,46 @@ def UMAP_fig(max_entries=10000000):
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
     run_name = "Without Protons"
 
+    stats_dict = stats_dicts[run_name]
+    del stats_dicts
     import umap
-    embeddings = []
-    for ind, run_name in enumerate([run_name]):  # stats_dicts.keys()):
-        reducer = umap.UMAP(n_components=2,
-                            metric='cosine',
-                            n_neighbors=10,
-                            min_dist=0.2)
-        scalar_encodings = stats_dicts[run_name]['scalar_encoding'][:max_entries]
+    reducer = umap.UMAP(n_components=2,
+                        metric='cosine',
+                        n_neighbors=10,
+                        min_dist=0.2)
+    scalar_encodings = stats_dict['scalar_encoding'][:max_entries]
 
-        embeddings.append(reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std()))
+    embedding = reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std())
 
-    composition_coloration = np.stack([np.concatenate(stats_dicts[run_name]['molecule_C_fraction']),
-                                       np.concatenate(stats_dicts[run_name]['molecule_N_fraction']),
-                                       np.concatenate(stats_dicts[run_name]['molecule_O_fraction'])]).T[:max_entries]
+    from rdkit.Chem import rdMolDescriptors
+    c_fraction = np.zeros(len(stats_dict['molecule_smiles']))
+    n_fraction = np.zeros_like(c_fraction)
+    o_fraction = np.zeros_like(c_fraction)
+    num_rings = np.zeros_like(c_fraction)
+    num_rotatable = np.zeros_like(c_fraction)
+    for ind in range(len(stats_dict['molecule_smiles'])):
+        mol = Chem.MolFromSmiles(stats_dict['molecule_smiles'][ind])
+        atoms = np.asarray([atom.GetAtomicNum() for atom in mol.GetAtoms()])
+        c_fraction[ind] = get_fraction(atoms, 6)
+        n_fraction[ind] = get_fraction(atoms, 7)
+        o_fraction[ind] = get_fraction(atoms, 8)
+        num_rings[ind] = mol.GetRingInfo().NumRings()
+        num_rotatable[ind] = rdMolDescriptors.CalcNumRotatableBonds(mol)
+
+    composition_coloration = np.stack([c_fraction, n_fraction, o_fraction]).T[:max_entries]
     point_colors1 = normalize_colors(composition_coloration)
     legend_entries1 = ["Carbon Enriched", "Nitrogen Enriched", "Oxygen Enriched"]
 
-    PR_triangle_points = np.asarray([[1, 1], [0, 1], [0.5, 0.5]])
+    PR_triangle_points = np.asarray([[1, 1], [0, 1], [0.5, 0.5]])  # principal inertial ratio points on the triangle
 
+    stats_dict['molecule_principal_moment_1'] = stats_dict['principal_inertial_moments'][:,0]
+    stats_dict['molecule_principal_moment_2'] = stats_dict['principal_inertial_moments'][:,1]
+    stats_dict['molecule_principal_moment_3'] = stats_dict['principal_inertial_moments'][:,2]
     # conventional principal ratios - our convention agreeing with QMUGS
-    PR1 = np.concatenate(stats_dicts[run_name]['molecule_principal_moment_2']) / (np.concatenate(
-        stats_dicts[run_name]['molecule_principal_moment_3']))# + 1e-3)
+    PR1 = stats_dict['molecule_principal_moment_2'] / stats_dict['molecule_principal_moment_3']# + 1e-3)
     PR1 = np.nan_to_num(PR1, posinf=0, neginf=0)
     PR1 /= np.quantile(PR1, 0.9999)
-    PR2 = np.concatenate(stats_dicts[run_name]['molecule_principal_moment_1']) / (np.concatenate(
-        stats_dicts[run_name]['molecule_principal_moment_3']))# + 1e-3)
+    PR2 = stats_dict['molecule_principal_moment_1'] / stats_dict['molecule_principal_moment_3']# + 1e-3)
     PR2 = np.nan_to_num(PR2)
     PR2 /= np.quantile(PR2, 0.9999)
     #
@@ -250,9 +249,9 @@ def UMAP_fig(max_entries=10000000):
     point_colors2 = normalize_colors(composition_coloration)
     legend_entries2 = ["Sphere-like", "Rod-Like", "Disc-Like"]
 
-    composition_coloration = np.stack([np.concatenate(stats_dicts[run_name]['molecule_num_rings']),
-                                       np.concatenate(stats_dicts[run_name]['molecule_num_rotatable_bonds']),
-                                       np.concatenate(stats_dicts[run_name]['molecule_radius'])]).T[:max_entries]
+    composition_coloration = np.stack([num_rings,
+                                       num_rotatable,
+                                       np.concatenate(stats_dict['molecule_radius'])]).T[:max_entries]
     point_colors3 = normalize_colors(composition_coloration)
     legend_entries3 = ["# Rings", "# Rotatable Bonds", "Mol. Radius"]
 
@@ -261,7 +260,6 @@ def UMAP_fig(max_entries=10000000):
     for ind2, (point_colors, legend_entries) in enumerate(
             zip([point_colors1, point_colors2, point_colors3], [legend_entries1, legend_entries2, legend_entries3])):
 
-        embedding = embeddings[0]
         embedding -= embedding.min(0)
         embedding /= embedding.max(0)
         fig2.add_trace(go.Scattergl(x=embedding[:, 0], y=embedding[:, 1],
@@ -279,9 +277,9 @@ def UMAP_fig(max_entries=10000000):
         # get corner indices
         ex, ey = embedding[:, 0], embedding[:, 1]
         try:
-            smiles = np.concatenate(stats_dicts[run_name]['molecule_smiles'])
+            smiles = np.concatenate(stats_dict['molecule_smiles'])
         except:
-            smiles = stats_dicts[run_name]['molecule_smiles']
+            smiles = stats_dict['molecule_smiles']
 
         for ix in np.linspace(0, 1, 8):
             for iy in np.linspace(0, 1, 8):
@@ -486,12 +484,15 @@ def regression_training_curve():
 
 
 #
-# fig = RMSD_fig()
-# fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+#fig = RMSD_fig()
+#fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+
 fig2 = UMAP_fig(max_entries=1000000)
 # fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
+
 # fig3 = embedding_regression_figure()
 # fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+
 # fig4 = regression_training_curve()
 # fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=600, height=400)
 aa = 1

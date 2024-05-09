@@ -10,7 +10,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: molecule_gap_energy
+  regression_target: gap_energy
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -33,10 +33,10 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  #autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57  # no protons, non-variational
-  #autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41  # protons, non-variational
-  autoencoder: /cluster/best_autoencoder_autoencoder_tests_qm9_test23_8_27-02-15-35-51  # inferred protons, non-variational
+  autoencoder: /best_autoencoder_experiments_autoencoder_tests_qm9_test24_10_07-05-21-32-31 # no protons
+  #autoencoder:
+  #autoencoder:
   embedding_regressor: null
 
 autoencoder:
-  infer_protons: True  # todo make this a property of the model
+  infer_protons: False  # todo make this a property of the model

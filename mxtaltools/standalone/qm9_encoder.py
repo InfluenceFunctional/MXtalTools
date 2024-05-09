@@ -59,7 +59,7 @@ class Qm9Autoencoder(torch.nn.Module):
         self.model = PointAutoencoder(seed=12345, config=self.config.autoencoder.model, num_atom_types=num_atom_types)
         for param in self.model.parameters():  # freeze encoder
             param.requires_grad = False
-        self.model, _ = reload_model(self.model, optimizer=None, path=checkpoint_path)
+        self.model, _ = reload_model(self.model, self.device, optimizer=None, path=checkpoint_path)
         self.model.eval()
 
         if num_atom_types == 5:

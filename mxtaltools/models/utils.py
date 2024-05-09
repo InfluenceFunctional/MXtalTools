@@ -648,8 +648,11 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
         ref_points = ref_points[:, isolate_dimensions[0]:isolate_dimensions[1]]
         pred_points = pred_points[:, isolate_dimensions[0]:isolate_dimensions[1]]
 
-    edges = radius(ref_points, pred_points, 2, max_num_neighbors=100, batch_x=data.batch,
-                   batch_y=decoded_data.batch)  # this step is slower than before
+    edges = radius(ref_points, pred_points,
+                   r=2 * ref_points[:, :3].norm(dim=1).amax(),  # max range encompasses whole molecule
+                   # r=6*sigma, # alternatively any point which will have even a small overlap
+                   max_num_neighbors=100,
+                   batch_x=data.batch, batch_y=decoded_data.batch)  # this step is slower than before
     dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
 
     if overlap_type == 'gaussian':
@@ -662,7 +665,9 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
         assert False, f"{overlap_type} is not an implemented overlap function"
 
     scaled_overlap = overlap * nodewise_weights[edges[0]]  # reweight appropriately
-    nodewise_overlap = scatter(scaled_overlap, edges[1], reduce='sum',
+    nodewise_overlap = scatter(scaled_overlap,
+                               edges[1],
+                               reduce='sum',
                                dim_size=data.num_nodes)  # this one is much, much faster
 
     if log_scale:

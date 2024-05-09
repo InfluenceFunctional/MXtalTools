@@ -165,6 +165,8 @@ def compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles,
 def extract_true_and_predicted_points(data, decoded_data, graph_ind, num_classes,
                                       to_numpy=False):
 
+    if data.x.ndim > 1:
+        data.x = data.x[:, 0]
     coords_true = data.pos[data.batch == graph_ind]
     coords_pred = decoded_data.pos[decoded_data.batch == graph_ind]
     points_true = torch.cat(

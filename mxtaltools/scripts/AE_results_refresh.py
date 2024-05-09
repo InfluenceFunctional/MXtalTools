@@ -34,4 +34,4 @@ for path, filter, infer in zip(ae_paths, filter_protons, infer_protons):
     config = process_main_config(override_args)
 
     predictor = Modeller(config)
-    predictor.autoencoder_embedding_analysis()
+    predictor.ae_embedding_analysis()

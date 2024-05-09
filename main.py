@@ -57,7 +57,7 @@ if __name__ == '__main__':
             predictor.crystal_search(molecule_data=dataloader.dataset[0], data_contains_ground_truth=True)
 
         elif config.mode == 'embedding':
-            predictor.autoencoder_embedding_analysis()
+            predictor.ae_embedding_analysis()
 
         elif config.mode == 'mol_generation':
             predictor.autoencoder_molecule_generation()
