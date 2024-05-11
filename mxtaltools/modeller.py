@@ -194,6 +194,41 @@ class Modeller:
         self.model_names = self.config.model_names
         self.reload_model_checkpoint_configs()
 
+        self.instantiate_models()
+
+        if self.config.device.lower() == 'cuda':
+            torch.backends.cudnn.benchmark = True
+            torch.cuda.empty_cache()
+            for model in self.models_dict.values():
+                model.cuda()
+
+        self.optimizers_dict = \
+            {model_name: init_optimizer(model_name, self.config.__dict__[model_name].optimizer, model)
+             for model_name, model in self.models_dict.items()
+             }
+
+        for model_name, model_path in self.config.model_paths.__dict__.items():
+            if model_path is not None:
+                self.models_dict[model_name], self.optimizers_dict[model_name] = reload_model(
+                    self.models_dict[model_name], self.device, self.optimizers_dict[model_name],
+                    model_path
+                )
+
+        self.schedulers_dict = {model_name: init_schedulers(
+            self.optimizers_dict[model_name], self.config.__dict__[model_name].optimizer)
+            for model_name in self.model_names}
+
+        num_params_dict = {model_name + "_num_params": get_n_config(model) for model_name, model in
+                           self.models_dict.items()}
+        [print(
+            f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters')
+            for model_name in num_params_dict.keys()]
+
+        self.times['init_models_end'] = time()
+        return num_params_dict
+
+    # noinspection PyTypedDict
+    def instantiate_models(self):
         print("Initializing model(s) for " + self.config.mode)
         self.models_dict = {}
         if self.config.mode == 'gan' or self.config.mode == 'search':
@@ -253,46 +288,13 @@ class Modeller:
                                                                          num_targets=self.config.EmbeddingRegressor.num_targets
                                                                          )
             assert self.config.model_paths.autoencoder is not None  # must preload the encoder
-
         if self.config.mode == 'polymorph_classification':
             self.models_dict['polymorph_classifier'] = PolymorphClassifier(self.config.seeds.model,
                                                                            self.config.polymorph_classifier.model,
                                                                            self.dataDims)
-
         null_models = {name: nn.Linear(1, 1) for name in self.model_names if
                        name not in self.models_dict.keys()}  # initialize null models
         self.models_dict.update(null_models)
-
-        if self.config.device.lower() == 'cuda':
-            torch.backends.cudnn.benchmark = True
-            torch.cuda.empty_cache()
-            for model in self.models_dict.values():
-                model.cuda()
-
-        self.optimizers_dict = \
-            {model_name: init_optimizer(model_name, self.config.__dict__[model_name].optimizer, model)
-             for model_name, model in self.models_dict.items()
-             }
-
-        for model_name, model_path in self.config.model_paths.__dict__.items():
-            if model_path is not None:
-                self.models_dict[model_name], self.optimizers_dict[model_name] = reload_model(
-                    self.models_dict[model_name], self.device, self.optimizers_dict[model_name],
-                    model_path
-                )
-
-        self.schedulers_dict = {model_name: init_schedulers(
-            self.optimizers_dict[model_name], self.config.__dict__[model_name].optimizer)
-            for model_name in self.model_names}
-
-        num_params_dict = {model_name + "_num_params": get_n_config(model) for model_name, model in
-                           self.models_dict.items()}
-        [print(
-            f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters')
-            for model_name in num_params_dict.keys()]
-
-        self.times['init_models_end'] = time()
-        return num_params_dict
 
     def load_dataset_and_dataloaders(self, override_test_fraction=None, override_dataset=None):
         """

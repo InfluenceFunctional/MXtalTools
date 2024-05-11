@@ -1401,9 +1401,9 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
 
         elif config.mode == 'autoencoder':
             log_autoencoder_analysis(config, dataDims, train_epoch_stats_dict,
-                                     'train', config.autoencoder.molecule_radius_normalization)
+                                     'train')
             log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict,
-                                     'test', config.autoencoder.molecule_radius_normalization)
+                                     'test')
 
         elif config.mode == 'polymorph_classification':
             classifier_reporting(true_labels=train_epoch_stats_dict['true_labels'],
@@ -1460,7 +1460,7 @@ def classifier_reporting(true_labels, probs, ordered_class_names, wandb, epoch_t
                f"{epoch_type} Confusion Matrix": fig})
 
 
-def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type, molecule_radius_normalization):
+def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
     """
     analyze performance of autoencoder model
     Parameters
@@ -1508,7 +1508,7 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type, mol
         fig, fig2, rmsd, max_dist, tot_overlap = (
             gaussian_3d_overlap_plots(data, decoded_data,
                                       dataDims['num_atom_types'],
-                                      molecule_radius_normalization))
+                                      ))
         wandb.log({
             epoch_type + "_pointwise_sample_distribution": fig,
             epoch_type + "_cluster_sample_distribution": fig2,

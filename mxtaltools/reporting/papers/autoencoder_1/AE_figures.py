@@ -9,26 +9,64 @@ import os
 from scipy.interpolate import interpn
 from scipy.stats import linregress
 
-
 stats_dict_paths = [
     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_10_07-05-21-32-31.npy',
     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_10_07-05-21-32-31.npy',
     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_10_07-05-21-32-31.npy',
-    ]
+]
 # best results from previous runs
 # stats_dict_paths = [r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_4_26-02-22-29-57.npy',
 #                     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_7_27-02-14-34-41.npy',
 #                     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_8_27-02-15-35-51.npy']
 
-stats_dict_names = ["Without Protons",
-                    "With Protons",
-                    "Inferred Protons"]
+stats_dict_names = ["Without Hydrogen",
+                    "With Hydrogen",
+                    "Inferred Hydrogens"]
 
 colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', len(stats_dict_paths), colortype='rgb')
+
 
 def get_fraction(atomic_numbers, target: int):
     """get fraction of atomic numbers equal to target"""
     return np.sum(atomic_numbers == target) / len(atomic_numbers)
+
+
+def compute_principal_axes_np(coords):
+    """
+    compute the principal axes for a given set of particle coordinates, ignoring particle mass
+    use our overlap rules to ensure a fixed direction for all axes under almost all circumstances
+    """
+    points = coords - coords.mean(0)
+
+    x, y, z = points.T
+    Ixx = np.sum((y ** 2 + z ** 2))
+    Iyy = np.sum((x ** 2 + z ** 2))
+    Izz = np.sum((x ** 2 + y ** 2))
+    Ixy = -np.sum(x * y)
+    Iyz = -np.sum(y * z)
+    Ixz = -np.sum(x * z)
+    I = np.array([[Ixx, Ixy, Ixz], [Ixy, Iyy, Iyz], [Ixz, Iyz, Izz]])  # inertial tensor
+    Ipm, Ip = np.linalg.eig(I)  # principal inertial tensor
+    Ipm, Ip = np.real(Ipm), np.real(Ip)
+    sort_inds = np.argsort(Ipm)
+    Ipm = Ipm[sort_inds]
+    Ip = Ip.T[sort_inds]  # want eigenvectors to be sorted row-wise (rather than column-wise)
+
+    # cardinal direction is vector from CoM to the farthest atom
+    dists = np.linalg.norm(points, axis=1)
+    max_ind = np.argmax(dists)
+    max_equivs = np.argwhere(np.round(dists, 8) == np.round(dists[max_ind], 8))[:,
+                 0]  # if there are multiple equidistant atoms - pick the one with the lowest index
+    max_ind = int(np.amin(max_equivs))
+    direction = points[max_ind]
+    direction = np.divide(direction, np.linalg.norm(direction))
+    overlaps = Ip.dot(direction)  # check if the principal components point towards or away from the CoG
+    signs = np.sign(overlaps)  # returns zero for zero overlap, but we want it to default to +1 in this case
+    signs[signs == 0] = 1
+
+    Ip = (Ip.T * signs).T  # if the vectors have negative overlap, flip the direction
+
+    return Ip, Ipm, I
 
 
 def get_point_density(xy, bins=500):
@@ -64,7 +102,6 @@ def RMSD_fig():
     bandwidth = 0.005
     fig = make_subplots(rows=1, cols=1)
     for ind, run_name in enumerate(stats_dicts.keys()):
-
         stats_dict = stats_dicts[run_name]
 
         x = np.concatenate(stats_dict['scaffold_rmsds'])
@@ -184,7 +221,7 @@ def UMAP_fig(max_entries=10000000):
     for ind in range(len(stats_dict_paths)):
         d = np.load(stats_dict_paths[ind], allow_pickle=True).item()
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
-    run_name = "Without Protons"
+    run_name = "Without Hydrogen"
 
     stats_dict = stats_dicts[run_name]
     del stats_dicts
@@ -218,29 +255,18 @@ def UMAP_fig(max_entries=10000000):
 
     PR_triangle_points = np.asarray([[1, 1], [0, 1], [0.5, 0.5]])  # principal inertial ratio points on the triangle
 
-    stats_dict['molecule_principal_moment_1'] = stats_dict['principal_inertial_moments'][:,0]
-    stats_dict['molecule_principal_moment_2'] = stats_dict['principal_inertial_moments'][:,1]
-    stats_dict['molecule_principal_moment_3'] = stats_dict['principal_inertial_moments'][:,2]
+    stats_dict['molecule_principal_moment_1'] = stats_dict['principal_inertial_moments'][:, 0]
+    stats_dict['molecule_principal_moment_2'] = stats_dict['principal_inertial_moments'][:, 1]
+    stats_dict['molecule_principal_moment_3'] = stats_dict['principal_inertial_moments'][:, 2]
     # conventional principal ratios - our convention agreeing with QMUGS
-    PR1 = stats_dict['molecule_principal_moment_2'] / stats_dict['molecule_principal_moment_3']# + 1e-3)
-    PR1 = np.nan_to_num(PR1, posinf=0, neginf=0)
-    PR1 /= np.quantile(PR1, 0.9999)
-    PR2 = stats_dict['molecule_principal_moment_1'] / stats_dict['molecule_principal_moment_3']# + 1e-3)
-    PR2 = np.nan_to_num(PR2)
-    PR2 /= np.quantile(PR2, 0.9999)
-    #
-    # xy = np.vstack([PR1, PR2])
-    # try:
-    #     z = get_point_density(xy, bins=100)
-    #     z[np.isnan(z)] = 0
-    # except:
-    #     z = np.ones_like(PR1)
-    #
-    # fig = go.Figure(go.Scattergl(x=PR2, y=PR1, mode='markers', opacity=0.25, marker_color=z))
-    # fig.update_layout(xaxis_title='I1/I3', yaxis_title='I2/I1', xaxis_range=[0, 1.1], yaxis_range=[.4, 1.1])
-    # fig.show()
+    principal_ratio1 = stats_dict['molecule_principal_moment_2'] / stats_dict['molecule_principal_moment_3']  # + 1e-3)
+    principal_ratio1 = np.nan_to_num(principal_ratio1, posinf=0, neginf=0)
+    principal_ratio1 /= np.quantile(principal_ratio1, 0.9999)
+    principal_ratio2 = stats_dict['molecule_principal_moment_1'] / stats_dict['molecule_principal_moment_3']  # + 1e-3)
+    principal_ratio2 = np.nan_to_num(principal_ratio2)
+    principal_ratio2 /= np.quantile(principal_ratio2, 0.9999)
 
-    PR_stack = np.concatenate([PR1[:, None], PR2[:, None]], axis=1)
+    PR_stack = np.concatenate([principal_ratio1[:, None], principal_ratio2[:, None]], axis=1)
     sphere_like = -np.linalg.norm(PR_triangle_points[0] - PR_stack, axis=1)
     disc_like = -np.linalg.norm(PR_triangle_points[1] - PR_stack, axis=1)
     rod_like = -np.linalg.norm(PR_triangle_points[2] - PR_stack, axis=1)
@@ -255,7 +281,42 @@ def UMAP_fig(max_entries=10000000):
     point_colors3 = normalize_colors(composition_coloration)
     legend_entries3 = ["# Rings", "# Rotatable Bonds", "Mol. Radius"]
 
-    fig2 = make_subplots(rows=1, cols=3, horizontal_spacing=.01)
+    'triangle PR plot'
+    # xy = np.vstack([principal_ratio1, principal_ratio2])
+    # try:
+    #     z = get_point_density(xy, bins=100)
+    #     z[np.isnan(z)] = 0
+    # except:
+    #     z = np.ones_like(principal_ratio1)
+    #
+    # x, y = np.meshgrid(np.linspace(0, 1, 100), np.linspace(0.5, 1, 100))
+    # good_inds = np.argwhere((y.flatten() > (1 - x.flatten())) * (y.flatten() > x.flatten())).flatten()
+    # x=x.flatten()[good_inds]
+    # y=y.flatten()[good_inds]
+    # PR_stack = np.concatenate([x[:, None], y[:, None]], axis=1)
+    # sphere_like = -np.linalg.norm(PR_triangle_points[0] - PR_stack, axis=1)
+    # disc_like = -np.linalg.norm(PR_triangle_points[1] - PR_stack, axis=1)
+    # rod_like = -np.linalg.norm(PR_triangle_points[2] - PR_stack, axis=1)
+    #
+    # test_colors = normalize_colors(composition_coloration)
+
+    # fig = go.Figure() #make_subplots(rows=1, cols=2)
+    # fig.add_scattergl(x=principal_ratio2, y=principal_ratio1, mode='markers', opacity=0.25, marker_color=point_colors2)
+    # #fig.add_scattergl(x=x, y=y, mode='markers', opacity=0.25, marker_color=test_colors)
+    # fig.update_layout(xaxis1_title='I1/I3', yaxis1_title='I2/I1', xaxis1_range=[0, 1.1], yaxis1_range=[.4, 1.1])
+    # fig.write_image('triangle.png', width=400, height=400)
+
+    'embeddings'
+    fig2 = make_subplots(rows=1, cols=3, horizontal_spacing=.01,
+                         subplot_titles=["(a) Composition", "(b) Inertial Ratios", "(c) Geometry"])
+    # fig2.add_layout_image(dict(
+    #     source=Image.open('triangle.png'),
+    #     x=0, y=[0.2, 0.4, 0.6][ind],
+    #     sizex=0.2, sizey=0.2, xanchor='left', yanchor='middle',
+    #     opacity=.75, yref='y domain', xref='x domain')
+    # )
+    legend_groups = ["(a)", "(b)", "(c)"]
+
     annotations_list = []
     for ind2, (point_colors, legend_entries) in enumerate(
             zip([point_colors1, point_colors2, point_colors3], [legend_entries1, legend_entries2, legend_entries3])):
@@ -288,11 +349,17 @@ def UMAP_fig(max_entries=10000000):
                         mol_point_callout(fig2, ix, iy, ex, ey, embedding, smiles, 0.125, row=1, col=ind2 + 1))
 
         fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
-                           marker_color=['rgb(255,0,0)'], name=legend_entries[0], showlegend=True, row=1, col=ind2 + 1)
+                           marker_color=['rgb(255,0,0)'], name=legend_entries[0], showlegend=True,
+                           legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
+                           row=1, col=ind2 + 1)
         fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
-                           marker_color=['rgb(0,255,0)'], name=legend_entries[1], showlegend=True, row=1, col=ind2 + 1)
+                           marker_color=['rgb(0,255,0)'], name=legend_entries[1], showlegend=True,
+                           legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
+                           row=1, col=ind2 + 1)
         fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
-                           marker_color=['rgb(0, 0,255)'], name=legend_entries[2], showlegend=True, row=1, col=ind2 + 1)
+                           marker_color=['rgb(0, 0,255)'], name=legend_entries[2], showlegend=True,
+                           legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
+                           row=1, col=ind2 + 1)
 
     fig2.update_layout(annotations=annotations_list)
 
@@ -312,7 +379,7 @@ def UMAP_fig(max_entries=10000000):
         xaxis2_title='Component 1',
         yaxis1_title='Component 2',
     )
-    fig2.update_layout(legend={'itemsizing': 'constant', 'orientation': 'h'})
+    fig2.update_layout(legend={'itemsizing': 'constant'})#, 'orientation': 'h'})
 
     fig2.update_layout(font=dict(size=18))
     fig2.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
@@ -324,10 +391,10 @@ def UMAP_fig(max_entries=10000000):
 
 
 def normalize_colors(composition_coloration):
-    composition_coloration -= composition_coloration.mean(0)[None, :]
+    composition_coloration -= composition_coloration.mean(0)[None, :]  # helpful distortion
     composition_coloration /= composition_coloration.std(0)[None, :]
-    composition_coloration = np.clip(composition_coloration, a_min=np.quantile(composition_coloration, 0.05),
-                                     a_max=np.quantile(composition_coloration, 0.95))
+    composition_coloration = np.clip(composition_coloration, a_min=np.quantile(composition_coloration, 0.01),
+                                     a_max=np.quantile(composition_coloration, 0.99))
     composition_coloration -= composition_coloration.min(0)
     composition_coloration /= composition_coloration.max(0)
     composition_coloration *= 255
@@ -484,7 +551,7 @@ def regression_training_curve():
 
 
 #
-#fig = RMSD_fig()
+fig = RMSD_fig()
 #fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
 fig2 = UMAP_fig(max_entries=1000000)

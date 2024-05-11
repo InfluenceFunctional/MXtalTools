@@ -725,7 +725,7 @@ def set_molecule_alignment(data, mode, right_handed=False, include_inversion=Fal
                     data.pos[data.batch == ind] = -data.pos[data.batch == ind]  # invert
 
             data.aunit_handedness = torch.ones_like(data.aunit_handedness)
-    elif mode == 'as is':
+    elif mode == 'as is' or mode is None:
         pass  # do nothing
 
     return data

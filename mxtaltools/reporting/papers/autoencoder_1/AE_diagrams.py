@@ -119,8 +119,8 @@ def process_flat_molecule(loader, flat_ind, encoder):
 
 
 def converging_gaussians_fig():
-    from standalone.qm9_encoder import Qm9Autoencoder
-    from standalone.qm9_loader import QM9Loader
+    from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
+    from mxtaltools.standalone.qm9_loader import QM9Loader
     loader = QM9Loader(device='cpu')
     loader.dataset_config.filter_protons = False
     loader.load_dataset(max_dataset_length=10000)

@@ -34,9 +34,11 @@ class PointAutoencoder(BaseGraphModel):
         self.bottleneck_dim = config.bottleneck_dim
         self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
 
-        config.encoder.graph.cutoff = config.encoder.graph.cutoff / self.radial_normalization  # normalize the graph cutoff from real space to normed space
+        #self.register_buffer('convolution_cutoff', config.encoder.graph.cutoff / self.radial_normalization)
+        #config.encoder.graph.cutoff = self.convolution_cutoff  # normalize the graph cutoff from real space to normed space
         self.encoder = PointEncoder(seed, config.encoder, config.bottleneck_dim)
-        self.decoder = PointDecoder(seed, config.decoder, config.bottleneck_dim, self.output_depth, self.num_decoder_nodes)
+        self.decoder = PointDecoder(seed, config.decoder, config.bottleneck_dim, self.output_depth,
+                                    self.num_decoder_nodes)
         self.scalarizer = Scalarizer(config.bottleneck_dim, self.cartesian_dimension, None, None, 0)
         #self.decoder.model.vector_to_scalar[0] = self.scalarizer
 
@@ -45,7 +47,9 @@ class PointAutoencoder(BaseGraphModel):
         decoding = self.decode(encoding)
 
         # de-normalize predicted node positions
-        decoding = torch.cat([decoding[:, :self.cartesian_dimension] * self.radial_normalization, decoding[:, self.cartesian_dimension:]], dim=1)
+        decoding = torch.cat(
+            [decoding[:, :self.cartesian_dimension] * self.radial_normalization,
+             decoding[:, self.cartesian_dimension:]], dim=1)
         if return_encoding:
             return decoding, encoding
         else:
@@ -65,7 +69,7 @@ class PointAutoencoder(BaseGraphModel):
     def decode(self, encoding):
         """encoding nx3xk"""
         decoding = self.decoder(self.scalarizer(encoding),
-            #x=torch.zeros_like(encoding[:, 0, :]),  #
+                                #x=torch.zeros_like(encoding[:, 0, :]),  #
                                 v=encoding)  # scalar input comes through scalarizer in first layer vector_to_scalar
 
         scalar_decoding, vector_decoding = decoding

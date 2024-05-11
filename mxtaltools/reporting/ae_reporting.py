@@ -32,7 +32,7 @@ def autoencoder_decoder_sample_validation(data, decoded_data, config, dataDims, 
     return coord_overlap, full_overlap, self_coord_overlap, self_overlap, self_type_overlap, type_overlap
 
 
-def gaussian_3d_overlap_plots(data, decoded_data, max_point_types, molecule_radius_normalization):
+def gaussian_3d_overlap_plots(data, decoded_data, max_point_types):
     # 3D swarm fig
     fig = swarm_vs_tgt_fig(data, decoded_data, max_point_types)
 
