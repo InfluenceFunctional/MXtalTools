@@ -35,7 +35,7 @@ class PointAutoencoder(BaseGraphModel):
         self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
 
         #self.register_buffer('convolution_cutoff', config.encoder.graph.cutoff / self.radial_normalization)
-        #config.encoder.graph.cutoff = self.convolution_cutoff  # normalize the graph cutoff from real space to normed space
+        config.encoder.graph.cutoff = self.convolution_cutoff  # normalize the graph cutoff from real space to normed space
         self.encoder = PointEncoder(seed, config.encoder, config.bottleneck_dim)
         self.decoder = PointDecoder(seed, config.decoder, config.bottleneck_dim, self.output_depth,
                                     self.num_decoder_nodes)
