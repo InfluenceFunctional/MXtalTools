@@ -13,15 +13,20 @@ Installation Instructions
 
  install_requirements.sh
 
+3. If planning to do dataset construction, optionally also install rdkit (for single-molecule featurization) via
 
-3. If you plan to do any model training, or use our built-in analysis tools, login to your weights and biases ("wandb") account, which is necessary for run monitoring and reporting in this repository.
-If just using tools, this is probably unnecessary.
+.. code-block:: bash
+
+ pip install rdkit
+
+and the Cambridge Structural Database Python API (for crystal featurization), which requires a separate license.
+
+4. If you plan to do model training, or use our analysis tools, login to your weights and biases ("wandb") account, which is necessary for run monitoring and reporting in this repository. If just using functions or utilities from the package, this is probably unnecessary.
 
 .. code-block:: bash
 
  wandb login
 
-4. In configs/users create a *.yaml* file for yourself and edit the paths and wandb details to correspond to your preferences.
-When running the code, append the following to your command line prompt.
-    --user YOUR_USERNAME
+5. In configs/users create a *.yaml* file for yourself and edit the paths and wandb details to correspond to your preferences. When running the code, append the following to your command line prompt.
 
+ --user YOUR_USERNAME
