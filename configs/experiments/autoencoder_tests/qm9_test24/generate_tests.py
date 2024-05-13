@@ -482,7 +482,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 14: big with noise
+                }}}},  # 14: big with noise - all weirdly killed, including OOM
     {
         'min_batch_size': 10,
         'max_batch_size': 300,
@@ -523,7 +523,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 15 lower overlap eps
+                }}}},  # 15 lower overlap eps - kindof normal performance
     {
         'min_batch_size': 10,
         'max_batch_size': 300,
@@ -610,7 +610,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 17: slower. Good train/test but worse rmsds
+                }}}},  # 17: slower. Good train/tebut worse rmsds
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -652,7 +652,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 18: 512 output nodes - same as 17 but good rmsds? Maybe an artifact of our scaffolding algo?
+                }}}},  # 18: 512 output nodes - New best/baseline
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -694,7 +694,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 19:
+                }}}},  # 19: CUDA assert after 703 epochs then OOM kill after 200 - was converging OK before cutoff mid-run
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -736,7 +736,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 20:
+                }}}},  # 20: converged at 2k steps and second run cancelled - slightly better than baseline
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -778,7 +778,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 21: 1024 embedding, crashed out
+                }}}},  # 21: 1024 embedding - CUDA error then OOM kill, both early
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -820,7 +820,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 22:
+                }}}},  # 22: 2 gcs 2 decoder layers - converges at a very high loss
 
     # we need also some protonated and inferred proton runs
     # one run with higher noise
@@ -865,7 +865,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 23: 13 with more noise
+                }}}},  # 23: 13 with more noise - almost identical... maybe more noise?
 
     {
         'min_batch_size': 50,
@@ -908,7 +908,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 24: 13 with protons
+                }}}},  # 24: 18 with protons - mean to do 13 but didn't
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -950,7 +950,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 25: 18 with protons
+                }}}},  # 25: 18 with protons - almost identical to 24
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -992,7 +992,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 26: 13 inferred protons
+                }}}},  # 26: 13 inferred protons - same issue as 23/24
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -1035,6 +1035,14 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}},  # 27: 18 inferred protons
+
+
+    '''
+    - extend convergence - keep cutting off training at 2k steps
+    - local test very large noise
+    - these OOM issues are getting ridiculous - investigate
+    - see further notes in test 25
+    '''
 ]
 
 

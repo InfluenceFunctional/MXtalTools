@@ -2,10 +2,8 @@ machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: embedding_regression
-dataset_name: 'qm9_molecules_dataset.pkl'
-misc_dataset_name: 'misc_data_for_qm9_molecules_dataset.npy'
-dataset_yaml_path: '/qm9_autoencoder.yaml' # '/dataset/full_discriminator.yaml' #
-extra_test_set_name: null
+dataset_name: 'test_qm9_molecules_dataset.pt' #'test_dataset.pt'
+dataset_yaml_path: '/qm9_autoencoder.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
 model_names: ['autoencoder', 'embedding_regressor']
@@ -16,8 +14,8 @@ dataset:
   type: 'molecule'
   max_dataset_length: 10000000
   test_fraction: 0.2
-  filter_protons: True
-  regression_target: molecule_gap_energy
+  filter_protons: False
+  regression_target: gap_energy
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -51,9 +49,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  #autoencoder: null  # must provide a checkpoint for embedding regression
-  #autoencoder: r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57',  # no protons
-  autoencoder: '/cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'  # protons
+  autoencoder: null
   embedding_regressor: null
 
 positional_noise:
@@ -64,11 +60,6 @@ positional_noise:
 
 generate_sgs: null
 supercell_size: 5
-
-autoencoder:
-  init_sigma: 0.15
-  optimizer: null
-  model: null
 
 embedding_regressor:
   prediction_type: scalar

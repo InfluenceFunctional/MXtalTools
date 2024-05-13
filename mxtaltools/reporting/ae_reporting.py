@@ -42,13 +42,16 @@ def gaussian_3d_overlap_plots(data, decoded_data, max_point_types):
     tot_overlaps = np.zeros_like(rmsds)
     for ind in range(data.num_graphs):
         if ind == 0:
-            rmsds[ind], max_dists[ind], tot_overlaps[ind], fig2 = scaffolded_decoder_clustering(ind, data, decoded_data,
-                                                                                                max_point_types,
-                                                                                                return_fig=True)
+            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful, fig2 = scaffolded_decoder_clustering(ind,
+                                                                                                                  data,
+                                                                                                                  decoded_data,
+                                                                                                                  max_point_types,
+                                                                                                                  return_fig=True)
         else:
-            rmsds[ind], max_dists[ind], tot_overlaps[ind] = scaffolded_decoder_clustering(ind, data, decoded_data,
-                                                                                          max_point_types,
-                                                                                          return_fig=False)
+            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful = scaffolded_decoder_clustering(ind, data,
+                                                                                                            decoded_data,
+                                                                                                            max_point_types,
+                                                                                                            return_fig=False)
 
     return fig, fig2, np.mean(rmsds[np.isfinite(rmsds)]), np.mean(
         max_dists[np.isfinite(max_dists)]), tot_overlaps.mean()
@@ -110,14 +113,15 @@ def scaffolded_decoder_clustering(graph_ind, data, decoded_data, num_classes,
     (pred_particles, pred_particle_weights, points_true) = (
         decoder_scaffolded_clustering(data, decoded_data, graph_ind, num_classes))
 
-    matched_particles, max_dist, rmsd = compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles)
+    matched_particles, max_dist, rmsd, match_successful = compute_point_cloud_rmsd(points_true, pred_particle_weights,
+                                                                                   pred_particles)
 
     if return_fig:
         fig2 = swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights, pred_particles, points_true)
 
-        return rmsd, max_dist, pred_particle_weights.mean(), fig2
+        return rmsd, max_dist, pred_particle_weights.mean(), match_successful, fig2
     else:
-        return rmsd, max_dist, pred_particle_weights.mean()
+        return rmsd, max_dist, pred_particle_weights.mean(), match_successful
 
 
 def decoder_scaffolded_clustering(data, decoded_data, graph_ind, num_classes):
@@ -135,11 +139,16 @@ def decoder_scaffolded_clustering(data, decoded_data, graph_ind, num_classes):
     distmat = cdist(points_true, points_pred)
     pred_particle_weights = np.zeros(len(distmat))
     pred_particles = np.zeros((len(distmat), points_pred.shape[1]))
-    for ind in range(len(distmat)):
+    for ind in range(len(distmat)):  # for each particle in the scaffold
+        # collect decoder points within the cartesian cutoff range
         collect_inds = np.argwhere(distmat[ind] < intrapoint_cutoff)[:, 0]
+        # get the relevant 3+n_class dim points
         collected_particles = points_pred[collect_inds]
+        # get the relevant swarm weights
         collected_particle_weights = sample_weights[collect_inds]
+        # sum the probability mass within the cutoff of this scaffold particle
         pred_particle_weights[ind] = collected_particle_weights.sum()
+        # aggregate the nearby6 swarm into a single synthetic particle
         pred_particles[ind] = np.sum(collected_particle_weights[:, None] * collected_particles, axis=0)
 
     return pred_particles, pred_particle_weights, points_true
@@ -147,24 +156,27 @@ def decoder_scaffolded_clustering(data, decoded_data, graph_ind, num_classes):
 
 def compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles, weight_threshold=0.5):
     """get distances to true and predicted particles"""
+
+    # confirm we have the same number of predicted and scaffold particles, and that each predicted particle
+    # is closer to its scaffold point than any other particle
     dists = cdist(pred_particles, points_true)
     matched_particle_inds = np.argmin(dists, axis=0)
     all_targets_matched = len(np.unique(matched_particle_inds)) == len(points_true)
     matched_particles = pred_particles[matched_particle_inds]
+
     matched_dists = np.linalg.norm(points_true[:, :3] - matched_particles[:, :3], axis=1)
     if all_targets_matched and np.amax(
             np.abs(1 - pred_particle_weights)) < weight_threshold:  # +/- X% of 100% probability mass on site
-        rmsd = matched_dists.mean()
-        max_dist = matched_dists.max()
+        match_successful = True
     else:
-        rmsd = np.Inf
-        max_dist = np.Inf
-    return matched_particles, max_dist, rmsd
+        match_successful = False
+    rmsd = matched_dists.mean()
+    max_dist = matched_dists.max()
+    return matched_particles, max_dist, rmsd, match_successful
 
 
 def extract_true_and_predicted_points(data, decoded_data, graph_ind, num_classes,
                                       to_numpy=False):
-
     if data.x.ndim > 1:
         data.x = data.x[:, 0]
     coords_true = data.pos[data.batch == graph_ind]
@@ -213,14 +225,13 @@ def swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights,
     return fig2
 
 
-def swarm_vs_tgt_fig(data, decoded_data, max_point_types):
+def swarm_vs_tgt_fig(data, decoded_data, max_point_types, graph_ind=0):
     cmax = 1
     fig = go.Figure()  # scatter all the true & predicted points, colorweighted by atom type
     colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)',
               'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
               'rgb(165, 170, 153)'] * 10
     colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
-    graph_ind = 0
     points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
     points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
     for j in range(max_point_types):

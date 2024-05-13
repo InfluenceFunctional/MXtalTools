@@ -10,9 +10,9 @@ from scipy.interpolate import interpn
 from scipy.stats import linregress
 
 stats_dict_paths = [
-    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_10_07-05-21-32-31.npy',
-    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_10_07-05-21-32-31.npy',
-    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_10_07-05-21-32-31.npy',
+    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_23_11-05-18-22-17.npy',
+    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_25_11-05-19-15-19.npy',
+    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_27_11-05-11-26-48.npy',
 ]
 # best results from previous runs
 # stats_dict_paths = [r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_4_26-02-22-29-57.npy',

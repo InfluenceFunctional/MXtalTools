@@ -270,7 +270,8 @@ class Modeller:
                                                                int(torch.sum(self.autoencoder_type_index != -1)),
                                                                self.autoencoder_type_index,
                                                                self.config.autoencoder.molecule_radius_normalization,
-                                                               infer_protons=self.config.autoencoder.infer_protons
+                                                               infer_protons=self.config.autoencoder.infer_protons,
+                                                               protons_in_input=not self.config.dataset.filter_protons
                                                                )
         if self.config.mode == 'embedding_regression' or self.config.model_paths.embedding_regressor is not None:
             self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model,
@@ -278,14 +279,15 @@ class Modeller:
                                                                int(torch.sum(self.autoencoder_type_index != -1)),
                                                                self.autoencoder_type_index,
                                                                self.config.autoencoder.molecule_radius_normalization,
-                                                               infer_protons=self.config.autoencoder.infer_protons
+                                                               infer_protons=self.config.autoencoder.infer_protons,
+                                                               protons_in_input=not self.config.dataset.filter_protons
                                                                )
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
                 param.requires_grad = False
-            self.config.EmbeddingRegressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
+            self.config.embedding_regressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
             self.models_dict['embedding_regressor'] = EmbeddingRegressor(self.config.seeds.model,
-                                                                         self.config.EmbeddingRegressor.model,
-                                                                         num_targets=self.config.EmbeddingRegressor.num_targets
+                                                                         self.config.embedding_regressor.model,
+                                                                         num_targets=self.config.embedding_regressor.num_targets
                                                                          )
             assert self.config.model_paths.autoencoder is not None  # must preload the encoder
         if self.config.mode == 'polymorph_classification':
@@ -680,14 +682,15 @@ class Modeller:
 
         Ip, Ipm, I = batch_molecule_principal_axes_torch([data.pos[data.batch == ind] for ind in range(data.num_graphs)])
 
-        scaffold_rmsds, scaffold_max_dists = [], []
+        scaffold_rmsds, scaffold_max_dists, scaffold_matched = [], [], []
         #glom_rmsds, glom_max_dists = [], []
         for ind in range(data.num_graphs):  # somewhat slow
-            rmsd, max_dist, weight_mean = scaffolded_decoder_clustering(ind, data, decoded_data,
+            rmsd, max_dist, weight_mean, match_successful = scaffolded_decoder_clustering(ind, data, decoded_data,
                                                                         self.dataDims['num_atom_types'],
                                                                         return_fig=False)
             scaffold_rmsds.append(rmsd)
             scaffold_max_dists.append(max_dist)
+            scaffold_matched.append(match_successful)
             #  very slow
             # coords_true, coords_pred, points_true, points_pred, sample_weights = (
             #     extract_true_and_predicted_points(data, decoded_data, ind, self.config.autoencoder.molecule_radius_normalization, self.dataDims['num_atom_types'], to_numpy=True))
@@ -708,6 +711,7 @@ class Modeller:
                         Ipm.cpu().detach().numpy(),
                         np.asarray(scaffold_rmsds),
                         np.asarray(scaffold_max_dists),
+                        np.asarray(scaffold_matched),
                         # np.asarray(glom_rmsds),
                         # np.asarray(glom_max_dists),
                         data.smiles
@@ -722,6 +726,7 @@ class Modeller:
                       'principal_inertial_moments',
                       'scaffold_rmsds',
                       'scaffold_max_dists',
+                      'scaffold_matched'
                       # 'glom_rmsds',
                       # 'glom_max_dists',
                       'molecule_smiles'
@@ -953,22 +958,19 @@ class Modeller:
         self.logger.concatenate_stats_dict(self.epoch_type)
 
     def embedding_regression_step(self, data, update_weights):
-        data = self.preprocess_ae_inputs(data, no_noise=True, orientation_override='random')
         data = data.to(self.device)
+        _, data = self.preprocess_ae_inputs(data, no_noise=True, orientation_override='random')
         v_embedding = self.models_dict['autoencoder'].encode(data)
         s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
-        # if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
-        #     data.y = batch_compute_dipole(data.pos, data.batch, data.x[:, 0], self.electronegativity_tensor)
-        #
 
         predictions = self.models_dict['embedding_regressor'](s_embedding, v_embedding)[:, 0]
         losses = F.smooth_l1_loss(predictions, data.y, reduction='none')
-        predictions = predictions.cpu().detach().numpy() * self.dataDims['target_std'] + self.dataDims['target_mean']
-        targets = data.y.cpu().detach().numpy() * self.dataDims['target_std'] + self.dataDims['target_mean']
+        predictions = predictions * self.dataDims['target_std'] + self.dataDims['target_mean']
+        targets = data.y * self.dataDims['target_std'] + self.dataDims['target_mean']
 
-        if self.config.EmbeddingRegressor.prediction_type == 'vector':  # this is quite fast
-            predictions = np.linalg.norm(predictions, axis=-1)
-            targets = np.linalg.norm(targets, axis=-1)
+        if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
+            assert False, "Vector predictions are not implemented"
+
         regression_loss = losses.mean()
         if update_weights:
             self.optimizers_dict['embedding_regressor'].zero_grad(
@@ -979,9 +981,11 @@ class Modeller:
         self.logger.update_current_losses('embedding_regressor', self.epoch_type,
                                           regression_loss.cpu().detach().numpy(),
                                           losses.cpu().detach().numpy())
-        stats_values = [predictions, targets]
+        stats_values = [predictions.cpu().detach().numpy(), targets.cpu().detach().numpy()]
 
-        self.logger.update_stats_dict(self.epoch_type, ['regressor_prediction', 'regressor_target'], stats_values,
+        self.logger.update_stats_dict(self.epoch_type,
+                                      ['regressor_prediction', 'regressor_target'],
+                                      stats_values,
                                       mode='extend')
 
     #
@@ -1184,7 +1188,7 @@ class Modeller:
         # atomwise random noise
         if not no_noise:
             if noise_override is not None:
-                data.pos += torch.randn_like(data.pos) * self.config.positional_noise.autoencoder
+                data.pos += torch.randn_like(data.pos) * noise_override
             elif self.config.positional_noise.autoencoder > 0:
                 data.pos += torch.randn_like(data.pos) * self.config.positional_noise.autoencoder
 

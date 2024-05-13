@@ -16,31 +16,33 @@ class PointAutoencoder(BaseGraphModel):
                  atom_embedding_vector: torch.tensor,
                  radial_normalization: float,
                  infer_protons: bool,
+                 protons_in_input: bool,
                  ):
         super(PointAutoencoder, self).__init__()
         """
         3D o3 equivariant multi-type point cloud autoencoder model
-        Mo3ENN
+        Mo3ENet
         """
 
         torch.manual_seed(seed)
-        self.inferring_protons = infer_protons
+
         self.cartesian_dimension = 3
         self.num_classes = num_atom_types
         self.output_depth = self.num_classes + self.cartesian_dimension + 1
         self.num_decoder_nodes = config.decoder.num_nodes
-        self.register_buffer('atom_embedding_vector', atom_embedding_vector)
-        self.fully_equivariant = True
         self.bottleneck_dim = config.bottleneck_dim
-        self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
 
+        self.register_buffer('atom_embedding_vector', atom_embedding_vector)
+        self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
+        self.register_buffer('protons_in_input', torch.tensor(protons_in_input, dtype=torch.bool))
+        self.register_buffer('inferring_protons', torch.tensor(infer_protons, dtype=torch.bool))
         self.register_buffer('convolution_cutoff', config.encoder.graph.cutoff / self.radial_normalization)
         config.encoder.graph.cutoff = self.convolution_cutoff  # normalize the graph cutoff from real space to normed space
+
         self.encoder = PointEncoder(seed, config.encoder, config.bottleneck_dim)
         self.decoder = PointDecoder(seed, config.decoder, config.bottleneck_dim, self.output_depth,
                                     self.num_decoder_nodes)
         self.scalarizer = Scalarizer(config.bottleneck_dim, self.cartesian_dimension, None, None, 0)
-        #self.decoder.model.vector_to_scalar[0] = self.scalarizer
 
     def forward(self, data, return_encoding=False, **kwargs):
         encoding = self.encode(data)
