@@ -11,6 +11,8 @@ from mxtaltools.common.geometry_calculations import batch_molecule_principal_axe
 from mxtaltools.crystal_building.utils import align_molecules_to_principal_axes
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering, swarm_vs_tgt_fig
 
+from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
+from mxtaltools.standalone.qm9_loader import QM9Loader
 
 def crude_2d_gaussian():
     n_input_particles = 4
@@ -119,8 +121,6 @@ def process_flat_molecule(loader, flat_ind, encoder):
 
 
 def converging_gaussians_fig():
-    from mxtaltools.standalone.qm9_encoder import Qm9Autoencoder
-    from mxtaltools.standalone.qm9_loader import QM9Loader
     loader = QM9Loader(device='cpu')
     loader.dataset_config.filter_protons = False
     loader.load_dataset(max_dataset_length=10000)
@@ -261,118 +261,115 @@ def converging_gaussians_fig():
         fig.show(renderer='browser')
 
 
-# converging_gaussians_fig()
 
-from standalone.qm9_encoder import Qm9Autoencoder
-from standalone.qm9_loader import QM9Loader
+def converging_caaussians_gif():
+    loader = QM9Loader(device='cpu')
+    loader.dataset_config.filter_protons = False
+    loader.load_dataset(max_dataset_length=10000)
+    encoder = Qm9Autoencoder(device='cpu',
+                             num_atom_types=loader.dataDims['num_atom_types'],
+                             min_num_atoms=loader.dataDims['min_molecule_num_atoms'],
+                             max_num_atoms=loader.dataDims['max_molecule_num_atoms'],
+                             max_molecule_radius=loader.dataDims['max_molecule_radius'],
+                             )
 
-loader = QM9Loader(device='cpu')
-loader.dataset_config.filter_protons = False
-loader.load_dataset(max_dataset_length=10000)
-encoder = Qm9Autoencoder(device='cpu',
-                         num_atom_types=loader.dataDims['num_atom_types'],
-                         min_num_atoms=loader.dataDims['min_molecule_num_atoms'],
-                         max_num_atoms=loader.dataDims['max_molecule_num_atoms'],
-                         max_molecule_radius=loader.dataDims['max_molecule_radius'],
-                         )
+    flat_ind = 980
+    data = process_flat_molecule(loader, flat_ind, encoder)
+    scaled_data, decoded_data, _ = get_decoding(data.clone(), encoder, noise=None)
 
-flat_ind = 980
-data = process_flat_molecule(loader, flat_ind, encoder)
-scaled_data, decoded_data, _ = get_decoding(data.clone(), encoder, noise=None)
+    ptp_x = np.ptp(scaled_data.pos[:, 0].numpy())
+    ptp_y = np.ptp(scaled_data.pos[:, 1].numpy())
 
-ptp_x = np.ptp(scaled_data.pos[:, 0].numpy())
-ptp_y = np.ptp(scaled_data.pos[:, 1].numpy())
+    min_xval, max_xval = -ptp_x / 2, ptp_x / 2
+    min_yval, max_yval = -ptp_y / 2, ptp_y / 2
 
-min_xval, max_xval = -ptp_x / 2, ptp_x / 2
-min_yval, max_yval = -ptp_y / 2, ptp_y / 2
+    num_gridpoints = 150
+    x = np.linspace(min_xval * 1.75, max_xval * 1.75, num_gridpoints)
+    y = np.linspace(min_yval * 1.75, max_yval * 1.75, num_gridpoints)
+    xx, yy = np.meshgrid(x, y)
+    grid_array = np.stack((xx.flatten(), yy.flatten())).T
 
-num_gridpoints = 150
-x = np.linspace(min_xval * 1.75, max_xval * 1.75, num_gridpoints)
-y = np.linspace(min_yval * 1.75, max_yval * 1.75, num_gridpoints)
-xx, yy = np.meshgrid(x, y)
-grid_array = np.stack((xx.flatten(), yy.flatten())).T
+    colors = ['rgb(255, 255, 255)', 'rgb(144, 144, 144)', 'rgb(48, 80, 248)', 'rgb(255, 13, 13)', 'rgb(144, 224, 80)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
+              'rgb(165, 170, 153)'] * 10
+    colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
 
-colors = ['rgb(255, 255, 255)', 'rgb(144, 144, 144)', 'rgb(48, 80, 248)', 'rgb(255, 13, 13)', 'rgb(144, 224, 80)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
-          'rgb(165, 170, 153)'] * 10
-colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
+    sigmas = np.logspace(np.log10(0.5), np.log10(0.05), 100)
+    noises = np.logspace(0, -3, 100)
 
-sigmas = np.logspace(np.log10(0.5), np.log10(0.05), 100)
-noises = np.logspace(0, -3, 100)
+    num_atom_types = loader.dataDims['num_atom_types']
 
-num_atom_types = loader.dataDims['num_atom_types']
+    if num_atom_types == 4:
+        atom_type_list = ['Carbon', 'Nitrogen', 'Oxygen', 'Fluorine']
+        colors = colors[1:]
+    elif num_atom_types == 5:
+        atom_type_list = ['Hydrogen', 'Carbon', 'Nitrogen', 'Oxygen', 'Fluorine']
+    else:
+        assert False
 
-if num_atom_types == 4:
-    atom_type_list = ['Carbon', 'Nitrogen', 'Oxygen', 'Fluorine']
-    colors = colors[1:]
-elif num_atom_types == 5:
-    atom_type_list = ['Hydrogen', 'Carbon', 'Nitrogen', 'Oxygen', 'Fluorine']
-else:
-    assert False
+    for ind, (sigma, noise) in enumerate(tqdm(zip(sigmas, noises))):
+        scaled_data, decoded_data, overlap = get_decoding(data.clone(), encoder, noise)
+        rmsd, max_dist, weight_mean, match_su = scaffolded_decoder_clustering(0, scaled_data, decoded_data,
+                                                                    num_atom_types,
+                                                                    return_fig=False)
+        fig = go.Figure()
+        for j in range(num_atom_types):
+            points_true = scaled_data.pos[data.x[:, 0] == j]
 
-for ind, (sigma, noise) in enumerate(tqdm(zip(sigmas, noises))):
-    scaled_data, decoded_data, overlap = get_decoding(data.clone(), encoder, noise)
-    rmsd, max_dist, weight_mean, match_successful = scaffolded_decoder_clustering(0, scaled_data, decoded_data,
-                                                                num_atom_types,
-                                                                return_fig=False)
-    fig = go.Figure()
-    for j in range(num_atom_types):
-        points_true = scaled_data.pos[data.x[:, 0] == j]
+            points_pred = decoded_data.pos.numpy()
+            pred_type_weights = (decoded_data.aux_ind * decoded_data.x[:, j]).cpu().detach().numpy()
+            decoded_density = np.sum(
+                pred_type_weights * np.exp(-(cdist(grid_array, points_pred[:, :2]) ** 2 / sigma)), axis=-1).reshape(
+                num_gridpoints, num_gridpoints)
 
-        points_pred = decoded_data.pos.numpy()
-        pred_type_weights = (decoded_data.aux_ind * decoded_data.x[:, j]).cpu().detach().numpy()
-        decoded_density = np.sum(
-            pred_type_weights * np.exp(-(cdist(grid_array, points_pred[:, :2]) ** 2 / sigma)), axis=-1).reshape(
-            num_gridpoints, num_gridpoints)
+            fig.add_trace(go.Surface(x=x, y=y, z=decoded_density,
+                                     surfacecolor=decoded_density,
+                                     opacity=1, cmin=0, cmax=1,
+                                     colorscale=colorscales[j],
+                                     showscale=False, ))
 
-        fig.add_trace(go.Surface(x=x, y=y, z=decoded_density,
-                                 surfacecolor=decoded_density,
-                                 opacity=1, cmin=0, cmax=1,
-                                 colorscale=colorscales[j],
-                                 showscale=False, ))
+            fig.add_trace(go.Scatter3d(x=points_true[:, 0], y=points_true[:, 1], z=points_true[:, 2] + 0.05,
+                                       mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
+                                       showlegend=True, name=atom_type_list[j]
+                                       ))
 
-        fig.add_trace(go.Scatter3d(x=points_true[:, 0], y=points_true[:, 1], z=points_true[:, 2] + 0.05,
-                                   mode='markers', marker_color=colors[j], marker_size=7, marker_line_width=5, marker_line_color='black',
-                                   showlegend=True, name=atom_type_list[j]
-                                   ))
+            fig.update_layout(legend={'itemsizing': 'constant'})
+            fig.update_scenes(
+                xaxis=dict(
+                    backgroundcolor="rgba(0, 0, 0,0)",
+                    gridcolor="grey",
+                    showbackground=True,
+                    zerolinecolor="white", ),
+                yaxis=dict(
+                    backgroundcolor="rgba(0, 0, 0,0)",
+                    gridcolor="grey",
+                    showbackground=True,
+                    zerolinecolor="white"),
+                zaxis=dict(
+                    backgroundcolor="rgba(1, 1, 1,0.1)",
+                    gridcolor="white",
+                    showbackground=True,
+                    zerolinecolor="white", ),
+                aspectratio=dict(x=1, y=1, z=0.25),
+                camera=dict(eye=dict(x=0, y=1.5, z=1.45)),
+            )
+            fig.update_layout(title=f"$\sigma={sigma:.2f}, Overlap={overlap:.2f}$")
 
-        fig.update_layout(legend={'itemsizing': 'constant'})
-        fig.update_scenes(
-            xaxis=dict(
-                backgroundcolor="rgba(0, 0, 0,0)",
-                gridcolor="grey",
-                showbackground=True,
-                zerolinecolor="white", ),
-            yaxis=dict(
-                backgroundcolor="rgba(0, 0, 0,0)",
-                gridcolor="grey",
-                showbackground=True,
-                zerolinecolor="white"),
-            zaxis=dict(
-                backgroundcolor="rgba(1, 1, 1,0.1)",
-                gridcolor="white",
-                showbackground=True,
-                zerolinecolor="white", ),
-            aspectratio=dict(x=1, y=1, z=0.25),
-            camera=dict(eye=dict(x=0, y=1.5, z=1.45)),
-        )
-        fig.update_layout(title=f"$\sigma={sigma:.2f}, Overlap={overlap:.2f}$")
+            fig.write_image(rf'C:\Users\mikem\crystals\CSP_runs\artifacts\frame_{ind}.png', width=480, height=480)
 
-        fig.write_image(rf'C:\Users\mikem\crystals\CSP_runs\artifacts\frame_{ind}.png', width=480, height=480)
+    import glob
+    from PIL import Image
 
-import glob
-from PIL import Image
+    # from https://www.blog.pythonlibrary.org/2021/06/23/creating-an-animated-gif-with-python/
+    import os
+    globs = sorted(glob.glob(rf"C:\Users\mikem\crystals\CSP_runs\artifacts/*.png"), key=os.path.getmtime)
+    frames = [Image.open(image) for image in globs]
+    frame_one = frames[0]
+    frame_one.save(r"C:\Users\mikem\crystals\CSP_runs\artifacts/gaussian_convergence.gif", format="GIF", append_images=frames,
+                   save_all=True, duration=100, loop=0)
 
-# from https://www.blog.pythonlibrary.org/2021/06/23/creating-an-animated-gif-with-python/
-import os
-globs = sorted(glob.glob(rf"C:\Users\mikem\crystals\CSP_runs\artifacts/*.png"), key=os.path.getmtime)
-frames = [Image.open(image) for image in globs]
-frame_one = frames[0]
-frame_one.save(r"C:\Users\mikem\crystals\CSP_runs\artifacts/gaussian_convergence.gif", format="GIF", append_images=frames,
-               save_all=True, duration=100, loop=0)
+converging_gaussians_fig()
 
-#
+
 # fig2 = swarm_vs_tgt_fig(data, decoded_data, 4)
 # fig2.show(renderer='browser')
 aa = 1
-
-aa = 2

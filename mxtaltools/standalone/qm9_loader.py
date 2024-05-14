@@ -10,7 +10,7 @@ from mxtaltools.dataset_management.dataloader_utils import get_dataloaders
 datasets_path = 'D:/crystal_datasets/'
 dataset_name = '/qm9_molecules_dataset.pkl'
 misc_dataset_name = '/misc_data_for_qm9_molecules_dataset.npy'
-dataset_yaml_path = '../standalone/qm9_loader.yaml'
+dataset_yaml_path = '/configs/standalone/qm9_loader.yaml'
 
 
 class QM9Loader:
@@ -18,7 +18,7 @@ class QM9Loader:
         self.device = device
         self.data_manager = DataManager(device=self.device,
                                         datasets_path=datasets_path,
-                                        dataset_type = 'molecule')
+                                        dataset_type='molecule')
 
         self.dataset_config = dict2namespace(load_yaml(dataset_yaml_path))
 
@@ -32,7 +32,8 @@ class QM9Loader:
             override_length=max_dataset_length,
         )
         self.dataDims = self.data_manager.dataDims
-        self.t_i_d = {feat: index for index, feat in enumerate(self.dataDims['tracking_features'])}  # tracking feature index dictionary
+        self.t_i_d = {feat: index for index, feat in
+                      enumerate(self.dataDims['tracking_features'])}  # tracking feature index dictionary
 
     def get_dataloaders(self, batch_size=10, test_fraction=0.2):
         train_loader, test_loader = get_dataloaders(self.data_manager,
