@@ -24,3 +24,17 @@ with the appropriate paths set within each script.
 `process_cifs_to_dataset.py` takes on the order of dozens of hours to process the full CSD (>1M crystals). We recommend running several instances in parallel to reduce this time. As they process datasets chunkwise in random order, this parallelism is quite efficient.
 
 We also have functions for identifying duplicate molecules and polymorphs of the same molecule. When filtering these, we identify all the duplicates and pick a single 'representative' sample at random. Options for duplicate and other types of filtering are set in the dataset configs stored in `configs/dataset`
+
+
+
+Molecule Datasets from .xyzs
+-----------------------------
+
+Generating a molecular dataset from sets of .xyz files is very similar to above. 
+Simply run the following scripts,
+
+- `process_xyz_to_daataset.py`
+
+- `collate_and_generate_dataset.py`
+
+with the appropriate paths set within each script.
