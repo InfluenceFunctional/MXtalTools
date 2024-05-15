@@ -1,4 +1,4 @@
-XModel Training
+Model Training
 =====
 
 Training is controlled by a set of .yaml configs.
