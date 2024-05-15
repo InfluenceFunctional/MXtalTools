@@ -410,21 +410,21 @@ def embedding_regression_figure():
     os.chdir(r'C:\Users\mikem\crystals\CSP_runs\models')
     elem = os.listdir()
     ers = [thing for thing in elem if '_embedding_regression_' in thing]
-    target_names = ["molecule_rotational_constant_a",  # 0
-                    "molecule_rotational_constant_b",  # 1
-                    "molecule_rotational_constant_c",  # 2
-                    "molecule_dipole_moment",  # 3
-                    "molecule_isotropic_polarizability",  # 4
-                    "molecule_HOMO_energy",  # 5
-                    "molecule_LUMO_energy",  # 6
-                    "molecule_gap_energy",  # 7
-                    "molecule_el_spatial_extent",  # 8
-                    "molecule_zpv_energy",  # 9
-                    "molecule_internal_energy_0",  # 10
-                    "molecule_internal_energy_STP",  # 11
-                    "molecule_enthalpy_STP",  # 12
-                    "molecule_free_energy_STP",  # 13
-                    "molecule_heat_capacity_STP",  # 14
+    target_names = ["rotational_constant_a",  # 0
+                    "rotational_constant_b",  # 1
+                    "rotational_constant_c",  # 2
+                    "dipole_moment",  # 3
+                    "isotropic_polarizability",  # 4
+                    "HOMO_energy",  # 5
+                    "LUMO_energy",  # 6
+                    "gap_energy",  # 7
+                    "el_spatial_extent",  # 8
+                    "zpv_energy",  # 9
+                    "internal_energy_0",  # 10
+                    "internal_energy_STP",  # 11
+                    "enthalpy_STP",  # 12
+                    "free_energy_STP",  # 13
+                    "heat_capacity_STP",  # 14
                     ]
     pretty_target_names = ["(a) Rotational Constant A /GHz",
                            "(b) Rotational Constant B /GHz",

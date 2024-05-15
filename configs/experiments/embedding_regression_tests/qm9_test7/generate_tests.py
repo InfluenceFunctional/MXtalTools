@@ -8,21 +8,21 @@ models = [r'/best_autoencoder_autoencoder_tests_qm9_test23_4_26-02-22-29-57',  #
           r'/best_autoencoder_experiments_autoencoder_tests_qm9_test24_25_11-05-19-15-19'  # protons
           ]
 
-targets = ["molecule_rotational_constant_a",  # 0
-           "molecule_rotational_constant_b",  # 1
-           "molecule_rotational_constant_c",  # 2
-           "molecule_dipole_moment",  # 3
-           "molecule_isotropic_polarizability",  # 4
-           "molecule_HOMO_energy",  # 5
-           "molecule_LUMO_energy",  # 6
-           "molecule_gap_energy",  # 7
-           "molecule_el_spatial_extent",  # 8
-           "molecule_zpv_energy",  # 9
-           "molecule_internal_energy_0",  # 10
-           "molecule_internal_energy_STP",  # 11
-           "molecule_enthalpy_STP",  # 12
-           "molecule_free_energy_STP",  # 13
-           "molecule_heat_capacity_STP",  # 14
+targets = ["rotational_constant_a",  # 0
+           "rotational_constant_b",  # 1
+           "rotational_constant_c",  # 2
+           "dipole_moment",  # 3
+           "isotropic_polarizability",  # 4
+           "HOMO_energy",  # 5
+           "LUMO_energy",  # 6
+           "gap_energy",  # 7
+           "el_spatial_extent",  # 8
+           "zpv_energy",  # 9
+           "internal_energy_0",  # 10
+           "internal_energy_STP",  # 11
+           "enthalpy_STP",  # 12
+           "free_energy_STP",  # 13
+           "heat_capacity_STP",  # 14
            ]
 # model, filter_protons
 # depth, num_layers, dropout, norm_mode
