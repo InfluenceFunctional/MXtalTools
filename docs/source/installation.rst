@@ -7,6 +7,12 @@ Installation Instructions
 
  git clone git@github.com:InfluenceFunctional/MXtalTools.git MXtalTools
 
+Then, checkout the currently active branch
+
+.. code-block:: bash
+
+ git checkout equivariant_implement
+
 2. Create and install pip environment. Note, you may need to adjust pytorch/pyg CUDA versions according to your local parameters.
 
 .. code-block:: bash
