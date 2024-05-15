@@ -457,7 +457,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 10: big no noise protons inferred
+                }}}},  # 10: big no noise protons inferred  # converged
 
     {
         'min_batch_size': 50,
@@ -541,7 +541,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 12: 24-13 redo
+                }}}},  # 12: 24-13 redo  - crashed, rerunning
     {
         'min_batch_size': 10,
         'max_batch_size': 300,
@@ -583,6 +583,49 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}},  # 13: 24-13 redo with 512 outputs
+
+    {
+        'min_batch_size': 50,
+        'max_batch_size': 10000,
+        'batch_growth_increment': 0.25,
+        'seeds': {'model': 1},
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'overlap_eps': {'test': 5e-4},
+            'infer_protons': False,
+            'type_distance_scaling': 2,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 5e-5,
+                'decoder_init_lr': 5e-5,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.995,
+            },
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 1,
+                        'fcs_per_gc': 4,
+                        'dropout': 0.05,
+                        'cutoff': 14,
+                        'radial_embedding': 'gaussian',
+                        'norm': 'graph layer'}},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 1,
+                        'dropout': 0.05,
+                        'norm': 'layer'},
+                    'num_nodes': 512
+                }}}},  # 14: LITERALLY just 24-18
 
 ]
 
