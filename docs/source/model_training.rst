@@ -1,4 +1,4 @@
-Model Training
+XModel Training
 =====
 
 Training is controlled by a set of .yaml configs.
@@ -7,7 +7,7 @@ The main config can be specified on command line like so
 
 .. code-block:: bash
 
- python main.py --user YOUR_USERNAME --yaml_config /PATH_TO_EXPERIMENT_CONFIGS/experiment_$SLURM_ARRAY_TASK_ID.yaml  # runs experiment_0.yaml --> experiment_2.yaml
+ python main.py --user YOUR_USERNAME --yaml_config /PATH_TO_EXPERIMENT_CONFIGS/YOUR_EXPERIMENT.yaml
 
 If no config is specified on the command line, the program will use `dev.yaml' by default.
 
