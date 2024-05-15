@@ -128,10 +128,10 @@ def RMSD_fig():
         xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig.update_layout(yaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
-    fig.update_layout(xaxis1_range=[0, 0.9])
-    fig.update_layout(font=dict(size=24))
-    fig.update_xaxes(title_font=dict(size=20), tickfont=dict(size=14))
-    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    fig.update_layout(xaxis1_range=[0, 0.6])
+    fig.update_layout(font=dict(size=30))
+    fig.update_xaxes(title_font=dict(size=24), tickfont=dict(size=18))
+    fig.update_yaxes(title_font=dict(size=24), tickfont=dict(size=18))
     fig.update_layout(violingap=0, violinmode='overlay')
     fig.update_layout(legend_traceorder='reversed')  # , yaxis_showgrid=True)
     fig.update_layout(xaxis1_title='RSMD (Angstrom)')
@@ -342,11 +342,11 @@ def UMAP_fig(max_entries=10000000):
         except:
             smiles = stats_dict['molecule_smiles']
 
-        for ix in np.linspace(0, 1, 8):
-            for iy in np.linspace(0, 1, 8):
+        for ix in np.linspace(0, 1, 6):
+            for iy in np.linspace(0, 1, 6):
                 if ix == 0 or ix == 1 or iy == 0 or iy == 1:
                     annotations_list.append(
-                        mol_point_callout(fig2, ix, iy, ex, ey, embedding, smiles, 0.125, row=1, col=ind2 + 1))
+                        mol_point_callout(fig2, ix, iy, ex, ey, embedding, smiles, 0.15, row=1, col=ind2 + 1))
 
         fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
                            marker_color=['rgb(255,0,0)'], name=legend_entries[0], showlegend=True,
@@ -381,9 +381,11 @@ def UMAP_fig(max_entries=10000000):
     )
     fig2.update_layout(legend={'itemsizing': 'constant'})#, 'orientation': 'h'})
 
-    fig2.update_layout(font=dict(size=18))
+
     fig2.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig2.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
+    fig2.update_annotations(font_size=30)
+    fig2.update_layout(font=dict(size=30))
 
     fig2.show(renderer='browser')
 
@@ -456,8 +458,8 @@ def embedding_regression_figure():
         NMAE_dict[target_name] = NMAE
         R_dict[target_name] = R_value
 
-    fig3 = make_subplots(cols=5, rows=3, subplot_titles=pretty_target_names, horizontal_spacing=0.04,
-                         vertical_spacing=0.075)
+    fig3 = make_subplots(cols=5, rows=3, subplot_titles=pretty_target_names, horizontal_spacing=0.06,
+                         vertical_spacing=0.1)
 
     annotations = []
     for ind, (path, target_name) in enumerate(zip(ers, target_names)):
@@ -501,6 +503,7 @@ def embedding_regression_figure():
     fig3.update_xaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
     fig3.update_layout(font=dict(size=20))
+    fig3.update_annotations(font_size=20)
     fig3.show(renderer='browser')
     return fig3
 
@@ -535,7 +538,7 @@ def regression_training_curve():
 
     ])
     fig4 = go.Figure()
-    fig4.add_scatter(x=x, y=y, mode='markers')
+    fig4.add_scatter(x=x, y=y, mode='markers', marker_size=10)
 
     fig4.update_layout(xaxis_title='Training Set Size', yaxis_title='Best Test Loss')
     fig4.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
@@ -543,7 +546,7 @@ def regression_training_curve():
         xaxis={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig4.update_layout(yaxis={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
-    fig4.update_layout(font=dict(size=24))
+    fig4.update_layout(font=dict(size=28))
     fig4.update_layout(yaxis_range=[0, 0.24])
     fig4.show(renderer='browser')
 
@@ -552,14 +555,14 @@ def regression_training_curve():
 
 #
 fig = RMSD_fig()
-#fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
 fig2 = UMAP_fig(max_entries=1000000)
-# fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
+fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
 
-# fig3 = embedding_regression_figure()
-# fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+fig3 = embedding_regression_figure()
+fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
 
-# fig4 = regression_training_curve()
-# fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=600, height=400)
+fig4 = regression_training_curve()
+fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
 aa = 1

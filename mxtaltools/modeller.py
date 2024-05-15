@@ -47,8 +47,7 @@ from mxtaltools.models.utils import (reload_model, init_schedulers, softmax_and_
 from mxtaltools.models.utils import (weight_reset, get_n_config)
 from mxtaltools.models.vdw_overlap import vdw_overlap
 from mxtaltools.reporting.logger import Logger
-from mxtaltools.reporting.ae_reporting import decoder_agglomerative_clustering, scaffolded_decoder_clustering, \
-    extract_true_and_predicted_points
+from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 
 
 # noinspection PyAttributeOutsideInit
@@ -680,14 +679,16 @@ class Modeller:
                                                                           decoded_data, nodewise_weights_tensor,
                                                                           true_nodes)
 
-        Ip, Ipm, I = batch_molecule_principal_axes_torch([data.pos[data.batch == ind] for ind in range(data.num_graphs)])
+        Ip, Ipm, I = batch_molecule_principal_axes_torch(
+            [data.pos[data.batch == ind] for ind in range(data.num_graphs)])
 
         scaffold_rmsds, scaffold_max_dists, scaffold_matched = [], [], []
         #glom_rmsds, glom_max_dists = [], []
         for ind in range(data.num_graphs):  # somewhat slow
             rmsd, max_dist, weight_mean, match_successful = scaffolded_decoder_clustering(ind, data, decoded_data,
-                                                                        self.dataDims['num_atom_types'],
-                                                                        return_fig=False)
+                                                                                          self.dataDims[
+                                                                                              'num_atom_types'],
+                                                                                          return_fig=False)
             scaffold_rmsds.append(rmsd)
             scaffold_max_dists.append(max_dist)
             scaffold_matched.append(match_successful)
@@ -1232,8 +1233,9 @@ class Modeller:
         decoded_dists = torch.linalg.norm(decoded_data.pos, dim=1)
         constraining_loss = scatter(
             F.relu(
-                decoded_dists - self.models_dict['autoencoder'].radial_normalization), #torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes,
-                                                        #dim=0)),
+                decoded_dists - self.models_dict['autoencoder'].radial_normalization),
+            #torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes,
+            #dim=0)),
             decoded_data.batch, reduce='mean')
 
         # node weight constraining loss
