@@ -33,6 +33,7 @@ To change any other settings for the dataset, batching, optimizer, or model, sim
 
 To run the code, simply run main.py using the python call above, or, if using a slurm-based scheduler, follow the template:
 
-.. literalinclude:: ../../bash_sub.sh
+.. literalinclude:: /bash_sub.sh
+  :language: bash
 
 The run will automatically log results & telemetry to wandb.
