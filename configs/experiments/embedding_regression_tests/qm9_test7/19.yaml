@@ -4,7 +4,7 @@ checkpointing_loss_type: test
 dataset:
   filter_protons: false
   max_dataset_length: 10000000
-  regression_target: molecule_el_spatial_extent
+  regression_target: el_spatial_extent
   test_fraction: 0.2
   type: molecule
 dataset_name: qm9_molecules_dataset.pt

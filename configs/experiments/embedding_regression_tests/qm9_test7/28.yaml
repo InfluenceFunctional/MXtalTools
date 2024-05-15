@@ -4,7 +4,7 @@ checkpointing_loss_type: test
 dataset:
   filter_protons: false
   max_dataset_length: 14578
-  regression_target: molecule_gap_energy
+  regression_target: gap_energy
   test_fraction: 0.2
   type: molecule
 dataset_name: qm9_molecules_dataset.pt
