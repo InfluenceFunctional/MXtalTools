@@ -727,11 +727,12 @@ class Modeller:
                       'principal_inertial_moments',
                       'scaffold_rmsds',
                       'scaffold_max_dists',
-                      'scaffold_matched'
+                      'scaffold_matched',
                       # 'glom_rmsds',
                       # 'glom_max_dists',
                       'molecule_smiles'
                       ]
+        assert len(stats_keys) == len(stats_values)
         self.logger.update_stats_dict(self.epoch_type,
                                       stats_keys,
                                       stats_values,

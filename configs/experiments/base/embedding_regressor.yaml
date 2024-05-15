@@ -2,7 +2,7 @@ machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: embedding_regression
-dataset_name: 'test_qm9_molecules_dataset.pt' #'test_dataset.pt'
+dataset_name: 'qm9_molecules_dataset.pt' #'test_dataset.pt'
 dataset_yaml_path: '/qm9_autoencoder.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached

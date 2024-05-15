@@ -105,15 +105,17 @@ def RMSD_fig():
         stats_dict = stats_dicts[run_name]
 
         x = np.concatenate(stats_dict['scaffold_rmsds'])
-        unmatched = np.mean(np.isinf(x))
-        finite_x = x[np.isfinite(x)]
+        matched = np.concatenate(stats_dict['scaffold_matched'])
+        matched_inds = np.argwhere(matched).flatten()
+        unmatched = np.mean(np.invert(matched))
+        finite_x = x[matched_inds]
         print(finite_x.mean())
 
         fig.add_annotation(x=0.4, y=ind + 0.3, showarrow=False,
                            text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.0f}%',
                            row=1, col=1)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
-            x=x, side='positive', orientation='h',
+            x=finite_x, side='positive', orientation='h',
             bandwidth=bandwidth, width=4, showlegend=True, opacity=1,  # .5,
             name=run_name,
             # scalegroup='',
@@ -128,10 +130,10 @@ def RMSD_fig():
         xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
     fig.update_layout(yaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
-    fig.update_layout(xaxis1_range=[0, 0.6])
+    fig.update_layout(xaxis1_range=[0, .75])
     fig.update_layout(font=dict(size=30))
-    fig.update_xaxes(title_font=dict(size=24), tickfont=dict(size=18))
-    fig.update_yaxes(title_font=dict(size=24), tickfont=dict(size=18))
+    fig.update_xaxes(title_font=dict(size=24), tickfont=dict(size=20))
+    fig.update_yaxes(title_font=dict(size=24), tickfont=dict(size=20))
     fig.update_layout(violingap=0, violinmode='overlay')
     fig.update_layout(legend_traceorder='reversed')  # , yaxis_showgrid=True)
     fig.update_layout(xaxis1_title='RSMD (Angstrom)')
@@ -221,7 +223,7 @@ def UMAP_fig(max_entries=10000000):
     for ind in range(len(stats_dict_paths)):
         d = np.load(stats_dict_paths[ind], allow_pickle=True).item()
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
-    run_name = "Without Hydrogen"
+    run_name = "With Hydrogen"
 
     stats_dict = stats_dicts[run_name]
     del stats_dicts
