@@ -9,7 +9,7 @@ The main config can be specified on command line like so
 
  python main.py --user YOUR_USERNAME --yaml_config /PATH_TO_EXPERIMENT_CONFIGS/YOUR_EXPERIMENT.yaml
 
-If no config is specified on the command line, the program will use `dev.yaml' by default.
+If no config is specified on the command line, the program will use 'dev.yaml' by default.
 
 1. Autoencoder
 
@@ -33,7 +33,6 @@ To change any other settings for the dataset, batching, optimizer, or model, sim
 
 To run the code, simply run main.py using the python call above, or, if using a slurm-based scheduler, follow the template:
 
-.. literalinclude:: /bash_sub.sh
-    :language: bash
+.. literalinclude:: ../../bash_sub.sh
 
 The run will automatically log results & telemetry to wandb.
