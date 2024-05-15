@@ -33,11 +33,11 @@ class PointAutoencoder(BaseGraphModel):
 
         self.register_buffer('atom_embedding_vector', atom_embedding_vector)
         self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
-        #self.register_buffer('protons_in_input', torch.tensor(protons_in_input, dtype=torch.bool))
-        #self.register_buffer('inferring_protons', torch.tensor(infer_protons, dtype=torch.bool))
+        self.register_buffer('protons_in_input', torch.tensor(protons_in_input, dtype=torch.bool))
+        self.register_buffer('inferring_protons', torch.tensor(infer_protons, dtype=torch.bool))
         self.inferring_protons = infer_protons
         self.register_buffer('convolution_cutoff', config.encoder.graph.cutoff / self.radial_normalization)
-        #config.encoder.graph.cutoff = self.convolution_cutoff  # normalize the graph cutoff from real space to normed space
+        config.encoder.graph.cutoff = self.convolution_cutoff  # normalize the graph cutoff from real space to normed space
 
         self.encoder = PointEncoder(seed, config.encoder, config.bottleneck_dim)
         self.decoder = PointDecoder(seed, config.decoder, config.bottleneck_dim, self.output_depth,
