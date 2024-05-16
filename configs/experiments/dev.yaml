@@ -1,8 +1,8 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml
-dataset_name: 'qm9_molecules_dataset.pt' #'test_dataset.pt'
-mode: embedding
+dataset_name: 'test_qm9_molecules_dataset.pt' #'test_dataset.pt'
+#mode: embedding
 extra_test_set_name: null
 save_checkpoints: False
 
@@ -36,8 +36,8 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  #autoencoder: null
-  autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_23_11-05-18-22-17 # no protons
+  autoencoder: null
+  #autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_23_11-05-18-22-17 # no protons
   #autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_25_11-05-19-15-19 # with protons
   #autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_27_11-05-11-26-48 # inferred protons
   embedding_regressor: null

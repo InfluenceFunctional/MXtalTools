@@ -43,8 +43,8 @@ class MoleculeGraphModel(nn.Module):
         self.concat_aux_ind_to_node_dim = concat_aux_ind_to_node_dim
         self.concat_mol_ind_to_node_dim = concat_mol_ind_to_node_dim
 
-        self.convolution_cutoff, self.max_num_neighbors = (
-            graph_config.cutoff, graph_config.max_num_neighbors)
+        self.register_buffer('convolution_cutoff', torch.tensor(graph_config.cutoff, dtype=torch.float32))
+        self.max_num_neighbors = graph_config.max_num_neighbors
         self.num_fc_layers = fc_config.num_layers
 
         self.register_buffer('SG_FEATURE_TENSOR', SG_FEATURE_TENSOR.clone())  # store space group information

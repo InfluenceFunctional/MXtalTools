@@ -262,10 +262,10 @@ def UMAP_fig(max_entries=10000000):
     stats_dict['molecule_principal_moment_3'] = stats_dict['principal_inertial_moments'][:, 2]
     # conventional principal ratios - our convention agreeing with QMUGS
     principal_ratio1 = stats_dict['molecule_principal_moment_2'] / stats_dict['molecule_principal_moment_3']  # + 1e-3)
-    principal_ratio1 = np.nan_to_num(principal_ratio1, posinf=0, neginf=0)
+    principal_ratio1 = np.nan_to_num(principal_ratio1, posinf=0, neginf=0)[:max_entries]
     principal_ratio1 /= np.quantile(principal_ratio1, 0.9999)
     principal_ratio2 = stats_dict['molecule_principal_moment_1'] / stats_dict['molecule_principal_moment_3']  # + 1e-3)
-    principal_ratio2 = np.nan_to_num(principal_ratio2)
+    principal_ratio2 = np.nan_to_num(principal_ratio2)[:max_entries]
     principal_ratio2 /= np.quantile(principal_ratio2, 0.9999)
 
     PR_stack = np.concatenate([principal_ratio1[:, None], principal_ratio2[:, None]], axis=1)
@@ -279,7 +279,8 @@ def UMAP_fig(max_entries=10000000):
 
     composition_coloration = np.stack([num_rings,
                                        num_rotatable,
-                                       np.concatenate(stats_dict['molecule_radius'])]).T[:max_entries]
+                                       ]).T[:max_entries]
+
     point_colors3 = normalize_colors(composition_coloration)
     legend_entries3 = ["# Rings", "# Rotatable Bonds", "Mol. Radius"]
 
@@ -309,8 +310,12 @@ def UMAP_fig(max_entries=10000000):
     # fig.write_image('triangle.png', width=400, height=400)
 
     'embeddings'
-    fig2 = make_subplots(rows=1, cols=3, horizontal_spacing=.01,
-                         subplot_titles=["(a) Composition", "(b) Inertial Ratios", "(c) Geometry"])
+    fig2 = make_subplots(rows=3, cols=4, horizontal_spacing=.01, vertical_spacing=0.05,
+                         specs=[[{'rowspan': 3}, {'rowspan': 3}, {'rowspan': 3}, None],
+                                [None, None, None, {}],
+                                [None, None, None, None]],
+                         subplot_titles=(
+                             "(a) Composition", "(b) Inertial Ratios", "(c) Geometry"))
     # fig2.add_layout_image(dict(
     #     source=Image.open('triangle.png'),
     #     x=0, y=[0.2, 0.4, 0.6][ind],
@@ -349,44 +354,69 @@ def UMAP_fig(max_entries=10000000):
                 if ix == 0 or ix == 1 or iy == 0 or iy == 1:
                     annotations_list.append(
                         mol_point_callout(fig2, ix, iy, ex, ey, embedding, smiles, 0.15, row=1, col=ind2 + 1))
+        #
+        # fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
+        #                    marker_color=['rgb(255,0,0)'], name=legend_entries[0], showlegend=True,
+        #                    legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
+        #                    row=1, col=ind2 + 1)
+        # fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
+        #                    marker_color=['rgb(0,255,0)'], name=legend_entries[1], showlegend=True,
+        #                    legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
+        #                    row=1, col=ind2 + 1)
+        # fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
+        #                    marker_color=['rgb(0, 0,255)'], name=legend_entries[2], showlegend=True,
+        #                    legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
+        #                    row=1, col=ind2 + 1)
 
-        fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
-                           marker_color=['rgb(255,0,0)'], name=legend_entries[0], showlegend=True,
-                           legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
-                           row=1, col=ind2 + 1)
-        fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
-                           marker_color=['rgb(0,255,0)'], name=legend_entries[1], showlegend=True,
-                           legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
-                           row=1, col=ind2 + 1)
-        fig2.add_scattergl(x=np.zeros(1), y=np.zeros(1), marker_size=0.001, mode='markers',
-                           marker_color=['rgb(0, 0,255)'], name=legend_entries[2], showlegend=True,
-                           legendgroup=legend_groups[ind2], legendgrouptitle_text=legend_groups[ind2],
-                           row=1, col=ind2 + 1)
-
-    fig2.update_layout(annotations=annotations_list)
-
-    fig2.update_layout(plot_bgcolor='rgb(255,255,255)')
+    fig2.update_annotations(font_size=30)
     fig2.update_yaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
     fig2.update_xaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
 
+    fig2.add_scattergl(x=principal_ratio2, y=principal_ratio1, mode='markers', opacity=0.25, marker_color=point_colors2,
+                       row=2, col=4, showlegend=False)
+    annotations_list.append(dict(
+        xref="x4", yref="y4",
+        text='Sphere-like', font_size=18,
+        x=1, y=1, yshift=30, showarrow=False
+    ))
+    annotations_list.append(dict(
+        xref="x4", yref="y4",
+        text='Rod-like', font_size=18,
+        x=0.5, y=0.5, yshift=-30, showarrow=False
+    ))
+    annotations_list.append(dict(
+        xref="x4", yref="y4",
+        text='Disc-like', font_size=18,
+        x=0, y=1, yshift=30, showarrow=False
+    ))
+
+    fig2.update_layout(annotations=annotations_list)
+
+    fig2.update_layout(plot_bgcolor='rgb(255,255,255)')
+
+
     xlim = -0.2
     ylim = 1.2
     fig2.update_layout(xaxis1_range=[xlim, ylim], yaxis1_range=[xlim, ylim],
                        xaxis2_range=[xlim, ylim], yaxis2_range=[xlim, ylim],
-                       xaxis3_range=[xlim, ylim], yaxis3_range=[xlim, ylim])
+                       xaxis3_range=[xlim, ylim], yaxis3_range=[xlim, ylim],
+                       xaxis4_range=[-.2, 1.2], yaxis4_range=[0.3, 1.2],
+                       #xaxis5_range=[-.2, 1.2], yaxis5_range=[.3, 1.2],
+                       #xaxis6_range=[-.2, 1.2], yaxis6_range=[.3, 1.2],
+                       )
 
     fig2.update_layout(
         xaxis2_title='Component 1',
         yaxis1_title='Component 2',
+        #yaxis4_title='Ip1/Ip3',
+        #xaxis4_title='Ip2/Ip3'
     )
-    fig2.update_layout(legend={'itemsizing': 'constant'})#, 'orientation': 'h'})
-
+    fig2.update_layout(legend={'itemsizing': 'constant'})  #, 'orientation': 'h'})
 
     fig2.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig2.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
-    fig2.update_annotations(font_size=30)
     fig2.update_layout(font=dict(size=30))
 
     fig2.show(renderer='browser')
@@ -401,7 +431,7 @@ def normalize_colors(composition_coloration):
                                      a_max=np.quantile(composition_coloration, 0.99))
     composition_coloration -= composition_coloration.min(0)
     composition_coloration /= composition_coloration.max(0)
-    composition_coloration *= 255
+    composition_coloration *= 200
     point_colors = [f'rgb({int(color[0])},{int(color[1])},{int(color[2])})' for color in composition_coloration]
     return point_colors
 
@@ -556,15 +586,15 @@ def regression_training_curve():
 
 
 #
-fig = RMSD_fig()
-fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+#fig = RMSD_fig()
+#fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
 fig2 = UMAP_fig(max_entries=1000000)
-fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
+#fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
 
-fig3 = embedding_regression_figure()
-fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+#fig3 = embedding_regression_figure()
+#fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
 
-fig4 = regression_training_curve()
-fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
+#fig4 = regression_training_curve()
+#fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
 aa = 1
