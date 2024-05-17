@@ -1505,10 +1505,12 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
                })
 
     if config.logger.log_figures:
-        fig, fig2, rmsd, max_dist, tot_overlap = (
+        fig, fig2, rmsd, max_dist, tot_overlap, match_successful = (
             gaussian_3d_overlap_plots(data, decoded_data,
                                       dataDims['num_atom_types'],
                                       ))
+        if not match_successful:
+            rmsd = np.inf
         wandb.log({
             epoch_type + "_pointwise_sample_distribution": fig,
             epoch_type + "_cluster_sample_distribution": fig2,

@@ -53,8 +53,12 @@ def gaussian_3d_overlap_plots(data, decoded_data, max_point_types):
                                                                                                             max_point_types,
                                                                                                             return_fig=False)
 
-    return fig, fig2, np.mean(rmsds[np.isfinite(rmsds)]), np.mean(
-        max_dists[np.isfinite(max_dists)]), tot_overlaps.mean()
+    return (fig, fig2,
+            np.mean(rmsds[np.isfinite(rmsds)]),
+            np.mean(max_dists[np.isfinite(max_dists)]),
+            tot_overlaps.mean(),
+            match_successful
+            )
 
 
 def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cutoff):

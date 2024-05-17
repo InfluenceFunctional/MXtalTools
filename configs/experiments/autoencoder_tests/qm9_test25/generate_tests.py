@@ -500,7 +500,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 11: 24-18 with slower lr decay
+                }}}},  # 11: 24-18 with slower lr decay -- in retrospect, quite stable, though not quite as good as others
     {
         'min_batch_size': 10,
         'max_batch_size': 300,
@@ -541,7 +541,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 12: 24-13 redo  - crashed, rerunning
+                }}}},  # 12: 24-13 redo  - crashed, rerunning  - a good / standard start
     {
         'min_batch_size': 10,
         'max_batch_size': 300,
@@ -582,7 +582,8 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 13: 24-13 redo with 512 outputs  - rather good
+                }}}},  # 13: 24-13 redo with 512 outputs  - rather good but eventually overfit RMSD, noisy... great training metrics though
+    #!!! possibly the issue here is from our redefinition of RMSD to include unmatched samples - looking at other stats, this is state-of-the-art for us
 
     {
         'min_batch_size': 50,
@@ -625,7 +626,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 14: LITERALLY just 24-18
+                }}}},  # 14: LITERALLY just 24-18 - almost identically 11, cutoff early
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -667,7 +668,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 15: LITERALLY just 24-18 with protons
+                }}}},  # 15: LITERALLY just 24-18 with protons - timeout early - very slightly better than 12
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
@@ -709,7 +710,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 16: LITERALLY just 24-18 protons inferred
+                }}}},  # 16: LITERALLY just 24-18 protons inferred - good start, early timeout
 
     {
         'min_batch_size': 10,
@@ -838,7 +839,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 512
-                }}}},  # 19: LITERALLY just 24-18 with fixed batch sizing
+                }}}},  # 19: LITERALLY just 24-18 with fixed batch sizing - bit more stable, good start, timed out, not quite as deep
 
 ]
 

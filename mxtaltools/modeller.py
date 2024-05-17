@@ -1024,12 +1024,12 @@ class Modeller:
             data = input_data.clone()  # deprotonate the reference if we are not inferring protons
 
         decoding, encoding = self.models_dict['autoencoder'](input_data, return_encoding=True)
-        autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
+        losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
 
-        autoencoder_loss = autoencoder_losses.mean()
+        mean_loss = losses.mean()
         if update_weights:
             self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-            autoencoder_loss.backward()  # back-propagation
+            mean_loss.backward()  # back-propagation
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
             self.optimizers_dict['autoencoder'].step()  # update parameters
@@ -1292,11 +1292,12 @@ class Modeller:
                                                        nodewise_weights=decoded_data.aux_ind,
                                                        overlap_type='gaussian', log_scale=False,
                                                        type_distance_scaling=self.config.autoencoder.type_distance_scaling)
+        # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
         self_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, data, self.config.autoencoder_sigma,
                                                     nodewise_weights=data.aux_ind,
                                                     overlap_type='gaussian', log_scale=False,
                                                     type_distance_scaling=self.config.autoencoder.type_distance_scaling,
-                                                    dist_to_self=True)  # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
+                                                    dist_to_self=True)
 
         # typewise agreement for whole graph
         per_graph_true_types = scatter(

@@ -155,10 +155,14 @@ class Logger:
                 if 'all_train' in self.current_losses[key].keys():
                     self.wandb.log(
                         {key + '_train_loss_distribution': self.wandb.Histogram(self.current_losses[key]['all_train'])})
+                    self.wandb.log(
+                        {key + '_log_train_loss_distribution': self.wandb.Histogram(np.log10(np.abs(self.current_losses[key]['all_train'])))})
 
                 if 'all_test' in self.current_losses[key].keys():
                     self.wandb.log(
                         {key + '_test_loss_distribution': self.wandb.Histogram(self.current_losses[key]['all_train'])})
+                    self.wandb.log(
+                        {key + '_log_test_loss_distribution': self.wandb.Histogram(np.log10(np.abs(self.current_losses[key]['all_train']))  )})
 
     def collate_current_metrics(self):
         # general metrics

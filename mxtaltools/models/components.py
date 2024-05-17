@@ -235,8 +235,6 @@ def construct_radial_graph(pos: torch.FloatTensor, batch: torch.LongTensor,
 
     Returns:
         dict: dictionary of edge information
-
-
     """
     if aux_ind is not None:  # there is an 'inside' 'outside' distinction
         inside_bool = aux_ind == 0

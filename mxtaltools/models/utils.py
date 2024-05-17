@@ -652,7 +652,8 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
                    r=2 * ref_points[:, :3].norm(dim=1).amax(),  # max range encompasses whole molecule
                    # r=6*sigma, # alternatively any point which will have even a small overlap
                    max_num_neighbors=100,
-                   batch_x=data.batch, batch_y=decoded_data.batch)  # this step is slower than before
+                   batch_x=data.batch,
+                   batch_y=decoded_data.batch)  # this step is slower than before
     dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
 
     if overlap_type == 'gaussian':

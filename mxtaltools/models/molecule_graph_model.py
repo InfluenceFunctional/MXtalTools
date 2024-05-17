@@ -29,6 +29,7 @@ class MoleculeGraphModel(nn.Module):
                  outside_convolution_type='none',
                  vector_norm=None,
                  equivariant=False,
+                 override_cutoff=None
                  ):
 
         super(MoleculeGraphModel, self).__init__()
@@ -43,7 +44,11 @@ class MoleculeGraphModel(nn.Module):
         self.concat_aux_ind_to_node_dim = concat_aux_ind_to_node_dim
         self.concat_mol_ind_to_node_dim = concat_mol_ind_to_node_dim
 
-        self.register_buffer('convolution_cutoff', torch.tensor(graph_config.cutoff, dtype=torch.float32))
+        if override_cutoff is None:
+            self.register_buffer('convolution_cutoff', torch.tensor(graph_config.cutoff, dtype=torch.float32))
+        else:
+            self.register_buffer('convolution_cutoff', torch.tensor(override_cutoff, dtype=torch.float32))
+
         self.max_num_neighbors = graph_config.max_num_neighbors
         self.num_fc_layers = fc_config.num_layers
 
@@ -60,6 +65,7 @@ class MoleculeGraphModel(nn.Module):
             outside_convolution_type=outside_convolution_type,
             equivariant=equivariant,
             vector_norm=vector_norm,
+            override_cutoff=override_cutoff,
             **graph_config.__dict__
         )
 

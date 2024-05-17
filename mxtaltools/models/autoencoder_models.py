@@ -35,13 +35,11 @@ class PointAutoencoder(BaseGraphModel):
         self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
         self.register_buffer('protons_in_input', torch.tensor(protons_in_input, dtype=torch.bool))
         self.register_buffer('inferring_protons', torch.tensor(infer_protons, dtype=torch.bool))
-        #self.inferring_protons = infer_protons
         self.register_buffer('convolution_cutoff', config.encoder.graph.cutoff / self.radial_normalization)
-        config.encoder.graph.cutoff = self.convolution_cutoff  # normalize the graph cutoff from real space to normed space
 
-        self.encoder = PointEncoder(seed, config.encoder, config.bottleneck_dim)
-        self.decoder = PointDecoder(seed, config.decoder, config.bottleneck_dim, self.output_depth,
-                                    self.num_decoder_nodes)
+        self.encoder = PointEncoder(seed, config.encoder, config.bottleneck_dim, override_cutoff=self.convolution_cutoff)
+        self.decoder = PointDecoder(seed, config.decoder, config.bottleneck_dim,
+                                    self.output_depth, self.num_decoder_nodes)
         self.scalarizer = Scalarizer(config.bottleneck_dim, self.cartesian_dimension, None, None, 0)
 
     def forward(self, data, return_encoding=False, **kwargs):
@@ -110,7 +108,7 @@ class PointDecoder(nn.Module):
 
 
 class PointEncoder(nn.Module):
-    def __init__(self, seed, config, bottleneck_dim):
+    def __init__(self, seed, config, bottleneck_dim, override_cutoff=None):
         super(PointEncoder, self).__init__()
         self.model = MoleculeGraphModel(
             input_node_dim=1,
@@ -127,7 +125,9 @@ class PointEncoder(nn.Module):
             graph_config=config.graph,
             periodize_inside_nodes=False,
             outside_convolution_type='none',
-            vector_norm=config.vector_norm)
+            vector_norm=config.vector_norm,
+            override_cutoff=override_cutoff,
+        )
 
     def forward(self, data):
         return self.model(data)

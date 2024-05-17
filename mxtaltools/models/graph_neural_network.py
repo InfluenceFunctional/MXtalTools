@@ -30,20 +30,25 @@ class GraphNeuralNetwork(torch.nn.Module):
                  outside_convolution_type='none',
                  equivariant=False,
                  vector_norm=None,
+                 override_cutoff=None
                  ):
         super(GraphNeuralNetwork, self).__init__()
 
         self.max_num_neighbors = max_num_neighbors
-        self.cutoff = cutoff
+        if override_cutoff is None:
+            self.register_buffer('cutoff', torch.tensor(cutoff, dtype=torch.float32))
+        else:
+            self.register_buffer('cutoff', torch.tensor(override_cutoff, dtype=torch.float32))
+
         self.periodize_inside_nodes = periodize_inside_nodes
         self.outside_convolution_type = outside_convolution_type
         self.equivariant = equivariant
         self.vector_addition_rescaling_factor = 1.6
 
         if radial_embedding == 'bessel':
-            self.rbf = BesselBasisLayer(num_radial, cutoff, envelope_exponent)
+            self.rbf = BesselBasisLayer(num_radial, self.cutoff, envelope_exponent)
         elif radial_embedding == 'gaussian':
-            self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
+            self.rbf = GaussianEmbedding(start=0.0, stop=self.cutoff, num_gaussians=num_radial)
 
         self.init_node_embedding = EmbeddingBlock(node_dim,
                                                   num_input_classes,
