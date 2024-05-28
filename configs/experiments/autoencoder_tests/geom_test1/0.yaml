@@ -8,9 +8,9 @@ save_checkpoints: False
 dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
-  refresh_interval: 5  # reload a new chunk of a larger dataset, only setup for QM9/GEOM
+  refresh_interval: 10  # reload a new chunk of a larger dataset, only setup for QM9/GEOM
   on_disk_data_dir: 'drugs_crude.msgpack/drugs_chunks/'
-  chunks_per_refresh: 10
+  chunks_per_refresh: 5
 
 # batching & convergence
 early_epochs_step_override: 50
