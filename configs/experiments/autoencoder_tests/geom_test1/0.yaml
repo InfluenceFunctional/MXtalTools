@@ -14,7 +14,7 @@ dataset:
 
 # batching & convergence
 early_epochs_step_override: 5
-num_early_epochs: 10
+num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 10
 max_batch_size: 1000
