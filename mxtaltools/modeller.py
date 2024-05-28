@@ -1097,7 +1097,7 @@ class Modeller:
         if self.logger.epoch % self.config.logger.sample_reporting_frequency == 0:
             stats['encoding'] = encoding.detach()
 
-        if last_step:
+        if step == 0 or last_step:
             self.detailed_autoencoder_step_analysis(data, decoded_data, stats)
 
         dict_of_tensors_to_cpu_numpy(stats)

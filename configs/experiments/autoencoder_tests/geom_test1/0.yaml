@@ -13,12 +13,12 @@ dataset:
   chunks_per_refresh: 10
 
 # batching & convergence
-early_epochs_step_override: 5
-num_early_epochs: 0
+early_epochs_step_override: 50
+num_early_epochs: 20
 grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 1000
-batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
+max_batch_size: 2000
+batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
