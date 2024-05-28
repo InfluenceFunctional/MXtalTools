@@ -1,25 +1,25 @@
 
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/embedding_regressor.yaml
-dataset_name: 'test_qm9_molecules_dataset.pt' #'test_dataset.pt'
-#mode: embedding
+base_config_path: /experiments/base/GEOM_autoencoder.yaml
+dataset_name: 'test_GEOM_QM9_DRUGS_dataset.pt' #'test_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: False
 
 dataset:
-  max_dataset_length: 1000000
+  max_dataset_length: 10000
   test_fraction: 0.2
-  filter_protons: False  # only relevant for autoencoder
-  refresh_interval: -1  # reload a new chunk of a larger dataset, only setup for QM9/GEOM
+  refresh_interval: 5  # reload a new chunk of a larger dataset, only setup for QM9/GEOM
+  on_disk_data_dir: 'drugs_crude.msgpack/drugs_chunks/'
+  chunks_per_refresh: 5
 
 # batching & convergence
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 250
+min_batch_size: 10
 max_batch_size: 500
-batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
@@ -34,9 +34,9 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  #autoencoder: null
-  #autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_23_11-05-18-22-17_fixed # no protons
-  autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_25_11-05-19-15-19_fixed # with protons
+  autoencoder: null
+  #autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_18_10-05-13-11-30_fixed # no protons
+  #autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_25_11-05-19-15-19_fixed # with protons
   #autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_27_11-05-11-26-48_fixed # inferred protons
   embedding_regressor: null
 
@@ -44,3 +44,4 @@ model_paths:
 
 autoencoder:
   infer_protons: False
+  filter_protons: False

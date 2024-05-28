@@ -5,6 +5,7 @@ import numpy as np
 from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from time import time
+import random
 
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
@@ -70,15 +71,21 @@ class DataManager:
 
         self.times = {}
 
-    def load_chunks(self):
+    def load_chunks(self, max_chunks=1e8, samples_per_chunk=1e8):
         os.chdir(self.chunks_path)
         chunks = os.listdir()
-        num_chunks = len(chunks)
+        random.Random(1).shuffle(chunks)
+        num_chunks = min([len(chunks), max_chunks])
         print(f'Collecting {num_chunks} dataset chunks')
         self.dataset = []
-        for chunk in tqdm(chunks):
-            if '.pkl' in chunk:
-                self.dataset.extend(torch.load(chunk))
+        for ind, chunk in enumerate(tqdm(chunks[:num_chunks])):
+            if '.pkl' in chunk or '.pt' in chunk:
+                loaded_chunk = torch.load(chunk)
+                if samples_per_chunk < len(loaded_chunk):
+                    samples_to_keep = np.random.choice(len(loaded_chunk), samples_per_chunk, replace=False)
+                    self.dataset.extend([loaded_chunk[ind] for ind in samples_to_keep])
+                else:
+                    self.dataset.extend(loaded_chunk)
 
     def load_dataset_for_modelling(self, dataset_name,
                                    override_length=None,
@@ -97,7 +104,6 @@ class DataManager:
             filter_conditions:
             filter_polymorphs:
             filter_duplicate_molecules:
-            filter_protons:  # todo deprecate this
             override_dataset:
 
         Returns:
@@ -126,7 +132,7 @@ class DataManager:
 
         self.get_cell_cov_mat()
         self.assign_targets()
-        self.present_atom_types = torch.unique(torch.cat([elem.x for elem in self.dataset])).tolist()
+        self.present_atom_types, _ = self.misc_dataset['dataset_stats']['atomic_number']['uniques']
         if filter_protons:
             if 1 in self.present_atom_types:
                 self.present_atom_types.remove(1)
@@ -304,10 +310,15 @@ class DataManager:
         """
         compute full covariance matrix, in raw basis
         """
-        cell_params = torch.zeros((len(self.dataset), 12), dtype=torch.float32)
-        for ind in range(len(self.dataset)):
-            cell_params[ind] = torch.cat(
-                [self.dataset[ind].cell_lengths, self.dataset[ind].cell_angles, self.dataset[ind].pose_params0], dim=1)
+        if self.dataset_type == 'crystal':
+            cell_params = torch.zeros((len(self.dataset), 12), dtype=torch.float32)
+
+            for ind in range(len(self.dataset)):
+                cell_params[ind] = torch.cat(
+                    [self.dataset[ind].cell_lengths, self.dataset[ind].cell_angles, self.dataset[ind].pose_params0], dim=1)
+        else:
+            cell_params = torch.ones((len(self.dataset), 12), dtype=torch.float32)
+
         self.covariance_matrix = np.cov(cell_params, rowvar=False)
 
         for i in range(len(self.covariance_matrix)):  # ensure it's well-conditioned
@@ -322,7 +333,8 @@ class DataManager:
         self.times['dataset_loading_start'] = time()
         self.dataset = torch.load(self.datasets_path + dataset_name)
 
-        if 'batch' in str(type(self.dataset)):  # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches
+        if 'batch' in str(type(self.dataset)):
+            # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches but as data lists
             self.dataset = self.dataset.to_data_list()
             print("Dataset is in pre-collated format, which slows down initial loading!")
 
@@ -341,9 +353,16 @@ class DataManager:
         if 'test' in dataset_name and self.dataset_type == 'crystal':
             self.rebuild_crystal_indices()
 
-    def process_new_dataset(self, new_dataset_name, test_dataset_size: int = 10000):
-        self.load_chunks()
+    def process_new_dataset(self, new_dataset_name, test_dataset_size: int = 10000, max_chunks=1e8, samples_per_chunk=1e8):
+        self.load_chunks(max_chunks=max_chunks, samples_per_chunk=samples_per_chunk)
 
+        # collation here so we don't slow down saving above
+        self.dataset = self.collater(self.dataset)
+        misc_data_dict = self.extract_misc_stats_and_indices()
+        # save smaller test dataset
+        np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
+
+        # dataset for functionality testing
         ints = list(
             np.random.choice(min(len(self.dataset), test_dataset_size),
                              min(len(self.dataset), test_dataset_size),
@@ -353,22 +372,16 @@ class DataManager:
         # save full dataset
         torch.save(self.dataset, self.datasets_path + new_dataset_name + '.pt')
 
-        # collation here so we don't slow down saving above
-        self.dataset = self.collater(self.dataset)
-        misc_data_dict = self.extract_misc_stats_and_indices()
-        # save smaller test dataset
-        np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
-
     def extract_misc_stats_and_indices(self):
         misc_data_dict = {
             'dataset_stats': {
-                'atomic_number': basic_stats(self.dataset.x.float()),
+                'atomic_number': basic_stats(self.dataset.x.long()),
                 'vdw_radii': basic_stats(self.vdw_radii_tensor[self.dataset.x.long()]),
                 'atom_weight': basic_stats(self.atom_weights_tensor[self.dataset.x.long()]),
                 'electronegativity': basic_stats(self.electronegativity_tensor[self.dataset.x.long()]),
-                'group': basic_stats(self.group_tensor[self.dataset.x.long()].float()),
-                'period': basic_stats(self.period_tensor[self.dataset.x.long()].float()),
-                'num_atoms': basic_stats(self.dataset.num_atoms.float()),
+                'group': basic_stats(self.group_tensor[self.dataset.x.long()].long()),
+                'period': basic_stats(self.period_tensor[self.dataset.x.long()].long()),
+                'num_atoms': basic_stats(self.dataset.num_atoms.long()),
                 'radius': basic_stats(self.dataset.radius.float()),
             }
         }

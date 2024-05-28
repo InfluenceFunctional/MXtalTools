@@ -221,7 +221,7 @@ def swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights,
                                     ))
         fig2.add_trace(go.Scatter3d(x=pred_particles[pred_type_inds][:, 0], y=pred_particles[pred_type_inds][:, 1],
                                     z=pred_particles[pred_type_inds][:, 2],
-                                    mode='markers', marker_color=colors[j], marker_size=6, marker_line_width=8,
+                                    mode='markers', marker_color=colors[j], marker_size=6, marker_line_width=2,
                                     marker_line_color='white', showlegend=True,
                                     marker_symbol='diamond',
                                     name=f'Predicted type {j}'))

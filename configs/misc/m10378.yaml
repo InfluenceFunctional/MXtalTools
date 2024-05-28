@@ -46,7 +46,7 @@ seeds:
 
 # opt - sweep details
 wandb:
-  username: mkilgour
+  username: anon
   project_name: MCryGAN
   mini_csp_frequency: 10
   sample_reporting_frequency: 1

@@ -55,8 +55,8 @@ def process_dataset_chunks(xyzs_path, chunks_path, n_chunks):
                         pos=torch.tensor(molecule_dict['atom_coordinates'], dtype=torch.float32),
                         smiles=molecule_dict['molecule_smiles'],
                         identifier=molecule_dict['identifier'],
-                        y=torch.tensor([float(prop) for prop in props[1:-1]], dtype=torch.float32)[None,
-                          :] if 'qm9' in chunks_path.lower() else None  # QM9 molecule properties
+                        # QM9 molecule properties
+                        y=torch.tensor([float(prop) for prop in props[1:-1]], dtype=torch.float32)[None,:] if 'qm9' in chunks_path.lower() else None
                     )
 
                     data_list.append(crystaldata)

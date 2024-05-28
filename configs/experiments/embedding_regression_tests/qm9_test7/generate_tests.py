@@ -91,7 +91,7 @@ for ind in range(len(dataset_sizes)):  # training curves
     config_list.append(bb)
 
 ind = 0
-for ix1 in range(len(config_list)):
+for ix1 in range(len(config_list)):  # note for later use - 'depth' here is not a config which is used! we were fooling ourselves!!
     config = copy(base_config)
     config['machine'] = 'cluster'
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ind)

@@ -92,7 +92,7 @@ class SupercellBuilder:
         #                                    highlight_canonical_conformer=False,
         #                                    exclusion_level='unit cell')
         #
-        #     io.write(f'/home/mkilgour/gflownet-dev/sample_{ind}.cif', mol)
+        #     io.write(f'/home/mk8347/gflownet-dev/sample_{ind}.cif', mol)
 
         return supercell_data, generated_cell_volumes
 

@@ -29,7 +29,7 @@ SGS_TO_SEARCH = [i for i in range(1, 230 + 1)]
 
 os.chdir(r'C:\Users\mikem\crystals\toys')  # where you want everything to save
 config_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/test_configs/crystal_building.yaml'
-user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/users/mkilgour.yaml'
+user_path = r'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/Users/mikem.yaml'
 
 """get molecule"""
 atom_numbers = [6, 9, 17, 35, 53]

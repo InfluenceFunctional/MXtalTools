@@ -161,7 +161,7 @@ class CrystalData(BaseData):
         if nonstandard_symmetry:  # set as list fo correct collation behavior
             self.symmetry_operators = symmetry_operators
             self.nonstandard_symmetry = True
-        else: # standard symmetry
+        else:  # standard symmetry
             self.symmetry_operators = np.stack(SYM_OPS[sg_ind])
             self.nonstandard_symmetry = False
 

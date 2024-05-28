@@ -275,8 +275,8 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
         rotation_matrix = Ip_axes.T @ torch.linalg.inv(alignment.T)
         assert torch.sum(torch.isnan(rotation_matrix)) == 0, f"{Ip_axes} {alignment} {rotation_matrix}"
         if not enforce_right_handedness:
-            assert torch.linalg.det(
-                rotation_matrix) > 0  # negative determinant is an improper rotation, which we do not want - inverts the molecule
+            # negative determinant is an improper rotation, which we do not want - inverts the molecule
+            assert torch.linalg.det(rotation_matrix) > 0
 
         direction_vector = torch.tensor([
             rotation_matrix[2, 1] - rotation_matrix[1, 2],
@@ -300,13 +300,12 @@ def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list
                 # print(f"caught bad rotation from {rotation_matrix} with direction {direction_vector} and r_arg {r_arg}")
                 r = torch.pi
 
-        if torch.sum(torch.isnan(direction_vector)) > 0 or (
-                torch.sum(direction_vector) == 0):  # bad rotation or ~approx null rotation
+        # bad rotation or ~approx null rotation
+        if torch.sum(torch.isnan(direction_vector)) > 0 or (torch.sum(direction_vector) == 0):
             # print(f"caught bad direction from {rotation_matrix} with direction {direction_vector} and r_arg {r_arg}")
 
             r = torch.pi
-            direction_vector = torch.ones(3, device=rotation_matrix.device,
-                                          dtype=torch.float32)
+            direction_vector = torch.ones(3, device=rotation_matrix.device, dtype=torch.float32)
 
         rotvec_list.append(direction_vector / torch.linalg.norm(direction_vector) * r)
 
@@ -481,61 +480,111 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
 
 
 def aunit2unit_cell(symmetry_multiplicity, aunit_coords_list, fc_transform_list, cf_transform_list, sym_ops_list):
-    """
+    """  # NEW VERSION - faster. See scratch_5 for testing
+    use cell symmetry to pattern asymmetric unit into full unit cell
+    'unzip' and 'collect' by Z to do the whole thing in a single parallel pass
+    """  # todo better docstring
+    num_crystals = len(aunit_coords_list)
+    num_aunits = torch.sum(symmetry_multiplicity)
+    aunit_lens = torch.tensor([len(aunit_coords_list[ii]) for ii in range(num_crystals)])
+
+    padded_coords_c = rnn.pad_sequence(aunit_coords_list, batch_first=True)
+    flat_padded_coords_c = torch.repeat_interleave(padded_coords_c, symmetry_multiplicity, dim=0)
+
+    centroids_c = torch.stack([aunit_coords_list[ii].mean(0) for ii in range(num_crystals)])
+    # repeat each molecule Z times
+    flat_centroids_c = torch.repeat_interleave(centroids_c, symmetry_multiplicity, dim=0)
+
+    centroids_f = torch.einsum('nij,nj->ni', (cf_transform_list, centroids_c))
+    flat_centroids_f = torch.repeat_interleave(centroids_f, symmetry_multiplicity,dim=0)
+
+    flat_fc_transform_list = torch.repeat_interleave(fc_transform_list, symmetry_multiplicity, dim=0)
+    flat_cf_transform_list = torch.repeat_interleave(cf_transform_list, symmetry_multiplicity, dim=0)
+
+    sym_ops = torch.cat(sym_ops_list, dim=0).reshape(num_aunits, 4, 4)
+    # add 4th dimension as a dummy for affine transforms
+    flat_affine_centroids_f = torch.cat(
+        (flat_centroids_f, torch.ones(flat_centroids_f.shape[:-1] + (1,)).to(padded_coords_c.device)), dim=-1)
+
+    # get molecule centroids via symmetry ops
+    flat_centroids_f = torch.einsum('nij,nj->ni', (sym_ops, flat_affine_centroids_f))[..., :-1]
+
+    # force centroids within unit cell
+    flat_centroids_f_in_cell = flat_centroids_f - torch.floor(flat_centroids_f)
+
+    # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame
+    flat_rot_coords_f = torch.einsum('nmj,nij->nmi',
+                                     (torch.einsum('mij,mnj->mni',
+                                                   (flat_cf_transform_list,
+                                                    flat_padded_coords_c - flat_centroids_c[:, None, :])),
+                                      sym_ops[:, :3, :3]))
+
+    # translate rotated aunits to their correct position
+    padded_unit_cells = torch.einsum('mij,mnj->mni',
+                                     (flat_fc_transform_list,
+                                      flat_rot_coords_f + flat_centroids_f_in_cell[:, None, :]))
+
+    reference_cell_list = []  # recombine everything into their respective crystals
+    mol_ind = 0
+    for crystal_ind, mult in enumerate(symmetry_multiplicity):
+        reference_cell_list.append(padded_unit_cells[mol_ind:mol_ind + mult][:, :aunit_lens[crystal_ind]])
+        mol_ind += mult
+
+    return reference_cell_list
+
+
+def old_aunit2unit_cell(symmetry_multiplicity, aunit_coords_list, fc_transform_list, cf_transform_list, sym_ops_list):
+    """  # OLD, pretty good, but slower
     use cell symmetry to pattern asymmetric unit into full unit cell
     batch crystals with same Z value together for added speed
+
     """
-    unit_cell_list_i = []
+    reference_cell_list_i = []
 
     unique_z_values = torch.unique(symmetry_multiplicity)
-    z_inds_list = [torch.where(symmetry_multiplicity == z)[0] for z in unique_z_values]
+    z_inds = [torch.where(symmetry_multiplicity == z)[0] for z in unique_z_values]
 
-    for i, (z_inds, z_value) in enumerate(zip(z_inds_list, unique_z_values)):
-        # padding allows for parallelization of uneven-length coordinates lists
-        lens = torch.tensor([len(aunit_coords_list[ii]) for ii in z_inds])
-        padded_coords_c = rnn.pad_sequence(aunit_coords_list, batch_first=True)[z_inds]
-        centroids_c = torch.stack([aunit_coords_list[z_inds[ii]].mean(0) for ii in range(len(z_inds))])
-        centroids_f = fractional_transform(centroids_c, cf_transform_list[z_inds])
-        #torch.einsum('nij,nj->ni', (cf_transform_list[z_inds], centroids_c))
+    for i, (inds, z_value) in enumerate(zip(z_inds, unique_z_values)):
+        # padding allows for parallel transforms below
+        lens = torch.tensor([len(aunit_coords_list[ii]) for ii in inds])
+        padded_coords_c = rnn.pad_sequence(aunit_coords_list, batch_first=True)[inds]
+        centroids_c = torch.stack([aunit_coords_list[inds[ii]].mean(0) for ii in range(len(inds))])
+        centroids_f = torch.einsum('nij,nj->ni', (cf_transform_list[inds], centroids_c))
 
         # initialize list of empty tensors [Z, n_crystals, n_atoms, 3]
-        unit_cell_coords_list = torch.zeros((z_value, len(z_inds), padded_coords_c.shape[1], 3)).to(
-            aunit_coords_list[0].device)
+        ref_cells = torch.zeros((z_value, len(inds), padded_coords_c.shape[1], 3)).to(aunit_coords_list[0].device)
         # get symmetry ops for this batch
-        z_sym_ops = torch.stack([sym_ops_list[j] for j in z_inds])
+        z_sym_ops = torch.stack([sym_ops_list[j] for j in inds])
         # add 4th dimension as a dummy for affine transforms
         affine_centroids_f = torch.cat(
             (centroids_f, torch.ones(centroids_f.shape[:-1] + (1,)).to(padded_coords_c.device)), dim=-1)
 
-        for zv in range(z_value):  # for each symmetry operation in this symmetry multiplicity
+        for zv in range(z_value):
             # get molecule centroids via symmetry ops
             centroids_f_z = torch.einsum('nij,nj->ni', (z_sym_ops[:, zv], affine_centroids_f))[..., :-1]
 
             # force centroids within unit cell
             centroids_f_z_in_cell = centroids_f_z - torch.floor(centroids_f_z)
 
-            # center molecule, transform to fractional frame, then apply rot/inv ops
+            # subtract centroids and apply point symmetry to the molecule coordinates in fractional frame
             rot_coords_f = torch.einsum('nmj,nij->nmi',
                                         (torch.einsum('mij,mnj->mni',
-                                                      (cf_transform_list[z_inds],
+                                                      (cf_transform_list[inds],
                                                        padded_coords_c - centroids_c[:, None, :])),
                                          z_sym_ops[:, zv, :3, :3]))
 
-            # move molecule and transform to cartesian
-            unit_cell_coords_list[zv, :, :, :] = torch.einsum('mij,mnj->mni',
-                                                              (fc_transform_list[z_inds],
-                                                               rot_coords_f + centroids_f_z_in_cell[:, None, :]))
+            # add final centroid
+            ref_cells[zv, :, :, :] = torch.einsum('mij,mnj->mni',
+                                                  (fc_transform_list[inds],
+                                                   rot_coords_f + centroids_f_z_in_cell[:, None, :]))
 
-        unit_cell_list_i.extend([unit_cell_coords_list[:, jj, :lens[jj], :] for jj in range(len(z_inds))])
+        reference_cell_list_i.extend([ref_cells[:, jj, :lens[jj], :] for jj in range(len(inds))])
 
-    if len(z_inds_list) > 1:
-        sorted_z_inds = torch.argsort(torch.cat(z_inds_list))
-    else:
-        sorted_z_inds = z_inds_list
+    sorted_z_inds = torch.argsort(torch.cat(z_inds))
 
-    unit_cell_list = [unit_cell_list_i[ind] for ind in sorted_z_inds]
+    reference_cell_list = [reference_cell_list_i[ind] for ind in sorted_z_inds]
 
-    return unit_cell_list
+    return reference_cell_list
 
 
 def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_dict, asym_unit_dict,
@@ -680,7 +729,7 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, symmetries_dict, ra
                                    sample_sg_inds]
     mol_data.sg_ind = torch.tensor(sample_sg_inds, dtype=mol_data.sg_ind.dtype, device=mol_data.sg_ind.device)
     mol_data.sym_mult = torch.tensor([len(ops) for ops in mol_data.symmetry_operators], dtype=torch.int32,
-                                 device=mol_data.sg_ind.device)
+                                     device=mol_data.sg_ind.device)
 
     return mol_data
 

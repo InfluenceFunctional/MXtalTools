@@ -27,7 +27,7 @@ def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2, shu
             tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0, pin_memory=True, drop_last=False)
         else:
             tr = None
-        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True, drop_last=False)
+        te = DataLoader(test_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=0, pin_memory=True, drop_last=False)
 
     return tr, te
 

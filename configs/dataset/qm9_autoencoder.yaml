@@ -4,7 +4,7 @@
 #Then, specify the features which will be fed to models in training
 
 seed: 1
-max_dataset_length: 10000000
+max_dataset_length: 1000000000
 save_dataset: False
 dataset_type: 'molecule'
 regression_target: 'gap_energy' # 'crystal_reduced_cell_volume' 'crystal_density' 'crystal_packing_coefficient'

@@ -10,7 +10,7 @@ from scipy.interpolate import interpn
 from scipy.stats import linregress
 
 stats_dict_paths = [
-    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_23_11-05-18-22-17.npy',
+    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_18_10-05-13-11-30_fixed.npy',
     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_25_11-05-19-15-19.npy',
     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_27_11-05-11-26-48.npy',
 ]
@@ -228,13 +228,6 @@ def UMAP_fig(max_entries=10000000):
     stats_dict = stats_dicts[run_name]
     del stats_dicts
     import umap
-    reducer = umap.UMAP(n_components=2,
-                        metric='cosine',
-                        n_neighbors=10,
-                        min_dist=0.2)
-    scalar_encodings = stats_dict['scalar_encoding'][:max_entries]
-
-    embedding = reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std())
 
     from rdkit.Chem import rdMolDescriptors
     c_fraction = np.zeros(len(stats_dict['molecule_smiles']))
@@ -268,7 +261,7 @@ def UMAP_fig(max_entries=10000000):
     principal_ratio2 = np.nan_to_num(principal_ratio2)[:max_entries]
     principal_ratio2 /= np.quantile(principal_ratio2, 0.9999)
 
-    PR_stack = np.concatenate([principal_ratio1[:, None], principal_ratio2[:, None]], axis=1)
+    PR_stack = np.concatenate([principal_ratio2[:, None], principal_ratio1[:, None]], axis=1)
     sphere_like = -np.linalg.norm(PR_triangle_points[0] - PR_stack, axis=1)
     disc_like = -np.linalg.norm(PR_triangle_points[1] - PR_stack, axis=1)
     rod_like = -np.linalg.norm(PR_triangle_points[2] - PR_stack, axis=1)
@@ -277,12 +270,13 @@ def UMAP_fig(max_entries=10000000):
     point_colors2 = normalize_colors(composition_coloration)
     legend_entries2 = ["Sphere-like", "Rod-Like", "Disc-Like"]
 
-    composition_coloration = np.stack([num_rings,
-                                       num_rotatable,
-                                       ]).T[:max_entries]
-
-    point_colors3 = normalize_colors(composition_coloration)
-    legend_entries3 = ["# Rings", "# Rotatable Bonds", "Mol. Radius"]
+    # composition_coloration = np.stack([num_rings,
+    #                                    num_rotatable,
+    #                                    np.concatenate(stats_dict['molecule_radius'])
+    #                                    ]).T[:max_entries]
+    #
+    # point_colors3 = normalize_colors(composition_coloration)
+    # legend_entries3 = ["# Rings", "# Rotatable Bonds", "Mol. Radius"]
 
     'triangle PR plot'
     # xy = np.vstack([principal_ratio1, principal_ratio2])
@@ -309,13 +303,21 @@ def UMAP_fig(max_entries=10000000):
     # fig.update_layout(xaxis1_title='I1/I3', yaxis1_title='I2/I1', xaxis1_range=[0, 1.1], yaxis1_range=[.4, 1.1])
     # fig.write_image('triangle.png', width=400, height=400)
 
+    reducer = umap.UMAP(n_components=2,
+                        metric='cosine',
+                        n_neighbors=10,
+                        min_dist=0.2)
+    scalar_encodings = stats_dict['scalar_encoding'][:max_entries]
+
+    embedding = reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std())
+
     'embeddings'
-    fig2 = make_subplots(rows=3, cols=4, horizontal_spacing=.01, vertical_spacing=0.05,
-                         specs=[[{'rowspan': 3}, {'rowspan': 3}, {'rowspan': 3}, None],
-                                [None, None, None, {}],
-                                [None, None, None, None]],
+    fig2 = make_subplots(rows=1, cols=2, horizontal_spacing=.01, vertical_spacing=0.05,
+                         #specs=[[{'rowspan': 3}, {'rowspan': 3}, {'rowspan': 3}, None],
+                         #       [None, None, None, {}],
+                         #       [None, None, None, None]],
                          subplot_titles=(
-                             "(a) Composition", "(b) Inertial Ratios", "(c) Geometry"))
+                             "(a) Composition", "(b) Geometry"))
     # fig2.add_layout_image(dict(
     #     source=Image.open('triangle.png'),
     #     x=0, y=[0.2, 0.4, 0.6][ind],
@@ -326,7 +328,7 @@ def UMAP_fig(max_entries=10000000):
 
     annotations_list = []
     for ind2, (point_colors, legend_entries) in enumerate(
-            zip([point_colors1, point_colors2, point_colors3], [legend_entries1, legend_entries2, legend_entries3])):
+            zip([point_colors1, point_colors2], [legend_entries1, legend_entries2])):
 
         embedding -= embedding.min(0)
         embedding /= embedding.max(0)
@@ -374,41 +376,22 @@ def UMAP_fig(max_entries=10000000):
     fig2.update_xaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
 
-    fig2.add_scattergl(x=principal_ratio2, y=principal_ratio1, mode='markers', opacity=0.25, marker_color=point_colors2,
-                       row=2, col=4, showlegend=False)
-    annotations_list.append(dict(
-        xref="x4", yref="y4",
-        text='Sphere-like', font_size=18,
-        x=1, y=1, yshift=30, showarrow=False
-    ))
-    annotations_list.append(dict(
-        xref="x4", yref="y4",
-        text='Rod-like', font_size=18,
-        x=0.5, y=0.5, yshift=-30, showarrow=False
-    ))
-    annotations_list.append(dict(
-        xref="x4", yref="y4",
-        text='Disc-like', font_size=18,
-        x=0, y=1, yshift=30, showarrow=False
-    ))
-
     fig2.update_layout(annotations=annotations_list)
 
     fig2.update_layout(plot_bgcolor='rgb(255,255,255)')
-
 
     xlim = -0.2
     ylim = 1.2
     fig2.update_layout(xaxis1_range=[xlim, ylim], yaxis1_range=[xlim, ylim],
                        xaxis2_range=[xlim, ylim], yaxis2_range=[xlim, ylim],
-                       xaxis3_range=[xlim, ylim], yaxis3_range=[xlim, ylim],
-                       xaxis4_range=[-.2, 1.2], yaxis4_range=[0.3, 1.2],
+                       #xaxis3_range=[xlim, ylim], yaxis3_range=[xlim, ylim],
+                       #xaxis4_range=[-.2, 1.2], yaxis4_range=[0.3, 1.2],
                        #xaxis5_range=[-.2, 1.2], yaxis5_range=[.3, 1.2],
                        #xaxis6_range=[-.2, 1.2], yaxis6_range=[.3, 1.2],
                        )
 
     fig2.update_layout(
-        xaxis2_title='Component 1',
+        xaxis_title='Component 1',
         yaxis1_title='Component 2',
         #yaxis4_title='Ip1/Ip3',
         #xaxis4_title='Ip2/Ip3'
@@ -420,6 +403,30 @@ def UMAP_fig(max_entries=10000000):
     fig2.update_layout(font=dict(size=30))
 
     fig2.show(renderer='browser')
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatterternary({
+        'mode': 'markers',
+        'a': c_fraction + np.random.randn(len(c_fraction)) * 0.05,
+        'b': o_fraction + np.random.randn(len(c_fraction)) * 0.05,
+        'c': n_fraction + np.random.randn(len(c_fraction)) * 0.05,
+        'marker': {'color': point_colors1, 'size': 40, 'opacity': 0.1}
+    }))
+    fig.update_layout(font_size=1)
+
+    fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
+                      xaxis_showticklabels=False, yaxis_showticklabels=False,
+                      plot_bgcolor='rgba(0,0,0,0)')
+    fig.show(renderer='browser')
+
+    fig = go.Figure()
+    fig.add_scattergl(x=principal_ratio2, y=-principal_ratio1, mode='markers',
+                      opacity=1, marker_color=point_colors2, showlegend=False)
+
+    fig.update_layout(xaxis_showgrid=False, yaxis_showgrid=False, xaxis_zeroline=False, yaxis_zeroline=False,
+                      xaxis_showticklabels=False, yaxis_showticklabels=False,
+                      plot_bgcolor='rgba(0,0,0,0)')
+    fig.show(renderer='browser')
 
     return fig2
 
@@ -437,7 +444,7 @@ def normalize_colors(composition_coloration):
 
 
 def embedding_regression_figure():
-    os.chdir(r'C:\Users\mikem\crystals\CSP_runs\models')
+    os.chdir(r'C:\Users\mikem\crystals\CSP_runs\er7_results')
     elem = os.listdir()
     ers = [thing for thing in elem if '_embedding_regression_' in thing]
     target_names = ["rotational_constant_a",  # 0
@@ -456,27 +463,28 @@ def embedding_regression_figure():
                     "free_energy_STP",  # 13
                     "heat_capacity_STP",  # 14
                     ]
-    pretty_target_names = ["(a) Rotational Constant A /GHz",
-                           "(b) Rotational Constant B /GHz",
-                           "(c) Rotational Constant C /GHz",
-                           "(d) Dipole Moment /Deb",
-                           "(e) Iso. Polarizability /Bohr^3",
-                           "(f) HOMO Energy /Hartree",
-                           "(g) LUMO Energy /Hartree",
-                           "(h) Gap Energy /Hartree",
-                           "(i) Electronic Spatial Extent /Bohr^2",
-                           "(j) ZPV Energy /Hartree",
-                           "(k) Internal Energy (T=0) /Hartree",
-                           "(l) Internal Energy STP /Hartree",
-                           "(m) Enthalpy STP /Hartree",
-                           "(n) Free Energy STP /Hartree",
-                           "(o) Heat Capacity STP /cal mol^-1 K^-1"]
+    pretty_target_names = [r"$\large{(a)\ Rotational\ Constant\ A\ /GHz}$",
+                           r"$\large{(b)\ Rotational\ Constant\ B\ /GHz}$",
+                           r"$\large{(c)\ Rotational\ Constant\ C\ /GHz}$",
+                           r"$\large{(d)\ Dipole\ Moment\ /Deb}$",
+                           r"$\large{(e)\ Iso.\ Polarizability\ /Bohr^3}$",
+                           r"$\large{(f)\ HOMO\ Energy\ /Hartree}$",
+                           r"$\large{(g)\ LUMO\ Energy\ /Hartree}$",
+                           r"$\large{(h)\ Gap\ Energy\ /Hartree}$",
+                           r"$\large{(i)\ Electronic\ Spatial\ Extent\ /Bohr^2}$",
+                           r"$\large{(j)\ ZPV\ Energy\ /Hartree}$",
+                           r"$\large{(k)\ Internal\ Energy\ (T=0)\ /Hartree}$",
+                           r"$\large{(l)\ Internal\ Energy\ 298K\ /Hartree}$",
+                           r"$\large{(m)\ Enthalpy\ 298K\ /Hartree}$",
+                           r"$\large{(n)\ Free\ Energy\ 298K\ /Hartree}$",
+                           r"$\large{(o)\ Heat\ Capacity\ 298K\ /cal\ mol^{-1}\ K^{-1}}$"]
 
     MAE_dict = {}
     NMAE_dict = {}
     R_dict = {}
     for ind, (path, target_name) in enumerate(zip(ers, target_names)):
-        stats_dict = np.load(path, allow_pickle=True).item()['test_stats']
+        dpath = path + '/best_embedding_regressor_test_stats_dict.npy'
+        stats_dict = np.load(dpath, allow_pickle=True).item()
         target = stats_dict['regressor_target']
         prediction = stats_dict['regressor_prediction']
 
@@ -495,7 +503,8 @@ def embedding_regression_figure():
 
     annotations = []
     for ind, (path, target_name) in enumerate(zip(ers, target_names)):
-        stats_dict = np.load(path, allow_pickle=True).item()['test_stats']
+        dpath = path + '/best_embedding_regressor_test_stats_dict.npy'
+        stats_dict = np.load(dpath, allow_pickle=True).item()
         target = stats_dict['regressor_target']
         prediction = stats_dict['regressor_prediction']
 
@@ -510,7 +519,6 @@ def embedding_regression_figure():
 
         row = ind // 5 + 1
         col = ind % 5 + 1
-        num_points = len(prediction)
         opacity = 0.05  # np.exp(-num_points / 10000)
         fig3.add_trace(go.Scattergl(x=target, y=prediction, mode='markers', marker=dict(color=z), opacity=opacity,
                                     showlegend=False),
@@ -518,9 +526,13 @@ def embedding_regression_figure():
         fig3.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
                        row=row, col=col)
 
+        minval = max([np.amin(target), np.amin(prediction)])
+        maxval = min([np.amax(target), np.amax(prediction)])
+        fig3.update_layout({f'xaxis{ind + 1}_range': [minval, maxval]})
+
         annotations.append(dict(xref="x" + str(ind + 1), yref="y" + str(ind + 1),
-                                x=np.amin(target) + np.ptp(target) * 0.2,
-                                y=np.amax(prediction) - np.ptp(prediction) * 0.2,
+                                x=minval + np.ptp(prediction) * 0.25,
+                                y=maxval - np.ptp(prediction) * 0.2,
                                 showarrow=False,
                                 text=f"R={R_dict[target_name]:.2f} <br> MAE={MAE_dict[target_name]:.3g}"
                                 ))
@@ -534,9 +546,14 @@ def embedding_regression_figure():
                       showgrid=True, zeroline=True)
     fig3.update_xaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
+    fig3.update_layout(yaxis6_title='Predicted Value')
+    fig3.update_layout(xaxis13_title='Target Value')
     fig3.update_layout(font=dict(size=20))
     fig3.update_annotations(font_size=20)
+    fig3.update_annotations(yshift=10)
+    fig3.update_xaxes(tickangle=0)
     fig3.show(renderer='browser')
+
     return fig3
 
 
@@ -546,28 +563,49 @@ def regression_training_curve():
     dataset_sizes[-1] = 133000
 
     x = dataset_sizes
+    # y = np.asarray([
+    #     .2328,  # 26
+    #     .1815,  # 27
+    #     .1575,  # 28
+    #     .1419,  # 29
+    #     .1211,  # 30
+    #     .1181,  # 31
+    #     .09724,  # 32
+    #     .09459,  # 33
+    #     .09,  # 34
+    #     np.nan,  # 35
+    #     .07692,  # 36
+    #     0.06927,  # 37
+    #     0.06702,  # 38
+    #     0.06181,  # 39
+    #     0.05746,  # 40
+    #     0.05795,  # 41
+    #     0.05174,  # 42
+    #     0.04831,  # 43 \
+    #     0.04734,  # 44
+    #     0.04505  # 45
+    # ])
     y = np.asarray([
-        .2328,  # 26
-        .1815,  # 27
-        .1575,  # 28
-        .1419,  # 29
-        .1211,  # 30
-        .1181,  # 31
-        .09724,  # 32
-        .09459,  # 33
-        .09,  # 34
-        np.nan,  # 35
-        .07692,  # 36
-        0.06927,  # 37
-        0.06702,  # 38
-        0.06181,  # 39
-        0.05746,  # 40
-        0.05795,  # 41
-        0.05174,  # 42
-        0.04831,  # 43 \
-        0.04734,  # 44
-        0.04505  # 45
-
+        0.3244,  # 26
+        0.2218,  # 27
+        0.1831,  # 28
+        0.1504,  # 29
+        0.139,  # 30
+        0.1159,  # 31
+        0.09535,  # 32
+        0.09786,  # 33
+        0.08978,  # 34
+        0.08531,  # 35
+        0.0769,  # 36
+        0.07244,  # 37
+        0.07253,  # 38
+        0.06615,  # 39
+        0.06154,  # 40
+        0.06448,  # 41
+        0.0610,  # 42
+        0.05527,  # 43 \
+        0.05574,  # 44
+        0.05364  # 45
     ])
     fig4 = go.Figure()
     fig4.add_scatter(x=x, y=y, mode='markers', marker_size=10)
@@ -589,11 +627,11 @@ def regression_training_curve():
 #fig = RMSD_fig()
 #fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
-fig2 = UMAP_fig(max_entries=1000000)
+#fig2 = UMAP_fig(max_entries=1000000)
 #fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
 
-#fig3 = embedding_regression_figure()
-#fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+fig3 = embedding_regression_figure()
+fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
 
 #fig4 = regression_training_curve()
 #fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)

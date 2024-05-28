@@ -54,15 +54,16 @@ def filter_batch_graphwise(data, keep_index=None, delete_index=None):
 
 
 def basic_stats(values: torch.tensor) -> dict[str, Tensor]:
-    clipped_values = values.clip(min=torch.quantile(values, 0.05), max=torch.quantile(values, 0.95))
+    clipped_values = values.clip(min=torch.quantile(values[:int(16e6)].float(), 0.05), max=torch.quantile(values[:int(16e6)].float(), 0.95))
 
     return {'max': torch.amax(values),
             'min': torch.amin(values),
-            'mean': torch.mean(values),
-            'std': torch.std(values),
+            'mean': torch.mean(values.float()),
+            'std': torch.std(values.float()),
             'tight_mean': torch.mean(clipped_values),
             'tight_std': torch.std(clipped_values),
-            'histogram': torch.histogram(values, bins=50)
+            'histogram': torch.histogram(values.float(), bins=50),
+            'uniques': torch.unique(values, return_counts=True) if values.dtype == torch.long else (None, None),
             }
 
 

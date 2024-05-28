@@ -56,7 +56,7 @@ class CrystalAnalyzer(torch.nn.Module):
         self.machine = machine
 
         self.config = process_main_config(None,
-                                          user_yaml_path='../../configs/users/mkilgour.yaml',
+                                          user_yaml_path='../../configs/Users/mikem.yaml',
                                           main_yaml_path='../../configs/standalone/crystal_analyzer.yaml',
                                           machine=machine)
         #self.config = dict2namespace(load_yaml(config_path))
@@ -209,7 +209,7 @@ class CrystalAnalyzer(torch.nn.Module):
                                                      exclusion_level='distance',
                                                      inclusion_distance=6) for ind in sort_inds]
                     # import ase.io
-                    # [ase.io.write(f'/home/mkilgour/gflownet-dev/sample_{i}.cif', mols[i]) for i in range(len(mols))]
+                    # [ase.io.write(f'/home/mk8347/gflownet-dev/sample_{i}.cif', mols[i]) for i in range(len(mols))]
 
                     stats_dict = {
                         'log_vdw_loss': np.log10(vdw_loss.cpu().detach().numpy()),

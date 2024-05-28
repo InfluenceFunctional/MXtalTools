@@ -8,8 +8,8 @@ from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders
 
 datasets_path = 'D:/crystal_datasets/'
-dataset_name = '/qm9_molecules_dataset.pkl'
-misc_dataset_name = '/misc_data_for_qm9_molecules_dataset.npy'
+dataset_name = '/qm9_dataset.pkl'
+misc_dataset_name = '/misc_data_for_qm9_dataset.npy'
 dataset_yaml_path = '/configs/standalone/qm9_loader.yaml'
 
 

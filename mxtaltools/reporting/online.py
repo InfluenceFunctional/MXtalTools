@@ -68,7 +68,8 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
     overlaps_1d = {}
     sample_means = {}
     sample_stds = {}
-    for i, key in enumerate(dataDims['lattice_features']):
+    lattice_features = ['a','b','c','alpha','beta','gamma','x','y','z','theta','phi','r']
+    for i, key in enumerate(lattice_features):
         mini, maxi = np.amin(dataset_cell_distribution[:, i]), np.amax(dataset_cell_distribution[:, i])
         h1, r1 = np.histogram(dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
         h1 = h1 / len(dataset_cell_distribution[:, i])
@@ -102,7 +103,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
         fig_dict['1D_overlaps'] = fig
 
         # 1d Histograms
-        fig = make_subplots(rows=4, cols=3, subplot_titles=dataDims['lattice_features'])
+        fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
         for i in range(n_crystal_features):
             row = i // 3 + 1
             col = i % 3 + 1
@@ -199,7 +200,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
 def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=None):
     scores_dict = {}
     vdw_penalty_dict = {}
-    tracking_features_dict = {}
+    #tracking_features_dict = {}
     packing_coeff_dict = {}
     pred_distance_dict = {}
     true_distance_dict = {}
@@ -212,28 +213,28 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=No
     scores_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_score'][randn_inds]
     scores_dict['Generator'] = epoch_stats_dict['discriminator_fake_score'][generator_inds]
     scores_dict['Distorted'] = epoch_stats_dict['discriminator_fake_score'][distorted_inds]
-
-    tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
-                                                                    epoch_stats_dict['tracking_features'].T)}
-    tracking_features_dict['Distorted'] = {feat: vec for feat, vec in
-                                           zip(dataDims['tracking_features'],
-                                               epoch_stats_dict['tracking_features'][distorted_inds].T)}
-    tracking_features_dict['Gaussian'] = {feat: vec for feat, vec in
-                                          zip(dataDims['tracking_features'],
-                                              epoch_stats_dict['tracking_features'][randn_inds].T)}
-    tracking_features_dict['Generator'] = {feat: vec for feat, vec in
-                                           zip(dataDims['tracking_features'],
-                                               epoch_stats_dict['tracking_features'][generator_inds].T)}
+    #
+    # tracking_features_dict['CSD'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
+    #                                                                 epoch_stats_dict['tracking_features'].T)}
+    # tracking_features_dict['Distorted'] = {feat: vec for feat, vec in
+    #                                        zip(dataDims['tracking_features'],
+    #                                            epoch_stats_dict['tracking_features'][distorted_inds].T)}
+    # tracking_features_dict['Gaussian'] = {feat: vec for feat, vec in
+    #                                       zip(dataDims['tracking_features'],
+    #                                           epoch_stats_dict['tracking_features'][randn_inds].T)}
+    # tracking_features_dict['Generator'] = {feat: vec for feat, vec in
+    #                                        zip(dataDims['tracking_features'],
+    #                                            epoch_stats_dict['tracking_features'][generator_inds].T)}
 
     vdw_penalty_dict['CSD'] = epoch_stats_dict['real_vdw_penalty']
     vdw_penalty_dict['Gaussian'] = epoch_stats_dict['fake_vdw_penalty'][randn_inds]
     vdw_penalty_dict['Generator'] = epoch_stats_dict['fake_vdw_penalty'][generator_inds]
     vdw_penalty_dict['Distorted'] = epoch_stats_dict['fake_vdw_penalty'][distorted_inds]
 
-    packing_coeff_dict['CSD'] = epoch_stats_dict['real_packing_coefficients']
-    packing_coeff_dict['Gaussian'] = epoch_stats_dict['generated_packing_coefficients'][randn_inds]
-    packing_coeff_dict['Generator'] = epoch_stats_dict['generated_packing_coefficients'][generator_inds]
-    packing_coeff_dict['Distorted'] = epoch_stats_dict['generated_packing_coefficients'][distorted_inds]
+    packing_coeff_dict['CSD'] = epoch_stats_dict['real_volume_fractions']
+    packing_coeff_dict['Gaussian'] = epoch_stats_dict['generated_volume_fractions'][randn_inds]
+    packing_coeff_dict['Generator'] = epoch_stats_dict['generated_volume_fractions'][generator_inds]
+    packing_coeff_dict['Distorted'] = epoch_stats_dict['generated_volume_fractions'][distorted_inds]
 
     pred_distance_dict['CSD'] = epoch_stats_dict['discriminator_real_predicted_distance']
     pred_distance_dict['Gaussian'] = epoch_stats_dict['discriminator_fake_predicted_distance'][randn_inds]
@@ -247,14 +248,13 @@ def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=No
 
     if len(extra_test_dict) > 0:
         scores_dict['extra_test'] = extra_test_dict['discriminator_real_score']
-        tracking_features_dict['extra_test'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'],
-                                                                               extra_test_dict['tracking_features'].T)}
+        #tracking_features_dict['extra_test'] = {feat: vec for feat, vec in zip(dataDims['tracking_features'], extra_test_dict['tracking_features'].T)}
         vdw_penalty_dict['extra_test'] = extra_test_dict['real_vdw_penalty']
-        packing_coeff_dict['extra_test'] = extra_test_dict['real_packing_coefficients']
+        packing_coeff_dict['extra_test'] = extra_test_dict['real_volume_fractions']
         pred_distance_dict['extra_test'] = extra_test_dict['discriminator_real_predicted_distance']
         true_distance_dict['extra_test'] = extra_test_dict['discriminator_real_true_distance']
 
-    return scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict, pred_distance_dict, true_distance_dict
+    return scores_dict, vdw_penalty_dict, packing_coeff_dict, pred_distance_dict, true_distance_dict
 
 
 def discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict, layout):
@@ -779,7 +779,7 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
     '''
     record all the stats for the usual test dataset
     '''
-    (scores_dict, vdw_penalty_dict,
+    (scores_dict, vdw_penalty_dict,  # todo check/rewrite - got rid of tracking features fed through samples
      tracking_features_dict, packing_coeff_dict,
      pred_distance_dict, true_distance_dict) \
         = process_discriminator_outputs(dataDims, test_epoch_stats_dict, extra_test_dict)
@@ -1576,11 +1576,11 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=N
     """
     fig_dict = {}
     layout = plotly_setup(config)
-    scores_dict, vdw_penalty_dict, tracking_features_dict, packing_coeff_dict, pred_distance_dict, true_distance_dict \
+    scores_dict, vdw_penalty_dict, packing_coeff_dict, pred_distance_dict, true_distance_dict \
         = process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict)
 
     fig_dict.update(discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict, layout))
-    fig_dict['Discriminator Score Correlates'] = plot_discriminator_score_correlates(dataDims, epoch_stats_dict, layout)
+    #fig_dict['Discriminator Score Correlates'] = plot_discriminator_score_correlates(dataDims, epoch_stats_dict, layout)
     fig_dict['Distance Results'], dist_rvalue, dist_slope = discriminator_distances_plots(
         pred_distance_dict, true_distance_dict, epoch_stats_dict)
 

@@ -16,7 +16,7 @@ run tests on subtasks of the supercell builder
 '''
 '''load test dataset'''
 config_path = r'/configs/test_configs/crystal_building.yaml'
-user_path = r'/configs/users/mkilgour.yaml'
+user_path = r'/configs/Users/mikem.yaml'
 config = process_main_config(user_yaml_path=user_path, main_yaml_path=config_path)
 modeller = Modeller(config)
 _, data_loader, _ = modeller.load_dataset_and_dataloaders(override_test_fraction=1)

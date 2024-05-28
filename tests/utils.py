@@ -8,7 +8,7 @@ from mxtaltools.modeller import Modeller
 def train_model(config_path):
     source_dir = os.getcwd()
     os.chdir(source_dir)
-    user_path = r'/configs/users/mkilgour.yaml'
+    user_path = r'/configs/Users/mikem.yaml'
     config = process_main_config(user_yaml_path=user_path, main_yaml_path=source_dir + config_path)
     modeller = Modeller(config)
     modeller.train_models()

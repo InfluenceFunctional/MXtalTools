@@ -1,6 +1,7 @@
 import gc
 import os
 import sys
+import random
 from argparse import Namespace
 from datetime import datetime
 from distutils.dir_util import copy_tree
@@ -270,7 +271,7 @@ class Modeller:
                                                                self.autoencoder_type_index,
                                                                self.config.autoencoder.molecule_radius_normalization,
                                                                infer_protons=self.config.autoencoder.infer_protons,
-                                                               protons_in_input=not self.config.dataset.filter_protons
+                                                               protons_in_input=not self.config.autoencoder.filter_protons
                                                                )
         if self.config.mode == 'embedding_regression' or self.config.model_paths.embedding_regressor is not None:
             self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model,
@@ -279,7 +280,7 @@ class Modeller:
                                                                self.autoencoder_type_index,
                                                                self.config.autoencoder.molecule_radius_normalization,
                                                                infer_protons=self.config.autoencoder.infer_protons,
-                                                               protons_in_input=not self.config.dataset.filter_protons
+                                                               protons_in_input=not self.config.autoencoder.filter_protons
                                                                )
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
                 param.requires_grad = False
@@ -297,7 +298,11 @@ class Modeller:
                        name not in self.models_dict.keys()}  # initialize null models
         self.models_dict.update(null_models)
 
-    def load_dataset_and_dataloaders(self, override_test_fraction=None, override_dataset=None):
+    def load_dataset_and_dataloaders(self,
+                                     override_test_fraction=None,
+                                     override_dataset=None,
+                                     override_shuffle=None,
+                                     override_batch_size=None):
         """
         use data manager to load and filter dataset
         use dataset builder to generate crystaldata objects
@@ -308,12 +313,15 @@ class Modeller:
         data_manager = DataManager(device=self.device,
                                    datasets_path=self.config.dataset_path,
                                    config=self.config.dataset)
+        if override_dataset is not None:
+            data_manager.misc_dataset = np.load(self.config.dataset_path + self.config.misc_dataset_name, allow_pickle=True).item()
+            data_manager.dataset_stats = data_manager.misc_dataset['dataset_stats']
         data_manager.load_dataset_for_modelling(
             dataset_name=self.config.dataset_name,
             filter_conditions=self.config.dataset.filter_conditions,
             filter_polymorphs=self.config.dataset.filter_polymorphs,
             filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules,
-            filter_protons=self.config.dataset.filter_protons,
+            filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
             override_dataset=override_dataset
         )
         self.dataDims = data_manager.dataDims
@@ -350,7 +358,7 @@ class Modeller:
                 filter_polymorphs=False,
                 # do not filter duplicates - e.g., in Blind test they're almost all duplicates!
                 filter_duplicate_molecules=False,
-                filter_protons=self.config.dataset.filter_protons,
+                filter_protons=not self.models_dict['autoencoder'].protons_in_input,
             )
             self.times['extra_dataset_loading'] = data_manager.times
         else:
@@ -362,10 +370,13 @@ class Modeller:
         else:
             test_fraction = self.config.dataset.test_fraction
 
-        return self.prep_dataloaders(data_manager, extra_data_manager, test_fraction)
+        return self.prep_dataloaders(data_manager, extra_data_manager, test_fraction,
+                                     override_shuffle=override_shuffle,
+                                     override_batch_size=override_batch_size)
 
     def prep_dataloaders(self, dataset_builder, extra_dataset_builder=None, test_fraction=0.2,
-                         override_batch_size: int = None):
+                         override_batch_size: int = None,
+                         override_shuffle=None):
         """
         get training, test, ane optionall extra validation dataloaders
         """
@@ -374,10 +385,15 @@ class Modeller:
             loader_batch_size = self.config.min_batch_size
         else:
             loader_batch_size = override_batch_size
+        if override_shuffle is not None:
+            shuffle = override_shuffle
+        else:
+            shuffle = True
         train_loader, test_loader = get_dataloaders(dataset_builder,
                                                     machine=self.config.machine,
                                                     batch_size=loader_batch_size,
-                                                    test_fraction=test_fraction)
+                                                    test_fraction=test_fraction,
+                                                    shuffle=shuffle)
         self.config.current_batch_size = loader_batch_size
         print("Initial training batch size set to {}".format(self.config.current_batch_size))
         del dataset_builder
@@ -387,7 +403,8 @@ class Modeller:
             _, extra_test_loader = get_dataloaders(extra_dataset_builder,
                                                    machine=self.config.machine,
                                                    batch_size=loader_batch_size,
-                                                   test_fraction=1)
+                                                   test_fraction=1,
+                                                   shuffle=shuffle)
             del extra_dataset_builder
         else:
             extra_test_loader = None
@@ -517,7 +534,8 @@ class Modeller:
         }
 
         '''initialize datasets and useful classes'''
-        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=1)
+        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=1,
+                                                                              override_shuffle=False)
         num_params_dict = self.init_models()
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
@@ -603,7 +621,7 @@ class Modeller:
         num_params_dict = self.init_models()
 
         self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
-        self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']  # todo fix
+        self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius']['max']
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
@@ -637,7 +655,8 @@ class Modeller:
     def ae_embedding_step(self, data):
         data = data.to(self.device)
         data, input_data = self.preprocess_ae_inputs(data, no_noise=True)
-        if self.config.dataset.filter_protons and not self.models_dict['autoencoder'].inferring_protons:
+        if not self.models_dict['autoencoder'].protons_in_input and not self.models_dict[
+            'autoencoder'].inferring_protons:
             data = input_data.clone()  # deprotonate the reference if we are not inferring protons
 
         decoding, encoding = self.models_dict['autoencoder'](input_data, return_encoding=True)
@@ -790,7 +809,7 @@ class Modeller:
             if self.train_models_dict['discriminator']:
                 self.init_gaussian_generator()
 
-            if self.config.mode == 'polymorph_classification':  # to refactor
+            if self.config.mode == 'polymorph_classification':  # TODO refactor
                 train_loader = update_dataloader_batch_size(train_loader, 1)
                 test_loader = update_dataloader_batch_size(test_loader, 1)
                 if extra_test_loader is not None:
@@ -820,15 +839,12 @@ class Modeller:
                 self.times['full_epoch_start'] = time()
                 self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
 
-                # if epoch % self.config.dataset.refresh_interval:
-                #     del train_loader, test_loader
-                #     # todo alternate between GEOM and qm9 with some frequency
-                #     # todo also keep track of where we are through GEOM and move through it at each iteration
-                #     self.new_dataset = geom_msgpack_to_minimal_dataset(
-                #         'DRUGS_crude.msgpack', self.config.dataset_path, self.config.dataset.max_dataset_length)
-                #     train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders(
-                #         override_dataset=self.new_dataset)
-                #     del self.new_dataset
+                # refresh dataset with random sample from on-disk dataset
+                if epoch % self.config.dataset.refresh_interval:
+                    extra_test_loader, test_loader, train_loader = self.refresh_from_on_disk_dataset(epoch,
+                                                                                                     extra_test_loader,
+                                                                                                     test_loader,
+                                                                                                     train_loader)
 
                 if epoch < self.config.num_early_epochs:
                     early_epochs_step_override = self.config.early_epochs_step_override
@@ -894,6 +910,24 @@ class Modeller:
                 self.logger.log_times(self.times)
                 self.times = {}
                 epoch += 1
+
+    def refresh_from_on_disk_dataset(self, epoch, extra_test_loader, test_loader, train_loader):
+        print("Refreshing dataset from via on-disk sampling")
+        self.times['dataset_refresh_start'] = time()
+        del train_loader, test_loader
+        all_chunks = os.listdir(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
+        random.Random(5).shuffle(all_chunks)
+        start = (epoch // self.config.dataset.refresh_interval) * self.config.dataset.chunks_per_refresh
+        stop = (epoch // self.config.dataset.refresh_interval + 1) * self.config.dataset.chunks_per_refresh
+        new_dataset = []
+        for ind in range(self.config.dataset.chunks_per_refresh):
+            new_dataset.extend(
+                torch.load(self.config.dataset_path + self.config.dataset.on_disk_data_dir + all_chunks[start + ind]))
+        train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_dataset=new_dataset,
+                                                                                         override_batch_size=self.config.current_batch_size)
+        del new_dataset
+        self.times['dataset_refresh_end'] = time()
+        return extra_test_loader, test_loader, train_loader
 
     def process_sweep_config(self):
         if self.sweep_config is not None:  # write sweep config features to working config # todo make more universal - I hate wandb configs
@@ -1020,8 +1054,12 @@ class Modeller:
     #     return data
 
     def ae_step(self, input_data, data, update_weights, step, last_step=False):
-        if self.config.dataset.filter_protons and not self.models_dict['autoencoder'].inferring_protons:
-            data = input_data.clone()  # deprotonate the reference if we are not inferring protons
+        if last_step:
+            self.times['ae_step_start'] = time()
+
+        if (not self.models_dict['autoencoder'].protons_in_input and
+                not self.models_dict['autoencoder'].inferring_protons):
+            data = input_data.clone()
 
         decoding, encoding = self.models_dict['autoencoder'](input_data, return_encoding=True)
         losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
@@ -1036,8 +1074,14 @@ class Modeller:
 
         self.ae_stats_and_reporting(data, decoded_data, encoding, last_step, stats, step)
 
+        if last_step:
+            self.times['ae_step_end'] = time()
+
     def fix_autoencoder_protonation(self, data, override_deprotonate=False):
-        if self.config.autoencoder.infer_protons or self.config.dataset.filter_protons or override_deprotonate:
+        if not self.models_dict['autoencoder'].inferring_protons and (self.models_dict[
+            'autoencoder'].protons_in_input) and not override_deprotonate:
+            input_cloud = data.clone()
+        else:
             heavy_atom_inds = torch.argwhere(data.x != 1)[:, 0]  # protons are atom type 1
             input_cloud = data.clone()
             input_cloud.x = input_cloud.x[heavy_atom_inds]
@@ -1046,14 +1090,12 @@ class Modeller:
             a, b = torch.unique(input_cloud.batch, return_counts=True)
             input_cloud.ptr = torch.cat([torch.zeros(1, device=self.device), torch.cumsum(b, dim=0)]).long()
             input_cloud.num_atoms = torch.diff(input_cloud.ptr).long()
-        else:
-            input_cloud = data.clone()
 
         return input_cloud
 
     def ae_stats_and_reporting(self, data, decoded_data, encoding, last_step, stats, step):
         if self.logger.epoch % self.config.logger.sample_reporting_frequency == 0:
-            stats['encoding'] = encoding.cpu().detach().numpy()
+            stats['encoding'] = encoding.detach()
 
         if last_step:
             self.detailed_autoencoder_step_analysis(data, decoded_data, stats)
@@ -1159,7 +1201,6 @@ class Modeller:
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
             data = data.to(self.device)
-            #data.pos = data.pos / self.models_dict['autoencoder'].radial_normalization
 
             data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
             self.ae_step(input_data, data, update_weights, step=i, last_step=i == len(data_loader) - 1)
@@ -1168,8 +1209,10 @@ class Modeller:
                 if i >= iteration_override:
                     break  # stop training early - for debugging purposes
 
+        self.times['ae_post_epoch_start'] = time()
         self.logger.concatenate_stats_dict(self.epoch_type)
         self.ae_annealing()
+        self.times['ae_post_epoch_end'] = time()
 
     def ae_annealing(self):
         # if we have learned the existing distribution
@@ -1234,9 +1277,8 @@ class Modeller:
         decoded_dists = torch.linalg.norm(decoded_data.pos, dim=1)
         constraining_loss = scatter(
             F.relu(
-                decoded_dists - self.models_dict['autoencoder'].radial_normalization),
-            #torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes,
-            #dim=0)),
+                decoded_dists -  #self.models_dict['autoencoder'].radial_normalization),
+                torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes, dim=0)),
             decoded_data.batch, reduce='mean')
 
         # node weight constraining loss
@@ -1255,8 +1297,6 @@ class Modeller:
                  'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
                  'node_weight_constraining_loss': node_weight_constraining_loss.mean().detach(),
                  }
-
-        assert torch.sum(torch.isnan(losses)) == 0, "NaN in Reconstruction Loss"
 
         return losses, stats, decoded_data
 
