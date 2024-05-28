@@ -840,7 +840,7 @@ class Modeller:
                 self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
 
                 # refresh dataset with random sample from on-disk dataset
-                if epoch % self.config.dataset.refresh_interval:
+                if epoch % self.config.dataset.refresh_interval == 0 and epoch > 0:
                     extra_test_loader, test_loader, train_loader = self.refresh_from_on_disk_dataset(epoch,
                                                                                                      extra_test_loader,
                                                                                                      test_loader,

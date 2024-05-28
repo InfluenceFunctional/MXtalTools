@@ -29,7 +29,7 @@ extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 
 logger:
   sample_reporting_frequency: 5  # how often to do detailed reporting with figures
-ae_
+
 model_paths:
   discriminator: null
   generator: null
