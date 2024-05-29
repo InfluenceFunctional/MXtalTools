@@ -2,7 +2,7 @@ Molecular Crystal Tools
 =========================
 
 What is ``MXtalTools``?
------------------
+-----------------------
 
 ``MXtalTools`` is a python library based on pytorch_ for machine learning tasks on molecules and molecular crystals.
 
@@ -22,7 +22,7 @@ What is ``MXtalTools``?
     source/common_utils
     source/common_geometry
     source/common_ovito_utils
-    source/common_rdf_calculation
+    source/common_rdf
 
 Indices and tables
 ==================
