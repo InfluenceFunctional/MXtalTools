@@ -19,6 +19,8 @@ What is ``MXtalTools``?
     source/model_deployment
     source/models
     source/model_components
+    source/common_utils
+    source/common_geometry
 
 Indices and tables
 ==================

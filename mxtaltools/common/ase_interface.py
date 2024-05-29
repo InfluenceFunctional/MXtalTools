@@ -5,26 +5,60 @@ from ase.spacegroup import crystal as ase_crystal
 from ase.visualize import view
 
 
-def crystals_to_ase_mols(crystaldata, max_ind=np.inf, highlight_aux=False, exclusion_level=None,
-                         inclusion_distance=4, return_crystal=False, show_mols=False):
-    mols = [ase_mol_from_crystaldata(crystaldata, ii, highlight_canonical_conformer=highlight_aux,
-                                     exclusion_level=exclusion_level, inclusion_distance=inclusion_distance,
-                                     return_crystal=return_crystal)
-            for ii in range(min(max_ind, crystaldata.num_graphs))]
+def crystaldata_batch_to_ase_mols_list(crystaldata_batch, max_ind: int = np.inf, show_mols: bool = False, **kwargs):
+    """
+    Helper function for converting Crystaldata batches into lists of ase objects.
+
+    Parameters
+    ----------
+    crystaldata_batch :
+        batch of Crystaldata objects
+    max_ind : int
+        Maximum batch ind to include in the list
+    show_mols : bool
+        whether to visualize the list of mol objects
+
+    Returns
+    -------
+    list of ase mol objects
+    """
+    mols = [ase_mol_from_crystaldata(crystaldata_batch, ii, **kwargs)
+            for ii in range(min(max_ind, crystaldata_batch.num_graphs))]
     if show_mols:
         view(mols)
     return mols
 
 
-def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=False, exclusion_level=None,
-                             inclusion_distance=4, return_crystal=False):
+def ase_mol_from_crystaldata(data, index: int = None, highlight_canonical_conformer: bool = False, exclusion_level=None,
+                             inclusion_distance: float = 4, return_crystal: bool = False):
     """
-    generate an ASE Atoms object from a crystaldata object, up to certain exclusions
-    optionally highlight atoms in the asymmetric unit
+    Extract an atomic structure from a Crystaldata object according to its batch index, and convert it into an ase mol object.
+    Several options for visualization of crystals.
 
-    view with
-    from ase.visualize import view
-    view(output_of_this_function)
+    Parameters
+    ----------
+    data : Crystaldata object
+    index : int, optional
+        Batch index of Crystaldata object to extract. Default is None.
+    highlight_canonical_conformer : bool, optional
+        Whether to give the canonical conformer a different atom type for color comparison.
+    exclusion_level : 'conformer', 'unit cell', 'inside cell', 'convolve with', 'distance', or None (default None)
+        Assuming the input Crystaldata is a molecule cluster larger than a single unit cell, we have several options to pare down to the desired visualization.
+        'conformer' : only the 'canonical conformer'
+        'unit cell' : all molecules with centroids inside the unit cell
+        'inside cell' : all atoms inside the unit cell
+        'convolve with' : all atoms within convolution range of the canonical conformer
+        'distance' : all atoms within a certain distance of the canonical conformer
+        None : show all atoms in the crystal
+    inclusion_distance : float, optional
+        Distance fed to the 'distance' exclusion level option
+    return_crystal : bool, optional
+        Whether to return an ase mol for the crystal. Does not always work properly. Ase does not understand our crystals correctly.
+
+
+    Returns
+    -------
+    ase mol object
     """
     data = data.clone().cpu().detach()
     if data.batch is not None:  # more than one crystal in the datafile
@@ -47,7 +81,7 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
             [torch.mean(
                 data.pos[data.ptr[index] + int(mol_size * multiplier):data.ptr[index] + int(mol_size * multiplier + 1)],
                 dim=0)
-             for multiplier in range(num_molecules)])
+                for multiplier in range(num_molecules)])
 
         fractional_centroids = torch.inner(torch.linalg.inv(data.T_fc[index]), molecule_centroids).T
 
@@ -85,7 +119,8 @@ def ase_mol_from_crystaldata(data, index=None, highlight_canonical_conformer=Fal
         mol_centroid = crystal_coords[canonical_conformer_inds].mean(0)
         mol_radius = torch.max(torch.cdist(mol_centroid[None], crystal_coords[canonical_conformer_inds], p=2))
         in_range_inds = \
-        torch.where((torch.cdist(mol_centroid[None], crystal_coords, p=2) < (mol_radius + inclusion_distance))[0])[0]
+            torch.where((torch.cdist(mol_centroid[None], crystal_coords, p=2) < (mol_radius + inclusion_distance))[0])[
+                0]
         atom_inds = atom_inds[in_range_inds]
         coords = crystal_coords[in_range_inds].cpu().detach().numpy()
     else:

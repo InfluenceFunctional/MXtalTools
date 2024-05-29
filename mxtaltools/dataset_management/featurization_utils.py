@@ -8,7 +8,7 @@ from rdkit import rdBase
 from scipy.spatial.distance import cdist
 import torch
 
-from mxtaltools.common.geometry_calculations import compute_principal_axes_np, coor_trans_matrix
+from mxtaltools.common.geometry_calculations import compute_principal_axes_np, coor_trans_matrix_np
 from mxtaltools.common.utils import chunkify
 from mxtaltools.constants.atom_properties import ELECTRONEGATIVITY, PERIOD, GROUP, VDW_RADII, ATOMIC_SYMBOLS, \
     ATOMIC_NUMBERS
@@ -105,7 +105,7 @@ def extract_crystal_data(identifier, crystal, unit_cell):
     # crystal_dict['is_organic'] = crystal.molecule.is_organic
     # crystal_dict['is_organometallic'] = crystal.molecule.is_organometallic
 
-    crystal_dict['fc_transform'], crystal_dict['cell_volume'] = (coor_trans_matrix('f_to_c', np.asarray(crystal.cell_lengths), np.asarray(crystal.cell_angles) / 180 * np.pi, return_vol=True))
+    crystal_dict['fc_transform'], crystal_dict['cell_volume'] = (coor_trans_matrix_np('f_to_c', np.asarray(crystal.cell_lengths), np.asarray(crystal.cell_angles) / 180 * np.pi, return_vol=True))
     # crystal_dict['cf_transform'] = (coor_trans_matrix('c_to_f', np.asarray(crystal.cell_lengths), np.asarray(crystal.cell_angles) / 180 * np.pi, return_vol=False))
     # crystal_dict['density'] = crystal.calculated_density
     crystal_dict['reduced_volume'] = crystal_dict['cell_volume'] / crystal_dict['symmetry_multiplicity']

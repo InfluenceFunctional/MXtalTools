@@ -1,6 +1,5 @@
 from argparse import Namespace
 from pathlib import Path
-import os
 import yaml
 
 
@@ -30,6 +29,19 @@ def dict2namespace(data_dict: dict):
 
 
 def get_user_config(override_args=None, user_yaml_path=None):
+    """
+    Load user config if yaml path is provided, otherwise search for user config yaml path in command line override args
+
+    Parameters
+    ----------
+    override_args : Namespace, optional
+    user_yaml_path : str, optional
+
+    Returns
+    -------
+    user_config : dict
+    override_args : converted to Namespace if sent as arg
+    """
     if user_yaml_path is None:
         assert override_args is not None, "Must provide a user yaml path on command line if not directly to get_config"
         '''get user-specific configs'''
@@ -49,7 +61,19 @@ def get_user_config(override_args=None, user_yaml_path=None):
 
 
 def get_main_config(user_config, override_args=None, main_yaml_path=None):
-    # Read main YAML config
+    """
+    Load main config given yaml path from command line override args, from main_yaml_path arg, or the default set from the user config.
+
+    Parameters
+    ----------
+    user_config
+    override_args
+    main_yaml_path
+
+    Returns
+    -------
+    main_config : dict
+    """
     if hasattr(override_args, 'yaml_config'):
         yaml_path = Path(override_args.yaml_config)
     elif main_yaml_path is not None:
@@ -62,7 +86,19 @@ def get_main_config(user_config, override_args=None, main_yaml_path=None):
 
 def print_dict(v, prefix='', keys_list=[]):
     """
+    Attribution:
     https://stackoverflow.com/questions/10756427/loop-through-all-nested-dictionary-values
+
+    Recursively get all elements of a dictionary
+
+    Parameters
+    ----------
+    v : dict
+
+    Returns
+    -------
+    List of keys at this nest level
+
     """
     if isinstance(v, dict):
         for k, v2 in v.items():
@@ -74,14 +110,23 @@ def print_dict(v, prefix='', keys_list=[]):
             keys_list = print_dict(v2, p2, keys_list)
     else:
         keys_list.append(prefix)
-        # print('{} = {}'.format(prefix, repr(v)))
 
     return keys_list
 
 
 def write_non_overlapping_configs(c1, c2):
     """
-    write any items in c2 onto c1 if they are not already there
+    Write any items in c2 onto c1 if they are not already there.
+    Compatible with nested configs.
+
+    Parameters
+    ----------
+    c1 : dict
+    c2 : dict
+
+    Returns
+    -------
+    c1 : dict
     """
     for key in c2.keys():
         if key in c1.keys():
@@ -161,6 +206,17 @@ def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=
 
 
 def load_yaml(path):
+    """
+    Safely load yaml file as dict.
+
+    Parameters
+    ----------
+    path : str
+
+    Returns
+    -------
+    dict
+    """
     yaml_path = Path(path)
     assert yaml_path.exists()
     assert yaml_path.suffix in {".yaml", ".yml"}

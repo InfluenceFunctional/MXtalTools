@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 from mxtaltools.common.utils import get_point_density, softmax_np
 
-from mxtaltools.common.geometry_calculations import cell_vol
+from mxtaltools.common.geometry_calculations import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
 from mxtaltools.reporting.ae_reporting import autoencoder_decoder_sample_validation, gaussian_3d_overlap_plots
 
@@ -1101,7 +1101,7 @@ def blind_test_scores_distributions_fig(crystals_for_targets, target_identifiers
 def log_cubic_defect(samples):
     cleaned_samples = samples
     cubic_distortion = np.abs(1 - np.nan_to_num(np.stack(
-        [cell_vol(cleaned_samples[i, 0:3], cleaned_samples[i, 3:6]) / np.prod(cleaned_samples[i, 0:3], axis=-1) for
+        [cell_vol_np(cleaned_samples[i, 0:3], cleaned_samples[i, 3:6]) / np.prod(cleaned_samples[i, 0:3], axis=-1) for
          i in range(len(cleaned_samples))])))
     wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
     hist = np.histogram(cubic_distortion, bins=256, range=(0, 1))

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from mxtaltools.dataset_management.utils import delete_from_dataframe
 from mxtaltools.common.utils import softmax_np
 from mxtaltools.models.mol_classifier import PolymorphClassifier
-from mxtaltools.common.geometry_calculations import coor_trans_matrix
+from mxtaltools.common.geometry_calculations import coor_trans_matrix_np
 from mxtaltools.constants.classifier_constants import defect_names
 
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
@@ -82,7 +82,7 @@ def convert_box_to_cell_params(box_params):
 
     T_fc_list2 = []  # double check the answer
     for i in range(len(lengths)):
-        T_fc_list2.append(coor_trans_matrix('f_to_c', lengths[i], angles[i]))
+        T_fc_list2.append(coor_trans_matrix_np('f_to_c', lengths[i], angles[i]))
     T_fc_list2 = np.stack(T_fc_list2)
 
     assert np.sum(np.abs(T_fc_list - T_fc_list2)) < 1e-3

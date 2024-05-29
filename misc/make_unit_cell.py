@@ -5,7 +5,7 @@ from ase.visualize import view
 from ase import Atoms
 from mxtaltools.crystal_building.utils import aunit2unit_cell, unit_cell_to_convolution_cluster, fractional_transform_np
 from mxtaltools.constants.space_group_info import SYM_OPS
-from mxtaltools.common.geometry_calculations import coor_trans_matrix
+from mxtaltools.common.geometry_calculations import coor_trans_matrix_np
 
 import torch
 
@@ -18,7 +18,7 @@ alpha = np.pi / 2
 gamma = np.pi / 2
 beta = 120.48 * np.pi / 180
 
-T_fc, cell_vol = coor_trans_matrix('f_to_c', [a, b, c], [alpha, beta, gamma], return_vol=True)
+T_fc, cell_vol = coor_trans_matrix_np('f_to_c', [a, b, c], [alpha, beta, gamma], return_vol=True)
 T_cf = np.linalg.inv(T_fc)
 
 misc = ['Zn', np.array([0, 0, 0]),
