@@ -9,7 +9,7 @@ The Cambridge Structural Database (CSD) can be processed by first dumping it to 
 Customized functions are available for processing CSD Blind Test submissions, as well as general collections of .xyz, and .cif files. The current models require only atomic numbers & coordinates to work, so a very simple featurization is sufficient.
 
 Crystals Datasets from the CSD
------------------------------
+------------------------------
 
 To generate a dataset from the CSD, run the following scripts,
 
@@ -28,7 +28,7 @@ We also have functions for identifying duplicate molecules and polymorphs of the
 
 
 Molecule Datasets from .xyzs
------------------------------
+----------------------------
 
 Generating a molecular dataset from sets of .xyz files is very similar to above. 
 Simply run the following scripts,

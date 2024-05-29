@@ -2,12 +2,25 @@ import torch
 from mxtaltools.common.utils import torch_ptp
 
 
-def parallel_compute_rdf_torch(dists_list, raw_density=True, rrange=None, bins=None, remove_radial_scaling=False):
+def parallel_compute_rdf_torch(dists_list: torch.tensor, raw_density=True, rrange=None, bins=None, remove_radial_scaling=False):
     """
-    compute the radial distribution for a single fixed point
-    dists: array of pairwise distances of nearby particles from the reference
-    some batching for speed
+    Compute the radial distribution given a list of distances with parallel execution for speed.
+
+    Parameters
+    ----------
+    dists_list : list of torch tensors
+    raw_density : bool
+        If true, use uniform density of 1 everywhere, else estimate the density from the dist list.
+    rrange : [min_range, max_range], optional
+    bins : int
+    remove_radial_scaling : removes inverse scaling in RDF, giving something more like the unnormalized radial CDF.
+
+    Returns
+    -------
+    rdf : torch.tensor(n, n_bins)
+    bin_edges : torch.tensor(n_bins + 1)
     """
+
     hist_range = [0.5, 10] if rrange is None else rrange
     hist_bins = 100 if bins is None else bins
 

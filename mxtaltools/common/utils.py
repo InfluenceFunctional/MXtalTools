@@ -15,6 +15,25 @@ general utilities
 
 
 def batch_compute_dipole(pos, batch, z, electronegativity_tensor):
+    """
+    Compute a rough dipole moment for a flat batch of molecules, as the simple weighted sum of electronegativities.
+    Do this in a batch fashion assuming the input is a flat list of graphs, indexed by batch
+
+    Parameters
+    ----------
+    pos : torch.tensor(n,3)
+        3d coordinates
+    batch : torch.tensor(n)
+        batch index
+    z : torch.tensor(n)
+        atom types
+    electronegativity_tensor
+        fixed electronegativities for each atom type
+
+    Returns
+    -------
+    dipole_moment : torch.tensor(num_graphs,3)
+    """
     centers_of_geometry = scatter(pos, batch, dim=0, reduce='mean')
     centers_of_charge = scatter(electronegativity_tensor[z.long()][:, None] * pos, batch, dim=0, reduce='mean')
 
@@ -23,11 +42,22 @@ def batch_compute_dipole(pos, batch, z, electronegativity_tensor):
 
 def get_point_density(xy, bins=1000):
     """
-    Scatter plot colored by 2d histogram
+    Interpolate a local density function over 2d points.
+
+    Parameters
+    ----------
+    xy : torch.tensor(n,2)
+    bins : int
+
+    Returns
+    -------
+    z : normalized local density function
     """
+
     x, y = xy
     data, x_e, y_e = np.histogram2d(x, y, bins=bins, density=True)
-    z = interpn((0.5 * (x_e[1:] + x_e[:-1]), 0.5 * (y_e[1:] + y_e[:-1])), data, np.vstack([x, y]).T, method="splinef2d", bounds_error=False)
+    z = interpn((0.5 * (x_e[1:] + x_e[:-1]), 0.5 * (y_e[1:] + y_e[:-1])), data, np.vstack([x, y]).T, method="splinef2d",
+                bounds_error=False)
 
     # To be sure to plot all data
     z[np.where(np.isnan(z))] = 0.0
@@ -38,6 +68,15 @@ def get_point_density(xy, bins=1000):
 def chunkify(lst: list, n: int):
     """
     break up a list into n chunks of equal size (up to last chunk)
+
+    Parameters
+    ----------
+    lst : list
+    n : int
+
+    Returns
+    -------
+    list_of_chunks : [n]
     """
     return [lst[i::n] for i in range(n)]
 
@@ -45,15 +84,39 @@ def chunkify(lst: list, n: int):
 def torch_ptp(tensor: torch.tensor):
     """
     torch implementation of np.ptp
+
+    Parameters
+    ----------
+    tensor
+
+    Returns
+    -------
+    ptp : float
     """
+
     return torch.max(tensor) - torch.min(tensor)
 
 
 def standardize_np(data: np.ndarray, return_standardization: bool = False, known_mean=None, known_std=None):
     """
     standardize an input 1D array by subtracting mean and dividing by standard deviation
-    optionally use precomputed mean and standard deviation (useful to compare data between datasets)
-    optionally return standardization parameters
+
+    Parameters
+    ----------
+    data : np.array
+    return_standardization : bool
+        return the mean and std
+
+    known_mean : float, optional
+        optionally use precomputed mean
+
+    known_std : float, optional
+            optionally use precomputed standard deviation
+
+    Returns
+    -------
+    std_data : np.array
+    mean and standard deviation : optional floats
     """
     data = data.astype('float32')
     if known_mean is not None:
@@ -81,6 +144,14 @@ def normalize_np(x: np.ndarray):
     """
     normalize an input by its span
     subtract min_x so that range is fixed on [0,1]
+
+    Parameters
+    ----------
+    x : np.array
+
+    Returns
+    -------
+    normed_x : np.array
     """
     normed_x = (x - np.amin(x)) / np.ptp(x)
     return normed_x
@@ -89,6 +160,16 @@ def normalize_np(x: np.ndarray):
 def softmax_np(x: np.ndarray, temperature: float = 1):
     """
     softmax function implemented in numpy
+
+    Parameters
+    ----------
+    x : np.array
+    temperature : float
+        softmax temperature
+
+    Returns
+    -------
+    softmax_x : np.array
     """
     if x.ndim == 1:
         x = x[None, :]
@@ -99,15 +180,22 @@ def softmax_np(x: np.ndarray, temperature: float = 1):
 
 def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
     """
-    compute a distance metric between two radial distribution functions with shapes
-    [num_sub_rdfs, num_bins] where sub_rdfs are e.g., particular interatomic RDFS within a certain sample (elementwise or atomwise modes)
-    rr is the bin edges used for both rdfs
+    Compute a distance metric between two radial distribution functions including sub_rdfs where sub_rdfs are e.g., particular interatomic RDFS within a certain sample (elementwise or atomwise modes).
 
-    option for input to be torch tensors or numpy arrays, but has to be the same either way
-    computation is done in torch
-    range rr can be independently either np.array or torch.tensor
-    will return same format as given
+    If all inputs are numpy arrays, output will be a numpy array, and vice-versa with torch tensors.
+    Parameters
+    ----------
+    rdf1 : array(n_sub_rdfs, n_bins)
+    rdf2 : array(n_sub_rdfs, n_bins)
+    rr : array(n_bins + 1)
+        is the bin edges used for both rdfs
+    n_parallel_rdf2: int, optional
+        Optionally in parallel compare many rdf2's to a single rdf1
+    Returns
+    -------
+
     """
+
     return_numpy = False
     if not torch.is_tensor(rdf1):
         torch_rdf1 = torch.Tensor(rdf1)
@@ -122,14 +210,15 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
     else:
         torch_range = rr
 
-    if n_parallel_rdf2 is not None:  # we can in parallel compare many rdf2's to a single rdf1
+    if n_parallel_rdf2 is not None:
         torch_rdf1_f = torch_rdf1.tile(n_parallel_rdf2, 1, 1)
     else:
         torch_rdf1_f = torch_rdf1
 
     emd = earth_movers_distance_torch(torch_rdf1_f, torch_rdf2)
 
-    range_normed_emd = emd / len(torch_range) ** 2 * (torch_range[-1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+    range_normed_emd = emd / len(torch_range) ** 2 * (
+                torch_range[-1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
     # do not adjust the above - distance is extensive weirdly extensive in bin scaling
     aggregation_weight = (rdf1.sum(1) + rdf2.sum(1)) / 2  # aggregate rdf components according to pairwise mean weight
     distance = (range_normed_emd * aggregation_weight).mean()
@@ -141,33 +230,71 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
     return distance
 
 
-def earth_movers_distance_torch(x: torch.tensor, y: torch.tensor):
+def earth_movers_distance_torch(pdf1: torch.tensor, pdf2: torch.tensor):
     """
     earth mover's distance between two PDFs
     not normalized or aggregated
+    Parameters
+    ----------
+    pdf1 : torch.tensor(n,i)
+    pdf2 : torch.tensor(n,i)
+
+    Returns
+    -------
+    emd: torch.tensor(n)
     """
-    return torch.sum(torch.abs(torch.cumsum(x, dim=-1) - torch.cumsum(y, dim=-1)), dim=-1)
+
+    return torch.sum(torch.abs(torch.cumsum(pdf1, dim=-1) - torch.cumsum(pdf2, dim=-1)), dim=-1)
 
 
-def earth_movers_distance_np(d1: np.ndarray, d2: np.ndarray):
+def earth_movers_distance_np(pdf1: np.ndarray, pdf2: np.ndarray):
     """
     earth mover's distance between two PDFs
     not normalized or aggregated
+    Parameters
+    ----------
+    pdf1 : np.array(n,i)
+    pdf2 : np.array(n,i)
+
+    Returns
+    -------
+    emd: np.array(n)
     """
-    return np.sum(np.abs(np.cumsum(d1, axis=-1) - np.cumsum(d2, axis=-1)), axis=-1)
+    return np.sum(np.abs(np.cumsum(pdf1, axis=-1) - np.cumsum(pdf2, axis=-1)), axis=-1)
 
 
 def histogram_overlap_np(d1: np.ndarray, d2: np.ndarray):
     """
-    compute the symmetric overlap of two histograms
+    Compute the symmetric overlap of two histograms
+
+    Parameters
+    ----------
+    d1 : np.array(n)
+    d2 : np.array(n)
+
+    Returns
+    -------
+    overlap : float
     """
     return np.sum(np.minimum(d1, d2)) / np.average((d1.sum(), d2.sum()))
 
 
 def update_stats_dict(dictionary: dict, keys, values, mode='append'):
     """
-    update dict of running statistics in batches of key:list pairs or one at a time
+    Append/extend dict of key:list pairs or one at a time
+
+    Parameters
+    ----------
+    dictionary
+    keys
+    values
+    mode: 'append' or 'extend'
+
+    Returns
+    -------
+    updated_dictionary
     """
+
     if isinstance(keys, list):
         for key, value in zip(keys, values):
             if key not in dictionary.keys():
@@ -191,6 +318,13 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
 
 
 def init_sym_info():
+    """
+    Initialize dict containing symmetry info for crystals with standard settings and general positions.
+
+    Returns
+    -------
+    sym_info : dict
+    """
     sym_ops = SYM_OPS
     point_groups = POINT_GROUPS
     lattice_type = LATTICE_TYPE
@@ -205,19 +339,36 @@ def init_sym_info():
 
 
 def norm_circular_components(components: torch.tensor):
-    """use softmax to norm the sum of squares, and multiply by the signs to keep all 4 quadrants"""
+    """
+    Use Pythagoras to norm the sum of squares to the unit circle.
+    Parameters
+    ----------
+    components : torch.tensor(n, 2)
+
+    Returns
+    -------
+    normed_components : torch.tensor(n, 2)
+    """
 
     return components / torch.sqrt(torch.sum(components ** 2, dim=-1))[:, None]
 
 
 def components2angle(components: torch.tensor, norm_components=True):
-    """  # todo decide whether we actually care about the norming
-    take two non-normalized components[n_samples, 2] representing
-    sin(angle) and cos(angle), compute the resulting angle, following
-    https://ai.stackexchange.com/questions/38045/how-can-i-encode-angle-data-to-train-neural-networks
-
-    norm the sum of squares via softmax to enforce prediction on the unit circle
     """
+    Take two non-normalized components[n, 2] representing sin(angle) and cos(angle), compute the resulting angle, following     https://ai.stackexchange.com/questions/38045/how-can-i-encode-angle-data-to-train-neural-networks
+
+    Optionally norm the sum of squares - doesn't appear to do much though.
+
+    Parameters
+    ----------
+    components : torch.tensor(n, 2)
+    norm_components : bool, optional
+
+    Returns
+    -------
+    angles : torch.tensor(n, 2)
+    """
+
     if norm_components:
         normed_components = norm_circular_components(components)
         angles = torch.atan2(normed_components[:, 0], normed_components[:, 1])
@@ -229,43 +380,18 @@ def components2angle(components: torch.tensor, norm_components=True):
 
 def angle2components(angle: torch.tensor):
     """
-    decompose an angle input into sin(angle) and cos(angle)
+    Tecompose an angle input into sin(angle) and cos(angle)
+
+    Parameters
+    ----------
+    angle : torch.tensor(n)
+
+    Returns
+    -------
+    sin(angle), cos(angle) : torch.tensor, torch.tensor
     """
+
     return torch.cat((torch.sin(angle)[:, None], torch.cos(angle)[:, None]), dim=1)
-
-
-# def prep_symmetry_info():
-#     """
-#     if we don't have the symmetry dict prepared already, generate it
-#     DEPRECATED USAGE - LEFT IN TO DEMONSTRATE HOW TO GENERATE THESE DATA
-#     """
-#
-#     from pyxtal import symmetry
-#     print('Pre-generating spacegroup symmetries')
-#     sym_ops = {}
-#     point_groups = {}
-#     lattice_type = {}
-#     space_groups = {}
-#     space_group_indices = {}
-#     for i in tqdm.tqdm(range(1, 231)):
-#         sym_group = symmetry.Group(i)
-#         general_position_syms = sym_group.wyckoffs_organized[0][0]
-#         sym_ops[i] = [general_position_syms[i].affine_matrix for i in range(
-#             len(general_position_syms))]  # first 0 index is for general position, second index is
-#         # superfluous, third index is the symmetry operation
-#         point_groups[i] = sym_group.point_group
-#         lattice_type[i] = sym_group.lattice_type
-#         space_groups[i] = sym_group.symbol
-#         space_group_indices[sym_group.symbol] = i
-#
-#     sym_info = {
-#         'sym_ops': sym_ops,
-#         'point_groups': point_groups,
-#         'lattice_type': lattice_type,
-#         'space_groups': space_groups,
-#         'space_group_indices': space_group_indices}
-#
-#     np.save('symmetry_info', sym_info)
 
 
 def repeat_interleave(
@@ -273,13 +399,38 @@ def repeat_interleave(
         device: Optional[torch.device] = None,
 ):
     """
+    # todo why do we have this? There are builtin methods.
+    Alternate implementation of torch.repeat_interleave
     borrowed from torch_geometric.data.collate
+
+    Parameters
+    ----------
+    repeats : list of ints
+    device : str or torch.device
+
+    Returns
+    -------
+    Repeated tensor which has the same shape as input, except along the given axis.
+
     """
+
     outs = [torch.full((n,), i, device=device) for i, n in enumerate(repeats)]
     return torch.cat(outs, dim=0)
 
 
 def namespace2dict(namespace_dict, higher_level=''):
+    """
+    Convert a dict from an optionally nested namespace to an optionally nested dict.
+
+    Parameters
+    ----------
+    namespace_dict : dict for the higher level namespace
+    higher_level : key for high level dict
+
+    Returns
+    -------
+    Dict matching higher level namespace
+    """
     copied_dict = copy(namespace_dict)
     for key in copied_dict.keys():
         if 'namespace' in str(type(copied_dict[key])).lower():
@@ -293,11 +444,17 @@ def namespace2dict(namespace_dict, higher_level=''):
 def flatten_dict(dictionary, parent_key=False, separator='_'):
     """
     From : https://stackoverflow.com/questions/6027558/flatten-nested-dictionaries-compressing-keys
-    Turn a nested dictionary into a flattened dictionary
-    :param dictionary: The dictionary to flatten
-    :param parent_key: The string to prepend to dictionary's keys
-    :param separator: The string used to separate flattened keys
-    :return: A flattened dictionary
+    Recursively convert a nested dictionary into a flattened dictionary
+
+    Parameters
+    ----------
+    dictionary
+    parent_key
+    separator
+
+    Returns
+    -------
+    Dict with all nested dict flattened, with longer keys instead of nesting.
     """
 
     items = []
@@ -312,12 +469,3 @@ def flatten_dict(dictionary, parent_key=False, separator='_'):
             items.append((new_key, value))
     return dict(items)
 
-
-def cart2sph(coords: torch.tensor):
-    r = torch.linalg.norm(coords, dim=1)
-    theta = torch.atan2(coords[:, 1], coords[:, 0])
-    phi = torch.arccos(coords[:, 2] / r)
-    return torch.cat([
-        r.unsqueeze(1), theta.unsqueeze(1), phi.unsqueeze(1)],
-        dim=1
-    )

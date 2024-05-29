@@ -5,6 +5,19 @@ from ovito.pipeline import Pipeline, PythonScriptSource
 
 
 def write_ovito_xyz(coords_in, atom_types_in, mol_flags_in, filename):
+    """ # todo generalize to mixtures of molecules
+    Write an input coordinates list with atom types and optional properties to an .xyz file using Ovito.
+
+    Note: Requires input molecules all the same number and types of atoms, in the same order.
+    Parameters
+    ----------
+    coords_in : np.array or torch.tensor
+    atom_types_in : np.array or torch.tensor
+    mol_flags_in : np.array or torch.tensor
+        Writes a molecule-wide property field to each atom
+    filename : str
+
+    """
     def process_coords(coords_in, atom_types_in, mol_flags_in):
         if torch.is_tensor(coords_in):
             coords_in = coords_in.cpu().detach().numpy() * 1

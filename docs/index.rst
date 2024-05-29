@@ -21,6 +21,8 @@ What is ``MXtalTools``?
     source/model_components
     source/common_utils
     source/common_geometry
+    source/common_ovito_utils
+    source/common_rdf_calculation
 
 Indices and tables
 ==================
