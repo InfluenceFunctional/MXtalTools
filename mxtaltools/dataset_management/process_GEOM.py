@@ -1,59 +1,116 @@
 import msgpack
 import os
 import numpy as np
-import tqdm
+from tqdm import tqdm
 import torch
+import lmdb
+import pickle
 
 from mxtaltools.dataset_management.CrystalData import CrystalData
 
+
+def write_lmdb(database, current_map_size, dict_to_write):
+    try:
+        with lmdb.open(database, map_size=current_map_size) as db:
+            with db.begin(write=True) as txn:
+                for key, value in dict_to_write.items():
+                    txn.put(key.encode('ascii'), pickle.dumps(value))
+
+        return current_map_size
+
+    except lmdb.MapFullError:
+        new_map_size = int(current_map_size * 1.25)
+        print(f'Boosting map size from {current_map_size / 1e9:.1f}GB to {new_map_size / 1e9:.1f}GB')
+        current_map_size = new_map_size
+        return write_lmdb(database, current_map_size, dict_to_write)
+
+
 if __name__ == '__main__':
-    direc = 'D:\crystal_datasets\drugs_crude.msgpack/'
-    filename = os.path.join(direc, "drugs_crude.msgpack")
-    #filename = os.path.join(direc, "qm9_crude.msgpack")
+    direc = r'D:\crystal_datasets\drugs_crude.msgpack'
+    data_type = 'drugs'  # 'drugs 'or 'qm9'
+    filename = os.path.join(direc, f"{data_type}_crude.msgpack")
     file = open(filename, "rb")
     unpacker = msgpack.Unpacker(file)
+    lmdb_database = 'train.lmdb'
+    map_size = int(30e9)  # map size in bytes
 
-    skip_steps = 190
-    #skip_steps = 100
-    #skip_steps = 200
-    #skip_steps = 225
+    min_chunk = 5
+    max_chunk = 10  # qm9 has 135 chunks, drugs has 296
+    'test dataset approx 500k samples from chunks 0-5 in qm9 and drugs'
+    'train dataset from subsequent 5 chunks'
 
-    iter = -1
-    with tqdm.tqdm(total=300) as pbar:
-        while iter <= 300:
+    os.chdir(direc)
+    if not os.path.exists(lmdb_database.split('.lmdb')[0] + '_keys.npy'):
+        keys_dict = {}
+    else:
+        keys_dict = np.load(lmdb_database.split('.lmdb')[0] + '_keys.npy', allow_pickle=True).item()
+
+    chunk_ind = - 1
+    with tqdm(total=max_chunk) as pbar:
+        while chunk_ind < max_chunk - 1:
             pbar.update(1)
-            iter += 1
-            if iter < skip_steps:
+            chunk_ind += 1
+            # todo replace this by checking the largest chunk in the keys dict and incrementing by one
+            if keys_dict != {}:
+                chunk_to_print = max(list(keys_dict.keys())) + 1
+            else:
+                chunk_to_print = 0
+
+            if not (max_chunk > chunk_ind >= min_chunk):
                 unpacker.skip()
                 continue
 
-            if not os.path.exists(direc + f"drugs_chunks/drugs_chunk_{iter}.pt"):
-                data_batch = unpacker.unpack()
-                data_list = []
-                for smiles, entry in data_batch.items():
-                    for conformer_ind, conformer in enumerate(entry['conformers']):
-                        atoms_arr = np.array(conformer['xyz'])
-                        #
-                        # if np.amax(atoms_arr[:, 0]) > max_atom_type:  # filter samples with big atoms
-                        #     continue
-                        # radius = np.amax(np.linalg.norm(atoms_arr[:, 1:] - atoms_arr[:, 1:].mean(0), axis=1))
-                        # if radius > max_mol_radius:  # filter beyond a max radius
-                        #     continue
+            data_batch = unpacker.unpack()
+            data_dict = {}
+            smiles_ind = 0
+            keys_dict[chunk_to_print] = {}
+            for s_ind, (smiles, entry) in enumerate((data_batch.items())):
+                samples = []
+                for conformer_ind, conformer in enumerate((entry['conformers'])):
+                    atoms_arr = np.array(conformer['xyz'])
+                    if len(atoms_arr) < 6 or len(atoms_arr) > 100:
+                        continue
+                    sample = CrystalData(
+                        x=torch.tensor(atoms_arr[:, 0], dtype=torch.long),
+                        pos=torch.tensor(atoms_arr[:, 1:], dtype=torch.float32),
+                        smiles=smiles,
+                        identifier=smiles + '_' + str(conformer_ind),
+                        y=torch.zeros(1, dtype=torch.float32),
+                        require_crystal_features=False,
+                    )
+                    if sample.radius > 15:
+                        continue
 
-                        data_list.append(CrystalData(
-                            x=torch.tensor(atoms_arr[:, 0], dtype=torch.long),
-                            pos=torch.tensor(atoms_arr[:, 1:], dtype=torch.float32),
-                            smiles=smiles,
-                            identifier=smiles + '_' + str(conformer_ind),
-                            y=torch.zeros(1, dtype=torch.float32)
-                        ))
+                    samples.append(sample.to_dict())
 
-                #torch.save(data_list, direc + f"drugs_chunks/qm9_chunk_{iter}.pt")
-                torch.save(data_list, direc + f"drugs_chunks/drugs_chunk_{iter}.pt")
+                if len(samples) > 0:
+                    sample_inds = [f'{chunk_to_print}_' + str(smiles_ind) + '_' + str(cc_idx) for cc_idx in
+                                   range(len(samples))]
+                    data_dict.update({k: v for k, v in zip(sample_inds, samples)})
+                    keys_dict[chunk_to_print][smiles_ind] = len(samples)
+                    smiles_ind += 1
 
-            else:
-                unpacker.skip()
+            np.save(lmdb_database.split('.lmdb')[0] + '_keys', keys_dict)
 
+            map_size = write_lmdb(lmdb_database, map_size, data_dict)
+
+''' # how to index the database
+if True:
+    data_type = 'qm9'
+    samplewise_index = [np.concatenate([np.zeros(1), np.cumsum([chunk[s_ind] for s_ind in chunk.keys()])]).astype(int) for chunk in keys_dict[data_type].values()]
+    chunk_tail_index = np.concatenate([np.zeros(1),np.cumsum([s[-1] for s in samplewise_index])]).astype(int)
+    
+    for idx in range(len(keys)):
+    
+        chunk_ind = np.digitize(idx, chunk_tail_index) - 1
+        index_in_chunk = idx - chunk_tail_index[chunk_ind]
+        sample_index = np.digitize(index_in_chunk, samplewise_index[chunk_ind]) - 1
+        index_in_sample = index_in_chunk - samplewise_index[chunk_ind][sample_index]
+    
+        sample_key = f'{data_type}_chunk_{chunk_ind}_{sample_index}_{index_in_sample}'
+        assert sample_key.encode('ascii') in keys, f'{idx} mismatch for {sample_key}'
+
+'''
 '''
 n_samples = 0
 n_smiles = 0

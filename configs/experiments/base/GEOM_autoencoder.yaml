@@ -100,7 +100,7 @@ autoencoder:
         num_attention_heads: 64
         embedding_dim: 512
         num_convs: 0
-        fcs_per_gc: 2
+        fcs_per_gc: 4
         num_radial: 50
         norm: 'graph layer'
         dropout: 0

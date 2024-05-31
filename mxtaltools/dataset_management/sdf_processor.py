@@ -1,3 +1,6 @@
+"""
+DEPRECATED IN CURRENT VERSION
+"""
 import os
 import pandas as pd
 import tqdm

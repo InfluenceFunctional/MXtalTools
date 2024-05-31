@@ -7,23 +7,22 @@ extra_test_set_name: null
 save_checkpoints: False
 
 dataset:
-  max_dataset_length: 10000
+  max_dataset_length: 10000  # non-functional for on-disk datasets.
   test_fraction: 0.2
-  refresh_interval: 5  # reload a new chunk of a larger dataset, only setup for QM9/GEOM
-  on_disk_data_dir: 'drugs_crude.msgpack/drugs_chunks/'
-  chunks_per_refresh: 5
+  on_disk_data_dir: 'drugs_crude.msgpack/train.lmdb/'
 
 # batching & convergence
-early_epochs_step_override: 5
-num_early_epochs: 0
+max_epoch_steps: 1000
+early_epochs_step_override: 20
+num_early_epochs: 20
 grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 500
-batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
+max_batch_size: 10000
+batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
-max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 50  # for convergence checks
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+history: 200  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 

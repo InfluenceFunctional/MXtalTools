@@ -110,38 +110,39 @@ class GraphNeuralNetwork(torch.nn.Module):
         else:
             x = self.zeroth_fc_block(x=x, v=v, batch=batch)
 
-        (edge_index, edge_index_inter,
-         inside_batch, inside_inds,
-         n_repeats,
-         rbf, rbf_inter) = self.get_edges(edges_dict, pos)
+        if len(self.interaction_blocks) > 0:
+            (edge_index, edge_index_inter,
+             inside_batch, inside_inds,
+             n_repeats,
+             rbf, rbf_inter) = self.get_edges(edges_dict, pos)
 
-        for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
-            if v is not None:
-                x_res, v_res = x.clone(), v.clone()
-                x, v = convolution(x, v, rbf, edge_index)
-                x = x + x_res
-                v = (v + v_res)/self.vector_addition_rescaling_factor
-            else:
-                x = x + convolution(x, v, rbf, edge_index)
-
-            if not self.periodize_inside_nodes:  # inside/outside periodic convolution
-                if self.equivariant:
+            for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
+                if v is not None:
                     x_res, v_res = x.clone(), v.clone()
-                    x, v = fc(x, v=v, batch=batch)
+                    x, v = convolution(x, v, rbf, edge_index)
                     x = x + x_res
                     v = (v + v_res)/self.vector_addition_rescaling_factor
                 else:
-                    x = x + fc(x, v=v, batch=batch)
+                    x = x + convolution(x, v, rbf, edge_index)
 
-                #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc_block output {get_model_nans(self.fc_blocks)}"
+                if not self.periodize_inside_nodes:  # inside/outside periodic convolution
+                    if self.equivariant:
+                        x_res, v_res = x.clone(), v.clone()
+                        x, v = fc(x, v=v, batch=batch)
+                        x = x + x_res
+                        v = (v + v_res)/self.vector_addition_rescaling_factor
+                    else:
+                        x = x + fc(x, v=v, batch=batch)
 
-            else:
-                assert v is None, "Vector embeddings not set up for periodic molecular crystal graph convolutions"
-                # update only the inside inds
-                x[inside_inds] = (x[inside_inds] + fc(x[inside_inds], batch=batch[inside_inds]))
+                    #assert torch.sum(torch.isnan(x)) == 0, f"NaN in fc_block output {get_model_nans(self.fc_blocks)}"
 
-                # then broadcast to all symmetry images
-                x = self.periodize_molecular_crystal(inside_batch, inside_inds, n, n_repeats, ptr, x)
+                else:
+                    assert v is None, "Vector embeddings not set up for periodic molecular crystal graph convolutions"
+                    # update only the inside inds
+                    x[inside_inds] = (x[inside_inds] + fc(x[inside_inds], batch=batch[inside_inds]))
+
+                    # then broadcast to all symmetry images
+                    x = self.periodize_molecular_crystal(inside_batch, inside_inds, n, n_repeats, ptr, x)
 
         return self.output_block(x, v)
 

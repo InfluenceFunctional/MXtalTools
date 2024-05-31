@@ -21,9 +21,10 @@ dataset:
   test_fraction: 0.2
   filter_protons: False
   regression_target: null # crystal_reduced_volume #
-  refresh_interval: -1  # how often to reload the dataset when using a chunkified dataset too large to fit in memory
+  on_disk_data_dir: null
 
 # batching & convergence
+max_epoch_steps: 1.0E8
 early_epochs_step_override: 0
 num_early_epochs: 0
 grow_batch_size: False

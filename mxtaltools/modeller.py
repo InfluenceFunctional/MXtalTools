@@ -313,9 +313,6 @@ class Modeller:
         data_manager = DataManager(device=self.device,
                                    datasets_path=self.config.dataset_path,
                                    config=self.config.dataset)
-        if override_dataset is not None:
-            data_manager.misc_dataset = np.load(self.config.dataset_path + self.config.misc_dataset_name, allow_pickle=True).item()
-            data_manager.dataset_stats = data_manager.misc_dataset['dataset_stats']
         data_manager.load_dataset_for_modelling(
             dataset_name=self.config.dataset_name,
             filter_conditions=self.config.dataset.filter_conditions,
@@ -389,11 +386,33 @@ class Modeller:
             shuffle = override_shuffle
         else:
             shuffle = True
-        train_loader, test_loader = get_dataloaders(dataset_builder,
-                                                    machine=self.config.machine,
-                                                    batch_size=loader_batch_size,
-                                                    test_fraction=test_fraction,
-                                                    shuffle=shuffle)
+
+        if self.config.dataset.on_disk_data_dir is not None:
+            from mxtaltools.dataset_management.on_disk_chunk_dataset import GeomDataset
+            from torch_geometric.data import DataLoader
+            train_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
+            if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
+                train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
+                                          num_workers=min(os.cpu_count(), 8), pin_memory=True, drop_last=False)
+            else:
+                train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
+                                          pin_memory=True, drop_last=False)
+            del train_dataset
+
+            test_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train','test'))
+            if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
+                test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
+                                          num_workers=min(os.cpu_count(), 8), pin_memory=True, drop_last=False)
+            else:
+                test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
+                                          pin_memory=True, drop_last=False)
+            del test_dataset
+        else:
+            train_loader, test_loader = get_dataloaders(dataset_builder,
+                                                        machine=self.config.machine,
+                                                        batch_size=loader_batch_size,
+                                                        test_fraction=test_fraction,
+                                                        shuffle=shuffle)
         self.config.current_batch_size = loader_batch_size
         print("Initial training batch size set to {}".format(self.config.current_batch_size))
         del dataset_builder
@@ -787,22 +806,9 @@ class Modeller:
 
             self.process_sweep_config()
 
-            '''prep workdir'''
             self.source_directory = os.getcwd()
             self.prep_new_working_directory()
-
-            self.train_models_dict = {
-                'discriminator': (self.config.mode == 'gan' or self.config.mode == 'discriminator') and any(
-                    (self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted,
-                     self.config.discriminator.train_on_randn)),
-                'generator': (self.config.mode == 'gan') and any((self.config.generator.train_vdw,
-                                                                  self.config.generator.train_adversarially,
-                                                                  self.config.generator.train_h_bond)),
-                'regressor': self.config.mode == 'regression',
-                'autoencoder': self.config.mode == 'autoencoder',
-                'embedding_regressor': self.config.mode == 'embedding_regression',
-                'polymorph_classifier': self.config.mode == 'polymorph_classification',
-            }
+            self.get_training_mode()
 
             '''initialize datasets and useful classes'''
             train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
@@ -839,25 +845,22 @@ class Modeller:
                 self.times['full_epoch_start'] = time()
                 self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
 
-                # refresh dataset with random sample from on-disk dataset
-                if epoch % self.config.dataset.refresh_interval == 0 and epoch > 0:
-                    extra_test_loader, test_loader, train_loader = self.refresh_from_on_disk_dataset(epoch,
-                                                                                                     extra_test_loader,
-                                                                                                     test_loader,
-                                                                                                     train_loader)
-
                 if epoch < self.config.num_early_epochs:
-                    early_epochs_step_override = self.config.early_epochs_step_override
+                    steps_override = self.config.early_epochs_step_override
                 else:
-                    early_epochs_step_override = None
+                    steps_override = self.config.max_epoch_steps
 
                 try:  # try this batch size
-                    self.run_epoch(epoch_type='train', data_loader=train_loader,
-                                   update_weights=True, iteration_override=early_epochs_step_override)
+                    self.run_epoch(epoch_type='train',
+                                   data_loader=train_loader,
+                                   update_weights=True,
+                                   iteration_override=steps_override)
 
                     with torch.no_grad():
-                        self.run_epoch(epoch_type='test', data_loader=test_loader,
-                                       update_weights=False, iteration_override=early_epochs_step_override)
+                        self.run_epoch(epoch_type='test',
+                                       data_loader=test_loader,
+                                       update_weights=False,
+                                       iteration_override=int(steps_override * self.config.dataset.test_fraction))
 
                         if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0) and (
                                 epoch > 0):
@@ -897,7 +900,7 @@ class Modeller:
                             gc.collect()  # TODO not clear to me that this is effective
 
                         train_loader, test_loader = slash_batch(train_loader, test_loader,
-                                                                slash_fraction=0.25)  # shrink batch size
+                                                                slash_fraction=0.1)  # shrink batch size
                         wandb.log({'batch size': train_loader.batch_size})
 
                         torch.cuda.empty_cache()
@@ -911,23 +914,19 @@ class Modeller:
                 self.times = {}
                 epoch += 1
 
-    def refresh_from_on_disk_dataset(self, epoch, extra_test_loader, test_loader, train_loader):
-        print("Refreshing dataset from via on-disk sampling")
-        self.times['dataset_refresh_start'] = time()
-        del train_loader, test_loader
-        all_chunks = os.listdir(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
-        random.Random(5).shuffle(all_chunks)
-        start = (epoch // self.config.dataset.refresh_interval) * self.config.dataset.chunks_per_refresh
-        stop = (epoch // self.config.dataset.refresh_interval + 1) * self.config.dataset.chunks_per_refresh
-        new_dataset = []
-        for ind in range(self.config.dataset.chunks_per_refresh):
-            new_dataset.extend(
-                torch.load(self.config.dataset_path + self.config.dataset.on_disk_data_dir + all_chunks[start + ind]))
-        train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_dataset=new_dataset,
-                                                                                         override_batch_size=self.config.current_batch_size)
-        del new_dataset
-        self.times['dataset_refresh_end'] = time()
-        return extra_test_loader, test_loader, train_loader
+    def get_training_mode(self):
+        self.train_models_dict = {
+            'discriminator': (self.config.mode == 'gan' or self.config.mode == 'discriminator') and any(
+                (self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted,
+                 self.config.discriminator.train_on_randn)),
+            'generator': (self.config.mode == 'gan') and any((self.config.generator.train_vdw,
+                                                              self.config.generator.train_adversarially,
+                                                              self.config.generator.train_h_bond)),
+            'regressor': self.config.mode == 'regression',
+            'autoencoder': self.config.mode == 'autoencoder',
+            'embedding_regressor': self.config.mode == 'embedding_regression',
+            'polymorph_classifier': self.config.mode == 'polymorph_classification',
+        }
 
     def process_sweep_config(self):
         if self.sweep_config is not None:  # write sweep config features to working config # todo make more universal - I hate wandb configs
@@ -1054,15 +1053,21 @@ class Modeller:
     #     return data
 
     def ae_step(self, input_data, data, update_weights, step, last_step=False):
-        if last_step:
-            self.times['ae_step_start'] = time()
-
         if (not self.models_dict['autoencoder'].protons_in_input and
                 not self.models_dict['autoencoder'].inferring_protons):
             data = input_data.clone()
 
+        # if step == 0:
+        #     self.times['ae_forward_start'] = time()
         decoding, encoding = self.models_dict['autoencoder'](input_data, return_encoding=True)
+        # if step == 0:
+        #     self.times['ae_forward_end'] = time()
+        #     self.times['ae_loss_start'] = time()
         losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
+        # if step == 0:
+        #     self.times['ae_loss_end'] = time()
+        #     if update_weights:
+        #         self.times['ae_opt_start'] = time()
 
         mean_loss = losses.mean()
         if update_weights:
@@ -1071,15 +1076,14 @@ class Modeller:
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
             self.optimizers_dict['autoencoder'].step()  # update parameters
-
+        # if step == 0 and update_weights:
+        #     self.times['ae_opt_end'] = time()
         self.ae_stats_and_reporting(data, decoded_data, encoding, last_step, stats, step)
 
-        if last_step:
-            self.times['ae_step_end'] = time()
-
     def fix_autoencoder_protonation(self, data, override_deprotonate=False):
-        if not self.models_dict['autoencoder'].inferring_protons and (self.models_dict[
-            'autoencoder'].protons_in_input) and not override_deprotonate:
+        if (not self.models_dict['autoencoder'].inferring_protons and
+                self.models_dict['autoencoder'].protons_in_input and
+                not override_deprotonate):
             input_cloud = data.clone()
         else:
             heavy_atom_inds = torch.argwhere(data.x != 1)[:, 0]  # protons are atom type 1
@@ -1200,14 +1204,32 @@ class Modeller:
             self.models_dict['autoencoder'].eval()
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+            # if i == 0:
+            #     self.times['ae_step_start'] = time()
+            # elif i == 1:
+            #     self.times['ae_enumerate_end'] = time()
+            #
+            # if i == 0:
+            #     self.times['ae_to_device_start'] = time()
             data = data.to(self.device)
-
+            if data.x.ndim == 1:
+                data.x = data.x[:, None]
+            #
+            # if i == 0:
+            #     self.times['ae_to_device_end'] = time()
+            #     self.times['ae_preprocess_start'] = time()
             data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
+            # if i == 0:
+            #     self.times['ae_preprocess_end'] = time()
             self.ae_step(input_data, data, update_weights, step=i, last_step=i == len(data_loader) - 1)
 
             if iteration_override is not None:
                 if i >= iteration_override:
                     break  # stop training early - for debugging purposes
+
+            if i == 0:
+                self.times['ae_step_end'] = time()
+                self.times['ae_enumerate_start'] = time()
 
         self.times['ae_post_epoch_start'] = time()
         self.logger.concatenate_stats_dict(self.epoch_type)
@@ -1928,8 +1950,10 @@ class Modeller:
                     train_loader.batch_size < self.config.max_batch_size):  # if the batch is smaller than the dataset
                 increment = max(4,
                                 int(train_loader.batch_size * self.config.batch_growth_increment))  # increment batch size
-                train_loader = update_dataloader_batch_size(train_loader, train_loader.batch_size + increment)
-                test_loader = update_dataloader_batch_size(test_loader, test_loader.batch_size + increment)
+                train_loader, test_loader = (
+                update_dataloader_batch_size(train_loader, train_loader.batch_size + increment),
+                update_dataloader_batch_size(test_loader, test_loader.batch_size + increment))
+
                 if extra_test_loader is not None:
                     extra_test_loader = update_dataloader_batch_size(extra_test_loader,
                                                                      extra_test_loader.batch_size + increment)

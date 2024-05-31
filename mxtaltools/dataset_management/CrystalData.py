@@ -123,6 +123,7 @@ class CrystalData(BaseData):
                  symmetry_operators: list = None,
                  aunit_handedness: list = None,
                  is_well_defined: bool = True,
+                 require_crystal_features: bool = True,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
@@ -148,63 +149,64 @@ class CrystalData(BaseData):
                 centroid = pos.mean(dim=0)
                 self.radius = torch.amax(torch.linalg.norm(pos - centroid, dim=1))
 
-        # fix helper indices
-        if aux_ind is not None:
-            self.aux_ind = aux_ind
-            assert len(aux_ind) == len(x)
-        if mol_ind is not None:
-            self.mol_ind = mol_ind
-            assert len(mol_ind) == len(x)
-
-        # fix symmetries
-        self.sg_ind = sg_ind
-        if nonstandard_symmetry:  # set as list fo correct collation behavior
-            self.symmetry_operators = symmetry_operators
-            self.nonstandard_symmetry = True
-        else:  # standard symmetry
-            self.symmetry_operators = np.stack(SYM_OPS[sg_ind])
-            self.nonstandard_symmetry = False
-
-        self.sym_mult = len(self.symmetry_operators)
-        self.z_prime = z_prime
-
-        # fix box
-        self.cell_lengths = cell_lengths[None, ...]
-        self.cell_angles = cell_angles[None, ...]
-        if all(cell_lengths == torch.ones(3)):  # if we are going with the default box
-            self.T_fc, self.T_cf = torch.eye(3), torch.eye(3)
-            self.cell_volume = 1
-        else:
-            self.T_fc, self.cell_volume = (
-                cell_parameters_to_box_vectors('f_to_c', cell_lengths, cell_angles, return_vol=True))
-            self.T_fc = self.T_fc[None, ...]
-            self.T_cf = torch.linalg.inv(self.T_fc[0])[None, ...]
-        self.reduced_volume = self.cell_volume / self.sym_mult
-
-        # fix molecule poses
-        assert len(pose_parameters) == z_prime
-        if z_prime > 0:
-            for zp in range(4):
-                setattr(self, f'pose_params{zp}', torch.ones(6)[None, ...])  # fill with dummy values
-            for zp in range(z_prime):  # fill with any real values
-                setattr(self, f'pose_params{zp}', pose_parameters[zp][None, ...])
-
         # fix identifiers
         if smiles is not None:
             self.smiles = smiles
         if identifier is not None:
             self.identifier = identifier
 
-        # record prebuilt unit cell coordinates
-        if unit_cell_pos is not None:
-            self.unit_cell_pos = unit_cell_pos.numpy()  # if it's saved as a tensor, we get problems in collation
-            assert unit_cell_pos.shape == (self.sym_mult, len(x), 3)
+        if require_crystal_features:
+            # fix helper indices
+            if aux_ind is not None:
+                self.aux_ind = aux_ind
+                assert len(aux_ind) == len(x)
+            if mol_ind is not None:
+                self.mol_ind = mol_ind
+                assert len(mol_ind) == len(x)
 
-        if aunit_handedness is not None:
-            self.aunit_handedness = aunit_handedness
+            # fix symmetries
+            self.sg_ind = sg_ind
+            if nonstandard_symmetry:  # set as list fo correct collation behavior
+                self.symmetry_operators = symmetry_operators
+                self.nonstandard_symmetry = True
+            else:  # standard symmetry
+                self.symmetry_operators = np.stack(SYM_OPS[sg_ind])
+                self.nonstandard_symmetry = False
 
-        if is_well_defined is not None:
-            self.is_well_defined = is_well_defined
+            self.sym_mult = len(self.symmetry_operators)
+            self.z_prime = z_prime
+
+            # fix box
+            self.cell_lengths = cell_lengths[None, ...]
+            self.cell_angles = cell_angles[None, ...]
+            if all(cell_lengths.flatten() == torch.ones(3)):  # if we are going with the default box
+                self.T_fc, self.T_cf = torch.eye(3), torch.eye(3)
+                self.cell_volume = 1
+            else:
+                self.T_fc, self.cell_volume = (
+                    cell_parameters_to_box_vectors('f_to_c', cell_lengths, cell_angles, return_vol=True))
+                self.T_fc = self.T_fc[None, ...]
+                self.T_cf = torch.linalg.inv(self.T_fc[0])[None, ...]
+            self.reduced_volume = self.cell_volume / self.sym_mult
+
+            # fix molecule poses
+            assert len(pose_parameters) == z_prime
+            if z_prime > 0:
+                for zp in range(4):
+                    setattr(self, f'pose_params{zp}', torch.ones(6)[None, ...])  # fill with dummy values
+                for zp in range(z_prime):  # fill with any real values
+                    setattr(self, f'pose_params{zp}', pose_parameters[zp][None, ...])
+
+            # record prebuilt unit cell coordinates
+            if unit_cell_pos is not None:
+                self.unit_cell_pos = unit_cell_pos.numpy()  # if it's saved as a tensor, we get problems in collation
+                assert unit_cell_pos.shape == (self.sym_mult, len(x), 3)
+
+            if aunit_handedness is not None:
+                self.aunit_handedness = aunit_handedness
+
+            if is_well_defined is not None:
+                self.is_well_defined = is_well_defined
 
     def __getattr__(self, key: str) -> Any:
         if '_store' not in self.__dict__:
