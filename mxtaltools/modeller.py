@@ -829,9 +829,10 @@ class Modeller:
 
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
-            wandb.log(num_params_dict)
-            wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
-                       "Initial Batch Size": self.config.current_batch_size})
+            wandb.log(data=num_params_dict, commit=False)
+            wandb.log(data={"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
+                       "Initial Batch Size": self.config.current_batch_size},
+                      commit=False)
             self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
             self.logger.log_times(self.times)  # log initialization times
             self.times = {}  # reset for iterative looping
@@ -901,7 +902,7 @@ class Modeller:
 
                         train_loader, test_loader = slash_batch(train_loader, test_loader,
                                                                 slash_fraction=0.1)  # shrink batch size
-                        wandb.log({'batch size': train_loader.batch_size})
+                        wandb.log(data={'batch size': train_loader.batch_size}, commit=False)
 
                         torch.cuda.empty_cache()
                         self.config.grow_batch_size = False  # stop growing the batch for the rest of the run
@@ -1958,7 +1959,7 @@ class Modeller:
                     extra_test_loader = update_dataloader_batch_size(extra_test_loader,
                                                                      extra_test_loader.batch_size + increment)
                 print(f'Batch size incremented to {train_loader.batch_size}')
-        wandb.log({'batch size': train_loader.batch_size})
+        wandb.log(data={'batch size': train_loader.batch_size}, commit=False)
         self.config.current_batch_size = train_loader.batch_size
         self.times['batch_resizing_end'] = time()
         return train_loader, test_loader, extra_test_loader

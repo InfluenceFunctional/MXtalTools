@@ -9,15 +9,15 @@ save_checkpoints: False
 dataset:
   max_dataset_length: 10000  # non-functional for on-disk datasets.
   test_fraction: 0.2
-  on_disk_data_dir: 'drugs_crude.msgpack/train.lmdb/'
+  on_disk_data_dir: 'drugs_crude.msgpack/test_full.lmdb/'
 
 # batching & convergence
-max_epoch_steps: 1000
+max_epoch_steps: 50
 early_epochs_step_override: 20
 num_early_epochs: 20
 grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 10000
+max_batch_size: 50
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000

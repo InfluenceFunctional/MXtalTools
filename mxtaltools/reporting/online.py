@@ -88,7 +88,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
     overlap_results.update(overlaps_1d)
     overlap_results.update(sample_means)
     overlap_results.update(sample_stds)
-    wandb.log(overlap_results)
+    wandb.log(data=overlap_results,commit=False)
 
     if config.logger.log_figures:
         fig_dict = {}  # consider replacing by Joy plot
@@ -142,7 +142,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
 
         fig_dict['lattice_features_distribution'] = fig
 
-        wandb.log(fig_dict)
+        wandb.log(data=fig_dict,commit=False)
 
 
 def plotly_setup(config):
@@ -192,7 +192,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
 
         # #fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
         if config.logger.log_figures:
-            wandb.log({'Cell Packing': fig})
+            wandb.log(data={'Cell Packing': fig},commit=False)
         if (config.machine == 'local') and False:
             fig.show(renderer='browser')
 
@@ -662,7 +662,7 @@ def plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_
 
     fig.layout.margin = layout.margin
 
-    wandb.log({'Generator Loss Correlates': fig})
+    wandb.log(data={'Generator Loss Correlates': fig},commit=False)
 
 
 def plot_discriminator_score_correlates(dataDims, epoch_stats_dict, layout):
@@ -734,7 +734,7 @@ def get_BT_scores(crystals_for_targets, target_identifiers_inds, extra_test_dict
             distance_dict[target + '_exp'] = extra_test_dict['discriminator_real_predicted_distance'][target_index][
                 None]
 
-            wandb.log({f'Average_{target}_exp_score': np.average(scores)})
+            wandb.log(data={f'Average_{target}_exp_score': np.average(scores)}, commit=False)
 
         if crystals_for_targets[target] != []:  # record sample data
             target_indices = crystals_for_targets[target]
@@ -748,8 +748,8 @@ def get_BT_scores(crystals_for_targets, target_identifiers_inds, extra_test_dict
 
             distance_dict[target] = extra_test_dict['discriminator_real_predicted_distance'][target_indices]
 
-            wandb.log({f'Average_{target}_score': np.average(scores)})
-            wandb.log({f'Average_{target}_std': np.std(scores)})
+            wandb.log(data={f'Average_{target}_score': np.average(scores)},commit=False)
+            wandb.log(data={f'Average_{target}_std': np.std(scores)}, commit=False)
 
             # correlate losses with molecular features
             tracking_features = np.asarray(extra_test_dict['tracking_features'])
@@ -801,15 +801,15 @@ def process_BT_evaluation_outputs(dataDims, wandb, extra_test_dict, test_epoch_s
     BT_submission_distances = np.concatenate(
         [pred_distance_dict[key] for key in pred_distance_dict.keys() if key in crystals_for_targets.keys()])
 
-    wandb.log({'Average BT submission score': np.average(BT_submission_scores)})
-    wandb.log({'Average BT target score': np.average(BT_target_scores)})
-    wandb.log({'BT submission score std': np.std(BT_target_scores)})
-    wandb.log({'BT target score std': np.std(BT_target_scores)})
-
-    wandb.log({'Average BT submission distance': np.average(BT_submission_distances)})
-    wandb.log({'Average BT target distance': np.average(BT_target_distances)})
-    wandb.log({'BT submission distance std': np.std(BT_target_distances)})
-    wandb.log({'BT target distance std': np.std(BT_target_distances)})
+    wandb.log(data={'Average BT submission score': np.average(BT_submission_scores),
+                    'Average BT target score': np.average(BT_target_scores),
+                    'BT submission score std': np.std(BT_target_scores),
+                    'BT target score std': np.std(BT_target_scores),
+                    'Average BT submission distance': np.average(BT_submission_distances),
+                    'Average BT target distance': np.average(BT_target_distances),
+                    'BT submission distance std': np.std(BT_target_distances),
+                    'BT target distance std': np.std(BT_target_distances)},
+              commit=False)
 
     return bt_score_correlates, scores_dict, pred_distance_dict, \
         crystals_for_targets, blind_test_targets, target_identifiers, target_identifiers_inds, \
@@ -851,8 +851,9 @@ def BT_separation_tables(layout, scores_dict, BT_submission_scores, crystals_for
     fig2.layout.margin = layout.margin
     fig2.write_image('normed_scores_separation_table.png', scale=4)
 
-    wandb.log({"Scores Separation": submissions_fraction_below_csd_quantile})
-    wandb.log({"Normed Scores Separation": normed_submissions_fraction_below_csd_quantile})
+    wandb.log(data={"Scores Separation": submissions_fraction_below_csd_quantile,
+               "Normed Scores Separation": normed_submissions_fraction_below_csd_quantile},
+              commit=False)
 
     return fig1, fig2
 
@@ -869,30 +870,33 @@ def make_and_plot_BT_figs(crystals_for_targets, target_identifiers_inds, identif
             scores_dict, BT_target_scores, BT_submission_scores,
             tracking_features_dict, layout))
     fig.write_image(f'bt_submissions_{score_name}_distribution.png', scale=4)
-    wandb.log({f"BT Submissions {score_name} Distribution": fig})
+    wandb.log(data={f"BT Submissions {score_name} Distribution": fig}, commit=False)
 
     '''score separations'''
     fig1, fig2 = BT_separation_tables(layout, scores_dict, BT_submission_scores,
                                       crystals_for_targets, normed_scores_dict, normed_BT_submission_scores)
-    wandb.log({f"{score_name} Separation Table": fig1,
-               f"Normed {score_name} Separation Table": fig2})
+    wandb.log(data={f"{score_name} Separation Table": fig1,
+               f"Normed {score_name} Separation Table": fig2},
+              commit=False)
 
     '''functional group analysis'''
     fig = functional_group_analysis_fig(scores_dict, tracking_features, layout, dataDims)
     if fig is not None:
         fig.write_image(f'functional_group_{score_name}.png', scale=2)
-        wandb.log({f"Functional Group {score_name}": fig})
+        wandb.log(data={f"Functional Group {score_name}": fig},
+                  commit=False)
 
     fig = group_wise_analysis_fig(identifiers_list, crystals_for_targets, scores_dict, normed_scores_dict, layout)
     fig.write_image(f'interesting_groups_{score_name}.png', scale=4)
-    wandb.log({f"Interesting Groups {score_name}": fig})
+    wandb.log(data={f"Interesting Groups {score_name}": fig},
+              commit=False)
 
     '''
     S2.  score correlates
     '''
     fig = make_correlates_plot(tracking_features, scores_dict['CSD'], dataDims)
     fig.write_image(f'{score_name}_correlates.png', scale=4)
-    wandb.log({f"{score_name} Correlates": fig})
+    wandb.log(data={f"{score_name} Correlates": fig},commit=False)
 
     '''
     S1. All group-wise analysis  # todo rebuild
@@ -1103,9 +1107,9 @@ def log_cubic_defect(samples):
     cubic_distortion = np.abs(1 - np.nan_to_num(np.stack(
         [cell_vol_np(cleaned_samples[i, 0:3], cleaned_samples[i, 3:6]) / np.prod(cleaned_samples[i, 0:3], axis=-1) for
          i in range(len(cleaned_samples))])))
-    wandb.log({'Avg generated cubic distortion': np.average(cubic_distortion)})
+    wandb.log(data={'Avg generated cubic distortion': np.average(cubic_distortion)},commit=False)
     hist = np.histogram(cubic_distortion, bins=256, range=(0, 1))
-    wandb.log({"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)})
+    wandb.log(data={"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)},commit=False)
 
 
 def process_generator_losses(config, epoch_stats_dict):
@@ -1145,9 +1149,9 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     else:
         cell_parameters = epoch_stats_dict['final_generated_cell_parameters']
     log_cubic_defect(cell_parameters)
-    wandb.log({"Generated cell parameter variation": cell_parameters.std(0).mean()})
+    wandb.log(data={"Generated cell parameter variation": cell_parameters.std(0).mean()},commit=False)
     generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
-    wandb.log(average_losses_dict)
+    wandb.log(average_losses_dict,commit=False)
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
     plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
@@ -1191,7 +1195,7 @@ def cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_categor
     fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
     fig.update_layout(xaxis_range=[vdw_cutoff, 0.1],
                       yaxis_range=[scatter_dict['volume_per_atom'].min(), scatter_dict['volume_per_atom'].max()])
-    wandb.log({'Generator Samples': fig})
+    wandb.log({'Generator Samples': fig},commit=False)
 
 
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
@@ -1262,8 +1266,8 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
 
     fig_dict['Regression Results'] = fig
 
-    wandb.log(loss_dict)
-    wandb.log(fig_dict)
+    wandb.log(loss_dict,commit=False)
+    wandb.log(fig_dict,commit=False)
 
     return None
 
@@ -1457,7 +1461,7 @@ def classifier_reporting(true_labels, probs, ordered_class_names, wandb, epoch_t
                f"{epoch_type} F1 Score": train_f1_score,
                f"{epoch_type} 1-ROC_AUC": 1 - train_score,
                f"{epoch_type} 1-F1 Score": 1 - train_f1_score,
-               f"{epoch_type} Confusion Matrix": fig})
+               f"{epoch_type} Confusion Matrix": fig},commit=False)
 
 
 def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
@@ -1495,14 +1499,15 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
     evaluation_overlap_loss = scatter(F.smooth_l1_loss(self_overlap, full_overlap, reduction='none'), data.batch,
                                       reduce='mean')
 
-    wandb.log({epoch_type + "_evaluation_positions_wise_overlap":
+    wandb.log(data={epoch_type + "_evaluation_positions_wise_overlap":
                    scatter(coord_overlap / self_coord_overlap, data.batch, reduce='mean').mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_typewise_overlap":
                    scatter(type_overlap / self_type_overlap, data.batch, reduce='mean').mean().cpu().detach().numpy(),
                epoch_type + "_evaluation_overall_overlap": overall_overlap.mean(),
                epoch_type + "_evaluation_matching_clouds_fraction": (np.sum(1 - overall_overlap) < 0.01).mean(),
                epoch_type + "_evaluation_overlap_loss": evaluation_overlap_loss.mean().cpu().detach().numpy(),
-               })
+               },
+              commit=False)
 
     if config.logger.log_figures:
         fig, fig2, rmsd, max_dist, tot_overlap, match_successful = (
@@ -1511,13 +1516,14 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
                                       ))
         if not match_successful:
             rmsd = np.inf
-        wandb.log({
+        wandb.log(data={
             epoch_type + "_pointwise_sample_distribution": fig,
             epoch_type + "_cluster_sample_distribution": fig2,
             epoch_type + "_sample_RMSD": rmsd,
             epoch_type + "_max_dist": max_dist,
             epoch_type + "_probability_mass_overlap": tot_overlap,
-        })
+        },
+        commit=False)
 
     return None
 
@@ -1564,7 +1570,7 @@ def proxy_discriminator_analysis(epoch_stats_dict):
 
     wandb.log({"Proxy Results": fig,
                "proxy_R_value": linreg_result.rvalue,
-               "proxy_slope": linreg_result.slope})
+               "proxy_slope": linreg_result.slope},commit=False)
 
 
 def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=None):
@@ -1587,9 +1593,9 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=N
     fig_dict['Score vs. Distance'] = score_vs_distance_plot(pred_distance_dict, scores_dict)
 
     # img_dict = {key: wandb.Image(fig) for key, fig in fig_dict.items()}
-    wandb.log(fig_dict)
-    wandb.log({"distance_R_value": dist_rvalue,
-               "distance_slope": dist_slope})
+    wandb.log(data=fig_dict, commit=False)
+    wandb.log(data={"distance_R_value": dist_rvalue,
+               "distance_slope": dist_slope}, commit=False)
 
     return None
 
@@ -1749,7 +1755,7 @@ def log_mini_csp_scores_distributions(config, wandb, generated_samples_dict, rea
     fig.layout.margin = layout.margin
 
     if config.logger.log_figures:
-        wandb.log({'Mini-CSP Scores': fig})
+        wandb.log(data={'Mini-CSP Scores': fig}, commit=False)
     if (config.machine == 'local') and False:
         fig.show(renderer='browser')
 
@@ -1792,7 +1798,7 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
     fig.update_traces(opacity=0.5)
     fig.update_layout(title=crystal_name)
 
-    wandb.log({"Mini-CSP Cell Parameters": fig})
+    wandb.log(data={"Mini-CSP Cell Parameters": fig}, commit=False)
     return None
 
 #

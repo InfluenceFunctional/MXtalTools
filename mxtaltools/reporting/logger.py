@@ -46,6 +46,7 @@ class Logger:
 
         self.epoch = epoch
         self.batch_size = batch_size
+        self.wandb.log({'epoch': epoch}, step=epoch, commit=True)
 
     def update_current_losses(self, model_name, epoch_type, mean_loss, all_loss):
         self.current_losses[model_name]['mean_' + epoch_type].append(mean_loss)
@@ -88,7 +89,7 @@ class Logger:
                 if isinstance(self.current_losses[k1][k2], list):
                     self.current_losses[k1][k2] = np.asarray(self.current_losses[k1][k2])
 
-    def log_times(self, times: dict):
+    def log_times(self, times: dict, commit=False):
         elapsed_times = {}
         for start_key in times.keys():
             if isinstance(times[start_key], dict):
@@ -97,7 +98,7 @@ class Logger:
                 end_key = start_key.split('_start')[0] + '_end'
                 if end_key in times.keys():
                     elapsed_times[start_key.split('_start')[0] + '_time'] = times[end_key] - times[start_key]
-        self.wandb.log(elapsed_times)
+        self.wandb.log(data=elapsed_times, commit=commit)
 
     def concatenate_stats_dict(self, epoch_type):
         stat_dict = self.get_stat_dict(epoch_type)
@@ -137,38 +138,42 @@ class Logger:
                                 for model_name in self.model_names if
                                 self.config.__dict__[model_name].optimizer is not None}
 
-    def log_fig_dict(self, fig_dict):
+    def log_fig_dict(self, fig_dict, commit=False):
         if self.log_figs_to_self:
-            self.wandb.log(fig_dict)
+            self.wandb.log(data=fig_dict, commit=commit)
 
         if self.save_figs_to_local:
             for key in fig_dict.keys():
                 fig_dict[key].write_image(key)  # assume these are all plotly figs
 
-    def log_training_metrics(self):
+    def log_training_metrics(self, commit=False):
         if self.log_figs_to_self:
             # key metrics
-            self.wandb.log(self.collate_current_metrics())
+            self.wandb.log(data=self.collate_current_metrics(), commit=commit)
 
             # loss histograms
             for key in self.current_losses.keys():
                 if 'all_train' in self.current_losses[key].keys():
                     train_loss = self.current_losses[key]['all_train']
                     self.wandb.log(
-                        {key + '_train_loss_distribution': self.wandb.Histogram(train_loss)})
+                        data={key + '_train_loss_distribution': self.wandb.Histogram(train_loss)},
+                        commit=commit)
                     self.wandb.log(
-                        {key + '_log_train_loss_distribution': self.wandb.Histogram(np.nan_to_num(
+                        data={key + '_log_train_loss_distribution': self.wandb.Histogram(np.nan_to_num(
                             np.log10(np.abs(train_loss)), neginf=0, posinf=0
-                        ))})
+                        ))},
+                        commit=commit)
 
                 if 'all_test' in self.current_losses[key].keys():
                     test_loss = self.current_losses[key]['all_test']
                     self.wandb.log(
-                        {key + '_test_loss_distribution': self.wandb.Histogram(test_loss)})
+                        data={key + '_test_loss_distribution': self.wandb.Histogram(test_loss)},
+                        commit=commit)
                     self.wandb.log(
-                        {key + '_log_test_loss_distribution': self.wandb.Histogram(np.nan_to_num(
+                        data={key + '_log_test_loss_distribution': self.wandb.Histogram(np.nan_to_num(
                             np.log10(np.abs(test_loss)), neginf=0, posinf=0
-                        ))})
+                        ))},
+                        commit=commit)
 
     def collate_current_metrics(self):
         # general metrics
@@ -184,7 +189,7 @@ class Logger:
         for key in self.current_losses.keys():
             for key2 in self.current_losses[key].keys():
                 if isinstance(self.current_losses[key][key2], np.ndarray) and (
-                len(self.current_losses[key][key2] > 0)):  # log 'best' metrics
+                        len(self.current_losses[key][key2] > 0)):  # log 'best' metrics
                     if 'train' in key2:
                         ttype = 'train'
                     elif 'test' in key2:

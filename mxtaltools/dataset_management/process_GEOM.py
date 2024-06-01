@@ -19,6 +19,7 @@ def write_lmdb(database, current_map_size, dict_to_write):
         return current_map_size
 
     except lmdb.MapFullError:
+        assert current_map_size < 2e10
         new_map_size = int(current_map_size * 1.25)
         print(f'Boosting map size from {current_map_size / 1e9:.1f}GB to {new_map_size / 1e9:.1f}GB')
         current_map_size = new_map_size
@@ -31,11 +32,11 @@ if __name__ == '__main__':
     filename = os.path.join(direc, f"{data_type}_crude.msgpack")
     file = open(filename, "rb")
     unpacker = msgpack.Unpacker(file)
-    lmdb_database = 'train.lmdb'
+    lmdb_database = 'train_full.lmdb'
     map_size = int(30e9)  # map size in bytes
 
     min_chunk = 5
-    max_chunk = 10  # qm9 has 135 chunks, drugs has 296
+    max_chunk = 400  # qm9 has 135 chunks, drugs has 296
     'test dataset approx 500k samples from chunks 0-5 in qm9 and drugs'
     'train dataset from subsequent 5 chunks'
 
