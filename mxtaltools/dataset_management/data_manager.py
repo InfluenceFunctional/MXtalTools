@@ -135,7 +135,7 @@ class DataManager:
         self.present_atom_types, _ = self.misc_dataset['dataset_stats']['atomic_number']['uniques']
         if filter_protons:
             if 1 in self.present_atom_types:
-                self.present_atom_types.remove(1)
+                self.present_atom_types = self.present_atom_types[self.present_atom_types != 1]
         self.dataDims = self.get_data_dimensions()
 
         for ind in range(len(self.dataset)):
