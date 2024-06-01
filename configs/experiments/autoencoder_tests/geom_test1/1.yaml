@@ -1,7 +1,7 @@
 machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/GEOM_autoencoder.yaml
-dataset_name: 'GEOM_QM9_DRUGS_dataset.pt' #'test_dataset.pt'
+dataset_name: 'test_GEOM_QM9_DRUGS_dataset.pt' #'test_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: False
 
@@ -41,7 +41,7 @@ model_paths:
 
 autoencoder:
   infer_protons: False
-  filter_protons: True
+  filter_protons: False
   type_distance_scaling: 2
   init_sigma: 1.05  # real-space valued
   evaluation_sigma: 0.35  # real-space valued
