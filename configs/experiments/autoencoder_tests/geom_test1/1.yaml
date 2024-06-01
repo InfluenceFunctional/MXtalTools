@@ -8,7 +8,7 @@ save_checkpoints: False
 dataset:
   max_dataset_length: 10000  # non-functional for on-disk datasets.
   test_fraction: 0.2
-  on_disk_data_dir: 'drugs_crude.msgpack/train.lmdb/'
+  on_disk_data_dir: 'drugs_crude.msgpack/train_full.lmdb/'
 
 # batching & convergence
 max_epoch_steps: 10000
