@@ -32,7 +32,7 @@ if __name__ == '__main__':
     filename = os.path.join(direc, f"{data_type}_crude.msgpack")
     file = open(filename, "rb")
     unpacker = msgpack.Unpacker(file)
-    lmdb_database = 'train_full.lmdb'
+    lmdb_database = 'train.lmdb'
     map_size = int(30e9)  # map size in bytes
 
     min_chunk = 5
@@ -69,8 +69,15 @@ if __name__ == '__main__':
                 samples = []
                 for conformer_ind, conformer in enumerate((entry['conformers'])):
                     atoms_arr = np.array(conformer['xyz'])
+
+                    # molecule sizes filter
                     if len(atoms_arr) < 6 or len(atoms_arr) > 100:
                         continue
+
+                    # atom types filter
+                    if not set(atoms_arr[:, 0]).issubset([1, 5, 6, 7, 8, 9, 14, 15, 16, 17, 35, 53]):
+                        continue
+
                     sample = CrystalData(
                         x=torch.tensor(atoms_arr[:, 0], dtype=torch.long),
                         pos=torch.tensor(atoms_arr[:, 1:], dtype=torch.float32),
@@ -79,6 +86,8 @@ if __name__ == '__main__':
                         y=torch.zeros(1, dtype=torch.float32),
                         require_crystal_features=False,
                     )
+
+                    # molecule radius filter
                     if sample.radius > 15:
                         continue
 

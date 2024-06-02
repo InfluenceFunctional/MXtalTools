@@ -10,6 +10,9 @@ dataset:
   test_fraction: 0.2
   on_disk_data_dir: 'drugs_crude.msgpack/train_full.lmdb/'
 
+seeds:
+  dataset: 1
+
 # batching & convergence
 max_epoch_steps: 10000
 early_epochs_step_override: 50
