@@ -27,22 +27,24 @@ def write_lmdb(database, current_map_size, dict_to_write):
 
 
 if __name__ == '__main__':
+    # direc = r'/scratch/mk8347/csd_runs/datasets/drugs_crude.msgpack'
+
     direc = r'D:\crystal_datasets\drugs_crude.msgpack'
-    data_type = 'drugs'  # 'drugs 'or 'qm9'
+    data_type = 'qm9'  # 'drugs 'or 'qm9'
     filename = os.path.join(direc, f"{data_type}_crude.msgpack")
     file = open(filename, "rb")
     unpacker = msgpack.Unpacker(file)
-    lmdb_database = 'train.lmdb'
+    lmdb_database = 'test.lmdb'
     map_size = int(150e9)  # map size in bytes
 
-    min_chunk = 5
-    max_chunk = 400  # qm9 has 135 chunks, drugs has 296
+    min_chunk = 0
+    max_chunk = 5  # qm9 has 135 chunks, drugs has 296
     'test dataset approx 500k samples from chunks 0-5 in qm9 and drugs'
     'train dataset from subsequent 5 chunks'
 
     os.chdir(direc)
     if not os.path.exists(lmdb_database.split('.lmdb')[0] + '_keys.npy'):
-        overall_index = np.zeros(1)
+        overall_index = int(0)
     else:
         overall_index = np.load(lmdb_database.split('.lmdb')[0] + '_keys.npy', allow_pickle=True).item()
 
@@ -89,7 +91,7 @@ if __name__ == '__main__':
 
                 if len(samples) > 0:
                     sample_inds = [overall_index + cc_idx for cc_idx in range(1, len(samples) + 1)]
-                    data_dict.update({str(int(k)): v for k, v in zip(sample_inds, samples)})
+                    data_dict.update({str(k): v for k, v in zip(sample_inds, samples)})
                     overall_index += len(samples)
 
             np.save(lmdb_database.split('.lmdb')[0] + '_keys', overall_index)
