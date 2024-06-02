@@ -19,7 +19,7 @@ def write_lmdb(database, current_map_size, dict_to_write):
         return current_map_size
 
     except lmdb.MapFullError:
-        assert current_map_size < 2e10
+        assert current_map_size < 2e11
         new_map_size = int(current_map_size * 1.25)
         print(f'Boosting map size from {current_map_size / 1e9:.1f}GB to {new_map_size / 1e9:.1f}GB')
         current_map_size = new_map_size
@@ -33,7 +33,7 @@ if __name__ == '__main__':
     file = open(filename, "rb")
     unpacker = msgpack.Unpacker(file)
     lmdb_database = 'train.lmdb'
-    map_size = int(30e9)  # map size in bytes
+    map_size = int(150e9)  # map size in bytes
 
     min_chunk = 5
     max_chunk = 400  # qm9 has 135 chunks, drugs has 296
@@ -42,20 +42,15 @@ if __name__ == '__main__':
 
     os.chdir(direc)
     if not os.path.exists(lmdb_database.split('.lmdb')[0] + '_keys.npy'):
-        keys_dict = {}
+        overall_index = np.zeros(1)
     else:
-        keys_dict = np.load(lmdb_database.split('.lmdb')[0] + '_keys.npy', allow_pickle=True).item()
+        overall_index = np.load(lmdb_database.split('.lmdb')[0] + '_keys.npy', allow_pickle=True).item()
 
     chunk_ind = - 1
     with tqdm(total=max_chunk) as pbar:
         while chunk_ind < max_chunk - 1:
             pbar.update(1)
             chunk_ind += 1
-            # todo replace this by checking the largest chunk in the keys dict and incrementing by one
-            if keys_dict != {}:
-                chunk_to_print = max(list(keys_dict.keys())) + 1
-            else:
-                chunk_to_print = 0
 
             if not (max_chunk > chunk_ind >= min_chunk):
                 unpacker.skip()
@@ -64,7 +59,6 @@ if __name__ == '__main__':
             data_batch = unpacker.unpack()
             data_dict = {}
             smiles_ind = 0
-            keys_dict[chunk_to_print] = {}
             for s_ind, (smiles, entry) in enumerate((data_batch.items())):
                 samples = []
                 for conformer_ind, conformer in enumerate((entry['conformers'])):
@@ -94,13 +88,11 @@ if __name__ == '__main__':
                     samples.append(sample.to_dict())
 
                 if len(samples) > 0:
-                    sample_inds = [f'{chunk_to_print}_' + str(smiles_ind) + '_' + str(cc_idx) for cc_idx in
-                                   range(len(samples))]
-                    data_dict.update({k: v for k, v in zip(sample_inds, samples)})
-                    keys_dict[chunk_to_print][smiles_ind] = len(samples)
-                    smiles_ind += 1
+                    sample_inds = [overall_index + cc_idx for cc_idx in range(1, len(samples) + 1)]
+                    data_dict.update({str(int(k)): v for k, v in zip(sample_inds, samples)})
+                    overall_index += len(samples)
 
-            np.save(lmdb_database.split('.lmdb')[0] + '_keys', keys_dict)
+            np.save(lmdb_database.split('.lmdb')[0] + '_keys', overall_index)
 
             map_size = write_lmdb(lmdb_database, map_size, data_dict)
 

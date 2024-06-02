@@ -14,7 +14,7 @@ class GeomDataset(Dataset):
             readonly=True,
         )
         self.txn = self.env.begin()
-        self.data_keys = list(self.txn.cursor().iternext(values=False))
+        self.data_keys = []
         self.samplewise_index, self.chunk_tail_index = self.build_key_indices(np.load(root.split('.lmdb')[0] + '_keys.npy', allow_pickle=True).item())
         super().__init__(root, transform, pre_transform, pre_filter)
 
