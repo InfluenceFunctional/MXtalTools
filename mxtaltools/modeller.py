@@ -396,7 +396,7 @@ class Modeller:
                                           num_workers=min(os.cpu_count(), 4), pin_memory=True, drop_last=False)
             else:
                 train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
-                                          pin_memory=True, drop_last=False)
+                                          pin_memory=False, drop_last=False)
             del train_dataset
 
             test_dataset = GeomDataset(
@@ -406,7 +406,7 @@ class Modeller:
                                          num_workers=min(os.cpu_count(), 4), pin_memory=True, drop_last=False)
             else:
                 test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
-                                         pin_memory=True, drop_last=False)
+                                         pin_memory=False, drop_last=False)
             del test_dataset
         else:
             train_loader, test_loader = get_dataloaders(dataset_builder,
