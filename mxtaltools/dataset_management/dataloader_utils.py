@@ -16,7 +16,7 @@ def get_dataloaders(dataset_builder, machine, batch_size, test_fraction=0.2, shu
     for i in range(test_size):
         test_dataset.append(dataset_builder[i])
 
-    if machine == 'cluster':  # faster dataloading on cluster with more workers
+    if False: #machine == 'cluster':  # faster dataloading on cluster with more workers
         if len(train_dataset) > 0:
             tr = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=min(os.cpu_count(), 8), pin_memory=True, drop_last=False)
         else:
