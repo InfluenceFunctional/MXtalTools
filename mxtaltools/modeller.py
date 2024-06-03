@@ -391,22 +391,22 @@ class Modeller:
             from mxtaltools.dataset_management.lmdb_dataset import GeomDataset
             from torch_geometric.data import DataLoader
             train_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
-            if False: #self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
+            if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
                 train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                           num_workers=min(os.cpu_count(), 4), pin_memory=True, drop_last=False)
             else:
                 train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
-                                          pin_memory=False, drop_last=False)
+                                          pin_memory=True, drop_last=False)
             del train_dataset
 
             test_dataset = GeomDataset(
                 self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
-            if False: #self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
+            if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
                 test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                          num_workers=min(os.cpu_count(), 4), pin_memory=True, drop_last=False)
             else:
                 test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
-                                         pin_memory=False, drop_last=False)
+                                         pin_memory=True, drop_last=False)
             del test_dataset
         else:
             train_loader, test_loader = get_dataloaders(dataset_builder,
