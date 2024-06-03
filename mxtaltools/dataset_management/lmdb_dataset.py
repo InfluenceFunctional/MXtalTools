@@ -44,7 +44,6 @@ class GeomDataset(Dataset):
             max_readers=512,
             readahead=False,
             lock=False,
-            subdir=False,
             meminit=False,
         )
         self.txn = self.env.begin()
