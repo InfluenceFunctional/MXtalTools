@@ -82,7 +82,7 @@ autoencoder:
         num_attention_heads: 64
         embedding_dim: 512
         num_convs: 0
-        fcs_per_gc: 4
+        fcs_per_gc: 1
         num_radial: 50
         norm: 'graph layer'
         dropout: 0
@@ -104,7 +104,7 @@ autoencoder:
       activation: 'gelu'
       fc:
         hidden_dim: 512
-        num_layers: 4
+        num_layers: 1
         dropout: 0
         norm: 'layer'
       num_nodes: 512

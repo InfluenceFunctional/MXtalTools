@@ -1205,10 +1205,10 @@ class Modeller:
             self.models_dict['autoencoder'].eval()
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            # if i == 0:
-            #     self.times['ae_step_start'] = time()
-            # elif i == 1:
-            #     self.times['ae_enumerate_end'] = time()
+            if i == 0:
+                self.times['ae_step_start'] = time()
+            elif i == 1:
+                self.times['ae_enumerate_end'] = time()
             #
             # if i == 0:
             #     self.times['ae_to_device_start'] = time()
