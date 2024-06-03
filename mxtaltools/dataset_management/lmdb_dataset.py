@@ -9,11 +9,7 @@ from mxtaltools.dataset_management.CrystalData import CrystalData
 class GeomDataset(Dataset):
     def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
         self.path_to_datafiles = root
-        self.env = lmdb.open(
-            root,
-            readonly=True,
-        )
-        self.txn = self.env.begin()
+        self.txn = None
         # self.data_keys = list(self.txn.cursor().iternext(values=False)) # slow and unused
         self.data_keys = []
         self.dataset_length = int(np.load(root.split('.lmdb')[0] + '_keys.npy', allow_pickle=True).item())
@@ -37,7 +33,16 @@ class GeomDataset(Dataset):
         -------
         CrystalData object
         """
+        if self.txn is None:
+            self._init_env()
         return CrystalData.from_dict(pickle.loads(self.txn.get(str(idx).encode('ascii'))))
+
+    def _init_env(self):
+        self.env = lmdb.open(
+            self.path_to_datafiles,
+            readonly=True,
+        )
+        self.txn = self.env.begin()
 
 
 if __name__ == '__main__':

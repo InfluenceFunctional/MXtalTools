@@ -388,24 +388,25 @@ class Modeller:
             shuffle = True
 
         if self.config.dataset.on_disk_data_dir is not None:
-            from mxtaltools.dataset_management.on_disk_chunk_dataset import GeomDataset
+            from mxtaltools.dataset_management.lmdb_dataset import GeomDataset
             from torch_geometric.data import DataLoader
             train_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
-            if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
+            if False: #self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
                 train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-                                          num_workers=min(os.cpu_count(), 8), pin_memory=True, drop_last=False)
+                                          num_workers=min(os.cpu_count(), 4), pin_memory=True, drop_last=False)
             else:
                 train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
                                           pin_memory=True, drop_last=False)
             del train_dataset
 
-            test_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train','test'))
-            if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
+            test_dataset = GeomDataset(
+                self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
+            if False: #self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
                 test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-                                          num_workers=min(os.cpu_count(), 8), pin_memory=True, drop_last=False)
+                                         num_workers=min(os.cpu_count(), 4), pin_memory=True, drop_last=False)
             else:
                 test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
-                                          pin_memory=True, drop_last=False)
+                                         pin_memory=True, drop_last=False)
             del test_dataset
         else:
             train_loader, test_loader = get_dataloaders(dataset_builder,
@@ -831,7 +832,7 @@ class Modeller:
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
             wandb.log(data=num_params_dict, commit=False)
             wandb.log(data={"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
-                       "Initial Batch Size": self.config.current_batch_size},
+                            "Initial Batch Size": self.config.current_batch_size},
                       commit=False)
             self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
             self.logger.log_times(self.times)  # log initialization times
@@ -1058,17 +1059,8 @@ class Modeller:
                 not self.models_dict['autoencoder'].inferring_protons):
             data = input_data.clone()
 
-        # if step == 0:
-        #     self.times['ae_forward_start'] = time()
         decoding, encoding = self.models_dict['autoencoder'](input_data, return_encoding=True)
-        # if step == 0:
-        #     self.times['ae_forward_end'] = time()
-        #     self.times['ae_loss_start'] = time()
         losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
-        # if step == 0:
-        #     self.times['ae_loss_end'] = time()
-        #     if update_weights:
-        #         self.times['ae_opt_start'] = time()
 
         mean_loss = losses.mean()
         if update_weights:
@@ -1077,8 +1069,7 @@ class Modeller:
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
             self.optimizers_dict['autoencoder'].step()  # update parameters
-        # if step == 0 and update_weights:
-        #     self.times['ae_opt_end'] = time()
+
         self.ae_stats_and_reporting(data, decoded_data, encoding, last_step, stats, step)
 
     def fix_autoencoder_protonation(self, data, override_deprotonate=False):
@@ -1205,37 +1196,19 @@ class Modeller:
             self.models_dict['autoencoder'].eval()
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-            if i == 0:
-                self.times['ae_step_start'] = time()
-            elif i == 1:
-                self.times['ae_enumerate_end'] = time()
-            #
-            # if i == 0:
-            #     self.times['ae_to_device_start'] = time()
             data = data.to(self.device)
             if data.x.ndim == 1:
                 data.x = data.x[:, None]
-            #
-            # if i == 0:
-            #     self.times['ae_to_device_end'] = time()
-            #     self.times['ae_preprocess_start'] = time()
+
             data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
-            # if i == 0:
-            #     self.times['ae_preprocess_end'] = time()
             self.ae_step(input_data, data, update_weights, step=i, last_step=i == len(data_loader) - 1)
 
             if iteration_override is not None:
                 if i >= iteration_override:
-                    break  # stop training early - for debugging purposes
+                    break
 
-            if i == 0:
-                self.times['ae_step_end'] = time()
-                self.times['ae_enumerate_start'] = time()
-
-        self.times['ae_post_epoch_start'] = time()
         self.logger.concatenate_stats_dict(self.epoch_type)
         self.ae_annealing()
-        self.times['ae_post_epoch_end'] = time()
 
     def ae_annealing(self):
         # if we have learned the existing distribution
@@ -1952,8 +1925,8 @@ class Modeller:
                 increment = max(4,
                                 int(train_loader.batch_size * self.config.batch_growth_increment))  # increment batch size
                 train_loader, test_loader = (
-                update_dataloader_batch_size(train_loader, train_loader.batch_size + increment),
-                update_dataloader_batch_size(test_loader, test_loader.batch_size + increment))
+                    update_dataloader_batch_size(train_loader, train_loader.batch_size + increment),
+                    update_dataloader_batch_size(test_loader, test_loader.batch_size + increment))
 
                 if extra_test_loader is not None:
                     extra_test_loader = update_dataloader_batch_size(extra_test_loader,

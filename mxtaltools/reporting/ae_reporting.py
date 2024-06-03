@@ -11,7 +11,7 @@ from mxtaltools.models.utils import compute_full_evaluation_overlap, compute_coo
     compute_type_evaluation_overlap
 
 
-def autoencoder_decoder_sample_validation(data, decoded_data, config, dataDims, epoch_stats_dict):
+def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims, epoch_stats_dict):
     if len(epoch_stats_dict['sample']) > 1:
         print("more than one batch of AE samples were saved but only the first is being analyzed")
 
@@ -37,18 +37,20 @@ def gaussian_3d_overlap_plots(data, decoded_data, max_point_types):
     fig = swarm_vs_tgt_fig(data, decoded_data, max_point_types)
 
     # RMSD calculation and scaffolded clustering figures
-    rmsds = np.zeros(data.num_graphs)
+    num_rmsd_samples = min(100, data.num_graphs)
+    rmsds = np.zeros(num_rmsd_samples)
     max_dists = np.zeros_like(rmsds)
     tot_overlaps = np.zeros_like(rmsds)
-    for ind in range(data.num_graphs):
+    match_successful = np.zeros_like(rmsds)
+    for ind in range(num_rmsd_samples):
         if ind == 0:
-            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful, fig2 = scaffolded_decoder_clustering(ind,
+            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind], fig2 = scaffolded_decoder_clustering(ind,
                                                                                                                   data,
                                                                                                                   decoded_data,
                                                                                                                   max_point_types,
                                                                                                                   return_fig=True)
         else:
-            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful = scaffolded_decoder_clustering(ind, data,
+            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind] = scaffolded_decoder_clustering(ind, data,
                                                                                                             decoded_data,
                                                                                                             max_point_types,
                                                                                                             return_fig=False)

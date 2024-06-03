@@ -46,14 +46,14 @@ class PointAutoencoder(BaseGraphModel):
         encoding = self.encode(data)
         decoding = self.decode(encoding)
 
-        # de-normalize predicted node positions
-        decoding = torch.cat(
+        # de-normalize predicted node positions and rearrange to correct format
+        decoding_fin = torch.cat(
             [decoding[:, :self.cartesian_dimension] * self.radial_normalization,
              decoding[:, self.cartesian_dimension:]], dim=1)
         if return_encoding:
-            return decoding, encoding
+            return decoding_fin, encoding
         else:
-            return decoding
+            return decoding_fin
 
     def encode(self, data):
         # # subtract mean

@@ -17,7 +17,7 @@ from mxtaltools.common.utils import get_point_density, softmax_np
 
 from mxtaltools.common.geometry_calculations import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
-from mxtaltools.reporting.ae_reporting import autoencoder_decoder_sample_validation, gaussian_3d_overlap_plots
+from mxtaltools.reporting.ae_reporting import autoencoder_evaluation_overlaps, gaussian_3d_overlap_plots
 
 blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
     'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
@@ -68,7 +68,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
     overlaps_1d = {}
     sample_means = {}
     sample_stds = {}
-    lattice_features = ['a','b','c','alpha','beta','gamma','x','y','z','theta','phi','r']
+    lattice_features = ['a', 'b', 'c', 'alpha', 'beta', 'gamma', 'x', 'y', 'z', 'theta', 'phi', 'r']
     for i, key in enumerate(lattice_features):
         mini, maxi = np.amin(dataset_cell_distribution[:, i]), np.amax(dataset_cell_distribution[:, i])
         h1, r1 = np.histogram(dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
@@ -88,7 +88,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
     overlap_results.update(overlaps_1d)
     overlap_results.update(sample_means)
     overlap_results.update(sample_stds)
-    wandb.log(data=overlap_results,commit=False)
+    wandb.log(data=overlap_results, commit=False)
 
     if config.logger.log_figures:
         fig_dict = {}  # consider replacing by Joy plot
@@ -142,7 +142,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
 
         fig_dict['lattice_features_distribution'] = fig
 
-        wandb.log(data=fig_dict,commit=False)
+        wandb.log(data=fig_dict, commit=False)
 
 
 def plotly_setup(config):
@@ -192,7 +192,7 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
 
         # #fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
         if config.logger.log_figures:
-            wandb.log(data={'Cell Packing': fig},commit=False)
+            wandb.log(data={'Cell Packing': fig}, commit=False)
         if (config.machine == 'local') and False:
             fig.show(renderer='browser')
 
@@ -662,7 +662,7 @@ def plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_
 
     fig.layout.margin = layout.margin
 
-    wandb.log(data={'Generator Loss Correlates': fig},commit=False)
+    wandb.log(data={'Generator Loss Correlates': fig}, commit=False)
 
 
 def plot_discriminator_score_correlates(dataDims, epoch_stats_dict, layout):
@@ -748,7 +748,7 @@ def get_BT_scores(crystals_for_targets, target_identifiers_inds, extra_test_dict
 
             distance_dict[target] = extra_test_dict['discriminator_real_predicted_distance'][target_indices]
 
-            wandb.log(data={f'Average_{target}_score': np.average(scores)},commit=False)
+            wandb.log(data={f'Average_{target}_score': np.average(scores)}, commit=False)
             wandb.log(data={f'Average_{target}_std': np.std(scores)}, commit=False)
 
             # correlate losses with molecular features
@@ -852,7 +852,7 @@ def BT_separation_tables(layout, scores_dict, BT_submission_scores, crystals_for
     fig2.write_image('normed_scores_separation_table.png', scale=4)
 
     wandb.log(data={"Scores Separation": submissions_fraction_below_csd_quantile,
-               "Normed Scores Separation": normed_submissions_fraction_below_csd_quantile},
+                    "Normed Scores Separation": normed_submissions_fraction_below_csd_quantile},
               commit=False)
 
     return fig1, fig2
@@ -876,7 +876,7 @@ def make_and_plot_BT_figs(crystals_for_targets, target_identifiers_inds, identif
     fig1, fig2 = BT_separation_tables(layout, scores_dict, BT_submission_scores,
                                       crystals_for_targets, normed_scores_dict, normed_BT_submission_scores)
     wandb.log(data={f"{score_name} Separation Table": fig1,
-               f"Normed {score_name} Separation Table": fig2},
+                    f"Normed {score_name} Separation Table": fig2},
               commit=False)
 
     '''functional group analysis'''
@@ -896,7 +896,7 @@ def make_and_plot_BT_figs(crystals_for_targets, target_identifiers_inds, identif
     '''
     fig = make_correlates_plot(tracking_features, scores_dict['CSD'], dataDims)
     fig.write_image(f'{score_name}_correlates.png', scale=4)
-    wandb.log(data={f"{score_name} Correlates": fig},commit=False)
+    wandb.log(data={f"{score_name} Correlates": fig}, commit=False)
 
     '''
     S1. All group-wise analysis  # todo rebuild
@@ -1107,9 +1107,9 @@ def log_cubic_defect(samples):
     cubic_distortion = np.abs(1 - np.nan_to_num(np.stack(
         [cell_vol_np(cleaned_samples[i, 0:3], cleaned_samples[i, 3:6]) / np.prod(cleaned_samples[i, 0:3], axis=-1) for
          i in range(len(cleaned_samples))])))
-    wandb.log(data={'Avg generated cubic distortion': np.average(cubic_distortion)},commit=False)
+    wandb.log(data={'Avg generated cubic distortion': np.average(cubic_distortion)}, commit=False)
     hist = np.histogram(cubic_distortion, bins=256, range=(0, 1))
-    wandb.log(data={"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)},commit=False)
+    wandb.log(data={"Generated cubic distortions": wandb.Histogram(np_histogram=hist, num_bins=256)}, commit=False)
 
 
 def process_generator_losses(config, epoch_stats_dict):
@@ -1149,9 +1149,9 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     else:
         cell_parameters = epoch_stats_dict['final_generated_cell_parameters']
     log_cubic_defect(cell_parameters)
-    wandb.log(data={"Generated cell parameter variation": cell_parameters.std(0).mean()},commit=False)
+    wandb.log(data={"Generated cell parameter variation": cell_parameters.std(0).mean()}, commit=False)
     generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
-    wandb.log(average_losses_dict,commit=False)
+    wandb.log(average_losses_dict, commit=False)
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
     plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
@@ -1195,7 +1195,7 @@ def cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_categor
     fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
     fig.update_layout(xaxis_range=[vdw_cutoff, 0.1],
                       yaxis_range=[scatter_dict['volume_per_atom'].min(), scatter_dict['volume_per_atom'].max()])
-    wandb.log({'Generator Samples': fig},commit=False)
+    wandb.log({'Generator Samples': fig}, commit=False)
 
 
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
@@ -1266,8 +1266,8 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
 
     fig_dict['Regression Results'] = fig
 
-    wandb.log(loss_dict,commit=False)
-    wandb.log(fig_dict,commit=False)
+    wandb.log(loss_dict, commit=False)
+    wandb.log(fig_dict, commit=False)
 
     return None
 
@@ -1461,7 +1461,7 @@ def classifier_reporting(true_labels, probs, ordered_class_names, wandb, epoch_t
                f"{epoch_type} F1 Score": train_f1_score,
                f"{epoch_type} 1-ROC_AUC": 1 - train_score,
                f"{epoch_type} 1-F1 Score": 1 - train_f1_score,
-               f"{epoch_type} Confusion Matrix": fig},commit=False)
+               f"{epoch_type} Confusion Matrix": fig}, commit=False)
 
 
 def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
@@ -1492,21 +1492,24 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
 
     # compute various distribution overlaps
     (coord_overlap, full_overlap,
-     self_coord_overlap, self_overlap, self_type_overlap, type_overlap) = (
-        autoencoder_decoder_sample_validation(data, decoded_data, config, dataDims, epoch_stats_dict))
+     self_coord_overlap, self_overlap,
+     self_type_overlap, type_overlap) = (
+        autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims, epoch_stats_dict))
 
     overall_overlap = scatter(full_overlap / self_overlap, data.batch, reduce='mean').cpu().detach().numpy()
     evaluation_overlap_loss = scatter(F.smooth_l1_loss(self_overlap, full_overlap, reduction='none'), data.batch,
                                       reduce='mean')
 
     wandb.log(data={epoch_type + "_evaluation_positions_wise_overlap":
-                   scatter(coord_overlap / self_coord_overlap, data.batch, reduce='mean').mean().cpu().detach().numpy(),
-               epoch_type + "_evaluation_typewise_overlap":
-                   scatter(type_overlap / self_type_overlap, data.batch, reduce='mean').mean().cpu().detach().numpy(),
-               epoch_type + "_evaluation_overall_overlap": overall_overlap.mean(),
-               epoch_type + "_evaluation_matching_clouds_fraction": (np.sum(1 - overall_overlap) < 0.01).mean(),
-               epoch_type + "_evaluation_overlap_loss": evaluation_overlap_loss.mean().cpu().detach().numpy(),
-               },
+                        scatter(coord_overlap / self_coord_overlap, data.batch,
+                                reduce='mean').mean().cpu().detach().numpy(),
+                    epoch_type + "_evaluation_typewise_overlap":
+                        scatter(type_overlap / self_type_overlap, data.batch,
+                                reduce='mean').mean().cpu().detach().numpy(),
+                    epoch_type + "_evaluation_overall_overlap": overall_overlap.mean(),
+                    epoch_type + "_evaluation_matching_clouds_fraction": (np.sum(1 - overall_overlap) < 0.01).mean(),
+                    epoch_type + "_evaluation_overlap_loss": evaluation_overlap_loss.mean().cpu().detach().numpy(),
+                    },
               commit=False)
 
     if config.logger.log_figures:
@@ -1514,16 +1517,15 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
             gaussian_3d_overlap_plots(data, decoded_data,
                                       dataDims['num_atom_types'],
                                       ))
-        if not match_successful:
-            rmsd = np.inf
         wandb.log(data={
             epoch_type + "_pointwise_sample_distribution": fig,
             epoch_type + "_cluster_sample_distribution": fig2,
             epoch_type + "_sample_RMSD": rmsd,
             epoch_type + "_max_dist": max_dist,
             epoch_type + "_probability_mass_overlap": tot_overlap,
+            epoch_type + "_rmsd_scaffolding_success_rate": np.mean(match_successful),
         },
-        commit=False)
+            commit=False)
 
     return None
 
@@ -1570,7 +1572,7 @@ def proxy_discriminator_analysis(epoch_stats_dict):
 
     wandb.log({"Proxy Results": fig,
                "proxy_R_value": linreg_result.rvalue,
-               "proxy_slope": linreg_result.slope},commit=False)
+               "proxy_slope": linreg_result.slope}, commit=False)
 
 
 def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=None):
@@ -1595,7 +1597,7 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=N
     # img_dict = {key: wandb.Image(fig) for key, fig in fig_dict.items()}
     wandb.log(data=fig_dict, commit=False)
     wandb.log(data={"distance_R_value": dist_rvalue,
-               "distance_slope": dist_slope}, commit=False)
+                    "distance_slope": dist_slope}, commit=False)
 
     return None
 

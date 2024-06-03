@@ -422,6 +422,7 @@ class GlobalAggregation(nn.Module):  # TODO upgrade with new PyG aggregation mod
             return self.agg(x, batch, size=output_dim)
 
 
+# noinspection PyAttributeOutsideInit
 class MLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
     r"""
     Flexible multi-layer perceptron module, with several options.
