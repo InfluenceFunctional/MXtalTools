@@ -392,6 +392,7 @@ class Modeller:
             from torch_geometric.data import DataLoader
             train_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
             num_workers = min(os.cpu_count(), 64)  # min(os.cpu_count(), 8)
+            print(f'{num_workers} workers set for dataloaders')
             if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
                 train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                           num_workers=num_workers, pin_memory=True, drop_last=False,
