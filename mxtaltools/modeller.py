@@ -394,7 +394,8 @@ class Modeller:
             num_workers = min(os.cpu_count(), 64)  # min(os.cpu_count(), 8)
             if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
                 train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-                                          num_workers=num_workers, pin_memory=True, drop_last=False)
+                                          num_workers=num_workers, pin_memory=True, drop_last=False,
+                                          persistent_workers=True)
             else:
                 train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
                                           pin_memory=True, drop_last=False)
@@ -404,7 +405,8 @@ class Modeller:
                 self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
             if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
                 test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-                                         num_workers=num_workers, pin_memory=True, drop_last=False)
+                                         num_workers=num_workers, pin_memory=True, drop_last=False,
+                                         persistent_workers=True)
             else:
                 test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
                                          pin_memory=True, drop_last=False)

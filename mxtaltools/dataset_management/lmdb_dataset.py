@@ -41,7 +41,11 @@ class GeomDataset(Dataset):
         self.env = lmdb.open(
             self.path_to_datafiles,
             readonly=True,
-            max_readers=2,
+            max_readers=512,
+            readahead=False,
+            lock=False,
+            subdir=False,
+            meminit=False,
         )
         self.txn = self.env.begin()
 
