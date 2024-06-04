@@ -393,24 +393,21 @@ class Modeller:
             train_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
             num_workers = min(os.cpu_count(), 64)  # min(os.cpu_count(), 8)
             print(f'{num_workers} workers set for dataloaders')
-            if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
-                train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-                                          num_workers=num_workers, pin_memory=True, drop_last=False,
-                                          persistent_workers=True)
-            else:
-                train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
-                                          pin_memory=True, drop_last=False)
+            train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
+                                     pin_memory=True, drop_last=False,
+                                     num_workers=0,#num_workers if self.config.machine == 'cluster' else 0,
+                                     persistent_workers=False,#True if self.config.machine == 'cluster' else False
+                                      )
             del train_dataset
 
             test_dataset = GeomDataset(
                 self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
-            if self.config.machine == 'cluster':  # faster dataloading on cluster with more workers
-                test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-                                         num_workers=num_workers, pin_memory=True, drop_last=False,
-                                         persistent_workers=True)
-            else:
-                test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle, num_workers=0,
-                                         pin_memory=True, drop_last=False)
+            test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
+                                     pin_memory=True, drop_last=False,
+                                     num_workers=0,#num_workers if self.config.machine == 'cluster' else 0,
+                                     persistent_workers=False,#True if self.config.machine == 'cluster' else False,
+                                     )
+
             del test_dataset
         else:
             train_loader, test_loader = get_dataloaders(dataset_builder,
