@@ -35,6 +35,10 @@ class GeomDataset(Dataset):
         """
         if self.txn is None:
             self._init_env()
+        if idx == 0:  # always missing
+            idx = 1
+        elif idx >= self.dataset_length:
+            idx = self.dataset_length - 1
         return CrystalData.from_dict(pickle.loads(self.txn.get(str(idx).encode('ascii'))))
 
     def _init_env(self):
@@ -48,11 +52,15 @@ class GeomDataset(Dataset):
 
 if __name__ == '__main__':
     from torch_geometric.loader import DataLoader
+    from tqdm import tqdm
 
     dataset = GeomDataset(root=r'D:\crystal_datasets\drugs_crude.msgpack\train.lmdb')
 
-    dataloader = DataLoader(dataset, batch_size=100, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=1000, shuffle=True,
+                            num_workers=8,
+                            persistent_workers=True)
 
-    data = next(iter(dataloader))
+    for data in enumerate(tqdm(dataloader)):
+        pass
 
     aa = 1
