@@ -396,7 +396,7 @@ class Modeller:
             train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                      pin_memory=True, drop_last=False,
                                      num_workers=num_workers if self.config.machine == 'cluster' else 0,
-                                     persistent_workers=True if self.config.machine == 'cluster' else False
+                                     persistent_workers=False, #True if self.config.machine == 'cluster' else False
                                       )
             del train_dataset
 
@@ -405,7 +405,7 @@ class Modeller:
             test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                      pin_memory=True, drop_last=False,
                                      num_workers=num_workers if self.config.machine == 'cluster' else 0,
-                                     persistent_workers=True if self.config.machine == 'cluster' else False,
+                                     persistent_workers=False, #True if self.config.machine == 'cluster' else False,
                                      )
 
             del test_dataset
