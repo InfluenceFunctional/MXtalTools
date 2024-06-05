@@ -391,12 +391,12 @@ class Modeller:
             from mxtaltools.dataset_management.lmdb_dataset import GeomDataset
             from torch_geometric.data import DataLoader
             train_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
-            num_workers = min(os.cpu_count(), 16)  # min(os.cpu_count(), 8)
+            num_workers = 2 #min(os.cpu_count(), 16)  # min(os.cpu_count(), 8)
             print(f'{num_workers} workers set for dataloaders')
             train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                      pin_memory=True, drop_last=False,
                                      num_workers=num_workers if self.config.machine == 'cluster' else 0,
-                                     persistent_workers=False, #True if self.config.machine == 'cluster' else False
+                                     persistent_workers=True, #True if self.config.machine == 'cluster' else False
                                       )
             del train_dataset
 
@@ -405,7 +405,7 @@ class Modeller:
             test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                      pin_memory=True, drop_last=False,
                                      num_workers=num_workers if self.config.machine == 'cluster' else 0,
-                                     persistent_workers=False, #True if self.config.machine == 'cluster' else False,
+                                     persistent_workers=True, #True if self.config.machine == 'cluster' else False,
                                      )
 
             del test_dataset
