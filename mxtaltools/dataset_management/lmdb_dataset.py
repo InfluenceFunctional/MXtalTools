@@ -45,7 +45,7 @@ class GeomDataset(Dataset):
         self.env = lmdb.open(
             self.path_to_datafiles,
             readonly=True,
-            max_readers=4,
+            max_readers=2,
         )
         self.txn = self.env.begin()
 
@@ -57,7 +57,7 @@ if __name__ == '__main__':
     dataset = GeomDataset(root=r'D:\crystal_datasets\drugs_crude.msgpack\train.lmdb')
 
     dataloader = DataLoader(dataset, batch_size=1000, shuffle=True,
-                            num_workers=2,
+                            num_workers=8,
                             persistent_workers=True)
 
     for data in enumerate(tqdm(dataloader)):
