@@ -395,8 +395,8 @@ class Modeller:
             print(f'{num_workers} workers set for dataloaders')
             train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                      pin_memory=True, drop_last=False,
-                                     num_workers=num_workers if self.config.machine == 'cluster' else 0,
-                                     persistent_workers=True, #True if self.config.machine == 'cluster' else False
+                                     num_workers=0, #num_workers if self.config.machine == 'cluster' else 0,
+                                     persistent_workers=False, #True if self.config.machine == 'cluster' else False
                                       )
             del train_dataset
 
@@ -404,8 +404,8 @@ class Modeller:
                 self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
             test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                      pin_memory=True, drop_last=False,
-                                     num_workers=num_workers if self.config.machine == 'cluster' else 0,
-                                     persistent_workers=True, #True if self.config.machine == 'cluster' else False,
+                                     num_workers=0, #num_workers if self.config.machine == 'cluster' else 0,
+                                     persistent_workers=False, #True, #True if self.config.machine == 'cluster' else False,
                                      )
 
             del test_dataset
