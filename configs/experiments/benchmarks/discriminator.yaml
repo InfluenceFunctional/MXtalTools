@@ -1,6 +1,6 @@
 machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
-dataset_name: 'dataset.pkl'
+dataset_name: 'CSD_dataset.pt'
 extra_test_set_name: null #'blind_test_dataset.pkl'
 base_config_path: '/experiments/base/discriminator.yaml'  # base config
 
