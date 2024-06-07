@@ -1091,8 +1091,9 @@ class Modeller:
         return input_cloud
 
     def ae_stats_and_reporting(self, data, decoded_data, encoding, last_step, stats, step):
-        if self.logger.epoch % self.config.logger.sample_reporting_frequency == 0:
-            stats['encoding'] = encoding.detach()
+        # if self.logger.epoch % self.config.logger.sample_reporting_frequency == 0:
+        #     if step % 10 == 0:
+        #         stats['encoding'] = encoding.detach()
 
         if step == 0 or last_step:
             self.detailed_autoencoder_step_analysis(data, decoded_data, stats)

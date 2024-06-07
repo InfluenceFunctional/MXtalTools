@@ -8,10 +8,10 @@ class MoleculeRegressor(BaseGraphModel):
     def __init__(self,
                  seed,
                  config,
-                 atom_features: int = None,
-                 molecule_features: int = None,
-                 node_standardization_tensor: torch.tensor = None,
-                 graph_standardization_tensor: torch.tensor = None):
+                 atom_features: list,
+                 molecule_features: list,
+                 node_standardization_tensor: torch.tensor,
+                 graph_standardization_tensor: torch.tensor):
         """
         wrapper for molecule model, with appropriate I/O
         """
@@ -22,7 +22,6 @@ class MoleculeRegressor(BaseGraphModel):
                             molecule_features,
                             node_standardization_tensor,
                             graph_standardization_tensor)
-
 
         self.model = MoleculeGraphModel(
             input_node_dim=self.n_atom_feats,
@@ -37,3 +36,5 @@ class MoleculeRegressor(BaseGraphModel):
             periodize_inside_nodes=False,
             outside_convolution_type='none'
         )
+
+    # uses default forward method inherited from base class
