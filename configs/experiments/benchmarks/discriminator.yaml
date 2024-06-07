@@ -1,15 +1,15 @@
 machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 dataset_name: 'dataset.pkl'
-extra_test_set_name: 'blind_test_dataset.pkl'
+extra_test_set_name: null #'blind_test_dataset.pkl'
 base_config_path: '/experiments/base/discriminator.yaml'  # base config
 
 dataset:
   regression_target: crystal_reduced_volume
 
 # batching & convergence
-early_epochs_step_override: 5
-num_early_epochs: 0
+early_epochs_step_override: 20
+num_early_epochs: 10
 grow_batch_size: True
 min_batch_size: 10
 max_batch_size: 1000

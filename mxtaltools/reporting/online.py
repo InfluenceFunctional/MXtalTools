@@ -390,7 +390,7 @@ def combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source
     """
     scatter_dict = {'vdw_score': -all_vdws.clip(max=vdw_cutoff), 'model_score': all_scores,
                     'packing_coefficient': all_coeffs.clip(min=0, max=1), 'sample_source': sample_source}
-    df = pd.DataFrame.from_dict(scatter_dict)  # todo do without pandas so we can get it out of requirements
+    df = pd.DataFrame.from_dict(scatter_dict)
     fig = px.scatter(df,
                      x='vdw_score', y='packing_coefficient',
                      color='model_score', symbol='sample_source',
@@ -1584,11 +1584,10 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=N
     """
     fig_dict = {}
     layout = plotly_setup(config)
-    scores_dict, vdw_penalty_dict, packing_coeff_dict, pred_distance_dict, true_distance_dict \
+    scores_dict, vdw_penalty_dict, reduced_volume_dict, pred_distance_dict, true_distance_dict \
         = process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict)
 
-    fig_dict.update(discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict, layout))
-    #fig_dict['Discriminator Score Correlates'] = plot_discriminator_score_correlates(dataDims, epoch_stats_dict, layout)
+    fig_dict.update(discriminator_scores_plots(scores_dict, vdw_penalty_dict, reduced_volume_dict, layout))
     fig_dict['Distance Results'], dist_rvalue, dist_slope = discriminator_distances_plots(
         pred_distance_dict, true_distance_dict, epoch_stats_dict)
 

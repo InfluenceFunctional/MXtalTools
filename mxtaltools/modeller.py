@@ -1667,8 +1667,7 @@ class Modeller:
         discriminator_output_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(
             fake_supercell_data, return_latent=True)
 
-        '''recompute packing coeffs'''  # todo get rid of these - we're not using mol_volume anymore
-
+        '''recompute reduced volumes'''
         real_volume_fractions = compute_reduced_volume_fraction(cell_lengths=real_supercell_data.cell_lengths,
                                                                 cell_angles=real_supercell_data.cell_angles,
                                                                 atom_radii=self.vdw_radii_tensor[
@@ -1709,7 +1708,6 @@ class Modeller:
                  'final_generated_cell_parameters': canonical_fake_cell_params.detach(),
                  'real_volume_fractions': real_volume_fractions.detach(),
                  'generated_volume_fractions': fake_volume_fractions.detach(),
-                 'real_volume_fractions': real_volume_fractions.detach(),
                  'fake_volume_fractions': fake_volume_fractions.detach()}
 
         stats.update(negatives_stats)
