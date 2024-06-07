@@ -126,7 +126,7 @@ class MoleculeGraphModel(nn.Module):
                 self.v_output_fc = nn.Identity()
 
     def forward(self, data, edges_dict=None, return_latent=False, return_dists=False, return_embedding=False):
-        if len(self.graph_net.interaction_blocks) > 0 and not return_dists:
+        if len(self.graph_net.interaction_blocks) > 0 or return_dists:
             if edges_dict is None:  # option to rebuild radial graph
                 if hasattr(data, 'periodic'):
                     if all(data.periodic):  # todo only currently works for batches containing a single graph

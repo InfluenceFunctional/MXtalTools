@@ -1,4 +1,5 @@
 import torch.nn.functional as F
+from torch_geometric.typing import OptTensor
 
 from mxtaltools.models.base_graph_model import BaseGraphModel
 from mxtaltools.models.molecule_graph_model import MoleculeGraphModel
@@ -9,8 +10,8 @@ class MolCrystal(BaseGraphModel):
     def __init__(self, seed, config,
                  atom_features: list,
                  molecule_features: list,
-                 node_standardization_tensor: torch.tensor,
-                 graph_standardization_tensor: torch.tensor):
+                 node_standardization_tensor: OptTensor = None,
+                 graph_standardization_tensor: OptTensor = None):
         """
         wrapper for molecule model, with appropriate I/O
         """

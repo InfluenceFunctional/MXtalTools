@@ -331,22 +331,6 @@ def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.te
     return coeffs
 
 
-def compute_packing_coefficient(cell_params: torch.tensor, mol_volumes: torch.tensor,
-                                crystal_multiplicity: torch.tensor):
-    """
-    @param cell_params: cell parameters using our standard scheme 0-5 are a,b,c,alpha,beta,gamma
-    @param mol_volumes: molumes in cubic angstrom of each single molecule
-    @param crystal_multiplicity: Z value for each crystal
-    @return: crystal packing coefficient
-    """
-    volumes_list = []
-    for i in range(len(cell_params)):
-        volumes_list.append(cell_vol_torch(cell_params[i, 0:3], cell_params[i, 3:6]))
-    cell_volumes = torch.stack(volumes_list)
-    coeffs = crystal_multiplicity * mol_volumes / cell_volumes
-    return coeffs
-
-
 def compute_reduced_volume_fraction(cell_lengths: torch.tensor,
                                     cell_angles: torch.tensor,
                                     atom_radii: torch.tensor,

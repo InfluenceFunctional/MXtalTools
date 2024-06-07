@@ -1,22 +1,22 @@
 
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/regressor.yaml
-dataset_name: 'CSD_dataset.pt' #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_dataset.pt'
+base_config_path: /experiments/base/GEOM_autoencoder.yaml
+dataset_name: 'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: True
 
 dataset:
   max_dataset_length: 10000000  # non-functional for on-disk datasets.
   test_fraction: 0.2
-  on_disk_data_dir: null #'drugs_crude.msgpack/train.lmdb/'
+  on_disk_data_dir: 'drugs_crude.msgpack/train.lmdb/'
 
 seeds:
   dataset: 1
 
 # batching & convergence
-max_epoch_steps: 500
-early_epochs_step_override: 50
+max_epoch_steps: 100
+early_epochs_step_override: 20
 num_early_epochs: 20
 grow_batch_size: True
 min_batch_size: 10

@@ -54,6 +54,10 @@ class Logger:
 
     def update_loss_record(self):
         for key in self.loss_record.keys():
+            if len(self.loss_record[key]['mean_train']) > 2 * self.config.history:
+                self.loss_record[key]['mean_train'].pop(0)
+                self.loss_record[key]['mean_test'].pop(0)
+
             self.loss_record[key]['mean_train'].append(self.current_losses[key]['mean_train'])
             self.loss_record[key]['mean_test'].append(self.current_losses[key]['mean_test'])
 

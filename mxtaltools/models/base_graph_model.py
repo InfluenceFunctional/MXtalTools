@@ -1,4 +1,5 @@
 import torch
+from torch_geometric.typing import OptTensor
 
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 
@@ -14,8 +15,17 @@ class BaseGraphModel(torch.nn.Module):
     def get_data_stats(self,
                        atom_features: list,
                        molecule_features: list,
-                       node_standardization_tensor: torch.tensor,
-                       graph_standardization_tensor: torch.tensor):
+                       node_standardization_tensor: OptTensor = None,
+                       graph_standardization_tensor: OptTensor = None
+                       ):
+
+        if node_standardization_tensor is None:
+            node_standardization_tensor = torch.ones((len(atom_features), 2), dtype=torch.float32)
+            node_standardization_tensor[:, 0] = 0
+        if graph_standardization_tensor is None:
+            graph_standardization_tensor = torch.ones((len(molecule_features), 2), dtype=torch.float32)
+            graph_standardization_tensor[:, 0] = 0
+
         self.n_atom_feats = len(atom_features)
         self.n_mol_feats = len(molecule_features)
         self.atom_feats = atom_features
@@ -49,9 +59,9 @@ class BaseGraphModel(torch.nn.Module):
             self.register_buffer('graph_standardization_tensor', graph_standardization_tensor)
 
     def featurize_input_graph(self, data):
-        data.x = self.atom_properties_tensor[data.x.long()]
         if data.x.ndim > 1:
             data.x = data.x[:, 0]
+        data.x = self.atom_properties_tensor[data.x.long()]
         if self.n_mol_feats > 0:
             mol_x_list = []
             if 'num_atoms' in self.mol_feats:

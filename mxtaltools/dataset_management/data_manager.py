@@ -142,7 +142,7 @@ class DataManager:
             if self.dataset[ind].x.ndim == 1:
                 self.dataset[ind].x = self.dataset[ind].x[:, None]
 
-    def truncate_and_shuffle_dataset(self, override_length):
+    def truncate_and_shuffle_dataset(self, override_length=None):
         """defines train/test split as well as overall dataset size"""
         self.times['dataset_shuffle_start'] = time()
         # get dataset length & shuffle
