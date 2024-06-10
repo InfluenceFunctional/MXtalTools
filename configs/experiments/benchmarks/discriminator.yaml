@@ -8,7 +8,7 @@ dataset:
   regression_target: crystal_reduced_volume
 
 # batching & convergence
-early_epochs_step_override: 20
+early_epochs_step_override: 50
 num_early_epochs: 10
 grow_batch_size: True
 min_batch_size: 10
