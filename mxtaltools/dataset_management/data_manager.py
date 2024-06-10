@@ -205,9 +205,11 @@ class DataManager:
         if self.dataset_type == 'crystal':
             self.lattice_means = [self.dataset_stats[feat]['tight_mean'] for feat in self.lattice_keys]
             self.lattice_stds = [self.dataset_stats[feat]['tight_std'] for feat in self.lattice_keys]
+            self.lattice_stats = {key:self.dataset_stats[key] for key in self.lattice_keys}
         else:
             self.lattice_means = [0 for _ in range(12)]
             self.lattice_stds = [0.01 for _ in range(12)]
+            self.lattice_stats = [[] for _ in range(12)]
         node_standardization_vector = np.asarray([[[self.dataset_stats[feat]['tight_mean'],
                                                     self.dataset_stats[feat]['tight_std']] for feat in
                                                    self.atom_keys]])[0]
@@ -224,6 +226,7 @@ class DataManager:
 
             'lattice_means': self.lattice_means,
             'lattice_stds': self.lattice_stds,
+            'lattice_stats': self.lattice_stats,
             'lattice_cov_mat': self.covariance_matrix,
 
             'regression_target': self.regression_target,

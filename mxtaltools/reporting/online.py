@@ -44,15 +44,8 @@ target_identifiers = {
 }
 
 
-def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict):
+def cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
     n_crystal_features = 12
-    # slightly expensive to do this every time
-    dataset_cell_distribution = np.asarray(
-        [torch.cat([train_loader.dataset[ii].cell_lengths[0],
-                    train_loader.dataset[ii].cell_angles[0],
-                    train_loader.dataset[ii].pose_params0[0]], dim=0)
-         for ii in range(len(train_loader.dataset))])
-
     cleaned_samples = epoch_stats_dict['final_generated_cell_parameters']
     if 'raw_generated_cell_parameters' in epoch_stats_dict.keys():
         raw_samples = epoch_stats_dict['raw_generated_cell_parameters']
@@ -68,11 +61,10 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
     overlaps_1d = {}
     sample_means = {}
     sample_stds = {}
-    lattice_features = ['a', 'b', 'c', 'alpha', 'beta', 'gamma', 'x', 'y', 'z', 'theta', 'phi', 'r']
+    lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma', 'aunit_x', 'aunit_y', 'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
     for i, key in enumerate(lattice_features):
-        mini, maxi = np.amin(dataset_cell_distribution[:, i]), np.amax(dataset_cell_distribution[:, i])
-        h1, r1 = np.histogram(dataset_cell_distribution[:, i], bins=100, range=(mini, maxi))
-        h1 = h1 / len(dataset_cell_distribution[:, i])
+        h1, r1 = dataDims['lattice_stats'][key]['histogram']
+        h1 = h1 / sum(h1)
 
         h2, r2 = np.histogram(cleaned_samples[:, i], bins=r1)
         h2 = h2 / len(cleaned_samples[:, i])
@@ -88,7 +80,6 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
     overlap_results.update(overlaps_1d)
     overlap_results.update(sample_means)
     overlap_results.update(sample_stds)
-    wandb.log(data=overlap_results, commit=False)
 
     if config.logger.log_figures:
         fig_dict = {}  # consider replacing by Joy plot
@@ -102,36 +93,36 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
         ))
         fig_dict['1D_overlaps'] = fig
 
+        lattice_keys = list(dataDims['lattice_stats'].keys())
         # 1d Histograms
         fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
         for i in range(n_crystal_features):
             row = i // 3 + 1
             col = i % 3 + 1
-
-            fig.add_trace(go.Histogram(
-                x=dataset_cell_distribution[:, i],
-                histnorm='probability density',
-                nbinsx=100,
+            bins=dataDims['lattice_stats'][lattice_keys[i]]['histogram'][1][1:]
+            hist1 = np.histogram(cleaned_samples[:, i], bins=bins)[0]
+            fig.add_trace(go.Bar(
+                x=bins,
+                y=dataDims['lattice_stats'][lattice_keys[i]]['histogram'][0] / sum(dataDims['lattice_stats'][lattice_keys[i]]['histogram'][0]),
                 legendgroup="Dataset Samples",
                 name="Dataset Samples",
                 showlegend=True if i == 0 else False,
                 marker_color='#1f77b4',
             ), row=row, col=col)
 
-            fig.add_trace(go.Histogram(
-                x=cleaned_samples[:, i],
-                histnorm='probability density',
-                nbinsx=100,
+            fig.add_trace(go.Bar(
+                x=bins,
+                y=hist1/sum(hist1),
                 legendgroup="Generated Samples",
                 name="Generated Samples",
                 showlegend=True if i == 0 else False,
                 marker_color='#ff7f0e',
             ), row=row, col=col)
             if raw_samples is not None:
-                fig.add_trace(go.Histogram(
-                    x=raw_samples[:, i],
-                    histnorm='probability density',
-                    nbinsx=100,
+                hist2 = np.histogram(raw_samples[:, i], bins=bins)[0]
+                fig.add_trace(go.Bar(
+                    x=bins,
+                    y=hist2/sum(hist2),
                     legendgroup="Raw Generated Samples",
                     name="Raw Generated Samples",
                     showlegend=True if i == 0 else False,
@@ -142,6 +133,7 @@ def cell_params_analysis(config, dataDims, wandb, train_loader, epoch_stats_dict
 
         fig_dict['lattice_features_distribution'] = fig
 
+        wandb.log(data=overlap_results, commit=False)
         wandb.log(data=fig_dict, commit=False)
 
 
@@ -1392,7 +1384,7 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
     if test_epoch_stats_dict is not None:
         if config.mode == 'gan' or config.mode == 'discriminator':
             if 'final_generated_cell_parameters' in test_epoch_stats_dict.keys():
-                cell_params_analysis(config, dataDims, wandb, test_loader, test_epoch_stats_dict)
+                cell_params_analysis(config, dataDims, wandb, test_epoch_stats_dict)
 
             if config.generator.train_vdw or config.generator.train_adversarially:
                 cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
