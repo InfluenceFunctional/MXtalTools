@@ -1432,7 +1432,9 @@ class Modeller:
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
-    def gan_epoch(self, data_loader=None, update_weights=True,
+    def gan_epoch(self,
+                  data_loader=None,
+                  update_weights=True,
                   iteration_override=None):
 
         if update_weights:

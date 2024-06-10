@@ -24,7 +24,7 @@ dataset:
   on_disk_data_dir: null
 
 # batching & convergence
-max_epoch_steps: 1.0E8
+max_epoch_steps: 1.0E+8
 early_epochs_step_override: 0
 num_early_epochs: 0
 grow_batch_size: False
