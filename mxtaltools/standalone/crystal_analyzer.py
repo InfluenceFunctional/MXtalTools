@@ -114,6 +114,7 @@ class CrystalAnalyzer(torch.nn.Module):
                  proposed_cell_params: OptTensor = None,
                  proposed_sgs: OptTensor = None,
                  proposed_zps: OptTensor = None,
+                 proposed_handedness: OptTensor = None,
                  analysis_type: str = 'heuristic',
                  return_stats: bool = False,
                  n_top_k: int = 1):
@@ -145,30 +146,40 @@ class CrystalAnalyzer(torch.nn.Module):
         """
         with torch.no_grad():
             if data_list is None:
-                data_batch = self.prep_data(atom_types_list, coords_list)
+                molecules_batch = self.prep_molecule_data_batch(atom_types_list, coords_list)
             else:
-                data_batch = self.collater(data_list)
-                assert torch.sum(data_batch.x == 1) == 0, 'Must pre-clean hydrogens from data_list arguments'
+                molecules_batch = self.collater(data_list)
+                assert torch.sum(molecules_batch.x == 1) == 0, 'Must pre-clean hydrogens from data_list arguments'
 
             if analysis_type in ['classifier', 'rdf_distance', 'heuristic']:
-                return self.crystal_analysis(analysis_type, data_batch,
-                                             n_top_k, proposed_cell_params,
-                                             proposed_sgs, proposed_zps,
-                                             return_stats)
+                return self.crystal_analysis(analysis_type,
+                                             molecules_batch,
+                                             n_top_k,
+                                             proposed_cell_params,
+                                             proposed_sgs,
+                                             proposed_zps,
+                                             return_stats,
+                                             proposed_handedness)
             elif analysis_type == 'volume':
-                return self.estimate_aunit_volume(data_batch)
+                return self.estimate_aunit_volume(molecules_batch)
 
             else:
                 assert False, f"{analysis_type} is not an implemented crystal analysis function"
 
-    def crystal_analysis(self, analysis_type, data_batch,
-                         n_top_k, proposed_cell_params,
-                         proposed_sgs, proposed_zps,
-                         return_stats):
+    def crystal_analysis(self,
+                         analysis_type,
+                         data_batch,
+                         n_top_k,
+                         proposed_cell_params,
+                         proposed_sgs,
+                         proposed_zps,
+                         return_stats,
+                         proposed_handedness=None):
         proposed_crystaldata = self.build_crystal(data_batch,
                                                   proposed_cell_params,
                                                   proposed_sgs.long().tolist(),
-                                                  proposed_zps.long().tolist())
+                                                  proposed_zps.long().tolist(),
+                                                  proposed_handedness)
         discriminator_output, pair_dist_dict = self.adversarial_score(proposed_crystaldata)
         classification_score = softmax_and_score(discriminator_output[:, :2])
         predicted_distance = discriminator_output[:, -1]
@@ -222,14 +233,14 @@ class CrystalAnalyzer(torch.nn.Module):
         else:
             return output
 
-    def prep_data(self, atom_types_list, coords_list):
-        # our model does not allow protons
+    def prep_molecule_data_batch(self, atom_types_list, coords_list):
+        # pre-filter hydrogen atoms
         for ind, (pos, z) in enumerate(zip(coords_list, atom_types_list)):
             good_inds = torch.argwhere(z != 1).flatten()
             coords_list[ind] = pos[good_inds]
             atom_types_list[ind] = z[good_inds]
 
-        datapoints = [
+        data_batch = [
             CrystalData(
                 x=atom_types_list[ind],
                 pos=coords_list[ind],
@@ -237,7 +248,7 @@ class CrystalAnalyzer(torch.nn.Module):
             )
             for ind in range(len(coords_list))
         ]
-        data_batch = self.collater(datapoints)
+        data_batch = self.collater(data_batch)
         data_batch.to(self.device)
 
         return data_batch
@@ -259,8 +270,8 @@ class CrystalAnalyzer(torch.nn.Module):
         return reduced_auv[:, 0] * scatter(4 / 3 * torch.pi * self.vdw_radii[data.x.flatten().long()] ** 3, data.batch,
                                            reduce='sum'), reduced_auv
 
-    def build_crystal(self, data, proposed_cell_params, proposed_sgs, proposed_zps):
-        data = self.prep_molecule_data(data, proposed_cell_params, proposed_sgs)
+    def build_crystal(self, data, proposed_cell_params, proposed_sgs, proposed_zps, proposed_handedness=None):
+        data = self.prep_molecule_data(data, proposed_cell_params, proposed_sgs, fixed_handedness=proposed_handedness)
         # todo add parameter safety assertions
         proposed_crystaldata, proposed_cell_volumes = self.supercell_builder.build_integer_zp_supercells(
             data, proposed_cell_params, self.supercell_size,
@@ -272,13 +283,15 @@ class CrystalAnalyzer(torch.nn.Module):
         )
         return proposed_crystaldata
 
-    def prep_molecule_data(self, data, proposed_cell_params, proposed_sgs):
+    def prep_molecule_data(self, data, proposed_cell_params, proposed_sgs, fixed_handedness=None):
         data.symmetry_operators = [self.supercell_builder.symmetries_dict['sym_ops'][ind] for ind in proposed_sgs]
         data.sg_ind = proposed_sgs
         data.cell_params = proposed_cell_params
         data.sym_mult = torch.tensor([
             len(sym_op) for sym_op in data.symmetry_operators
         ], device=data.x.device, dtype=torch.long)
+        if fixed_handedness is not None:
+            data.aunit_handedness = fixed_handedness
         return data
 
     def adversarial_score(self, data):
@@ -361,19 +374,22 @@ if __name__ == '__main__':
                                      ])
 
     auv, reduced_auv = analyzer(data_list=miner.dataset[0:10],
-                   analysis_type='volume')
+                                analysis_type='volume')
 
     reference_auvs = torch.tensor([elem.y * analyzer.auvol_std + analyzer.auvol_mean for elem in miner.dataset[0:10]])
     volume_error = F.mse_loss(reduced_auv.flatten(), reference_auvs)
 
-    'Stability analysis'
+    'Stability analysis - from parameters'
     crystal_analysis = analyzer(atom_types_list=[elem.x for elem in miner.dataset[0:10]],
                                 coords_list=[elem.pos for elem in miner.dataset[0:10]],
                                 proposed_cell_params=torch.stack([torch.cat([
-                                    elem.cell_lengths, elem.cell_angles, elem.pose_params0], dim=1)[0] for elem in miner.dataset[0:10]]),
-                                proposed_sgs=torch.tensor([elem.sg_ind for elem in miner.dataset[0:10]], dtype=torch.long),
+                                    elem.cell_lengths, elem.cell_angles, elem.pose_params0], dim=1)[0] for elem in
+                                                                  miner.dataset[0:10]]),
+                                proposed_sgs=torch.tensor([elem.sg_ind for elem in miner.dataset[0:10]],
+                                                          dtype=torch.long),
                                 proposed_zps=torch.ones(10),
                                 analysis_type='heuristic')
 
-    aa = 1
+    'Stability analysis - without pose parameters'
 
+    aa = 1
