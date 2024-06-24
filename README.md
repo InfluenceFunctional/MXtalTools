@@ -4,6 +4,8 @@
 
 ## Archived version for classification of bulk molecule polymorphs
 
+## NOTE this version is currently deprecated - installation instructions are incomplete/untested. All relevant models and functions are present. The updated code with simplified installation is forthcoming on the main branch. 
+
 
 ## 1. Installation
 1. Download the main repository via
