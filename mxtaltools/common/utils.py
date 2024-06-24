@@ -1,3 +1,6 @@
+import os
+from datetime import datetime
+
 import numpy as np
 
 import torch
@@ -40,7 +43,7 @@ def batch_compute_dipole(pos, batch, z, electronegativity_tensor):
     return centers_of_charge - centers_of_geometry
 
 
-def get_point_density(xy, bins=1000):
+def get_point_density(xy, bins=25):
     """
     Interpolate a local density function over 2d points.
 
@@ -469,3 +472,16 @@ def flatten_dict(dictionary, parent_key=False, separator='_'):
             items.append((new_key, value))
     return dict(items)
 
+
+def make_sequential_directory(yaml_path, workdir):  # make working directory
+    """
+    make a new working directory labelled by the time & date
+    hopefully does not overlap with any other workdirs
+    :return:
+    """
+    run_identifier = str(yaml_path).split('.yaml')[0].split('configs')[1].replace('\\',
+                                                                                                         '_').replace(
+        '/', '_') + '_' + datetime.today().strftime("%d-%m-%H-%M-%S")
+    working_directory = workdir + run_identifier
+    os.mkdir(working_directory)
+    return run_identifier, working_directory

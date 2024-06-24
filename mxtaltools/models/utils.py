@@ -11,7 +11,7 @@ from torch_scatter import scatter, scatter_softmax
 from mxtaltools.common.geometry_calculations import cell_vol_torch
 from mxtaltools.common.utils import softmax_np, components2angle
 from mxtaltools.dataset_management.dataloader_utils import update_dataloader_batch_size
-from mxtaltools.models.asymmetric_radius_graph import radius
+from mxtaltools.models.functions.asymmetric_radius_graph import radius
 
 
 def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr):
@@ -161,7 +161,7 @@ def init_optimizer(model_name, optim_config, model, amsgrad=False, freeze_params
     return optimizer
 
 
-def init_schedulers(optimizer, optimizer_config):
+def init_scheduler(optimizer, optimizer_config):
     """
     initialize a series of LR schedulers
     """

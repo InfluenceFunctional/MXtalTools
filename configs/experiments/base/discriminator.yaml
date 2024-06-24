@@ -39,6 +39,7 @@ logger:
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
   sample_reporting_frequency: 2  # how often to do detailed reporting with figures
   log_figures: True
+  stats_reporting_frequency: 5
 
 sample_steps: 100
 
@@ -95,7 +96,6 @@ discriminator:
     graph:
       node_dim: 256
       message_dim: 128
-      num_attention_heads: 16
       embedding_dim: 256
       num_convs: 4
       fcs_per_gc: 1

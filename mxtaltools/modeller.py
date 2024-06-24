@@ -1,12 +1,11 @@
 import gc
 import os
 import sys
-import random
 from argparse import Namespace
-from datetime import datetime
 from distutils.dir_util import copy_tree
 from shutil import copy
 from time import time
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -21,24 +20,25 @@ from torch_scatter import scatter
 from tqdm import tqdm
 
 from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
-from mxtaltools.common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict
+from mxtaltools.common.utils import softmax_np, init_sym_info, compute_rdf_distance, flatten_dict, namespace2dict, \
+    make_sequential_directory
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.crystal_building.builder import SupercellBuilder
 from mxtaltools.crystal_building.utils import (clean_cell_params, set_molecule_alignment)
 from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements
 from mxtaltools.csp.SampleOptimization import gradient_descent_sampling, mcmc_sampling
+from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
-#from mxtaltools.dataset_management.process_GEOM import geom_msgpack_to_minimal_dataset
-from mxtaltools.models.autoencoder_models import PointAutoencoder
-from mxtaltools.models.crystal_rdf import new_crystal_rdf
-from mxtaltools.models.crystal_models import MolCrystal
-from mxtaltools.models.embedding_regression_models import EmbeddingRegressor
-from mxtaltools.models.generator_models import IndependentGaussianGenerator, CrystalGenerator
-from mxtaltools.models.mol_classifier import PolymorphClassifier
-from mxtaltools.models.regression_models import MoleculeRegressor
-from mxtaltools.models.utils import (reload_model, init_schedulers, softmax_and_score, save_checkpoint, set_lr,
+from mxtaltools.models.task_models.autoencoder_models import PointAutoencoder, Mo3ENet
+from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
+from mxtaltools.models.task_models.crystal_models import MolCrystal, MolCrystal2
+from mxtaltools.models.graph_models.embedding_regression_models import EmbeddingRegressor
+from mxtaltools.models.task_models.generator_models import IndependentGaussianGenerator, CrystalGenerator
+from mxtaltools.models.task_models.mol_classifier import PolymorphClassifier
+from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
+from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_score, save_checkpoint, set_lr,
                                      cell_vol_torch, init_optimizer, get_regression_loss,
                                      slash_batch, compute_gaussian_overlap,
                                      compute_type_evaluation_overlap,
@@ -46,12 +46,14 @@ from mxtaltools.models.utils import (reload_model, init_schedulers, softmax_and_
                                      compute_full_evaluation_overlap, get_node_weights,
                                      compute_reduced_volume_fraction, dict_of_tensors_to_cpu_numpy)
 from mxtaltools.models.utils import (weight_reset, get_n_config)
-from mxtaltools.models.vdw_overlap import vdw_overlap
+from mxtaltools.models.functions.vdw_overlap import vdw_overlap
 from mxtaltools.reporting.logger import Logger
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 
 
 # noinspection PyAttributeOutsideInit
+
+
 class Modeller:
     """
     Main class brining together
@@ -69,22 +71,18 @@ class Modeller:
         self.config = config
         self.times = {}
         self.sweep_config = sweep_config
+        self.process_sweep_config()
         self.device = self.config.device
+        self.separator_string = "⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅"
+
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
 
-        self.packing_loss_coefficient = 1
-        '''get some physical constants'''
-        self.atom_weights = ATOM_WEIGHTS
-        self.vdw_radii = VDW_RADII
-        self.sym_info = init_sym_info()
-        for key, value in ELECTRONEGATIVITY.items():
-            if value is None:
-                ELECTRONEGATIVITY[key] = 0
-        self.electronegativity_tensor = torch.tensor(list(ELECTRONEGATIVITY.values()), dtype=torch.float32,
-                                                     device=self.config.device)
+        self.load_physical_constants()
+        self.flatten_wandb_params()
 
         self.supercell_builder = SupercellBuilder(device=self.config.device, rotation_basis='spherical')
+        self.collater = Collater(None, None)
 
         self.train_models_dict = {
             'discriminator': False,
@@ -94,66 +92,37 @@ class Modeller:
             'embedding_regressor': False,
         }
 
-        '''set space groups to be included and generated'''
-        if self.config.generate_sgs == 'all':
-            self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in asym_unit_dict.keys()]
+    def flatten_wandb_params(self):
+        """Initialize "flat" config for wandb parameter logging"""
+        flat_config_dict = flatten_dict(namespace2dict(self.config.__dict__), separator='_')
+        for key in flat_config_dict.keys():
+            if 'path' in str(type(flat_config_dict[key])).lower():
+                flat_config_dict[key] = str(flat_config_dict[key])
+        self.config.__dict__.update(flat_config_dict)
 
-        self.collater = Collater(None, None)
-
-        '''compute the ratios between the norms of n-dimensional gaussians (means of chi distribution)'''
-        m1 = torch.sqrt(torch.ones(1) * 2) * torch.exp(torch.lgamma(torch.ones(1) * (12 + 1) / 2)) / torch.exp(
-            torch.lgamma(torch.ones(1) * 12 / 2))
-        self.chi_scaling_factors = torch.zeros(4, dtype=torch.float, device=self.device)
-        for ind, ni in enumerate([3, 6, 9, 12]):
-            m2 = torch.sqrt(torch.ones(1) * 2) * torch.exp(torch.lgamma(torch.ones(1) * (ni + 1) / 2)) / torch.exp(
-                torch.lgamma(torch.ones(1) * ni / 2))
-            self.chi_scaling_factors[ind] = m1 / m2
-
+    def load_physical_constants(self):
+        """get some physical constants"""
+        self.atom_weights = ATOM_WEIGHTS
+        self.vdw_radii = VDW_RADII
+        self.sym_info = init_sym_info()
+        for key, value in ELECTRONEGATIVITY.items():
+            if value is None:
+                ELECTRONEGATIVITY[key] = 0
+        self.electronegativity_tensor = torch.tensor(list(ELECTRONEGATIVITY.values()), dtype=torch.float32,
+                                                     device=self.config.device)
         self.vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device=self.device)
         self.atom_weights_tensor = torch.tensor(list(ATOM_WEIGHTS.values()), device=self.device)
         self.electronegativity_tensor = torch.tensor(list(ELECTRONEGATIVITY.values()), device=self.device)
         self.group_tensor = torch.tensor(list(GROUP.values()), device=self.device)
         self.period_tensor = torch.tensor(list(PERIOD.values()), device=self.device)
 
-        ''' # the distributions for the independent spherical coordinates of randn distributed vectors in 3d - chi 3, sine, and uniform
-        import numpy as np
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-        # sine distribution https://stats.libretexts.org/Bookshelves/Probability_Theory/Probability_Mathematical_Statistics_and_Stochastic_Processes_(Siegrist)/05%3A_Special_Distributions/5.27%3A_The_Sine_Distribution
-        
-        def to_spherical(vec):
-            """Converts a cartesian coordinate (x, y, z) into a spherical one (radius, theta, phi)."""
-            x, y, z = vec.T
-            r = np.linalg.norm(vec, axis=1)
-            theta = np.arctan2(np.sqrt(x * x + y * y), z)
-            phi = np.arctan2(y, x)
-            return r, theta, phi
-        
-        v = np.random.randn(100000,3)
-        r, theta, phi = to_spherical(v)
-        
-        x = np.linspace(0, np.pi, 1001)
-        
-        theta2 = np.arcsin(2*(x - np.pi/2)) + np.pi/2
-        fig = make_subplots(rows=1, cols=3, subplot_titles =['Radial Norm, Chi (3)','Polar Angle (sine)','Azimuthal Angle (uniform)'])
-        fig.add_histogram(x=r, nbinsx=100, histnorm='probability density', row=1, col=1)
-        fig.add_histogram(x=np.sqrt(np.random.chisquare(3.0, size=10000)), histnorm='probability density', row=1, col=1)
-        for value in [theta, theta2]:
-            fig.add_histogram(x=value,nbinsx=100,histnorm='probability density', row=1, col=2)
-        fig.add_scattergl(x=x, y=1/2*np.sin(x), row=1,col=2)
-        
-        fig.add_histogram(x=phi, nbinsx=100, histnorm='probability density', row=1, col=3)
-        fig.add_histogram(x=np.random.uniform(-np.pi,np.pi,size=10000), nbinsx=100, histnorm='probability density', row=1, col=3)
-        
-        fig.show(renderer='browser')
-        '''
-
     def prep_new_working_directory(self):
         """
         make a workdir
         copy the source directory to the new working directory
         """
-        self.make_sequential_directory()
+        self.run_identifier, self.working_directory = make_sequential_directory(self.config.paths.yaml_path,
+                                                                                self.config.workdir)
         self.copy_source_to_workdir()
 
     def copy_source_to_workdir(self):
@@ -164,7 +133,6 @@ class Modeller:
         copy_tree("mxtaltools/dataset_management", self.working_directory + "/source/dataset_management")
         copy_tree("mxtaltools/models", self.working_directory + "/source/models")
         copy_tree("mxtaltools/reporting", self.working_directory + "/source/reporting")
-        copy_tree("mxtaltools/csp", self.working_directory + "/source/csp")
         copy("mxtaltools/modeller.py", self.working_directory + "/source")
         copy("main.py", self.working_directory + "/source")
         np.save(self.working_directory + '/run_config', self.config)
@@ -172,19 +140,7 @@ class Modeller:
         copy(yaml_path, os.getcwd())  # copy full config for reference
         print('Starting fresh run ' + self.working_directory)
 
-    def make_sequential_directory(self):  # make working directory
-        """
-        make a new working directory labelled by the time & date
-        hopefully does not overlap with any other workdirs
-        :return:
-        """
-        self.run_identifier = str(self.config.paths.yaml_path).split('.yaml')[0].split('configs')[1].replace('\\',
-                                                                                                             '_').replace(
-            '/', '_') + '_' + datetime.today().strftime("%d-%m-%H-%M-%S")
-        self.working_directory = self.config.workdir + self.run_identifier
-        os.mkdir(self.working_directory)
-
-    def init_models(self):
+    def initialize_models_optimizers_schedulers(self):
         """
         Initialize models, optimizers, schedulers
         for models we will not use, just set them as nn.Linear(1,1)
@@ -193,39 +149,42 @@ class Modeller:
         self.times['init_models_start'] = time()
         self.model_names = self.config.model_names
         self.reload_model_checkpoint_configs()
-
         self.instantiate_models()
+        self.init_optimizers()
+        self.reload_models()
+        self.init_schedulers()
+        self.num_params_dict = self.get_model_sizes()
+        self.times['init_models_end'] = time()
 
-        if self.config.device.lower() == 'cuda':
-            torch.backends.cudnn.benchmark = True
-            torch.cuda.empty_cache()
-            for model in self.models_dict.values():
-                model.cuda()
+    def get_model_sizes(self):
+        num_params_dict = {model_name + "_num_params": get_n_config(model) for model_name, model in
+                           self.models_dict.items()}
+        [print(
+            f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters')
+            for model_name in num_params_dict.keys()]
+        return num_params_dict
 
-        self.optimizers_dict = \
-            {model_name: init_optimizer(model_name, self.config.__dict__[model_name].optimizer, model)
-             for model_name, model in self.models_dict.items()
-             }
+    def init_schedulers(self):
+        self.schedulers_dict = {model_name: init_scheduler(
+            self.optimizers_dict[model_name], self.config.__dict__[model_name].optimizer)
+            for model_name in self.model_names}
 
+    def init_optimizers(self):
+        self.optimizers_dict = {
+            model_name: init_optimizer(
+                model_name, self.config.__dict__[model_name].optimizer, model
+            )
+            for model_name, model in self.models_dict.items()
+        }
+        self.hit_max_lr_dict = {model_name: False for model_name in self.model_names}
+
+    def reload_models(self):
         for model_name, model_path in self.config.model_paths.__dict__.items():
             if model_path is not None:
                 self.models_dict[model_name], self.optimizers_dict[model_name] = reload_model(
                     self.models_dict[model_name], self.device, self.optimizers_dict[model_name],
                     model_path
                 )
-
-        self.schedulers_dict = {model_name: init_schedulers(
-            self.optimizers_dict[model_name], self.config.__dict__[model_name].optimizer)
-            for model_name in self.model_names}
-
-        num_params_dict = {model_name + "_num_params": get_n_config(model) for model_name, model in
-                           self.models_dict.items()}
-        [print(
-            f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters')
-            for model_name in num_params_dict.keys()]
-
-        self.times['init_models_end'] = time()
-        return num_params_dict
 
     # noinspection PyTypedDict
     def instantiate_models(self):
@@ -243,45 +202,53 @@ class Modeller:
                                                              self.dataDims['lattice_means'],
                                                              self.dataDims['lattice_stds']
                                                              )
-            self.models_dict['discriminator'] = MolCrystal(self.config.seeds.model,
-                                                           self.config.discriminator.model,
-                                                           self.dataDims['atom_features'],
-                                                           self.dataDims['molecule_features'],
-                                                           self.dataDims['node_standardization_vector'],
-                                                           self.dataDims['graph_standardization_vector'])
+            self.models_dict['discriminator'] = MolCrystal2(
+                self.config.seeds.model,
+                self.config.discriminator.model,
+                self.dataDims['atom_features'],
+                self.dataDims['molecule_features'],
+                output_dim=3,
+                node_standardization_tensor=self.dataDims['node_standardization_vector'],
+                graph_standardization_tensor=self.dataDims['graph_standardization_vector'])
         if self.config.mode == 'discriminator':
             self.models_dict['generator'] = nn.Linear(1, 1)
-            self.models_dict['discriminator'] = MolCrystal(self.config.seeds.model,
-                                                           self.config.discriminator.model,
-                                                           self.dataDims['atom_features'],
-                                                           self.dataDims['molecule_features'],
-                                                           self.dataDims['node_standardization_vector'],
-                                                           self.dataDims['graph_standardization_vector'])
+            self.models_dict['discriminator'] = MolCrystal2(
+                self.config.seeds.model,
+                self.config.discriminator.model,
+                self.dataDims['atom_features'],
+                self.dataDims['molecule_features'],
+                output_dim=3,
+                node_standardization_tensor=self.dataDims['node_standardization_vector'],
+                graph_standardization_tensor=self.dataDims['graph_standardization_vector'])
         if self.config.mode == 'regression' or self.config.model_paths.regressor is not None:
-            self.models_dict['regressor'] = MoleculeRegressor(self.config.seeds.model,
-                                                              self.config.regressor.model,
-                                                              self.dataDims['atom_features'],
-                                                              self.dataDims['molecule_features'],
-                                                              self.dataDims['node_standardization_vector'],
-                                                              self.dataDims['graph_standardization_vector'])
+            self.models_dict['regressor'] = MoleculeScalarRegressor(
+                self.config.regressor.model,
+                self.dataDims['atom_features'],
+                self.dataDims['molecule_features'],
+                self.dataDims['node_standardization_vector'],
+                self.dataDims['graph_standardization_vector'],
+                self.config.seeds.model
+            )
         if self.config.mode == 'autoencoder' or self.config.model_paths.autoencoder is not None:
-            self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model,
-                                                               self.config.autoencoder.model,
-                                                               int(torch.sum(self.autoencoder_type_index != -1)),
-                                                               self.autoencoder_type_index,
-                                                               self.config.autoencoder.molecule_radius_normalization,
-                                                               infer_protons=self.config.autoencoder.infer_protons,
-                                                               protons_in_input=not self.config.autoencoder.filter_protons
-                                                               )
+            self.models_dict['autoencoder'] = Mo3ENet(
+                self.config.seeds.model,
+                self.config.autoencoder.model,
+                int(torch.sum(self.autoencoder_type_index != -1)),
+                self.autoencoder_type_index,
+                self.config.autoencoder.molecule_radius_normalization,
+                infer_protons=self.config.autoencoder.infer_protons,
+                protons_in_input=not self.config.autoencoder.filter_protons
+            )
         if self.config.mode == 'embedding_regression' or self.config.model_paths.embedding_regressor is not None:
-            self.models_dict['autoencoder'] = PointAutoencoder(self.config.seeds.model,
-                                                               self.config.autoencoder.model,
-                                                               int(torch.sum(self.autoencoder_type_index != -1)),
-                                                               self.autoencoder_type_index,
-                                                               self.config.autoencoder.molecule_radius_normalization,
-                                                               infer_protons=self.config.autoencoder.infer_protons,
-                                                               protons_in_input=not self.config.autoencoder.filter_protons
-                                                               )
+            self.models_dict['autoencoder'] = Mo3ENet(
+                self.config.seeds.model,
+                self.config.autoencoder.model,
+                int(torch.sum(self.autoencoder_type_index != -1)),
+                self.autoencoder_type_index,
+                self.config.autoencoder.molecule_radius_normalization,
+                infer_protons=self.config.autoencoder.infer_protons,
+                protons_in_input=not self.config.autoencoder.filter_protons
+            )
             for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
                 param.requires_grad = False
             self.config.embedding_regressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
@@ -297,6 +264,16 @@ class Modeller:
         null_models = {name: nn.Linear(1, 1) for name in self.model_names if
                        name not in self.models_dict.keys()}  # initialize null models
         self.models_dict.update(null_models)
+
+        # # compile models
+        # for key in self.models_dict.keys():
+        #     self.models_dict[key].compile_self()
+
+        if self.config.device.lower() == 'cuda':
+            torch.backends.cudnn.benchmark = True
+            torch.cuda.empty_cache()
+            for model in self.models_dict.values():
+                model.cuda()
 
     def load_dataset_and_dataloaders(self,
                                      override_test_fraction=None,
@@ -353,7 +330,7 @@ class Modeller:
                 override_length=int(1e7),
                 filter_conditions=blind_test_conditions,  # standard filtration conditions
                 filter_polymorphs=False,
-                # do not filter duplicates - e.g., in Blind test they're almost all duplicates!
+                # do not filter duplicates
                 filter_duplicate_molecules=False,
                 filter_protons=not self.models_dict['autoencoder'].protons_in_input,
             )
@@ -366,6 +343,10 @@ class Modeller:
             test_fraction = override_test_fraction
         else:
             test_fraction = self.config.dataset.test_fraction
+
+        if self.config.mode == 'polymorph_classification':
+            override_batch_size = 1
+            print("Setting batch size to 1 for bulk classification")
 
         return self.prep_dataloaders(data_manager, extra_data_manager, test_fraction,
                                      override_shuffle=override_shuffle,
@@ -391,12 +372,12 @@ class Modeller:
             from mxtaltools.dataset_management.lmdb_dataset import GeomDataset
             from torch_geometric.data import DataLoader
             train_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
-            num_workers = 2 #min(os.cpu_count(), 16)  # min(os.cpu_count(), 8)
+            num_workers = 2  #min(os.cpu_count(), 16)  # min(os.cpu_count(), 8)
             print(f'{num_workers} workers set for dataloaders')
             train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-                                     pin_memory=True, drop_last=False,
-                                     num_workers=0, #num_workers if self.config.machine == 'cluster' else 0,
-                                     persistent_workers=False, #True if self.config.machine == 'cluster' else False
+                                      pin_memory=True, drop_last=False,
+                                      num_workers=0,  #num_workers if self.config.machine == 'cluster' else 0,
+                                      persistent_workers=False,  #True if self.config.machine == 'cluster' else False
                                       )
             del train_dataset
 
@@ -404,8 +385,9 @@ class Modeller:
                 self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
             test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                      pin_memory=True, drop_last=False,
-                                     num_workers=0, #num_workers if self.config.machine == 'cluster' else 0,
-                                     persistent_workers=False, #True, #True if self.config.machine == 'cluster' else False,
+                                     num_workers=0,  #num_workers if self.config.machine == 'cluster' else 0,
+                                     persistent_workers=False,
+                                     #True, #True if self.config.machine == 'cluster' else False,
                                      )
 
             del test_dataset
@@ -432,115 +414,6 @@ class Modeller:
         self.times['dataloader_end'] = time()
         return train_loader, test_loader, extra_test_loader
 
-    # def autoencoder_molecule_generation(self):
-    #     # TODO DEPRECATE OR REBUILD
-    #     """prep workdir"""
-    #     self.source_directory = os.getcwd()
-    #     self.prep_new_working_directory()
-    #
-    #     self.train_models_dict = {
-    #         'discriminator': False,
-    #         'generator': False,
-    #         'regressor': False,
-    #         'autoencoder': True,
-    #         'embedding_regressor': False,
-    #     }
-    #
-    #     '''initialize datasets and useful classes'''
-    #     _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=1)
-    #     num_params_dict = self.init_models()
-    #
-    #     self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
-    #
-    #     with (wandb.init(config=self.config,
-    #                      project=self.config.wandb.project_name,
-    #                      entity=self.config.wandb.username,
-    #                      tags=[self.config.logger.experiment_tag],
-    #                      settings=wandb.Settings(code_dir="."))):
-    #         wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
-    #         wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
-    #         wandb.log(num_params_dict)
-    #         wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
-    #                    "Initial Batch Size": self.config.current_batch_size})
-    #
-    #         self.models_dict['autoencoder'].eval()
-    #         self.epoch_type = 'test'
-    #
-    #         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
-    #             self.autoencoder_generation_step(data)
-    #
-    #         # post epoch processing
-    #         self.logger.concatenate_stats_dict(self.epoch_type)
-
-    # def autoencoder_generation_step(self, data):
-    #     # TODO molecule validity checker
-    #     data.to(self.device)
-    #     import plotly.graph_objects as go
-    #     decoding = self.models_dict['autoencoder'].decode(torch.randn(size=(
-    #         data.num_graphs,
-    #         3,
-    #         self.config.autoencoder.model.bottleneck_dim
-    #     ), dtype=torch.float32, device=self.device))
-    #
-    #     decoded_data = data.clone()
-    #     decoded_data.pos = decoding[:, :3]
-    #     decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(
-    #         self.config.autoencoder.model.num_decoder_nodes).to(self.config.device)
-    #
-    #     nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = \
-    #         get_node_weights(data, decoded_data, decoding, self.config.autoencoder.model.num_decoder_nodes,
-    #                          self.config.autoencoder.node_weight_temperature)
-    #
-    #     decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
-    #     decoded_data.aux_ind = nodewise_weights_tensor
-    #
-    #     colors = ['rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)',
-    #               'rgb(204, 97, 176)', 'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)',
-    #               'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
-    #               'rgb(165, 170, 153)'] * 10
-    #     colorscales = [[[0, 'rgba(0, 0, 0, 0)'], [1, color]] for color in colors]
-    #     cmax = 1
-    #     for graph_ind in range(5):
-    #         # points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
-    #         # fig = go.Figure()
-    #         # for j in range(self.dataDims['num_atom_types']):
-    #         #
-    #         #     pred_type_weights = (decoded_data.aux_ind[decoded_data.batch == graph_ind] * decoded_data.x[decoded_data.batch == graph_ind, j]).cpu().detach().numpy()
-    #         #
-    #         #     fig.add_trace(go.Scatter3d(x=points_pred[:, 0] * self.config.autoencoder.molecule_radius_normalization,
-    #         #                                y=points_pred[:, 1] * self.config.autoencoder.molecule_radius_normalization,
-    #         #                                z=points_pred[:, 2] * self.config.autoencoder.molecule_radius_normalization,
-    #         #                                mode='markers', marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j], cmax=cmax, cmin=0), opacity=1, marker_line_color='white',
-    #         #                                showlegend=True,
-    #         #                                name=f'Predicted type {j}',
-    #         #                                legendgroup=f'Predicted type {j}',
-    #         #                                ))
-    #
-    #         fig = go.Figure()
-    #         coords_true, coords_pred, points_true, points_pred, sample_weights = (
-    #             extract_true_and_predicted_points(data, decoded_data, graph_ind,
-    #                                               self.dataDims['num_atom_types'], to_numpy=True))
-    #
-    #         glom_points_pred, glom_pred_weights = decoder_agglomerative_clustering(points_pred, sample_weights, 0.75)
-    #
-    #         for j in range(self.dataDims['num_atom_types']):
-    #             type_inds = np.argwhere(np.argmax(glom_points_pred[:, 3:], axis=1) == j)[:, 0]
-    #
-    #             pred_type_weights = glom_points_pred[type_inds, j + 3] * glom_pred_weights[type_inds]
-    #             atom_type = int(torch.argwhere(self.autoencoder_type_index == j)) + 1
-    #
-    #             fig.add_trace(go.Scatter3d(x=glom_points_pred[type_inds, 0], y=glom_points_pred[type_inds, 1],
-    #                                        z=glom_points_pred[type_inds, 2],
-    #                                        mode='markers',
-    #                                        marker=dict(size=10, color=pred_type_weights, colorscale=colorscales[j],
-    #                                                    cmax=cmax, cmin=0), opacity=1,
-    #                                        marker_line_color='black', marker_line_width=30,
-    #                                        showlegend=True,  # if j == 0 else False,
-    #                                        name=f'Clustered Atoms Type {atom_type}',
-    #                                        legendgroup=f'Clustered Atoms'
-    #                                        ))
-    #         fig.show(renderer='browser')
-
     def ae_embedding_analysis(self):
         """prep workdir"""
         self.source_directory = os.getcwd()  # todo fix
@@ -557,7 +430,7 @@ class Modeller:
         '''initialize datasets and useful classes'''
         _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=1,
                                                                               override_shuffle=False)
-        num_params_dict = self.init_models()
+        self.initialize_models_optimizers_schedulers()
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
@@ -568,8 +441,8 @@ class Modeller:
                          settings=wandb.Settings(code_dir="."))):
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
-            wandb.log(num_params_dict)
-            wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
+            wandb.log(self.num_params_dict)
+            wandb.log({"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
                        "Initial Batch Size": self.config.current_batch_size})
 
             self.models_dict['autoencoder'].eval()
@@ -639,7 +512,7 @@ class Modeller:
 
         '''initialize datasets and useful classes'''
         _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
-        num_params_dict = self.init_models()
+        self.initialize_models_optimizers_schedulers()
 
         self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
         self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius']['max']
@@ -653,8 +526,8 @@ class Modeller:
                          settings=wandb.Settings(code_dir="."))):
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
-            wandb.log(num_params_dict)
-            wandb.log({"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
+            wandb.log(self.num_params_dict)
+            wandb.log({"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
                        "Initial Batch Size": self.config.current_batch_size})
 
             self.models_dict['autoencoder'].eval()
@@ -785,20 +658,10 @@ class Modeller:
                                       stats.values(),
                                       mode='append')
 
-    def train_models(self):
+    def fit_models(self):
         """
-        train and/or evaluate one or more models
-        regressor
-        GAN (generator and/or discriminator)
-        autoencoder
-        embedding_regressor
+        train and/or evaluate one or more models given one of our training modes
         """
-
-        flat_config_dict = flatten_dict(namespace2dict(self.config.__dict__), separator='_')
-        for key in flat_config_dict.keys():
-            if 'path' in str(type(flat_config_dict[key])).lower():
-                flat_config_dict[key] = str(flat_config_dict[key])
-        self.config.__dict__.update(flat_config_dict)
 
         with (wandb.init(config=self.config,
                          project=self.config.wandb.project_name,
@@ -806,44 +669,17 @@ class Modeller:
                          tags=[self.config.logger.experiment_tag],
                          settings=wandb.Settings(code_dir="."))):
 
-            self.process_sweep_config()
-
             self.source_directory = os.getcwd()
             self.prep_new_working_directory()
             self.get_training_mode()
-
-            '''initialize datasets and useful classes'''
             train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
-            if self.train_models_dict['discriminator']:
-                self.init_gaussian_generator()
-
-            if self.config.mode == 'polymorph_classification':  # TODO refactor
-                train_loader = update_dataloader_batch_size(train_loader, 1)
-                test_loader = update_dataloader_batch_size(test_loader, 1)
-                if extra_test_loader is not None:
-                    extra_test_loader = update_dataloader_batch_size(extra_test_loader, 1)
-
-            num_params_dict = self.init_models()
-
-            '''initialize some training metrics'''
-            self.hit_max_lr_dict = {model_name: False for model_name in self.model_names}
-            converged, epoch, prev_epoch_failed = self.config.max_epochs == 0, 0, False
-
-            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
-            wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
-            wandb.log(data=num_params_dict, commit=False)
-            wandb.log(data={"All Models Parameters": np.sum(np.asarray(list(num_params_dict.values()))),
-                            "Initial Batch Size": self.config.current_batch_size},
-                      commit=False)
-            self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
-            self.logger.log_times(self.times)  # log initialization times
-            self.times = {}  # reset for iterative looping
+            self.initialize_models_optimizers_schedulers()
+            converged, epoch, prev_epoch_failed = self.init_logging()
 
             # training loop
             # with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
             while (epoch < self.config.max_epochs) and not converged:
-                print(
-                    "⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅")
+                print(self.separator_string)
                 print("Starting Epoch {}".format(epoch))  # index from 0
                 self.times['full_epoch_start'] = time()
                 self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
@@ -854,43 +690,13 @@ class Modeller:
                     steps_override = self.config.max_epoch_steps
 
                 try:  # try this batch size
-                    self.run_epoch(epoch_type='train',
-                                   data_loader=train_loader,
-                                   update_weights=True,
-                                   iteration_override=steps_override)
-
-                    with torch.no_grad():
-                        self.run_epoch(epoch_type='test',
-                                       data_loader=test_loader,
-                                       update_weights=False,
-                                       iteration_override=int(steps_override * self.config.dataset.test_fraction))
-
-                        if (extra_test_loader is not None) and (epoch % self.config.extra_test_period == 0) and (
-                                epoch > 0):
-                            self.run_epoch(epoch_type='extra', data_loader=extra_test_loader,
-                                           update_weights=False, iteration_override=None)  # compute loss on test set
-
-                    '''save checkpoints'''
-                    if self.config.save_checkpoints and epoch > 0:
-                        self.model_checkpointing(epoch)
-
-                    '''update learning rates'''
-                    self.update_lr()
-
-                    '''check convergence status and record metrics & analysis'''
-                    self.times['reporting_start'] = time()
-                    self.logger.numpyize_current_losses()
-                    self.logger.update_loss_record()
-                    self.logger.log_training_metrics()
-                    self.logger.log_detailed_analysis(test_loader)
-                    self.logger.check_model_convergence()
-                    self.times['reporting_end'] = time()
+                    self.train_test_validate(epoch, extra_test_loader, steps_override, test_loader, train_loader)
+                    self.post_epoch_logging_analysis(test_loader, epoch)
 
                     if all(list(self.logger.converged_flags.values())):  # todo confirm this works
                         print('Training has converged!')
                         break
 
-                    '''increment batch size'''
                     train_loader, test_loader, extra_test_loader = \
                         self.increment_batch_size(train_loader, test_loader, extra_test_loader)
 
@@ -900,22 +706,67 @@ class Modeller:
                     if "CUDA out of memory" in str(
                             e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
                         if prev_epoch_failed:
-                            gc.collect()  # TODO not clear to me that this is effective
+                            gc.collect()  # TODO not clear to me that these are effective
+                            torch.cuda.empty_cache()
 
-                        train_loader, test_loader = slash_batch(train_loader, test_loader,
-                                                                slash_fraction=0.1)  # shrink batch size
-                        wandb.log(data={'batch_size': train_loader.batch_size}, commit=False)
-
-                        torch.cuda.empty_cache()
+                        train_loader, test_loader = slash_batch(train_loader, test_loader, slash_fraction=0.1)
                         self.config.grow_batch_size = False  # stop growing the batch for the rest of the run
                         prev_epoch_failed = True
                     else:
-                        raise e  # will simply raise error if training on CPU
+                        raise e  # will simply raise error if other or if training on CPU
 
                 self.times['full_epoch_end'] = time()
                 self.logger.log_times(self.times)
                 self.times = {}
                 epoch += 1
+
+    def train_test_validate(self, epoch, extra_test_loader, steps_override, test_loader, train_loader):
+        self.run_epoch(epoch_type='train',
+                       data_loader=train_loader,
+                       update_weights=True,
+                       iteration_override=steps_override)
+        with torch.no_grad():
+            self.run_epoch(epoch_type='test',
+                           data_loader=test_loader,
+                           update_weights=False,
+                           iteration_override=int(steps_override * self.config.dataset.test_fraction))
+
+            if (extra_test_loader is not None) and \
+                    (epoch % self.config.extra_test_period == 0) and \
+                    (epoch > 0):
+                self.run_epoch(epoch_type='extra',
+                               data_loader=extra_test_loader,
+                               update_weights=False,
+                               iteration_override=None)
+
+    def post_epoch_logging_analysis(self, test_loader, epoch):
+        """check convergence status and record metrics & analysis"""
+        self.times['reporting_start'] = time()
+        self.logger.numpyize_current_losses()
+        self.logger.update_loss_record()
+        self.logger.log_training_metrics()
+        self.logger.log_detailed_analysis(test_loader)
+        self.logger.check_model_convergence()
+        self.times['reporting_end'] = time()
+
+        if self.config.save_checkpoints and epoch > 0:
+            self.model_checkpointing(epoch)
+
+        self.update_lr()
+
+    def init_logging(self):
+        """initialize some training metrics"""
+        converged, epoch, prev_epoch_failed = self.config.max_epochs == 0, 0, False
+        wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+        wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
+        wandb.log(data=self.num_params_dict, commit=False)
+        wandb.log(data={"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
+                        "Initial Batch Size": self.config.current_batch_size},
+                  commit=False)
+        self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
+        self.logger.log_times(self.times)  # log initialization times
+        self.times = {}  # reset for iterative looping
+        return converged, epoch, prev_epoch_failed
 
     def get_training_mode(self):
         self.train_models_dict = {
@@ -956,6 +807,7 @@ class Modeller:
     def run_epoch(self, epoch_type: str, data_loader=None, update_weights=True, iteration_override=None):
         self.epoch_type = epoch_type
         self.times[epoch_type + "_epoch_start"] = time()
+
         if self.config.mode == 'gan' or self.config.mode == 'discriminator':
             if self.config.model_paths.regressor is not None:
                 self.models_dict['regressor'].eval()  # using this to suggest densities to the generator
@@ -1060,8 +912,15 @@ class Modeller:
                 not self.models_dict['autoencoder'].inferring_protons):
             data = input_data.clone()
 
-        decoding, encoding = self.models_dict['autoencoder'](input_data, return_encoding=True)
-        losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
+        if step % self.config.logger.stats_reporting_frequency == 0:
+            skip_stats = False
+        elif last_step:
+            skip_stats = False
+        else:
+            skip_stats = True
+
+        decoding, encoding = self.models_dict['autoencoder'](input_data, return_latent=True)
+        losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone(), skip_stats=skip_stats)
 
         mean_loss = losses.mean()
         if update_weights:
@@ -1071,7 +930,8 @@ class Modeller:
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
-        self.ae_stats_and_reporting(data, decoded_data, encoding, last_step, stats, step)
+        if not skip_stats:
+            self.ae_stats_and_reporting(data, decoded_data, last_step, stats, step)
 
     def fix_autoencoder_protonation(self, data, override_deprotonate=False):
         if (not self.models_dict['autoencoder'].inferring_protons and
@@ -1090,7 +950,12 @@ class Modeller:
 
         return input_cloud
 
-    def ae_stats_and_reporting(self, data, decoded_data, encoding, last_step, stats, step):
+    def ae_stats_and_reporting(self,
+                               data: CrystalData,
+                               decoded_data: CrystalData,
+                               last_step: bool,
+                               stats: dict,
+                               step: int):
         # if self.logger.epoch % self.config.logger.sample_reporting_frequency == 0:
         #     if step % 10 == 0:
         #         stats['encoding'] = encoding.detach()
@@ -1203,7 +1068,8 @@ class Modeller:
                 data.x = data.x[:, None]
 
             data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
-            self.ae_step(input_data, data, update_weights, step=i, last_step=i == len(data_loader) - 1)
+            self.ae_step(input_data, data, update_weights, step=i,
+                         last_step=(i == len(data_loader) - 1) or (i == iteration_override))
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -1250,15 +1116,23 @@ class Modeller:
 
         return data, input_data
 
-    def compute_autoencoder_loss(self, decoding, data):
+    def compute_autoencoder_loss(self,
+                                 decoding: torch.Tensor,
+                                 data: CrystalData,
+                                 skip_stats: bool = False,
+                                 ) -> Tuple[torch.Tensor, dict, CrystalData]:
         """
-        Function for analyzing autoencoder and calculating loss & other key metrics
+        Function for analyzing autoencoder outputs and calculating loss & other key metrics
         1) process inputs and outputs into the correct format
         2) compute relevant losses, reconstruction, radial constraint, weight constraint
         Parameters
         ----------
-        decoding
-        data
+        decoding : Tensor
+            raw output for gaussian mixture
+        data : CrystalData
+            Input data to be reconstructed
+        skip_stats : bool
+            Whether to skip saving summary statistics for this step
 
         Returns
         -------
@@ -1283,18 +1157,24 @@ class Modeller:
         node_weight_constraining_loss = scatter(
             F.relu(-torch.log10(nodewise_weights_tensor / torch.amin(nodewise_graph_weights)) - 2),
             decoded_data.batch)  # don't let these get too small
+
+        # sum losses
         losses = reconstruction_loss + constraining_loss + node_weight_constraining_loss
 
-        stats = {'constraining_loss': constraining_loss.mean().detach(),
-                 'reconstruction_loss': reconstruction_loss.mean().detach(),
-                 'nodewise_type_loss': nodewise_type_loss.detach(),
-                 'scaled_reconstruction_loss': (reconstruction_loss.mean() * self.config.autoencoder_sigma).detach(),
-                 'sigma': self.config.autoencoder_sigma,
-                 'mean_self_overlap': scatter(self_likelihoods, data.batch, reduce='mean').mean().detach(),
-                 'matching_nodes_fraction': matching_nodes_fraction.detach(),
-                 'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
-                 'node_weight_constraining_loss': node_weight_constraining_loss.mean().detach(),
-                 }
+        if not skip_stats:
+            stats = {'constraining_loss': constraining_loss.mean().detach(),
+                     'reconstruction_loss': reconstruction_loss.mean().detach(),
+                     'nodewise_type_loss': nodewise_type_loss.detach(),
+                     'scaled_reconstruction_loss': (
+                             reconstruction_loss.mean() * self.config.autoencoder_sigma).detach(),
+                     'sigma': self.config.autoencoder_sigma,
+                     'mean_self_overlap': scatter(self_likelihoods, data.batch, reduce='mean').mean().detach(),
+                     'matching_nodes_fraction': matching_nodes_fraction.detach(),
+                     'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
+                     'node_weight_constraining_loss': node_weight_constraining_loss.mean().detach(),
+                     }
+        else:
+            stats = {}
 
         return losses, stats, decoded_data
 
@@ -1437,6 +1317,9 @@ class Modeller:
                   update_weights=True,
                   iteration_override=None):
 
+        if not hasattr(self, 'packing_loss_coefficient'):  # first GAN epoch
+            self.init_gan_constants()
+
         if update_weights:
             self.models_dict['generator'].train(True)
             self.models_dict['discriminator'].train(True)
@@ -1469,6 +1352,23 @@ class Modeller:
                     break  # stop training early - for debugging purposes
 
         self.logger.concatenate_stats_dict(self.epoch_type)
+
+    def init_gan_constants(self):
+        self.packing_loss_coefficient = 1
+        '''set space groups to be included and generated'''
+        if self.config.generate_sgs == 'all':
+            self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in asym_unit_dict.keys()]
+        '''compute the ratios between the norms of n-dimensional gaussians (means of chi distribution)'''
+        m1 = torch.sqrt(torch.ones(1) * 2) * torch.exp(torch.lgamma(torch.ones(1) * (12 + 1) / 2)) / torch.exp(
+            torch.lgamma(torch.ones(1) * 12 / 2))
+        self.chi_scaling_factors = torch.zeros(4, dtype=torch.float, device=self.device)
+        for ind, ni in enumerate([3, 6, 9, 12]):
+            m2 = torch.sqrt(torch.ones(1) * 2) * torch.exp(torch.lgamma(torch.ones(1) * (ni + 1) / 2)) / torch.exp(
+                torch.lgamma(torch.ones(1) * ni / 2))
+            self.chi_scaling_factors[ind] = m1 / m2
+
+        if self.train_models_dict['discriminator']:
+            self.init_gaussian_generator()
 
     def decide_whether_to_skip_discriminator(self, i, epoch_stats_dict):
         """
@@ -1551,20 +1451,17 @@ class Modeller:
 
         combined_outputs = torch.cat((discriminator_output_on_real, discriminator_output_on_fake), dim=0)
 
+        'classification loss'
         classification_target = torch.cat((torch.ones_like(discriminator_output_on_real[:, 0]),
                                            torch.zeros_like(discriminator_output_on_fake[:, 0])))
-
         classification_losses = F.cross_entropy(combined_outputs[:, :2], classification_target.long(), reduction='none')
 
-        if real_fake_rdf_distances is not None:
-            rdf_distance_target = torch.log10(1 + torch.cat((torch.zeros_like(discriminator_output_on_real[:, 0]),
-                                                             real_fake_rdf_distances)))  # rescale on log(1+x)
-
-            rdf_distance_losses = F.smooth_l1_loss(combined_outputs[:, 2], rdf_distance_target,
-                                                   reduction='none') * 10  # rescale w.r.t., classification loss
-
-        else:
-            rdf_distance_losses = torch.zeros_like(classification_losses)
+        'rdf distance loss'
+        rdf_distance_target = torch.log10(1 + torch.cat((torch.zeros_like(discriminator_output_on_real[:, 0]),
+                                                         real_fake_rdf_distances)))  # rescale on log(1+x)
+        rdf_distance_prediction = F.softplus(combined_outputs[:, 2])
+        rdf_distance_losses = F.smooth_l1_loss(rdf_distance_prediction, rdf_distance_target,
+                                               reduction='none') * 10  # rescale w.r.t., classification loss
 
         score_on_real = softmax_and_score(discriminator_output_on_real[:, :2])
         score_on_fake = softmax_and_score(discriminator_output_on_fake[:, :2])
@@ -1572,9 +1469,9 @@ class Modeller:
         stats = {'discriminator_real_score': score_on_real.detach(),
                  'discriminator_fake_score': score_on_fake.detach(),
                  'discriminator_fake_true_distance': torch.log10(1 + real_fake_rdf_distances).detach(),
-                 'discriminator_fake_predicted_distance': discriminator_output_on_fake[:, 2].detach(),
+                 'discriminator_fake_predicted_distance': F.softplus(discriminator_output_on_fake[:, 2]).detach(),
                  'discriminator_real_true_distance': torch.zeros_like(discriminator_output_on_real[:, 0]).detach(),
-                 'discriminator_real_predicted_distance': discriminator_output_on_real[:, 2].detach(),
+                 'discriminator_real_predicted_distance': F.softplus(discriminator_output_on_real[:, 2]).detach(),
                  'discriminator_classification_loss': classification_losses.detach(),
                  'discriminator_distance_loss': rdf_distance_losses.detach()}
 
@@ -1664,10 +1561,10 @@ class Modeller:
                 torch.randn_like(fake_supercell_data.pos) * self.config.positional_noise.discriminator
 
         '''score'''
-        discriminator_output_on_real, real_pairwise_distances_dict, real_latent = self.adversarial_score(
-            real_supercell_data, return_latent=True)
-        discriminator_output_on_fake, fake_pairwise_distances_dict, fake_latent = self.adversarial_score(
-            fake_supercell_data, return_latent=True)
+        discriminator_output_on_real, real_pairwise_distances_dict = self.adversarial_score(
+            real_supercell_data, return_latent=False)
+        discriminator_output_on_fake, fake_pairwise_distances_dict = self.adversarial_score(
+            fake_supercell_data, return_latent=False)
 
         '''recompute reduced volumes'''
         real_volume_fractions = compute_reduced_volume_fraction(cell_lengths=real_supercell_data.cell_lengths,
@@ -1934,7 +1831,6 @@ class Modeller:
                     extra_test_loader = update_dataloader_batch_size(extra_test_loader,
                                                                      extra_test_loader.batch_size + increment)
                 print(f'Batch size incremented to {train_loader.batch_size}')
-        wandb.log(data={'batch size': train_loader.batch_size}, commit=False)
         self.config.current_batch_size = train_loader.batch_size
         self.times['batch_resizing_end'] = time()
         return train_loader, test_loader, extra_test_loader
@@ -1996,32 +1892,8 @@ class Modeller:
                             'model_state_dict'].pop(i)
                 self.models_dict['discriminator'].load_state_dict(discriminator_checkpoint['model_state_dict'])
 
-    # def gan_evaluation(self, epoch, test_loader, extra_test_loader):
-    #     """
-    #     run post-training evaluation
-    #     """
-    #     self.reload_best_test_checkpoint(epoch)
-    #     self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
-    #
-    #     # rerun test inference
-    #     # self.models_dict['generator'].eval()
-    #     self.models_dict['discriminator'].eval()
-    #     with torch.no_grad():
-    #         if self.train_models_dict['discriminator']:
-    #             self.run_epoch(epoch_type='test', data_loader=test_loader, update_weights=False)  # compute loss on test set
-    #
-    #             if extra_test_loader is not None:
-    #                 self.run_epoch(epoch_type='extra', data_loader=extra_test_loader, update_weights=False)  # compute loss on test set
-    #
-    #         # sometimes test the generator on a mini CSP problem
-    #         if (self.config.mode == 'gan') and self.train_models_dict['generator']:
-    #             self.batch_csp(extra_test_loader if extra_test_loader is not None else test_loader)
-    #
-    #     self.logger.log_epoch_analysis(test_loader)
-    #
-    #     return None
-
     def compute_similarity_penalty(self, generated_samples, prior, raw_samples):
+        # DEPRECATED not currently useful
         """
         by hook or crook
         force samples to be more diverse
@@ -2214,7 +2086,7 @@ class Modeller:
             max_iters = 10
 
             self.init_gaussian_generator()
-            self.init_models()
+            self.initialize_models_optimizers_schedulers()
 
             self.models_dict['generator'].eval()
             self.models_dict['regressor'].eval()

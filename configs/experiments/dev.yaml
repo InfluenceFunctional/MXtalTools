@@ -14,13 +14,13 @@ seeds:
   dataset: 1
 
 # batching & convergence
-max_epoch_steps: 50
-early_epochs_step_override: 20
-num_early_epochs: 10
+max_epoch_steps: 100
+early_epochs_step_override: 10
+num_early_epochs: 20
 grow_batch_size: True
 min_batch_size: 10
 max_batch_size: 1000
-batch_growth_increment: 0.5 # fraction of batch size to grow by each epoch
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
@@ -30,6 +30,7 @@ extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 
 logger:
   sample_reporting_frequency: 1  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 5  # how many steps between which to move training stats to cpu
   experiment_tag: dev
   run_name: dev
 

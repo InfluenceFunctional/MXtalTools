@@ -40,7 +40,9 @@ class VectorLayerNorm(torch.nn.Module):
         r"""Resets all learnable parameters of the module."""
         ones(self.weight)
 
-    def forward(self, v: Tensor, batch: OptTensor = None,
+    def forward(self,
+                v: Tensor,
+                batch: Optional[torch.LongTensor] = None,
                 batch_size: Optional[int] = None) -> Tensor:
         r"""
         Args:

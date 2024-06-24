@@ -1,7 +1,7 @@
 import itertools
 
 import torch
-from mxtaltools.models.asymmetric_radius_graph import asymmetric_radius_graph
+from mxtaltools.models.functions.asymmetric_radius_graph import asymmetric_radius_graph
 from mxtaltools.common.rdf_calculation import parallel_compute_rdf_torch
 from torch_scatter import scatter
 from mxtaltools.common.utils import repeat_interleave

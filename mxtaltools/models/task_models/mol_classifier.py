@@ -1,7 +1,7 @@
 import torch
 
-from mxtaltools.models.base_graph_model import BaseGraphModel
-from mxtaltools.models.molecule_graph_model import MoleculeGraphModel
+from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
+from mxtaltools.models.graph_models.molecule_graph_model import MoleculeGraphModel
 
 
 class PolymorphClassifier(BaseGraphModel):

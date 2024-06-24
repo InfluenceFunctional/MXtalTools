@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 from mxtaltools.dataset_management.utils import delete_from_dataframe
 from mxtaltools.common.utils import softmax_np
-from mxtaltools.models.mol_classifier import PolymorphClassifier
 from mxtaltools.common.geometry_calculations import coor_trans_matrix_np
 from mxtaltools.constants.classifier_constants import defect_names
 

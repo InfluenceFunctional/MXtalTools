@@ -18,13 +18,13 @@ import numpy as np
 from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.dataset_management.CrystalData import CrystalData
-from mxtaltools.models.molecule_graph_model import MoleculeGraphModel
-from mxtaltools.models.components import GlobalAggregation, MLP
-from mxtaltools.models.gnn_blocks import GCBlock
-from mxtaltools.models.vector_LayerNorm import VectorLayerNorm
+from mxtaltools.models.graph_models.molecule_graph_model import MoleculeGraphModel
+from mxtaltools.models.modules.components import GlobalAggregation, EMLP
+from mxtaltools.models.graph_models.gnn_blocks import GCBlock
+from mxtaltools.models.modules.vector_LayerNorm import VectorLayerNorm
 from tests.utils import check_tensor_similarity, is_module_equivariant
 from torch.nn import Linear
-from mxtaltools.models.components import VectorActivation
+from mxtaltools.models.modules.components import VectorActivation
 
 device = 'cpu'
 num_samples = 100
@@ -66,9 +66,9 @@ def test_VectorLayerNorm():
 
 @torch.no_grad()
 def test_EMLP():
-    module = MLP(layers=1, input_dim=feature_depth, filters=feature_depth, output_dim=feature_depth, activation='gelu',
-                 dropout=0, norm='layer', equivariant=True, vector_output_dim=feature_depth,
-                 vector_norm='vector layer', ramp_depth=True)
+    module = EMLP(layers=1, input_dim=feature_depth, filters=feature_depth, output_dim=feature_depth, activation='gelu',
+                  dropout=0, norm='layer', add_vector_channel=True, vector_output_dim=feature_depth,
+                  vector_norm='vector layer', ramp_depth=True)
 
     vector_batch = torch.randn(num_samples, 3, feature_depth)
     '''forward pass'''
@@ -97,7 +97,7 @@ def test_aggregators():
 @torch.no_grad()
 def test_graph_convolution():
     module = GCBlock(message_depth=feature_depth, node_embedding_depth=feature_depth, radial_dim=10,
-                     dropout=0, heads=4, equivariant=True)
+                     dropout=0, heads=4, add_vector_channel=True)
     vector_batch = torch.randn(num_samples, 3, feature_depth)
     batch_inds = torch.tensor(np.random.choice(np.arange(num_graphs), size=num_samples), device=device, dtype=torch.long)
     edge_index = torch.stack([

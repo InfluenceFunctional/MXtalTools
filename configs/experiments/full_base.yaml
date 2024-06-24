@@ -44,6 +44,7 @@ logger:
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
   sample_reporting_frequency: 1  # how often to do detailed reporting with figures
   log_figures: True
+  stats_reporting_frequency: 1
 
 sample_steps: 100
 

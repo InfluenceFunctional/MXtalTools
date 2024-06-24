@@ -155,6 +155,7 @@ def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords
     supercell_data.ptr = new_ptr.type(dtype=torch.int64)
     supercell_data.aux_ind = torch.cat(ref_mol_inds_list).type(dtype=torch.int)
     supercell_data.unit_cell_pos = reference_cell_list
+    supercell_data.mol_ind = torch.zeros_like(supercell_data.aux_ind)  # mol ind is always 0 for zp=1 cells
 
     return supercell_data
 

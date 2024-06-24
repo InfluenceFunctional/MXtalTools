@@ -17,10 +17,9 @@ from mxtaltools.dataset_management.CrystalData import CrystalData
 from torch_geometric.loader.dataloader import Collater
 from mxtaltools.constants.space_group_info import SYM_OPS
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
-from ase.visualize import view
 import ase
 from tqdm import tqdm
-from mxtaltools.models.vdw_overlap import vdw_overlap
+from mxtaltools.models.functions.vdw_overlap import vdw_overlap
 
 batch_size = 1000  # how many samples per batch
 num_iters = 50  # how many batches to try before giving up on this space group

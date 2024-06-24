@@ -11,9 +11,9 @@ from mxtaltools.common.geometry_calculations import cell_vol_torch
 from mxtaltools.common.utils import compute_rdf_distance
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements, DEPRECATED_write_sg_to_all_crystals
-from mxtaltools.models.crystal_rdf import crystal_rdf
+from mxtaltools.models.functions.crystal_rdf import crystal_rdf
 from mxtaltools.models.utils import softmax_and_score, undo_1d_bound
-from mxtaltools.models.vdw_overlap import vdw_overlap
+from mxtaltools.models.functions.vdw_overlap import vdw_overlap
 
 
 def compute_csp_sample_distances(config, real_samples_dict, generated_samples_dict, num_crystals, num_samples, rr):

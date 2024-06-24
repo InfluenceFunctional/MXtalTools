@@ -11,9 +11,9 @@ from mxtaltools.models.utils import compute_full_evaluation_overlap, compute_coo
     compute_type_evaluation_overlap
 
 
-def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims, epoch_stats_dict):
-    if len(epoch_stats_dict['sample']) > 1:
-        print("more than one batch of AE samples were saved but only the first is being analyzed")
+def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims):
+    # if len(epoch_stats_dict['sample']) > 1:
+    #     print("more than one batch of AE samples were saved but only the first is being analyzed")
 
     # compute overlaps with evaluation settings
     nodewise_weights_tensor = decoded_data.aux_ind

@@ -2,15 +2,16 @@ import torch
 from torch_geometric.typing import OptTensor
 
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
+from mxtaltools.dataset_management.CrystalData import CrystalData
 
 
 class BaseGraphModel(torch.nn.Module):
     def __init__(self):
         super(BaseGraphModel, self).__init__()
-        self.atom_feats = None
-        self.mol_feats = None
-        self.n_mol_feats = None
-        self.n_atom_feats = None
+        self.atom_feats = 0
+        self.mol_feats = 0
+        self.n_mol_feats = 0
+        self.n_atom_feats = 0
 
     def get_data_stats(self,
                        atom_features: list,
@@ -58,10 +59,14 @@ class BaseGraphModel(torch.nn.Module):
         if self.n_mol_feats != 0:
             self.register_buffer('graph_standardization_tensor', graph_standardization_tensor)
 
-    def featurize_input_graph(self, data):
+    def featurize_input_graph(self,
+                              data: CrystalData
+                              ) -> CrystalData:
         if data.x.ndim > 1:
             data.x = data.x[:, 0]
+
         data.x = self.atom_properties_tensor[data.x.long()]
+
         if self.n_mol_feats > 0:
             mol_x_list = []
             if 'num_atoms' in self.mol_feats:
@@ -72,19 +77,37 @@ class BaseGraphModel(torch.nn.Module):
 
         return data
 
-    def standardize(self, data):
+    def standardize(self,
+                    data: CrystalData
+                    ) -> CrystalData:
+
         data.x = (data.x - self.node_standardization_tensor[:, 0]) / self.node_standardization_tensor[:, 1]
+
         if self.n_mol_feats > 0:
             data.mol_x = (
                     (data.mol_x - self.graph_standardization_tensor[:, 0]) / self.graph_standardization_tensor[:, 1])
 
         return data
 
-    def forward(self, data, return_dists=False, return_latent=False):
+    def forward(self,
+                data: CrystalData,
+                return_dists: bool = False,
+                return_latent: bool = False
+                ):
         # featurize atom properties on the fly
         data = self.featurize_input_graph(data)
 
         # standardize on the fly from model-attached statistics
         data = self.standardize(data)
 
-        return self.model(data, return_dists=return_dists, return_latent=return_latent)
+        return self.model(data.x,
+                          data.pos,
+                          data.batch,
+                          data.ptr,
+                          data.mol_x,
+                          data.num_graphs,
+                          return_dists=return_dists,
+                          return_latent=return_latent)
+
+    def compile_self(self, dynamic=True, fullgraph=False):
+        self.model = torch.compile(self.model, dynamic=dynamic, fullgraph=fullgraph)

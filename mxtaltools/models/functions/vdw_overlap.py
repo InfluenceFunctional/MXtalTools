@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from mxtaltools.models.asymmetric_radius_graph import asymmetric_radius_graph
+from mxtaltools.models.functions.asymmetric_radius_graph import asymmetric_radius_graph
 import sys
 
 

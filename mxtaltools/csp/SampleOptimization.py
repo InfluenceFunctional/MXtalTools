@@ -3,7 +3,7 @@ import tqdm
 
 from mxtaltools.crystal_building.utils import clean_cell_params
 from mxtaltools.models.utils import softmax_and_score
-from mxtaltools.models.vdw_overlap import vdw_overlap
+from mxtaltools.models.functions.vdw_overlap import vdw_overlap
 import torch.optim as optim
 import torch
 

@@ -20,10 +20,10 @@ from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.common.geometry_calculations import cell_vol_torch
 from mxtaltools.crystal_building.builder import SupercellBuilder
 from mxtaltools.dataset_management.CrystalData import CrystalData
-from mxtaltools.models.crystal_models import MolCrystal
-from mxtaltools.models.regression_models import MoleculeRegressor
+from mxtaltools.models.task_models.crystal_models import MolCrystal
+from mxtaltools.models.task_models.regression_models import MoleculeRegressor
 from mxtaltools.models.utils import softmax_and_score, reload_model
-from mxtaltools.models.vdw_overlap import vdw_overlap
+from mxtaltools.models.functions.vdw_overlap import vdw_overlap
 from mxtaltools.constants.atom_properties import VDW_RADII
 
 import pathlib

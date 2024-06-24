@@ -61,7 +61,8 @@ def cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
     overlaps_1d = {}
     sample_means = {}
     sample_stds = {}
-    lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma', 'aunit_x', 'aunit_y', 'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
+    lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma', 'aunit_x', 'aunit_y',
+                        'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
     for i, key in enumerate(lattice_features):
         h1, r1 = dataDims['lattice_stats'][key]['histogram']
         h1 = h1 / sum(h1)
@@ -99,11 +100,12 @@ def cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
         for i in range(n_crystal_features):
             row = i // 3 + 1
             col = i % 3 + 1
-            bins=dataDims['lattice_stats'][lattice_keys[i]]['histogram'][1][1:]
+            bins = dataDims['lattice_stats'][lattice_keys[i]]['histogram'][1][1:]
             hist1 = np.histogram(cleaned_samples[:, i], bins=bins)[0]
             fig.add_trace(go.Bar(
                 x=bins,
-                y=dataDims['lattice_stats'][lattice_keys[i]]['histogram'][0] / sum(dataDims['lattice_stats'][lattice_keys[i]]['histogram'][0]),
+                y=dataDims['lattice_stats'][lattice_keys[i]]['histogram'][0] / sum(
+                    dataDims['lattice_stats'][lattice_keys[i]]['histogram'][0]),
                 legendgroup="Dataset Samples",
                 name="Dataset Samples",
                 showlegend=True if i == 0 else False,
@@ -112,7 +114,7 @@ def cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
 
             fig.add_trace(go.Bar(
                 x=bins,
-                y=hist1/sum(hist1),
+                y=hist1 / sum(hist1),
                 legendgroup="Generated Samples",
                 name="Generated Samples",
                 showlegend=True if i == 0 else False,
@@ -122,7 +124,7 @@ def cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
                 hist2 = np.histogram(raw_samples[:, i], bins=bins)[0]
                 fig.add_trace(go.Bar(
                     x=bins,
-                    y=hist2/sum(hist2),
+                    y=hist2 / sum(hist2),
                     legendgroup="Raw Generated Samples",
                     name="Raw Generated Samples",
                     showlegend=True if i == 0 else False,
@@ -266,20 +268,20 @@ def discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict
     sample_source = np.concatenate([[stype for _ in range(len(scores_dict[stype]))] for stype in sample_types])
     scores_range = np.ptp(all_scores)
 
+    'score vs vs vdw'
     bandwidth1, fig, vdw_cutoff, viridis = score_vs_vdw_plot(all_scores, all_vdws, layout,
                                                              plot_color_dict, sample_types, scores_dict,
                                                              scores_range, vdw_penalty_dict)
     fig_dict['Discriminator vs vdw scores'] = fig
 
-    '''
-    vs coeff
-    '''
-    fig = score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coeff_dict,
-                                plot_color_dict, sample_types, scores_dict, viridis)
-    fig_dict['Discriminator vs packing coefficient'] = fig
+    'score vs packing'
+    fig_dict['Discriminator vs Reduced Volume'] = score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout,
+                                                                        packing_coeff_dict,
+                                                                        plot_color_dict, sample_types, scores_dict,
+                                                                        viridis)
 
-    fig = combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source, vdw_cutoff)
-    fig_dict['Discriminator Scores Analysis'] = fig
+    fig_dict['Discriminator Scores Analysis'] = combined_scores_plot(all_coeffs, all_scores, all_vdws, layout,
+                                                                     sample_source, vdw_cutoff)
 
     return fig_dict
 
@@ -365,9 +367,9 @@ def score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout, packing_co
                   row=2, col=1)
     fig.update_layout(showlegend=False, yaxis_showgrid=True)
     fig.update_xaxes(title_text='Model Score', row=1, col=1)
-    fig.update_xaxes(title_text='Packing Coefficient', row=1, col=2)
+    fig.update_xaxes(title_text='Reduced Volume Fraction', row=1, col=2)
     fig.update_xaxes(title_text='Model Score', row=2, col=1)
-    fig.update_yaxes(title_text='Packing Coefficient', row=2, col=1)
+    fig.update_yaxes(title_text='Reduced Volume Fraction', row=2, col=1)
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.layout.annotations[0].update(x=0.025)
@@ -378,21 +380,24 @@ def score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout, packing_co
 
 def combined_scores_plot(all_coeffs, all_scores, all_vdws, layout, sample_source, vdw_cutoff):
     """
-    # All in one
+    # All in one  # todo replace 'packing coefficient' throughout
     """
-    scatter_dict = {'vdw_score': -all_vdws.clip(max=vdw_cutoff), 'model_score': all_scores,
-                    'packing_coefficient': all_coeffs.clip(min=0, max=1), 'sample_source': sample_source}
+    scatter_dict = {'vdW Score': -all_vdws.clip(max=vdw_cutoff), 'Classification Score': all_scores,
+                    'Reduced Volume Fraction': all_coeffs, 'Sample Source': sample_source}
+    opacity = max(0.1, 1 - len(all_vdws) / 5e4)
+
     df = pd.DataFrame.from_dict(scatter_dict)
     fig = px.scatter(df,
-                     x='vdw_score', y='packing_coefficient',
-                     color='model_score', symbol='sample_source',
+                     x='vdW Score', y='Reduced Volume Fraction',
+                     color='Classification Score', symbol='Sample Source',
                      marginal_x='histogram', marginal_y='histogram',
                      range_color=(np.amin(all_scores), np.amax(all_scores)),
-                     opacity=0.1
+                     opacity=opacity,
                      )
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_range=[-vdw_cutoff, 0.1], yaxis_range=[0, 1.1])
-    fig.update_layout(xaxis_title='vdw score', yaxis_title='packing coefficient')
+    fig.update_layout(xaxis_range=[-vdw_cutoff, 0.1],
+                      yaxis_range=[np.quantile(all_coeffs, 0.01), np.quantile(all_coeffs, 0.99)])
+    fig.update_layout(xaxis_title='vdW Score', yaxis_title='Reduced Volume Fraction')
     fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
     return fig
 
@@ -1256,10 +1261,10 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
 
-    fig_dict['Regression Results'] = fig
-
-    wandb.log(loss_dict, commit=False)
+    fig.write_image('fig.png', width=1024, height=512)  # save the image rather than the fig, for size reasons
+    fig_dict['Regression Results'] = wandb.Image('fig.png')
     wandb.log(fig_dict, commit=False)
+    wandb.log(loss_dict, commit=False)
 
     return None
 
@@ -1486,7 +1491,7 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
     (coord_overlap, full_overlap,
      self_coord_overlap, self_overlap,
      self_type_overlap, type_overlap) = (
-        autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims, epoch_stats_dict))
+        autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims))
 
     overall_overlap = scatter(full_overlap / self_overlap, data.batch, reduce='mean').cpu().detach().numpy()
     evaluation_overlap_loss = scatter(F.smooth_l1_loss(self_overlap, full_overlap, reduction='none'), data.batch,
@@ -1522,51 +1527,6 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
     return None
 
 
-def proxy_discriminator_analysis(epoch_stats_dict):
-    tgt_value = np.concatenate(
-        (epoch_stats_dict['discriminator_real_score'], epoch_stats_dict['discriminator_fake_score']))
-    pred_value = np.concatenate((epoch_stats_dict['proxy_real_score'], epoch_stats_dict['proxy_fake_score']))
-
-    num_real_samples = len(epoch_stats_dict['discriminator_real_score'])
-    generator_inds = np.where(epoch_stats_dict['generator_sample_source'] == 0)[0] + num_real_samples
-    randn_inds = np.where(epoch_stats_dict['generator_sample_source'] == 1)[0] + num_real_samples
-    distorted_inds = np.where(epoch_stats_dict['generator_sample_source'] == 2)[0] + num_real_samples
-    csd_inds = np.arange(num_real_samples)
-
-    linreg_result = linregress(tgt_value, pred_value)
-
-    # predictions vs target trace
-    xline = np.linspace(max(min(tgt_value), min(pred_value)),
-                        min(max(tgt_value), max(pred_value)), 2)
-
-    xy = np.vstack([tgt_value, pred_value])
-    try:
-        z = get_point_density(xy)
-    except:
-        z = np.ones_like(tgt_value)
-
-    fig = go.Figure()
-    opacity = max(0.1, 1 - len(tgt_value) / 5e4)
-    for inds, name, symbol in zip([csd_inds, randn_inds, distorted_inds, generator_inds],
-                                  ['CSD', 'Gaussian', 'Distorted', 'Generated'],
-                                  ['circle', 'square', 'diamond', 'cross']):
-        fig.add_trace(go.Scattergl(x=tgt_value[inds], y=pred_value[inds], mode='markers', marker=dict(color=z[inds]),
-                                   opacity=opacity, showlegend=True, name=name, marker_symbol=symbol),
-                      )
-
-    fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
-                  )
-
-    fig.update_layout(xaxis_title='Discriminator Score', yaxis_title='Proxy Score')
-
-    fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
-    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
-
-    wandb.log({"Proxy Results": fig,
-               "proxy_R_value": linreg_result.rvalue,
-               "proxy_slope": linreg_result.slope}, commit=False)
-
-
 def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=None):
     """
     do analysis and plotting for cell discriminator
@@ -1585,7 +1545,10 @@ def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=N
 
     fig_dict['Score vs. Distance'] = score_vs_distance_plot(pred_distance_dict, scores_dict)
 
-    # img_dict = {key: wandb.Image(fig) for key, fig in fig_dict.items()}
+    for key, fig in fig_dict.items():
+        fig.write_image(key + 'fig.png', width=1024, height=512)  # save the image rather than the fig, for size reasons
+        fig_dict[key] = wandb.Image(key + 'fig.png')
+
     wandb.log(data=fig_dict, commit=False)
     wandb.log(data={"distance_R_value": dist_rvalue,
                     "distance_slope": dist_slope}, commit=False)

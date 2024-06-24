@@ -6,9 +6,9 @@ from torch.distributions import MultivariateNormal, Uniform
 
 from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from mxtaltools.crystal_building.utils import clean_cell_params
-from mxtaltools.models.base_graph_model import BaseGraphModel
-from mxtaltools.models.components import MLP
-from mxtaltools.models.molecule_graph_model import MoleculeGraphModel
+from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
+from mxtaltools.models.modules.components import EMLP
+from mxtaltools.models.graph_models.molecule_graph_model import MoleculeGraphModel
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.models.utils import clean_generator_output
 
@@ -79,7 +79,7 @@ class CrystalGenerator(BaseGraphModel):
         '''
         generator model
         '''
-        self.model = MLP(
+        self.model = EMLP(
             layers=config.generator.num_layers,
             filters=config.generator.hidden_dim,
             input_dim=self.latent_dim + SG_FEATURE_TENSOR.shape[1] + 1,
@@ -90,7 +90,7 @@ class CrystalGenerator(BaseGraphModel):
             conditioning_mode=None,
             norm=config.generator.norm,
             dropout=config.generator.dropout,
-            equivariant=True,
+            add_vector_channel=True,
             vector_output_dim=3,  # opt for rotvec output
             vector_input_dim=config.conditioner.graph_embedding_depth,
             vector_norm=config.generator.norm,

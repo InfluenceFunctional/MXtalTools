@@ -15,7 +15,7 @@ from torch_scatter import scatter_softmax
 
 from mxtaltools.common.config_processing import dict2namespace
 from mxtaltools.crystal_building.utils import random_crystaldata_alignment
-from mxtaltools.models.autoencoder_models import PointAutoencoder
+from mxtaltools.models.task_models.autoencoder_models import PointAutoencoder
 import numpy as np
 import torch
 

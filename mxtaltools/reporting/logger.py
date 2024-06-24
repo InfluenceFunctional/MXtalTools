@@ -119,11 +119,11 @@ class Logger:
                     else:
                         stat_dict[key] = np.asarray(value)
                 elif 'crystaldata' in str(type(value[0])).lower():
-                    pass
+                    pass  # do not concatenate lists of crystaldata objects
                 else:  # just a list
                     try:
                         stat_dict[key] = np.asarray(value)
-                    except:
+                    except ValueError:
                         stat_dict[key] = np.concatenate(value)
 
     def save_stats_dict(self, prefix=None):

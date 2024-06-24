@@ -1,29 +1,11 @@
 import torch
+from torch import Tensor
 from torch import nn as nn
 from torch_geometric import nn as gnn
-from torch_scatter import scatter
+from typing import Optional
 
-from mxtaltools.models.components import MLP
-from mxtaltools.models.equivariant_TransformerConv import EquiVTransformerConv
-
-
-class EmbeddingBlock(torch.nn.Module):
-    def __init__(self, init_node_embedding_dim, num_input_classes, num_scalar_input_features, atom_type_embedding_dim):
-        super(EmbeddingBlock, self).__init__()
-
-        self.embeddings = nn.Embedding(num_input_classes + 1, atom_type_embedding_dim)
-        self.linear = nn.Linear(atom_type_embedding_dim + num_scalar_input_features - 1, init_node_embedding_dim)
-
-    def forward(self, x):
-        if x.dim() == 1:
-            x = x.unsqueeze(1)  # make dim 1 explicit
-
-        embedding = self.embeddings(
-            x[:, 0].long())  # always embed the first dimension only (by convention, atomic number)
-
-        concat_vec = torch.cat([embedding, x[:, 1:]], dim=-1)
-
-        return self.linear(concat_vec)
+from mxtaltools.models.modules.components import EMLP
+from mxtaltools.models.modules.equivariant_TransformerConv import EquiVTransformerConv
 
 
 class GCBlock(torch.nn.Module):
@@ -33,11 +15,11 @@ class GCBlock(torch.nn.Module):
                  radial_dim,
                  dropout=0,
                  heads=1,
-                 equivariant=False):
+                 add_vector_channel=False):
         super(GCBlock, self).__init__()
         self.embed_edge = nn.Linear(radial_dim, radial_dim, bias=False)
-        self.equivariant = equivariant
-        if equivariant:
+        self.equivariant = add_vector_channel
+        if add_vector_channel:
             self.V_GConv = EquiVTransformerConv(
                 in_channels=message_depth,
                 out_channels=message_depth // heads,
@@ -61,6 +43,18 @@ class GCBlock(torch.nn.Module):
         )
 
     def embed_edge_attrs(self, edge_attr):
+        """
+        Embed edge attributes
+
+        Parameters
+        ----------
+        edge_attr : torch.tensor[n_edges, n_features]
+            1d attributes for each edge, typically an embedding over radial basis functions
+
+        Returns
+        -------
+        torch.tensor[n_edges, message_depth]
+        """
         return self.embed_edge(edge_attr)
 
     def forward(self, x, v, edge_attr, edge_index):
@@ -81,30 +75,37 @@ class GCBlock(torch.nn.Module):
 
 
 class FCBlock(torch.nn.Module):
+    """
+    Pure wrapper for MLP class
+    """
     def __init__(self,
-                 nodewise_fc_layers,
-                 node_embedding_depth,
-                 activation,
-                 nodewise_norm,
-                 nodewise_dropout,
-                 equivariant=False,
-                 vector_norm=None,
+                 nodewise_fc_layers: int,
+                 node_embedding_depth: int,
+                 activation: str,
+                 nodewise_norm: str,
+                 nodewise_dropout: float,
+                 equivariant: bool = False,
+                 vector_norm: str = None,
                  ):
         super(FCBlock, self).__init__()
         self.equivariant = equivariant
 
-        self.model = MLP(layers=nodewise_fc_layers,
-                         filters=node_embedding_depth,
-                         input_dim=node_embedding_depth,
-                         output_dim=node_embedding_depth,
-                         conditioning_dim=node_embedding_depth if equivariant else 0,
-                         activation=activation,
-                         norm=nodewise_norm,
-                         dropout=nodewise_dropout,
-                         equivariant=equivariant,
-                         vector_norm=vector_norm)
+        self.model = EMLP(layers=nodewise_fc_layers,
+                          filters=node_embedding_depth,
+                          input_dim=node_embedding_depth,
+                          output_dim=node_embedding_depth,
+                          conditioning_dim=node_embedding_depth if equivariant else 0,
+                          activation=activation,
+                          norm=nodewise_norm,
+                          dropout=nodewise_dropout,
+                          add_vector_channel=equivariant,
+                          vector_norm=vector_norm)
 
-    def forward(self, x, v=None, return_latent=False, batch=None):
+    def forward(self,
+                x: Tensor,
+                v: Optional[Tensor] = None,
+                return_latent: bool = False,
+                batch: Optional[torch.LongTensor] = None):
         return self.model(x,
                           v=v,
                           conditions=torch.linalg.norm(v, dim=1) if v is not None else None,
