@@ -275,10 +275,10 @@ def discriminator_scores_plots(scores_dict, vdw_penalty_dict, packing_coeff_dict
     fig_dict['Discriminator vs vdw scores'] = fig
 
     'score vs packing'
-    fig_dict['Discriminator vs Reduced Volume'] = score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout,
-                                                                        packing_coeff_dict,
-                                                                        plot_color_dict, sample_types, scores_dict,
-                                                                        viridis)
+    fig_dict['Discriminator vs Reduced Volume'] = score_vs_volume_plot(all_coeffs, all_scores, bandwidth1, layout,
+                                                                       packing_coeff_dict,
+                                                                       plot_color_dict, sample_types, scores_dict,
+                                                                       viridis)
 
     fig_dict['Discriminator Scores Analysis'] = combined_scores_plot(all_coeffs, all_scores, all_vdws, layout,
                                                                      sample_source, vdw_cutoff)
@@ -334,8 +334,8 @@ def score_vs_vdw_plot(all_scores, all_vdws, layout, plot_color_dict, sample_type
     return bandwidth1, fig, vdw_cutoff, viridis
 
 
-def score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coeff_dict, plot_color_dict, sample_types,
-                          scores_dict, viridis):
+def score_vs_volume_plot(all_coeffs, all_scores, bandwidth1, layout, packing_coeff_dict, plot_color_dict, sample_types,
+                         scores_dict, viridis):
     bandwidth2 = 0.01
     scores_labels = sample_types
     fig = make_subplots(rows=2, cols=2, subplot_titles=('a)', 'b)', 'c)'),
@@ -346,7 +346,7 @@ def score_vs_packing_plot(all_coeffs, all_scores, bandwidth1, layout, packing_co
                                 side='positive', orientation='h', width=4,
                                 meanline_visible=True, bandwidth=bandwidth1, points=False),
                       row=1, col=1)
-        fig.add_trace(go.Violin(x=np.clip(packing_coeff_dict[label], a_min=0, a_max=1), name=legend_label,
+        fig.add_trace(go.Violin(x=packing_coeff_dict[label], name=legend_label,
                                 line_color=plot_color_dict[label],
                                 side='positive', orientation='h', width=4, meanline_visible=True,
                                 bandwidth=bandwidth2, points=False),
@@ -1377,7 +1377,7 @@ def make_correlates_plot(tracking_features, values, dataDims):
     return fig
 
 
-def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, test_epoch_stats_dict,
+def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stats_dict,
                        extra_test_dict=None):
     """
     Do analysis and upload results to w&b
@@ -1407,16 +1407,18 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
                                      'test')
 
         elif config.mode == 'polymorph_classification':
-            classifier_reporting(true_labels=train_epoch_stats_dict['true_labels'],
-                                 probs=np.stack(train_epoch_stats_dict['probs']),
-                                 ordered_class_names=polymorph2form['acridine'],
-                                 wandb=wandb,
-                                 epoch_type='train')
-            classifier_reporting(true_labels=np.stack(test_epoch_stats_dict['true_labels']),
-                                 probs=np.stack(test_epoch_stats_dict['probs']),
-                                 ordered_class_names=polymorph2form['acridine'],
-                                 wandb=wandb,
-                                 epoch_type='test')
+            if train_epoch_stats_dict != {}:
+                classifier_reporting(true_labels=np.concatenate(train_epoch_stats_dict['true_labels']),
+                                     probs=np.stack(train_epoch_stats_dict['probs']),
+                                     ordered_class_names=polymorph2form['acridine'],
+                                     wandb=wandb,
+                                     epoch_type='train')
+            if test_epoch_stats_dict != {}:
+                classifier_reporting(true_labels=np.concatenate(test_epoch_stats_dict['true_labels']),
+                                     probs=np.stack(test_epoch_stats_dict['probs']),
+                                     ordered_class_names=polymorph2form['acridine'],
+                                     wandb=wandb,
+                                     epoch_type='test')
 
         # todo rewrite this - it's extremely slow and doesn't always work
         # combined_stats_dict = train_epoch_stats_dict.copy()
@@ -1442,11 +1444,18 @@ def detailed_reporting(config, dataDims, test_loader, train_epoch_stats_dict, te
 def classifier_reporting(true_labels, probs, ordered_class_names, wandb, epoch_type):
     present_classes = np.unique(true_labels)
     present_class_names = [ordered_class_names[ind] for ind in present_classes]
+    #if len(present_classes) > 1:
 
-    type_probs = softmax_np(probs[:, list(present_classes.astype(int))])
+    type_probs = F.softmax(torch.Tensor(probs[:, list(present_classes.astype(int))]), dim=1).detach().numpy()
     predicted_class = np.argmax(type_probs, axis=1)
 
-    train_score = roc_auc_score(true_labels, type_probs, multi_class='ovo')
+    if len(present_classes) == 2:
+        type_probs = type_probs[:, 1]
+
+    if len(present_classes) > 1:
+        train_score = roc_auc_score(true_labels, type_probs, multi_class='ovo')
+    else:
+        train_score = 1
     train_f1_score = f1_score(true_labels, predicted_class, average='micro')
     train_cmat = confusion_matrix(true_labels, predicted_class, normalize='true')
     fig = go.Figure(go.Heatmap(z=train_cmat, x=present_class_names, y=present_class_names))
@@ -1564,7 +1573,7 @@ def score_vs_distance_plot(pred_distance_dict, scores_dict):
     y = np.concatenate([pred_distance_dict[stype] for stype in sample_types])
     xy = np.vstack([x, y])
     try:
-        z = get_point_density(xy, bins=200)
+        z = get_point_density(xy, bins=25)
     except:
         z = np.ones(len(xy))
 
@@ -1576,12 +1585,12 @@ def score_vs_distance_plot(pred_distance_dict, scores_dict):
     xy = np.vstack([x, np.log10(y)])
 
     try:
-        z = get_point_density(xy, bins=200)
+        z = get_point_density(xy, bins=25)
     except:
         z = np.ones(len(x))
 
-    fig.add_trace(go.Scattergl(x=x, y=y + 1e-16, mode='markers', opacity=0.2, marker_color=z, showlegend=False), row=1,
-                  col=2)
+    fig.add_trace(go.Scattergl(x=x, y=y + 1e-16, mode='markers', opacity=0.2, marker_color=z, showlegend=False),
+                  row=1, col=2)
 
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
@@ -1821,3 +1830,54 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
 #                                        ), row=row, col=col)
 #     fig.update_coloraxes(cmin=0, cmax=cmax, autocolorscale=False, colorscale='viridis')
 #     return fig
+
+
+def polymorph_classification_trajectory_analysis(test_loader, stats_dict, traj_name):
+    # analysis here comprises plotting relative polymorph compositions
+    # and returning a trajectory with classification information
+    datapoints = test_loader.dataset
+    probabilities = softmax_np(np.stack(stats_dict['probs']))
+    num_classes = probabilities.shape[1]
+    num_atoms = datapoints[0].num_nodes
+
+    class_prob_traj = np.zeros((len(datapoints), probabilities.shape[1]))
+    class_selection_traj = np.zeros_like(class_prob_traj)
+    time_traj = np.zeros(len(datapoints))
+    coords_traj = np.zeros((len(datapoints), num_atoms, 3))
+    atom_types_traj = np.zeros((len(datapoints), num_atoms))
+    atomwise_prediction_traj = np.zeros_like(atom_types_traj)
+    mol_counter = 0
+    for ind in range(len(datapoints)):
+        sample = datapoints[ind]
+        num_mols = sample.mol_ind.max()
+        sample_probabilities = probabilities[mol_counter:mol_counter + num_mols]
+        sample_predictions = np.argmax(sample_probabilities, axis=1)
+        coords_traj[ind] = sample.pos.cpu().detach().numpy()
+        atom_types_traj[ind] = sample.x.flatten().cpu().detach().numpy()
+        atomwise_prediction_traj[ind] = sample_predictions[sample.mol_ind-1]
+
+        class_prob_traj[ind] = sample_probabilities.mean(0)
+        class_selection_traj[ind] = np.eye(num_classes)[sample_predictions].sum(0)
+        time_traj[ind] = int(sample.time_step)
+
+        mol_counter += num_mols
+
+    sort_inds = np.argsort(time_traj)
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=['Molecules / Class', 'Classwise Probability'])
+    for cind in range(num_classes):
+        fig.add_scattergl(x=time_traj[sort_inds], y=class_selection_traj[sort_inds, cind],
+                          name=f'Polymorph {cind}',
+                          row=1, col=1)
+        fig.add_scattergl(x=time_traj[sort_inds], y=class_prob_traj[sort_inds, cind],
+                          showlegend=False,
+                          row=1, col=2)
+    fig.show(renderer='browser')
+
+
+    from mxtaltools.common.ovito_utils import write_ovito_xyz
+
+    write_ovito_xyz(coords_traj,
+                    atom_types_traj,
+                    atomwise_prediction_traj,
+                    filename=traj_name[0].replace('\\','/').replace('/','_') + '_prediction')  # write a trajectory

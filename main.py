@@ -50,14 +50,17 @@ if __name__ == '__main__':
                 or config.mode == 'autoencoder'
                 or config.mode == 'embedding_regression'
                 or config.mode == 'polymorph_classification'):
-            predictor.fit_models()
+            if config.max_epochs > 0:
+                predictor.fit_models()
+            elif config.max_epochs == 0:
+                predictor.evaluate_model()
 
-        elif config.mode == 'search':
-            _, dataloader, _ = predictor.load_dataset_and_dataloaders(override_test_fraction=1)
-            predictor.crystal_search(molecule_data=dataloader.dataset[0], data_contains_ground_truth=True)
+        # elif config.mode == 'search':  # currently deprecated
+        #     _, dataloader, _ = predictor.load_dataset_and_dataloaders(override_test_fraction=1)
+        #     predictor.crystal_search(molecule_data=dataloader.dataset[0], data_contains_ground_truth=True)
 
         elif config.mode == 'embedding':
             predictor.ae_embedding_analysis()
 
-        elif config.mode == 'mol_generation':
-            predictor.autoencoder_molecule_generation()
+        # elif config.mode == 'mol_generation':
+        #     predictor.autoencoder_molecule_generation()

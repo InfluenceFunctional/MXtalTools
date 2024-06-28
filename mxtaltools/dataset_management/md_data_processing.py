@@ -7,11 +7,39 @@ from scipy.spatial.distance import cdist
 from tqdm import tqdm
 from pathlib import Path
 
-from mxtaltools.common.mol_classifier_utils import convert_box_to_cell_params
+from mxtaltools.common.mol_classifier_utils import convert_box_to_cell_params, convert_box_to_cell_vectors
 from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, ATOMIC_NUMBERS, VDW_RADII, ELECTRONEGATIVITY, GROUP, \
     PERIOD
-from mxtaltools.constants.mol_classifier_constants import MOLECULE_NUM_ATOMS, MOLECULE_MASSES, structure2polymorph
-from mxtaltools.dataset_management.utils import flatten_dataframe
+from mxtaltools.constants.mol_classifier_constants import MOLECULE_NUM_ATOMS, structure2polymorph
+import torch
+
+from mxtaltools.dataset_management.CrystalData import CrystalData
+from torch_scatter import scatter
+
+
+def flatten_dataframe(dataset1):
+    """
+    Flatten all elements of dataset1
+    Speeds up I/O and makes compatible with new processing functions + polars integration
+    Args:
+        dataset1:
+
+    Returns:
+
+    """
+    dataset2 = dataset1.copy()
+    for column in dataset1.columns:
+        try:
+            vals = [np.concatenate(entry).flatten() for entry in dataset1[column]]
+        except ValueError:
+            vals = [np.array(entry).flatten() for entry in dataset1[column]]
+        except TypeError:
+            vals = [np.array(entry).flatten() for entry in dataset1[column]]
+
+        dataset2[column] = vals
+        del dataset1[column]  # for RAM purposed
+
+    return dataset2
 
 
 def process_thermo_data():
@@ -117,8 +145,8 @@ def atom_mass_to_atom_num(atom_mass):
 
 
 def process_dump(path):
-    if os.path.exists('new_system.data') or os.path.exists(
-            'system.data'):  # pull atom indices straight out of the definition file
+    # pull atom indices straight out of the definition file
+    if os.path.exists('new_system.data') or os.path.exists('system.data'):
         num2atomicnum = extract_atom_indexing()
     else:
         assert False, "Missing system data - cannot define atom types"
@@ -129,20 +157,9 @@ def process_dump(path):
 
     timestep = None
     n_atoms = None
-    frame_outputs = {}
-    for ind, line in enumerate(tqdm(lines, miniters=len(lines) // 100)):
-        if "ITEM: TIMESTEP" in line:
-            timestep = int(lines[ind + 1])
-        elif "ITEM: NUMBER OF ATOMS" in line:
-            n_atoms = int(lines[ind + 1])
-        elif "ITEM: BOX BOUNDS" in line:
-            cell_params = np.stack([
-                np.asarray(lines[ind + 1].split()).astype(float),
-                np.asarray(lines[ind + 2].split()).astype(float),
-                np.asarray(lines[ind + 3].split()).astype(float)
-            ]
-            )
-        elif "ITEM: ATOMS" in line:  # atoms header
+    frame_outputs = {}  # todo is it really faster to do this as a bunch of dataframes? maybe just a dict or a pl.datadrame would be faster?
+    for ind, line in enumerate(tqdm(lines, miniters=len(lines) // 10)):
+        if "ITEM: ATOMS" in line:  # atoms header
             headers = line.split()[2:8]
             atom_data = np.zeros((n_atoms, len(headers)))
             for ind2 in range(n_atoms):
@@ -159,6 +176,17 @@ def process_dump(path):
             frame_data = pd.DataFrame(atom_data, columns=headers)
             frame_data.attrs['cell_params'] = cell_params  # add attribute directly to dataframe
             frame_outputs[timestep] = frame_data
+        elif "ITEM: TIMESTEP" in line:
+            timestep = int(lines[ind + 1])
+        elif "ITEM: NUMBER OF ATOMS" in line:
+            n_atoms = int(lines[ind + 1])
+        elif "ITEM: BOX BOUNDS" in line:
+            cell_params = np.stack([
+                np.asarray(lines[ind + 1].split()).astype(float),
+                np.asarray(lines[ind + 2].split()).astype(float),
+                np.asarray(lines[ind + 3].split()).astype(float)
+            ])
+
         else:
             pass
 
@@ -281,6 +309,7 @@ def force_molecules_into_box(T_fc, molwise_coords, num_molecules):
     # by default, we use ux, uy, uz (molecules do not fragment across boundaries, or respect periodicity)
     # so we have to force them back into the box
     # todo since we can have molecules of different sizes, we do this serially rather than in parallel
+
     # it could be parallelized with padding & torch, but we can do that later
     mol_centroids = np.zeros((num_molecules, 3))
     frac_mol_centroids = np.zeros_like(mol_centroids)
@@ -291,6 +320,7 @@ def force_molecules_into_box(T_fc, molwise_coords, num_molecules):
     adjustment_cart_vector = adjustment_fractional_vector @ T_fc.T
     for ind in range(num_molecules):
         molwise_coords[ind] += adjustment_cart_vector[ind]
+
     # check mols are in the box
     mol_centroids = np.zeros((num_molecules, 3))
     frac_mol_centroids = np.zeros_like(mol_centroids)
@@ -298,68 +328,254 @@ def force_molecules_into_box(T_fc, molwise_coords, num_molecules):
         mol_centroids[ind] = molwise_coords[ind].mean(0)
         frac_mol_centroids[ind] = mol_centroids[ind] @ np.linalg.inv(T_fc.T)
     assert -1e-5 <= frac_mol_centroids.min() and (
-                1 + 1e-5) >= frac_mol_centroids.max(), "Molecules are not all in the box!"
+            1 + 1e-5) >= frac_mol_centroids.max(), "Molecules are not all in the box!"
 
     return molwise_coords
 
 
-def generate_dataset_from_dumps(dumps_dirs, dataset_path):
-    interim_path = dataset_path.split('.pkl')[0] + '_interim.pkl'
-    if os.path.exists(interim_path):
-        sample_df = pd.read_pickle(interim_path)
-    else:
-        sample_df = pd.DataFrame()
+#
+#
+# def old_generate_dataset_from_dumps(dumps_dirs, dataset_path):
+#     interim_path = dataset_path.split('.pkl')[0] + '_interim.pkl'
+#     if os.path.exists(interim_path):
+#         sample_df = pd.read_pickle(interim_path)
+#     else:
+#         sample_df = pd.DataFrame()
+#     for dumps_dir in dumps_dirs:
+#         os.chdir(dumps_dir)
+#         dump_files = glob.glob(r'*/*.dump', recursive=True) + glob.glob(
+#             '*.dump')  # plus any free dumps directly in this dir
+#
+#         if len(dump_files) == 0:
+#             assert False, "No dump files in {}!".format(dumps_dir)
+#
+#         for path in tqdm(dump_files):  # todo make it so we skip over already-featurized dumps
+#             os.chdir(dumps_dir)
+#             print(f"Processing dump {path}")
+#             p1 = Path(path)
+#             path_parts = p1.parts
+#             if len(path_parts) > 1:
+#                 os.chdir(path_parts[0])
+#                 path = path_parts[1]
+#
+#             run_config = np.load('run_config.npy', allow_pickle=True).item()
+#
+#             trajectory_dict = process_dump(path)
+#             thermo_dict = process_thermo_data()
+#
+#             for ts, (time_step, vals) in enumerate(tqdm(trajectory_dict.items(), miniters=len(trajectory_dict) // 25)):
+#                 if ts % 10 == 0:
+#                     new_dict = {'atom_atomic_numbers': [vals['element'].astype(int)],
+#                                 'mol_ind': [vals['mol']],
+#                                 'atom_coordinates': [np.concatenate((
+#                                     np.asarray(vals['xu'])[:, None],
+#                                     np.asarray(vals['yu'])[:, None],
+#                                     np.asarray(vals['zu'])[:, None]), axis=-1)],
+#                                 'time_step': time_step,
+#                                 'cell_params': vals.attrs['cell_params'],
+#                                 'molecule_num_atoms': [MOLECULE_NUM_ATOMS[run_config['molind2name_dict'][val]] for val in
+#                                                        vals['mol']],
+#                                 'molecule_mass': [MOLECULE_MASSES[run_config['molind2name_dict'][val]] for val in
+#                                                   vals['mol']],
+#                                 }
+#                     new_dict.update(run_config)
+#                     new_dict['temperature'] = thermo_dict['temp'][np.argwhere(thermo_dict['time_step'] == time_step)]
+#
+#                     new_df = pd.DataFrame()
+#                     for key in new_dict.keys():
+#                         new_df[key] = [new_dict[key]]
+#
+#                     new_df = mol_cluster_dataset_processing(new_df)
+#                     sample_df = pd.concat([sample_df, new_df])
+#
+#             sample_df.to_pickle(interim_path)
+#
+#     os.remove(interim_path)
+#     sample_df.reset_index(drop=True, inplace=True)
+#     sample_df = flatten_dataframe(sample_df)
+#     sample_df.to_pickle(dataset_path)
+#     return True
+
+
+def generate_dataset_from_dumps(dumps_dirs: list,
+                                chunks_path: str,
+                                steps_per_save: int = 1):
     for dumps_dir in dumps_dirs:
         os.chdir(dumps_dir)
-        dump_files = glob.glob(r'*/*.dump', recursive=True) + glob.glob(
-            '*.dump')  # plus any free dumps directly in this dir
+        dump_files = glob.glob(r'*/*.dump', recursive=True) + glob.glob('*.dump')
 
         if len(dump_files) == 0:
             assert False, "No dump files in {}!".format(dumps_dir)
 
-        for path in tqdm(dump_files):  # todo make it so we skip over already-featurized dumps
+        for path in tqdm(dump_files):
             os.chdir(dumps_dir)
-            print(f"Processing dump {path}")
             p1 = Path(path)
             path_parts = p1.parts
             if len(path_parts) > 1:
                 os.chdir(path_parts[0])
-                path = path_parts[1]
+                file_path = path_parts[1]
+            else:
+                file_path = path
 
-            run_config = np.load('run_config.npy', allow_pickle=True).item()
+            run_dir = os.getcwd()
+            run_name = '_'.join(run_dir.replace('\\','/').split('/')[-2:])
+            chunk_path = chunks_path + run_name + '.pt'
 
-            trajectory_dict = process_dump(path)
-            thermo_dict = process_thermo_data()
+            if not os.path.exists(chunk_path):
+                print(f"Processing dump {path}")
 
-            for ts, (time_step, vals) in enumerate(tqdm(trajectory_dict.items(), miniters=len(trajectory_dict) // 25)):
-                if ts % 10 == 0:
-                    new_dict = {'atom_atomic_numbers': [vals['element'].astype(int)],
-                                'mol_ind': [vals['mol']],
-                                'atom_coordinates': [np.concatenate((
-                                    np.asarray(vals['xu'])[:, None],
-                                    np.asarray(vals['yu'])[:, None],
-                                    np.asarray(vals['zu'])[:, None]), axis=-1)],
-                                'time_step': time_step,
-                                'cell_params': vals.attrs['cell_params'],
-                                'molecule_num_atoms': [MOLECULE_NUM_ATOMS[run_config['molind2name_dict'][val]] for val in
-                                                       vals['mol']],
-                                'molecule_mass': [MOLECULE_MASSES[run_config['molind2name_dict'][val]] for val in
-                                                  vals['mol']],
-                                }
-                    new_dict.update(run_config)
-                    new_dict['temperature'] = thermo_dict['temp'][np.argwhere(thermo_dict['time_step'] == time_step)]
+                run_config = np.load('run_config.npy', allow_pickle=True).item()
 
-                    new_df = pd.DataFrame()
-                    for key in new_dict.keys():
-                        new_df[key] = [new_dict[key]]
+                trajectory_dict = process_dump(file_path)
+                data_list = []
+                for ts, (time_step, vals) in enumerate(tqdm(trajectory_dict.items(), miniters=len(trajectory_dict) // 10)):
+                    if ts % steps_per_save == 0:  # each X time steps
+                        (cell_angles, cell_lengths, cluster_coords, mol_centroids,
+                         molecule_num_atoms, polymorph, molecule_types, cluster_type) = process_cluster(
+                            run_config, vals)
 
-                    new_df = mol_cluster_dataset_processing(new_df)
-                    sample_df = pd.concat([sample_df, new_df])
+                        datapoint = CrystalData(
+                            x=torch.tensor(vals['element'], dtype=torch.long),
+                            mol_ind=torch.tensor(vals['mol'], dtype=torch.long),
+                            pos=cluster_coords,
+                            polymorph=polymorph,
+                            centroid_pos=mol_centroids - mol_centroids.mean(),
+                            time_step=time_step,
+                            molecule_num_atoms=molecule_num_atoms,
+                            mol_type_ind=molecule_types,
+                            cell_lengths=cell_lengths,
+                            cell_angles=cell_angles,
+                            cluster_type=cluster_type,
+                            sg_ind=1,
+                            z_prime=0,
+                            temperature=run_config['temperature'],
+                        )
 
-            sample_df.to_pickle(interim_path)
+                        data_list.append(datapoint)
 
-    os.remove(interim_path)
-    sample_df.reset_index(drop=True, inplace=True)
-    sample_df = flatten_dataframe(sample_df)
-    sample_df.to_pickle(dataset_path)
+                torch.save(data_list, chunk_path)
+
     return True
+
+
+def process_cluster_old_slow(run_config, vals):
+    """order atoms according to molecule index"""
+    unique_mols = np.unique(vals['mol'])
+    assert len(unique_mols) == unique_mols.max(), 'Molecule indices are not continuous'
+    mol_inds_tensor = torch.tensor(vals['mol'], dtype=torch.long)
+    molwise_atom_index = torch.cat([
+        torch.argwhere(mol_inds_tensor == unique).flatten() for unique in unique_mols
+    ])
+    unique_mol_names = np.unique(list(run_config['molind2name_dict'].values())).tolist()
+    molecule_types = torch.tensor([unique_mol_names.index(run_config['molind2name_dict'][val]) for val in unique_mols])
+    cluster_coords = torch.stack([
+        torch.tensor(vals['xu'], dtype=torch.float32),
+        torch.tensor(vals['yu'], dtype=torch.float32),
+        torch.tensor(vals['zu'], dtype=torch.float32)]
+    ).T[molwise_atom_index]
+    T_fc, cell_angles, cell_lengths = convert_box_to_cell_vectors(vals.attrs['cell_params'][None, ...])
+    T_fc, cell_angles, cell_lengths = torch.Tensor(T_fc[0]), torch.Tensor(cell_angles[0]), torch.Tensor(
+        cell_lengths[0])
+    polymorph_index = structure2polymorph[run_config['structure_identifier']]
+    rough_density = len(cluster_coords) / torch.prod(torch.diagonal(T_fc))
+    cluster_type = run_config['cluster_type']
+    if cluster_type == 'supercell':  # if periodic
+        cluster_coords -= cluster_coords.mean(0)
+    num_mols = int(np.amax(unique_mols))
+    molecule_num_atoms = torch.tensor([MOLECULE_NUM_ATOMS[run_config['molind2name_dict'][val]] for val
+                                       in unique_mols], dtype=torch.long)
+    assert torch.sum(molecule_num_atoms) == len(
+        cluster_coords), "Wrong number of atoms for given molecules input"
+    'get molecule centroids and coordinates'
+    if len(torch.unique(molecule_num_atoms)) == 1:
+        uniform_mol_size = True
+        molwise_coords = cluster_coords.reshape(num_mols, molecule_num_atoms[0], 3)
+        mol_centroids = molwise_coords.mean(1)
+    else:
+        uniform_mol_size = False
+        counter = 0
+        molwise_coords = []
+        mol_centroids = torch.zeros(num_mols)
+        for indi, mol_size in enumerate(molecule_num_atoms):
+            molwise_coords.append(
+                cluster_coords[counter:counter + int(mol_size)]
+            )
+            mol_centroids[indi] = molwise_coords[0].mean()
+    'force molecules into unit cell'
+    if cluster_type == 'supercell':  # periodic structure
+        # could be parallelized for massive speed-up with torch rnn-style padding
+        frac_mol_centroids = torch.zeros_like(mol_centroids)
+        for ind in range(num_mols):
+            frac_mol_centroids[ind] = mol_centroids[ind] @ torch.linalg.inv(T_fc.T)
+
+        adjustment_fractional_vector = -torch.floor(frac_mol_centroids)
+        adjustment_cart_vector = adjustment_fractional_vector @ T_fc.T
+        for ind in range(num_mols):
+            molwise_coords[ind] += adjustment_cart_vector[ind]
+
+        # check mols are in the box - expensive!
+        mol_centroids = torch.zeros((num_mols, 3))
+        frac_mol_centroids = torch.zeros_like(mol_centroids)
+        for ind in range(num_mols):
+            mol_centroids[ind] = molwise_coords[ind].mean(0)
+            frac_mol_centroids[ind] = mol_centroids[ind] @ torch.linalg.inv(T_fc.T)
+        assert -1e-5 <= frac_mol_centroids.min() and (
+                1 + 1e-5) >= frac_mol_centroids.max(), "Molecules are not all in the box!"
+    if uniform_mol_size:
+        cluster_coords = molwise_coords.reshape(num_mols * molecule_num_atoms[0], 3)
+    else:
+        cluster_coords = torch.stack(molwise_coords)
+
+    polymorph = torch.tensor([polymorph_index for _ in range(num_mols)], dtype=torch.long)
+
+    return cell_angles, cell_lengths, cluster_coords, mol_centroids, molecule_num_atoms, polymorph, molecule_types
+
+
+def process_cluster(run_config, vals):
+    """order atoms according to molecule index"""
+    'box params'
+    T_fc, cell_angles, cell_lengths = convert_box_to_cell_vectors(vals.attrs['cell_params'][None, ...])
+    T_fc, cell_angles, cell_lengths = torch.Tensor(T_fc[0]), torch.Tensor(cell_angles[0]), torch.Tensor(
+        cell_lengths[0])
+    T_cf = torch.linalg.inv(T_fc)
+
+    'molwise information'
+    unique_mols = np.unique(vals['mol']).astype(int)
+    num_mols = int(np.amax(unique_mols))
+    molecule_num_atoms = torch.tensor([MOLECULE_NUM_ATOMS[run_config['molind2name_dict'][val]] for val
+                                       in unique_mols], dtype=torch.long)
+    assert len(unique_mols) == unique_mols.max(), 'Molecule indices are not continuous'
+    unique_mol_names = np.unique(list(run_config['molind2name_dict'].values())).tolist()
+    molecule_types = torch.tensor([unique_mol_names.index(run_config['molind2name_dict'][val]) for val in unique_mols])
+    mol_inds_tensor = torch.tensor(vals['mol'], dtype=torch.long)
+
+    'polymorph index'
+    polymorph_index = structure2polymorph[run_config['structure_identifier']]
+    polymorph = torch.tensor([polymorph_index for _ in range(num_mols)], dtype=torch.long)
+
+    'extract coordinates'
+    cluster_coords = torch.stack([  # note: atoms are molwise out of order, but that's ok, we have a batch index
+        torch.tensor(vals['xu'], dtype=torch.float32),
+        torch.tensor(vals['yu'], dtype=torch.float32),
+        torch.tensor(vals['zu'], dtype=torch.float32)]
+    ).T
+    assert torch.sum(molecule_num_atoms) == len(
+        cluster_coords), "Wrong number of atoms for given molecules input"
+
+    cluster_type = run_config['cluster_type']
+
+    'force molecules into unit cell, if relevant, and return centroids'
+    mol_centroids = scatter(cluster_coords, mol_inds_tensor - 1, reduce='mean', dim=0)
+    if cluster_type == 'supercell':  # periodic structure
+        frac_mol_centroids = (T_cf @ mol_centroids.T).T
+
+        if torch.abs(frac_mol_centroids - 0.5).max() > 0.5:
+            adjustment_fractional_vector = -torch.floor(frac_mol_centroids)
+            adjustment_cart_vector = adjustment_fractional_vector @ T_fc.T
+            cluster_coords += adjustment_cart_vector[mol_inds_tensor - 1]
+            mol_centroids = scatter(cluster_coords, mol_inds_tensor - 1, reduce='mean', dim=0)
+            frac_mol_centroids = (T_cf @ mol_centroids.T).T
+
+        assert float(torch.abs(frac_mol_centroids - 0.5).max()) <= 0.50001, "Molecules are not all in the box!"
+
+    return cell_angles, cell_lengths, cluster_coords, mol_centroids, molecule_num_atoms, polymorph, molecule_types, cluster_type

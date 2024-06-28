@@ -1,8 +1,9 @@
+from typing import Optional
+
 import torch
 from torch import Tensor
 from torch import nn as nn
 from torch_geometric import nn as gnn
-from typing import Optional
 
 from mxtaltools.models.modules.components import EMLP
 from mxtaltools.models.modules.equivariant_TransformerConv import EquiVTransformerConv

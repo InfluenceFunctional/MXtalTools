@@ -15,26 +15,12 @@ sample_from_trajectory: True # true for random selection from dataset, false for
 trajs_to_analyze_list: null
 
 dataset_type: 'mol_cluster'
-dumps_dirs: ['acridine_test/']
+dumps_dirs: ['acridine_test']
 
 filter_polymorphs: False
 filter_duplicate_molecules: False
 filter_conditions: [#['temperature','range',[200, 400]],
                     ['time_step', 'range', [10000, 1000000000000]],
-                    ['cluster_type','in',['supercell']],
+                    #['cluster_type','in',['supercell']],
                     #['structure_identifier','in',['acridine/Form2', 'melt']],
                     ]
-
-atom_feature_keys: [
-'atom_atomic_numbers',
-'atom_mass',
-'atom_vdW_radius',
-'atom_electronegativity',
-'atom_group',
-'atom_period',
-'molecule_mass',
-'molecule_num_atoms'
-]
-
-molecule_feature_keys : [
-]

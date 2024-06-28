@@ -208,6 +208,17 @@ class CrystalData(BaseData):
             if is_well_defined is not None:
                 self.is_well_defined = is_well_defined
 
+    def cell_parameters(self):
+        """
+        return the zp=1 total cell parameter tensor
+        Returns
+        -------
+
+        """
+        return torch.cat([self.cell_lengths,
+                          self.cell_angles,
+                          self.pose_params1], dim=1)
+
     def __getattr__(self, key: str) -> Any:
         if '_store' not in self.__dict__:
             raise RuntimeError(

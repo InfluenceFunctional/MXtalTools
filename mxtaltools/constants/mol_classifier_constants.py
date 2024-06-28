@@ -241,7 +241,7 @@ polymorph2form = {
         3: 'Acr VI',
         4: 'Acr VII',
         5: 'Acr VIII',
-        6: 'Acr VI',
+        6: 'Acr IX',
         7: 'Acr Liq',
     }
 }

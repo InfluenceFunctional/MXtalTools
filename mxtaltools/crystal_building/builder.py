@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 from torch_geometric.loader.dataloader import Collater
 
@@ -5,10 +7,11 @@ from mxtaltools.common.utils import init_sym_info
 from mxtaltools.crystal_building.utils import \
     (update_supercell_data, unit_cell_to_convolution_cluster,
      align_molecules_to_principal_axes,
-     batch_asymmetric_unit_pose_analysis_torch, set_sym_ops,
-     rotvec2rotmat, aunit2unit_cell, generate_sorted_fractional_translations)
-from mxtaltools.common.geometry_calculations import compute_fractional_transform_torch, sph2rotvec
+     batch_asymmetric_unit_pose_analysis_torch, rotvec2rotmat, aunit2unit_cell, generate_sorted_fractional_translations,
+     get_symmetry_functions)
+from mxtaltools.common.geometry_calculations import sph2rotvec
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
+from mxtaltools.dataset_management.CrystalData import CrystalData
 
 
 class SupercellBuilder:
@@ -80,9 +83,10 @@ class SupercellBuilder:
                                                supercell_list, ref_mol_inds_list,
                                                combined_unit_cell_coords_list)
         supercell_data.mol_size = mol_size_list
-        supercell_data.mol_ind = torch.cat([  # if supercells are always indexed in increments of whole asymmetric units, this is valid
-            mol_ind_list[ind].repeat(n_copies[ind]) for ind in range(supercell_data.num_graphs)
-        ])
+        supercell_data.mol_ind = torch.cat(
+            [  # if supercells are always indexed in increments of whole asymmetric units, this is valid
+                mol_ind_list[ind].repeat(n_copies[ind]) for ind in range(supercell_data.num_graphs)
+            ])
 
         # visualize samples
         # from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
@@ -118,7 +122,8 @@ class SupercellBuilder:
             ], dim=0)
 
             mol_inds = torch.cat([
-                torch.ones(len(atomic_number_list[mol_ind + ind2]), dtype=torch.long, device=self.device) * ind2 for ind2 in range(zp)
+                torch.ones(len(atomic_number_list[mol_ind + ind2]), dtype=torch.long, device=self.device) * ind2 for
+                ind2 in range(zp)
             ], dim=0)
 
             combined_unit_cell_coords_list.append(combined_unit_cell)
@@ -159,22 +164,31 @@ class SupercellBuilder:
         return molwise_data, molwise_parameters
 
     def build_zp1_supercells(self,
-                             molecule_data,
+                             molecule_data: CrystalData,
                              cell_parameters: torch.tensor,
                              supercell_size: int = 5,
                              graph_convolution_cutoff: float = 6,
-                             target_handedness=None,
-                             align_to_standardized_orientation=False,
-                             pare_to_convolution_cluster=True,
-                             skip_refeaturization=False):
+                             target_handedness: Optional[torch.Tensor] = None,
+                             align_to_standardized_orientation: bool = False,
+                             pare_to_convolution_cluster: bool = True,
+                             skip_refeaturization: bool = False,
+                             skip_molecule_posing: bool = False,
+                             ):
 
         """
         convert cell parameters to unit cell in a fast, differentiable, invertible way
         convert reference cell to "supercell" (in fact, it's truncated to an appropriate cluster size)
         """
 
-        T_cf_list, T_fc_list, atomic_number_list, canonical_conformer_coords_list, generated_cell_volumes, supercell_data, sym_ops_list = self.build_zp_1_asymmetric_unit(
+        (T_cf_list, T_fc_list,
+         atomic_number_list, canonical_conformer_coords_list,
+         generated_cell_volumes, supercell_data, sym_ops_list) = self.build_zp_1_asymmetric_unit(
             align_to_standardized_orientation, cell_parameters, molecule_data, target_handedness)
+
+        if not skip_molecule_posing:
+            pass
+        else:  # use original pose
+            canonical_conformer_coords_list = [molecule_data.pos[molecule_data.batch == ind] for ind in range(molecule_data.num_graphs)]
 
         # apply symmetry ops to build unit cell
         unit_cell_coords_list = aunit2unit_cell(supercell_data.sym_mult,
@@ -182,8 +196,6 @@ class SupercellBuilder:
                                                 T_fc_list,
                                                 T_cf_list,
                                                 sym_ops_list)
-
-        #assert torch.sum(torch.isnan(torch.cat([elem.flatten() for elem in unit_cell_coords_list]))) == 0, f"{cell_parameters}, {coords_list}, {canonical_conformer_coords_list}"
 
         if not skip_refeaturization:  # if the mol position is outside the asym unit, the below params will not correspond to the inputs
             self.refeaturize_generated_cell(supercell_data, unit_cell_coords_list)
@@ -219,7 +231,7 @@ class SupercellBuilder:
             mol_rotation = mol_rotation_i
 
         T_cf_list, T_fc_list, generated_cell_volumes, supercell_data, sym_ops_list = (
-            self.get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotation, supercell_data))
+            get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotation, supercell_data))
 
         rotations_list = rotvec2rotmat(mol_rotation)
 
@@ -261,14 +273,6 @@ class SupercellBuilder:
         #     if (torch.amax(torch.sum(torch.abs(mol_orientations - mol_rotation_i), dim=1)) > 1e-2 or
         #             torch.amax(torch.sum(torch.abs(mol_positions - mol_position), dim=1)) > 1e-2):  # in the spherical basis
         #         print("Warning: Rebuilt standardized crystal was not identical.")
-
-    def get_symmetry_functions(self, cell_angles, cell_lengths, mol_position, mol_rotation, supercell_data):
-        # get transformation matrices
-        T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform_torch(cell_lengths, cell_angles)
-        supercell_data.T_fc = T_fc_list
-        supercell_data.cell_params = torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation), dim=1)
-        sym_ops_list, supercell_data = set_sym_ops(supercell_data)  # assign correct symmetry options
-        return T_cf_list, T_fc_list, generated_cell_volumes, supercell_data, sym_ops_list
 
     def prebuilt_unit_cell_to_supercell(self, supercell_data,
                                         supercell_size=5,

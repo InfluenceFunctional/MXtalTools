@@ -1,16 +1,21 @@
+from typing import Optional
+
 import torch
 from tqdm import tqdm
+from torch_geometric import nn as gnn
+
 import os
 import numpy as np
 from torch_geometric.loader.dataloader import Collater
-from torch_scatter import scatter
 from time import time
 import random
+import glob
 
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
-from mxtaltools.dataset_management.utils import basic_stats, filter_graph_nodewise, \
-    filter_batch_graphwise
+from mxtaltools.dataset_management.md_data_processing import generate_dataset_from_dumps
+from mxtaltools.dataset_management.utils import basic_stats, filter_graph_nodewise
+from mxtaltools.models.functions.minimum_image_neighbors import argwhere_minimum_image_convention_edges
 
 qm9_targets_list = ["rotational_constant_a",
                     "rotational_constant_b",
@@ -40,12 +45,17 @@ class DataManager:
                  dataset_type=None):
         self.datapoints = None
         self.datasets_path = datasets_path
-        self.chunks_path = chunks_path
+        if chunks_path is not None:
+            self.chunks_path = chunks_path
+        else:
+            self.chunks_path = self.datasets_path + '/classifier_chunks/'
+
         self.device = device  # cpu or cuda
         self.mode = mode  # standard or 'blind test'
         self.dataset_type = None
         self.config = config
         self.dataset_stats = None
+
         if dataset_type is not None:
             self.dataset_type = dataset_type
         else:
@@ -55,7 +65,7 @@ class DataManager:
             self.regression_target = self.config.regression_target if 'regression_target' in self.config.__dict__.keys() else None
             self.sample_from_trajectory = self.config.sample_from_trajectory if 'sample_from_trajectory' in self.config.__dict__.keys() else None
 
-        np.random.seed(seed=seed if config is None else config.seed)  # for certain random sampling ops
+        np.random.seed(seed=seed if config is None else config.seed)
         torch.manual_seed(seed=seed if config is None else config.seed)
         self.collater = Collater(None, None)
 
@@ -63,17 +73,31 @@ class DataManager:
         for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(device)
 
+        self.init_atom_properties()
+
+        self.times = {}
+
+    def init_atom_properties(self):
         self.vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()))
         self.atom_weights_tensor = torch.tensor(list(ATOM_WEIGHTS.values()))
         self.electronegativity_tensor = torch.tensor(list(ELECTRONEGATIVITY.values()))
         self.group_tensor = torch.tensor(list(GROUP.values()))
         self.period_tensor = torch.tensor(list(PERIOD.values()))
 
-        self.times = {}
-
-    def load_chunks(self, max_chunks=1e8, samples_per_chunk=1e8):
+    def load_chunks(self, chunks_patterns=None,
+                    max_chunks=1e8,
+                    samples_per_chunk=1e8):
         os.chdir(self.chunks_path)
-        chunks = os.listdir()
+        if chunks_patterns is None:
+            chunks = os.listdir()
+        else:
+            chunks = []
+            for pattern in chunks_patterns:
+                pattern = pattern.replace('\\','/').replace('/','_')
+                chunks.extend(glob.glob(f'{pattern}*.pt'))
+
+        print(f'Loading {len(chunks)}:{chunks} chunks from {chunks_patterns}')
+
         random.Random(1).shuffle(chunks)
         num_chunks = min([len(chunks), max_chunks])
         print(f'Collecting {num_chunks} dataset chunks')
@@ -87,68 +111,107 @@ class DataManager:
                 else:
                     self.dataset.extend(loaded_chunk)
 
-    def load_dataset_for_modelling(self, dataset_name,
+    def load_dataset_for_modelling(self,
+                                   dataset_name,
                                    override_length=None,
                                    filter_conditions=None,
                                    filter_polymorphs=False,
                                    filter_duplicate_molecules=False,
                                    filter_protons=False,
-                                   override_dataset=None):
-        """
-        Loads a dataset for use in modelling, with last minute filtering, featurization and transformations.
-        # TODO note currently only set up for Z'=1 crystal structures
-
-        Args:
-            dataset_name:
-            override_length:
-            filter_conditions:
-            filter_polymorphs:
-            filter_duplicate_molecules:
-            override_dataset:
-
-        Returns:
-
+                                   conv_cutoff: Optional[float] = None,
+                                   do_shuffle: bool=True,
+                                   precompute_edges: bool=False,
+                                   ):
         """
 
-        if override_dataset is None:
-            # todo rewrite molecule cluster dataloading
-            # if not os.path.exists(self.datasets_path + dataset_name) and 'dumps_dirs' in config.__dict__.keys():
-            #     # convert dump files to a combined dataframe if it doesn't already exist
-            #     generate_dataset_from_dumps([self.datasets_path + dir_name for dir_name in config.dumps_dirs],
-            #                                 self.datasets_path + dataset_name)
+        Parameters
+        ----------
+        do_shuffle
+        conv_cutoff : float
+        dataset_name
+        override_length
+        filter_conditions
+        filter_polymorphs
+        filter_duplicate_molecules
+        filter_protons
 
+        Returns
+        -------
+
+        """
+
+        if self.dataset_type == 'mol_cluster':
+            self.molecule_cluster_dataset_processing(dataset_name)
+        else:
             self.load_training_dataset(dataset_name)
-        else:  # for loading dataset on the fly
-            self.dataset = override_dataset
-            if self.dataset_type == 'crystal':
-                self.rebuild_crystal_indices()
-            # self.override_dataDims  # todo build a constant dataDims for the overall dataset (not just chunks) and ignore the one that comes out from get_dimension
-            # self.override std dict  # todo may not be necessary?
-            # self.override target    # todo add dummy value?, maybe just 'radius' but will need a mean and std just so the datapoint builder doesn't crash
 
         self.dataset_filtration(filter_conditions, filter_duplicate_molecules, filter_polymorphs)
 
-        self.truncate_and_shuffle_dataset(override_length)
+        self.truncate_and_shuffle_dataset(override_length, do_shuffle=do_shuffle)
 
         self.get_cell_cov_mat()
         self.assign_targets()
-        self.present_atom_types, _ = self.misc_dataset['dataset_stats']['atomic_number']['uniques']
+        self.present_atom_types, _ = self.dataset_stats['atomic_number']['uniques']
         if filter_protons:
             if 1 in self.present_atom_types:
                 self.present_atom_types = self.present_atom_types[self.present_atom_types != 1]
+
         self.dataDims = self.get_data_dimensions()
 
         for ind in range(len(self.dataset)):
             if self.dataset[ind].x.ndim == 1:
                 self.dataset[ind].x = self.dataset[ind].x[:, None]
 
-    def truncate_and_shuffle_dataset(self, override_length=None):
+        if precompute_edges:
+            self.compute_edges(conv_cutoff)
+
+    def compute_edges(self, conv_cutoff):
+        if self.dataset_type == 'mol_cluster':
+            self.molecule_cluster_edge_indexing(conv_cutoff)
+        else:
+            # doesn't work for crystal datasets
+            for ind in tqdm(range(len(self.dataset))):
+                sample = self.dataset[ind]
+                self.dataset[ind].edge_index = gnn.radius_graph(sample.pos,
+                                                                r=conv_cutoff,
+                                                                max_num_neighbors=100,
+                                                                flow='source_to_target')  # note - requires batch be monotonically increasing
+
+    def molecule_cluster_dataset_processing(self, dataset_name):
+        if not os.path.exists(self.datasets_path + dataset_name) and 'dumps_dirs' in self.config.__dict__.keys():
+            # if it hasn't already been done, convert the relevant LAMMPS trajectories into trainable data objects
+            generate_dataset_from_dumps([self.datasets_path + dir_name for dir_name in self.config.dumps_dirs],
+                                        self.datasets_path + '/classifier_chunks/',
+                                        steps_per_save=1)
+
+        self.process_new_dataset(new_dataset_name=None,
+                                 chunks_patterns=[dump_dir for dump_dir in self.config.dumps_dirs],
+                                 save_dataset=False,
+                                 )
+        self.dataset = self.dataset.to_data_list()  # process in list form
+        self.dataset_stats = self.misc_dataset['dataset_stats']
+
+    def molecule_cluster_edge_indexing(self, conv_cutoff):
+        'prepopulate edge information - expensive to do repeatedly - will not work if we noise the coordinates'
+        for ind in tqdm(range(len(self.dataset))):
+            edges_dict = argwhere_minimum_image_convention_edges(1,
+                                                                 self.dataset[ind].pos,
+                                                                 self.dataset[ind].T_fc,
+                                                                 conv_cutoff)
+            self.dataset[ind].edge_index = edges_dict['edge_index']
+            self.dataset[ind].edge_attr = edges_dict['dists']
+
+    def truncate_and_shuffle_dataset(self, override_length=None, do_shuffle=True):
         """defines train/test split as well as overall dataset size"""
         self.times['dataset_shuffle_start'] = time()
         # get dataset length & shuffle
         self.max_dataset_length = override_length if override_length is not None else self.config.max_dataset_length
         self.dataset_length = min(len(self.dataset), self.max_dataset_length)
-        inds_to_keep = list(np.random.choice(len(self.dataset), self.dataset_length, replace=False))
+        if do_shuffle:
+            inds_to_keep = list(np.random.choice(len(self.dataset), self.dataset_length, replace=False))
+        else:
+            inds_to_keep = np.linspace(0, len(self.dataset) - 1, min(len(self.dataset), self.dataset_length)).astype(int)
+
         self.dataset = [self.dataset[ind] for ind in inds_to_keep]
         self.times['dataset_shuffle_end'] = time()
 
@@ -205,7 +268,7 @@ class DataManager:
         if self.dataset_type == 'crystal':
             self.lattice_means = [self.dataset_stats[feat]['tight_mean'] for feat in self.lattice_keys]
             self.lattice_stds = [self.dataset_stats[feat]['tight_std'] for feat in self.lattice_keys]
-            self.lattice_stats = {key:self.dataset_stats[key] for key in self.lattice_keys}
+            self.lattice_stats = {key: self.dataset_stats[key] for key in self.lattice_keys}
         else:
             self.lattice_means = [0 for _ in range(12)]
             self.lattice_stds = [0.01 for _ in range(12)]
@@ -244,7 +307,7 @@ class DataManager:
         }
 
         if self.dataset_type == 'mol_cluster':
-            dim['num_polymorphs'] = self.num_polymorphs  # todo reimplement
+            dim['num_polymorphs'] = len(torch.unique(torch.cat([elem.polymorph for elem in self.dataset])))
             dim['num_topologies'] = 0
 
         return dim
@@ -318,7 +381,8 @@ class DataManager:
 
             for ind in range(len(self.dataset)):
                 cell_params[ind] = torch.cat(
-                    [self.dataset[ind].cell_lengths, self.dataset[ind].cell_angles, self.dataset[ind].pose_params0], dim=1)
+                    [self.dataset[ind].cell_lengths, self.dataset[ind].cell_angles, self.dataset[ind].pose_params0],
+                    dim=1)
         else:
             cell_params = torch.ones((len(self.dataset), 12), dtype=torch.float32)
 
@@ -356,24 +420,34 @@ class DataManager:
         if 'test' in dataset_name and self.dataset_type == 'crystal':
             self.rebuild_crystal_indices()
 
-    def process_new_dataset(self, new_dataset_name, test_dataset_size: int = 10000, max_chunks=1e8, samples_per_chunk=1e8):
-        self.load_chunks(max_chunks=max_chunks, samples_per_chunk=samples_per_chunk)
+    def process_new_dataset(self,
+                            new_dataset_name: str = None,
+                            test_dataset_size: int = 10000,
+                            max_chunks: int = 1e8,
+                            chunks_patterns: list = None,
+                            samples_per_chunk=1e8,
+                            save_dataset=True):
+        self.load_chunks(chunks_patterns=chunks_patterns,
+                         max_chunks=max_chunks,
+                         samples_per_chunk=samples_per_chunk)
 
         # collation here so we don't slow down saving above
         self.dataset = self.collater(self.dataset)
-        misc_data_dict = self.extract_misc_stats_and_indices()
+        self.misc_dataset = self.extract_misc_stats_and_indices()
         # save smaller test dataset
-        np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, misc_data_dict)
 
-        # dataset for functionality testing
-        ints = list(
-            np.random.choice(min(len(self.dataset), test_dataset_size),
-                             min(len(self.dataset), test_dataset_size),
-                             replace=False))
-        torch.save([self.dataset[ind] for ind in ints], self.datasets_path + 'test_' + new_dataset_name + '.pt')
+        if save_dataset:
+            np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, self.misc_dataset)
 
-        # save full dataset
-        torch.save(self.dataset, self.datasets_path + new_dataset_name + '.pt')
+            # dataset for functionality testing
+            ints = list(
+                np.random.choice(min(len(self.dataset), test_dataset_size),
+                                 min(len(self.dataset), test_dataset_size),
+                                 replace=False))
+            torch.save([self.dataset[ind] for ind in ints], self.datasets_path + 'test_' + new_dataset_name + '.pt')
+
+            # save full dataset
+            torch.save(self.dataset, self.datasets_path + new_dataset_name + '.pt')
 
     def extract_misc_stats_and_indices(self):
         misc_data_dict = {
@@ -580,6 +654,8 @@ class DataManager:
             # ratio of asymmetric unit volume to the sum of atomwise volumes
             # a very coarse proxy for packing coefficient
             values = self.get_reduced_volume_fraction()
+        elif condition_key == 'time_step':
+            values = torch.Tensor([elem.time_step for elem in self.dataset])
         else:
             assert False, f"{condition_key} is not implemented as a filterable item"
 

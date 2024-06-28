@@ -21,6 +21,8 @@ import torch
 
 from mxtaltools.models.utils import compute_full_evaluation_overlap, reload_model
 
+# NOTE DEPRECATED
+
 config_path = '../standalone/qm9_encoder.yaml'
 # checkpoint_path = 'C:/Users/mikem/crystals/CSP_runs/models/cluster/best_autoencoder_autoencoder_tests_qm9_test21_43_17-02-20-55-35'  # without protons
 checkpoint_path = 'C:/Users/mikem/crystals/CSP_runs/models/cluster/best_autoencoder_autoencoder_tests_qm9_test21_39_17-02-09-19-00'  # with protons

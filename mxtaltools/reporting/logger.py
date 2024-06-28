@@ -1,8 +1,8 @@
 import numpy as np
 
-from mxtaltools.common.utils import update_stats_dict
+from mxtaltools.common.utils import update_stats_dict, softmax_np
 from mxtaltools.models.utils import check_convergence, softmax_and_score
-from mxtaltools.reporting.online import detailed_reporting
+from mxtaltools.reporting.online import detailed_reporting, polymorph_classification_trajectory_analysis
 
 
 class Logger:
@@ -234,5 +234,24 @@ class Logger:
     def log_detailed_analysis(self, test_loader):
         """sometimes do detailed reporting"""
         if (self.epoch % self.sample_reporting_frequency) == 0:
-            detailed_reporting(self.config, self.dataDims, test_loader,
+            detailed_reporting(self.config, self.dataDims,
                                self.train_stats, self.test_stats, extra_test_dict=self.extra_stats)
+
+    def evaluation_analysis(self, test_loader, mode):
+        """
+        log analysis of an evaluation dataset
+        Parameters
+        ----------
+        test_loader
+
+        Returns
+        -------
+
+
+        """
+
+        if mode == 'polymorph_classification':
+            assert len(self.config.dataset.dumps_dirs) == 1, "Polymorph classification trajectory analysis only implemented for single trajectory files"
+            polymorph_classification_trajectory_analysis(test_loader, self.test_stats, traj_name=self.config.dataset.dumps_dirs)
+
+            aa = 1

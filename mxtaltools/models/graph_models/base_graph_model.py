@@ -106,6 +106,7 @@ class BaseGraphModel(torch.nn.Module):
                           data.ptr,
                           data.mol_x,
                           data.num_graphs,
+                          edge_index=data.edge_index,
                           return_dists=return_dists,
                           return_latent=return_latent)
 

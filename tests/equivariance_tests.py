@@ -33,6 +33,7 @@ feature_depth = 12
 
 rotation_matrix = torch.tensor(R.random().as_matrix(), device=device, dtype=torch.float32)
 
+# TODO update with new graph convolution and end-to-end model
 
 @torch.no_grad()
 def test_VectorActivation():
@@ -86,7 +87,7 @@ def test_EMLP():
 @torch.no_grad()
 def test_aggregators():
     for aggregator in ['equivariant softmax', 'equivariant combo', 'equivariant attention']:
-        module = GlobalAggregation(aggregator, feature_depth)
+        module = GlobalAggregation(aggregator, feature_depth)  # todo replace with up-to-date aggregators
         vector_batch = torch.randn(num_samples, 3, feature_depth)
         batch_inds = torch.tensor(np.random.choice(np.arange(num_graphs), size=num_samples), device=device, dtype=torch.long)
         rotated_output, output_from_rotated = is_module_equivariant(x=vector_batch.norm(dim=1), v=vector_batch, rotation_matrix=rotation_matrix, module=module, batch=batch_inds)

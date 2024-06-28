@@ -1,18 +1,23 @@
+from typing import Tuple, Optional
+
 import torch
 
+from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
-from mxtaltools.models.graph_models.molecule_graph_model import MoleculeGraphModel
+from mxtaltools.models.graph_models.molecule_graph_model import MoleculeClusterModel
 
 
-class PolymorphClassifier(BaseGraphModel):
-    def __init__(self, seed, config,
-                 dataDims: dict,
+class MoleculeClusterClassifier(BaseGraphModel):
+    def __init__(self,
+                 seed,
+                 config,
+                 output_dim,
                  atom_features: list,
                  molecule_features: list,
-                 node_standardization_tensor: torch.tensor,
-                 graph_standardization_tensor: torch.tensor,
+                 node_standardization_tensor: torch.Tensor,
+                 graph_standardization_tensor: torch.Tensor,
                  ):
-        super(PolymorphClassifier, self).__init__()
+        super(MoleculeClusterClassifier, self).__init__()
 
         torch.manual_seed(seed)
         self.get_data_stats(atom_features,
@@ -20,106 +25,77 @@ class PolymorphClassifier(BaseGraphModel):
                             node_standardization_tensor,
                             graph_standardization_tensor)
 
-
-        self.model = MoleculeGraphModel(
+        self.model = MoleculeClusterModel(
             input_node_dim=self.n_atom_feats,
             num_mol_feats=0,
-            output_dim=dataDims['num_polymorphs'] + dataDims['num_topologies'],
+            output_dim=output_dim,
             seed=seed,
-            graph_aggregator='molwise',
             activation=config.activation,
             fc_config=config.fc,
             graph_config=config.graph,
-            outside_convolution_type='none'
         )
 
-    def forward(self, data, return_dists=False, return_latent=False, return_embedding=False, skip_standardization=False):
-        if not skip_standardization:
-            data = self.standardize(data)
+    def forward(self,
+                data: CrystalData,
+                return_dists: bool = False,
+                return_latent: bool = False,
+                return_embedding: bool = False,
+                ) -> Tuple[torch.Tensor, Optional[dict]]:
+        # featurize atom properties on the fly
+        data = self.featurize_input_graph(data)
 
-        return self.model(data,
+        # standardize on the fly from model-attached statistics
+        data = self.standardize(data)
+
+        return self.model(data.x,
+                          data.pos,
+                          data.ptr,
+                          data.mol_x,
+                          data.num_graphs,
+                          data.mol_ind,
+                          data.T_fc,
+                          data.edge_index,
+                          data.edge_attr,
                           return_dists=return_dists,
                           return_latent=return_latent,
                           return_embedding=return_embedding)
 
 
-    #
-    #     self.max_num_neighbors = max_num_neighbors
-    #     self.cutoff = cutoff
-    #
-    #     if radial_embedding == 'bessel':
-    #         self.rbf = BesselBasisLayer(num_radial, cutoff, envelope_exponent)
-    #     elif radial_embedding == 'gaussian':
-    #         self.rbf = GaussianEmbedding(start=0.0, stop=cutoff, num_gaussians=num_radial)
-    #
-    #     self.atom_embedding = EmbeddingBlock(node_embedding_depth,
-    #                                          num_embedding_types,
-    #                                          input_node_depth,
-    #                                          embedding_hidden_dimension)
-    #
-    #     self.interaction_blocks = torch.nn.ModuleList([
-    #         GC_Block(message_depth,
-    #                  node_embedding_depth,
-    #                  num_radial,
-    #                  heads=attention_heads,
-    #                  )
-    #         for _ in range(num_blocks)
-    #     ])
-    #
-    #     self.fc_blocks = torch.nn.ModuleList([
-    #         MLP(
-    #             layers=nodewise_fc_layers,
-    #             filters=node_embedding_depth,
-    #             input_dim=node_embedding_depth,
-    #             output_dim=node_embedding_depth,
-    #             activation=activation,
-    #             norm=nodewise_norm,
-    #             dropout=nodewise_dropout,
-    #         )
-    #         for _ in range(num_blocks)
-    #     ])
-    #
-    #     self.global_pool = GlobalAggregation('molwise', graph_embedding_depth)
-    #
-    #     self.gnn_mlp = MLP(layers=num_fcs,
-    #                        filters=node_embedding_depth,
-    #                        norm=fc_norm,
-    #                        dropout=fc_dropout,
-    #                        input_dim=graph_embedding_depth,
-    #                        output_dim=output_dimension,
-    #                        conditioning_dim=0,
-    #                        seed=seed
-    #                        )
-    #
-    # def get_geom_embedding(self, edge_index, pos):
-    #     """
-    #     compute elements for radial & spherical embeddings
-    #     """
-    #     i, j = edge_index  # i->j source-to-target
-    #     dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
-    #
-    #     return dist, self.rbf(dist)
-    #
-    # def forward(self, data, return_latent=False, return_embedding=False):
-    #
-    #     x = self.atom_embedding(data.x)  # embed atomic numbers & compute initial atom-wise feature vector
-    #     batch = data.batch
-    #
-    #     if data.periodic[0]:  # get radial embeddings periodically using minimum image convention
-    #
-    #     else:  # just get the radial graph the normal way
-    #         edges_dict = construct_radial_graph(data.pos, data.batch, data.ptr, self.cutoff, self.max_num_neighbors)
-    #         edge_index = edges_dict['edge_index']
-    #         dist, rbf = self.get_geom_embedding(edge_index, data.pos)
-    #
-    #     for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
-    #         x = convolution(x, rbf, edge_index, batch)  # graph convolution
-    #         x = fc(x, batch=batch)  # feature-wise 1D convolution
-    #
-    #     x = self.global_pool(x, batch, cluster=data.mol_ind, output_dim=data.num_graphs)
-    #
-    #     if not return_embedding:
-    #         return self.gnn_mlp(x, return_latent=return_latent)
-    #     else:
-    #         return self.gnn_mlp(x, return_latent=return_latent), x
-    #
+# deprecated
+# class PolymorphClassifier(BaseGraphModel):
+#     def __init__(self, seed, config,
+#                  dataDims: dict,
+#                  atom_features: list,
+#                  molecule_features: list,
+#                  node_standardization_tensor: torch.tensor,
+#                  graph_standardization_tensor: torch.tensor,
+#                  ):
+#         super(PolymorphClassifier, self).__init__()
+#
+#         torch.manual_seed(seed)
+#         self.get_data_stats(atom_features,
+#                             molecule_features,
+#                             node_standardization_tensor,
+#                             graph_standardization_tensor)
+#
+#         self.model = MoleculeGraphModel(
+#             input_node_dim=self.n_atom_feats,
+#             num_mol_feats=0,
+#             output_dim=dataDims['num_polymorphs'] + dataDims['num_topologies'],
+#             seed=seed,
+#             graph_aggregator='molwise',
+#             activation=config.activation,
+#             fc_config=config.fc,
+#             graph_config=config.graph,
+#             outside_convolution_type='none'
+#         )
+#
+#     def forward(self, data, return_dists=False, return_latent=False, return_embedding=False,
+#                 skip_standardization=False):
+#         if not skip_standardization:
+#             data = self.standardize(data)
+#
+#         return self.model(data,
+#                           return_dists=return_dists,
+#                           return_latent=return_latent,
+#                           return_embedding=return_embedding)

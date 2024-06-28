@@ -1,8 +1,10 @@
 import sys
+from argparse import Namespace
+from typing import Union, Tuple
 
 import numpy as np
-from scipy.stats import linregress
 import torch
+from scipy.stats import linregress
 from torch import optim, nn as nn
 from torch.nn import functional as F
 from torch.optim import lr_scheduler as lr_scheduler
@@ -10,12 +12,18 @@ from torch_scatter import scatter, scatter_softmax
 
 from mxtaltools.common.geometry_calculations import cell_vol_torch
 from mxtaltools.common.utils import softmax_np, components2angle
+from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.dataloader_utils import update_dataloader_batch_size
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
+from mxtaltools.models.graph_models.embedding_regression_models import EmbeddingRegressor
+from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
+from mxtaltools.models.task_models.crystal_models import MolecularCrystalModel
+from mxtaltools.models.task_models.mol_classifier import MoleculeClusterClassifier
+from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
 
 
-def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr):
-    if optimizer_config.lr_schedule:
+def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr, override_lr = None):
+    if optimizer_config.lr_schedule and override_lr is None:
         lr = optimizer.param_groups[0]['lr']
         if lr > optimizer_config.min_lr:
             schedulers[0].step(np.mean(np.asarray(err_tr)))  # plateau scheduler
@@ -25,6 +33,9 @@ def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr):
         elif hit_max_lr:
             if lr > optimizer_config.min_lr:
                 schedulers[2].step()  # start reducing lr
+    elif override_lr is not None:
+        for g in optimizer.param_groups:
+            g['lr'] = override_lr
 
     lr = optimizer.param_groups[0]['lr']
     return optimizer, lr
@@ -381,13 +392,37 @@ def compute_num_h_bonds(supercell_data, atom_acceptor_ind, atom_donor_ind, i):
     return torch.sum(torch.cdist(donors_pos, acceptors_pos, p=2) < 3.3)
 
 
-def save_checkpoint(epoch, model, optimizer, config, save_path, dataDims):
-    torch.save({'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'config': config,
-                'dataDims': dataDims},
-               save_path)
+def save_checkpoint(epoch: int,
+                    model: nn.Module,
+                    optimizer,
+                    config: dict,
+                    save_path: str,
+                    dataDims: dict):
+    """
+
+    Parameters
+    ----------
+    epoch
+    model
+    optimizer
+    config
+    save_path
+    dataDims
+
+    Returns
+    -------
+
+    """
+    if torch.stack([torch.isfinite(p).any() for p in model.parameters()]).all():
+        torch.save({'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'config': config,
+                    'dataDims': dataDims},
+                   save_path)
+    else:
+        print("Did not save model - NaN parameters present")
+        # todo add assertion here?
     return None
 
 
@@ -727,31 +762,6 @@ def compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor,
     return full_overlap, self_overlap
 
 
-def argwhere_minimum_image_convention_edges(num_graphs, pos, T_fc, cutoff):
-    assert num_graphs == 1  # this only works one at a time
-    # restrict particles individually to box
-    if T_fc.ndim == 3:
-        T_fc = T_fc[0, ...]
-    frac_coords = pos @ torch.linalg.inv(T_fc.T)
-    frac_coords -= torch.floor(frac_coords)
-    # B.9 in Tuckerman
-    # convert to fractional
-    # get pointwise differences
-    # subtract nearest integer
-    # transform back to cartesian
-    fdistmats = torch.stack([
-        frac_coords[:, ind, None] - frac_coords[None, :, ind]
-        for ind in range(3)])
-    fdistmats -= torch.round(fdistmats)
-    distmats = fdistmats.permute((1, 2, 0)) @ T_fc.T
-    norms = torch.linalg.norm(distmats, dim=-1)
-    a, b = torch.where((norms > 0) * (norms <= cutoff))  # faster but still pretty slow
-    edge_index = torch.cat((a[None, :], b[None, :]), dim=0)
-    dist = norms[edge_index[0], edge_index[1]]
-
-    return {'edge_index': edge_index, 'dists': dist}
-
-
 def get_node_weights(data, decoded_data, decoding, num_decoder_nodes, node_weight_temperature):
     # per-atom weights of each graph
     graph_weights = data.num_atoms / num_decoder_nodes
@@ -774,3 +784,215 @@ def dict_of_tensors_to_cpu_numpy(stats):
     for key, value in stats.items():
         if torch.is_tensor(value):
             stats[key] = value.cpu().numpy()
+
+
+def decoding2data(data, decoding, device, num_nodes):
+    decoded_data = data.clone()
+    decoded_data.pos = decoding[:, :3]
+    decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(num_nodes).to(device)
+    return decoded_data
+
+
+def test_decoder_equivariance(data: CrystalData,
+                              encoding: torch.Tensor,
+                              rotated_encoding: torch.Tensor,
+                              rotations: torch.Tensor,
+                              autoencoder: nn.Module,
+                              device: Union[torch.device, str]) -> torch.Tensor:
+    """
+    check decoder end-to-end equivariance
+    """
+    '''take a given embedding and decoded it'''
+    decoding = autoencoder.decode(encoding)
+    '''rotate embedding and decode'''
+    decoding2 = autoencoder.decode(
+        rotated_encoding.reshape(data.num_graphs, 3, encoding.shape[-1]))
+    '''rotate first decoding and compare'''
+    decoded_batch = torch.arange(data.num_graphs).repeat_interleave(autoencoder.num_decoder_nodes).to(device)
+    rotated_decoding_positions = torch.cat(
+        [torch.einsum('ij, kj->ki', rotations[ind], decoding[:, :3][decoded_batch == ind])
+         for ind in range(data.num_graphs)])
+    rotated_decoding = decoding.clone()
+    rotated_decoding[:, :3] = rotated_decoding_positions
+    # first three dimensions should be equivariant and all trailing invariant
+    decoder_equivariance_loss = (
+            torch.abs(rotated_decoding[:, :3] - decoding2[:, :3]) / torch.abs(rotated_decoding[:, :3])).mean(-1)
+    return decoder_equivariance_loss
+
+
+def test_encoder_equivariance(data: CrystalData,
+                              rotations: torch.Tensor,
+                              autoencoder) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    check encoder end-to-end equivariance
+    """
+    '''embed the input data then rotate the embedding'''
+    encoding = autoencoder.encode(data.clone())
+    rotated_encoding = torch.einsum('nij, njk->nik',
+                                    rotations,
+                                    encoding
+                                    )  # rotate in 3D
+
+    rotated_encoding = rotated_encoding.reshape(data.num_graphs, rotated_encoding.shape[-1] * 3)
+    '''rotate the input data and embed it'''
+    data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch == ind])
+                          for ind in range(data.num_graphs)])
+    encoding2 = autoencoder.encode(data.clone())
+    encoding2 = encoding2.reshape(data.num_graphs, encoding2.shape[-1] * 3)
+    '''compare the embeddings - should be identical for an equivariant embedding'''
+    encoder_equivariance_loss = (torch.abs(rotated_encoding - encoding2) / torch.abs(rotated_encoding)).mean(-1)
+    return encoder_equivariance_loss, encoding, rotated_encoding
+
+
+def instantiate_models(config: Namespace,
+                       dataDims: dict,
+                       device: Union[torch.device, str],
+                       sym_info: dict,
+                       model_names,
+                       autoencoder_type_index) -> dict:
+    print("Initializing model(s) for " + config.mode)
+    models_dict = {}
+    if config.mode == 'gan' or config.mode == 'search':
+        assert False, "Generator currently deprecated for streamline/rebuild"
+        # models_dict['generator'] = CrystalGenerator(config.seeds.model,
+        #                                                  device,
+        #                                                  config.generator.model,
+        #                                                  sym_info,
+        #                                                  dataDims['atom_features'],
+        #                                                  dataDims['molecule_features'],
+        #                                                  dataDims['node_standardization_vector'],
+        #                                                  dataDims['graph_standardization_vector'],
+        #                                                  dataDims['lattice_means'],
+        #                                                  dataDims['lattice_stds']
+        #                                                  )
+        # models_dict['discriminator'] = MolecularCrystalModel(
+        #     config.seeds.model,
+        #     config.discriminator.model,
+        #     dataDims['atom_features'],
+        #     dataDims['molecule_features'],
+        #     output_dim=3,
+        #     node_standardization_tensor=dataDims['node_standardization_vector'],
+        #     graph_standardization_tensor=dataDims['graph_standardization_vector'])
+    if config.mode == 'discriminator':
+        models_dict['generator'] = nn.Linear(1, 1)
+        models_dict['discriminator'] = MolecularCrystalModel(
+            config.seeds.model,
+            config.discriminator.model,
+            dataDims['atom_features'],
+            dataDims['molecule_features'],
+            output_dim=3,
+            node_standardization_tensor=dataDims['node_standardization_vector'],
+            graph_standardization_tensor=dataDims['graph_standardization_vector'])
+    if config.mode == 'regression' or config.model_paths.regressor is not None:
+        models_dict['regressor'] = MoleculeScalarRegressor(
+            config.regressor.model,
+            dataDims['atom_features'],
+            dataDims['molecule_features'],
+            dataDims['node_standardization_vector'],
+            dataDims['graph_standardization_vector'],
+            config.seeds.model
+        )
+    if config.mode == 'autoencoder' or config.model_paths.autoencoder is not None:
+        models_dict['autoencoder'] = Mo3ENet(
+            config.seeds.model,
+            config.autoencoder.model,
+            int(torch.sum(autoencoder_type_index != -1)),
+            autoencoder_type_index,
+            config.autoencoder.molecule_radius_normalization,
+            infer_protons=config.autoencoder.infer_protons,
+            protons_in_input=not config.autoencoder.filter_protons
+        )
+    if config.mode == 'embedding_regression' or config.model_paths.embedding_regressor is not None:
+        models_dict['autoencoder'] = Mo3ENet(
+            config.seeds.model,
+            config.autoencoder.model,
+            int(torch.sum(autoencoder_type_index != -1)),
+            autoencoder_type_index,
+            config.autoencoder.molecule_radius_normalization,
+            infer_protons=config.autoencoder.infer_protons,
+            protons_in_input=not config.autoencoder.filter_protons
+        )
+        for param in models_dict['autoencoder'].parameters():  # freeze encoder
+            param.requires_grad = False
+        config.embedding_regressor.model.bottleneck_dim = config.autoencoder.model.bottleneck_dim
+        models_dict['embedding_regressor'] = EmbeddingRegressor(
+            config.seeds.model,
+            config.embedding_regressor.model,
+            num_targets=config.embedding_regressor.num_targets
+        )
+        assert config.model_paths.autoencoder is not None  # must preload the encoder
+    if config.mode == 'polymorph_classification':
+        models_dict['polymorph_classifier'] = MoleculeClusterClassifier(
+            config.seeds.model,
+            config.polymorph_classifier.model,
+            config.polymorph_classifier.num_output_classes,
+            dataDims['atom_features'],
+            dataDims['molecule_features'],
+            dataDims['node_standardization_vector'],
+            dataDims['graph_standardization_vector'],
+        )
+    null_models = {name: nn.Linear(1, 1) for name in model_names if
+                   name not in models_dict.keys()}  # initialize null models
+    models_dict.update(null_models)
+
+    # # compile models
+    # for key in models_dict.keys():
+    #     models_dict[key].compile_self()
+
+    if config.device.lower() == 'cuda':
+        torch.backends.cudnn.benchmark = True
+        torch.cuda.empty_cache()
+        for model in models_dict.values():
+            model.cuda()
+
+    return models_dict
+
+
+def prep_ae_io_for_analysis(data, decoding, autoencoder, node_weight_temperature, device):
+    # reduce to relevant atom types
+    data.x = autoencoder.atom_embedding_vector[data.x]
+    # generate input reconstructed as a data type
+    decoded_data = decoding2data(data, decoding,
+                                 device,
+                                 autoencoder.num_decoder_nodes)
+    # compute the distributional weight of each node
+    nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = \
+        get_node_weights(data, decoded_data, decoding,
+                         autoencoder.num_decoder_nodes,
+                         node_weight_temperature)
+    decoded_data.aux_ind = nodewise_weights_tensor
+    # input node weights are always 1 - corresponding each to an atom
+    data.aux_ind = torch.ones(data.num_nodes, dtype=torch.float32, device=device)
+    # get probability distribution over type dimensions
+    decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
+    return decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
+
+
+def ae_reconstruction_loss(data, decoded_data, nodewise_weights, num_atom_types, type_distance_scaling, autoencoder_sigma):
+    true_node_one_hot = F.one_hot(data.x[:, 0].long(), num_classes=num_atom_types).float()
+
+    decoder_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, decoded_data,
+                                                   autoencoder_sigma,
+                                                   nodewise_weights=decoded_data.aux_ind,
+                                                   overlap_type='gaussian', log_scale=False,
+                                                   type_distance_scaling=type_distance_scaling)
+    # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
+    self_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, data, autoencoder_sigma,
+                                                nodewise_weights=data.aux_ind,
+                                                overlap_type='gaussian', log_scale=False,
+                                                type_distance_scaling=type_distance_scaling,
+                                                dist_to_self=True)
+
+    # typewise agreement for whole graph
+    per_graph_true_types = scatter(
+        true_node_one_hot, data.batch[:, None], dim=0, reduce='mean')
+    per_graph_pred_types = scatter(
+        decoded_data.x * nodewise_weights[:, None], decoded_data.batch[:, None], dim=0, reduce='sum')
+
+    nodewise_type_loss = (F.binary_cross_entropy(per_graph_pred_types.clip(min=1e-6,max=1-1e-6), per_graph_true_types) -
+                          F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
+
+    nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
+    graph_reconstruction_loss = scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')
+
+    return nodewise_reconstruction_loss, nodewise_type_loss, graph_reconstruction_loss, self_likelihoods

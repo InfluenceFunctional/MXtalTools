@@ -22,6 +22,7 @@ dataset:
   filter_protons: False
   regression_target: null # crystal_reduced_volume #
   on_disk_data_dir: null
+  dumps_rids: null
 
 # batching & convergence
 max_epoch_steps: 1.0E+8

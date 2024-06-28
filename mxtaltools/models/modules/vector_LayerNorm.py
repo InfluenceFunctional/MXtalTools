@@ -3,9 +3,7 @@ from typing import Optional
 import torch
 from torch import Tensor
 from torch.nn import Parameter
-
 from torch_geometric.nn.inits import ones
-from torch_geometric.typing import OptTensor
 from torch_geometric.utils import scatter
 
 

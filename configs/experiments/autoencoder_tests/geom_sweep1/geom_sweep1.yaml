@@ -9,37 +9,34 @@ parameters:
     distribution: int_uniform
     min: 100
     max: 2500
-  batch_growth_increment:
-    distribution: uniform
-    min: 0.05
-    max: 1
   positional_noise:
-    autoencoder:
-      distribution: uniform
-      min: 0
-      max: 0.1
+    parameters:
+      autoencoder:
+        distribution: uniform
+        min: 0
+        max: 0.25
   autoencoder:
     parameters:
       optimizer:
         parameters:
           encoder_init_lr:
-            distribution: uniform
+            distribution: log_uniform_values
             min: 1.0E-5
             max: 5.0E-4
           decoder_init_lr:
-            distribution: uniform
+            distribution: log_uniform_values
             min: 1.0E-5
             max: 5.0E-4
           beta1:
-            distribution: uniform
+            distribution: log_uniform_values
             min: 0.9
             max: 0.99
           beta2:
-            distribution: uniform
+            distribution: log_uniform_values
             min: 0.99
             max: 0.9999
           weight_decay:
-            distribution: uniform
+            distribution: log_uniform_values
             min: 1.0E-4
             max: 1
           lr_growth_lambda:
@@ -47,8 +44,9 @@ parameters:
           lr_shrink_lambda:
             values: [0.999, 0.99, 0.95]
           max_lr:
-            values: [1.0E-3, 5.0E-4]
-
+            distribution: log_uniform_values
+            min: 1.0E-4
+            max: 5.0E-3
       model:
         parameters:
           bottleneck_dim:
@@ -76,7 +74,7 @@ parameters:
                   cutoff:
                     distribution: uniform
                     min: 3
-                    max: 14
+                    max: 6
                   radial_embedding:
                     values: ['bessel', 'gaussian']
                   node_dim:
@@ -88,10 +86,11 @@ parameters:
                     min: 64
                     max: 1024
                   message_dim:
-                    values: [64, 128, 256]
-                  num_attention_heads:
-                    values: [4, 16, 32]
-
+                    distribution: int_uniform
+                    min: 64
+                    max: 1024
+                  vector_norm:
+                    values: [null, 'graph vector layer']
           decoder:
             parameters:
               num_nodes:
@@ -116,4 +115,6 @@ parameters:
                     distribution: uniform
                     min: 0
                     max: 0.5
+                  vector_norm:
+                    values: [null, 'vector layer']
 

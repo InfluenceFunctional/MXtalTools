@@ -94,7 +94,7 @@ regressor:
       num_radial: 32
       num_input_classes: 101
       norm: 'graph layer'
-      dropout: 0.05
+      dropout: 0.5
 
       atom_type_embedding_dim: 32
       radial_embedding: 'bessel'
@@ -105,7 +105,7 @@ regressor:
     fc:
       hidden_dim: 256
       num_layers: 4
-      dropout: 0.05
+      dropout: 0.5
       norm: 'layer'
 
     activation: gelu

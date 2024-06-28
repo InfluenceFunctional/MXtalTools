@@ -1,14 +1,24 @@
+import sys
+from typing import Optional
+
 import torch
 import torch.nn.functional as F
+
+from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.asymmetric_radius_graph import asymmetric_radius_graph
-import sys
 
 
-def vdw_overlap(vdw_radii, dist_dict=None, dists=None, batch_numbers=None, atomic_numbers=None,
-                num_graphs=None, crystaldata=None, graph_sizes=None,
-                return_loss_only=False, return_score_only=False,
-                loss_func=None):
-
+def vdw_overlap(vdw_radii: torch.Tensor,  # todo refactor this into separate functions given different inpujts
+                dist_dict: Optional[dict] = None,
+                dists: Optional[torch.Tensor] = None,
+                batch_numbers: Optional[torch.LongTensor] = None,
+                atomic_numbers: Optional[torch.LongTensor] = None,
+                num_graphs: Optional[int] = None,
+                crystaldata: Optional[CrystalData] = None,
+                graph_sizes: Optional[int] = None,
+                return_loss_only: bool = False,
+                return_score_only: bool = False,
+                loss_func: Optional[str] = None):
     assert not (return_loss_only and return_score_only)
 
     if dist_dict is not None:
@@ -112,7 +122,8 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None,
         crystal_number = crystaldata.batch[edges[0]]
 
         dists = (crystaldata.pos[edges[0]] - crystaldata.pos[edges[1]]).pow(2).sum(dim=-1).sqrt()
-        elements = [crystaldata.x[edges[0], 0].long().to(dists.device), crystaldata.x[edges[1], 0].long().to(dists.device)]
+        elements = [crystaldata.x[edges[0], 0].long().to(dists.device),
+                    crystaldata.x[edges[1], 0].long().to(dists.device)]
         num_graphs = crystaldata.num_graphs
         #molecule_sizes = torch.diff(crystaldata.ptr)
     elif dists is not None:  # precomputed intermolecular crystal distances

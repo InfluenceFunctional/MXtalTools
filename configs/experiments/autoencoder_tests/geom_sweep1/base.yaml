@@ -1,40 +1,51 @@
 machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/GEOM_autoencoder.yaml
-dataset_name: 'test_GEOM_QM9_DRUGS_dataset.pt' #'test_dataset.pt'
+anomaly_detection: False  # slows down the code
+mode: autoencoder
+dataset_name: 'test_GEOM_QM9_DRUGS_dataset.pt'
+misc_dataset_name: 'misc_data_for_GEOM_QM9_DRUGS_dataset.npy'
+dataset_yaml_path: '/GEOM_autoencoder.yaml' # '/dataset/full_discriminator.yaml' #
 extra_test_set_name: null
-save_checkpoints: False
-sweep_id: ########
-sweep_path: /scratch/mk8347/mcrygan/configs/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
+save_checkpoints: True # will do it always on cluster, only locally if True
+checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
+model_names: ['autoencoder']
+sweep_path: configs/experiments/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
+sweep_id: jao9tqo9
 
 dataset:
-  max_dataset_length: 10000  # non-functional for on-disk datasets.
+  type: 'molecule'
+  max_dataset_length: 10000000
   test_fraction: 0.2
-  on_disk_data_dir: 'geom_drugs/train.lmdb/'
-
-seeds:
-  dataset: 1
+  regression_target: null
 
 # batching & convergence
 max_epoch_steps: 500
-early_epochs_step_override: 50
-num_early_epochs: 20
+early_epochs_step_override: 5
+num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 10
-max_batch_size: 5000
-batch_growth_increment: 1 # fraction of batch size to grow by each epoch
+max_batch_size: 500
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 10000
-max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 50  # for convergence checks
+minimum_epochs: 2000
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+history: 100  # for convergence checks
 gradient_norm_clip: 1
-extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+extra_test_period: 1 # unused
 
 logger:
-  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
-  experiment_tag: geom_sweep1
-  run_name: geom_sweep1
+  run_name: GEOM_sweep1
+  experiment_tag: GEOM_sweep1
+  mini_csp_frequency: 1 # unused here
+  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 10
+  log_figures: True
 
+seeds:
+  model: 12345
+  dataset: 0
+
+# for reloading prior checkpoints
 model_paths:
   discriminator: null
   generator: null
@@ -42,11 +53,18 @@ model_paths:
   autoencoder: null
   embedding_regressor: null
 
-#generate_sgs: ['P-1','C2/c','P21/c','P212121']
+positional_noise:
+  discriminator: 0
+  generator: 0
+  regressor: 0
+  autoencoder: 0
+
+generate_sgs: null
+supercell_size: 5
 
 autoencoder:
   infer_protons: False
-  filter_protons: False
+  filter_protons: True
   type_distance_scaling: 2
   init_sigma: 1.05  # real-space valued
   evaluation_sigma: 0.35  # real-space valued
@@ -60,10 +78,10 @@ autoencoder:
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 5.0E-5
+    init_lr: 5.0E-5  # dummy
     encoder_init_lr: 5.0E-5
     decoder_init_lr: 5.0E-5
-    max_lr: 1.0E-4
+    max_lr: 1.0E-3
     min_lr: 1.0E-6
     lr_schedule: True
     beta1: 0.9
@@ -80,37 +98,38 @@ autoencoder:
       activation: 'gelu'
       graph:
         node_dim: 512
-        message_dim: 256
-        num_attention_heads: 64
+        message_dim: 128
         embedding_dim: 512
-        num_convs: 0
-        fcs_per_gc: 4
+        num_convs: 2
+        fcs_per_gc: 2
         num_radial: 50
         norm: 'graph layer'
-        dropout: 0
+        dropout: 0.1
+        vector_norm: 'graph vector layer'
 
         atom_type_embedding_dim: 32
-        radial_embedding: 'gaussian'
-        cutoff: 14  # real space
+        radial_embedding: 'bessel'
+        cutoff: 3  # real space
         max_num_neighbors: 100
         envelope_exponent: 5
-      fc: # dummy
+
+      fc: # generally unused
         hidden_dim: 256
         num_layers: 0
         dropout: 0
         norm: null
-      vector_norm: 'graph vector layer'
-      graph_aggregator: 'equivariant softmax'
+        vector_norm: 'vector layer'
 
     decoder:
       activation: 'gelu'
       fc:
         hidden_dim: 512
         num_layers: 4
-        dropout: 0
+        dropout: 0.1
         norm: 'layer'
+        vector_norm: 'vector layer'
+
       num_nodes: 512
       ramp_depth: True
-      vector_norm: 'vector layer'
 
 

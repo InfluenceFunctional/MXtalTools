@@ -79,8 +79,10 @@ def radius(x: torch.Tensor, y: torch.Tensor, r: float,
 
 
 # @torch.jit.script
-def asymmetric_radius_graph(x: torch.Tensor, r: float,
-                            inside_inds: torch.Tensor, convolve_inds: torch.Tensor,
+def asymmetric_radius_graph(x: torch.Tensor,
+                            r: float,
+                            inside_inds: torch.Tensor,
+                            convolve_inds: torch.Tensor,
                             batch: torch.Tensor,
                             loop: bool = False,
                             max_num_neighbors: int = 32, flow: str = 'source_to_target',

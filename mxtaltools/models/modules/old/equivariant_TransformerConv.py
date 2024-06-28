@@ -1,8 +1,7 @@
 import typing
 from typing import Optional, Tuple, Union
-import torch.nn.functional as F
-from torch import Tensor
 
+from torch import Tensor
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.dense.linear import Linear
 from torch_geometric.typing import (
@@ -13,9 +12,9 @@ from torch_geometric.typing import (
 )
 
 if typing.TYPE_CHECKING:
-    from typing import overload
+    pass
 else:
-    from torch.jit import _overload_method as overload
+    pass
 
 
 class EquiVTransformerConv(MessagePassing):

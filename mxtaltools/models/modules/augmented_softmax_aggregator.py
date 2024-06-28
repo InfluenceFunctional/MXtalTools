@@ -3,13 +3,8 @@ from typing import Optional
 import torch
 from torch import Tensor
 from torch.nn import Parameter
-
 from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.utils import softmax
-
-from typing import Optional
-
-from torch import Tensor
 
 
 class AugSoftmaxAggregation(Aggregation):

@@ -1,7 +1,6 @@
 from mxtaltools.common.config_processing import load_yaml
 import yaml
 from copy import copy
-import numpy as np
 
 base_config = load_yaml('base.yaml')
 

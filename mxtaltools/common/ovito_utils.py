@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from ovito.data import DataCollection
 from ovito.io import export_file
@@ -50,16 +51,12 @@ def write_ovito_xyz(coords_in, atom_types_in, mol_flags_in, filename):
 
         return coords, atom_types, mol_flags
 
-    if isinstance(coords_in, list):  # trajectory
-        coords, atom_types, mol_flags = [], [], []
-        for ind in range(len(coords_in)):
-            ci, ai, mi = process_coords(coords_in[ind], atom_types_in[ind], mol_flags_in[ind])
-            coords.append(ci)
-            atom_types.append(ai)
-            mol_flags.append(mi)
-    else:  # single frame
-        coords, atom_types, mol_flags = process_coords(coords_in, atom_types_in, mol_flags_in)
-        coords, atom_types, mol_flags = [coords], [atom_types], [mol_flags]
+    coords, atom_types, mol_flags = [], [], []
+    for ind in range(len(coords_in)):
+        ci, ai, mi = process_coords(coords_in[ind], atom_types_in[ind], mol_flags_in[ind])
+        coords.append(ci)
+        atom_types.append(ai)
+        mol_flags.append(mi)
 
     def create_ovito_model(frame: int, data: DataCollection):
         particles = data.create_particles(count=len(coords[frame]))
@@ -86,4 +83,5 @@ def write_ovito_xyz(coords_in, atom_types_in, mol_flags_in, filename):
     # The system will invoke the Python function defined above once per animation frame.
     export_file(pipeline, f'{filename}.xyz', format='xyz',
                 columns=column_names,
-                multiple_frames=True, start_frame=0, end_frame=len(coords) - 1)
+                multiple_frames=True,
+                start_frame=0, end_frame=len(coords) - 1)

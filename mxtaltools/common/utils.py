@@ -177,7 +177,8 @@ def softmax_np(x: np.ndarray, temperature: float = 1):
     if x.ndim == 1:
         x = x[None, :]
     x = x.astype(float)
-    probabilities = np.exp(x / temperature) / np.sum(np.exp(x / temperature), axis=1)[:, None]
+    x -= x.max()
+    probabilities = np.exp(x / temperature) / (np.sum(np.exp(x / temperature), axis=1) + 1e-16)[:, None]
     return probabilities
 
 
@@ -485,3 +486,13 @@ def make_sequential_directory(yaml_path, workdir):  # make working directory
     working_directory = workdir + run_identifier
     os.mkdir(working_directory)
     return run_identifier, working_directory
+
+
+def flatten_wandb_params(config):
+    """Initialize "flat" config for wandb parameter logging"""
+    flat_config_dict = flatten_dict(namespace2dict(config.__dict__), separator='_')
+    for key in flat_config_dict.keys():
+        if 'path' in str(type(flat_config_dict[key])).lower():
+            flat_config_dict[key] = str(flat_config_dict[key])
+    config.__dict__.update(flat_config_dict)
+    return config

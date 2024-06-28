@@ -1,13 +1,24 @@
 import itertools
+from typing import Tuple, Optional, Union
 
 import torch
+
+from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.asymmetric_radius_graph import asymmetric_radius_graph
 from mxtaltools.common.rdf_calculation import parallel_compute_rdf_torch
 from torch_scatter import scatter
 from mxtaltools.common.utils import repeat_interleave
 
 
-def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bins=100, mode='all', elementwise=False, raw_density=False, atomwise=False, cpu_detach=False, remove_radial_scaling=False):
+def crystal_rdf(crystaldata, precomputed_distances_dict=None,
+                rrange: list[int, int] = [0, 10],
+                bins: int = 100,
+                mode: str = 'all',
+                elementwise: bool = False,
+                raw_density: bool = False,
+                atomwise: bool = False,
+                cpu_detach: bool = False,
+                remove_radial_scaling: bool = False) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """
     compute the RDF for all the supercells in a CrystalData object
 
@@ -66,7 +77,9 @@ def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bi
         element_symbols = {5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F', 15: 'P', 16: 'S', 17: 'Cl', 35: 'Br'}
         elements = [crystaldata.x[edges[0], 0], crystaldata.x[edges[1], 0]]
         rdfs_dict = {}
-        rdfs_array = torch.zeros((crystaldata.num_graphs, int((len(relevant_elements) ** 2 + len(relevant_elements)) / 2), bins), device=dists.device)
+        rdfs_array = torch.zeros(
+            (crystaldata.num_graphs, int((len(relevant_elements) ** 2 + len(relevant_elements)) / 2), bins),
+            device=dists.device)
         # prebuild pair lists
         elem_pair_list = []
         ind = 0
@@ -98,7 +111,8 @@ def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bi
         for i in range(crystaldata.num_graphs):
             # all_atom_inds.append(torch.arange(crystal_data.num_atoms[i]).tile(int((crystal_data.batch == i).sum() // crystal_data.num_atoms[i])))
             # assume only that the order of atoms is patterned in all images
-            canonical_conformer_coords = crystaldata.pos[crystaldata.ptr[i]:crystaldata.ptr[i] + int(crystaldata.num_atoms[i])]
+            canonical_conformer_coords = crystaldata.pos[
+                                         crystaldata.ptr[i]:crystaldata.ptr[i] + int(crystaldata.num_atoms[i])]
             centroid = canonical_conformer_coords.mean(0)
             mol_dists = torch.linalg.norm(canonical_conformer_coords - centroid[None, :], dim=-1)
             inds = torch.argsort(mol_dists)
@@ -116,11 +130,13 @@ def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bi
 
             in_crystal_inds = torch.where(edge_in_crystal_number == n)[0]  # atom indices in this crystal
 
-            atom_locations = [[atoms_in_edges[0][in_crystal_inds] == m, atoms_in_edges[1][in_crystal_inds] == m] for m in range(int(atom_pairs.max()) + 1)]
+            atom_locations = [[atoms_in_edges[0][in_crystal_inds] == m, atoms_in_edges[1][in_crystal_inds] == m] for m
+                              in range(int(atom_pairs.max()) + 1)]
 
-            relevant_atoms_dists_list = [dists[in_crystal_inds[torch.logical_and(atom_locations[int(atom_pairs[m, 0])][0],
-                                                                                 atom_locations[int(atom_pairs[m, 1])][1])]]
-                                         for m in range(len(atom_pairs))]
+            relevant_atoms_dists_list = [
+                dists[in_crystal_inds[torch.logical_and(atom_locations[int(atom_pairs[m, 0])][0],
+                                                        atom_locations[int(atom_pairs[m, 1])][1])]]
+                for m in range(len(atom_pairs))]
 
             rdfs_array, rr = parallel_compute_rdf_torch(relevant_atoms_dists_list,
                                                         rrange=rrange, bins=bins,
@@ -135,18 +151,27 @@ def crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bi
 
         return rdfs_array_list, rr, rdfs_dict_list
     else:
-        rdfs_array, rr = parallel_compute_rdf_torch([dists[edge_in_crystal_number == n] for n in range(crystaldata.num_graphs)],
-                                                    rrange=rrange, bins=bins,
-                                                    raw_density=raw_density, remove_radial_scaling=remove_radial_scaling)
+        rdfs_array, rr = parallel_compute_rdf_torch(
+            [dists[edge_in_crystal_number == n] for n in range(crystaldata.num_graphs)],
+            rrange=rrange, bins=bins,
+            raw_density=raw_density, remove_radial_scaling=remove_radial_scaling)
         if cpu_detach:
             rdfs_array = rdfs_array.cpu().detach().numpy()
             rr = rr.cpu().detach().numpy()
         return rdfs_array, rr
 
 
-def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10], bins=100, mode='all',
-                    elementwise=False, raw_density=False, atomwise=False, cpu_detach=False,
-                    remove_radial_scaling=False, atomic_numbers_override=None):
+def new_crystal_rdf(crystaldata,
+                    precomputed_distances_dict=None,
+                    rrange: list[int, int] = [0, 10],
+                    bins: int = 100,
+                    mode: str = 'all',
+                    elementwise: bool = False,
+                    raw_density: bool = False,
+                    atomwise: bool = False,
+                    cpu_detach: bool = False,
+                    atomic_numbers_override: Optional[torch.Tensor] = None
+                    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
     """
     faster rdf calculation
     """
@@ -177,7 +202,8 @@ def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10]
     efficiently gather the relevant distances
     '''
     if elementwise:
-        dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_crystal_number, atomic_numbers_override)
+        dists_per_hist, sorted_dists, rdfs_dict = get_elementwise_dists(crystaldata, edges, dists, device, num_graphs,
+                                                                        edge_in_crystal_number, atomic_numbers_override)
         num_pairs = len(rdfs_dict.keys())
         batch = repeat_interleave(dists_per_hist, device='cpu').to(device)  # todo faster on cpu but still slow
         hist, bin_edges = batch_histogram_1d(sorted_dists, batch, num_graphs * num_pairs, rrange=rrange, nbins=bins)
@@ -185,7 +211,8 @@ def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10]
             rdf_density = torch.ones(num_graphs * num_pairs, device=device, dtype=torch.float32)
         else:
             assert False, "non-raw density not implemented"
-        shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)  # volume of the shell at radius r+dr
+        shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[
+                                                                                              :-1] ** 3)  # volume of the shell at radius r+dr
         rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
         rdf = rdf.reshape(num_graphs, num_pairs, -1)  # sample-wise indexing
     elif atomwise:
@@ -197,7 +224,8 @@ def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10]
         batch = repeat_interleave(dists_per_hist, device='cpu').to(device)
         hist, bin_edges = batch_histogram_1d(sorted_dists, batch, num_graphs, rrange=rrange, nbins=bins)
         rdf_density = torch.ones(num_graphs, device=device, dtype=torch.float32)
-        shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)  # volume of the shell at radius r+dr
+        shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[
+                                                                                              :-1] ** 3)  # volume of the shell at radius r+dr
         rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
 
     rr = (bin_edges[:-1] + torch.diff(bin_edges)).requires_grad_()
@@ -209,42 +237,54 @@ def new_crystal_rdf(crystaldata, precomputed_distances_dict=None, rrange=[0, 10]
     return rdf, rr, rdfs_dict
 
 
-def get_atomwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_crystal_number):
-    """
-    #TODO hideously slow and we have an indexing problem
-    """
-    rdfs_dict_list = []
-    all_atom_inds = []
-    for i in range(crystaldata.num_graphs):
-        # assume only that the order of atoms is patterned in all images
-        canonical_conformer_coords = crystaldata.pos[crystaldata.ptr[i]:crystaldata.ptr[i] + int(crystaldata.num_atoms[i])]
-        centroid = canonical_conformer_coords.mean(0)
-        mol_dists = torch.linalg.norm(canonical_conformer_coords - centroid[None, :], dim=-1)
-        inds = torch.argsort(mol_dists)
-        all_atom_inds.append(inds.tile(int((crystaldata.batch == i).sum() // crystaldata.num_atoms[i])))
+#
+# # TODO DEPRECATE
+# def get_atomwise_dists(crystaldata, edges, dists, edge_in_crystal_number):
+#     """
+#     #TODO hideously slow and we have an indexing problem
+#     """
+#     rdfs_dict_list = []
+#     all_atom_inds = []
+#     for i in range(crystaldata.num_graphs):
+#         # assume only that the order of atoms is patterned in all images
+#         canonical_conformer_coords = crystaldata.pos[
+#                                      crystaldata.ptr[i]:crystaldata.ptr[i] + int(crystaldata.num_atoms[i])]
+#         centroid = canonical_conformer_coords.mean(0)
+#         mol_dists = torch.linalg.norm(canonical_conformer_coords - centroid[None, :], dim=-1)
+#         inds = torch.argsort(mol_dists)
+#         all_atom_inds.append(inds.tile(int((crystaldata.batch == i).sum() // crystaldata.num_atoms[i])))
+#
+#     atom_inds = torch.cat(all_atom_inds)
+#
+#     atoms_in_edges = [atom_inds[edges[0]], atom_inds[edges[1]]]
+#
+#     relevant_atoms_dists_list = []
+#     for n in range(crystaldata.num_graphs):
+#         # all possible combinations of unique atoms on this graph
+#         atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystaldata.num_atoms[n])), 2)))
+#         rdfs_dict_list.append(atom_pairs)  # record the pairs for reporting purposes
+#
+#         in_crystal_inds = torch.where(edge_in_crystal_number == n)[0]  # atom indices in this crystal
+#
+#         atom_locations = [[atoms_in_edges[0][in_crystal_inds] == m, atoms_in_edges[1][in_crystal_inds] == m] for m in
+#                           range(int(atom_pairs.max()) + 1)]
+#
+#         relevant_atoms_dists_list.extend(
+#             [dists[in_crystal_inds[torch.logical_and(atom_locations[int(atom_pairs[m, 0])][0],
+#                                                      atom_locations[int(atom_pairs[m, 1])][1])]]
+#              for m in range(len(atom_pairs))])
+#
+#     return [len(thing) for thing in relevant_atoms_dists_list], relevant_atoms_dists_list, rdfs_dict_list
 
-    atom_inds = torch.cat(all_atom_inds)
 
-    atoms_in_edges = [atom_inds[edges[0]], atom_inds[edges[1]]]
-
-    relevant_atoms_dists_list = []
-    for n in range(crystaldata.num_graphs):
-        # all possible combinations of unique atoms on this graph
-        atom_pairs = torch.Tensor(list(itertools.combinations(torch.arange(int(crystaldata.num_atoms[n])), 2)))
-        rdfs_dict_list.append(atom_pairs)  # record the pairs for reporting purposes
-
-        in_crystal_inds = torch.where(edge_in_crystal_number == n)[0]  # atom indices in this crystal
-
-        atom_locations = [[atoms_in_edges[0][in_crystal_inds] == m, atoms_in_edges[1][in_crystal_inds] == m] for m in range(int(atom_pairs.max()) + 1)]
-
-        relevant_atoms_dists_list.extend([dists[in_crystal_inds[torch.logical_and(atom_locations[int(atom_pairs[m, 0])][0],
-                                                                                  atom_locations[int(atom_pairs[m, 1])][1])]]
-                                          for m in range(len(atom_pairs))])
-
-    return [len(thing) for thing in relevant_atoms_dists_list], relevant_atoms_dists_list, rdfs_dict_list
-
-
-def get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in_crystal_number, atomic_numbers_override=None):
+def get_elementwise_dists(crystaldata: CrystalData,
+                          edges: torch.LongTensor,
+                          dists: torch.Tensor,
+                          device: Union[torch.device, str],
+                          num_graphs: int,
+                          edge_in_crystal_number: torch.LongTensor,
+                          atomic_numbers_override: Optional[torch.LongTensor] = None
+                          ) -> Tuple[torch.Tensor, torch.Tensor, dict]:
     if atomic_numbers_override is None:
         relevant_elements = torch.tensor([5, 6, 7, 8, 9, 15, 16, 17, 35], dtype=torch.long, device=device)
         element_symbols = {5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F', 15: 'P', 16: 'S', 17: 'Cl', 35: 'Br'}
@@ -271,7 +311,8 @@ def get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in
 
     bool_list = torch.zeros((num_pairs * num_graphs, len(dists)), dtype=torch.bool, device=device)
     for i in range(num_graphs):
-        bool_list[i * num_pairs:(i + 1) * num_pairs, :] = (edge_in_crystal_number == i).repeat(num_pairs, 1) * elem_pair_list
+        bool_list[i * num_pairs:(i + 1) * num_pairs, :] = (edge_in_crystal_number == i).repeat(num_pairs,
+                                                                                               1) * elem_pair_list
 
     sorted_dists = dists.repeat(num_graphs * num_pairs, 1)[bool_list]
     # test assert bool_list.sum() == len(sorted_dists)
@@ -280,7 +321,10 @@ def get_elementwise_dists(crystaldata, edges, dists, device, num_graphs, edge_in
     return dists_per_hist, sorted_dists, rdfs_dict
 
 
-def get_rdf_inds(crystaldata, mode, device):
+def get_rdf_inds(crystaldata: CrystalData,
+                 mode: str,
+                 device: Union[torch.device, str]
+                 ) -> Tuple[torch.LongTensor, torch.LongTensor]:
     #  whether to include intramolecular edges
 
     if crystaldata.aux_ind is not None:
@@ -303,7 +347,11 @@ def get_rdf_inds(crystaldata, mode, device):
 
 
 # inspired by https://github.com/pytorch/pytorch/issues/99719#issuecomment-1664135524
-def batch_histogram_1d(data_tensor, batch, num_hists, rrange=[0, 10], nbins=100):
+def batch_histogram_1d(data_tensor: torch.Tensor,
+                       batch: torch.LongTensor,
+                       num_hists: int,
+                       rrange: list[int, int] = [0, 10],
+                       nbins: int = 100) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     very fast approximate batch histogram accurate up to n digits where n is log10(nbins)
 
@@ -315,7 +363,8 @@ def batch_histogram_1d(data_tensor, batch, num_hists, rrange=[0, 10], nbins=100)
     """
     epsilon = (rrange[1] - rrange[0]) / nbins  # important to bracket bins
     ones = torch.ones_like(data_tensor)
-    scatter_inds = batch.long() * nbins + (torch.round(data_tensor.clip(min=rrange[0], max=rrange[1] - epsilon) / rrange[1] * nbins)).long()  # convert float to long
+    scatter_inds = batch.long() * nbins + (torch.round(
+        data_tensor.clip(min=rrange[0], max=rrange[1] - epsilon) / rrange[1] * nbins)).long()  # convert float to long
 
     flat_hist = scatter(ones, scatter_inds, dim=0, dim_size=num_hists * nbins)
     hists = flat_hist.reshape(num_hists, nbins)
@@ -325,4 +374,3 @@ def batch_histogram_1d(data_tensor, batch, num_hists, rrange=[0, 10], nbins=100)
     # a,b = torch.unique(batch, return_counts = True)  # test
     # for i, num in enumerate(a):
     #     assert hists[int(num)].sum() == b[i], f'{i} {num}'
-

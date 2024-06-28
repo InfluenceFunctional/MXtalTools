@@ -77,7 +77,7 @@ autoencoder:
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 5.0E-5
+    init_lr: 5.0E-5  # dummy
     encoder_init_lr: 5.0E-5
     decoder_init_lr: 5.0E-5
     max_lr: 1.0E-3

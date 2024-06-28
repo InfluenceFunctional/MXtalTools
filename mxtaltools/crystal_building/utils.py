@@ -3,7 +3,8 @@ from torch.nn.utils import rnn as rnn
 
 from mxtaltools.models.utils import clean_generator_output, enforce_crystal_system
 from mxtaltools.common.geometry_calculations import single_molecule_principal_axes_torch, \
-    batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, sph2rotvec
+    batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, sph2rotvec, \
+    compute_fractional_transform_torch
 from scipy.spatial.transform import Rotation
 import torch
 import sys
@@ -779,3 +780,12 @@ def set_molecule_alignment(data, mode, right_handed=False, include_inversion=Fal
         pass  # do nothing
 
     return data
+
+
+def get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotation, supercell_data):
+    # get transformation matrices
+    T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform_torch(cell_lengths, cell_angles)
+    supercell_data.T_fc = T_fc_list
+    supercell_data.cell_params = torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation), dim=1)
+    sym_ops_list, supercell_data = set_sym_ops(supercell_data)  # assign correct symmetry options
+    return T_cf_list, T_fc_list, generated_cell_volumes, supercell_data, sym_ops_list

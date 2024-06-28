@@ -1,12 +1,12 @@
 import torch
-from torch import Tensor
-
-from torch_geometric.nn.conv import MessagePassing
 import torch.nn as nn
+from torch import Tensor
+from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.typing import (
     Adj,
     OptTensor,
 )
+
 from mxtaltools.models.modules.augmented_softmax_aggregator import AugSoftmaxAggregation, VectorAugSoftmaxAggregation
 from mxtaltools.models.modules.components import Normalization, Activation
 

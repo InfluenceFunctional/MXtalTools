@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from mxtaltools.dataset_management.utils import delete_from_dataframe
 from mxtaltools.common.utils import softmax_np
 from mxtaltools.common.geometry_calculations import coor_trans_matrix_np
 from mxtaltools.constants.classifier_constants import defect_names
@@ -10,8 +9,32 @@ from mxtaltools.constants.classifier_constants import defect_names
 from sklearn.metrics import roc_auc_score, confusion_matrix, f1_score
 import plotly.graph_objects as go
 
+import pandas as pd
+
+
+def delete_pandas_dataframe_rows(df: pd.DataFrame, inds):
+    df.drop(index=inds, inplace=True)
+    df.reset_index(drop=True, inplace=True)
+
+    return df
+
+
+#
 
 def convert_box_to_cell_params(box_params):
+    T_fc_list, angles, lengths = convert_box_to_cell_vectors(box_params)
+
+    T_fc_list2 = []  # double check the answer
+    for i in range(len(lengths)):
+        T_fc_list2.append(coor_trans_matrix_np('f_to_c', lengths[i], angles[i]))
+    T_fc_list2 = np.stack(T_fc_list2)
+
+    assert np.sum(np.abs(T_fc_list - T_fc_list2)) < 1e-3
+
+    return T_fc_list
+
+
+def convert_box_to_cell_vectors(box_params):
     """
     LAMMPS periodic box style
     ITEM: BOX BOUNDS xy xz yz
@@ -30,7 +53,6 @@ def convert_box_to_cell_params(box_params):
     zlo = zlo_bound
     zhi = zhi_bound
     """
-
     try:
         box_params = np.stack(box_params)
     except ValueError:  # pad zeros to orthorhombic boxes
@@ -39,7 +61,6 @@ def convert_box_to_cell_params(box_params):
             if box_params[ind].shape[-1] == 2:
                 box_params[ind] = np.concatenate([box_params[ind], np.zeros(3)[:, None]], axis=-1)
         box_params = np.stack(box_params)
-
     xlo_bound = box_params[:, 0, 0]
     ylo_bound = box_params[:, 1, 0]
     zlo_bound = box_params[:, 2, 0]
@@ -54,22 +75,18 @@ def convert_box_to_cell_params(box_params):
         xy = np.zeros_like(xhi_bound)
         xz = np.zeros_like(xy)
         yz = np.zeros_like(xy)
-
     xlo = xlo_bound - np.stack((np.zeros_like(xy), xy, xz, xy + xz)).T.min(1)
     xhi = xhi_bound - np.stack((np.zeros_like(xy), xy, xz, xy + xz)).T.max(1)
     ylo = ylo_bound - np.stack((np.zeros_like(yz), yz)).T.min(1)
     yhi = yhi_bound - np.stack((np.zeros_like(yz), yz)).T.max(1)
     zlo = zlo_bound
     zhi = zhi_bound
-
     av = np.asarray([xhi - xlo, np.zeros_like(xhi), np.zeros_like(xhi)]).T
     bv = np.asarray([xy, yhi - ylo, np.zeros_like(xy)]).T
     cv = np.asarray([xz, yz, zhi - zlo]).T
-
     T_fc_list = np.zeros((len(av), 3, 3))
     for i in range(len(T_fc_list)):  # warning dubious
         T_fc_list[i] = np.stack((av[i], bv[i], cv[i])).T
-
     a = xhi - xlo
     b = np.sqrt((yhi - ylo) ** 2 + xy ** 2)
     c = np.sqrt((zhi - zlo) ** 2 + xz ** 2 + yz ** 2)
@@ -78,15 +95,7 @@ def convert_box_to_cell_params(box_params):
     gamma = np.arccos(xy / b)
     lengths = np.stack([a, b, c]).T
     angles = np.stack([alpha, beta, gamma]).T
-
-    T_fc_list2 = []  # double check the answer
-    for i in range(len(lengths)):
-        T_fc_list2.append(coor_trans_matrix_np('f_to_c', lengths[i], angles[i]))
-    T_fc_list2 = np.stack(T_fc_list2)
-
-    assert np.sum(np.abs(T_fc_list - T_fc_list2)) < 1e-3
-
-    return T_fc_list
+    return T_fc_list, angles, lengths
 
 
 def reindex_mols(dataset, i, mol_num_atoms):
@@ -98,105 +107,105 @@ def reindex_mols(dataset, i, mol_num_atoms):
     assert num_molecules == len(torch.unique(mol_ind))
     return atomic_numbers, mol_ind, num_molecules, ref_coords
 
-
-def filter_mols(dataset, dataset_path, early_only, filter_early, melt_only, no_melt, temperatures,
-                periodic_only, aperiodic_only, max_box_volume, min_box_volume):
-    if temperatures is not None:
-        good_inds = []
-        for temperature in temperatures:
-            good_inds.append(np.argwhere(np.asarray(dataset['temperature']) == temperature)[:, 0])
-
-        good_inds = np.unique(np.concatenate(good_inds))
-        bad_inds = np.asarray([ind for ind in np.arange(len(dataset)) if ind not in good_inds])
-        print(f"Temperature filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
-    if filter_early:
-        bad_inds = np.argwhere(np.asarray(dataset['time_step']) <= int(1e4))[:,
-                   0]  # filter first 10ps steps for equilibration
-        print(f"Early filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
-    if early_only:
-        bad_inds = np.argwhere(np.asarray(dataset['time_step']) >= int(1e6))[:, 0]  # keep only 1 ns maximum
-        print(f"Early only filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
-
-    if max_box_volume is not None:
-        T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
-        approx_box_volume = (T_fc_list[:, 0, 0] * T_fc_list[:, 1, 1] * T_fc_list[:, 2, 2])
-        bad_inds = np.argwhere(approx_box_volume > max_box_volume)[0, :]
-        print(f"Max box filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
-
-    if min_box_volume is not None:
-        T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
-        approx_box_volume = (T_fc_list[:, 0, 0] * T_fc_list[:, 1, 1] * T_fc_list[:, 2, 2])
-        bad_inds = np.argwhere(approx_box_volume < min_box_volume)[0, :]
-        print(f"Min box filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
-
-    if periodic_only or aperiodic_only:
-        num_atoms = np.asarray([len(thing[0]) for thing in dataset['atom_type']])
-        T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
-        density = num_atoms / (T_fc_list[:, 0, 0] * T_fc_list[:, 1, 1] * T_fc_list[:, 2, 2])
-
-    if periodic_only:
-        bad_inds = np.argwhere(density <= 0.025).flatten()
-        print(f"Periodic only filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
-    if aperiodic_only:
-        bad_inds = np.argwhere(density > 0.025).flatten()
-        print(f"Aperiodic only filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
-    if True:
-        if 'gap_rate' in dataset.columns:
-            bad_inds = np.argwhere(np.asarray(dataset['gap_rate']) > 0)[:, 0]  # cannot process gaps right now
-            print(f"No Gaps filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-            dataset = delete_from_dataframe(dataset, bad_inds)
-            dataset = dataset.reset_index().drop(columns='index')
-    # forms = np.sort(np.unique(dataset['form']))
-    # forms2tgt = {form: i for i, form in enumerate(forms)}
-    targets = np.asarray(
-        dataset['form']) - 1  # no longer need to reindex, as we have this now managed through the constants
-    # this will throw an error later if the combined dataset is missing any forms, but it shouldn't be missing any forms in general
-    # so that's fine
-    # set high temperature samples to 'melted' class
-    if 'urea' in dataset_path:
-        melt_class_num = 6
-    else:
-        melt_class_num = 9  # nicotinamide
-    if melt_only:
-        bad_inds = np.argwhere(targets != melt_class_num)[:, 0]
-        print(f"Melt only filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-        good_inds = np.argwhere(targets == melt_class_num)[:, 0]
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
-        targets = targets[good_inds]
-    if no_melt:
-        bad_inds = np.argwhere(targets == melt_class_num)[:, 0]
-        print(f"No Melt filter killed {len(bad_inds)} out of {len(dataset)} samples")
-
-        good_inds = np.argwhere(targets != melt_class_num)[:, 0]
-
-        dataset = delete_from_dataframe(dataset, bad_inds)
-        dataset = dataset.reset_index().drop(columns='index')
-        targets = targets[good_inds]
-    return dataset, targets
+#
+# def filter_mols(dataset, dataset_path, early_only, filter_early, melt_only, no_melt, temperatures,
+#                 periodic_only, aperiodic_only, max_box_volume, min_box_volume):
+#     if temperatures is not None:
+#         good_inds = []
+#         for temperature in temperatures:
+#             good_inds.append(np.argwhere(np.asarray(dataset['temperature']) == temperature)[:, 0])
+#
+#         good_inds = np.unique(np.concatenate(good_inds))
+#         bad_inds = np.asarray([ind for ind in np.arange(len(dataset)) if ind not in good_inds])
+#         print(f"Temperature filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#         dataset = delete_from_dataframe(dataset, bad_inds)
+#         dataset = dataset.reset_index().drop(columns='index')
+#     if filter_early:
+#         bad_inds = np.argwhere(np.asarray(dataset['time_step']) <= int(1e4))[:,
+#                    0]  # filter first 10ps steps for equilibration
+#         print(f"Early filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#         dataset = delete_from_dataframe(dataset, bad_inds)
+#         dataset = dataset.reset_index().drop(columns='index')
+#     if early_only:
+#         bad_inds = np.argwhere(np.asarray(dataset['time_step']) >= int(1e6))[:, 0]  # keep only 1 ns maximum
+#         print(f"Early only filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#         dataset = delete_from_dataframe(dataset, bad_inds)
+#         dataset = dataset.reset_index().drop(columns='index')
+#
+#     if max_box_volume is not None:
+#         T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
+#         approx_box_volume = (T_fc_list[:, 0, 0] * T_fc_list[:, 1, 1] * T_fc_list[:, 2, 2])
+#         bad_inds = np.argwhere(approx_box_volume > max_box_volume)[0, :]
+#         print(f"Max box filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#         dataset = delete_from_dataframe(dataset, bad_inds)
+#         dataset = dataset.reset_index().drop(columns='index')
+#
+#     if min_box_volume is not None:
+#         T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
+#         approx_box_volume = (T_fc_list[:, 0, 0] * T_fc_list[:, 1, 1] * T_fc_list[:, 2, 2])
+#         bad_inds = np.argwhere(approx_box_volume < min_box_volume)[0, :]
+#         print(f"Min box filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#         dataset = delete_from_dataframe(dataset, bad_inds)
+#         dataset = dataset.reset_index().drop(columns='index')
+#
+#     if periodic_only or aperiodic_only:
+#         num_atoms = np.asarray([len(thing[0]) for thing in dataset['atom_type']])
+#         T_fc_list = torch.Tensor(convert_box_to_cell_params(dataset['cell_params']))
+#         density = num_atoms / (T_fc_list[:, 0, 0] * T_fc_list[:, 1, 1] * T_fc_list[:, 2, 2])
+#
+#     if periodic_only:
+#         bad_inds = np.argwhere(density <= 0.025).flatten()
+#         print(f"Periodic only filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#         dataset = delete_from_dataframe(dataset, bad_inds)
+#         dataset = dataset.reset_index().drop(columns='index')
+#     if aperiodic_only:
+#         bad_inds = np.argwhere(density > 0.025).flatten()
+#         print(f"Aperiodic only filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#         dataset = delete_from_dataframe(dataset, bad_inds)
+#         dataset = dataset.reset_index().drop(columns='index')
+#     if True:
+#         if 'gap_rate' in dataset.columns:
+#             bad_inds = np.argwhere(np.asarray(dataset['gap_rate']) > 0)[:, 0]  # cannot process gaps right now
+#             print(f"No Gaps filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#             dataset = delete_from_dataframe(dataset, bad_inds)
+#             dataset = dataset.reset_index().drop(columns='index')
+#     # forms = np.sort(np.unique(dataset['form']))
+#     # forms2tgt = {form: i for i, form in enumerate(forms)}
+#     targets = np.asarray(
+#         dataset['form']) - 1  # no longer need to reindex, as we have this now managed through the constants
+#     # this will throw an error later if the combined dataset is missing any forms, but it shouldn't be missing any forms in general
+#     # so that's fine
+#     # set high temperature samples to 'melted' class
+#     if 'urea' in dataset_path:
+#         melt_class_num = 6
+#     else:
+#         melt_class_num = 9  # nicotinamide
+#     if melt_only:
+#         bad_inds = np.argwhere(targets != melt_class_num)[:, 0]
+#         print(f"Melt only filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#         good_inds = np.argwhere(targets == melt_class_num)[:, 0]
+#         dataset = delete_from_dataframe(dataset, bad_inds)
+#         dataset = dataset.reset_index().drop(columns='index')
+#         targets = targets[good_inds]
+#     if no_melt:
+#         bad_inds = np.argwhere(targets == melt_class_num)[:, 0]
+#         print(f"No Melt filter killed {len(bad_inds)} out of {len(dataset)} samples")
+#
+#         good_inds = np.argwhere(targets != melt_class_num)[:, 0]
+#
+#         dataset = delete_from_dataframe(dataset, bad_inds)
+#         dataset = dataset.reset_index().drop(columns='index')
+#         targets = targets[good_inds]
+#     return dataset, targets
 
 
 def identify_surface_molecules(cluster_coords, cluster_targets, conv_cutoff, good_mols, mol_num_atoms, mol_radii):

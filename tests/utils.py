@@ -14,7 +14,6 @@ def train_model(config_path):
     modeller.fit_models()
 
 
-
 def check_tensor_similarity(t1, t2, eps=1e-4):
     """
     check that two tensors are sufficiently similar
@@ -23,7 +22,7 @@ def check_tensor_similarity(t1, t2, eps=1e-4):
     assert diff < eps, f"Difference is too large {diff:.5f}"
 
 
-def is_module_equivariant(v, rotation_matrix, module, batch=None, x=None): # todo rewrite with all kwargs
+def is_module_equivariant(v, rotation_matrix, module, batch=None, x=None):  # todo rewrite with all kwargs
 
     rotated_vector_batch = torch.einsum('ij, njk -> nik', rotation_matrix, v)
     if x is None:
