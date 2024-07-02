@@ -45,7 +45,7 @@ configs_list = [
                      'num_layers': 4,
                      'dropout': 0.25,
                      'norm': 'layer',
-                     'vector_norm': 'vector_layer', },
+                     'vector_norm': 'vector layer', },
                  'num_nodes': 512,
                  'ramp_depth': True,
              }}}},  # 0: Baseline - big model with dropout
@@ -90,7 +90,7 @@ configs_list = [
                      'num_layers': 4,
                      'dropout': 0.25,
                      'norm': 'layer',
-                     'vector_norm': 'vector_layer', },
+                     'vector_norm': 'vector layer', },
                  'num_nodes': 512,
                  'ramp_depth': True,
              }}}},  # 1: Loose sigma
@@ -135,7 +135,7 @@ configs_list = [
                      'num_layers': 4,
                      'dropout': 0.25,
                      'norm': 'layer',
-                     'vector_norm': 'vector_layer', },
+                     'vector_norm': 'vector layer', },
                  'num_nodes': 512,
                  'ramp_depth': True,
              }}}},  # 2: Really loose sigma
@@ -180,7 +180,7 @@ configs_list = [
                      'num_layers': 4,
                      'dropout': 0.25,
                      'norm': 'layer',
-                     'vector_norm': 'vector_layer', },
+                     'vector_norm': 'vector layer', },
                  'num_nodes': 512,
                  'ramp_depth': True,
              }}}},  # 3: Baseline double depth
