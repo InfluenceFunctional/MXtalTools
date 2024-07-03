@@ -183,7 +183,142 @@ configs_list = [
                      'vector_norm': 'vector layer', },
                  'num_nodes': 512,
                  'ramp_depth': True,
-             }}}},  # 3: Baseline double depth
+             }}}},  # 3: Loose sigma, double depth
+    {'min_batch_size': 10,
+     'max_batch_size': 1000,
+     'seeds': {'model': 1},
+     'positional_noise': {'autoencoder': 0},
+     'autoencoder': {
+         'overlap_eps': {'test': 1e-3},
+         'infer_protons': False,
+         'filter_protons': True,
+         'sigma_threshold': 0.01,
+         'type_distance_scaling': 2,
+         'optimizer': {
+             'init_lr': 5e-5,
+             'encoder_init_lr': 5e-5,
+             'decoder_init_lr': 5e-5,
+             'max_lr': 1e-3,
+             'min_lr': 1e-6,
+             'weight_decay': 0.05,
+             'lr_growth_lambda': 1.01,
+             'lr_shrink_lambda': 0.999,
+         },
+         'model': {
+             'bottleneck_dim': 512,
+             'encoder': {
+                 'graph': {
+                     'node_dim': 512,
+                     'message_dim': 128,
+                     'embedding_dim': 512,
+                     'num_convs': 2,
+                     'fcs_per_gc': 2,
+                     'dropout': 0.25,
+                     'cutoff': 5,
+                     'radial_embedding': 'bessel',
+                     'norm': 'graph layer',
+                     'vector_norm': 'graph vector layer',
+                 }},
+             'decoder': {
+                 'fc': {
+                     'hidden_dim': 512,
+                     'num_layers': 4,
+                     'dropout': 0.25,
+                     'norm': 'layer',
+                     'vector_norm': 'vector layer', },
+                 'num_nodes': 512,
+                 'ramp_depth': True,
+             }}}},  # 4: Baseline with more aggressive LR
+    {'min_batch_size': 10,
+     'max_batch_size': 1000,
+     'seeds': {'model': 1},
+     'positional_noise': {'autoencoder': 0},
+     'autoencoder': {
+         'overlap_eps': {'test': 1e-3},
+         'infer_protons': False,
+         'filter_protons': True,
+         'sigma_threshold': 0.01,
+         'type_distance_scaling': 2,
+         'optimizer': {
+             'init_lr': 5e-5,
+             'encoder_init_lr': 5e-5,
+             'decoder_init_lr': 5e-5,
+             'max_lr': 1e-3,
+             'min_lr': 1e-6,
+             'weight_decay': 0.05,
+             'lr_growth_lambda': 1.01,
+             'lr_shrink_lambda': 0.999,
+         },
+         'model': {
+             'bottleneck_dim': 512,
+             'encoder': {
+                 'graph': {
+                     'node_dim': 512,
+                     'message_dim': 128,
+                     'embedding_dim': 512,
+                     'num_convs': 2,
+                     'fcs_per_gc': 2,
+                     'dropout': 0.5,
+                     'cutoff': 5,
+                     'radial_embedding': 'bessel',
+                     'norm': 'graph layer',
+                     'vector_norm': 'graph vector layer',
+                 }},
+             'decoder': {
+                 'fc': {
+                     'hidden_dim': 512,
+                     'num_layers': 4,
+                     'dropout': 0.5,
+                     'norm': 'layer',
+                     'vector_norm': 'vector layer', },
+                 'num_nodes': 512,
+                 'ramp_depth': True,
+             }}}},  # 5: Baseline with more aggressive LR + double dropout
+    {'min_batch_size': 10,
+     'max_batch_size': 1000,
+     'seeds': {'model': 1},
+     'positional_noise': {'autoencoder': 0},
+     'autoencoder': {
+         'overlap_eps': {'test': 1e-3},
+         'infer_protons': False,
+         'filter_protons': True,
+         'sigma_threshold': 0.01,
+         'type_distance_scaling': 2,
+         'optimizer': {
+             'init_lr': 5e-5,
+             'encoder_init_lr': 5e-5,
+             'decoder_init_lr': 5e-5,
+             'max_lr': 1e-3,
+             'min_lr': 1e-6,
+             'weight_decay': 0.05,
+             'lr_growth_lambda': 1.01,
+             'lr_shrink_lambda': 0.999,
+         },
+         'model': {
+             'bottleneck_dim': 256,
+             'encoder': {
+                 'graph': {
+                     'node_dim': 256,
+                     'message_dim': 128,
+                     'embedding_dim': 256,
+                     'num_convs': 2,
+                     'fcs_per_gc': 2,
+                     'dropout': 0.25,
+                     'cutoff': 5,
+                     'radial_embedding': 'bessel',
+                     'norm': 'graph layer',
+                     'vector_norm': 'graph vector layer',
+                 }},
+             'decoder': {
+                 'fc': {
+                     'hidden_dim': 256,
+                     'num_layers': 4,
+                     'dropout': 0.25,
+                     'norm': 'layer',
+                     'vector_norm': 'vector layer', },
+                 'num_nodes': 512,
+                 'ramp_depth': True,
+             }}}},  # 6: Smaller model with more aggressive LR
 
 ]
 
