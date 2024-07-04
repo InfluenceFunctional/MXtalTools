@@ -4,7 +4,7 @@ base_config_path: /experiments/base/GEOM_autoencoder.yaml
 #dataset_name: 'test_CSD_dataset.pt' #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: True
-sweep_path: configs/experiments/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
+#sweep_path: configs/experiments/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
 #sweep_id: jao9tqo9
 
 dataset:

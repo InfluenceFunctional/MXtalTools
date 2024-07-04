@@ -77,7 +77,7 @@ extra_test_set_name: null
 generate_sgs: null
 gradient_norm_clip: 10
 grow_batch_size: true
-history: 100
+history: 500
 logger:
   experiment_tag: GEOM_sweep2
   log_figures: true

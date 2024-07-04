@@ -637,7 +637,7 @@ class Modeller:
         print(e)
         print("Reloading prior best checkpoint and restarting training at low LR")
         self.reload_best_test_checkpoint(epoch)
-        self.update_lr(update_lr_ratio=0.1)  # divide LR by 10 and try again
+        self.update_lr(update_lr_ratio=0.5)  # divide LR by 2 and try again
         self.hit_max_lr_dict = {key: True for key in self.hit_max_lr_dict.keys()}
 
     def handle_oom(self, prev_epoch_failed, test_loader, train_loader):

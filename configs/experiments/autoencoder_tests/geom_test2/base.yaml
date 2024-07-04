@@ -28,7 +28,7 @@ batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 2000
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 100  # for convergence checks
+history: 500  # for convergence checks
 gradient_norm_clip: 10
 extra_test_period: 1 # unused
 
