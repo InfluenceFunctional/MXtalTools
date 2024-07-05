@@ -35,4 +35,4 @@ and the Cambridge Structural Database Python API (for crystal featurization), wh
 
 5. In configs/users create a *.yaml* file for yourself and edit the paths and wandb details to correspond to your preferences. When running the code, append the following to your command line prompt.
 
- --user YOUR_USERNAME
+ python main.py --user YOUR_USERNAME
