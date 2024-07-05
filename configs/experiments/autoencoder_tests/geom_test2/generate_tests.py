@@ -536,7 +536,7 @@ configs_list = [
                  }},
              'decoder': {
                  'fc': {
-                     'hidden_dim': 1024,
+                     'hidden_dim': 512,
                      'num_layers': 4,
                      'dropout': 0.5,
                      'norm': None,
