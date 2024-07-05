@@ -1,10 +1,14 @@
 Dataset Creation
 ================
-This software generates training datasets of molecules/molecular crystal structures from collections of .xyz or .cif files, respectively. Structures collated and processed with the CSD Python API (for crystals only) and RDKit.
+This software generates training datasets of molecules/molecular crystal/molecular cluster structures from collections of .xyz or .cif files, respectively.
+Structures collated and processed using the CSD Python API (for crystals only), RDKit, and custom functions.
+Small datasets are may be saved and loaded into RAM, whereas large ones are loaded in batches from on-disk lmdb databases.
+Note dataset mixing and statistical analysis is not yet automated for such on-disk datasets.
 
-Collation includes filtering of structures which are somehow invalid. Invalid conditions include: symmetry features disagree, no atoms in the crystal, RDKit rejects the structure outright.
+Collation includes filtering of structures which are somehow invalid.
+Invalid conditions include: symmetry features disagree (i.e., wrong number of molecules in the crystal), no atoms in the structure, RDKit rejects the structure outright, and so on.
 
-The Cambridge Structural Database (CSD) can be processed by first dumping it to .cif files, which are then processed sequentially, or directly from the database with minor modifications.
+The full Cambridge Structural Database (CSD) can be processed by first dumping it to .cif files, which are then processed sequentially, or directly from the database with minor modifications to the existing scripts.
 
 Customized functions are available for processing CSD Blind Test submissions, as well as general collections of .xyz, and .cif files. The current models require only atomic numbers & coordinates to work, so a very simple featurization is sufficient.
 
@@ -26,7 +30,6 @@ with the appropriate paths set within each script.
 We also have functions for identifying duplicate molecules and polymorphs of the same molecule. When filtering these, we identify all the duplicates and pick a single 'representative' sample at random. Options for duplicate and other types of filtering are set in the dataset configs stored in `configs/dataset`
 
 
-
 Molecule Datasets from .xyzs
 ----------------------------
 
@@ -38,3 +41,16 @@ Simply run the following scripts,
 - `collate_and_generate_dataset.py`
 
 with the appropriate paths set within each script.
+
+
+Molecule Datasets from other sources
+------------------------------------
+
+Other datasets, such as GEOM Drugs, may be processed analogously to the .xyzs method, see for example:
+
+- `process_GEOM.py`
+
+The key difference in processing such a new dataset is simply in reading the relevant file to be processed.
+In the case of GEOM, one must install msgpack to serially walk through the dataset.
+
+
