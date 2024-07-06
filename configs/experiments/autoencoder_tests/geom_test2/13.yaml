@@ -44,7 +44,7 @@ autoencoder:
   optimizer:
     beta1: 0.9
     beta2: 0.999
-    convergence_eps: 1.0e-05
+    convergence_eps: 1.0e-07
     decoder_init_lr: 2.0e-05
     encoder_init_lr: 4.0e-05
     init_lr: 5.0e-05
@@ -90,7 +90,7 @@ max_batch_size: 100
 max_epoch_steps: 500
 max_epochs: 10000
 min_batch_size: 10
-minimum_epochs: 2000
+minimum_epochs: 4000
 misc_dataset_name: misc_data_for_GEOM_QM9_DRUGS_dataset.npy
 mode: autoencoder
 model_names:
