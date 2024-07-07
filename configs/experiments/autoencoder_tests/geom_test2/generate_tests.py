@@ -859,6 +859,54 @@ configs_list = [
                  'num_nodes': 512,
                  'ramp_depth': True,
              }}}},  # 18: 12 with huge decoder
+    {'min_batch_size': 10,
+     'max_batch_size': 132,
+     'seeds': {'model': 1},
+     'positional_noise': {'autoencoder': 0},
+     'autoencoder': {
+         'overlap_eps': {'test': 1e-3},
+         'infer_protons': False,
+         'filter_protons': True,
+         'sigma_threshold': 0.01,
+         'type_distance_scaling': 2,
+         'optimizer': {
+             'init_lr': 5e-5,
+             'encoder_init_lr': 0.00004205932928066357,
+             'decoder_init_lr': 0.00001939383815016441,
+             'max_lr': 0.0009520396832912248,
+             'min_lr': 1e-6,
+             'weight_decay': 0.0031908810182467765,
+             'lr_growth_lambda': 1.01,
+             'lr_shrink_lambda': 0.99,
+             'beta1': 0.9080372575922618,
+             'beta2': 0.99810670687236,
+         },
+         'model': {
+             'bottleneck_dim': 639,
+             'encoder': {
+                 'graph': {
+                     'node_dim': 948,
+                     'message_dim': 109,
+                     'embedding_dim': 492,
+                     'num_convs': 4,
+                     'fcs_per_gc': 1,
+                     'dropout': 0.2422100129086513,
+                     'cutoff': 5.575466887418605,
+                     'radial_embedding': 'bessel',
+                     'norm': None,
+                     'vector_norm': 'graph vector layer',
+                 }},
+             'decoder': {
+                 'fc': {
+                     'hidden_dim': 998,
+                     'num_layers': 3,
+                     'dropout': 0.4824555940509227,
+                     'norm': None,
+                     'vector_norm': None, },
+                 'num_nodes': 839,
+                 'ramp_depth': True,
+             }}}},  # 19: actual copy of sweep 104
+
 ]
 
 
