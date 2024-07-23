@@ -78,9 +78,6 @@ def process_smiles(line):
     return sample.to_dict()
 
 
-def append_sample(sample):
-    samples.append(sample)
-
 
 if __name__ == '__main__':
     #parent_directory = r'D:\crystal_datasets\zinc22'
