@@ -3,40 +3,90 @@ from tqdm import tqdm
 import torch
 import lmdb
 import pickle
-
+import gzip
+import multiprocessing as mp
 import os
 import rdkit.Chem as Chem
 from rdkit.Chem import AllChem
 
+from mxtaltools.common.utils import chunkify
 from mxtaltools.dataset_management.CrystalData import CrystalData
 
 
 def write_lmdb(database, current_map_size, dict_to_write):
+    #try:
+    with lmdb.open(database, map_size=current_map_size) as db:
+        with db.begin(write=True) as txn:
+            for key, value in dict_to_write.items():
+                txn.put(key.encode('ascii'), pickle.dumps(value))
+
+    return current_map_size
+    #
+    # except lmdb.MapFullError:
+    #     assert current_map_size < 2e11
+    #     new_map_size = int(current_map_size * 1.25)
+    #     print(f'Boosting map size from {current_map_size / 1e9:.1f}GB to {new_map_size / 1e9:.1f}GB')
+    #     current_map_size = new_map_size
+    #     return write_lmdb(database, current_map_size, dict_to_write)
+
+
+def process_smiles_list(chunk, overall_index, map_size, database_path, keys_path):
+    samples = [process_smiles(line) for line in chunk]
+    samples = [sample for sample in samples if sample is not None]
+    sample_inds = [overall_index + cc_idx for cc_idx in range(1, len(samples) + 1)]
+    data_dict = {str(k): v for k, v in zip(sample_inds, samples)}
+    overall_index += len(samples)
+
+    #np.save(keys_path, overall_index)
+    map_size = write_lmdb(database_path, map_size, data_dict)
+
+
+def process_smiles(line):
     try:
-        with lmdb.open(database, map_size=current_map_size) as db:
-            with db.begin(write=True) as txn:
-                for key, value in dict_to_write.items():
-                    txn.put(key.encode('ascii'), pickle.dumps(value))
+        mol = Chem.MolFromSmiles(line)
+        mol2 = Chem.AddHs(mol)
+        AllChem.EmbedMolecule(mol2)
+        conf = mol2.GetConformer()
+    except:
+        return None
 
-        return current_map_size
+    coords = np.array(conf.GetPositions())
+    atom_types = [atom.GetAtomicNum() for atom in mol2.GetAtoms()]
 
-    except lmdb.MapFullError:
-        assert current_map_size < 2e11
-        new_map_size = int(current_map_size * 1.25)
-        print(f'Boosting map size from {current_map_size / 1e9:.1f}GB to {new_map_size / 1e9:.1f}GB')
-        current_map_size = new_map_size
-        return write_lmdb(database, current_map_size, dict_to_write)
+    # molecule sizes filter
+    if len(atom_types) < 6 or len(atom_types) > 100:
+        return None
+
+    # atom types filter
+    if not set(atom_types).issubset([1, 5, 6, 7, 8, 9, 14, 15, 16, 17, 35, 53]):
+        return None
+
+    sample = CrystalData(
+        x=torch.tensor(atom_types, dtype=torch.long),
+        pos=torch.tensor(coords, dtype=torch.float32),
+        smiles=Chem.MolToSmiles(mol),
+        identifier=mol.GetProp("_Name"),
+        y=torch.zeros(1, dtype=torch.float32),
+        require_crystal_features=False,
+    )
+
+    # molecule radius filter
+    if sample.radius > 15:
+        return None
+
+    return sample.to_dict()
+
+
+def append_sample(sample):
+    samples.append(sample)
 
 
 if __name__ == '__main__':
-    #parent_directory = r'D:\crystal_datasets\zinc22'
-    parent_directory = r'/vast/mk8347/zinc'
+    parent_directory = r'D:\crystal_datasets\zinc22'
+    #parent_directory = r'/vast/mk8347/zinc'
 
     lmdb_database = 'zinc.lmdb'
-    map_size = int(1e9)  # map size in bytes
-
-    min_chunk = 0
-    max_chunk = 5
+    map_size = int(10e9)  # map size in bytes
 
     os.chdir(parent_directory)
     dirs = os.listdir()
@@ -49,6 +99,9 @@ if __name__ == '__main__':
     keys_path = parent_directory + '/' + lmdb_database.split('.lmdb')[0] + '_keys'
     database_path = parent_directory + '/' + lmdb_database
     chunk_ind = - 1
+    min_chunk = 0
+    max_chunk = min(100000, len(dirs))
+    tot_index = 0
     with tqdm(total=max_chunk) as pbar:
         while chunk_ind < max_chunk - 1:
             pbar.update(1)
@@ -57,51 +110,26 @@ if __name__ == '__main__':
             if not (max_chunk > chunk_ind >= min_chunk):
                 continue
 
-            data_dict = {}
-            samples = []
+            os.chdir(parent_directory)
             os.chdir(dirs[chunk_ind])
             for file in os.listdir():
-                data = open(file, 'r')
-                for line in tqdm(data):
-                    try:
-                        mol = Chem.MolFromSmiles(line)
-                        mol2 = Chem.AddHs(mol)
-                        AllChem.EmbedMolecule(mol2)
-                        conf = mol2.GetConformer()
-                    except ValueError as e:
-                        continue
+                if file[-3:] == '.gz':
+                    data = gzip.open(file, 'r')
+                else:
+                    data = open(file, 'r')
 
-                    coords = np.array(conf.GetPositions())
-                    atom_types = [atom.GetAtomicNum() for atom in mol2.GetAtoms()]
+                lines = data.readlines()
+                chunks = chunkify(lines, 1000)
+                data.close()
+                samples = []
+                pool = mp.Pool(os.cpu_count() - 2)
 
-                    # molecule sizes filter
-                    if len(atom_types) < 6 or len(atom_types) > 100:
-                        continue
+                for c_ind, chunk in enumerate(tqdm(chunks)):
+                    chunk_index = tot_index + sum([len(chunks[cc]) for cc in range(c_ind - 1)])
+                    pool.apply_async(process_smiles_list, args=(chunk, chunk_index, map_size, database_path, keys_path))
+                tot_index += chunk_index
+                np.save(keys_path, tot_index)
 
-                    # atom types filter
-                    if not set(atom_types).issubset([1, 5, 6, 7, 8, 9, 14, 15, 16, 17, 35, 53]):
-                        continue
+                pool.close()
 
-                    sample = CrystalData(
-                        x=torch.tensor(atom_types, dtype=torch.long),
-                        pos=torch.tensor(coords, dtype=torch.float32),
-                        smiles=Chem.MolToSmiles(mol),
-                        identifier=mol.GetProp("_Name"),
-                        y=torch.zeros(1, dtype=torch.float32),
-                        require_crystal_features=False,
-                    )
-
-                    # molecule radius filter
-                    if sample.radius > 15:
-                        continue
-
-                    samples.append(sample.to_dict())
-
-            if len(samples) > 0:
-                sample_inds = [overall_index + cc_idx for cc_idx in range(1, len(samples) + 1)]
-                data_dict.update({str(k): v for k, v in zip(sample_inds, samples)})
-                overall_index += len(samples)
-
-            np.save(keys_path, overall_index)
-
-            map_size = write_lmdb(database_path, map_size, data_dict)
+                aa = 1

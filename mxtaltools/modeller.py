@@ -284,9 +284,9 @@ class Modeller:
             shuffle = True
 
         if self.config.dataset.on_disk_data_dir is not None:
-            from mxtaltools.dataset_management.lmdb_dataset import GeomDataset
+            from mxtaltools.dataset_management.lmdb_dataset import lmdbDataset
             from torch_geometric.data import DataLoader
-            train_dataset = GeomDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
+            train_dataset = lmdbDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
             num_workers = 2  #min(os.cpu_count(), 16)  # min(os.cpu_count(), 8)
             print(f'{num_workers} workers set for dataloaders')
             train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
@@ -296,7 +296,7 @@ class Modeller:
                                       )
             del train_dataset
 
-            test_dataset = GeomDataset(
+            test_dataset = lmdbDataset(
                 self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
             test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
                                      pin_memory=True, drop_last=False,

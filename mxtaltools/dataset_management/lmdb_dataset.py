@@ -6,7 +6,7 @@ import numpy as np
 from mxtaltools.dataset_management.CrystalData import CrystalData
 
 
-class GeomDataset(Dataset):
+class lmdbDataset(Dataset):
     def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
         self.path_to_datafiles = root
         self.txn = None
@@ -39,7 +39,18 @@ class GeomDataset(Dataset):
             idx = 1
         elif idx >= self.dataset_length:
             idx = self.dataset_length - 1
-        return CrystalData.from_dict(pickle.loads(self.txn.get(str(idx).encode('ascii'))))
+
+        return self.return_sample(idx)
+
+    def return_sample(self, idx):
+        """
+        required since some keys map to None, which can be difficult to clean up
+        """
+        try:
+            return CrystalData.from_dict(pickle.loads(self.txn.get(str(idx).encode('ascii'))))
+        except TypeError:
+            idx -= 1
+            return self.return_sample(idx)
 
     def _init_env(self):
         env = lmdb.open(
@@ -56,13 +67,19 @@ if __name__ == '__main__':
     from torch_geometric.loader import DataLoader
     from tqdm import tqdm
 
-    dataset = GeomDataset(root=r'D:\crystal_datasets\drugs_crude.msgpack\train.lmdb')
+    #dataset = lmdbDataset(root=r'D:\crystal_datasets\drugs_crude.msgpack\train.lmdb')
+    dataset = lmdbDataset(root=r'D:\crystal_datasets\zinc22/zinc.lmdb')
+    dataset.get(1)
 
-    dataloader = DataLoader(dataset, batch_size=1000, shuffle=True,
-                            num_workers=2,
-                            persistent_workers=True)
+    dataloader = DataLoader(dataset,
+                            batch_size=100,
+                            shuffle=True,
+                            num_workers=0,
+                            )
 
-    for data in enumerate(tqdm(dataloader)):
+    sample = next(iter(dataloader))
+
+    for ind, data in enumerate(tqdm(dataloader)):
         pass
 
     aa = 1
