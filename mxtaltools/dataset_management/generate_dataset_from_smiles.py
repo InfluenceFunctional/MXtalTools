@@ -39,6 +39,7 @@ def process_smiles_list(chunk, overall_index, map_size, database_path, keys_path
 
     #np.save(keys_path, overall_index)
     map_size = write_lmdb(database_path, map_size, data_dict)
+    del data_dict, samples
 
 
 def process_smiles(line):
@@ -82,8 +83,8 @@ def append_sample(sample):
 
 
 if __name__ == '__main__':
-    parent_directory = r'D:\crystal_datasets\zinc22'
-    #parent_directory = r'/vast/mk8347/zinc'
+    #parent_directory = r'D:\crystal_datasets\zinc22'
+    parent_directory = r'/vast/mk8347/zinc'
 
     lmdb_database = 'zinc.lmdb'
     map_size = int(10e9)  # map size in bytes
@@ -112,24 +113,26 @@ if __name__ == '__main__':
 
             os.chdir(parent_directory)
             os.chdir(dirs[chunk_ind])
-            for file in os.listdir():
+            for file in tqdm(os.listdir()):
                 if file[-3:] == '.gz':
                     data = gzip.open(file, 'r')
                 else:
                     data = open(file, 'r')
 
                 lines = data.readlines()
-                chunks = chunkify(lines, 1000)
+                chunks = chunkify(lines, 100)
                 data.close()
-                samples = []
-                pool = mp.Pool(os.cpu_count() - 2)
+                del lines
+                pool = mp.Pool(os.cpu_count())
 
-                for c_ind, chunk in enumerate(tqdm(chunks)):
+                for c_ind, chunk in enumerate(chunks):
                     chunk_index = tot_index + sum([len(chunks[cc]) for cc in range(c_ind - 1)])
                     pool.apply_async(process_smiles_list, args=(chunk, chunk_index, map_size, database_path, keys_path))
+
+                del chunks
+                pool.close()
+
                 tot_index += chunk_index
                 np.save(keys_path, tot_index)
-
-                pool.close()
 
                 aa = 1
