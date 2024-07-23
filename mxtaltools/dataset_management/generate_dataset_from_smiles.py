@@ -30,14 +30,13 @@ def write_lmdb(database, current_map_size, dict_to_write):
     #     return write_lmdb(database, current_map_size, dict_to_write)
 
 
-def process_smiles_list(chunk, overall_index, map_size, database_path, keys_path):
+def process_smiles_list(chunk, overall_index, map_size, database_path):
     samples = [process_smiles(line) for line in chunk]
     samples = [sample for sample in samples if sample is not None]
     sample_inds = [overall_index + cc_idx for cc_idx in range(1, len(samples) + 1)]
     data_dict = {str(k): v for k, v in zip(sample_inds, samples)}
     overall_index += len(samples)
 
-    #np.save(keys_path, overall_index)
     map_size = write_lmdb(database_path, map_size, data_dict)
     del data_dict, samples
 
@@ -78,10 +77,9 @@ def process_smiles(line):
     return sample.to_dict()
 
 
-
 if __name__ == '__main__':
-    #parent_directory = r'D:\crystal_datasets\zinc22'
-    parent_directory = r'/vast/mk8347/zinc'
+    parent_directory = r'D:\crystal_datasets\zinc22'
+    #parent_directory = r'/vast/mk8347/zinc'
 
     lmdb_database = 'zinc.lmdb'
     map_size = int(10e9)  # map size in bytes
@@ -89,10 +87,10 @@ if __name__ == '__main__':
     os.chdir(parent_directory)
     dirs = os.listdir()
 
-    if not os.path.exists(lmdb_database.split('.lmdb')[0] + '_keys.npy'):
-        overall_index = int(0)
-    else:
-        overall_index = np.load(lmdb_database.split('.lmdb')[0] + '_keys.npy', allow_pickle=True).item()
+    # if not os.path.exists(lmdb_database.split('.lmdb')[0] + '_keys.npy'):
+    #     overall_index = int(0)
+    # else:
+    #     overall_index = np.load(lmdb_database.split('.lmdb')[0] + '_keys.npy', allow_pickle=True).item()
 
     keys_path = parent_directory + '/' + lmdb_database.split('.lmdb')[0] + '_keys'
     database_path = parent_directory + '/' + lmdb_database
@@ -108,28 +106,37 @@ if __name__ == '__main__':
             if not (max_chunk > chunk_ind >= min_chunk):
                 continue
 
-            os.chdir(parent_directory)
-            os.chdir(dirs[chunk_ind])
-            for file in tqdm(os.listdir()):
-                if file[-3:] == '.gz':
-                    data = gzip.open(file, 'r')
-                else:
-                    data = open(file, 'r')
+            if dirs[chunk_ind][0] == 'H':
+                os.chdir(parent_directory)
+                os.chdir(dirs[chunk_ind])
+                for file in tqdm(os.listdir()):
+                    if file[-3:] == '.gz':
+                        with gzip.open(file, 'r') as f:
+                            lines = f.readlines()
+                    elif file[-4:] == '.smi':
+                        with open(file, 'r') as f:
+                            lines = f.readlines()
+                    else:
+                        continue
 
-                lines = data.readlines()
-                chunks = chunkify(lines, 100)
-                data.close()
-                del lines
-                pool = mp.Pool(os.cpu_count())
+                    if len(lines) > 0:
+                        chunks = chunkify(lines, int(np.ceil(len(lines) / 1000)))
+                        del lines
+                        pool = mp.Pool(mp.cpu_count() - 1)
+                        for c_ind, chunk in enumerate(chunks):
+                            chunk_incr = sum([len(chunks[cc]) for cc in range(c_ind + 1)])
+                            chunk_index = tot_index + chunk_incr
+                            pool.apply_async(process_smiles_list, args=(chunk, chunk_index, map_size, database_path))
 
-                for c_ind, chunk in enumerate(chunks):
-                    chunk_index = tot_index + sum([len(chunks[cc]) for cc in range(c_ind - 1)])
-                    pool.apply_async(process_smiles_list, args=(chunk, chunk_index, map_size, database_path, keys_path))
+                        pool.close()
+                        pool.join()
 
-                del chunks
-                pool.close()
+                        tot_index += chunk_incr
+                        np.save(keys_path, tot_index)
 
-                tot_index += chunk_index
-                np.save(keys_path, tot_index)
+                        del chunks
 
-                aa = 1
+                    else:
+                        del lines
+
+                    aa = 1
