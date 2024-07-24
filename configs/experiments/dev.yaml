@@ -1,6 +1,6 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/GEOM_autoencoder.yaml
+base_config_path: /experiments/base/ZINC_autoencoder.yaml
 #dataset_name: 'test_CSD_dataset.pt' #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: True
@@ -10,7 +10,7 @@ save_checkpoints: True
 dataset:
   max_dataset_length: 10000  # non-functional for on-disk datasets.
   test_fraction: 0.2
-  on_disk_data_dir: 'drugs_crude.msgpack/train.lmdb/'
+  on_disk_data_dir: 'zinc22/zinc.lmdb/'
   #dumps_dirs: ['acridine_melt_interface18/5']
 
 seeds:
@@ -19,7 +19,7 @@ seeds:
 # batching & convergence
 max_epoch_steps: 500
 early_epochs_step_override: 5
-num_early_epochs: 50
+num_early_epochs: 5
 grow_batch_size: True
 min_batch_size: 25
 max_batch_size: 500

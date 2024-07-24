@@ -295,17 +295,24 @@ class Modeller:
                                       persistent_workers=False,  #True if self.config.machine == 'cluster' else False
                                       )
             del train_dataset
+            #
+            # test_dataset = lmdbDataset(
+            #     self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
+            # test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
+            #                          pin_memory=True, drop_last=False,
+            #                          num_workers=0,  #num_workers if self.config.machine == 'cluster' else 0,
+            #                          persistent_workers=False,
+            #                          #True, #True if self.config.machine == 'cluster' else False,
+            #                          )
 
-            test_dataset = lmdbDataset(
-                self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
-            test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-                                     pin_memory=True, drop_last=False,
-                                     num_workers=0,  #num_workers if self.config.machine == 'cluster' else 0,
-                                     persistent_workers=False,
-                                     #True, #True if self.config.machine == 'cluster' else False,
-                                     )
+            #del test_dataset
 
-            del test_dataset
+            # test dataset is the pre-generated qm9/GEOM
+            test_loader, _ = get_dataloaders(dataset_builder,
+                                                        machine=self.config.machine,
+                                                        batch_size=loader_batch_size,
+                                                        test_fraction=0,
+                                                        shuffle=shuffle)
         else:
             train_loader, test_loader = get_dataloaders(dataset_builder,
                                                         machine=self.config.machine,
