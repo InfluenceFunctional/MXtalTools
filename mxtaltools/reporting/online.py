@@ -1206,7 +1206,6 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     losses = ['abs_error', 'abs_normed_error', 'squared_error']
     loss_dict = {}
     fig_dict = {}
-    fig = make_subplots(cols=2, rows=1)
     for loss in losses:
         if loss == 'abs_error':
             loss_i = np.abs(target - prediction)
@@ -1234,8 +1233,10 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     except:
         z = np.ones_like(tgt_value)
 
+    fig = make_subplots(cols=2, rows=1)
+
     num_points = len(pred_value)
-    opacity = np.exp(-num_points / 10000)
+    opacity = max(0.1,np.exp(-num_points / 10000))
     fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity,
                                showlegend=False),
                   row=1, col=1)
@@ -1260,6 +1261,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
 
     fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
     fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
 
     fig.write_image('fig.png', width=1024, height=512)  # save the image rather than the fig, for size reasons
     fig_dict['Regression Results'] = wandb.Image('fig.png')

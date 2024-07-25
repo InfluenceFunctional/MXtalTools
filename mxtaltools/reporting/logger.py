@@ -242,6 +242,7 @@ class Logger:
         log analysis of an evaluation dataset
         Parameters
         ----------
+        mode
         test_loader
 
         Returns
