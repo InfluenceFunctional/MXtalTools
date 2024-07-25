@@ -19,8 +19,8 @@ dataset:
 
 # batching & convergence
 max_epoch_steps: 500
-early_epochs_step_override: 5
-num_early_epochs: 0
+early_epochs_step_override: 10
+num_early_epochs: 10
 grow_batch_size: True
 min_batch_size: 10
 max_batch_size: 1000
@@ -33,8 +33,8 @@ gradient_norm_clip: 10
 extra_test_period: 1 # unused
 
 logger:
-  run_name: GEOM_sweep2
-  experiment_tag: GEOM_sweep2
+  run_name: zinc_test
+  experiment_tag: zinc_test1
   mini_csp_frequency: 1 # unused here
   sample_reporting_frequency: 20  # how often to do detailed reporting with figures
   stats_reporting_frequency: 20
