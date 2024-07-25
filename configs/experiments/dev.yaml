@@ -10,7 +10,7 @@ save_checkpoints: True
 dataset:
   max_dataset_length: 1000000  # non-functional for on-disk datasets.
   test_fraction: 0.2
-  on_disk_data_dir: 'zinc22/zinc.lmdb/'
+  on_disk_data_dir: '/zinc22/zinc.lmdb/'
   #dumps_dirs: ['acridine_melt_interface18/5']
 
 seeds:

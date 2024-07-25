@@ -284,6 +284,7 @@ class Modeller:
             shuffle = True
 
         if self.config.dataset.on_disk_data_dir is not None:
+            print(f"Loading on-disk dataset {self.config.dataset.on_disk_data_dir}")
             from mxtaltools.dataset_management.lmdb_dataset import lmdbDataset
             from torch_geometric.data import DataLoader
             train_dataset = lmdbDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)

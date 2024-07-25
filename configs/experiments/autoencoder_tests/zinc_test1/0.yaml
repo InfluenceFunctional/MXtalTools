@@ -66,6 +66,7 @@ batch_growth_increment: 0.05
 checkpointing_loss_type: test
 dataset:
   max_dataset_length: 10000000
+  on_disc_data_dir: /zinc/zinc.lmdb/
   regression_target: null
   test_fraction: 0.2
   type: molecule

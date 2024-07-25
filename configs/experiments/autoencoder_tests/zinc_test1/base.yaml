@@ -16,7 +16,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   regression_target: null
-  on_disc_data_dir: 'zinc/zinc.lmdb/'
+  on_disc_data_dir: '/zinc/zinc.lmdb/'
 
 
 # batching & convergence
