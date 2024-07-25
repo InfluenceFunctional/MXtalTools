@@ -16,7 +16,7 @@ configs_list = [
          'type_distance_scaling': 2,
          'optimizer': {
              'init_lr': 5e-5,
-             'encoder_init_lr': 4e-4,
+             'encoder_init_lr': 4e-5,
              'decoder_init_lr': 2e-5,
              'max_lr': 1e-4,
              'min_lr': 1e-6,
