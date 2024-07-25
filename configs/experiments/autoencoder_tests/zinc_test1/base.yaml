@@ -16,6 +16,8 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   regression_target: null
+  on_disc_data_dir: 'zinc22/zinc.lmdb/'
+
 
 # batching & convergence
 max_epoch_steps: 500
