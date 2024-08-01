@@ -38,8 +38,8 @@ logger:
   run_name: zinc_test
   experiment_tag: zinc_test1
   mini_csp_frequency: 1 # unused here
-  sample_reporting_frequency: 20  # how often to do detailed reporting with figures
-  stats_reporting_frequency: 20
+  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 5
   log_figures: True
 
 seeds:

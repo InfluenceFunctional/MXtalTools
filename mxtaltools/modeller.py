@@ -6,6 +6,7 @@ from distutils.dir_util import copy_tree
 from shutil import copy
 from time import time
 from typing import Tuple
+#os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 import numpy as np
 import torch
@@ -39,7 +40,7 @@ from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_s
                                      compute_full_evaluation_overlap, compute_reduced_volume_fraction,
                                      dict_of_tensors_to_cpu_numpy,
                                      test_decoder_equivariance, test_encoder_equivariance, instantiate_models,
-                                     prep_ae_io_for_analysis, ae_reconstruction_loss)
+                                     collate_decoded_data, ae_reconstruction_loss)
 from mxtaltools.models.utils import (weight_reset, get_n_config)
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
@@ -134,8 +135,10 @@ class Modeller:
         self.times['init_models_start'] = time()
         self.model_names = self.config.model_names
         self.reload_model_checkpoint_configs()
-        self.models_dict = instantiate_models(self.config, self.dataDims, self.device,
-                                              self.sym_info, self.model_names, self.autoencoder_type_index)
+        self.models_dict = instantiate_models(self.config,
+                                              self.dataDims,
+                                              self.model_names,
+                                              self.autoencoder_type_index)
         self.init_optimizers()
         self.reload_models()
         self.init_schedulers()
@@ -308,12 +311,12 @@ class Modeller:
 
             #del test_dataset
 
-            # test dataset is the pre-generated qm9/GEOM
+            # test dataset is pre-generated
             test_loader, _ = get_dataloaders(dataset_builder,
-                                                        machine=self.config.machine,
-                                                        batch_size=loader_batch_size,
-                                                        test_fraction=0,
-                                                        shuffle=shuffle)
+                                             machine=self.config.machine,
+                                             batch_size=loader_batch_size,
+                                             test_fraction=0,
+                                             shuffle=shuffle)
         else:
             train_loader, test_loader = get_dataloaders(dataset_builder,
                                                         machine=self.config.machine,
@@ -599,47 +602,46 @@ class Modeller:
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
-            # training loop
-            # with torch.autograd.set_detect_anomaly(self.config.anomaly_detection):
-            while (epoch < self.config.max_epochs) and not converged:
-                print(self.separator_string)
-                print("Starting Epoch {}".format(epoch))  # index from 0
-                self.times['full_epoch_start'] = time()
-                self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
+            with torch.autograd.set_detect_anomaly(False):
+                while (epoch < self.config.max_epochs) and not converged:
+                    print(self.separator_string)
+                    print("Starting Epoch {}".format(epoch))  # index from 0
+                    self.times['full_epoch_start'] = time()
+                    self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
 
-                if epoch < self.config.num_early_epochs:
-                    steps_override = self.config.early_epochs_step_override
-                else:
-                    steps_override = self.config.max_epoch_steps
-
-                try:  # try this batch size
-                    self.train_test_validate(epoch, extra_test_loader, steps_override, test_loader, train_loader)
-                    self.post_epoch_logging_analysis(test_loader, epoch)
-
-                    if all(list(self.logger.converged_flags.values())):  # todo confirm this works
-                        print('Training has converged!')
-                        break
-
-                    if self.config.mode != 'polymorph_classification':
-                        train_loader, test_loader, extra_test_loader = \
-                            self.increment_batch_size(train_loader, test_loader, extra_test_loader)
-
-                    prev_epoch_failed = False
-
-                except (RuntimeError, ValueError) as e:  # if we do hit OOM, slash the batch size
-                    if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
-                        test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed, test_loader, train_loader)
-                    elif "Mean loss is NaN/Inf" == str(e):
-                        self.handle_nan(e, epoch)
+                    if epoch < self.config.num_early_epochs:
+                        steps_override = self.config.early_epochs_step_override
                     else:
-                        raise e  # will simply raise error if other or if training on CPU
+                        steps_override = self.config.max_epoch_steps
 
-                self.times['full_epoch_end'] = time()
-                self.logger.log_times(self.times)
-                self.times = {}
-                epoch += 1
+                    try:  # try this batch size
+                        self.train_test_validate(epoch, extra_test_loader, steps_override, test_loader, train_loader)
+                        self.post_epoch_logging_analysis(test_loader, epoch)
 
-            self.logger.evaluation_analysis(test_loader, self.config.mode)
+                        if all(list(self.logger.converged_flags.values())):  # todo confirm this works
+                            print('Training has converged!')
+                            break
+
+                        if self.config.mode != 'polymorph_classification':
+                            train_loader, test_loader, extra_test_loader = \
+                                self.increment_batch_size(train_loader, test_loader, extra_test_loader)
+
+                        prev_epoch_failed = False
+
+                    except (RuntimeError, ValueError) as e:  # if we do hit OOM, slash the batch size
+                        if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
+                            test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed, test_loader, train_loader)
+                        elif "Mean loss is NaN/Inf" == str(e):
+                            self.handle_nan(e, epoch)
+                        else:
+                            raise e  # will simply raise error if other or if training on CPU
+
+                    self.times['full_epoch_end'] = time()
+                    self.logger.log_times(self.times)
+                    self.times = {}
+                    epoch += 1
+
+                self.logger.evaluation_analysis(test_loader, self.config.mode)
 
     def handle_nan(self, e, epoch):
         print(e)
@@ -773,7 +775,7 @@ class Modeller:
                   epoch_type: str,
                   data_loader: CrystalData = None,
                   update_weights: bool = True,
-                  iteration_override: bool = None):
+                  iteration_override: int = None):
         self.epoch_type = epoch_type
         self.times[epoch_type + "_epoch_start"] = time()
 
@@ -832,8 +834,7 @@ class Modeller:
 
         regression_loss = losses.mean()
         if update_weights:
-            self.optimizers_dict['embedding_regressor'].zero_grad(
-                set_to_none=True)  # reset gradients from previous passes
+            self.optimizers_dict['embedding_regressor'].zero_grad(set_to_none=True)
             regression_loss.backward()  # back-propagation
             self.optimizers_dict['embedding_regressor'].step()  # update parameters
         '''log losses and other tracking values'''
@@ -850,7 +851,7 @@ class Modeller:
     def ae_step(self, input_data, data, update_weights, step, last_step=False):
         if (not self.models_dict['autoencoder'].protons_in_input and
                 not self.models_dict['autoencoder'].inferring_protons):
-            data = input_data.clone()
+            data = input_data.detach().clone()
 
         if step % self.config.logger.stats_reporting_frequency == 0:
             skip_stats = False
@@ -859,16 +860,15 @@ class Modeller:
         else:
             skip_stats = True
 
-        decoding, encoding = self.models_dict['autoencoder'](input_data.clone(), return_latent=True)
+        decoding = self.models_dict['autoencoder'](input_data.clone(), return_latent=False)
         losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone(), skip_stats=skip_stats)
 
         mean_loss = losses.mean()
-
         if torch.sum(torch.logical_not(torch.isfinite(mean_loss))) > 0:
             raise ValueError("Mean loss is NaN/Inf")
 
         if update_weights:
-            self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+            self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)
             mean_loss.backward()  # back-propagation
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
@@ -881,10 +881,10 @@ class Modeller:
         if (not self.models_dict['autoencoder'].inferring_protons and
                 self.models_dict['autoencoder'].protons_in_input and
                 not override_deprotonate):
-            input_cloud = data.clone()
+            input_cloud = data.detach().clone()
         else:
-            heavy_atom_inds = torch.argwhere(data.x != 1)[:, 0]  # protons are atom type 1
-            input_cloud = data.clone()
+            heavy_atom_inds = torch.argwhere(data.x != 1).flatten()  # protons are atom type 1
+            input_cloud = data.detach().clone()
             input_cloud.x = input_cloud.x[heavy_atom_inds]
             input_cloud.pos = input_cloud.pos[heavy_atom_inds]
             input_cloud.batch = input_cloud.batch[heavy_atom_inds]
@@ -922,7 +922,7 @@ class Modeller:
 
         # do evaluation on current sample and save this as our loss for tracking purposes
         nodewise_weights_tensor = decoded_data.aux_ind
-        true_nodes = F.one_hot(self.models_dict['autoencoder'].atom_embedding_vector[data.x[:, 0].long()],
+        true_nodes = F.one_hot(self.models_dict['autoencoder'].atom_embedding_vector[data.x.long()],
                                num_classes=self.dataDims['num_atom_types']).float()
         full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor,
                                                                      true_nodes,
@@ -976,8 +976,7 @@ class Modeller:
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
             data = data.to(self.device)
-            if data.x.ndim == 1:
-                data.x = data.x[:, None]
+            data.x = data.x.flatten()
 
             data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
             self.ae_step(input_data, data, update_weights, step=i,
@@ -995,8 +994,7 @@ class Modeller:
         if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:
             # and we more self-overlap than desired
             if self.epoch_type == 'test':  # the overlap we ultimately care about is in the Test
-                if np.abs(1 - self.logger.test_stats['mean_self_overlap'][
-                              -100:]).mean() > self.config.autoencoder.overlap_eps.test:
+                if np.abs(1 - self.logger.test_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps.test:
                     # tighten the target distribution
                     self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
@@ -1050,17 +1048,25 @@ class Modeller:
         -------
 
         """
+        # reduce to relevant atom types
+        data.x = self.models_dict['autoencoder'].atom_embedding_vector[data.x].flatten()
         decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
-            prep_ae_io_for_analysis(data, decoding,
-                                    self.models_dict['autoencoder'],
-                                    self.config.autoencoder.node_weight_temperature,
-                                    self.device))
+            collate_decoded_data(data,
+                                 decoding,
+                                 self.models_dict['autoencoder'].num_decoder_nodes,
+                                 self.config.autoencoder.node_weight_temperature,
+                                 self.device))
 
-        nodewise_reconstruction_loss, nodewise_type_loss, reconstruction_loss, self_likelihoods = (
-            ae_reconstruction_loss(data, decoded_data, nodewise_weights,
+        (nodewise_reconstruction_loss,
+         nodewise_type_loss,
+         reconstruction_loss,
+         self_likelihoods) = ae_reconstruction_loss(data,
+                                   decoded_data,
+                                   nodewise_weights,
                                    self.dataDims['num_atom_types'],
                                    self.config.autoencoder.type_distance_scaling,
-                                   self.config.autoencoder_sigma))
+                                   self.config.autoencoder_sigma)
+
         matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
 
         # node radius constraining loss

@@ -11,9 +11,7 @@ class BesselBasisLayer(torch.nn.Module):  # NOTE borrowed from DimeNet implement
         super(BesselBasisLayer, self).__init__()
         self.register_buffer('cutoff', torch.tensor(cutoff))
         self.envelope = Envelope(envelope_exponent)
-
         self.freq = torch.nn.Parameter(torch.Tensor(num_radial))
-
         self.reset_parameters()
 
     def reset_parameters(self):

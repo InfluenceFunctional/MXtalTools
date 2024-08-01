@@ -126,6 +126,7 @@ class DataManager:
 
         Parameters
         ----------
+        precompute_edges: bool
         do_shuffle
         conv_cutoff : float
         dataset_name
@@ -148,6 +149,9 @@ class DataManager:
         self.dataset_filtration(filter_conditions, filter_duplicate_molecules, filter_polymorphs)
 
         self.truncate_and_shuffle_dataset(override_length, do_shuffle=do_shuffle)
+
+        self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
+        self.dataset_stats = self.misc_dataset['dataset_stats']
 
         self.get_cell_cov_mat()
         self.assign_targets()
@@ -433,7 +437,7 @@ class DataManager:
 
         # collation here so we don't slow down saving above
         self.dataset = self.collater(self.dataset)
-        self.misc_dataset = self.extract_misc_stats_and_indices()
+        self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
         # save smaller test dataset
 
         if save_dataset:
@@ -449,36 +453,41 @@ class DataManager:
             # save full dataset
             torch.save(self.dataset, self.datasets_path + new_dataset_name + '.pt')
 
-    def extract_misc_stats_and_indices(self):
+    def extract_misc_stats_and_indices(self, dataset):
+        if isinstance(dataset, list):
+            dataset_to_analyze = self.collater(dataset)
+        else:
+            dataset_to_analyze = dataset
+
         misc_data_dict = {
             'dataset_stats': {
-                'atomic_number': basic_stats(self.dataset.x.long()),
-                'vdw_radii': basic_stats(self.vdw_radii_tensor[self.dataset.x.long()]),
-                'atom_weight': basic_stats(self.atom_weights_tensor[self.dataset.x.long()]),
-                'electronegativity': basic_stats(self.electronegativity_tensor[self.dataset.x.long()]),
-                'group': basic_stats(self.group_tensor[self.dataset.x.long()].long()),
-                'period': basic_stats(self.period_tensor[self.dataset.x.long()].long()),
-                'num_atoms': basic_stats(self.dataset.num_atoms.long()),
-                'radius': basic_stats(self.dataset.radius.float()),
+                'atomic_number': basic_stats(dataset_to_analyze.x.long()),
+                'vdw_radii': basic_stats(self.vdw_radii_tensor[dataset_to_analyze.x.long()]),
+                'atom_weight': basic_stats(self.atom_weights_tensor[dataset_to_analyze.x.long()]),
+                'electronegativity': basic_stats(self.electronegativity_tensor[dataset_to_analyze.x.long()]),
+                'group': basic_stats(self.group_tensor[dataset_to_analyze.x.long()].long()),
+                'period': basic_stats(self.period_tensor[dataset_to_analyze.x.long()].long()),
+                'num_atoms': basic_stats(dataset_to_analyze.num_atoms.long()),
+                'radius': basic_stats(dataset_to_analyze.radius.float()),
             }
         }
         if self.dataset_type == 'crystal':
             misc_data_dict['dataset_stats'].update({
-                'cell_a': basic_stats(self.dataset.cell_lengths[:, 0].float()),
-                'cell_b': basic_stats(self.dataset.cell_lengths[:, 1].float()),
-                'cell_c': basic_stats(self.dataset.cell_lengths[:, 2].float()),
-                'cell_alpha': basic_stats(self.dataset.cell_angles[:, 0].float()),
-                'cell_beta': basic_stats(self.dataset.cell_angles[:, 1].float()),
-                'cell_gamma': basic_stats(self.dataset.cell_angles[:, 2].float()),
-                'aunit_x': basic_stats(self.dataset.pose_params0[:, 0].float()),
-                'aunit_y': basic_stats(self.dataset.pose_params0[:, 1].float()),
-                'aunit_z': basic_stats(self.dataset.pose_params0[:, 2].float()),
-                'aunit_theta': basic_stats(self.dataset.pose_params0[:, 3].float()),
-                'aunit_phi': basic_stats(self.dataset.pose_params0[:, 4].float()),
-                'aunit_r': basic_stats(self.dataset.pose_params0[:, 5].float()),
-                'z_prime': basic_stats(self.dataset.z_prime.float()),
-                'cell_volume': basic_stats(self.dataset.cell_volume.float()),
-                'reduced_volume': basic_stats(self.dataset.reduced_volume.float()),
+                'cell_a': basic_stats(dataset_to_analyze.cell_lengths[:, 0].float()),
+                'cell_b': basic_stats(dataset_to_analyze.cell_lengths[:, 1].float()),
+                'cell_c': basic_stats(dataset_to_analyze.cell_lengths[:, 2].float()),
+                'cell_alpha': basic_stats(dataset_to_analyze.cell_angles[:, 0].float()),
+                'cell_beta': basic_stats(dataset_to_analyze.cell_angles[:, 1].float()),
+                'cell_gamma': basic_stats(dataset_to_analyze.cell_angles[:, 2].float()),
+                'aunit_x': basic_stats(dataset_to_analyze.pose_params0[:, 0].float()),
+                'aunit_y': basic_stats(dataset_to_analyze.pose_params0[:, 1].float()),
+                'aunit_z': basic_stats(dataset_to_analyze.pose_params0[:, 2].float()),
+                'aunit_theta': basic_stats(dataset_to_analyze.pose_params0[:, 3].float()),
+                'aunit_phi': basic_stats(dataset_to_analyze.pose_params0[:, 4].float()),
+                'aunit_r': basic_stats(dataset_to_analyze.pose_params0[:, 5].float()),
+                'z_prime': basic_stats(dataset_to_analyze.z_prime.float()),
+                'cell_volume': basic_stats(dataset_to_analyze.cell_volume.float()),
+                'reduced_volume': basic_stats(dataset_to_analyze.reduced_volume.float()),
             })
             self.rebuild_crystal_indices()
 
@@ -601,32 +610,40 @@ class DataManager:
         for atoms & molecules with potential Z'>1, need to adjust formatting a bit
         """
         condition_key, condition_type, condition_range = condition
-        values = self.get_condition_values(condition_key)
+        if condition_key == 'atomic_number':
+            # must search within molecules
+            bad_inds = []
+            for ind, elem in enumerate(self.dataset):
+                if not set(elem.x.numpy()).issubset(condition_range):
+                    bad_inds.append(ind)
+        else:
+            # molecule-wise
+            values = self.get_condition_values(condition_key)
 
-        if condition_type == 'range':
-            # check fo the values to be in the range (inclusive)
-            assert condition_range[1] > condition_range[0], "Range condition must be set low to high"
-            bad_inds = torch.cat((
-                torch.argwhere(values > condition_range[1]),
-                torch.argwhere(values < condition_range[0])
-            ))[:, 0]
+            if condition_type == 'range':
+                # check fo the values to be in the range (inclusive)
+                assert condition_range[1] > condition_range[0], "Range condition must be set low to high"
+                bad_inds = torch.cat((
+                    torch.argwhere(values > condition_range[1]),
+                    torch.argwhere(values < condition_range[0])
+                ))[:, 0]
 
-        elif condition_type == 'in':
-            # check for where the data is not equal to the explicitly enumerated range elements to be included
-            # dataset entries are float, so switch conditions to float arrays
-            bad_inds = torch.argwhere(
-                torch.logical_not(
+            elif condition_type == 'in':
+                # check for where the data is not equal to the explicitly enumerated range elements to be included
+                # dataset entries are float, so switch conditions to float arrays
+                bad_inds = torch.argwhere(
+                    torch.logical_not(
+                        torch.any(
+                            torch.cat([values[..., None] == cond for cond in condition_range], dim=1),
+                            dim=1))).flatten()
+
+            elif condition_type == 'not_in':
+                torch.argwhere(
                     torch.any(
                         torch.cat([values[..., None] == cond for cond in condition_range], dim=1),
-                        dim=1))).flatten()
-
-        elif condition_type == 'not_in':
-            torch.argwhere(
-                torch.any(
-                    torch.cat([values[..., None] == cond for cond in condition_range], dim=1),
-                    dim=1)).flatten()
-        else:
-            assert False, f"{condition_type} is not an implemented dataset filter condition"
+                        dim=1)).flatten()
+            else:
+                assert False, f"{condition_type} is not an implemented dataset filter condition"
 
         print(f'{condition} filtered {len(bad_inds)} samples')
 
@@ -640,7 +657,6 @@ class DataManager:
         elif condition_key == 'crystal_symmetry_operations_are_nonstandard':
             values = torch.tensor([elem.nonstandard_symmetry for elem in self.dataset])
         elif condition_key == 'max_atomic_number':
-            # always take the largest value - this is what we are practically filtering
             values = torch.tensor([elem.x.amax() for elem in self.dataset])
         elif condition_key == 'molecule_num_atoms':
             values = torch.tensor([elem.num_atoms for elem in self.dataset])

@@ -669,7 +669,8 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
 
     edges = radius(ref_points, pred_points,
                    #r=2 * ref_points[:, :3].norm(dim=1).amax(),  # max range encompasses largest molecule in the batch
-                   r=6*sigma,  # alternatively any point which will have even a small overlap - should be faster by ignoring unimportant edges
+                   # alternatively any point which will have even a small overlap - should be faster by ignoring unimportant edges, where the gradient will anyway be vanishing
+                   r=6*sigma,
                    max_num_neighbors=100,
                    batch_x=data.batch,
                    batch_y=decoded_data.batch)  # this step is slower than before
@@ -786,8 +787,8 @@ def dict_of_tensors_to_cpu_numpy(stats):
             stats[key] = value.cpu().numpy()
 
 
-def decoding2data(data, decoding, device, num_nodes):
-    decoded_data = data.clone()
+def init_decoded_data(data, decoding, device, num_nodes):
+    decoded_data = data.detach().clone()
     decoded_data.pos = decoding[:, :3]
     decoded_data.batch = torch.arange(data.num_graphs).repeat_interleave(num_nodes).to(device)
     return decoded_data
@@ -846,8 +847,6 @@ def test_encoder_equivariance(data: CrystalData,
 
 def instantiate_models(config: Namespace,
                        dataDims: dict,
-                       device: Union[torch.device, str],
-                       sym_info: dict,
                        model_names,
                        autoencoder_type_index) -> dict:
     print("Initializing model(s) for " + config.mode)
@@ -948,17 +947,15 @@ def instantiate_models(config: Namespace,
     return models_dict
 
 
-def prep_ae_io_for_analysis(data, decoding, autoencoder, node_weight_temperature, device):
-    # reduce to relevant atom types
-    data.x = autoencoder.atom_embedding_vector[data.x]
+def collate_decoded_data(data, decoding, num_decoder_nodes, node_weight_temperature, device):
     # generate input reconstructed as a data type
-    decoded_data = decoding2data(data, decoding,
-                                 device,
-                                 autoencoder.num_decoder_nodes)
+    decoded_data = init_decoded_data(data, decoding,
+                                     device,
+                                     num_decoder_nodes)
     # compute the distributional weight of each node
     nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = \
         get_node_weights(data, decoded_data, decoding,
-                         autoencoder.num_decoder_nodes,
+                         num_decoder_nodes,
                          node_weight_temperature)
     decoded_data.aux_ind = nodewise_weights_tensor
     # input node weights are always 1 - corresponding each to an atom
@@ -969,13 +966,14 @@ def prep_ae_io_for_analysis(data, decoding, autoencoder, node_weight_temperature
 
 
 def ae_reconstruction_loss(data, decoded_data, nodewise_weights, num_atom_types, type_distance_scaling, autoencoder_sigma):
-    true_node_one_hot = F.one_hot(data.x[:, 0].long(), num_classes=num_atom_types).float()
+    true_node_one_hot = F.one_hot(data.x.flatten().long(), num_classes=num_atom_types).float()
 
     decoder_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, decoded_data,
                                                    autoencoder_sigma,
                                                    nodewise_weights=decoded_data.aux_ind,
                                                    overlap_type='gaussian', log_scale=False,
                                                    type_distance_scaling=type_distance_scaling)
+
     # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
     self_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, data, autoencoder_sigma,
                                                 nodewise_weights=data.aux_ind,

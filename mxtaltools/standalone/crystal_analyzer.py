@@ -25,7 +25,7 @@ from mxtaltools.models.functions.vdw_overlap import vdw_overlap
 from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
 from mxtaltools.models.task_models.crystal_models import MolecularCrystalModel
 from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
-from mxtaltools.models.utils import softmax_and_score, reload_model, prep_ae_io_for_analysis, ae_reconstruction_loss
+from mxtaltools.models.utils import softmax_and_score, reload_model, collate_decoded_data, ae_reconstruction_loss
 
 module_path = str(pathlib.Path(__file__).parent.resolve())
 
@@ -313,10 +313,10 @@ class CrystalAnalyzer(torch.nn.Module):
 
         if check_reconstruction:
             decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
-                prep_ae_io_for_analysis(molecules_batch, decoding,
-                                        self.models_dict['autoencoder'],
-                                        self.config.autoencoder.node_weight_temperature,
-                                        self.device))
+                collate_decoded_data(molecules_batch, decoding,
+                                     self.models_dict['autoencoder'],
+                                     self.config.autoencoder.node_weight_temperature,
+                                     self.device))
 
             nodewise_reconstruction_loss, nodewise_type_loss, reconstruction_loss, self_likelihoods = (
                 ae_reconstruction_loss(molecules_batch, decoded_data, nodewise_weights,

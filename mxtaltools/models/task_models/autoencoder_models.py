@@ -56,14 +56,10 @@ class Mo3ENet(BaseGraphModel):
         encoding = self.encode(data)
         decoding = self.decode(encoding)
 
-        # de-normalize predicted node positions and rearrange to correct format
-        decoding_fin = torch.cat(
-            [decoding[:, :self.cartesian_dimension] * self.radial_normalization,
-             decoding[:, self.cartesian_dimension:]], dim=1)
         if return_latent:
-            return decoding_fin, encoding
+            return decoding, encoding
         else:
-            return decoding_fin
+            return decoding
 
     def encode(self, data):
         # normalize radii
@@ -74,12 +70,12 @@ class Mo3ENet(BaseGraphModel):
 
     def decode(self, encoding):
         """encoding nx3xk"""
-        decoding = self.decoder(self.scalarizer(encoding), v=encoding)
+        scalar_decoding, vector_decoding = self.decoder(self.scalarizer(encoding), v=encoding)
 
-        scalar_decoding, vector_decoding = decoding
         '''combine vector and scalar features to n*nodes x m'''
+        # de-normalize predicted node positions and rearrange to correct format
         decoding = torch.cat([
-            vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_decoder_nodes, 3),
+            vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_decoder_nodes, 3) * self.radial_normalization,
             scalar_decoding.reshape(len(scalar_decoding) * self.num_decoder_nodes, self.output_depth - 3)],
             dim=-1)
 
@@ -132,7 +128,6 @@ class Mo3ENetEncoder(nn.Module):
                           data.ptr,
                           num_graphs=data.num_graphs,
                           )
-
 
 # model from original draft of Mo3ENet paper
 # # noinspection PyAttributeOutsideInit

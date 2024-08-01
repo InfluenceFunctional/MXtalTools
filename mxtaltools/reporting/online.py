@@ -1495,7 +1495,7 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
 
     # get samples
     data = epoch_stats_dict['sample'][0]
-    data.x = type_index_tensor[data.x[:, 0].long()]
+    data.x = type_index_tensor[data.x.flatten().long()]
     decoded_data = epoch_stats_dict['decoded_sample'][0]
 
     # compute various distribution overlaps
