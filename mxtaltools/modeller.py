@@ -213,6 +213,13 @@ class Modeller:
                     model_path
                 )
 
+        if not self.config.embedding_regressor.freeze_encoder:
+            def weights_init(m):
+                if isinstance(m, nn.Linear):
+                    torch.nn.init.xavier_uniform(m.weight.data)
+
+            self.models_dict['autoencoder'].apply(weights_init)
+
         self.schedulers_dict = {model_name: init_schedulers(
             self.optimizers_dict[model_name], self.config.__dict__[model_name].optimizer)
             for model_name in self.model_names}
@@ -281,8 +288,10 @@ class Modeller:
                                                                infer_protons=self.config.autoencoder.infer_protons,
                                                                protons_in_input=not self.config.dataset.filter_protons
                                                                )
-            for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
-                param.requires_grad = False
+            if self.config.embedding_regressor.freeze_encoder:
+                for param in self.models_dict['autoencoder'].parameters():  # freeze encoder
+                    param.requires_grad = False
+
             self.config.embedding_regressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
             self.models_dict['embedding_regressor'] = EmbeddingRegressor(self.config.seeds.model,
                                                                          self.config.embedding_regressor.model,
@@ -367,7 +376,7 @@ class Modeller:
     def prep_dataloaders(self, dataset_builder, extra_dataset_builder=None, test_fraction=0.2,
                          override_batch_size: int = None):
         """
-        get training, test, ane optionall extra validation dataloaders
+        get training, test, ane optional extra validation dataloaders
         """
         self.times['dataloader_start'] = time()
         if override_batch_size is None:
@@ -944,10 +953,13 @@ class Modeller:
     def embedding_regression_epoch(self, data_loader, update_weights, iteration_override):
         if update_weights:
             self.models_dict['embedding_regressor'].train(True)
+            if not self.config.embedding_regressor.freeze_encoder:
+                self.models_dict['autoencoder'].train(True)
+            else:
+                self.models_dict['autoencoder'].eval()
         else:
             self.models_dict['embedding_regressor'].eval()
-
-        self.models_dict['autoencoder'].eval()
+            self.models_dict['autoencoder'].eval()
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
             self.embedding_regression_step(data, update_weights)
@@ -975,10 +987,16 @@ class Modeller:
 
         regression_loss = losses.mean()
         if update_weights:
-            self.optimizers_dict['embedding_regressor'].zero_grad(
-                set_to_none=True)  # reset gradients from previous passes
+            # reset gradients from previous passes
+            self.optimizers_dict['embedding_regressor'].zero_grad(set_to_none=True)
+            if not self.config.embedding_regressor.freeze_encoder:
+                # reset gradients from previous passes
+                self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)
             regression_loss.backward()  # back-propagation
             self.optimizers_dict['embedding_regressor'].step()  # update parameters
+            if not self.config.embedding_regressor.freeze_encoder:
+                self.optimizers_dict['autoencoder'].step()  # update parameters
+
         '''log losses and other tracking values'''
         self.logger.update_current_losses('embedding_regressor', self.epoch_type,
                                           regression_loss.cpu().detach().numpy(),

@@ -2,7 +2,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/embedding_regressor.yaml
-dataset_name: 'test_qm9_molecules_dataset.pt' #'test_dataset.pt'
+dataset_name: 'test_qm9_dataset.pt' #'test_dataset.pt'
 #mode: embedding
 extra_test_set_name: null
 save_checkpoints: False
@@ -44,3 +44,6 @@ model_paths:
 
 autoencoder:
   infer_protons: False
+
+embedding_regressor:
+  freeze_encoder: False

@@ -92,6 +92,7 @@ regressor:
   model: null
 
 embedding_regressor:
+  freeze_encoder: True
   prediction_type: scalar
   num_targets: 1
   optimizer: null

@@ -610,7 +610,7 @@ config_list = [
                         'dropout': 0.05,
                         'norm': 'layer'},
                     'num_nodes': 256
-                }}}},  # 17: slower. Good train/tebut worse rmsds
+                }}}},  # 17: slower. Good train/test but worse rmsds
     {
         'min_batch_size': 50,
         'max_batch_size': 10000,
