@@ -90,7 +90,7 @@ for ix1 in range(len(config_list)):
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ind)
 
     config['dataset']['filter_protons'] = config_list[ix1][1]
-    #config['model_paths']['autoencoder'] = config_list[ix1][0]
+    config['model_paths']['autoencoder'] = config_list[ix1][0]
     config['dataset']['regression_target'] = config_list[ix1][2]
     config['embedding_regressor']['freeze_encoder'] = False
     config['embedding_regressor']['model']['depth'] = config_list[ix1][3]
