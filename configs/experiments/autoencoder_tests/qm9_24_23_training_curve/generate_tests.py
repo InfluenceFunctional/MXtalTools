@@ -28,8 +28,6 @@ for ix1 in range(len(dataset_sizes)):
     config['machine'] = 'cluster'
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ind)
     config['dataset']['max_dataset_length'] = dataset_sizes[ix1]
-    run_config = config_list[ix1]
-    overwrite_nested_dict(config, run_config)
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
