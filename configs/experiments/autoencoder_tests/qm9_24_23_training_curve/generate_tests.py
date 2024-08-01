@@ -27,7 +27,7 @@ for ix1 in range(len(dataset_sizes)):
     config = copy(base_config)
     config['machine'] = 'cluster'
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ind)
-    config['dataset']['max_dataset_length'] = dataset_sizes[ix1]
+    config['dataset']['max_dataset_length'] = int(dataset_sizes[ix1])
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)

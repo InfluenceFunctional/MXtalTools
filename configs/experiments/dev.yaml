@@ -46,4 +46,4 @@ autoencoder:
   infer_protons: False
 
 embedding_regressor:
-  freeze_encoder: False
+  freeze_encoder: True
