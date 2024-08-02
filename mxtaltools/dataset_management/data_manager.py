@@ -246,8 +246,8 @@ class DataManager:
                 targets = self.get_reduced_volume_fraction()
             elif self.regression_target == 'crystal_reduced_volume':
                 targets = torch.tensor([elem.reduced_volume for elem in self.dataset])
-            elif self.regression_target in qm9_targets_list:
-                target_ind = qm9_targets_list.index(self.regression_target)
+            elif self.regression_target.replace('molecule_','') in qm9_targets_list:
+                target_ind = qm9_targets_list.index(self.regression_target.replace('molecule_',''))
                 targets = torch.tensor([elem.y[:, target_ind] for elem in self.dataset])
             else:
                 assert False, "Unrecognized regression target"

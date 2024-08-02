@@ -1205,7 +1205,6 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     losses = ['abs_error', 'abs_normed_error', 'squared_error']
     loss_dict = {}
     fig_dict = {}
-    fig = make_subplots(cols=2, rows=1)
     for loss in losses:
         if loss == 'abs_error':
             loss_i = np.abs(target - prediction)
@@ -1219,51 +1218,103 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         loss_dict[loss + '_mean'] = np.mean(loss_i)
         loss_dict[loss + '_std'] = np.std(loss_i)
 
-        linreg_result = linregress(tgt_value, pred_value)
-        loss_dict['regression_R_value'] = linreg_result.rvalue
-        loss_dict['regression_slope'] = linreg_result.slope
+        if prediction.ndim == 1:
+            linreg_result = linregress(tgt_value, pred_value)
+            loss_dict['regression_R_value'] = linreg_result.rvalue
+            loss_dict['regression_slope'] = linreg_result.slope
+    if prediction.ndim == 1:
+        fig = make_subplots(cols=2, rows=1)
 
-    # predictions vs target trace
-    xline = np.linspace(max(min(tgt_value), min(pred_value)),
-                        min(max(tgt_value), max(pred_value)), 2)
+        # predictions vs target trace
+        xline = np.linspace(max(min(tgt_value), min(pred_value)),
+                            min(max(tgt_value), max(pred_value)), 2)
 
-    xy = np.vstack([tgt_value, pred_value])
-    try:
-        z = get_point_density(xy)
-    except:
-        z = np.ones_like(tgt_value)
+        xy = np.vstack([tgt_value, pred_value])
+        try:
+            z = get_point_density(xy)
+        except:
+            z = np.ones_like(tgt_value)
 
-    num_points = len(pred_value)
-    opacity = np.exp(-num_points / 10000)
-    fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity,
-                               showlegend=False),
-                  row=1, col=1)
-    fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
-                  row=1, col=1)
+        num_points = len(pred_value)
+        opacity = np.exp(-num_points / 10000)
+        fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity,
+                                   showlegend=False),
+                      row=1, col=1)
+        fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                      row=1, col=1)
 
-    fig.add_trace(go.Histogram(x=pred_value - tgt_value,
-                               histnorm='probability density',
-                               nbinsx=100,
-                               name="Error Distribution",
-                               showlegend=False,
-                               marker_color='rgba(0,0,100,1)'),
-                  row=1, col=2)  #
+        fig.add_trace(go.Histogram(x=pred_value - tgt_value,
+                                   histnorm='probability density',
+                                   nbinsx=100,
+                                   name="Error Distribution",
+                                   showlegend=False,
+                                   marker_color='rgba(0,0,100,1)'),
+                      row=1, col=2)  #
 
-    #
-    target_name = dataDims['regression_target']
-    fig.update_yaxes(title_text=f'Predicted {target_name}', row=1, col=1, tickformat=".2g")
+        #
+        target_name = dataDims['regression_target']
+        fig.update_yaxes(title_text=f'Predicted {target_name}', row=1, col=1, tickformat=".2g")
 
-    fig.update_xaxes(title_text=f'True {target_name}', row=1, col=1, tickformat=".2g")
+        fig.update_xaxes(title_text=f'True {target_name}', row=1, col=1, tickformat=".2g")
 
-    fig.update_xaxes(title_text=f'{target_name} Error', row=1, col=2, tickformat=".2g")
+        fig.update_xaxes(title_text=f'{target_name} Error', row=1, col=2, tickformat=".2g")
 
-    fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
-    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
 
-    fig_dict['Regression Results'] = fig
+        fig_dict['Regression Results'] = fig
 
-    wandb.log(loss_dict)
-    wandb.log(fig_dict)
+        wandb.log(loss_dict)
+        wandb.log(fig_dict)
+    elif prediction.ndim == 2:
+        if prediction.shape[1] == 3:  # prediction of some vector property
+
+            fig = make_subplots(cols=2, rows=1)
+
+            tgt_norm = np.linalg.norm(tgt_value,axis=1)
+            pred_norm = np.linalg.norm(pred_value, axis=1)
+
+            xline = np.linspace(max(min(tgt_norm), min(pred_norm)),
+                                min(max(tgt_norm), max(pred_norm)), 2)
+
+            xy = np.vstack([tgt_norm, pred_norm])
+            try:
+                z = get_point_density(xy)
+            except:
+                z = np.ones_like(tgt_norm)
+
+            num_points = len(pred_value)
+            opacity = np.exp(-num_points / 10000)
+            fig.add_trace(go.Scattergl(x=tgt_norm, y=pred_norm, mode='markers', marker=dict(color=z), opacity=opacity,
+                                       showlegend=False),
+                          row=1, col=1)
+            fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                          row=1, col=1)
+
+            fig.add_trace(go.Histogram(x=np.sum(tgt_value * pred_value, axis=1) / (tgt_norm * pred_norm),
+                                       histnorm='probability density',
+                                       nbinsx=100,
+                                       name="Overlaps Distribution",
+                                       showlegend=False,
+                                       marker_color='rgba(0,0,100,1)'),
+                          row=1, col=2)  #
+
+            #
+            target_name = "Dipole Vector" #dataDims['regression_target']
+            fig.update_yaxes(title_text=f'Predicted {target_name} Norm', row=1, col=1, tickformat=".2g")
+
+            fig.update_xaxes(title_text=f'True {target_name} Norm', row=1, col=1, tickformat=".2g")
+
+            fig.update_xaxes(title_text=f'{target_name} Prediction Overlap', row=1, col=2, tickformat=".2g")
+
+            fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+            fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
+            fig_dict['Regression Results'] = fig
+
+            wandb.log(loss_dict)
+            wandb.log(fig_dict)
+
 
     return None
 

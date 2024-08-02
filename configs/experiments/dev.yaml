@@ -2,7 +2,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/embedding_regressor.yaml
-dataset_name: 'test_qm9_dataset.pt' #'test_dataset.pt'
+dataset_name: 'qm9_dataset.pt' #'test_dataset.pt'
 #mode: embedding
 extra_test_set_name: null
 save_checkpoints: False
@@ -17,9 +17,9 @@ dataset:
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 250
-max_batch_size: 500
-batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
+min_batch_size: 50
+max_batch_size: 2000
+batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
 max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
@@ -47,3 +47,26 @@ autoencoder:
 
 embedding_regressor:
   freeze_encoder: True
+  prediction_type: vector
+  num_targets: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 1.0e-04
+    init_lr: 1.0e-4
+    lr_growth_lambda: 1.1
+    lr_schedule: true
+    lr_shrink_lambda: 0.95
+    max_lr: 5.0e-04
+    min_lr: 5.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.1
+
+  model:
+    hidden_dim: 512
+    dropout: 0.1
+    equivariant: true
+    norm: layer
+    num_layers: 4
+    vector_norm: 'vector layer'

@@ -396,7 +396,6 @@ def UMAP_fig(max_entries=10000000):
 
     fig2.update_layout(plot_bgcolor='rgb(255,255,255)')
 
-
     xlim = -0.2
     ylim = 1.2
     fig2.update_layout(xaxis1_range=[xlim, ylim], yaxis1_range=[xlim, ylim],
@@ -434,6 +433,114 @@ def normalize_colors(composition_coloration):
     composition_coloration *= 200
     point_colors = [f'rgb({int(color[0])},{int(color[1])},{int(color[2])})' for color in composition_coloration]
     return point_colors
+
+
+def unfrozen_embedding_regression_figure():
+    os.chdir(r'C:\Users\mikem\crystals\CSP_runs\models\unfrozen_ae_regressor')
+    elem = os.listdir()
+    ers = [thing for thing in elem if ('_embedding_regression_' in thing and '.npy' in thing)]
+    target_names = ["rotational_constant_a",  # 0
+                    "rotational_constant_b",  # 1
+                    "rotational_constant_c",  # 2
+                    "dipole_moment",  # 3
+                    "isotropic_polarizability",  # 4
+                    "HOMO_energy",  # 5
+                    "LUMO_energy",  # 6
+                    "gap_energy",  # 7
+                    "el_spatial_extent",  # 8
+                    "zpv_energy",  # 9
+                    "internal_energy_0",  # 10
+                    "internal_energy_STP",  # 11
+                    "enthalpy_STP",  # 12
+                    "free_energy_STP",  # 13
+                    "heat_capacity_STP",  # 14
+                    ]
+    pretty_target_names = ["(a) Rotational Constant A /GHz",
+                           "(b) Rotational Constant B /GHz",
+                           "(c) Rotational Constant C /GHz",
+                           "(d) Dipole Moment /Deb",
+                           "(e) Iso. Polarizability /Bohr^3",
+                           "(f) HOMO Energy /Hartree",
+                           "(g) LUMO Energy /Hartree",
+                           "(h) Gap Energy /Hartree",
+                           "(i) Electronic Spatial Extent /Bohr^2",
+                           "(j) ZPV Energy /Hartree",
+                           "(k) Internal Energy (T=0) /Hartree",
+                           "(l) Internal Energy STP /Hartree",
+                           "(m) Enthalpy STP /Hartree",
+                           "(n) Free Energy STP /Hartree",
+                           "(o) Heat Capacity STP /cal mol^-1 K^-1"]
+
+    MAE_dict = {}
+    NMAE_dict = {}
+    R_dict = {}
+    for ind, (path, target_name) in enumerate(zip(ers, target_names)):
+        stats_dict = np.load(path, allow_pickle=True).item()['test_stats']
+        target = stats_dict['regressor_target']
+        #prediction = stats_dict['regressor_prediction']
+        prediction = np.concatenate(stats_dict['regressor_prediction'])
+
+        MAE = np.abs(target - prediction).mean()
+        NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
+
+        linreg_result = linregress(target, prediction)
+        R_value = linreg_result.rvalue
+        slope = linreg_result.slope
+        MAE_dict[target_name] = MAE
+        NMAE_dict[target_name] = NMAE
+        R_dict[target_name] = R_value
+
+    fig3 = make_subplots(cols=5, rows=3, subplot_titles=pretty_target_names, horizontal_spacing=0.06,
+                         vertical_spacing=0.1)
+
+    annotations = []
+    for ind, (path, target_name) in enumerate(zip(ers, target_names)):
+        stats_dict = np.load(path, allow_pickle=True).item()['test_stats']
+        target = stats_dict['regressor_target']
+        #prediction = stats_dict['regressor_prediction']
+        prediction = np.concatenate(stats_dict['regressor_prediction'])
+
+        xline = np.linspace(max(min(target), min(prediction)),
+                            min(max(target), max(prediction)), 2)
+
+        xy = np.vstack([target, prediction])
+        try:
+            z = get_point_density(xy, bins=1000)
+        except:
+            z = np.ones_like(target)
+
+        row = ind // 5 + 1
+        col = ind % 5 + 1
+        num_points = len(prediction)
+        opacity = 0.05  # np.exp(-num_points / 10000)
+        fig3.add_trace(go.Scattergl(x=target, y=prediction, mode='markers', marker=dict(color=z), opacity=opacity,
+                                    showlegend=False),
+                       row=row, col=col)
+        fig3.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                       row=row, col=col)
+
+        annotations.append(dict(xref="x" + str(ind + 1), yref="y" + str(ind + 1),
+                                x=np.amin(target) + np.ptp(target) * 0.2,
+                                y=np.amax(prediction) - np.ptp(prediction) * 0.2,
+                                showarrow=False,
+                                text=f"R={R_dict[target_name]:.2f} <br> MAE={MAE_dict[target_name]:.3g}"
+                                ))
+
+    fig3['layout']['annotations'] += tuple(annotations)
+    fig3.update_annotations(font=dict(size=18))
+    fig3.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig3.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
+    fig3.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
+    fig3.update_yaxes(linecolor='black', mirror=True,
+                      showgrid=True, zeroline=True)
+    fig3.update_xaxes(linecolor='black', mirror=True,
+                      showgrid=True, zeroline=True)
+    fig3.update_layout(font=dict(size=20))
+    fig3.update_annotations(font_size=20)
+    fig3.show(renderer='browser')
+
+
+    return fig3
 
 
 def embedding_regression_figure():
@@ -585,15 +692,63 @@ def regression_training_curve():
     return fig4
 
 
+
+def ae_training_cur():
+    import numpy as np
+    dataset_sizes = np.linspace(1000, 130000, num=20)
+    dataset_sizes[-1] = 133000
+
+    x = dataset_sizes
+    y = np.asarray([
+        .7451,  # 26
+        .534,  # 27
+        .4148,  # 28
+        .165,  # 29
+        .1094,  # 30
+        .0998,  # 31
+        .1016,  # 32
+        .1071,  # 33
+        .1016,  # 34
+        .08258,  # 35
+        .07209,  # 36
+        0.07268,  # 37
+        0.08539,  # 38
+        0.0495,  # 39
+        0.06249,  # 40
+        0.03261,  # 41
+        0.05,  # 42
+        0.03477,  # 43 \
+        0.03808,  # 44
+        0.0679  # 45
+
+    ])
+    fig4 = go.Figure()
+    fig4.add_scatter(x=x, y=y, mode='markers', marker_size=10)
+
+    fig4.update_layout(xaxis_title='Training Set Size', yaxis_title='Best Test Loss')
+    fig4.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
+    fig4.update_layout(
+        xaxis={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
+    fig4.update_layout(yaxis={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
+
+    fig4.update_layout(font=dict(size=28))
+    fig4.update_layout(yaxis_range=[0, 0.24])
+    fig4.show(renderer='browser')
+
+    return fig4
+
 #
 #fig = RMSD_fig()
 #fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
-fig2 = UMAP_fig(max_entries=1000000)
+#fig2 = UMAP_fig(max_entries=1000000)
 #fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
 
-#fig3 = embedding_regression_figure()
-#fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+# fig3 = embedding_regression_figure()
+# fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+
+fig3 = unfrozen_embedding_regression_figure()
+fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties_direct.png', width=1920, height=840)
 
 #fig4 = regression_training_curve()
 #fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)

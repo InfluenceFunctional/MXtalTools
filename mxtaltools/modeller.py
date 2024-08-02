@@ -295,7 +295,8 @@ class Modeller:
             self.config.embedding_regressor.model.bottleneck_dim = self.config.autoencoder.model.bottleneck_dim
             self.models_dict['embedding_regressor'] = EmbeddingRegressor(self.config.seeds.model,
                                                                          self.config.embedding_regressor.model,
-                                                                         num_targets=self.config.embedding_regressor.num_targets
+                                                                         num_targets=self.config.embedding_regressor.num_targets,
+                                                                         prediction_type=self.config.embedding_regressor.prediction_type,
                                                                          )
             assert self.config.model_paths.autoencoder is not None  # must preload the encoder
         if self.config.mode == 'polymorph_classification':
@@ -330,8 +331,8 @@ class Modeller:
         self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], device=self.device)
         self.times['dataset_loading'] = data_manager.times
 
-        if self.train_models_dict['autoencoder'] or self.train_models_dict[
-            'embedding_regressor']:  # todo change this to 'if autoencoder exists' or some proxy
+        # todo change this to 'if autoencoder exists' or some proxy
+        if self.train_models_dict['autoencoder'] or self.train_models_dict['embedding_regressor']:
             self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
             self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius'][
                 'max']
@@ -612,7 +613,7 @@ class Modeller:
         num_params_dict = self.init_models()
 
         self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
-        self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']  # todo fix
+        #self.config.autoencoder.molecule_radius_normalization = self.dataDims['max_molecule_radius']  # todo fix
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
@@ -640,7 +641,7 @@ class Modeller:
 
             # save results
             np.save(self.config.checkpoint_dir_path +
-                    self.config.model_paths.EmbeddingRegressor.split('embedding_regressor')[-1],
+                    self.config.model_paths.embedding_regressor.split('embedding_regressor')[-1],
                     {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
     def ae_embedding_step(self, data):
@@ -789,7 +790,7 @@ class Modeller:
                                                                   self.config.generator.train_adversarially,
                                                                   self.config.generator.train_h_bond)),
                 'regressor': self.config.mode == 'regression',
-                'autoencoder': self.config.mode == 'autoencoder',
+                'autoencoder': self.config.mode == 'autoencoder' or (self.config.mode == 'embedding_regression' and (not self.config.embedding_regressor.freeze_encoder)),
                 'embedding_regressor': self.config.mode == 'embedding_regression',
                 'polymorph_classifier': self.config.mode == 'polymorph_classification',
             }
@@ -976,14 +977,42 @@ class Modeller:
         _, data = self.preprocess_ae_inputs(data, no_noise=True, orientation_override='random')
         v_embedding = self.models_dict['autoencoder'].encode(data)
         s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
+        '''
+        if True:  # debugging autoencoder performance
+            decoding, encoding = self.models_dict['autoencoder'](data.clone(), return_encoding=True)
+            losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
+            encoder_equivariance_loss, decoder_equivariance_loss = self.equivariance_test(data.clone())
+            stats['encoder_equivariance_loss'] = encoder_equivariance_loss.mean().detach()
+            stats['decoder_equivariance_loss'] = decoder_equivariance_loss.mean().detach()
+        
+            # do evaluation on current sample and save this as our loss for tracking purposes
+            nodewise_weights_tensor = decoded_data.aux_ind
+            true_nodes = F.one_hot(self.models_dict['autoencoder'].atom_embedding_vector[data.x[:, 0].long()],
+                                   num_classes=self.dataDims['num_atom_types']).float()
+            full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor,
+                                                                         true_nodes,
+                                                                         sigma=self.config.autoencoder.evaluation_sigma,
+                                                                         distance_scaling=self.config.autoencoder.type_distance_scaling
+                                                                         )
+            # for the purpose of convergence, we track the evaluation overlap rather than the loss, which is sigma-dependent
+            # it's also expensive to compute so do it rarely
+            overlap = (full_overlap / self_overlap).detach()
+            evaluation_overlap = scatter(overlap, data.batch, reduce='mean').detach()
+            print(evaluation_overlap.mean())
+        '''
 
-        predictions = self.models_dict['embedding_regressor'](s_embedding, v_embedding)[:, 0]
-        losses = F.smooth_l1_loss(predictions, data.y, reduction='none')
-        predictions = predictions * self.dataDims['target_std'] + self.dataDims['target_mean']
-        targets = data.y * self.dataDims['target_std'] + self.dataDims['target_mean']
-
-        if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
-            assert False, "Vector predictions are not implemented"
+        predictions = self.models_dict['embedding_regressor'](s_embedding, v_embedding)
+        if self.config.embedding_regressor.prediction_type == 'vector':  # predict a simple dipole vector
+            electronegativities = self.electronegativity_tensor[data.x.flatten()]
+            effective_dipoles = scatter(data.pos * electronegativities[:, None], data.batch, dim=0, reduce='sum')
+            overlaps = torch.sum(predictions[..., 0] * effective_dipoles, dim=1)  # elementwise dot product
+            losses = F.smooth_l1_loss(overlaps, effective_dipoles.norm(dim=1)**2, reduction='none')
+            predictions = predictions[..., 0]
+            targets = effective_dipoles
+        else:
+            losses = F.smooth_l1_loss(predictions.flatten(), data.y, reduction='none')
+            predictions = predictions.flatten() * self.dataDims['target_std'] + self.dataDims['target_mean']
+            targets = data.y * self.dataDims['target_std'] + self.dataDims['target_mean']
 
         regression_loss = losses.mean()
         if update_weights:

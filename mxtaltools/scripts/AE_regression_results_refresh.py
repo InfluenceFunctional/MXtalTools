@@ -7,9 +7,12 @@ import yaml
 from mxtaltools.common.config_processing import load_yaml, process_main_config
 from mxtaltools.modeller import Modeller
 
-ae_path = r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'
+ae_path = r'/cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_25_11-05-19-15-19_fixed' #r'/cluster/best_autoencoder_autoencoder_tests_qm9_test23_7_27-02-14-34-41'
 
-regressor_paths = os.listdir(r'C:\Users\mikem\crystals\CSP_runs\models\cluster\ae_regressor')
+#paths_dir = r'/cluster\ae_regressor/'
+paths_dir = '/unfrozen_ae_regressor/'
+
+regressor_paths = os.listdir(r"C:\Users\mikem\crystals\CSP_runs\models" + paths_dir)
 
 targets = ["molecule_rotational_constant_a",  # 0
            "molecule_rotational_constant_b",  # 1
@@ -34,8 +37,9 @@ for path, target in zip(regressor_paths, targets):
     os.chdir(r'C:\Users\mikem\OneDrive\NYU\CSD\MCryGAN')
 
     config = load_yaml('configs/analyses/er_analysis.yaml')
+    config['dataset_name'] = 'test_qm9_dataset.pt'
     config['model_paths']['autoencoder'] = ae_path
-    config['model_paths']['embedding_regressor'] = '/cluster/ae_regressor/' + path
+    config['model_paths']['embedding_regressor'] = paths_dir + path
     config['dataset']['filter_protons'] = False
     config['dataset']['max_dataset_length'] = max_dataset_length
     config['dataset']['regression_target'] = target
