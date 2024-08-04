@@ -693,33 +693,33 @@ def regression_training_curve():
 
 
 
-def ae_training_cur():
+def ae_training_curve():
     import numpy as np
-    dataset_sizes = np.linspace(1000, 130000, num=20)
+    dataset_sizes = np.linspace(1000, 130000, num=18)
     dataset_sizes[-1] = 133000
 
     x = dataset_sizes
     y = np.asarray([
-        .7451,  # 26
-        .534,  # 27
-        .4148,  # 28
-        .165,  # 29
-        .1094,  # 30
-        .0998,  # 31
-        .1016,  # 32
-        .1071,  # 33
-        .1016,  # 34
-        .08258,  # 35
-        .07209,  # 36
-        0.07268,  # 37
-        0.08539,  # 38
-        0.0495,  # 39
-        0.06249,  # 40
-        0.03261,  # 41
-        0.05,  # 42
-        0.03477,  # 43 \
-        0.03808,  # 44
-        0.0679  # 45
+        .7431,  # 26
+        .3576,  # 27
+        .3645,  # 28
+        .1493,  # 29
+        .06618,  # 30
+        .07285,  # 31
+        .07251,  # 32
+        0.05727,  # 33
+        0.06321,  # 34
+        0.02228,  # 35
+        0.0487,  # 36
+        0.0403,  # 37
+        0.03345,  # 38
+        0.03206,  # 39
+        0.03315,  # 40
+        0.02731,  # 41
+        0.02574,  # 42
+        0.02403,  # 43 \
+        # 0.03321,  # 44
+        # 0.03906  # 45
 
     ])
     fig4 = go.Figure()
@@ -747,9 +747,14 @@ def ae_training_cur():
 # fig3 = embedding_regression_figure()
 # fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
 
-fig3 = unfrozen_embedding_regression_figure()
-fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties_direct.png', width=1920, height=840)
+#fig3 = unfrozen_embedding_regression_figure()
+#fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties_direct.png', width=1920, height=840)
 
 #fig4 = regression_training_curve()
 #fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
+
+fig4 = ae_training_curve()
+fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\ae_traning_curve.png', width=1200, height=800)
+
+
 aa = 1
