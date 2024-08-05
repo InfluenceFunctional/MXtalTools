@@ -2,7 +2,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/embedding_regressor.yaml
-dataset_name: 'test_qm9_dataset.pt' #'test_dataset.pt'
+dataset_name: 'qm9_dataset.pt' #'test_dataset.pt'
 #mode: embedding
 extra_test_set_name: null
 save_checkpoints: True
@@ -22,13 +22,13 @@ max_batch_size: 2000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
-max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
+max_epochs: 10000  # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
 history: 50  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
 
 model_paths:
   discriminator: null
@@ -38,7 +38,7 @@ model_paths:
   #autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_23_11-05-18-22-17_fixed # no protons
   autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_25_11-05-19-15-19_fixed # with protons
   #autoencoder: /cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_27_11-05-11-26-48_fixed # inferred protons
-  embedding_regressor: null
+  embedding_regressor: #/best_embedding_regressor_experiments_dev_05-08-13-09-15
 
 #generate_sgs: ['P-1','C2/c','P21/c','P212121']
 
@@ -46,7 +46,7 @@ autoencoder:
   infer_protons: False
 
 embedding_regressor:
-  freeze_encoder: False
+  freeze_encoder: True
   prediction_type: vector
   num_targets: 1
   optimizer:
