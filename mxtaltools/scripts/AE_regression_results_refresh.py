@@ -12,7 +12,8 @@ ae_path = r'/cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test24_2
 #paths_dir = r'/cluster\ae_regressor/'
 paths_dir = '/unfrozen_ae_regressor/'
 
-regressor_paths = os.listdir(r"C:\Users\mikem\crystals\CSP_runs\models" + paths_dir)
+regressor_paths = os.listdir(r"C:\Users\mikem\crystals\CSP_runs\models" + paths_dir + '/regressors')
+encoder_paths = os.listdir(r"C:\Users\mikem\crystals\CSP_runs\models" + paths_dir + '/encoders')
 
 targets = ["molecule_rotational_constant_a",  # 0
            "molecule_rotational_constant_b",  # 1
@@ -33,13 +34,13 @@ targets = ["molecule_rotational_constant_a",  # 0
 
 max_dataset_length = 10000000
 
-for path, target in zip(regressor_paths, targets):
+for encoder_path, regressor_path, target in zip(encoder_paths, regressor_paths, targets):
     os.chdir(r'C:\Users\mikem\OneDrive\NYU\CSD\MCryGAN')
 
     config = load_yaml('configs/analyses/er_analysis.yaml')
     config['dataset_name'] = 'test_qm9_dataset.pt'
-    config['model_paths']['autoencoder'] = ae_path
-    config['model_paths']['embedding_regressor'] = paths_dir + path
+    config['model_paths']['autoencoder'] = paths_dir + '/encoders/' + encoder_path
+    config['model_paths']['embedding_regressor'] = paths_dir + '/regressors/' + regressor_path
     config['dataset']['filter_protons'] = False
     config['dataset']['max_dataset_length'] = max_dataset_length
     config['dataset']['regression_target'] = target

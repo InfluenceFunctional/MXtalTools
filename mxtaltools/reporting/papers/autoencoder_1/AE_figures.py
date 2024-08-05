@@ -477,8 +477,8 @@ def unfrozen_embedding_regression_figure():
     for ind, (path, target_name) in enumerate(zip(ers, target_names)):
         stats_dict = np.load(path, allow_pickle=True).item()['test_stats']
         target = stats_dict['regressor_target']
-        #prediction = stats_dict['regressor_prediction']
-        prediction = np.concatenate(stats_dict['regressor_prediction'])
+        prediction = stats_dict['regressor_prediction']
+        #prediction = np.concatenate(stats_dict['regressor_prediction'])
 
         MAE = np.abs(target - prediction).mean()
         NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
@@ -497,8 +497,8 @@ def unfrozen_embedding_regression_figure():
     for ind, (path, target_name) in enumerate(zip(ers, target_names)):
         stats_dict = np.load(path, allow_pickle=True).item()['test_stats']
         target = stats_dict['regressor_target']
-        #prediction = stats_dict['regressor_prediction']
-        prediction = np.concatenate(stats_dict['regressor_prediction'])
+        prediction = stats_dict['regressor_prediction']
+        #prediction = np.concatenate(stats_dict['regressor_prediction'])
 
         xline = np.linspace(max(min(target), min(prediction)),
                             min(max(target), max(prediction)), 2)
@@ -538,7 +538,6 @@ def unfrozen_embedding_regression_figure():
     fig3.update_layout(font=dict(size=20))
     fig3.update_annotations(font_size=20)
     fig3.show(renderer='browser')
-
 
     return fig3
 
@@ -692,7 +691,6 @@ def regression_training_curve():
     return fig4
 
 
-
 def ae_training_curve():
     import numpy as np
     dataset_sizes = np.linspace(1000, 130000, num=18)
@@ -737,6 +735,89 @@ def ae_training_curve():
 
     return fig4
 
+
+def electronegativity_regression_figure():
+    os.chdir(r'C:\Users\mikem\crystals\CSP_runs\_experiments_dev_05-08-15-14-54')
+
+    fig5 = make_subplots(cols=2, rows=1, horizontal_spacing=0.06,
+                         vertical_spacing=0.1)
+
+    annotations = []
+    stats_dict = np.load('best_embedding_regressor_test_stats_dict.npy', allow_pickle=True).item()
+    target_vec = np.stack(stats_dict['regressor_target'])
+    prediction_vec = np.stack(stats_dict['regressor_prediction'])
+
+    target = np.linalg.norm(target_vec,axis=1)
+    prediction = np.linalg.norm(prediction_vec,axis=1)
+    overlap = np.sum(target_vec * prediction_vec, axis=1) / (target * prediction)
+
+    MAE = np.abs(target - prediction).mean()
+    NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
+
+    linreg_result = linregress(target, prediction)
+    R_value = linreg_result.rvalue
+
+    xline = np.linspace(max(min(target), min(prediction)),
+                        min(max(target), max(prediction)), 2)
+
+    xy = np.vstack([target, prediction])
+    try:
+        z = get_point_density(xy, bins=1000)
+    except:
+        z = np.ones_like(target)
+
+    opacity = 0.05  # np.exp(-num_points / 10000)
+    fig5.add_trace(go.Scattergl(x=target, y=prediction, mode='markers', marker=dict(color=z), opacity=opacity,
+                                showlegend=False),
+                   row=1, col=1)
+    fig5.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                   row=1, col=1)
+
+    annotations.append(dict(xref="x1", yref="y1",
+                            x=np.amin(target) + np.ptp(target) * 0.2,
+                            y=np.amax(prediction) - np.ptp(prediction) * 0.2,
+                            showarrow=False,
+                            text=f"R={R_value:.2f} <br> MAE={MAE:.3g}"
+                            ))
+
+    annotations.append(dict(xref="x2", yref="y2",
+                            x=np.amin(target) + np.ptp(target) * 0.2,
+                            y=np.amax(prediction) - np.ptp(prediction) * 0.2,
+                            showarrow=False,
+                            text=f"Mean Vector Overlap={overlap.mean():.3g}"
+                            ))
+
+    fig5.add_trace(go.Histogram(x=overlap,
+                               histnorm='probability density',
+                               nbinsx=100,
+                               name="Overlaps Distribution",
+                               showlegend=False,
+                               marker_color='rgba(0,0,100,1)',),
+                  row=1, col=2)  #
+
+    target_name = "Dipole Vector"
+    fig5.update_yaxes(title_text=f'Predicted {target_name} Norm', row=1, col=1, tickformat=".2g")
+
+    fig5.update_xaxes(title_text=f'True {target_name} Norm', row=1, col=1, tickformat=".2g")
+
+    fig5.update_xaxes(title_text=f'{target_name} Prediction Overlap', row=1, col=2, tickformat=".2g")
+
+    fig5['layout']['annotations'] += tuple(annotations)
+    fig5.update_annotations(font=dict(size=18))
+    fig5.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig5.update_xaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
+    fig5.update_yaxes(gridcolor='lightgrey')  # , zerolinecolor='black')
+    fig5.update_yaxes(linecolor='black', mirror=True,
+                      showgrid=True, zeroline=True)
+    fig5.update_xaxes(linecolor='black', mirror=True,
+                      showgrid=True, zeroline=True)
+    fig5.update_layout(font=dict(size=20))
+    fig5.update_annotations(font_size=20)
+    fig5.show(renderer='browser')
+
+    return fig5
+
+
 #
 #fig = RMSD_fig()
 #fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
@@ -747,14 +828,18 @@ def ae_training_curve():
 # fig3 = embedding_regression_figure()
 # fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
 
-#fig3 = unfrozen_embedding_regression_figure()
-#fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties_direct.png', width=1920, height=840)
-
 #fig4 = regression_training_curve()
 #fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
-
+#
+# for rebuttal
 fig4 = ae_training_curve()
 fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\ae_traning_curve.png', width=1200, height=800)
+
+fig3 = unfrozen_embedding_regression_figure()
+fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties_direct.png', width=1920, height=840)
+
+fig5 = electronegativity_regression_figure()
+fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\electronegativity_regression.png', width=1920, height=840)
 
 
 aa = 1
