@@ -747,8 +747,8 @@ def electronegativity_regression_figure():
     target_vec = np.stack(stats_dict['regressor_target'])
     prediction_vec = np.stack(stats_dict['regressor_prediction'])
 
-    target = np.linalg.norm(target_vec,axis=1)
-    prediction = np.linalg.norm(prediction_vec,axis=1)
+    target = np.linalg.norm(target_vec, axis=1)
+    prediction = np.linalg.norm(prediction_vec, axis=1)
     overlap = np.sum(target_vec * prediction_vec, axis=1) / (target * prediction)
 
     MAE = np.abs(target - prediction).mean()
@@ -788,12 +788,12 @@ def electronegativity_regression_figure():
                             ))
 
     fig5.add_trace(go.Histogram(x=overlap,
-                               histnorm='probability density',
-                               nbinsx=100,
-                               name="Overlaps Distribution",
-                               showlegend=False,
-                               marker_color='rgba(0,0,100,1)',),
-                  row=1, col=2)  #
+                                histnorm='probability density',
+                                nbinsx=100,
+                                name="Overlaps Distribution",
+                                showlegend=False,
+                                marker_color='rgba(0,0,100,1)', ),
+                   row=1, col=2)  #
 
     target_name = "Dipole Vector"
     fig5.update_yaxes(title_text=f'Predicted {target_name} Norm', row=1, col=1, tickformat=".2g")
@@ -818,6 +818,63 @@ def electronegativity_regression_figure():
     return fig5
 
 
+def ae_regression_grid_search():
+    config = []
+    for i in [32, 64, 128, 256, 512]:
+        for j in [1, 2, 4, 8, 12]:
+            config.append([i, j])
+
+    config = np.array(config)
+
+    values = [0.06303,  #0
+              0.0544,  #1
+              0.05446,  #2
+              0.0565,  #3
+              0.05957,  #4
+              0.06394,  #5
+              0.05565,  #6
+              0.05355,  #7
+              0.0578,  #8
+              0.05743,  #9
+              0.06174,  #10
+              0.05638,  #11
+              0.05426,  #12
+              0.05694,  #13
+              0.05872,  #14
+              0.06094,  #15
+              0.05465,  #16
+              0.05429,  #17
+              0.05729,  #18
+              0.06048,  #19
+              0.06243,  #20
+              0.05584,  #21
+              0.05527,  #22
+              0.05861,  #23
+              0.0568,  #24
+              ]
+    values = np.array(values).reshape(5, 5)
+
+    fig6 = go.Figure()
+    fig6.add_trace(go.Heatmap(x=np.array([32, 64, 128, 256, 512]).astype('str'),
+                              y=np.array([1, 2, 4, 8, 12]).astype('str'),
+                              z=values,
+                              text=values,
+                              texttemplate="%{text:.2g}",
+                              textfont={"size": 20},
+                              colorbar={"title": "Best Test Loss"}
+                              )
+                   )
+
+    fig6.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig6.update_layout(font=dict(size=20))
+    fig6.update_annotations(font_size=28)
+    fig6.update_layout(xaxis_title='Feature Depth', yaxis_title='Num Layers')
+
+    fig6.show(renderer='browser')
+
+    return fig6
+
+
 #
 #fig = RMSD_fig()
 #fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
@@ -832,14 +889,17 @@ def electronegativity_regression_figure():
 #fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
 #
 # for rebuttal
-fig4 = ae_training_curve()
-fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\ae_traning_curve.png', width=1200, height=800)
+# fig4 = ae_training_curve()
+# fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\ae_traning_curve.png', width=1200, height=800)
+#
+# fig3 = unfrozen_embedding_regression_figure()
+# fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties_direct.png', width=1920, height=840)
+#
+# fig5 = electronegativity_regression_figure()
+# fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\electronegativity_regression.png', width=1920,
+#                  height=840)
 
-fig3 = unfrozen_embedding_regression_figure()
-fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties_direct.png', width=1920, height=840)
-
-fig5 = electronegativity_regression_figure()
-fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\electronegativity_regression.png', width=1920, height=840)
-
+fig6 = ae_regression_grid_search()
+fig6.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\ae_grid.png', width=840, height=840)
 
 aa = 1

@@ -14,10 +14,9 @@ early_epochs_step_override: 5
 embedding_regressor:
   freeze_encoder: true
   model:
-    depth: 32
     dropout: 0.1
     equivariant: true
-    hidden_dim: 128
+    hidden_dim: 32
     norm: layer
     norm_mode: layer
     num_layers: 2
