@@ -24,7 +24,7 @@ for ix1 in range(len(config_list)):
     config['dataset']['filter_protons'] = False
     config['model_paths']['autoencoder'] = models[1]
     config['dataset']['regression_target'] = 'gap_energy'
-    config['embedding_regressor']['freeze_encoder'] = False
+    config['embedding_regressor']['freeze_encoder'] = True
     config['embedding_regressor']['model']['depth'] = config_list[ix1][0]
     config['embedding_regressor']['model']['num_layers'] = config_list[ix1][1]
     config['embedding_regressor']['model']['dropout'] = 0.1

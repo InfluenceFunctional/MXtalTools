@@ -12,7 +12,7 @@ dataset_yaml_path: /qm9_autoencoder.yaml
 device: cuda
 early_epochs_step_override: 5
 embedding_regressor:
-  freeze_encoder: false
+  freeze_encoder: true
   model:
     depth: 128
     dropout: 0.1
