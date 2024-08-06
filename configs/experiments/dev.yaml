@@ -1,6 +1,6 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/ZINC_autoencoder.yaml
+base_config_path: /experiments/base/discriminator.yaml
 #dataset_name: CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: True
@@ -10,7 +10,7 @@ save_checkpoints: True
 dataset:
   max_dataset_length: 10000  # non-functional for on-disk datasets.
   test_fraction: 0.2
-  on_disk_data_dir: '/zinc22_3d/zinc3d.lmdb/'
+  #on_disk_data_dir: '/zinc22_3d/zinc3d.lmdb/'
   #dumps_dirs: ['acridine_melt_interface18/5']
 
 seeds:
@@ -47,6 +47,6 @@ model_paths:
 
 #generate_sgs: ['P-1','C2/c','P21/c','P212121']
 
-autoencoder:
-  infer_protons: False
-  filter_protons: True
+#autoencoder:
+#  infer_protons: False
+#  filter_protons: True

@@ -192,7 +192,7 @@ class Modeller:
             conv_cutoff = self.config.regressor.model.graph.cutoff
         elif self.config.mode == 'autoencoder':
             conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
-        elif self.config.mode == 'gan':
+        elif self.config.mode == 'gan' or self.config.mode == 'discriminator':
             conv_cutoff = self.config.discriminator.model.graph.cutoff
         else:
             assert False, "Missing convolutional cutoff information"
