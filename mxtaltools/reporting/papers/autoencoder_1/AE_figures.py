@@ -781,8 +781,8 @@ def electronegativity_regression_figure():
                             ))
 
     annotations.append(dict(xref="x2", yref="y2",
-                            x=np.amin(target) + np.ptp(target) * 0.2,
-                            y=np.amax(prediction) - np.ptp(prediction) * 0.2,
+                            x=0,
+                            y=20,
                             showarrow=False,
                             text=f"Mean Vector Overlap={overlap.mean():.3g}"
                             ))
@@ -826,33 +826,33 @@ def ae_regression_grid_search():
 
     config = np.array(config)
 
-    values = [0.06303,  #0
-              0.0544,  #1
-              0.05446,  #2
-              0.0565,  #3
-              0.05957,  #4
-              0.06394,  #5
-              0.05565,  #6
-              0.05355,  #7
-              0.0578,  #8
-              0.05743,  #9
-              0.06174,  #10
-              0.05638,  #11
-              0.05426,  #12
-              0.05694,  #13
-              0.05872,  #14
-              0.06094,  #15
-              0.05465,  #16
-              0.05429,  #17
-              0.05729,  #18
-              0.06048,  #19
-              0.06243,  #20
-              0.05584,  #21
-              0.05527,  #22
-              0.05861,  #23
-              0.0568,  #24
+    values = [0.08303,  #0
+              0.07575,  #1
+              0.07093,  #2
+              0.07961,  #3
+              0.08652,  #4
+              0.06937,  #5
+              0.06232,  #6
+              0.06202,  #7
+              0.06414,  #8
+              0.06426,  #9
+              0.06201,  #10
+              0.05519,  #11
+              0.05269,  #12
+              0.05474,  #13
+              0.05943,  #14
+              0.05766,  #15
+              0.04898,  #16
+              0.04795,  #17
+              0.05185,  #18
+              0.05308,  #19
+              0.05649,  #20
+              0.05203,  #21
+              0.05289,  #22
+              0.05101,  #23
+              0.04924,  #24
               ]
-    values = np.array(values).reshape(5, 5)
+    values = np.array(values).reshape(5, 5).T
 
     fig6 = go.Figure()
     fig6.add_trace(go.Heatmap(x=np.array([32, 64, 128, 256, 512]).astype('str'),
@@ -895,11 +895,11 @@ def ae_regression_grid_search():
 # fig3 = unfrozen_embedding_regression_figure()
 # fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties_direct.png', width=1920, height=840)
 #
-# fig5 = electronegativity_regression_figure()
-# fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\electronegativity_regression.png', width=1920,
-#                  height=840)
-
-fig6 = ae_regression_grid_search()
-fig6.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\ae_grid.png', width=840, height=840)
+fig5 = electronegativity_regression_figure()
+fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\electronegativity_regression.png', width=900,
+                 height=450)
+#
+# fig6 = ae_regression_grid_search()
+# fig6.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\ae_grid.png', width=840, height=840)
 
 aa = 1
