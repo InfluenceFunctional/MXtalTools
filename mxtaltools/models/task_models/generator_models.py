@@ -22,6 +22,12 @@ class CrystalGenerator(nn.Module):
         torch.manual_seed(seed)
         self.symmetries_dict = sym_info
 
+        path = os.path.join(os.path.dirname(__file__), '../../constants/prior_stds.npy')
+        self.register_buffer('stds', torch.tensor(np.load(path, allow_pickle=True), dtype=torch.float32))
+
+        path = os.path.join(os.path.dirname(__file__), '../../constants/prior_means.npy')
+        self.register_buffer('means', torch.tensor(np.load(path, allow_pickle=True), dtype=torch.float32))
+
         # generator model
         self.model = vectorMLP(layers=config.num_layers,
                                filters=config.hidden_dim,
@@ -44,14 +50,14 @@ class CrystalGenerator(nn.Module):
 
         x, v = self.model(x=x, v=v)
 
-        raw_sample = torch.cat([x, v[:, :, 0]], dim=-1)
+        raw_sample = torch.cat([x, v[:, :, 0]], dim=-1) * self.stds[sg_ind_list] + self.means[sg_ind_list]
         if return_raw_sample:
             sample = raw_sample
         else:
             # cleanup outputs
 
             # cell lengths have to be positive nonzero
-            cell_lengths = torch.maximum(F.relu(raw_sample[:, :3]), 0.01 * torch.ones_like(raw_sample[:, :3]))
+            cell_lengths = F.softplus(raw_sample[:, :3] - 0.1) + 0.1
             # range from (0,pi) with 20% padding to prevent too-skinny cells
             cell_angles = enforce_1d_bound(raw_sample[:, 3:6], x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2,
                                            mode='soft')
@@ -220,7 +226,7 @@ class GeneratorPrior(nn.Module):
 
         # enforce 'hard' bounds
         # harshly enforces positive nonzero
-        cell_lengths = torch.maximum(F.relu(cell_lengths), 0.01 * torch.ones_like(cell_lengths))
+        cell_lengths = torch.maximum(F.relu(cell_lengths), 0.1 * torch.ones_like(cell_lengths))
         # range from (0,pi) with 20% padding to prevent too-skinny cells
         cell_angles = enforce_1d_bound(cell_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='hard')
 
@@ -230,7 +236,9 @@ class GeneratorPrior(nn.Module):
         return torch.cat([cell_lengths, cell_angles, pose_params], dim=1)
 
     def generate_norming_factors(self):
-        norms = np.zeros((230, 12))
+        norms = np.zeros((231, 12))
+        stds = np.zeros_like(norms)
+        means = np.zeros_like(stds)
         for ind in range(1, 231):
             p1 = self.generator_prior(10000, ind * torch.ones(10000))
             p2 = self.generator_prior(10000, ind * torch.ones(10000))
@@ -238,6 +246,10 @@ class GeneratorPrior(nn.Module):
             d1 = torch.abs(p1 - p2)
             scale = d1.mean(0)
 
-            norms[ind - 1] = scale.detach().numpy()
+            norms[ind] = scale.detach().numpy()
+            stds[ind] = p1.std(0).detach().numpy()
+            means[ind] = p1.mean(0).detach().numpy()
 
         np.save('prior_norm_factors', norms)
+        np.save('prior_stds', stds)
+        np.save('prior_means', means)

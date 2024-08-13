@@ -304,7 +304,7 @@ def update_stats_dict(dictionary: dict, keys, values, mode='append'):
             if key not in dictionary.keys():
                 dictionary[key] = []
 
-            if mode == 'append':
+            if (mode == 'append') or ('crystaldata' in str(type(value)).lower()):
                 dictionary[key].append(value)
             elif mode == 'extend':
                 dictionary[key].extend(value)

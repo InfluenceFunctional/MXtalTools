@@ -17,7 +17,7 @@ seeds:
   dataset: 1
 
 # batching & convergence
-max_epoch_steps: 500
+max_epoch_steps: 50
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True

@@ -1421,7 +1421,8 @@ class Modeller:
             skip_stats = True
 
         target_rauv = self.get_generator_density_target(data)
-        target_rauv = torch.ones_like(target_rauv) + torch.randn_like(target_rauv) * 0.01
+        target_rauv = (torch.ones_like(target_rauv)
+                       + torch.randn_like(target_rauv) * self.config.generator.packing_target_noise)
 
         variation_factor = torch.rand(size=(data.num_graphs,), device=self.device)
 
@@ -1473,7 +1474,7 @@ class Modeller:
                 'smiles': data.smiles,
             }
             if step == 0:
-                stats['generator_samples'] = supercell_data.detach()
+                stats['generator_samples'] = supercell_data.cpu().detach()
 
             stats.update(losses_stats)
 
@@ -1648,8 +1649,8 @@ class Modeller:
                              ):
 
         scaled_deviation = (prior - generated_samples) / (self.generator_prior.norm_factors[data.sg_ind, :] + 1e-4)
-        prior_loss = torch.linalg.norm(scaled_deviation,
-                                       dim=1) * variation_factor * self.config.generator.prior_loss_coefficient
+        prior_loss = (F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)
+                      * self.config.generator.prior_loss_coefficient)
 
         d_output, dist_dict = self.score_adversarially(supercell_data)
 
@@ -1692,7 +1693,7 @@ class Modeller:
                 0.02 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
             self.packing_loss_coefficient *= 0.99
         if (packing_loss.mean() > (0.03 + self.config.generator.packing_target_noise)) and (
-                self.packing_loss_coefficient < 100):
+                self.packing_loss_coefficient < 10):
             self.packing_loss_coefficient *= 1.01
         self.logger.packing_loss_coefficient = self.packing_loss_coefficient
 

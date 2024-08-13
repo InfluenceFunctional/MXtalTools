@@ -1,3 +1,4 @@
+import ase
 import numpy as np
 import torch
 import wandb
@@ -13,6 +14,7 @@ from torch import scatter
 from torch_scatter import scatter
 import torch.nn.functional as F
 
+from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
 from mxtaltools.common.utils import get_point_density, softmax_np, torch_ptp
 
 from mxtaltools.common.geometry_calculations import cell_vol_np
@@ -1183,18 +1185,22 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     #plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
     new_cell_scatter(epoch_stats_dict, wandb, layout)
 
-    # mols = [ase_mol_from_crystaldata(proposed_crystaldata,
-    #                                  index=ind,
-    #                                  exclusion_level='distance',
-    #                                  inclusion_distance=6) for ind in sort_inds]
-    # if type(metrics['topk_samples'][0]) == ase.atoms.Atoms:
-    #     [ase.io.write(f'sample_{i}.cif', value[i]) for i in range(len(value))]
-    #     for ind in range(len(value)):
-    #         self.wandb.log(
-    #             {f'Topk_crystal_{ind}': self.wandb.Molecule(open(f"sample_{ind}.cif"), caption=f"sample_{ind}.cif")},
-    #             step=step)
+    log_crystal_samples(epoch_stats_dict)
 
     return None
+
+
+def log_crystal_samples(epoch_stats_dict):
+    sample_crystals = epoch_stats_dict['generator_samples'][0]
+    mols = [ase_mol_from_crystaldata(sample_crystals,
+                                     index=ind,
+                                     exclusion_level='distance',
+                                     inclusion_distance=6) for ind in range(min(5, len(sample_crystals)))]
+    [ase.io.write(f'sample_{i}.cif', mols[i]) for i in range(len(mols))]
+    for ind in range(len(mols)):
+        wandb.log(
+            {f'crystal_sample_{ind}': wandb.Molecule(open(f"sample_{ind}.cif"), caption=f"sample_{ind}.cif")},
+            commit=False)
 
 
 def new_cell_scatter(epoch_stats_dict, wandb, layout):
