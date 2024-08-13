@@ -1442,7 +1442,7 @@ class Modeller:
                 skip_refeaturization=True,
             ))
 
-        generator_losses, losses_stats = self.get_generator_losses(
+        generator_losses, losses_stats, supercell_data = self.get_generator_losses(
             data,
             generated_samples,
             generated_samples_to_build,
@@ -1451,6 +1451,7 @@ class Modeller:
             prior,
             target_rauv,
             variation_factor,
+            skip_stats,
         )
         generator_loss = generator_losses.mean()
 
@@ -1471,6 +1472,9 @@ class Modeller:
                 'identifiers': data.identifier,
                 'smiles': data.smiles,
             }
+            if step == 0:
+                stats['generator_samples'] = supercell_data.detach()
+
             stats.update(losses_stats)
 
             dict_of_tensors_to_cpu_numpy(stats)
@@ -1640,6 +1644,7 @@ class Modeller:
                              prior,
                              target_rauv,
                              variation_factor,
+                             skip_stats,
                              ):
 
         scaled_deviation = (prior - generated_samples) / (self.generator_prior.norm_factors[data.sg_ind, :] + 1e-4)
@@ -1664,20 +1669,23 @@ class Modeller:
 
         self.anneal_packing_loss(packing_loss)
 
-        generator_losses = prior_loss + packing_loss  + vdw_loss
+        generator_losses = prior_loss + packing_loss + vdw_loss
 
-        stats_dict = {
-            'generator_per_mol_vdw_loss': vdw_loss.detach(),
-            'generator_per_mol_vdw_score': vdw_score.detach(),
-            'generator_prior_loss': prior_loss.detach(),
-            'generator_packing_loss': packing_loss.detach(),
-            'generator_packing_prediction': sample_rauv.detach(),
-            'generator_packing_target': target_rauv.detach(),
-            'generator_prior': prior.detach(),
-            'generated_cell_parameters': generated_samples.detach(),
-            'generator_scaled_deviation': scaled_deviation.detach(),
-        }
-        return generator_losses, stats_dict
+        if skip_stats:
+            stats_dict = {}
+        else:
+            stats_dict = {
+                'generator_per_mol_vdw_loss': vdw_loss.detach(),
+                'generator_per_mol_vdw_score': vdw_score.detach(),
+                'generator_prior_loss': prior_loss.detach(),
+                'generator_packing_loss': packing_loss.detach(),
+                'generator_packing_prediction': sample_rauv.detach(),
+                'generator_packing_target': target_rauv.detach(),
+                'generator_prior': prior.detach(),
+                'generated_cell_parameters': generated_samples.detach(),
+                'generator_scaled_deviation': scaled_deviation.detach(),
+            }
+        return generator_losses, stats_dict, supercell_data.detach()
 
     def anneal_packing_loss(self, packing_loss):
         if packing_loss.mean() < (

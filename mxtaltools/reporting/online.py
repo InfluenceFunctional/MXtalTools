@@ -1181,14 +1181,46 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
     #plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
-    #cell_scatter(epoch_stats_dict, wandb, layout,
-    #             num_atoms_index=dataDims['tracking_features'].index('molecule_num_atoms'),
-    #             extra_category='generated_space_group_numbers')
+    new_cell_scatter(epoch_stats_dict, wandb, layout)
+
+    # mols = [ase_mol_from_crystaldata(proposed_crystaldata,
+    #                                  index=ind,
+    #                                  exclusion_level='distance',
+    #                                  inclusion_distance=6) for ind in sort_inds]
+    # if type(metrics['topk_samples'][0]) == ase.atoms.Atoms:
+    #     [ase.io.write(f'sample_{i}.cif', value[i]) for i in range(len(value))]
+    #     for ind in range(len(value)):
+    #         self.wandb.log(
+    #             {f'Topk_crystal_{ind}': self.wandb.Molecule(open(f"sample_{ind}.cif"), caption=f"sample_{ind}.cif")},
+    #             step=step)
 
     return None
 
 
-def cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_category=None):
+def new_cell_scatter(epoch_stats_dict, wandb, layout):
+    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'],
+                    'packing_prediction': epoch_stats_dict['generator_packing_prediction'],
+                    'prior_loss': epoch_stats_dict['generator_prior_loss']
+                    }
+    vdw_cutoff = np.amin(scatter_dict['vdw_score'])
+    opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 5e4)
+    df = pd.DataFrame.from_dict(scatter_dict)
+
+    fig = px.scatter(df,
+                     x='vdw_score', y='packing_prediction',
+                     color='prior_loss',
+                     marginal_x='histogram', marginal_y='histogram',
+                     opacity=opacity
+                     )
+    fig.layout.margin = layout.margin
+    fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
+    fig.update_layout(xaxis_range=[vdw_cutoff, 0.1],
+                      yaxis_range=[scatter_dict['packing_prediction'].min(), scatter_dict['packing_prediction'].max()])
+
+    wandb.log({'Generator Samples': fig}, commit=False)
+
+
+def old_cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_category=None):
     model_scores = epoch_stats_dict['generator_adversarial_score']
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'],
                     'model_score': model_scores,
