@@ -84,10 +84,10 @@ autoencoder:
         node_dim: 512
         message_dim: 128
         embedding_dim: 512
-        num_convs: 2
-        fcs_per_gc: 2
+        num_convs: 1
+        fcs_per_gc: 4
         num_radial: 50
-        norm: 'graph layer'
+        norm: null
         dropout: 0.1
         vector_norm: 'graph vector layer'
 
@@ -108,7 +108,7 @@ autoencoder:
       activation: 'gelu'
       fc:
         hidden_dim: 512
-        num_layers: 4
+        num_layers: 1
         dropout: 0.1
         norm: 'layer'
         vector_norm: 'vector layer'
