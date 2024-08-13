@@ -1,5 +1,4 @@
 import sys
-from argparse import Namespace
 from typing import Union, Tuple
 
 import numpy as np
@@ -12,17 +11,13 @@ from torch_scatter import scatter, scatter_softmax
 
 from mxtaltools.common.geometry_calculations import cell_vol_torch
 from mxtaltools.common.utils import softmax_np, components2angle
+from mxtaltools.crystal_building.utils import descale_asymmetric_unit, scale_asymmetric_unit
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.dataloader_utils import update_dataloader_batch_size
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
-from mxtaltools.models.graph_models.embedding_regression_models import EmbeddingRegressor
-from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
-from mxtaltools.models.task_models.crystal_models import MolecularCrystalModel
-from mxtaltools.models.task_models.mol_classifier import MoleculeClusterClassifier
-from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
 
 
-def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr, override_lr = None):
+def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr, override_lr=None):
     if optimizer_config.lr_schedule and override_lr is None:
         lr = optimizer.param_groups[0]['lr']
         if lr > optimizer_config.min_lr:
@@ -447,9 +442,16 @@ def get_n_config(model):
     return pp
 
 
-def clean_generator_output(samples=None, lattice_lengths=None, lattice_angles=None,
-                           mol_positions=None, mol_orientations=None,
-                           lattice_means=None, lattice_stds=None, destandardize=True, mode='soft'):
+def clean_generator_output(samples=None,  # TODO rewrite - this is a mess
+                           lattice_lengths=None,
+                           lattice_angles=None,
+                           mol_positions=None,
+                           mol_orientations=None,
+                           lattice_means=None,
+                           lattice_stds=None,
+                           destandardize=True,
+                           mode='soft',
+                           skip_angular_dof=False):
     """
     convert from raw model output to the actual cell parameters with appropriate bounds
     considering raw outputs to be in the standardized basis, we destandardize, then enforce bounds
@@ -480,8 +482,8 @@ def clean_generator_output(samples=None, lattice_lengths=None, lattice_angles=No
 
     if mol_orientations.shape[-1] == 6:
         theta, phi, r_i = decode_to_sph_rotvec(real_mol_orientations)
-    elif mol_orientations.shape[
-        -1] == 3:  # already have angles, no need to decode  # todo deprecate - we will only use spherical components in future
+    # already have angles, no need to decode  # todo deprecate - we will only use spherical components in future
+    elif mol_orientations.shape[-1] == 3:
         if mode is not None:
             theta = enforce_1d_bound(real_mol_orientations[:, 0], x_span=torch.pi / 4, x_center=torch.pi / 4,
                                      mode=mode)[:, None]
@@ -489,13 +491,14 @@ def clean_generator_output(samples=None, lattice_lengths=None, lattice_angles=No
             r_i = enforce_1d_bound(real_mol_orientations[:, 2], x_span=torch.pi, x_center=torch.pi, mode=mode)[:, None]
         else:
             theta, phi, r_i = real_mol_orientations
+
     r = torch.maximum(r_i, torch.ones_like(r_i) * 0.01)  # MUST be nonzero
     clean_mol_orientations = torch.cat((theta, phi, r), dim=-1)
 
     '''enforce physical bounds'''
     if mode is not None:
         if mode == 'soft':
-            clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.1) + 0.1  # smoothly enforces positive nonzero
+            clean_lattice_lengths = F.softplus(real_lattice_lengths - 0.01) + 0.01  # smoothly enforces positive nonzero
         elif mode == 'hard':
             clean_lattice_lengths = torch.maximum(F.relu(real_lattice_lengths), torch.ones_like(
                 real_lattice_lengths))  # harshly enforces positive nonzero
@@ -670,7 +673,7 @@ def compute_gaussian_overlap(ref_types, data, decoded_data, sigma, overlap_type,
     edges = radius(ref_points, pred_points,
                    #r=2 * ref_points[:, :3].norm(dim=1).amax(),  # max range encompasses largest molecule in the batch
                    # alternatively any point which will have even a small overlap - should be faster by ignoring unimportant edges, where the gradient will anyway be vanishing
-                   r=6*sigma,
+                   r=6 * sigma,
                    max_num_neighbors=100,
                    batch_x=data.batch,
                    batch_y=decoded_data.batch)  # this step is slower than before
@@ -727,7 +730,8 @@ def compute_type_evaluation_overlap(config, data, num_atom_types, decoded_data, 
                                             isolate_dimensions=[3, 3 + num_atom_types],
                                             type_distance_scaling=config.autoencoder.type_distance_scaling)
     self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                 nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
+                                                 nodewise_weights=torch.ones(len(data.x), device=data.x.device,
+                                                                             dtype=data.x.dtype),
                                                  overlap_type='gaussian', log_scale=False,
                                                  isolate_dimensions=[3, 3 + num_atom_types],
                                                  type_distance_scaling=config.autoencoder.type_distance_scaling,
@@ -741,7 +745,8 @@ def compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weight
                                              overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
                                              type_distance_scaling=config.autoencoder.type_distance_scaling)
     self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                  nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
+                                                  nodewise_weights=torch.ones(len(data.x), device=data.x.device,
+                                                                              dtype=data.x.dtype),
                                                   overlap_type='gaussian', log_scale=False, isolate_dimensions=[0, 3],
                                                   type_distance_scaling=config.autoencoder.type_distance_scaling,
                                                   dist_to_self=True)
@@ -750,13 +755,13 @@ def compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weight
 
 def compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes,
                                     sigma=None, distance_scaling=None):
-
     full_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, sigma,
                                             nodewise_weights=nodewise_weights_tensor,
                                             overlap_type='gaussian', log_scale=False,
                                             type_distance_scaling=distance_scaling)
     self_overlap = compute_gaussian_overlap(true_nodes, data, data, sigma,
-                                            nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
+                                            nodewise_weights=torch.ones(len(data.x), device=data.x.device,
+                                                                        dtype=data.x.dtype),
                                             overlap_type='gaussian', log_scale=False,
                                             type_distance_scaling=distance_scaling,
                                             dist_to_self=True)
@@ -845,108 +850,6 @@ def test_encoder_equivariance(data: CrystalData,
     return encoder_equivariance_loss, encoding, rotated_encoding
 
 
-def instantiate_models(config: Namespace,
-                       dataDims: dict,
-                       model_names,
-                       autoencoder_type_index) -> dict:
-    print("Initializing model(s) for " + config.mode)
-    models_dict = {}
-    if config.mode == 'gan' or config.mode == 'search':
-        assert False, "Generator currently deprecated for streamline/rebuild"
-        # models_dict['generator'] = CrystalGenerator(config.seeds.model,
-        #                                                  device,
-        #                                                  config.generator.model,
-        #                                                  sym_info,
-        #                                                  dataDims['atom_features'],
-        #                                                  dataDims['molecule_features'],
-        #                                                  dataDims['node_standardization_vector'],
-        #                                                  dataDims['graph_standardization_vector'],
-        #                                                  dataDims['lattice_means'],
-        #                                                  dataDims['lattice_stds']
-        #                                                  )
-        # models_dict['discriminator'] = MolecularCrystalModel(
-        #     config.seeds.model,
-        #     config.discriminator.model,
-        #     dataDims['atom_features'],
-        #     dataDims['molecule_features'],
-        #     output_dim=3,
-        #     node_standardization_tensor=dataDims['node_standardization_vector'],
-        #     graph_standardization_tensor=dataDims['graph_standardization_vector'])
-    if config.mode == 'discriminator':
-        models_dict['generator'] = nn.Linear(1, 1)
-        models_dict['discriminator'] = MolecularCrystalModel(
-            config.seeds.model,
-            config.discriminator.model,
-            dataDims['atom_features'],
-            dataDims['molecule_features'],
-            output_dim=3,
-            node_standardization_tensor=dataDims['node_standardization_vector'],
-            graph_standardization_tensor=dataDims['graph_standardization_vector'])
-    if config.mode == 'regression' or config.model_paths.regressor is not None:
-        models_dict['regressor'] = MoleculeScalarRegressor(
-            config.regressor.model,
-            dataDims['atom_features'],
-            dataDims['molecule_features'],
-            dataDims['node_standardization_vector'],
-            dataDims['graph_standardization_vector'],
-            config.seeds.model
-        )
-    if config.mode == 'autoencoder' or config.model_paths.autoencoder is not None:
-        models_dict['autoencoder'] = Mo3ENet(
-            config.seeds.model,
-            config.autoencoder.model,
-            int(torch.sum(autoencoder_type_index != -1)),
-            autoencoder_type_index,
-            config.autoencoder.molecule_radius_normalization,
-            infer_protons=config.autoencoder.infer_protons,
-            protons_in_input=not config.autoencoder.filter_protons
-        )
-    if config.mode == 'embedding_regression' or config.model_paths.embedding_regressor is not None:
-        models_dict['autoencoder'] = Mo3ENet(
-            config.seeds.model,
-            config.autoencoder.model,
-            int(torch.sum(autoencoder_type_index != -1)),
-            autoencoder_type_index,
-            config.autoencoder.molecule_radius_normalization,
-            infer_protons=config.autoencoder.infer_protons,
-            protons_in_input=not config.autoencoder.filter_protons
-        )
-        for param in models_dict['autoencoder'].parameters():  # freeze encoder
-            param.requires_grad = False
-        config.embedding_regressor.model.bottleneck_dim = config.autoencoder.model.bottleneck_dim
-        models_dict['embedding_regressor'] = EmbeddingRegressor(
-            config.seeds.model,
-            config.embedding_regressor.model,
-            num_targets=config.embedding_regressor.num_targets
-        )
-        assert config.model_paths.autoencoder is not None  # must preload the encoder
-    if config.mode == 'polymorph_classification':
-        models_dict['polymorph_classifier'] = MoleculeClusterClassifier(
-            config.seeds.model,
-            config.polymorph_classifier.model,
-            config.polymorph_classifier.num_output_classes,
-            dataDims['atom_features'],
-            dataDims['molecule_features'],
-            dataDims['node_standardization_vector'],
-            dataDims['graph_standardization_vector'],
-        )
-    null_models = {name: nn.Linear(1, 1) for name in model_names if
-                   name not in models_dict.keys()}  # initialize null models
-    models_dict.update(null_models)
-
-    # # compile models
-    # for key in models_dict.keys():
-    #     models_dict[key].compile_self()
-
-    if config.device.lower() == 'cuda':
-        torch.backends.cudnn.benchmark = True
-        torch.cuda.empty_cache()
-        for model in models_dict.values():
-            model.cuda()
-
-    return models_dict
-
-
 def collate_decoded_data(data, decoding, num_decoder_nodes, node_weight_temperature, device):
     # generate input reconstructed as a data type
     decoded_data = init_decoded_data(data, decoding,
@@ -965,7 +868,8 @@ def collate_decoded_data(data, decoding, num_decoder_nodes, node_weight_temperat
     return decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
 
 
-def ae_reconstruction_loss(data, decoded_data, nodewise_weights, num_atom_types, type_distance_scaling, autoencoder_sigma):
+def ae_reconstruction_loss(data, decoded_data, nodewise_weights, num_atom_types, type_distance_scaling,
+                           autoencoder_sigma):
     true_node_one_hot = F.one_hot(data.x.flatten().long(), num_classes=num_atom_types).float()
 
     decoder_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, decoded_data,
@@ -987,10 +891,88 @@ def ae_reconstruction_loss(data, decoded_data, nodewise_weights, num_atom_types,
     per_graph_pred_types = scatter(
         decoded_data.x * nodewise_weights[:, None], decoded_data.batch[:, None], dim=0, reduce='sum')
 
-    nodewise_type_loss = (F.binary_cross_entropy(per_graph_pred_types.clip(min=1e-6,max=1-1e-6), per_graph_true_types) -
-                          F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
+    nodewise_type_loss = (
+                F.binary_cross_entropy(per_graph_pred_types.clip(min=1e-6, max=1 - 1e-6), per_graph_true_types) -
+                F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
 
     nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
     graph_reconstruction_loss = scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')
 
     return nodewise_reconstruction_loss, nodewise_type_loss, graph_reconstruction_loss, self_likelihoods
+
+
+def clean_cell_params(samples,
+                      sg_inds,
+                      lattice_means,
+                      lattice_stds,
+                      symmetries_dict,
+                      asym_unit_dict,
+                      rescale_asymmetric_unit=True,
+                      destandardize=False,
+                      mode='soft',
+                      fractional_basis='asymmetric_unit',
+                      skip_angular_dof=False):
+    """
+    An important function for enforcing physical limits on cell parameterization
+    with randomly generated samples of different sources.
+
+
+    Parameters
+    ----------
+    skip_angular_dof
+    samples: torch.Tensor
+    sg_inds: torch.LongTensor
+    lattice_means: torch.Tensor
+    lattice_stds: torch.Tensor
+    symmetries_dict: dict
+    asym_unit_dict: dict
+    rescale_asymmetric_unit: bool
+    destandardize: bool
+    mode: str, "hard" or "soft"
+    fractional_basis: bool
+
+    Returns
+    -------
+
+    """
+    lattice_lengths = samples[:, :3]
+    lattice_angles = samples[:, 3:6]
+    mol_orientations = samples[:, 9:]
+
+    if fractional_basis == 'asymmetric_unit':  # basis is 0-1 within the asymmetric unit
+        mol_positions = samples[:, 6:9]
+
+    elif fractional_basis == 'unit_cell':  # basis is 0-1 within the unit cell
+        mol_positions = descale_asymmetric_unit(asym_unit_dict, samples[:, 6:9], sg_inds)
+
+    else:
+        assert False, f"{fractional_basis} is not an implemented fractional basis"
+
+    lattice_lengths, lattice_angles, mol_positions, mol_orientations \
+        = clean_generator_output(lattice_lengths=lattice_lengths,
+                                 lattice_angles=lattice_angles,
+                                 mol_positions=mol_positions,
+                                 mol_orientations=mol_orientations,
+                                 lattice_means=lattice_means,
+                                 lattice_stds=lattice_stds,
+                                 destandardize=destandardize,
+                                 mode=mode,
+                                 skip_angular_dof=skip_angular_dof)
+
+    fixed_lengths, fixed_angles = (
+        enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_dict))
+
+    if rescale_asymmetric_unit:
+        fixed_positions = scale_asymmetric_unit(asym_unit_dict, mol_positions, sg_inds)
+    else:
+        fixed_positions = mol_positions * 1
+
+    '''collect'''
+    final_samples = torch.cat((
+        fixed_lengths,
+        fixed_angles,
+        fixed_positions,
+        mol_orientations,
+    ), dim=-1)
+
+    return final_samples

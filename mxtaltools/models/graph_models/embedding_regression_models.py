@@ -12,7 +12,6 @@ class EmbeddingRegressor(BaseGraphModel):
 
         torch.manual_seed(seed)
 
-        self.equivariant = config.add_vector_track
         self.prediction_type = 'scalar'
         self.output_dim = int(1 * num_targets)
 
@@ -24,7 +23,7 @@ class EmbeddingRegressor(BaseGraphModel):
                                input_dim=config.bottleneck_dim,
                                output_dim=self.output_dim,
                                vector_input_dim=config.bottleneck_dim,
-                               vector_output_dim=1,  # dummy dimension
+                               vector_output_dim=self.output_dim,
                                conditioning_dim=0,
                                seed=seed,
                                vector_norm=config.vector_norm

@@ -1,7 +1,6 @@
 import numpy as np
 from torch.nn.utils import rnn as rnn
 
-from mxtaltools.models.utils import clean_generator_output, enforce_crystal_system
 from mxtaltools.common.geometry_calculations import single_molecule_principal_axes_torch, \
     batch_molecule_principal_axes_torch, compute_Ip_handedness, rotvec2sph, sph2rotvec, \
     compute_fractional_transform_torch
@@ -587,49 +586,6 @@ def old_aunit2unit_cell(symmetry_multiplicity, aunit_coords_list, fc_transform_l
     reference_cell_list = [reference_cell_list_i[ind] for ind in sorted_z_inds]
 
     return reference_cell_list
-
-
-def clean_cell_params(samples, sg_inds, lattice_means, lattice_stds, symmetries_dict, asym_unit_dict,
-                      rescale_asymmetric_unit=True, destandardize=False, mode='soft',
-                      fractional_basis='asymmetric_unit'):
-    lattice_lengths = samples[:, :3]
-    lattice_angles = samples[:, 3:6]
-    mol_orientations = samples[:, 9:]
-
-    if fractional_basis == 'asymmetric_unit':  # basis is 0-1 within the asymmetric unit
-        mol_positions = samples[:, 6:9]
-
-    elif fractional_basis == 'unit_cell':  # basis is 0-1 within the unit cell
-        mol_positions = descale_asymmetric_unit(asym_unit_dict, samples[:, 6:9], sg_inds)
-
-    else:
-        assert False, f"{fractional_basis} is not an implemented fractional basis"
-
-    lattice_lengths, lattice_angles, mol_positions, mol_orientations \
-        = clean_generator_output(lattice_lengths=lattice_lengths,
-                                 lattice_angles=lattice_angles,
-                                 mol_positions=mol_positions,
-                                 mol_orientations=mol_orientations,
-                                 lattice_means=lattice_means, lattice_stds=lattice_stds,
-                                 destandardize=destandardize, mode=mode)
-
-    fixed_lengths, fixed_angles = (
-        enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_dict))
-
-    if rescale_asymmetric_unit:
-        fixed_positions = scale_asymmetric_unit(asym_unit_dict, mol_positions, sg_inds)
-    else:
-        fixed_positions = mol_positions * 1
-
-    '''collect'''
-    final_samples = torch.cat((
-        fixed_lengths,
-        fixed_angles,
-        fixed_positions,
-        mol_orientations,
-    ), dim=-1)
-
-    return final_samples
 
 
 def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):

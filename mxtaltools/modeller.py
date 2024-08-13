@@ -25,22 +25,23 @@ from mxtaltools.common.utils import softmax_np, init_sym_info, compute_rdf_dista
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.crystal_building.builder import SupercellBuilder
-from mxtaltools.crystal_building.utils import (clean_cell_params, set_molecule_alignment)
+from mxtaltools.crystal_building.utils import (set_molecule_alignment)
 from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.functions.vdw_overlap import vdw_overlap
-from mxtaltools.models.task_models.generator_models import IndependentGaussianGenerator
+from mxtaltools.models.task_models.generator_models import IndependentGaussianGenerator, GeneratorPrior
 from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_score, save_checkpoint, set_lr,
                                      cell_vol_torch, init_optimizer, get_regression_loss,
                                      slash_batch, compute_type_evaluation_overlap,
                                      compute_coord_evaluation_overlap,
                                      compute_full_evaluation_overlap, compute_reduced_volume_fraction,
                                      dict_of_tensors_to_cpu_numpy,
-                                     test_decoder_equivariance, test_encoder_equivariance, instantiate_models,
-                                     collate_decoded_data, ae_reconstruction_loss)
+                                     test_decoder_equivariance, test_encoder_equivariance, collate_decoded_data,
+                                     ae_reconstruction_loss, clean_cell_params, enforce_1d_bound)
+from mxtaltools.common.training_utils import instantiate_models
 from mxtaltools.models.utils import (weight_reset, get_n_config)
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
@@ -75,7 +76,8 @@ class Modeller:
         self.load_physical_constants()
         self.config = flatten_wandb_params(self.config)
 
-        self.supercell_builder = SupercellBuilder(device=self.config.device, rotation_basis='spherical')
+        self.supercell_builder = SupercellBuilder(device=self.config.device,
+                                                  rotation_basis='spherical' if self.config.mode != 'generator' else 'cartesian')
         self.collater = Collater(None, None)
 
         self.train_models_dict = {
@@ -138,7 +140,8 @@ class Modeller:
         self.models_dict = instantiate_models(self.config,
                                               self.dataDims,
                                               self.model_names,
-                                              self.autoencoder_type_index)
+                                              self.autoencoder_type_index,
+                                              self.sym_info)
         self.init_optimizers()
         self.reload_models()
         self.init_schedulers()
@@ -192,7 +195,7 @@ class Modeller:
             conv_cutoff = self.config.regressor.model.graph.cutoff
         elif self.config.mode == 'autoencoder':
             conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
-        elif self.config.mode == 'gan' or self.config.mode == 'discriminator':
+        elif self.config.mode in ['gan', 'generator', 'discriminator']:
             conv_cutoff = self.config.discriminator.model.graph.cutoff
         else:
             assert False, "Missing convolutional cutoff information"
@@ -209,18 +212,29 @@ class Modeller:
             filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
             conv_cutoff=conv_cutoff,
             do_shuffle=override_shuffle,
-            precompute_edges=not nonzero_positional_noise and not self.config.mode == 'gan',
+            precompute_edges=not nonzero_positional_noise and (
+                    self.config.mode not in ['gan', 'discriminator', 'generator']),
         )
         self.dataDims = data_manager.dataDims
         self.lattice_means = torch.tensor(self.dataDims['lattice_means'], device=self.device)
         self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], device=self.device)
+        self.new_lattice_means = torch.tensor([1.2740, 1.4319, 1.7752,
+                                               1.5619, 1.5691, 1.5509,
+                                               0.5, 0.5, 0.5,
+                                               torch.pi / 2, 0, torch.pi],
+                                              dtype=torch.float32, device=self.device)
+        self.new_lattice_stds = torch.tensor([0.5163, 0.5930, 0.6284,
+                                              0.2363, 0.2046, 0.2624,
+                                              0.2875, 0.2875, 0.2875,
+                                              2.0942, 2.0942, 1.3804],
+                                             dtype=torch.float32, device=self.device)
         if self.config.mode == 'polymorph_classification':
             self.config.polymorph_classifier.num_output_classes = 7  #self.dataDims['num_polymorphs'] + self.dataDims['num_topologies']
 
         self.times['dataset_loading'] = data_manager.times
 
         # todo change this to 'if autoencoder exists' or some proxy
-        if self.train_models_dict['autoencoder'] or self.train_models_dict['embedding_regressor']:
+        if self.train_models_dict['autoencoder'] or self.config.model_paths.autoencoder is not None:
             self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
             self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius'][
                 'max']
@@ -629,8 +643,10 @@ class Modeller:
                         prev_epoch_failed = False
 
                     except (RuntimeError, ValueError) as e:  # if we do hit OOM, slash the batch size
-                        if "CUDA out of memory" in str(e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
-                            test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed, test_loader, train_loader)
+                        if "CUDA out of memory" in str(
+                                e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
+                            test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed,
+                                                                                           test_loader, train_loader)
                         elif "Mean loss is NaN/Inf" == str(e):
                             self.handle_nan(e, epoch)
                         else:
@@ -741,12 +757,14 @@ class Modeller:
 
     def get_training_mode(self):
         self.train_models_dict = {
-            'discriminator': (self.config.mode == 'gan' or self.config.mode == 'discriminator') and any(
+            'discriminator': ((self.config.mode in ['gan', 'generator', 'discriminator']) and any(
                 (self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted,
-                 self.config.discriminator.train_on_randn)),
-            'generator': (self.config.mode == 'gan') and any((self.config.generator.train_vdw,
-                                                              self.config.generator.train_adversarially,
-                                                              self.config.generator.train_h_bond)),
+                 self.config.discriminator.train_on_randn, self.config.generator.train_adversarially)))
+                             or (self.config.model_paths.discriminator is not None),
+            'generator': (self.config.mode in ['gan', 'generator', 'discriminator']) and
+                         any((self.config.generator.train_vdw,
+                              self.config.generator.train_adversarially,
+                              self.config.generator.train_h_bond)),
             'regressor': self.config.mode == 'regression',
             'autoencoder': self.config.mode == 'autoencoder',
             'embedding_regressor': self.config.mode == 'embedding_regression',
@@ -779,12 +797,15 @@ class Modeller:
         self.epoch_type = epoch_type
         self.times[epoch_type + "_epoch_start"] = time()
 
-        if self.config.mode == 'gan' or self.config.mode == 'discriminator':
+        if self.config.mode in ['gan', 'generator']:
             if self.config.model_paths.regressor is not None:
                 self.models_dict['regressor'].eval()  # using this to suggest densities to the generator
 
-            if self.train_models_dict['discriminator'] or self.train_models_dict['generator']:
-                self.gan_epoch(data_loader, update_weights, iteration_override)
+        if self.train_models_dict['discriminator']:
+            self.discriminator_epoch(data_loader, update_weights, iteration_override)
+
+        if self.train_models_dict['generator']:
+            self.generator_epoch(data_loader, update_weights, iteration_override)
 
         elif self.config.mode == 'regression':
             self.regression_epoch(data_loader, update_weights, iteration_override)
@@ -994,7 +1015,8 @@ class Modeller:
         if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:
             # and we more self-overlap than desired
             if self.epoch_type == 'test':  # the overlap we ultimately care about is in the Test
-                if np.abs(1 - self.logger.test_stats['mean_self_overlap'][-100:]).mean() > self.config.autoencoder.overlap_eps.test:
+                if np.abs(1 - self.logger.test_stats['mean_self_overlap'][
+                              -100:]).mean() > self.config.autoencoder.overlap_eps.test:
                     # tighten the target distribution
                     self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
@@ -1061,11 +1083,11 @@ class Modeller:
          nodewise_type_loss,
          reconstruction_loss,
          self_likelihoods) = ae_reconstruction_loss(data,
-                                   decoded_data,
-                                   nodewise_weights,
-                                   self.dataDims['num_atom_types'],
-                                   self.config.autoencoder.type_distance_scaling,
-                                   self.config.autoencoder_sigma)
+                                                    decoded_data,
+                                                    nodewise_weights,
+                                                    self.dataDims['num_atom_types'],
+                                                    self.config.autoencoder.type_distance_scaling,
+                                                    self.config.autoencoder_sigma)
 
         matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
 
@@ -1184,10 +1206,10 @@ class Modeller:
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
-    def gan_epoch(self,
-                  data_loader=None,
-                  update_weights=True,
-                  iteration_override=None):
+    def discriminator_epoch(self,
+                            data_loader=None,
+                            update_weights=True,
+                            iteration_override=None):
 
         if not hasattr(self, 'packing_loss_coefficient'):  # first GAN epoch
             self.init_gan_constants()
@@ -1209,10 +1231,7 @@ class Modeller:
                 self.epoch_type))
 
             self.discriminator_step(data, i, update_weights, skip_step=skip_discriminator_step)
-            '''
-            train_generator
-            '''
-            self.generator_step(data, i, update_weights)
+
             '''
             record some stats
             '''
@@ -1225,11 +1244,38 @@ class Modeller:
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
+    def generator_epoch(self,
+                        data_loader=None,
+                        update_weights=True,
+                        iteration_override=None):
+
+        if not hasattr(self, 'packing_loss_coefficient'):  # first GAN epoch
+            self.init_gan_constants()
+
+        if update_weights:
+            self.models_dict['generator'].train(True)
+        else:
+            self.models_dict['generator'].eval()
+
+        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+            data = data.to(self.config.device)
+            '''
+            train_generator
+            '''
+            self.generator_step(data, i, i == len(data_loader) - 1, update_weights)
+
+            if iteration_override is not None:
+                if i >= iteration_override:
+                    break  # stop training early - for debugging purposes
+
+        self.logger.concatenate_stats_dict(self.epoch_type)
+
     def init_gan_constants(self):
-        self.packing_loss_coefficient = 1
+        self.packing_loss_coefficient = 0.1  #1
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
             self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in asym_unit_dict.keys()]
+
         '''compute the ratios between the norms of n-dimensional gaussians (means of chi distribution)'''
         m1 = torch.sqrt(torch.ones(1) * 2) * torch.exp(torch.lgamma(torch.ones(1) * (12 + 1) / 2)) / torch.exp(
             torch.lgamma(torch.ones(1) * 12 / 2))
@@ -1241,6 +1287,9 @@ class Modeller:
 
         if self.train_models_dict['discriminator']:
             self.init_gaussian_generator()
+
+        if self.train_models_dict['generator']:
+            self.init_generator_prior()
 
     def decide_whether_to_skip_discriminator(self, i, epoch_stats_dict):
         """
@@ -1358,37 +1407,69 @@ class Modeller:
 
         return discriminator_losses, stats
 
-    def generator_step(self, data, i, update_weights):
+    def generator_step(self, data, step, last_step, update_weights):
         """
         execute a complete training step for the generator
         get sample losses, do reporting, update gradients
         """
-        if self.train_models_dict['generator']:
-            discriminator_raw_output, generated_samples, raw_samples, packing_loss, auv_prediction, auv_target, \
-                vdw_loss, vdw_score, generated_dist_dict, supercell_examples, similarity_penalty, h_bond_score = \
-                self.get_generator_losses(data)
 
-            generator_losses, losses_stats = self.aggregate_generator_losses(
-                packing_loss, discriminator_raw_output, vdw_loss, vdw_score,
-                similarity_penalty, auv_prediction, auv_target, h_bond_score)
+        if step % self.config.logger.stats_reporting_frequency == 0:
+            skip_stats = False
+        elif last_step:
+            skip_stats = False
+        else:
+            skip_stats = True
 
-            generator_loss = generator_losses.mean()
+        target_rauv = self.get_generator_density_target(data)
+        target_rauv = torch.ones_like(target_rauv) + torch.randn_like(target_rauv) * 0.01
 
-            if update_weights:
-                self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
-                generator_loss.backward()  # back-propagation
-                torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
-                                               self.config.gradient_norm_clip)  # gradient clipping
-                self.optimizers_dict['generator'].step()  # update parameters
+        variation_factor = torch.rand(size=(data.num_graphs,), device=self.device)
 
+        generated_samples, prior, generator_data \
+            = self.get_generator_samples(data, target_rauv, variation_factor)
+
+        # denormalize the predicted cell lengths
+        cell_lengths = data.radius[:, None] * torch.pow(generator_data.sym_mult, (1 / 3))[:, None] * generated_samples[:, :3]
+        generated_samples_to_build = torch.cat([cell_lengths, generated_samples[:, 3:]], dim=1)
+
+        supercell_data, generated_cell_volumes = (
+            self.supercell_builder.build_zp1_supercells(
+                molecule_data=generator_data,
+                cell_parameters=generated_samples_to_build,
+                supercell_size=self.config.supercell_size,
+                graph_convolution_cutoff=self.config.discriminator.model.graph.cutoff,
+                align_to_standardized_orientation=False,
+                skip_refeaturization=True,
+            ))
+
+        generator_losses, losses_stats = self.get_generator_losses(
+            data,
+            generated_samples,
+            generated_samples_to_build,
+            supercell_data,
+            generated_cell_volumes,
+            prior,
+            target_rauv,
+            variation_factor,
+        )
+        generator_loss = generator_losses.mean()
+
+        if update_weights:
+            self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+            generator_loss.backward()  # back-propagation
+            torch.nn.utils.clip_grad_norm_(self.models_dict['generator'].parameters(),
+                                           self.config.gradient_norm_clip)  # gradient clipping
+            self.optimizers_dict['generator'].step()  # update parameters
+
+        if not skip_stats:
             self.logger.update_current_losses('generator', self.epoch_type,
                                               generator_loss.data.cpu().detach().numpy(),
                                               generator_losses.cpu().detach().numpy())
 
             stats = {
-                'final_generated_cell_parameters': supercell_examples.cell_params.cpu().detach().numpy(),
-                'generated_space_group_numbers': supercell_examples.sg_ind.cpu().detach().numpy(),
-                'raw_generated_cell_parameters': raw_samples
+                'generated_space_group_numbers': supercell_data.sg_ind.detach(),
+                'identifiers': data.identifier,
+                'smiles': data.smiles,
             }
             stats.update(losses_stats)
 
@@ -1399,7 +1480,21 @@ class Modeller:
                                           stats.values(),
                                           mode='extend')
 
-            del supercell_examples, stats
+    def get_generator_density_target(self, data):
+        if self.config.model_paths.regressor is not None:
+            # predict the crystal volume cofficient and feed it as an input to the generator
+            with torch.no_grad():
+                target_rauv = self.models_dict['regressor'](data.clone().detach().to(self.config.device)).detach()[:,
+                             0]
+                assert False, "Missing standardization for volume regressor"
+        else:
+            atom_volumes = scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[data.x[:, 0]] ** 3, data.batch,
+                                   reduce='sum')
+            target_rauv = data.reduced_volume / atom_volumes
+
+        target_rauv += torch.randn_like(target_rauv) * self.config.generator.packing_target_noise
+
+        return torch.maximum(target_rauv, torch.ones_like(target_rauv) * 0.01)
 
     def get_discriminator_output(self, data, i):
         """
@@ -1475,8 +1570,8 @@ class Modeller:
                                                   return_score_only=True).detach(),
                  'fake_vdw_penalty': -vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data,
                                                   return_score_only=True).detach(),
-                 'generated_cell_parameters': generated_samples_i.detach(),
-                 'final_generated_cell_parameters': canonical_fake_cell_params.detach(),
+                 #'generated_cell_parameters': generated_samples_i.detach(),
+                 'generated_cell_parameters': canonical_fake_cell_params.detach(),
                  'real_volume_fractions': real_volume_fractions.detach(),
                  'generated_volume_fractions': fake_volume_fractions.detach(),
                  'fake_volume_fractions': fake_volume_fractions.detach()}
@@ -1486,13 +1581,13 @@ class Modeller:
         return (discriminator_output_on_real, discriminator_output_on_fake,
                 rdf_dists, stats)
 
-    def get_generator_samples(self, data, alignment_override=None):
+    def get_generator_samples(self, data, target_auv, variation_factor, alignment_override=None):
         """
         set conformer orientation, optionally add noise, set the space group & symmetry information
-        optionally get the predicted density from a regression model
         pass to generator and get cell parameters
         """
         mol_data = data.clone()
+
         # conformer orientation setting
         mol_data = set_molecule_alignment(mol_data, mode=alignment_override)
 
@@ -1502,79 +1597,103 @@ class Modeller:
 
         # update symmetry information
         if self.config.generate_sgs is not None:
-            mol_data = update_crystal_symmetry_elements(mol_data, self.config.generate_sgs, self.sym_info,
+            mol_data = update_crystal_symmetry_elements(mol_data,
+                                                        self.config.generate_sgs,
+                                                        self.sym_info,
                                                         randomize_sgs=True)
 
-        # update packing coefficient
-        if self.config.model_paths.regressor is not None:  # todo ensure we have a regressor predicting the right thing here - i.e., cell_volume vs packing coeff
-            # predict the crystal density and feed it as an input to the generator
-            with torch.no_grad():
-                standardized_target_aunit_volume = self.models_dict['regressor'](
-                    mol_data.clone().detach().to(self.config.device)).detach()[:, 0]
-        else:
-            target_aunit_volume = mol_data.tracking[:, self.t_i_d[
-                                                           'crystal_reduced_volume']]  # todo std dict and t_i_d are deprecated in current version
-            standardized_target_aunit_volume = (
-                    (target_aunit_volume - self.std_dict['crystal_reduced_volume'][0]) /
-                    self.std_dict['crystal_reduced_volume'][1]).to(self.config.device)
-
-        standardized_target_aunit_volume += torch.randn_like(
-            standardized_target_aunit_volume) * self.config.generator.packing_target_noise
-
         # generate the samples
-        [generated_samples, prior, condition, raw_samples] = self.models_dict['generator'].forward()
+        with torch.no_grad():
+            prior = self.generator_prior(data.num_graphs, mol_data.sg_ind).to(self.device)
+            vector_mol_embedding = self.models_dict['autoencoder'].encode(mol_data)
+            scalar_mol_embedding = self.models_dict['autoencoder'].scalarizer(vector_mol_embedding)
 
-        return generated_samples, prior, standardized_target_aunit_volume, mol_data, raw_samples
+            # append scalar and vector features
+            scalar_mol_embedding = torch.cat((scalar_mol_embedding,
+                                              target_auv[:, None],
+                                              prior[:, :9],
+                                              variation_factor[:, None]),
+                                             dim=1)
+            reference_vector = torch.eye(
+                3, dtype=torch.float32, device=self.device
+            ).reshape(1, 3, 3
+                      ).repeat(data.num_graphs, 1, 1)
 
-    def get_generator_losses(self, data):
-        """
-        generate samples & score them
-        """
+            vector_mol_embedding = torch.cat((vector_mol_embedding,
+                                              prior[:, 9:, None],
+                                              reference_vector),
+                                             dim=2)
 
-        """get crystals"""
-        generated_samples, prior, standardized_target_auv, generator_data, raw_samples = (
-            self.get_generator_samples(data))
+        generated_samples = self.models_dict['generator'].forward(scalar_mol_embedding,
+                                                                  vector_mol_embedding,
+                                                                  mol_data.sg_ind,
+                                                                  )
 
-        supercell_data, generated_cell_volumes = (
-            self.supercell_builder.build_zp1_supercells(
-                generator_data, generated_samples, self.config.supercell_size,
-                self.config.discriminator.model.graph.cutoff,
-                align_to_standardized_orientation=False
-            ))
+        return generated_samples, prior, mol_data
 
-        """get losses"""
-        similarity_penalty = self.compute_similarity_penalty(generated_samples, prior, raw_samples)
-        discriminator_raw_output, dist_dict = self.score_adversarially(supercell_data)
-        h_bond_score = torch.ones_like(similarity_penalty)
+    def get_generator_losses(self,
+                             data,
+                             generated_samples,
+                             generated_samples_to_build,
+                             supercell_data,
+                             generated_cell_volumes,
+                             prior,
+                             target_rauv,
+                             variation_factor,
+                             ):
+
+        scaled_deviation = (prior - generated_samples) / (self.generator_prior.norm_factors[data.sg_ind, :] + 1e-4)
+        prior_loss = torch.linalg.norm(scaled_deviation,
+                                       dim=1) * variation_factor * self.config.generator.prior_loss_coefficient
+
+        d_output, dist_dict = self.score_adversarially(supercell_data)
+
         vdw_loss, vdw_score, _, _, _ = vdw_overlap(self.vdw_radii,
                                                    dist_dict=dist_dict,
-                                                   num_graphs=generator_data.num_graphs,
-                                                   graph_sizes=generator_data.num_atoms,
+                                                   num_graphs=data.num_graphs,
+                                                   graph_sizes=data.num_atoms,
                                                    loss_func=self.config.generator.vdw_loss_func)
-        packing_loss, auv_prediction, auv_target, auv_csd = \
-            self.generator_density_matching_loss(
-                standardized_target_auv, supercell_data, generated_samples,
-                precomputed_volumes=generated_cell_volumes, loss_func=self.config.generator.density_loss_func)
 
-        return discriminator_raw_output, generated_samples.detach(), raw_samples.detach(), \
-            packing_loss, auv_prediction.detach(), \
-            auv_target.detach(), \
-            vdw_loss, vdw_score, dist_dict, \
-            supercell_data, similarity_penalty, h_bond_score
+        packing_loss, sample_rauv = \
+            self.generator_density_matching_loss(
+                target_rauv,
+                data,
+                generated_samples_to_build,
+                precomputed_volumes=generated_cell_volumes,
+                loss_func=self.config.generator.density_loss_func)
+
+        self.anneal_packing_loss(packing_loss)
+
+        generator_losses = prior_loss + packing_loss  + vdw_loss
+
+        stats_dict = {
+            'generator_per_mol_vdw_loss': vdw_loss.detach(),
+            'generator_per_mol_vdw_score': vdw_score.detach(),
+            'generator_prior_loss': prior_loss.detach(),
+            'generator_packing_loss': packing_loss.detach(),
+            'generator_packing_prediction': sample_rauv.detach(),
+            'generator_packing_target': target_rauv.detach(),
+            'generator_prior': prior.detach(),
+            'generated_cell_parameters': generated_samples.detach(),
+            'generator_scaled_deviation': scaled_deviation.detach(),
+        }
+        return generator_losses, stats_dict
+
+    def anneal_packing_loss(self, packing_loss):
+        if packing_loss.mean() < (
+                0.02 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
+            self.packing_loss_coefficient *= 0.99
+        if (packing_loss.mean() > (0.03 + self.config.generator.packing_target_noise)) and (
+                self.packing_loss_coefficient < 100):
+            self.packing_loss_coefficient *= 1.01
+        self.logger.packing_loss_coefficient = self.packing_loss_coefficient
 
     def init_gaussian_generator(self):
         """
-        dataset_builder: for going from database to trainable dataset
-        dataDims: contains key information about the dataset
-        number of generators for discriminator training
-        supercell_builder
-        tracking indices for certain properties
-        symmetry element indexing
-        multivariate gaussian generator
+
         """
         ''' 
         init gaussian generator for cell parameter sampling
-        we don't always use it but it's very cheap so just do it every time
         '''
         self.gaussian_generator = IndependentGaussianGenerator(input_dim=12,
                                                                means=self.dataDims['lattice_means'],
@@ -1582,6 +1701,15 @@ class Modeller:
                                                                sym_info=self.sym_info,
                                                                device=self.config.device,
                                                                cov_mat=self.dataDims['lattice_cov_mat'])
+
+    def init_generator_prior(self):
+        """
+        Initialize a prior for the generator model
+        """
+        ''' 
+        init gaussian generator for cell parameter sampling
+        '''
+        self.generator_prior = GeneratorPrior(sym_info=self.sym_info, device=self.config.device)
 
     def what_generators_to_use(self, override_randn, override_distorted, override_adversarial):
         """
@@ -1617,8 +1745,8 @@ class Modeller:
         if (self.config.discriminator.train_adversarially or override_adversarial) and (generator_ind == 1):
             negative_type = 'generator'
             with torch.no_grad():
-                generated_samples, _, _, generator_data, _ = self.get_generator_samples(real_data,
-                                                                                        alignment_override=orientation)
+                generated_samples, _, generator_data = self.get_generator_samples(real_data,
+                                                                                  alignment_override=orientation)
 
             stats = {'generator_sample_source': np.zeros(len(generated_samples))}
 
@@ -1824,92 +1952,6 @@ class Modeller:
         else:
             return discriminator_score, dist_dict
 
-    def aggregate_generator_losses(self, packing_loss, discriminator_raw_output, vdw_loss, vdw_score,
-                                   similarity_penalty, auv_prediction, auv_target, h_bond_score):
-        generator_losses_list = []
-        stats_keys, stats_values = [], []
-        if packing_loss is not None:
-            packing_mae = torch.abs(auv_prediction - auv_target) / auv_target
-
-            if packing_mae.mean() < (
-                    0.02 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
-                self.packing_loss_coefficient *= 0.99
-            if (packing_mae.mean() > (0.03 + self.config.generator.packing_target_noise)) and (
-                    self.packing_loss_coefficient < 100):
-                self.packing_loss_coefficient *= 1.01
-
-            self.logger.packing_loss_coefficient = self.packing_loss_coefficient
-
-            stats_keys += ['generator_packing_loss', 'generator_packing_prediction',
-                           'generator_packing_target', 'generator_packing_mae']
-            stats_values += [packing_loss.detach() * self.packing_loss_coefficient,
-                             auv_prediction.detach(),
-                             auv_target.detach(),
-                             packing_mae.detach()]
-
-            if True:  # enforce the target density all the time
-                generator_losses_list.append(packing_loss.float() * self.packing_loss_coefficient)
-
-        if discriminator_raw_output is not None:
-            if self.config.generator.adversarial_loss_func == 'hot softmax':
-                adversarial_loss = 1 - F.softmax(discriminator_raw_output / 5, dim=1)[:,
-                                       1]  # high temp smears out the function over a wider range
-                adversarial_score = softmax_and_score(discriminator_raw_output)
-
-            elif self.config.generator.adversarial_loss_func == 'minimax':
-                softmax_adversarial_score = F.softmax(discriminator_raw_output, dim=1)[:, 1]  # modified minimax
-                adversarial_loss = -torch.log(softmax_adversarial_score)  # modified minimax
-                adversarial_score = softmax_and_score(discriminator_raw_output)
-
-            elif self.config.generator.adversarial_loss_func == 'score':
-                adversarial_loss = -softmax_and_score(discriminator_raw_output)  # linearized score
-                adversarial_score = softmax_and_score(discriminator_raw_output)
-
-            elif self.config.generator.adversarial_loss_func == 'softmax':
-                adversarial_loss = 1 - F.softmax(discriminator_raw_output, dim=1)[:, 1]
-                adversarial_score = softmax_and_score(discriminator_raw_output)
-
-            else:
-                print(f'{self.config.generator.adversarial_loss_func} is not an implemented adversarial loss')
-                sys.exit()
-
-            stats_keys += ['generator_adversarial_loss']
-            stats_values += [adversarial_loss.detach()]
-            stats_keys += ['generator_adversarial_score']
-            stats_values += [adversarial_score.detach()]
-
-            if self.config.generator.train_adversarially:
-                generator_losses_list.append(adversarial_loss)
-
-        if vdw_loss is not None:
-            stats_keys += ['generator_per_mol_vdw_loss', 'generator_per_mol_vdw_score']
-            stats_values += [vdw_loss.detach()]
-            stats_values += [vdw_score.detach()]
-
-            if self.config.generator.train_vdw:
-                generator_losses_list.append(vdw_loss)
-
-        if h_bond_score is not None:
-            if self.config.generator.train_h_bond:
-                generator_losses_list.append(h_bond_score)
-
-            stats_keys += ['generator h bond loss']
-            stats_values += [h_bond_score.detach()]
-
-        if similarity_penalty is not None:
-            stats_keys += ['generator similarity loss']
-            stats_values += [similarity_penalty.detach()]
-
-            if self.config.generator.similarity_penalty != 0:
-                if similarity_penalty is not None:
-                    generator_losses_list.append(self.config.generator.similarity_penalty * similarity_penalty)
-                else:
-                    print('similarity penalty was none')
-
-        generator_losses = torch.sum(torch.stack(generator_losses_list), dim=0)
-
-        return generator_losses, {key: value for key, value in zip(stats_keys, stats_values)}
-
     def reinitialize_models(self, generator, discriminator, regressor):
         """
         reset model weights, if we did not load it from a given path
@@ -2112,44 +2154,33 @@ class Modeller:
     #
     #     return crystaldata
 
-    def generator_density_matching_loss(self, standardized_target_auv,
-                                        data, raw_sample,
-                                        precomputed_volumes=None, loss_func='mse'):
+    def generator_density_matching_loss(self,
+                                        target_rauv,
+                                        data,
+                                        samples,
+                                        precomputed_volumes=None,
+                                        loss_func='mse'):
         """
         compute packing coefficients for generated cells
         compute losses relating to packing density
         """
         if precomputed_volumes is None:
             volumes_list = []
-            for i in range(len(raw_sample)):
-                volumes_list.append(cell_vol_torch(data.cell_params[i, 0:3], data.cell_params[i, 3:6]))
-            volumes = torch.stack(volumes_list)
+            for i in range(len(samples)):  # todo implement parallel version
+                volumes_list.append(cell_vol_torch(samples[i, 0:3], samples[i, 3:6]))
+            cell_volume = torch.stack(volumes_list)
         else:
-            volumes = precomputed_volumes
+            cell_volume = precomputed_volumes
 
-        # generated_packing_coeffs = data.sym_mult * data.mol_volume / volumes
-        generated_auvs = volumes / data.sym_mult
-        # standardized_gen_packing_coeffs = (generated_packing_coeffs - self.std_dict['crystal_packing_coefficient'][0]) / \
-        #                                   self.std_dict['crystal_packing_coefficient'][1]
-        standardized_gen_auvs = (generated_auvs - self.std_dict['crystal_reduced_volume'][0]) / \
-                                self.std_dict['crystal_reduced_volume'][
-                                    1]  # todo std dict deprecated in current version
-        #
-        # target_packing_coeffs = standardized_target_auv * self.std_dict['crystal_packing_coefficient'][1] + \
-        #                         self.std_dict['crystal_packing_coefficient'][0]
-        target_auvs = standardized_target_auv * self.std_dict['crystal_reduced_volume'][1] + \
-                      self.std_dict['crystal_reduced_volume'][0]
+        reduced_volume = cell_volume / data.sym_mult
+        atom_volumes = scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[data.x[:, 0]] ** 3, data.batch,
+                               reduce='sum')
+        generated_rauv = reduced_volume / atom_volumes
 
-        # csd_packing_coeffs = data.tracking[:, self.t_i_d['crystal_packing_coefficient']]
-        csd_auvs = data.tracking[:, self.t_i_d['crystal_reduced_volume']]  # TODO also deprecated
-
-        # compute loss vs the target
         if loss_func == 'mse':
-            packing_loss = F.mse_loss(standardized_gen_auvs, standardized_target_auv,
-                                      reduction='none')  # allow for more error around the minimum
+            packing_loss = F.mse_loss(generated_rauv, target_rauv, reduction='none')
         elif loss_func == 'l1':
-            packing_loss = F.smooth_l1_loss(standardized_gen_auvs, standardized_target_auv,
-                                            reduction='none')
+            packing_loss = F.smooth_l1_loss(generated_rauv, target_rauv, reduction='none')
         else:
             assert False, "Must pick from the set of implemented packing loss functions 'mse', 'l1'"
-        return packing_loss, generated_auvs, target_auvs, csd_auvs
+        return packing_loss, generated_rauv

@@ -13,7 +13,7 @@ from torch import scatter
 from torch_scatter import scatter
 import torch.nn.functional as F
 
-from mxtaltools.common.utils import get_point_density, softmax_np
+from mxtaltools.common.utils import get_point_density, softmax_np, torch_ptp
 
 from mxtaltools.common.geometry_calculations import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
@@ -44,19 +44,9 @@ target_identifiers = {
 }
 
 
-def cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
+def old_cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
     n_crystal_features = 12
-    cleaned_samples = epoch_stats_dict['final_generated_cell_parameters']
-    if 'raw_generated_cell_parameters' in epoch_stats_dict.keys():
-        raw_samples = epoch_stats_dict['raw_generated_cell_parameters']
-    else:
-        raw_samples = None
-
-    if isinstance(cleaned_samples, list):
-        cleaned_samples = np.stack(cleaned_samples)
-
-    if isinstance(raw_samples, list):
-        raw_samples = np.stack(raw_samples)
+    samples = epoch_stats_dict['generated_cell_parameters']
 
     overlaps_1d = {}
     sample_means = {}
@@ -67,13 +57,13 @@ def cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
         h1, r1 = dataDims['lattice_stats'][key]['histogram']
         h1 = h1 / sum(h1)
 
-        h2, r2 = np.histogram(cleaned_samples[:, i], bins=r1)
-        h2 = h2 / len(cleaned_samples[:, i])
+        h2, r2 = np.histogram(samples[:, i], bins=r1)
+        h2 = h2 / len(samples[:, i])
 
         overlaps_1d[f'{key}_1D_Overlap'] = np.min(np.concatenate((h1[None], h2[None]), axis=0), axis=0).sum()
 
-        sample_means[f'{key}_mean'] = np.mean(cleaned_samples[:, i])
-        sample_stds[f'{key}_std'] = np.std(cleaned_samples[:, i])
+        sample_means[f'{key}_mean'] = np.mean(samples[:, i])
+        sample_stds[f'{key}_std'] = np.std(samples[:, i])
 
     average_overlap = np.average([overlaps_1d[key] for key in overlaps_1d.keys()])
     overlaps_1d['average_1D_overlap'] = average_overlap
@@ -101,7 +91,7 @@ def cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
             row = i // 3 + 1
             col = i % 3 + 1
             bins = dataDims['lattice_stats'][lattice_keys[i]]['histogram'][1][1:]
-            hist1 = np.histogram(cleaned_samples[:, i], bins=bins)[0]
+            hist1 = np.histogram(samples[:, i], bins=bins)[0]
             fig.add_trace(go.Bar(
                 x=bins,
                 y=dataDims['lattice_stats'][lattice_keys[i]]['histogram'][0] / sum(
@@ -139,6 +129,44 @@ def cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
         wandb.log(data=fig_dict, commit=False)
 
 
+def new_cell_params_analysis(wandb, stats_dict):
+    n_crystal_features = 12
+    samples = stats_dict['generated_cell_parameters']
+    prior = stats_dict['generator_prior']
+
+    if isinstance(samples, list):
+        samples = np.stack(samples)
+
+    if isinstance(prior, list):
+        prior = np.stack(prior)
+
+    lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma', 'aunit_x', 'aunit_y',
+                        'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
+    # 1d Histograms
+    fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
+    for i in range(n_crystal_features):
+        row = i // 3 + 1
+        col = i % 3 + 1
+        fig.add_trace(go.Violin(
+            x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+            name='sample', legendgroup='sample', showlegend=True if i == 0 else False,
+            meanline_visible=True, bandwidth=float(np.ptp(prior[:, i])/100), points=False, line_color='blue',
+        ),
+            row=row, col=col
+        )
+        fig.add_trace(go.Violin(
+            x=prior[:, i], y=[0 for _ in range(len(prior))], side='positive', orientation='h', width=4, name='prior',
+            legendgroup='prior', showlegend=True if i == 0 else False,
+            meanline_visible=True, bandwidth=float(np.ptp(prior[:, i])/100), points=False, line_color='red',
+        ),
+            row=row, col=col
+        )
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+    fig.update_traces(opacity=0.5)
+
+    wandb.log(data={'lattice_features_distribution': fig}, commit=False)
+
+
 def plotly_setup(config):
     if config.machine == 'local':
         import plotly.io as pio
@@ -159,36 +187,35 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
     if epoch_stats_dict['generator_packing_prediction'] is not None and \
             epoch_stats_dict['generator_packing_target'] is not None:
 
-        x = epoch_stats_dict['generator_packing_target']  # generator_losses['generator_per_mol_vdw_loss']
-        y = epoch_stats_dict['generator_packing_prediction']  # generator_losses['generator packing loss']
-
-        xy = np.vstack([x, y])
-        try:
-            z = get_point_density(xy)
-        except:
-            z = np.ones_like(x)
-
-        xline = np.asarray([np.amin(x), np.amax(x)])
-        linreg_result = linregress(x, y)
-        yline = xline * linreg_result.slope + linreg_result.intercept
-
-        fig = go.Figure()
-        fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
-                                   mode='markers', marker=dict(color=z), opacity=1))
-
-        fig.add_trace(
-            go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}, m={linreg_result.slope:.3f}'))
-
-        fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)', showlegend=False))
-
-        fig.layout.margin = layout.margin
-        fig.update_layout(xaxis_title='Asymmetric Unit Volume Target', yaxis_title='Asymmetric Unit Volume Prediction')
-
-        # #fig.write_image('../paper1_figs_new_architecture/scores_vs_emd.png', scale=4)
         if config.logger.log_figures:
+
+            x = epoch_stats_dict['generator_packing_target']  # generator_losses['generator_per_mol_vdw_loss']
+            y = epoch_stats_dict['generator_packing_prediction']  # generator_losses['generator packing loss']
+
+            xy = np.vstack([x, y])
+            try:
+                z = get_point_density(xy)
+            except:
+                z = np.ones_like(x)
+
+            xline = np.asarray([np.amin(x), np.amax(x)])
+            linreg_result = linregress(x, y)
+            yline = xline * linreg_result.slope + linreg_result.intercept
+
+            fig = go.Figure()
+            fig.add_trace(go.Scattergl(x=x, y=y, showlegend=False,
+                                       mode='markers', marker=dict(color=z), opacity=1))
+
+            fig.add_trace(
+                go.Scattergl(x=xline, y=yline, name=f' R={linreg_result.rvalue:.3f}, m={linreg_result.slope:.3f}'))
+
+            fig.add_trace(go.Scattergl(x=xline, y=xline, marker_color='rgba(0,0,0,1)', showlegend=False))
+
+            fig.layout.margin = layout.margin
+            fig.update_layout(xaxis_title='Asymmetric Unit Volume Target',
+                              yaxis_title='Asymmetric Unit Volume Prediction')
+
             wandb.log(data={'Cell Packing': fig}, commit=False)
-        if (config.machine == 'local') and False:
-            fig.show(renderer='browser')
 
 
 def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=None):
@@ -1125,7 +1152,7 @@ def process_generator_losses(config, epoch_stats_dict):
                     generator_losses[key[10:]] = epoch_stats_dict[key]
 
                 if key == 'generator_packing_target':
-                    generator_losses['packing normed mae'] = np.abs(
+                    generator_losses['packing_normed_mae'] = np.abs(
                         generator_losses['packing_prediction'] - generator_losses['packing_target']) / \
                                                              generator_losses['packing_target']
                     del generator_losses['packing_prediction'], generator_losses['packing_target']
@@ -1141,20 +1168,22 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     do analysis and plotting for cell generator
     """
     layout = plotly_setup(config)
-    if isinstance(epoch_stats_dict['final_generated_cell_parameters'], list):
-        cell_parameters = np.stack(epoch_stats_dict['final_generated_cell_parameters'])
+
+    if isinstance(epoch_stats_dict['generated_cell_parameters'], list):
+        cell_parameters = np.stack(epoch_stats_dict['generated_cell_parameters'])
     else:
-        cell_parameters = epoch_stats_dict['final_generated_cell_parameters']
+        cell_parameters = epoch_stats_dict['generated_cell_parameters']
+
     log_cubic_defect(cell_parameters)
     wandb.log(data={"Generated cell parameter variation": cell_parameters.std(0).mean()}, commit=False)
     generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
     wandb.log(average_losses_dict, commit=False)
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
-    plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
-    cell_scatter(epoch_stats_dict, wandb, layout,
-                 num_atoms_index=dataDims['tracking_features'].index('molecule_num_atoms'),
-                 extra_category='generated_space_group_numbers')
+    #plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
+    #cell_scatter(epoch_stats_dict, wandb, layout,
+    #             num_atoms_index=dataDims['tracking_features'].index('molecule_num_atoms'),
+    #             extra_category='generated_space_group_numbers')
 
     return None
 
@@ -1236,7 +1265,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     fig = make_subplots(cols=2, rows=1)
 
     num_points = len(pred_value)
-    opacity = max(0.1,np.exp(-num_points / 10000))
+    opacity = max(0.1, np.exp(-num_points / 10000))
     fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity,
                                showlegend=False),
                   row=1, col=1)
@@ -1384,14 +1413,17 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
     """
     Do analysis and upload results to w&b
     """
-    # rec = np.load(r'C:\Users\mikem\crystals\CSP_runs\_experiments_dev_12-11-13-36-50/multi_discriminator_stats_dicts.npy', allow_pickle=True)
-    # test_epoch_stats_dict = rec[1]
-    # extra_test_dict = rec[2]
-    # dataDims = rec[0]
     if test_epoch_stats_dict is not None:
-        if config.mode == 'gan' or config.mode == 'discriminator':
-            if 'final_generated_cell_parameters' in test_epoch_stats_dict.keys():
-                cell_params_analysis(config, dataDims, wandb, test_epoch_stats_dict)
+        if 'generated_cell_parameters' in test_epoch_stats_dict.keys():
+            if config.mode == 'generator':
+                if config.logger.log_figures:
+                    new_cell_params_analysis(wandb, test_epoch_stats_dict)
+
+                    log_mean_deviations(test_epoch_stats_dict)
+            else:
+                old_cell_params_analysis(config, dataDims, wandb, test_epoch_stats_dict)
+
+        if config.mode in ['gan', 'generator', 'discriminator']:
 
             if config.generator.train_vdw or config.generator.train_adversarially:
                 cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
@@ -1441,6 +1473,19 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
         discriminator_BT_reporting(dataDims, wandb, test_epoch_stats_dict, extra_test_dict)
 
     return None
+
+
+def log_mean_deviations(test_epoch_stats_dict):
+    lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma',
+                        'aunit_x', 'aunit_y',
+                        'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
+    deviations = test_epoch_stats_dict['generator_scaled_deviation']
+    if isinstance(deviations, list):
+        deviations = np.stack(deviations)
+    mean_deviations = np.abs(deviations).mean(0)
+    dev_dict = {lattice_features[ind] + '_mean_scaled_deviation': mean_deviations[ind] for ind in
+                range(len(mean_deviations))}
+    wandb.log(data=dev_dict, commit=False)
 
 
 def classifier_reporting(true_labels, probs, ordered_class_names, wandb, epoch_type):
@@ -1768,6 +1813,7 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
     wandb.log(data={"Mini-CSP Cell Parameters": fig}, commit=False)
     return None
 
+
 #
 # TODO deprecated - rewrite for toy / demo purposes
 # def oneD_gaussian_overlap_plot(cmax, data, decoded_data, max_point_types, max_xval, min_xval, sigma):
@@ -1856,7 +1902,7 @@ def polymorph_classification_trajectory_analysis(test_loader, stats_dict, traj_n
         sample_predictions = np.argmax(sample_probabilities, axis=1)
         coords_traj[ind] = sample.pos.cpu().detach().numpy()
         atom_types_traj[ind] = sample.x.flatten().cpu().detach().numpy()
-        atomwise_prediction_traj[ind] = sample_predictions[sample.mol_ind-1]
+        atomwise_prediction_traj[ind] = sample_predictions[sample.mol_ind - 1]
 
         class_prob_traj[ind] = sample_probabilities.mean(0)
         class_selection_traj[ind] = np.eye(num_classes)[sample_predictions].sum(0)
@@ -1876,10 +1922,9 @@ def polymorph_classification_trajectory_analysis(test_loader, stats_dict, traj_n
                           row=1, col=2)
     fig.show(renderer='browser')
 
-
     from mxtaltools.common.ovito_utils import write_ovito_xyz
 
     write_ovito_xyz(coords_traj,
                     atom_types_traj,
                     atomwise_prediction_traj,
-                    filename=traj_name[0].replace('\\','/').replace('/','_') + '_prediction')  # write a trajectory
+                    filename=traj_name[0].replace('\\', '/').replace('/', '_') + '_prediction')  # write a trajectory

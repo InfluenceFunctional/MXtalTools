@@ -359,7 +359,8 @@ def norm_circular_components(components: torch.tensor):
 
 def components2angle(components: torch.tensor, norm_components=True):
     """
-    Take two non-normalized components[n, 2] representing sin(angle) and cos(angle), compute the resulting angle, following     https://ai.stackexchange.com/questions/38045/how-can-i-encode-angle-data-to-train-neural-networks
+    Take two non-normalized components[n, 2] representing sin(angle) and cos(angle), compute the resulting angle,
+    following     https://ai.stackexchange.com/questions/38045/how-can-i-encode-angle-data-to-train-neural-networks
 
     Optionally norm the sum of squares - doesn't appear to do much though.
 

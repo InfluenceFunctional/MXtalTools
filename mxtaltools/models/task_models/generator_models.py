@@ -1,150 +1,75 @@
-#import sys
-
 import torch
+import os
+import numpy as np
 from torch import nn as nn
-from torch.distributions import MultivariateNormal
+import torch.nn.functional as F
+from torch.distributions import MultivariateNormal, Uniform
 
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
-# from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
-from mxtaltools.crystal_building.utils import clean_cell_params
+from mxtaltools.models.modules.components import vectorMLP
+from mxtaltools.models.utils import enforce_crystal_system, enforce_1d_bound, clean_cell_params
 
 
-#from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
-#from mxtaltools.models.graph_models.molecule_graph_model import MoleculeGraphModel
-#from mxtaltools.models.modules.components import EMLP
+class CrystalGenerator(nn.Module):
+    def __init__(self,
+                 seed: int,
+                 config,
+                 embedding_dim: int,
+                 sym_info: dict,
+                 z_prime=1):
+        super(CrystalGenerator, self).__init__()
 
-#
-# class CrystalGenerator(BaseGraphModel):
-#     def __init__(self, seed, device, config, sym_info,
-#                  atom_features: list,
-#                  molecule_features: list,
-#                  node_standardization_tensor: torch.tensor,
-#                  graph_standardization_tensor: torch.tensor,
-#                  lattice_means: torch.tensor,
-#                  lattice_stds: torch.tensor,
-#                  ):
-#         super(CrystalGenerator, self).__init__()
-#
-#         self.device = device
-#         torch.manual_seed(seed)
-#         self.get_data_stats(atom_features,
-#                             molecule_features,
-#                             node_standardization_tensor,
-#                             graph_standardization_tensor)
-#
-#
-#         self.symmetries_dict = sym_info
-#         self.lattice_means = torch.tensor(lattice_means, dtype=torch.float32, device=device)
-#         self.lattice_stds = torch.tensor(lattice_stds, dtype=torch.float32, device=device)
-#         self.radial_norm_factor = config.radial_norm_factor
-#
-#         # initialize asymmetric unit dict
-#         self.asym_unit_dict = asym_unit_dict.copy()
-#         for key in self.asym_unit_dict:
-#             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key]).to(self.device)
-#
-#         self.register_buffer('SG_FEATURE_TENSOR', SG_FEATURE_TENSOR.clone())
-#
-#         '''set random prior'''
-#         self.latent_dim = config.prior_dimension
-#         if config.prior == 'multivariate normal':
-#             self.prior = MultivariateNormal(torch.zeros(self.latent_dim), torch.eye(self.latent_dim))
-#         elif config.prior.lower() == 'uniform':
-#             self.prior = Uniform(low=0, high=1)
-#         else:
-#             print(config.prior + ' is not an implemented prior!!')
-#             sys.exit()
-#
-#         '''conditioning model'''
-#         torch.manual_seed(seed)
-#
-#         # equivalent to equivariant point encoder model
-#         self.conditioner = MoleculeGraphModel(
-#             input_node_dim=self.num_atom_feats,
-#             num_mol_feats=self.num_mol_feats,
-#             output_dim=config.conditioner.graph_embedding_depth,
-#             seed=seed,
-#             equivariant=True,
-#             graph_aggregator=config.conditioner.graph_aggregator,
-#             concat_pos_to_node_dim=True,
-#             concat_mol_to_node_dim=False,
-#             concat_crystal_to_node_dim=False,
-#             activation=config.conditioner.activation,
-#             fc_config=config.conditioner.fc,
-#             graph_config=config.conditioner.graph,
-#             periodize_inside_nodes=False,
-#             outside_convolution_type='none',
-#             vector_norm='graph vector layer' if config.conditioner.graph_node_norm == 'graph layer' else None,
-#         )
-#
-#         '''
-#         generator model
-#         '''
-#         self.model = EMLP(
-#             layers=config.generator.num_layers,
-#             filters=config.generator.hidden_dim,
-#             input_dim=self.latent_dim + SG_FEATURE_TENSOR.shape[1] + 1,
-#             # include crystal information for the generator and the target packing coeff
-#             output_dim=12 + 3,  # 3 extra dimensions for angle decoder
-#             conditioning_dim=0,
-#             activation='gelu',
-#             conditioning_mode=None,
-#             norm=config.generator.norm,
-#             dropout=config.generator.dropout,
-#             add_vector_channel=True,
-#             vector_output_dim=3,  # opt for rotvec output
-#             vector_input_dim=config.conditioner.graph_embedding_depth,
-#             vector_norm=config.generator.norm,
-#             ramp_depth=False,
-#             v_to_s_combination='sum'
-#         )
-#
-#     def sample_latent(self, n_samples):
-#         # return torch.ones((n_samples,12)).to(self.device) # when we don't actually want any noise (test purposes)
-#         return self.prior.sample((n_samples,)).to(self.device)
-#
-#     def forward(self, n_samples, molecule_data, z=None, return_condition=False, return_prior=False,
-#                 return_raw_samples=False, target_packing=0, skip_standardization=False):
-#
-#         if not skip_standardization:
-#             molecule_data = self.standardize(molecule_data)
-#
-#         if z is None:  # sample random numbers from prior distribution
-#             z = self.sample_latent(n_samples)
-#
-#         molecule_data.pos = molecule_data.pos / self.radial_norm_factor
-#         _, molecule_encoding = self.conditioner(molecule_data)
-#
-#         scalar_input = torch.cat((
-#             z,
-#             torch.tensor(self.SG_FEATURE_TENSOR[molecule_data.sg_ind],
-#                          dtype=torch.float32,
-#                          device=molecule_data.x.device),
-#             target_packing[:, None]), dim=-1)
-#
-#         # conditioning goes to vector track, noise and crystal information to scalar track
-#         samples, _ = self.model(scalar_input, v=molecule_encoding)  # omit vector outputs for now
-#
-#         clean_samples = clean_cell_params(samples, molecule_data.sg_ind, self.lattice_means, self.lattice_stds,
-#                                           self.symmetries_dict, self.asym_unit_dict, destandardize=True, mode='soft')
-#
-#         if any((return_condition, return_prior, return_raw_samples)):
-#             output = [clean_samples]
-#             if return_prior:
-#                 output.append(z)
-#             if return_condition:
-#                 output.append(molecule_encoding)
-#             if return_raw_samples:
-#                 output.append(
-#                     torch.cat(
-#                         clean_generator_output(samples=samples,
-#                                                lattice_means=self.lattice_means,
-#                                                lattice_stds=self.lattice_stds,
-#                                                destandardize=True, mode=None),
-#                         dim=-1))  # destandardize but don't clean up or normalize fractional outputs
-#             return output
-#         else:
-#             return clean_samples
+        torch.manual_seed(seed)
+        self.symmetries_dict = sym_info
+
+        # generator model
+        self.model = vectorMLP(layers=config.num_layers,
+                               filters=config.hidden_dim,
+                               norm=config.norm,
+                               dropout=config.dropout,
+                               input_dim=embedding_dim + 9 * z_prime + 2,
+                               output_dim=6 + z_prime * 3,
+                               vector_input_dim=embedding_dim + z_prime + 3,
+                               vector_output_dim=z_prime,
+                               conditioning_dim=0,
+                               seed=seed,
+                               vector_norm=config.vector_norm
+                               )
+
+    def forward(self,
+                x: torch.Tensor,
+                v: torch.Tensor,
+                sg_ind_list: torch.LongTensor,
+                return_raw_sample=False) -> torch.Tensor:
+
+        x, v = self.model(x=x, v=v)
+
+        raw_sample = torch.cat([x, v[:, :, 0]], dim=-1)
+        if return_raw_sample:
+            sample = raw_sample
+        else:
+            # cleanup outputs
+
+            # cell lengths have to be positive nonzero
+            cell_lengths = torch.maximum(F.relu(raw_sample[:, :3]), 0.01 * torch.ones_like(raw_sample[:, :3]))
+            # range from (0,pi) with 20% padding to prevent too-skinny cells
+            cell_angles = enforce_1d_bound(raw_sample[:, 3:6], x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2,
+                                           mode='soft')
+            # positions must be on 0-1
+            mol_positions = enforce_1d_bound(raw_sample[:, 6:9], x_span=0.495, x_center=0.5, mode='soft')
+            # for now, just enforce vector norm
+            rotvec = raw_sample[:, 9:12]
+            norm = torch.linalg.norm(rotvec, dim=1)
+            new_norm = enforce_1d_bound(norm, x_span=0.99 * torch.pi, x_center=torch.pi, mode='soft')  # MUST be nonzero
+            new_rotvec = rotvec / norm[:, None] * new_norm[:, None]
+            new_rotvec[:, 2] = F.softplus(new_rotvec[:, 2] - 0.01) + 0.01  # z direction always positive
+
+            # force cells to conform to crystal system
+            cell_lengths, cell_angles = enforce_crystal_system(cell_lengths, cell_angles, sg_ind_list,
+                                                               self.symmetries_dict)
+            sample = torch.cat((cell_lengths, cell_angles, mol_positions, new_rotvec), dim=-1)
+
+        return sample
 
 
 class IndependentGaussianGenerator(nn.Module):
@@ -203,3 +128,116 @@ class IndependentGaussianGenerator(nn.Module):
 
     def score(self, samples):
         return self.prior.log_prob(samples)
+
+
+class GeneratorPrior(nn.Module):
+    """
+    angle means and stds
+    {'cubic': [tensor([1.5708, 1.5708, 1.5708]), tensor([0., 0., 0.])],
+     'hexagonal': [tensor([1.5708, 1.5708, 2.0944]), tensor([0., 0., 0.])],
+     'monoclinic': [tensor([1.5708, 1.7693, 1.5713]), tensor([0.0020, 0.1465, 0.0163])],
+     'orthorhombic': [tensor([1.5708, 1.5708, 1.5708]), tensor([0.0001, 0.0001, 0.0000])],
+     'tetragonal': [tensor([1.5708, 1.5708, 1.5708]), tensor([0., 0., 0.])],
+     'triclinic': [tensor([1.5619, 1.5691, 1.5509]), tensor([0.2363, 0.2046, 0.2624])]} <- use this one for now
+
+    length_stds
+    tensor([0.5163, 0.5930, 0.6284])
+    length_means
+    tensor([1.2740, 1.4319, 1.7752])
+    """
+
+    def __init__(self, sym_info, device):
+        super(GeneratorPrior, self).__init__()
+
+        self.device = device
+        self.symmetries_dict = sym_info
+        path = os.path.join(os.path.dirname(__file__), '../../constants/prior_norm_factors.npy')
+        self.norm_factors = torch.tensor(np.load(path, allow_pickle=True), dtype=torch.float32, device=device)
+        # initialize asymmetric unit dict
+        self.asym_unit_dict = asym_unit_dict.copy()
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])  # .to(self.device)
+
+        cell_means = torch.tensor([1.2740, 1.4319, 1.7752, 1.5619, 1.5691, 1.5509], dtype=torch.float32)
+        cell_stds = torch.tensor([0.5163, 0.5930, 0.6284, 0.2363, 0.2046, 0.2624], dtype=torch.float32)
+        self.cell_prior = MultivariateNormal(cell_means, torch.eye(6) * cell_stds)  # apply standardization
+
+        self.pose_prior = Uniform(0, 1)
+
+    def sample_poses(self, num_samples, z_prime=1):
+        """
+        prior samples are xyz (fractional positions defined on 0-1)
+
+        theta, phi, r (orientation angles defined on [0,pi/2], [-pi,pi], [0, 2*pi]
+        also, the theta parameter has to be rescaled as it's not actually uniform
+
+        To leverage equivariance of prediction model, we will sample instead directly
+        the rotation vector, (ijk), conditioned to generate the appropriate statistics
+
+        Parameters
+        ----------
+        num_samples
+
+        Returns
+        -------
+
+        """
+        positions = self.pose_prior.sample((num_samples, 3))
+
+        # random directions on the sphere, getting naturally the correct distribution of theta, phi
+        random_vectors = torch.randn(size=(num_samples, 3))
+
+        # set norms uniformly between 0-2pi
+        norms = random_vectors.norm(dim=1)
+        applied_norms = (torch.rand(num_samples) * 2 * torch.pi).clip(min=0.05)  # cannot be exactly zero
+        random_vectors = random_vectors / norms[:, None] * applied_norms[:, None]
+
+        # restrict theta to upper half-sphere (positive z)
+        random_vectors[:, 2] = torch.abs(random_vectors[:, 2])
+
+        # # rescale
+        # samples[:, 4] = samples[:, 4] * 2 * torch.pi - torch.pi
+        # samples[:, 5] *= 2 * torch.pi
+        #
+        # # theta is special - we approximate it by
+        # theta = -torch.abs(torch.randn(num_samples)) / (torch.pi / 2) + torch.pi / 2
+        # #theta = theta.clip(min=0, max=torch.pi/2)
+
+        return torch.cat((positions, random_vectors), dim=1)
+
+    def sample_cell_vectors(self, num_samples):
+        return self.cell_prior.sample((num_samples,))
+
+    def forward(self, num_samples, sg_ind_list):
+        """
+        sample comes out in non-standardized basis, but with normalized cell lengths
+        so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
+        then standardize
+        """
+        cell_samples = self.sample_cell_vectors(num_samples)
+        cell_lengths, cell_angles = cell_samples[:, 0:3], cell_samples[:, 3:6]
+        pose_params = self.sample_poses(num_samples)
+
+        # enforce 'hard' bounds
+        # harshly enforces positive nonzero
+        cell_lengths = torch.maximum(F.relu(cell_lengths), 0.01 * torch.ones_like(cell_lengths))
+        # range from (0,pi) with 20% padding to prevent too-skinny cells
+        cell_angles = enforce_1d_bound(cell_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='hard')
+
+        # force cells to conform to crystal system
+        cell_lengths, cell_angles = enforce_crystal_system(cell_lengths, cell_angles, sg_ind_list, self.symmetries_dict)
+
+        return torch.cat([cell_lengths, cell_angles, pose_params], dim=1)
+
+    def generate_norming_factors(self):
+        norms = np.zeros((230, 12))
+        for ind in range(1, 231):
+            p1 = self.generator_prior(10000, ind * torch.ones(10000))
+            p2 = self.generator_prior(10000, ind * torch.ones(10000))
+
+            d1 = torch.abs(p1 - p2)
+            scale = d1.mean(0)
+
+            norms[ind - 1] = scale.detach().numpy()
+
+        np.save('prior_norm_factors', norms)

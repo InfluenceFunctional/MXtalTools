@@ -44,12 +44,11 @@ if __name__ == '__main__':
 
     else:
         predictor = Modeller(config)
-        if (config.mode == 'discriminator'
-                or config.mode == 'gan'
-                or config.mode == 'regression'
-                or config.mode == 'autoencoder'
-                or config.mode == 'embedding_regression'
-                or config.mode == 'polymorph_classification'):
+        if config.mode in ['discriminator', 'gan',
+                           'regression', 'autoencoder',
+                           'embedding_regression',
+                           'polymorph_classification',
+                           'generator']:
             if config.max_epochs > 0:
                 predictor.fit_models()
             elif config.max_epochs == 0:

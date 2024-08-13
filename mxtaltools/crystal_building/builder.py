@@ -51,7 +51,11 @@ class SupercellBuilder:
         (T_cf_list, T_fc_list, atomic_number_list, canonical_conformer_coords_list,
          generated_cell_volumes, molwise_data, sym_ops_list) = (
             self.build_zp_1_asymmetric_unit(
-                align_to_standardized_orientation, molwise_parameters, molwise_data, target_handedness))
+                align_to_standardized_orientation,
+                molwise_parameters,
+                molwise_data,
+                target_handedness,
+            ))
 
         # apply symmetry ops to build unit cell
         unit_cell_coords_list = aunit2unit_cell(
@@ -182,13 +186,19 @@ class SupercellBuilder:
 
         (T_cf_list, T_fc_list,
          atomic_number_list, canonical_conformer_coords_list,
-         generated_cell_volumes, supercell_data, sym_ops_list) = self.build_zp_1_asymmetric_unit(
-            align_to_standardized_orientation, cell_parameters, molecule_data, target_handedness)
+         generated_cell_volumes, supercell_data, sym_ops_list) \
+            = self.build_zp_1_asymmetric_unit(
+            align_to_standardized_orientation,
+            cell_parameters,
+            molecule_data,
+            target_handedness,
+            )
 
         if not skip_molecule_posing:
             pass
         else:  # use original pose
-            canonical_conformer_coords_list = [molecule_data.pos[molecule_data.batch == ind] for ind in range(molecule_data.num_graphs)]
+            canonical_conformer_coords_list = [molecule_data.pos[molecule_data.batch == ind] for ind in
+                                               range(molecule_data.num_graphs)]
 
         # apply symmetry ops to build unit cell
         unit_cell_coords_list = aunit2unit_cell(supercell_data.sym_mult,
@@ -215,25 +225,29 @@ class SupercellBuilder:
 
         return supercell_data, generated_cell_volumes
 
-    def build_zp_1_asymmetric_unit(self, align_to_standardized_orientation, cell_parameters, molecule_data,
-                                   target_handedness):
+    def build_zp_1_asymmetric_unit(self,
+                                   align_to_standardized_orientation,
+                                   cell_parameters,
+                                   molecule_data,
+                                   target_handedness,
+                                   ):
         supercell_data = molecule_data.clone()
         supercell_data, cell_parameters, target_handedness = \
             self.move_cell_data_to_device(supercell_data, cell_parameters, target_handedness)
 
         # assumes cell params arrive appropriately pre-cleaned
-        cell_lengths, cell_angles, mol_position, mol_rotation_i = (
+        cell_lengths, cell_angles, mol_position, mol_rotvec_i = (
             cell_parameters[:, :3], cell_parameters[:, 3:6], cell_parameters[:, 6:9], cell_parameters[:, 9:])
 
         if self.rotation_basis == 'spherical':
-            mol_rotation = sph2rotvec(mol_rotation_i)
+            mol_rotvec = sph2rotvec(mol_rotvec_i)
         else:
-            mol_rotation = mol_rotation_i
+            mol_rotvec = mol_rotvec_i
 
         T_cf_list, T_fc_list, generated_cell_volumes, supercell_data, sym_ops_list = (
-            get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotation, supercell_data))
+            get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotvec, supercell_data))
 
-        rotations_list = rotvec2rotmat(mol_rotation)
+        rotations_list = rotvec2rotmat(mol_rotvec)
 
         if align_to_standardized_orientation:  # align canonical conformers principal axes to cartesian axes - not usually done here, but allowed
             supercell_data = align_molecules_to_principal_axes(supercell_data, handedness=target_handedness)
