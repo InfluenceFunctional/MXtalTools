@@ -67,7 +67,7 @@ supercell_size: 5
 # for GAN training
 generator:
   prior_loss_coefficient: 10
-  variation_scale: 10
+  variation_scale: 2
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
   train_vdw: True
@@ -94,8 +94,8 @@ generator:
     weight_decay: 0.01
 
   model:
-    hidden_dim: 512
-    dropout: 0
+    hidden_dim: 256
+    dropout: 0.05
     norm: 'layer'
     num_layers: 8
     vector_norm: 'vector layer'

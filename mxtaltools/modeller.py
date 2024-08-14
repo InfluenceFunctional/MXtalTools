@@ -1420,7 +1420,7 @@ class Modeller:
         else:
             skip_stats = True
 
-        target_rauv = self.get_generator_density_target(data)
+        target_rauv = self.get_generator_density_target(data)  # doesn't work for QM9 data
         target_rauv = (torch.ones_like(target_rauv)
                        + torch.randn_like(target_rauv) * self.config.generator.packing_target_noise)
 
