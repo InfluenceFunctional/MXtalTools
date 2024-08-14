@@ -41,7 +41,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null #'volume_model.pt'
-  autoencoder: best_autoencoder_experiments_dev_12-08-14-09-31
+  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-16-18-19  # excelent proton model
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 

@@ -3,7 +3,7 @@ import os
 import numpy as np
 from torch import nn as nn
 import torch.nn.functional as F
-from torch.distributions import MultivariateNormal, Uniform
+from torch.distributions import MultivariateNormal, Uniform, LogNormal
 
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.models.modules.components import vectorMLP
@@ -62,7 +62,7 @@ class CrystalGenerator(nn.Module):
             cell_angles = enforce_1d_bound(raw_sample[:, 3:6], x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2,
                                            mode='soft')
             # positions must be on 0-1
-            mol_positions = enforce_1d_bound(raw_sample[:, 6:9], x_span=0.495, x_center=0.5, mode='soft')
+            mol_positions = enforce_1d_bound(raw_sample[:, 6:9], x_span=0.5, x_center=0.5, mode='soft')
             # for now, just enforce vector norm
             rotvec = raw_sample[:, 9:12]
             norm = torch.linalg.norm(rotvec, dim=1)
@@ -166,7 +166,9 @@ class GeneratorPrior(nn.Module):
 
         cell_means = torch.tensor([1.2740, 1.4319, 1.7752, 1.5619, 1.5691, 1.5509], dtype=torch.float32)
         cell_stds = torch.tensor([0.5163, 0.5930, 0.6284, 0.2363, 0.2046, 0.2624], dtype=torch.float32)
-        self.cell_prior = MultivariateNormal(cell_means, torch.eye(6) * cell_stds)  # apply standardization
+
+        self.lengths_prior = MultivariateNormal(torch.log(cell_means[:3]), torch.eye(3) * cell_stds[:3])  # apply standardization
+        self.angles_prior = MultivariateNormal(cell_means[3:], torch.eye(3) * cell_stds[3:])  # apply standardization
 
         self.pose_prior = Uniform(0, 1)
 
@@ -212,7 +214,8 @@ class GeneratorPrior(nn.Module):
         return torch.cat((positions, random_vectors), dim=1)
 
     def sample_cell_vectors(self, num_samples):
-        return self.cell_prior.sample((num_samples,))
+        return torch.cat([torch.exp(self.lengths_prior.sample((num_samples,))),
+                          self.angles_prior.sample((num_samples,))],dim=1)
 
     def forward(self, num_samples, sg_ind_list):
         """

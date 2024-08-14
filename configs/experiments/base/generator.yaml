@@ -66,12 +66,13 @@ supercell_size: 5
 
 # for GAN training
 generator:
-  prior_loss_coefficient: 100
+  prior_loss_coefficient: 10
+  variation_scale: 10
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.05 # randn noise magnitude in the standardized basis
   train_vdw: True
   train_adversarially: False
-  vdw_loss_func: log  # null 'mse' or 'log' or 'inv'
+  vdw_loss_func: inv  # null 'mse' or 'log' or 'inv'
   density_loss_func: l1  # 'l1' or 'mse'
   adversarial_loss_func: 'score'  #
   train_h_bond: False # (non-directional)

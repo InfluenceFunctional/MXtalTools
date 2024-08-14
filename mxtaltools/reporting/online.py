@@ -1192,8 +1192,10 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
 
 def log_crystal_samples(epoch_stats_dict):
     sample_crystals = epoch_stats_dict['generator_samples'][0]
+    topk_samples = torch.argsort(sample_crystals.loss)[:5]
+
     mols = [ase_mol_from_crystaldata(sample_crystals,
-                                     index=ind,
+                                     index=int(topk_samples[ind]),
                                      exclusion_level='distance',
                                      inclusion_distance=6) for ind in range(min(5, len(sample_crystals)))]
     [ase.io.write(f'sample_{i}.cif', mols[i]) for i in range(len(mols))]
@@ -1204,11 +1206,11 @@ def log_crystal_samples(epoch_stats_dict):
 
 
 def new_cell_scatter(epoch_stats_dict, wandb, layout):
-    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'],
+    vdw_cutoff = -5
+    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'].clip(min=vdw_cutoff),
                     'packing_prediction': epoch_stats_dict['generator_packing_prediction'],
                     'prior_loss': epoch_stats_dict['generator_prior_loss']
                     }
-    vdw_cutoff = np.amin(scatter_dict['vdw_score'])
     opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 5e4)
     df = pd.DataFrame.from_dict(scatter_dict)
 
@@ -1221,7 +1223,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
     fig.update_layout(xaxis_range=[vdw_cutoff, 0.1],
-                      yaxis_range=[scatter_dict['packing_prediction'].min(), scatter_dict['packing_prediction'].max()])
+                      yaxis_range=[0, min(5, scatter_dict['packing_prediction'].max())])
 
     wandb.log({'Generator Samples': fig}, commit=False)
 

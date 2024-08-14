@@ -15,6 +15,7 @@ from mxtaltools.crystal_building.utils import descale_asymmetric_unit, scale_asy
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.dataloader_utils import update_dataloader_batch_size
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
+from mxtaltools.models.modules.components import construct_radial_graph
 
 
 def set_lr(schedulers, optimizer, optimizer_config, err_tr, hit_max_lr, override_lr=None):
@@ -976,3 +977,29 @@ def clean_cell_params(samples,
     ), dim=-1)
 
     return final_samples
+
+def get_intermolecular_dists_dict(supercell_data, conv_cutoff, max_num_neighbors):
+    dist_dict = {}
+    edges_dict = construct_radial_graph(
+        supercell_data.pos,
+        supercell_data.batch,
+        supercell_data.ptr,
+        conv_cutoff,
+        max_num_neighbors,
+        aux_ind=supercell_data.aux_ind,
+        mol_ind=supercell_data.mol_ind,
+    )
+    dist_dict.update(edges_dict)
+    dist_dict['intermolecular_dist'] = (
+        (supercell_data.pos[edges_dict['edge_index_inter'][0]] - supercell_data.pos[edges_dict['edge_index_inter'][1]]).pow(2).sum(
+            dim=-1).sqrt())
+
+    dist_dict['intermolecular_dist_batch'] = supercell_data.batch[edges_dict['edge_index_inter'][0]]
+
+    dist_dict['intermolecular_dist_atoms'] = \
+        [supercell_data.x[edges_dict['edge_index_inter'][0], 0].long(),
+         supercell_data.x[edges_dict['edge_index_inter'][1], 0].long()]
+
+    dist_dict['intermolecular_dist_inds'] = edges_dict['edge_index_inter']
+
+    return dist_dict

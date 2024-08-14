@@ -40,7 +40,7 @@ from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_s
                                      compute_full_evaluation_overlap, compute_reduced_volume_fraction,
                                      dict_of_tensors_to_cpu_numpy,
                                      test_decoder_equivariance, test_encoder_equivariance, collate_decoded_data,
-                                     ae_reconstruction_loss, clean_cell_params, enforce_1d_bound)
+                                     ae_reconstruction_loss, clean_cell_params, get_intermolecular_dists_dict)
 from mxtaltools.common.training_utils import instantiate_models
 from mxtaltools.models.utils import (weight_reset, get_n_config)
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
@@ -1424,7 +1424,7 @@ class Modeller:
         target_rauv = (torch.ones_like(target_rauv)
                        + torch.randn_like(target_rauv) * self.config.generator.packing_target_noise)
 
-        variation_factor = torch.rand(size=(data.num_graphs,), device=self.device)
+        variation_factor = torch.rand(size=(data.num_graphs,), device=self.device) * self.config.generator.variation_scale
 
         generated_samples, prior, generator_data \
             = self.get_generator_samples(data, target_rauv, variation_factor)
@@ -1610,7 +1610,7 @@ class Modeller:
         # generate the samples
         with torch.no_grad():
             prior = self.generator_prior(data.num_graphs, mol_data.sg_ind).to(self.device)
-            vector_mol_embedding = self.models_dict['autoencoder'].encode(mol_data)
+            vector_mol_embedding = self.models_dict['autoencoder'].encode(mol_data.clone())
             scalar_mol_embedding = self.models_dict['autoencoder'].scalarizer(vector_mol_embedding)
 
             # append scalar and vector features
@@ -1652,7 +1652,12 @@ class Modeller:
         prior_loss = (F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)
                       * self.config.generator.prior_loss_coefficient)
 
-        d_output, dist_dict = self.score_adversarially(supercell_data)
+        if False: #self.config.generator.train_adversarially:  # not currently using this
+            d_output, dist_dict = self.score_adversarially(supercell_data)  # skip discriminator call - slow
+        else:
+            dist_dict = get_intermolecular_dists_dict(supercell_data,
+                                                      self.models_dict['discriminator'].model.convolution_cutoff,
+                                                      self.models_dict['discriminator'].model.max_num_neighbors)
 
         vdw_loss, vdw_score, _, _, _ = vdw_overlap(self.vdw_radii,
                                                    dist_dict=dist_dict,
@@ -1671,6 +1676,7 @@ class Modeller:
         self.anneal_packing_loss(packing_loss)
 
         generator_losses = prior_loss + packing_loss + vdw_loss
+        supercell_data.loss = generator_losses
 
         if skip_stats:
             stats_dict = {}
