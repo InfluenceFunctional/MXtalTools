@@ -211,7 +211,7 @@ class CrystalAnalyzer(torch.nn.Module):
         discriminator_output, pair_dist_dict = self.adversarial_score(crystal_batch.clone())
         classification_score = softmax_and_score(discriminator_output[:, :2])
         predicted_distance = F.softplus(discriminator_output[:, -1])
-        vdw_loss, vdw_score, _, _, _ = vdw_overlap(self.vdw_radii,
+        vdw_loss, vdw_score, _, _, _, lj_potential = vdw_overlap(self.vdw_radii,
                                                    crystaldata=crystal_batch,
                                                    return_score_only=False,
                                                    loss_func='inv')

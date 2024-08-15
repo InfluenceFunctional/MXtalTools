@@ -31,7 +31,7 @@ from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
-from mxtaltools.models.functions.vdw_overlap import vdw_overlap
+from mxtaltools.models.functions.vdw_overlap import vdw_overlap, vdw_analysis
 from mxtaltools.models.task_models.generator_models import IndependentGaussianGenerator, GeneratorPrior
 from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_score, save_checkpoint, set_lr,
                                      cell_vol_torch, init_optimizer, get_regression_loss,
@@ -1271,7 +1271,9 @@ class Modeller:
         self.logger.concatenate_stats_dict(self.epoch_type)
 
     def init_gan_constants(self):
-        self.packing_loss_coefficient = 0.1  #1
+        self.packing_loss_coefficient = self.config.generator.packing_loss_coefficient
+        self.prior_loss_coefficient = self.config.generator.prior_loss_coefficient
+        self.vdw_loss_coefficient = self.config.generator.vdw_loss_coefficient
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
             self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in asym_unit_dict.keys()]
@@ -1649,8 +1651,7 @@ class Modeller:
                              ):
 
         scaled_deviation = (prior - generated_samples) / (self.generator_prior.norm_factors[data.sg_ind, :] + 1e-4)
-        prior_loss = (F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)
-                      * self.config.generator.prior_loss_coefficient)
+        prior_loss = F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)
 
         if False: #self.config.generator.train_adversarially:  # not currently using this
             d_output, dist_dict = self.score_adversarially(supercell_data)  # skip discriminator call - slow
@@ -1658,12 +1659,20 @@ class Modeller:
             dist_dict = get_intermolecular_dists_dict(supercell_data,
                                                       self.models_dict['discriminator'].model.convolution_cutoff,
                                                       self.models_dict['discriminator'].model.max_num_neighbors)
+        #
+        # vdw_loss, vdw_score, _, _, _, lj_potential= vdw_overlap(self.vdw_radii,
+        #                                            dist_dict=dist_dict,
+        #                                            num_graphs=data.num_graphs,
+        #                                            graph_sizes=data.num_atoms,
+        #                                            loss_func=self.config.generator.vdw_loss_func)
 
-        vdw_loss, vdw_score, _, _, _ = vdw_overlap(self.vdw_radii,
-                                                   dist_dict=dist_dict,
-                                                   num_graphs=data.num_graphs,
-                                                   graph_sizes=data.num_atoms,
-                                                   loss_func=self.config.generator.vdw_loss_func)
+        molwise_overlap, molwise_normed_overlap, lj_potential, inv_loss \
+            = vdw_analysis(self.vdw_radii_tensor, dist_dict, data.num_graphs)
+
+        vdw_score = -molwise_normed_overlap/data.num_atoms
+
+        vdw_loss = lj_potential.clone() / data.num_atoms
+        vdw_loss[vdw_loss > 0] = torch.log10(vdw_loss[vdw_loss > 0]) + 1
 
         packing_loss, sample_rauv = \
             self.generator_density_matching_loss(
@@ -1675,8 +1684,10 @@ class Modeller:
 
         self.anneal_packing_loss(packing_loss)
 
-        generator_losses = prior_loss + packing_loss + vdw_loss
-        supercell_data.loss = generator_losses
+        generator_losses = (prior_loss * self.prior_loss_coefficient +
+                            packing_loss * self.packing_loss_coefficient +
+                            vdw_loss * self.vdw_loss_coefficient)
+        supercell_data.loss = vdw_loss
 
         if skip_stats:
             stats_dict = {}
@@ -1691,15 +1702,15 @@ class Modeller:
                 'generator_prior': prior.detach(),
                 'generated_cell_parameters': generated_samples.detach(),
                 'generator_scaled_deviation': scaled_deviation.detach(),
+                'generator_sample_lj_energy': lj_potential.detach(),
             }
         return generator_losses, stats_dict, supercell_data.detach()
 
     def anneal_packing_loss(self, packing_loss):
-        if packing_loss.mean() < (
-                0.02 + self.config.generator.packing_target_noise):  # dynamically soften the packing loss when the model is doing well
+        # dynamically soften the packing loss when the model is doing well
+        if packing_loss.mean() < 0.02:
             self.packing_loss_coefficient *= 0.99
-        if (packing_loss.mean() > (0.03 + self.config.generator.packing_target_noise)) and (
-                self.packing_loss_coefficient < 10):
+        if (packing_loss.mean() > 0.03) and (self.packing_loss_coefficient < 10):
             self.packing_loss_coefficient *= 1.01
         self.logger.packing_loss_coefficient = self.packing_loss_coefficient
 

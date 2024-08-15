@@ -15,7 +15,7 @@ from torch_scatter import scatter
 import torch.nn.functional as F
 
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
-from mxtaltools.common.utils import get_point_density, softmax_np, torch_ptp
+from mxtaltools.common.utils import get_point_density, softmax_np
 
 from mxtaltools.common.geometry_calculations import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
@@ -1207,18 +1207,24 @@ def log_crystal_samples(epoch_stats_dict):
 
 def new_cell_scatter(epoch_stats_dict, wandb, layout):
     vdw_cutoff = -5
+    scaled_lj = 1 * epoch_stats_dict['generator_sample_lj_energy']
+    scaled_lj[scaled_lj > 0] = np.log10(scaled_lj[scaled_lj > 0]) + 1
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'].clip(min=vdw_cutoff),
                     'packing_prediction': epoch_stats_dict['generator_packing_prediction'],
-                    'prior_loss': epoch_stats_dict['generator_prior_loss']
+                    'prior_loss': epoch_stats_dict['generator_prior_loss'],
+                    'lj_energy': scaled_lj,
                     }
     opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 5e4)
     df = pd.DataFrame.from_dict(scatter_dict)
 
     fig = px.scatter(df,
                      x='vdw_score', y='packing_prediction',
-                     color='prior_loss',
+                     color='lj_energy',
                      marginal_x='histogram', marginal_y='histogram',
-                     opacity=opacity
+                     opacity=opacity,
+                     color_continuous_scale=px.colors.diverging.Spectral,
+                     color_continuous_midpoint=0.0,
+                     #range_color=[scaled_lj.min(), scaled_lj.max()]
                      )
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')

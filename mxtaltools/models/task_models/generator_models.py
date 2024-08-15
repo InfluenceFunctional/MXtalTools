@@ -10,6 +10,10 @@ from mxtaltools.models.modules.components import vectorMLP
 from mxtaltools.models.utils import enforce_crystal_system, enforce_1d_bound, clean_cell_params
 
 
+def softplus_shift(x: torch.Tensor) -> torch.Tensor:
+    return F.softplus(x - 0.01, beta=5) + 0.01
+
+
 class CrystalGenerator(nn.Module):
     def __init__(self,
                  seed: int,
@@ -57,18 +61,19 @@ class CrystalGenerator(nn.Module):
             # cleanup outputs
 
             # cell lengths have to be positive nonzero
-            cell_lengths = F.softplus(raw_sample[:, :3] - 0.1) + 0.1
+            cell_lengths = softplus_shift(raw_sample[:, :3])
             # range from (0,pi) with 20% padding to prevent too-skinny cells
             cell_angles = enforce_1d_bound(raw_sample[:, 3:6], x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2,
                                            mode='soft')
             # positions must be on 0-1
-            mol_positions = enforce_1d_bound(raw_sample[:, 6:9], x_span=0.5, x_center=0.5, mode='soft')
+            mol_positions = enforce_1d_bound(raw_sample[:, 6:9], x_span=0.5, x_center=0.5, mode='hard')
             # for now, just enforce vector norm
             rotvec = raw_sample[:, 9:12]
             norm = torch.linalg.norm(rotvec, dim=1)
             new_norm = enforce_1d_bound(norm, x_span=0.99 * torch.pi, x_center=torch.pi, mode='soft')  # MUST be nonzero
             new_rotvec = rotvec / norm[:, None] * new_norm[:, None]
-            new_rotvec[:, 2] = F.softplus(new_rotvec[:, 2] - 0.01) + 0.01  # z direction always positive
+            # invert_inds = torch.argwhere(new_rotvec[:, 2] < 0)
+            # new_rotvec[invert_inds] = -new_rotvec[invert_inds]  # z direction always positive
 
             # force cells to conform to crystal system
             cell_lengths, cell_angles = enforce_crystal_system(cell_lengths, cell_angles, sg_ind_list,
@@ -167,7 +172,11 @@ class GeneratorPrior(nn.Module):
         cell_means = torch.tensor([1.2740, 1.4319, 1.7752, 1.5619, 1.5691, 1.5509], dtype=torch.float32)
         cell_stds = torch.tensor([0.5163, 0.5930, 0.6284, 0.2363, 0.2046, 0.2624], dtype=torch.float32)
 
-        self.lengths_prior = MultivariateNormal(torch.log(cell_means[:3]), torch.eye(3) * cell_stds[:3])  # apply standardization
+        lengths_cov_mat = torch.tensor([[0.2545, -0.0266, -0.0357],
+                                        [-0.0266, 0.3541, -0.0743],
+                                        [-0.0357, -0.0743, 0.3992]], dtype=torch.float32)
+
+        self.lengths_prior = MultivariateNormal(cell_means[:3], lengths_cov_mat)  # apply standardization
         self.angles_prior = MultivariateNormal(cell_means[3:], torch.eye(3) * cell_stds[3:])  # apply standardization
 
         self.pose_prior = Uniform(0, 1)
@@ -214,8 +223,8 @@ class GeneratorPrior(nn.Module):
         return torch.cat((positions, random_vectors), dim=1)
 
     def sample_cell_vectors(self, num_samples):
-        return torch.cat([torch.exp(self.lengths_prior.sample((num_samples,))),
-                          self.angles_prior.sample((num_samples,))],dim=1)
+        return torch.cat([self.lengths_prior.sample((num_samples,)),
+                          self.angles_prior.sample((num_samples,))], dim=1)
 
     def forward(self, num_samples, sg_ind_list):
         """
@@ -229,7 +238,7 @@ class GeneratorPrior(nn.Module):
 
         # enforce 'hard' bounds
         # harshly enforces positive nonzero
-        cell_lengths = torch.maximum(F.relu(cell_lengths), 0.1 * torch.ones_like(cell_lengths))
+        cell_lengths = softplus_shift(cell_lengths)  # very gently enforce positive
         # range from (0,pi) with 20% padding to prevent too-skinny cells
         cell_angles = enforce_1d_bound(cell_angles, x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='hard')
 

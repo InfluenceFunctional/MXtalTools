@@ -3,6 +3,7 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
+from torch_scatter import scatter
 
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.asymmetric_radius_graph import asymmetric_radius_graph
@@ -94,7 +95,7 @@ def vdw_overlap(vdw_radii: torch.Tensor,  # todo refactor this into separate fun
     elif return_score_only:
         return vdw_score
     else:  # return everything
-        return vdw_loss, vdw_score, max_overlaps, abs_overlaps, normed_overlaps
+        return vdw_loss, vdw_score, max_overlaps, abs_overlaps, normed_overlaps, lj_potentials
 
 
 def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None,
@@ -155,3 +156,38 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None,
     return ([penalties[crystal_number == ii] for ii in range(num_graphs)],
             [normed_penalties[crystal_number == ii] for ii in range(num_graphs)],
             [pot[crystal_number == ii] for ii in range(num_graphs)])
+
+
+def vdw_analysis(vdw_radii: torch.Tensor,
+                 dist_dict: dict,
+                 num_graphs: int,
+                 ):
+    """
+    new version of the vdw_overlap function for analysis of intermolecular contacts
+    """
+    dists = dist_dict['intermolecular_dist']
+    elements = dist_dict['intermolecular_dist_atoms']
+    batch = dist_dict['intermolecular_dist_batch']
+
+    atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
+    radii_sums = atom_radii[0] + atom_radii[1]
+
+    # only punish positives (meaning overlaps)
+    overlap = F.relu(radii_sums - dists)
+    # norm overlaps against internuclear distances
+    normed_overlap = F.relu((radii_sums - dists) / radii_sums)
+
+    # uniform lennard jones potential
+    sigma_r6 = torch.pow(radii_sums / dists, 6)
+    sigma_r12 = torch.pow(sigma_r6, 2)
+    lj_pot = 4 * 1 * (sigma_r12 - sigma_r6)
+
+    molwise_overlap = scatter(overlap, batch, reduce='sum', dim_size=num_graphs)
+    molwise_normed_overlap = scatter(normed_overlap, batch, reduce='sum', dim_size=num_graphs)
+    molwise_lj_pot = scatter(lj_pot, batch, reduce='sum', dim_size=num_graphs)
+
+    inv_scaled_dists = 1 / (-torch.minimum(0.99 * torch.ones_like(normed_overlap), normed_overlap) + 1) - 1
+    molwise_loss = scatter(inv_scaled_dists, batch, reduce='sum', dim_size=num_graphs)  # use always the inv-type loss function
+
+    return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss
+

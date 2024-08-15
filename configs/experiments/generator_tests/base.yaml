@@ -19,7 +19,7 @@ early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 25
-max_batch_size: 200
+max_batch_size: 2000
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
@@ -47,3 +47,14 @@ generate_sgs: ['P-1']#,'C2/c','P21/c','P212121']
 autoencoder:
   infer_protons: False
   filter_protons: False
+
+
+
+# for GAN training
+generator:
+  model:
+    hidden_dim: 256
+    dropout: 0.05
+    norm: 'layer'
+    num_layers: 8
+    vector_norm: 'vector layer'

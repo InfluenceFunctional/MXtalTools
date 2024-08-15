@@ -1,10 +1,12 @@
 import torch
 from torch import nn as nn
+from torch_scatter import scatter
 
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
 from mxtaltools.models.graph_models.molecule_graph_model import VectorMoleculeGraphModel
 from mxtaltools.models.modules.components import Scalarizer, vectorMLP
+from mxtaltools.models.utils import collate_decoded_data, ae_reconstruction_loss
 
 
 # noinspection PyAttributeOutsideInit
@@ -29,7 +31,7 @@ class Mo3ENet(BaseGraphModel):
         self.output_depth = self.num_classes + self.cartesian_dimension + 1
         self.num_decoder_nodes = config.decoder.num_nodes
         self.bottleneck_dim = config.bottleneck_dim
-
+        # todo add type distance scaling and num atom types and node weight temperature
         self.register_buffer('atom_embedding_vector', atom_embedding_vector)
         self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
         self.register_buffer('protons_in_input', torch.tensor(protons_in_input, dtype=torch.bool))
@@ -80,6 +82,34 @@ class Mo3ENet(BaseGraphModel):
             dim=-1)
 
         return decoding
+
+    def check_embedding_quality(self, data, sigma=0.35,
+                                type_distance_scaling=2,
+                                node_weight_temperature=1,
+                                num_atom_types=5,
+                                ):
+        encoding = self.encode(data)
+        decoding = self.decode(encoding)
+
+        data.x = self.atom_embedding_vector[data.x].flatten()
+        decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
+            collate_decoded_data(data,
+                                 decoding,
+                                 self.num_decoder_nodes,
+                                 node_weight_temperature,
+                                 self.device))
+
+        (nodewise_reconstruction_loss,
+         nodewise_type_loss,
+         reconstruction_loss,
+         self_likelihoods) = ae_reconstruction_loss(data,
+                                                    decoded_data,
+                                                    nodewise_weights,
+                                                    num_atom_types,
+                                                    type_distance_scaling,
+                                                    sigma)
+
+        return scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')
 
 
 class Mo3ENetDecoder(nn.Module):
