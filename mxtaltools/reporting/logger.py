@@ -160,7 +160,7 @@ class Logger:
                 if 'all_train' in self.current_losses[key].keys():
                     train_loss = self.current_losses[key]['all_train']
                     self.wandb.log(
-                        data={key + '_train_loss_distribution': self.wandb.Histogram(train_loss)},
+                        data={key + '_train_loss_distribution': self.wandb.Histogram(np.nan_to_num(train_loss))},
                         commit=commit)
                     self.wandb.log(
                         data={key + '_log_train_loss_distribution': self.wandb.Histogram(np.nan_to_num(
@@ -171,7 +171,7 @@ class Logger:
                 if 'all_test' in self.current_losses[key].keys():
                     test_loss = self.current_losses[key]['all_test']
                     self.wandb.log(
-                        data={key + '_test_loss_distribution': self.wandb.Histogram(test_loss)},
+                        data={key + '_test_loss_distribution': self.wandb.Histogram(np.nan_to_num(test_loss))},
                         commit=commit)
                     self.wandb.log(
                         data={key + '_log_test_loss_distribution': self.wandb.Histogram(np.nan_to_num(
