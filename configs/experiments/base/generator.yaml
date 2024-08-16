@@ -97,7 +97,7 @@ generator:
 
   model:
     hidden_dim: 256
-    dropout: 0.05
+    dropout: 0
     norm: 'layer'
     num_layers: 8
     vector_norm: 'vector layer'

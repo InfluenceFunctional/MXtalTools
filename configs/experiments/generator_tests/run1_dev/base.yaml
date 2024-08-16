@@ -42,7 +42,7 @@ model_paths:
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
-generate_sgs: ['P-1']#,'C2/c','P21/c','P212121']
+generate_sgs: ['P21/c']#,'C2/c','P21/c','P212121']
 
 autoencoder:
   infer_protons: False
@@ -70,9 +70,9 @@ generator:
     beta2: 0.999
     convergence_eps: 1.0e-04
     init_lr: 1.0e-4
-    lr_growth_lambda: 1.1
+    lr_growth_lambda: 1.01
     lr_schedule: true
-    lr_shrink_lambda: 0.99
+    lr_shrink_lambda: 0.9975
     max_lr: 2.0e-3
     min_lr: 1.0e-06
     optimizer: adamw
@@ -80,8 +80,8 @@ generator:
     weight_decay: 0.01
 
   model:
-    hidden_dim: 512
+    hidden_dim: 256
     dropout: 0
     norm: 'layer'
-    num_layers: 4
+    num_layers: 8
     vector_norm: 'vector layer'

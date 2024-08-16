@@ -29,8 +29,12 @@ def crystaldata_batch_to_ase_mols_list(crystaldata_batch, max_ind: int = np.inf,
     return mols
 
 
-def ase_mol_from_crystaldata(data, index: int = None, highlight_canonical_conformer: bool = False, exclusion_level=None,
-                             inclusion_distance: float = 4, return_crystal: bool = False):
+def ase_mol_from_crystaldata(data,
+                             index: int = None,
+                             highlight_canonical_conformer: bool = False,
+                             exclusion_level=None,
+                             inclusion_distance: float = 4,
+                             return_crystal: bool = False):
     """
     Extract an atomic structure from a Crystaldata object according to its batch index, and convert it into an ase mol object.
     Several options for visualization of crystals.

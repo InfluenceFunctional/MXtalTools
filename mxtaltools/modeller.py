@@ -24,7 +24,7 @@ from mxtaltools.common.utils import softmax_np, init_sym_info, compute_rdf_dista
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.crystal_building.builder import SupercellBuilder
-from mxtaltools.crystal_building.utils import (set_molecule_alignment)
+from mxtaltools.crystal_building.utils import (set_molecule_alignment, descale_asymmetric_unit)
 from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.data_manager import DataManager
@@ -833,7 +833,7 @@ class Modeller:
 
             if iteration_override is not None:
                 if i >= iteration_override:
-                    break  # stop training early - for debugging purposes
+                    break  # stop training early
 
         # post epoch processing
         self.logger.concatenate_stats_dict(self.epoch_type)
@@ -1155,7 +1155,7 @@ class Modeller:
             self.logger.update_stats_dict(self.epoch_type, stats.keys(), stats.values(), mode='extend')
             if iteration_override is not None:
                 if i >= iteration_override:
-                    break  # stop training early - for debugging purposes
+                    break  # stop training early
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
@@ -1201,7 +1201,7 @@ class Modeller:
 
             if iteration_override is not None:
                 if i >= iteration_override:
-                    break  # stop training early - for debugging purposes
+                    break  # stop training early
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
@@ -1239,7 +1239,7 @@ class Modeller:
 
             if iteration_override is not None:
                 if i >= iteration_override:
-                    break  # stop training early - for debugging purposes
+                    break  # stop training early
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
@@ -1267,7 +1267,7 @@ class Modeller:
 
             if iteration_override is not None:
                 if i >= iteration_override:
-                    break  # stop training early - for debugging purposes
+                    break  # stop training early
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
@@ -1433,8 +1433,12 @@ class Modeller:
             = self.get_generator_samples(data, target_rauv, variation_factor)
 
         # denormalize the predicted cell lengths
-        cell_lengths = data.radius[:, None] * torch.pow(generator_data.sym_mult, (1 / 3))[:, None] * generated_samples[:, :3]
-        generated_samples_to_build = torch.cat([cell_lengths, generated_samples[:, 3:]], dim=1)
+        cell_lengths = data.radius[:, None] * torch.pow(generator_data.sym_mult, 1 / 3)[:, None] * generated_samples[:, :3]
+        # rescale asymmetric units  # todo add assertions around these
+        mol_positions = descale_asymmetric_unit(self.supercell_builder.asym_unit_dict,
+                                                generated_samples[:, 6:9],
+                                                generator_data.sg_ind)
+        generated_samples_to_build = torch.cat([cell_lengths, generated_samples[:, 3:6], mol_positions, generated_samples[:, 9:12]], dim=1)
 
         supercell_data, generated_cell_volumes = (
             self.supercell_builder.build_zp1_supercells(
@@ -1662,27 +1666,27 @@ class Modeller:
             d_output, dist_dict = self.score_adversarially(supercell_data)  # skip discriminator call - slow
         else:
             dist_dict = get_intermolecular_dists_dict(supercell_data,
-                                                      self.models_dict['discriminator'].model.convolution_cutoff,
-                                                      self.models_dict['discriminator'].model.max_num_neighbors)
-        #
+                                                      6,
+                                                      100)
+
         # vdw_loss, vdw_score, _, _, _, lj_potential= vdw_overlap(self.vdw_radii,
         #                                            dist_dict=dist_dict,
         #                                            num_graphs=data.num_graphs,
         #                                            graph_sizes=data.num_atoms,
         #                                            loss_func=self.config.generator.vdw_loss_func)
 
-        molwise_overlap, molwise_normed_overlap, lj_potential, inv_loss \
+        molwise_overlap, molwise_normed_overlap, lj_potential, lj_loss \
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, data.num_graphs)
 
         vdw_score = -molwise_normed_overlap/data.num_atoms
 
-        vdw_loss = lj_potential.clone() / data.num_atoms
-        vdw_loss[vdw_loss > 0] = torch.log10(vdw_loss[vdw_loss > 0]) + 1
+        vdw_loss = lj_loss.clone() / data.num_atoms
 
         packing_loss, sample_rauv = \
             self.generator_density_matching_loss(
                 target_rauv,
                 data,
+                supercell_data.sym_mult,
                 generated_samples_to_build,
                 precomputed_volumes=generated_cell_volumes,
                 loss_func=self.config.generator.density_loss_func)
@@ -2188,6 +2192,7 @@ class Modeller:
     def generator_density_matching_loss(self,
                                         target_rauv,
                                         data,
+                                        sym_mult,
                                         samples,
                                         precomputed_volumes=None,
                                         loss_func='mse'):
@@ -2203,7 +2208,7 @@ class Modeller:
         else:
             cell_volume = precomputed_volumes
 
-        reduced_volume = cell_volume / data.sym_mult
+        reduced_volume = cell_volume / sym_mult
         atom_volumes = scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[data.x[:, 0]] ** 3, data.batch,
                                reduce='sum')
         generated_rauv = reduced_volume / atom_volumes

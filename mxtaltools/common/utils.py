@@ -43,7 +43,7 @@ def batch_compute_dipole(pos, batch, z, electronegativity_tensor):
     return centers_of_charge - centers_of_geometry
 
 
-def get_point_density(xy, bins=25):
+def get_point_density(xy, bins=35):
     """
     Interpolate a local density function over 2d points.
 
@@ -59,8 +59,12 @@ def get_point_density(xy, bins=25):
 
     x, y = xy
     data, x_e, y_e = np.histogram2d(x, y, bins=bins, density=True)
-    z = interpn((0.5 * (x_e[1:] + x_e[:-1]), 0.5 * (y_e[1:] + y_e[:-1])), data, np.vstack([x, y]).T, method="splinef2d",
-                bounds_error=False)
+    z = interpn((0.5 * (x_e[1:] + x_e[:-1]), 0.5 * (y_e[1:] + y_e[:-1])),
+                data,
+                np.vstack([x, y]).T,
+                method="cubic",
+                bounds_error=False,
+                fill_value=None)
 
     # To be sure to plot all data
     z[np.where(np.isnan(z))] = 0.0

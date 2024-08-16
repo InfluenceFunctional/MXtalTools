@@ -12,7 +12,7 @@ early_epochs_step_override: 5
 extra_test_period: 5
 extra_test_set_name: null
 generate_sgs:
-- P-1
+- P21/c
 generator:
   adversarial_loss_func: score
   canonical_conformer_orientation: random
@@ -28,9 +28,9 @@ generator:
     beta2: 0.999
     convergence_eps: 0.0001
     init_lr: 0.0001
-    lr_growth_lambda: 1.1
+    lr_growth_lambda: 1.01
     lr_schedule: true
-    lr_shrink_lambda: 0.99
+    lr_shrink_lambda: 0.9975
     max_lr: 0.002
     min_lr: 1.0e-06
     optimizer: adamw

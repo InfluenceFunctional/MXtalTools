@@ -152,14 +152,14 @@ def new_cell_params_analysis(wandb, stats_dict):
         fig.add_trace(go.Violin(
             x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
             name='sample', legendgroup='sample', showlegend=True if i == 0 else False,
-            meanline_visible=True, bandwidth=float(np.ptp(prior[:, i])/100), points=False, line_color='blue',
+            meanline_visible=True, bandwidth=float(np.ptp(prior[:, i]) / 100), points=False, line_color='blue',
         ),
             row=row, col=col
         )
         fig.add_trace(go.Violin(
             x=prior[:, i], y=[0 for _ in range(len(prior))], side='positive', orientation='h', width=4, name='prior',
             legendgroup='prior', showlegend=True if i == 0 else False,
-            meanline_visible=True, bandwidth=float(np.ptp(prior[:, i])/100), points=False, line_color='red',
+            meanline_visible=True, bandwidth=float(np.ptp(prior[:, i]) / 100), points=False, line_color='red',
         ),
             row=row, col=col
         )
@@ -217,7 +217,8 @@ def cell_density_plot(config, wandb, epoch_stats_dict, layout):
             fig.update_layout(xaxis_title='Asymmetric Unit Volume Target',
                               yaxis_title='Asymmetric Unit Volume Prediction')
 
-            wandb.log(data={'Cell Packing': fig}, commit=False)
+            fig.write_image('fig.png', width=512, height=512)  # save the image rather than the fig, for size reasons
+            wandb.log({'Cell Packing': wandb.Image('fig.png')}, commit=False)
 
 
 def process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict=None):
@@ -1208,44 +1209,35 @@ def log_crystal_samples(epoch_stats_dict):
 def new_cell_scatter(epoch_stats_dict, wandb, layout):
     scaled_lj = 1 * epoch_stats_dict['generator_sample_lj_energy']
     scaled_lj[scaled_lj > 0] = np.log10(scaled_lj[scaled_lj > 0]) + 1
-    vdw_cutoff = max(-5, min(epoch_stats_dict['generator_per_mol_vdw_score']))
+    vdw_cutoff = max(-10, min(epoch_stats_dict['generator_per_mol_vdw_score']))
 
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'].clip(min=vdw_cutoff),
                     'packing_prediction': epoch_stats_dict['generator_packing_prediction'],
                     'prior_loss': epoch_stats_dict['generator_prior_loss'],
                     'lj_energy': scaled_lj,
                     }
-    opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 1e4)
+    opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 3e3)
     df = pd.DataFrame.from_dict(scatter_dict)
 
-    # fig = px.scatter(df,
-    #                  x='vdw_score', y='packing_prediction',
-    #                  color='lj_energy',
-    #                  marginal_x='histogram', marginal_y='histogram',
-    #                  opacity=opacity,
-    #                  color_continuous_scale=px.colors.diverging.Spectral,
-    #                  color_continuous_midpoint=0.0,
-    #                  #range_color=[scaled_lj.min(), scaled_lj.max()]
-    #                  )
-    zeroval = abs((0 - (df['lj_energy']).min())/np.ptp(df['lj_energy']))
-    cscale = [[min(df['lj_energy']), 'green'],[max(0.01, zeroval * 0.99), 'red'], [zeroval, "yellow"], [1, 'blue']]
+    zeroval = abs((0 - (scaled_lj).min()) / np.ptp(scaled_lj))
+    cscale = [[0, 'green'], [max(0.01, zeroval * 0.99), 'blue'], [zeroval, "yellow"], [1, 'red']]
     if zeroval == 0:
         cscale.pop(0)
         cscale.pop(0)
     fig = go.Figure()
     fig.add_scattergl(
-        x=df['vdw_score'], y=df['packing_prediction'],
+        x=-np.log10(-(df['vdw_score'] - 1e-2)), y=df['packing_prediction'],
         mode='markers',
         marker_color=df['lj_energy'],
         opacity=opacity,
         marker={"cmin": min(-1, np.amin(df['lj_energy'])), "cmax": 10,
                 "colorbar_title": "LJ Energy",
                 'colorscale': cscale},
-        )
+    )
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
-    fig.update_layout(xaxis_range=[vdw_cutoff, 0.1],
-                      yaxis_range=[0, min(5, scatter_dict['packing_prediction'].max())])
+    fig.update_layout(xaxis_range=[-1, np.inf],
+                      yaxis_range=[0, np.quantile(scatter_dict['packing_prediction'], 0.975)])
 
     fig.write_image('fig.png', width=512, height=512)  # save the image rather than the fig, for size reasons
     wandb.log({'Generator Samples': wandb.Image('fig.png')}, commit=False)
