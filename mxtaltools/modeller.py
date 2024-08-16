@@ -1,12 +1,11 @@
 import gc
 import os
-import sys
 from argparse import Namespace
 from distutils.dir_util import copy_tree
 from shutil import copy
 from time import time
 from typing import Tuple
-#os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 import numpy as np
 import torch
@@ -616,48 +615,48 @@ class Modeller:
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
-            with torch.autograd.set_detect_anomaly(False):
-                while (epoch < self.config.max_epochs) and not converged:
-                    print(self.separator_string)
-                    print("Starting Epoch {}".format(epoch))  # index from 0
-                    self.times['full_epoch_start'] = time()
-                    self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
+            #with torch.autograd.set_detect_anomaly(False):
+            while (epoch < self.config.max_epochs) and not converged:
+                print(self.separator_string)
+                print("Starting Epoch {}".format(epoch))  # index from 0
+                self.times['full_epoch_start'] = time()
+                self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
 
-                    if epoch < self.config.num_early_epochs:
-                        steps_override = self.config.early_epochs_step_override
+                if epoch < self.config.num_early_epochs:
+                    steps_override = self.config.early_epochs_step_override
+                else:
+                    steps_override = self.config.max_epoch_steps
+
+                try:  # try this batch size
+                    self.train_test_validate(epoch, extra_test_loader, steps_override, test_loader, train_loader)
+                    self.post_epoch_logging_analysis(test_loader, epoch)
+
+                    if all(list(self.logger.converged_flags.values())):  # todo confirm this works
+                        print('Training has converged!')
+                        break
+
+                    if self.config.mode != 'polymorph_classification':
+                        train_loader, test_loader, extra_test_loader = \
+                            self.increment_batch_size(train_loader, test_loader, extra_test_loader)
+
+                    prev_epoch_failed = False
+
+                except (RuntimeError, ValueError) as e:  # if we do hit OOM, slash the batch size
+                    if "CUDA out of memory" in str(
+                            e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
+                        test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed,
+                                                                                       test_loader, train_loader)
+                    elif "Mean loss is NaN/Inf" == str(e):
+                        self.handle_nan(e, epoch)
                     else:
-                        steps_override = self.config.max_epoch_steps
+                        raise e  # will simply raise error if other or if training on CPU
 
-                    try:  # try this batch size
-                        self.train_test_validate(epoch, extra_test_loader, steps_override, test_loader, train_loader)
-                        self.post_epoch_logging_analysis(test_loader, epoch)
+                self.times['full_epoch_end'] = time()
+                self.logger.log_times(self.times)
+                self.times = {}
+                epoch += 1
 
-                        if all(list(self.logger.converged_flags.values())):  # todo confirm this works
-                            print('Training has converged!')
-                            break
-
-                        if self.config.mode != 'polymorph_classification':
-                            train_loader, test_loader, extra_test_loader = \
-                                self.increment_batch_size(train_loader, test_loader, extra_test_loader)
-
-                        prev_epoch_failed = False
-
-                    except (RuntimeError, ValueError) as e:  # if we do hit OOM, slash the batch size
-                        if "CUDA out of memory" in str(
-                                e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
-                            test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed,
-                                                                                           test_loader, train_loader)
-                        elif "Mean loss is NaN/Inf" == str(e):
-                            self.handle_nan(e, epoch)
-                        else:
-                            raise e  # will simply raise error if other or if training on CPU
-
-                    self.times['full_epoch_end'] = time()
-                    self.logger.log_times(self.times)
-                    self.times = {}
-                    epoch += 1
-
-                self.logger.evaluation_analysis(test_loader, self.config.mode)
+            self.logger.evaluation_analysis(test_loader, self.config.mode)
 
     def handle_nan(self, e, epoch):
         print(e)
@@ -1257,6 +1256,8 @@ class Modeller:
         else:
             self.models_dict['generator'].eval()
 
+        self.models_dict['autoencoder'].eval()
+
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
             data = data.to(self.config.device)
             '''
@@ -1611,8 +1612,13 @@ class Modeller:
 
         # generate the samples
         with torch.no_grad():
+            # center the molecules
+            mol_data, _ = self.preprocess_ae_inputs(mol_data, no_noise=True, orientation_override=None)
             prior = self.generator_prior(data.num_graphs, mol_data.sg_ind).to(self.device)
             vector_mol_embedding = self.models_dict['autoencoder'].encode(mol_data.clone())
+
+            # q = self.models_dict['autoencoder'].check_embedding_quality(mol_data.clone())
+
             scalar_mol_embedding = self.models_dict['autoencoder'].scalarizer(vector_mol_embedding)
 
             # append scalar and vector features
@@ -1621,8 +1627,7 @@ class Modeller:
                                               prior[:, :9],
                                               variation_factor[:, None]),
                                              dim=1)
-            reference_vector = torch.eye(
-                3, dtype=torch.float32, device=self.device
+            reference_vector = torch.eye(3, dtype=torch.float32, device=self.device
             ).reshape(1, 3, 3
                       ).repeat(data.num_graphs, 1, 1)
 
@@ -1685,7 +1690,7 @@ class Modeller:
         self.anneal_packing_loss(packing_loss)
 
         generator_losses = (prior_loss * self.prior_loss_coefficient +
-                            packing_loss * self.packing_loss_coefficient +
+                            #packing_loss * self.packing_loss_coefficient +
                             vdw_loss * self.vdw_loss_coefficient)
         supercell_data.loss = vdw_loss
 

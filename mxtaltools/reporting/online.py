@@ -1206,32 +1206,49 @@ def log_crystal_samples(epoch_stats_dict):
 
 
 def new_cell_scatter(epoch_stats_dict, wandb, layout):
-    vdw_cutoff = -5
     scaled_lj = 1 * epoch_stats_dict['generator_sample_lj_energy']
     scaled_lj[scaled_lj > 0] = np.log10(scaled_lj[scaled_lj > 0]) + 1
+    vdw_cutoff = max(-5, min(epoch_stats_dict['generator_per_mol_vdw_score']))
+
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'].clip(min=vdw_cutoff),
                     'packing_prediction': epoch_stats_dict['generator_packing_prediction'],
                     'prior_loss': epoch_stats_dict['generator_prior_loss'],
                     'lj_energy': scaled_lj,
                     }
-    opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 5e4)
+    opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 1e4)
     df = pd.DataFrame.from_dict(scatter_dict)
 
-    fig = px.scatter(df,
-                     x='vdw_score', y='packing_prediction',
-                     color='lj_energy',
-                     marginal_x='histogram', marginal_y='histogram',
-                     opacity=opacity,
-                     color_continuous_scale=px.colors.diverging.Spectral,
-                     color_continuous_midpoint=0.0,
-                     #range_color=[scaled_lj.min(), scaled_lj.max()]
-                     )
+    # fig = px.scatter(df,
+    #                  x='vdw_score', y='packing_prediction',
+    #                  color='lj_energy',
+    #                  marginal_x='histogram', marginal_y='histogram',
+    #                  opacity=opacity,
+    #                  color_continuous_scale=px.colors.diverging.Spectral,
+    #                  color_continuous_midpoint=0.0,
+    #                  #range_color=[scaled_lj.min(), scaled_lj.max()]
+    #                  )
+    zeroval = abs((0 - (df['lj_energy']).min())/np.ptp(df['lj_energy']))
+    cscale = [[min(df['lj_energy']), 'green'],[max(0.01, zeroval * 0.99), 'red'], [zeroval, "yellow"], [1, 'blue']]
+    if zeroval == 0:
+        cscale.pop(0)
+        cscale.pop(0)
+    fig = go.Figure()
+    fig.add_scattergl(
+        x=df['vdw_score'], y=df['packing_prediction'],
+        mode='markers',
+        marker_color=df['lj_energy'],
+        opacity=opacity,
+        marker={"cmin": min(-1, np.amin(df['lj_energy'])), "cmax": 10,
+                "colorbar_title": "LJ Energy",
+                'colorscale': cscale},
+        )
     fig.layout.margin = layout.margin
     fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
     fig.update_layout(xaxis_range=[vdw_cutoff, 0.1],
                       yaxis_range=[0, min(5, scatter_dict['packing_prediction'].max())])
 
-    wandb.log({'Generator Samples': fig}, commit=False)
+    fig.write_image('fig.png', width=512, height=512)  # save the image rather than the fig, for size reasons
+    wandb.log({'Generator Samples': wandb.Image('fig.png')}, commit=False)
 
 
 def old_cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_category=None):

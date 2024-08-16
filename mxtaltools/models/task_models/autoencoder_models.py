@@ -7,6 +7,7 @@ from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
 from mxtaltools.models.graph_models.molecule_graph_model import VectorMoleculeGraphModel
 from mxtaltools.models.modules.components import Scalarizer, vectorMLP
 from mxtaltools.models.utils import collate_decoded_data, ae_reconstruction_loss
+from mxtaltools.reporting.ae_reporting import gaussian_3d_overlap_plots
 
 
 # noinspection PyAttributeOutsideInit
@@ -65,6 +66,7 @@ class Mo3ENet(BaseGraphModel):
 
     def encode(self, data):
         # normalize radii
+        assert torch.linalg.norm(data.pos.mean(0)) < 1e-3, "Encoder trained only for centered molecules!"
         data.pos /= self.radial_normalization
         _, encoding = self.encoder(data)
 
@@ -83,12 +85,14 @@ class Mo3ENet(BaseGraphModel):
 
         return decoding
 
-    def check_embedding_quality(self, data, sigma=0.35,
+    def check_embedding_quality(self, data,
+                                sigma=0.35,
                                 type_distance_scaling=2,
+                                # todo next two should be properties of the model
                                 node_weight_temperature=1,
                                 num_atom_types=5,
                                 ):
-        encoding = self.encode(data)
+        encoding = self.encode(data.clone())
         decoding = self.decode(encoding)
 
         data.x = self.atom_embedding_vector[data.x].flatten()
@@ -97,7 +101,7 @@ class Mo3ENet(BaseGraphModel):
                                  decoding,
                                  self.num_decoder_nodes,
                                  node_weight_temperature,
-                                 self.device))
+                                 data.x.device))
 
         (nodewise_reconstruction_loss,
          nodewise_type_loss,
@@ -109,7 +113,12 @@ class Mo3ENet(BaseGraphModel):
                                                     type_distance_scaling,
                                                     sigma)
 
-        return scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')
+        fig, fig2, rmsd, max_dist, tot_overlap, match_successful = (
+            gaussian_3d_overlap_plots(data, decoded_data,
+                                      num_atom_types,
+                                      ))
+
+        return reconstruction_loss, rmsd
 
 
 class Mo3ENetDecoder(nn.Module):
