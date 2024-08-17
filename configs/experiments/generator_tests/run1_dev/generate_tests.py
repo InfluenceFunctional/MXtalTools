@@ -12,6 +12,14 @@ configs_list = [
                     'num_layers': 4,
                     'vector_norm': 'vector layer'}
           }},
+    {'generator':
+         {'model': {'hidden_dim': 256,
+                    'dropout': 0,
+                    'norm': 'layer',
+                    'num_layers': 4,
+                    'vector_norm': 'vector layer'},
+          'prior_loss_coefficient': 100
+          }},
 ]
 
 

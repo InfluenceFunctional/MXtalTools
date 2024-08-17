@@ -1427,18 +1427,21 @@ class Modeller:
         target_rauv = (torch.ones_like(target_rauv)
                        + torch.randn_like(target_rauv) * self.config.generator.packing_target_noise)
 
-        variation_factor = torch.rand(size=(data.num_graphs,), device=self.device) * self.config.generator.variation_scale
+        variation_factor = torch.rand(size=(data.num_graphs,),device=self.device
+                                      ) * self.config.generator.variation_scale
 
         generated_samples, prior, generator_data \
             = self.get_generator_samples(data, target_rauv, variation_factor)
 
         # denormalize the predicted cell lengths
-        cell_lengths = data.radius[:, None] * torch.pow(generator_data.sym_mult, 1 / 3)[:, None] * generated_samples[:, :3]
+        cell_lengths = data.radius[:, None] * torch.pow(generator_data.sym_mult, 1 / 3)[:, None] * generated_samples[:,
+                                                                                                   :3]
         # rescale asymmetric units  # todo add assertions around these
         mol_positions = descale_asymmetric_unit(self.supercell_builder.asym_unit_dict,
                                                 generated_samples[:, 6:9],
                                                 generator_data.sg_ind)
-        generated_samples_to_build = torch.cat([cell_lengths, generated_samples[:, 3:6], mol_positions, generated_samples[:, 9:12]], dim=1)
+        generated_samples_to_build = torch.cat(
+            [cell_lengths, generated_samples[:, 3:6], mol_positions, generated_samples[:, 9:12]], dim=1)
 
         supercell_data, generated_cell_volumes = (
             self.supercell_builder.build_zp1_supercells(
@@ -1497,7 +1500,7 @@ class Modeller:
             # predict the crystal volume cofficient and feed it as an input to the generator
             with torch.no_grad():
                 target_rauv = self.models_dict['regressor'](data.clone().detach().to(self.config.device)).detach()[:,
-                             0]
+                              0]
                 assert False, "Missing standardization for volume regressor"
         else:
             atom_volumes = scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[data.x[:, 0]] ** 3, data.batch,
@@ -1632,8 +1635,8 @@ class Modeller:
                                               variation_factor[:, None]),
                                              dim=1)
             reference_vector = torch.eye(3, dtype=torch.float32, device=self.device
-            ).reshape(1, 3, 3
-                      ).repeat(data.num_graphs, 1, 1)
+                                         ).reshape(1, 3, 3
+                                                   ).repeat(data.num_graphs, 1, 1)
 
             vector_mol_embedding = torch.cat((vector_mol_embedding,
                                               prior[:, 9:, None],
@@ -1662,7 +1665,7 @@ class Modeller:
         scaled_deviation = (prior - generated_samples) / (self.generator_prior.norm_factors[data.sg_ind, :] + 1e-4)
         prior_loss = F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)
 
-        if False: #self.config.generator.train_adversarially:  # not currently using this
+        if False:  #self.config.generator.train_adversarially:  # not currently using this
             d_output, dist_dict = self.score_adversarially(supercell_data)  # skip discriminator call - slow
         else:
             dist_dict = get_intermolecular_dists_dict(supercell_data,
@@ -1678,7 +1681,7 @@ class Modeller:
         molwise_overlap, molwise_normed_overlap, lj_potential, lj_loss \
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, data.num_graphs)
 
-        vdw_score = -molwise_normed_overlap/data.num_atoms
+        vdw_score = -molwise_normed_overlap / data.num_atoms
 
         vdw_loss = lj_loss.clone() / data.num_atoms
 

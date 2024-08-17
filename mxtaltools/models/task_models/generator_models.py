@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch.distributions import MultivariateNormal, Uniform, LogNormal
 
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
+from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
 from mxtaltools.models.modules.components import vectorMLP
 from mxtaltools.models.utils import enforce_crystal_system, enforce_1d_bound, clean_cell_params
 
@@ -32,12 +33,14 @@ class CrystalGenerator(nn.Module):
         path = os.path.join(os.path.dirname(__file__), '../../constants/prior_means.npy')
         self.register_buffer('means', torch.tensor(np.load(path, allow_pickle=True), dtype=torch.float32))
 
+        self.register_buffer('SG_FEATURE_TENSOR', SG_FEATURE_TENSOR.clone())  # store space group information
+
         # generator model
         self.model = vectorMLP(layers=config.num_layers,
                                filters=config.hidden_dim,
                                norm=config.norm,
                                dropout=config.dropout,
-                               input_dim=embedding_dim + 9 * z_prime + 2,
+                               input_dim=embedding_dim + 9 * z_prime + 2 + 237,
                                output_dim=6 + z_prime * 3,
                                vector_input_dim=embedding_dim + z_prime + 3,
                                vector_output_dim=z_prime,
@@ -52,7 +55,9 @@ class CrystalGenerator(nn.Module):
                 sg_ind_list: torch.LongTensor,
                 return_raw_sample=False) -> torch.Tensor:
 
-        x, v = self.model(x=x, v=v)
+        x_w_sg = torch.cat([x, SG_FEATURE_TENSOR[sg_ind_list]], dim=1)
+
+        x_w_sg, v = self.model(x=x, v=v)
 
         raw_sample = torch.cat([x, v[:, :, 0]], dim=-1) * self.stds[sg_ind_list] + self.means[sg_ind_list]
         if return_raw_sample:
