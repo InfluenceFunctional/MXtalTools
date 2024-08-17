@@ -20,6 +20,15 @@ configs_list = [
                     'vector_norm': 'vector layer'},
           'prior_loss_coefficient': 100
           }},
+    {'generate_sgs': ['P-1', 'C2/c', 'P21/c', 'P212121'],
+     'generator':
+         {'model': {'hidden_dim': 256,
+                    'dropout': 0,
+                    'norm': 'layer',
+                    'num_layers': 4,
+                    'vector_norm': 'vector layer'},
+          'prior_loss_coefficient': 100
+          }},
 ]
 
 

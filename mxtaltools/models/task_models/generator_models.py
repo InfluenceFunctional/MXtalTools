@@ -55,9 +55,9 @@ class CrystalGenerator(nn.Module):
                 sg_ind_list: torch.LongTensor,
                 return_raw_sample=False) -> torch.Tensor:
 
-        x_w_sg = torch.cat([x, SG_FEATURE_TENSOR[sg_ind_list]], dim=1)
+        x_w_sg = torch.cat([x, self.SG_FEATURE_TENSOR[sg_ind_list]], dim=1)
 
-        x_w_sg, v = self.model(x=x, v=v)
+        x, v = self.model(x=x_w_sg, v=v)
 
         raw_sample = torch.cat([x, v[:, :, 0]], dim=-1) * self.stds[sg_ind_list] + self.means[sg_ind_list]
         if return_raw_sample:
