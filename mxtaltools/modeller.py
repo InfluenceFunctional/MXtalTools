@@ -1627,12 +1627,14 @@ class Modeller:
             scalar_mol_embedding = self.models_dict['autoencoder'].scalarizer(vector_mol_embedding)
 
             # loss, rmsd = self.models_dict['autoencoder'].check_embedding_quality(mol_data.clone())
+        scaling_factor = (self.generator_prior.norm_factors[mol_data.sg_ind, :] + 1e-4)
 
         # append scalar and vector features
         scalar_mol_embedding = torch.cat((scalar_mol_embedding,
                                           target_auv[:, None],
                                           prior[:, :9],
-                                          variation_factor[:, None]),
+                                          variation_factor[:, None],
+                                          scaling_factor),
                                          dim=1)
         reference_vector = torch.eye(3, dtype=torch.float32, device=self.device
                                      ).reshape(1, 3, 3
@@ -1694,7 +1696,7 @@ class Modeller:
 
         generator_losses = prior_loss * self.prior_loss_coefficient  #+
         # packing_loss * self.packing_loss_coefficient +
-        #vdw_loss * self.vdw_loss_coefficient)
+        # vdw_loss * self.vdw_loss_coefficient)
         supercell_data.loss = vdw_loss
 
         if skip_stats:
@@ -1726,7 +1728,8 @@ class Modeller:
 
     def anneal_prior_loss(self, prior_loss):
         # dynamically soften the packing loss when the model is doing well
-        if prior_loss.mean() < self.config.generator.prior_coefficient_threshold:
+        if (prior_loss.mean() < self.config.generator.prior_coefficient_threshold) and (
+                self.prior_loss_coefficient > 0.01):
             self.prior_loss_coefficient *= 0.99
         if (prior_loss.mean() > self.config.generator.prior_coefficient_threshold) and (
                 self.prior_loss_coefficient < 100):
