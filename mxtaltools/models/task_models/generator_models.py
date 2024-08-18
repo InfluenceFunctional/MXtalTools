@@ -55,7 +55,6 @@ class CrystalGenerator(nn.Module):
                 v: torch.Tensor,
                 sg_ind_list: torch.LongTensor,
                 return_raw_sample=False) -> torch.Tensor:
-
         x_w_sg = torch.cat([x, self.SG_FEATURE_TENSOR[sg_ind_list]], dim=1)
 
         x, v = self.model(x=x_w_sg, v=v)
@@ -67,13 +66,14 @@ class CrystalGenerator(nn.Module):
         # cell lengths have to be positive nonzero
         cell_lengths = softplus_shift(raw_sample[:, :3])
         # range from (0,pi) with 20% padding to prevent too-skinny cells
-        cell_angles = enforce_1d_bound(raw_sample[:, 3:6], x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2, mode='soft')
+        cell_angles = enforce_1d_bound(raw_sample[:, 3:6], x_span=torch.pi / 2 * 0.8, x_center=torch.pi / 2,
+                                       mode='hard')
         # positions must be on 0-1
-        mol_positions = enforce_1d_bound(raw_sample[:, 6:9], x_span=0.5, x_center=0.5, mode='soft')
+        mol_positions = enforce_1d_bound(raw_sample[:, 6:9], x_span=0.5, x_center=0.5, mode='hard')
         # for now, just enforce vector norm
         rotvec = raw_sample[:, 9:12]
         norm = torch.linalg.norm(rotvec, dim=1)
-        new_norm = enforce_1d_bound(norm, x_span=0.99 * torch.pi, x_center=torch.pi, mode='soft')  # MUST be nonzero
+        new_norm = enforce_1d_bound(norm, x_span=0.99 * torch.pi, x_center=torch.pi, mode='hard')  # MUST be nonzero
         new_rotvec = rotvec / norm[:, None] * new_norm[:, None]
         # invert_inds = torch.argwhere(new_rotvec[:, 2] < 0)
         # new_rotvec[invert_inds] = -new_rotvec[invert_inds]  # z direction always positive
@@ -84,64 +84,6 @@ class CrystalGenerator(nn.Module):
         sample = torch.cat((cell_lengths, cell_angles, mol_positions, new_rotvec), dim=-1)
 
         return sample
-
-
-class IndependentGaussianGenerator(nn.Module):
-    def __init__(self, input_dim, means, stds, sym_info, device, cov_mat=None):
-        super(IndependentGaussianGenerator, self).__init__()
-
-        self.device = device
-        self.input_dim = input_dim
-        means = torch.Tensor(means)
-        stds = torch.Tensor(stds)
-
-        self.register_buffer('means', torch.Tensor(means))
-        self.register_buffer('stds', torch.Tensor(stds))
-        self.register_buffer('fixed_norms', torch.Tensor(means))
-        self.register_buffer('fixed_stds', torch.Tensor(stds))
-
-        self.symmetries_dict = sym_info
-        # initialize asymmetric unit dict
-        self.asym_unit_dict = asym_unit_dict.copy()
-        for key in self.asym_unit_dict:
-            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])  # .to(self.device)
-
-        if cov_mat is not None:
-            pass
-        else:
-            cov_mat = torch.diag(torch.Tensor(stds).pow(2))
-
-        try:
-            self.prior = MultivariateNormal(means, torch.Tensor(cov_mat))  # apply standardization
-        except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
-            self.prior = MultivariateNormal(loc=means,
-                                            covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(
-                                                cov_mat).diagonal())
-
-    def forward(self, num_samples, data=None, sg_ind=None):
-        """
-        sample comes out in non-standardized basis, but with normalized cell lengths
-        so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
-        then standardize
-        """
-        if data is None:
-            pass
-        else:
-            sg_ind = data.sg_ind
-
-        samples = self.prior.sample((num_samples,))  # samples in the destandardied 'real' basis
-        final_samples = clean_cell_params(samples, sg_ind, self.means, self.stds,
-                                          self.symmetries_dict, self.asym_unit_dict,
-                                          rescale_asymmetric_unit=True, destandardize=False, mode='soft').to(
-            self.device)
-
-        return final_samples
-
-    def backward(self, samples):
-        return samples * self.stds + self.means
-
-    def score(self, samples):
-        return self.prior.log_prob(samples)
 
 
 class GeneratorPrior(nn.Module):
@@ -229,7 +171,6 @@ class GeneratorPrior(nn.Module):
         return torch.cat([self.lengths_prior.sample((num_samples,)),
                           self.angles_prior.sample((num_samples,))], dim=1)
 
-
     def forward(self, num_samples, sg_ind_list):
         """
         sample comes out in non-standardized basis, but with normalized cell lengths
@@ -269,3 +210,62 @@ class GeneratorPrior(nn.Module):
         np.save('prior_norm_factors', norms)
         np.save('prior_stds', stds)
         np.save('prior_means', means)
+
+
+
+class IndependentGaussianGenerator(nn.Module):
+    def __init__(self, input_dim, means, stds, sym_info, device, cov_mat=None):
+        super(IndependentGaussianGenerator, self).__init__()
+
+        self.device = device
+        self.input_dim = input_dim
+        means = torch.Tensor(means)
+        stds = torch.Tensor(stds)
+
+        self.register_buffer('means', torch.Tensor(means))
+        self.register_buffer('stds', torch.Tensor(stds))
+        self.register_buffer('fixed_norms', torch.Tensor(means))
+        self.register_buffer('fixed_stds', torch.Tensor(stds))
+
+        self.symmetries_dict = sym_info
+        # initialize asymmetric unit dict
+        self.asym_unit_dict = asym_unit_dict.copy()
+        for key in self.asym_unit_dict:
+            self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])  # .to(self.device)
+
+        if cov_mat is not None:
+            pass
+        else:
+            cov_mat = torch.diag(torch.Tensor(stds).pow(2))
+
+        try:
+            self.prior = MultivariateNormal(means, torch.Tensor(cov_mat))  # apply standardization
+        except ValueError:  # for some datasets (e.g., all tetragonal space groups) the covariance matrix is ill conditioned, so we throw away off diagonals (mostly unimportant)
+            self.prior = MultivariateNormal(loc=means,
+                                            covariance_matrix=torch.eye(12, dtype=torch.float32) * torch.Tensor(
+                                                cov_mat).diagonal())
+
+    def forward(self, num_samples, data=None, sg_ind=None):
+        """
+        sample comes out in non-standardized basis, but with normalized cell lengths
+        so, denormalize cell length (multiply by Z^(1/3) and vol^(1/3)
+        then standardize
+        """
+        if data is None:
+            pass
+        else:
+            sg_ind = data.sg_ind
+
+        samples = self.prior.sample((num_samples,))  # samples in the destandardied 'real' basis
+        final_samples = clean_cell_params(samples, sg_ind, self.means, self.stds,
+                                          self.symmetries_dict, self.asym_unit_dict,
+                                          rescale_asymmetric_unit=True, destandardize=False, mode='soft').to(
+            self.device)
+
+        return final_samples
+
+    def backward(self, samples):
+        return samples * self.stds + self.means
+
+    def score(self, samples):
+        return self.prior.log_prob(samples)
