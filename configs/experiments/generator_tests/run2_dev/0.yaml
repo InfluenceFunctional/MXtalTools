@@ -38,7 +38,7 @@ generator:
     weight_decay: 0
   packing_loss_coefficient: 1
   packing_target_noise: 0.1
-  prior_coefficient_threshold: 1
+  prior_coefficient_threshold: 1.0e-05
   prior_loss_coefficient: 1
   similarity_penalty: 0
   train_adversarially: false
