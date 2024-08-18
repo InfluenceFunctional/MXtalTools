@@ -39,13 +39,13 @@ generator:
   packing_loss_coefficient: 1
   packing_target_noise: 0.1
   prior_coefficient_threshold: 1
-  prior_loss_coefficient: 0.0001
+  prior_loss_coefficient: 1
   similarity_penalty: 0
   train_adversarially: false
   train_h_bond: false
   train_vdw: true
   variation_scale: 2
-  vdw_loss_coefficient: 1
+  vdw_loss_coefficient: 0.0001
   vdw_loss_func: inv
 gradient_norm_clip: 1
 grow_batch_size: true
