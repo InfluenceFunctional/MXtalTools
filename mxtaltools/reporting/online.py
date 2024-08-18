@@ -1183,12 +1183,79 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     wandb.log(average_losses_dict, commit=False)
 
     cell_density_plot(config, wandb, epoch_stats_dict, layout)
-    #plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
+    # plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
     new_cell_scatter(epoch_stats_dict, wandb, layout)
 
     log_crystal_samples(epoch_stats_dict)
 
+    log_generator_distributions(epoch_stats_dict)
+
+    vdw_vs_prior_dist(epoch_stats_dict)
+    vdw_vs_variation_dist(epoch_stats_dict)
+    variation_vs_prior_dist(epoch_stats_dict)
+    variation_vs_deviation_dist(epoch_stats_dict)
+
     return None
+
+
+def vdw_vs_variation_dist(epoch_stats_dict):
+    fig = go.Figure()
+    variation_factor = epoch_stats_dict['generator_variation_factor']
+    vdw_loss = epoch_stats_dict['generator_per_mol_vdw_loss']
+    fig.add_histogram2d(x=variation_factor, y=vdw_loss, nbinsx=64, nbinsy=64)
+    fig.update_layout(xaxis_title="Variation Factor",
+                      yaxis_title="vdW Loss"
+                      )
+    wandb.log({"vdW vs Variation Loss": fig}, commit=False)
+
+
+def variation_vs_prior_dist(epoch_stats_dict):
+    fig = go.Figure()
+    variation_factor = epoch_stats_dict['generator_variation_factor']
+    vdw_loss = epoch_stats_dict['generator_prior_loss']
+    fig.add_histogram2d(x=variation_factor, y=vdw_loss, nbinsx=64, nbinsy=64)
+    fig.update_layout(xaxis_title="Variation Factor",
+                      yaxis_title="Prior Loss"
+                      )
+    wandb.log({"Variation vs Prior Loss": fig}, commit=False)
+
+
+def variation_vs_deviation_dist(epoch_stats_dict):
+    fig = go.Figure()
+    variation_factor = epoch_stats_dict['generator_variation_factor']
+    scaled_deviations = np.stack(epoch_stats_dict['generator_scaled_deviation'])
+    fig.add_histogram2d(x=variation_factor, y=np.linalg.norm(scaled_deviations, axis=1), nbinsx=64, nbinsy=64)
+    fig.update_layout(xaxis_title="Variation Factor",
+                      yaxis_title="Scaled Deviations"
+                      )
+    wandb.log({"Variation vs Deviation": fig}, commit=False)
+
+
+
+def vdw_vs_prior_dist(epoch_stats_dict):
+    fig = go.Figure()
+    prior_loss = epoch_stats_dict['generator_prior_loss']
+    vdw_loss = epoch_stats_dict['generator_per_mol_vdw_loss']
+    fig.add_histogram2d(x=prior_loss, y=vdw_loss, nbinsx=64, nbinsy=64)
+    fig.update_layout(xaxis_title="Prior Loss",
+                      yaxis_title="vdW Loss"
+                      )
+    wandb.log({"vdW vs Prior Loss": fig}, commit=False)
+
+
+def log_generator_distributions(epoch_stats_dict):
+    for key in ['generated_space_group_numbers',
+                'generator_per_mol_vdw_loss',
+                'generator_per_mol_vdw_score',
+                'generator_prior_loss',
+                'generator_packing_prediction',
+                'generator_scaling_factor',
+                'generator_sample_lj_energy',
+                'generator_variation_factor']:
+        wandb.log(
+            data={key + '_distribution': wandb.Histogram(
+                np.nan_to_num(epoch_stats_dict[key], neginf=0, posinf=0))},
+            commit=False)
 
 
 def log_crystal_samples(epoch_stats_dict):
@@ -1226,7 +1293,8 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
         cscale.pop(0)
     fig = go.Figure()
     fig.add_scattergl(
-        x=-np.log10(-(df['vdw_score'] - 1e-2)), y=df['packing_prediction'],
+        x=-np.log10(-(df['vdw_score'] - 1e-3)),
+        y=np.log10(1 + df['packing_prediction']),
         mode='markers',
         marker_color=df['lj_energy'],
         opacity=opacity,
@@ -1235,16 +1303,15 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
                 'colorscale': cscale},
     )
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
+    fig.update_layout(xaxis_title='vdw score', yaxis_title='log(1 + Reduced Volume)')
     fig.update_layout(xaxis_range=[-1, np.inf],
-                      yaxis_range=[0, np.quantile(scatter_dict['packing_prediction'], 0.975)])
+                      yaxis_range=[0, np.inf])
 
     if len(df['vdw_score']) > 50000:
         fig.write_image('fig.png', width=512, height=512)  # save the image rather than the fig, for size reasons
         wandb.log({'Generator Samples': wandb.Image('fig.png')}, commit=False)
     else:
         wandb.log({'Generator Samples': fig}, commit=False)
-
 
 
 def old_cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_category=None):

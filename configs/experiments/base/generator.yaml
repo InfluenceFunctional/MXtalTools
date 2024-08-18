@@ -61,24 +61,26 @@ positional_noise:
   regressor: 0
   autoencoder: 0
 
-generate_sgs: null
+generate_sgs: null # ['P1','P-1']#,'C2/c','P21/c','P212121']
 supercell_size: 5
+
 
 # for GAN training
 generator:
-  packing_loss_coefficient: 1
-  prior_loss_coefficient: 10
+  packing_loss_coefficient: 1  # DEPRECATED, but do not delete
+  prior_loss_coefficient: 1
+  prior_coefficient_threshold: 1
   vdw_loss_coefficient: 1
-  variation_scale: 2
+  variation_scale: 2  # maximum of the uniform distribution of search scales
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
-  packing_target_noise: 0.1 # randn noise magnitude
-  train_vdw: True
-  train_adversarially: False
-  vdw_loss_func: inv  # not used / only 'inv'
-  density_loss_func: l1  # 'l1' or 'mse'
-  adversarial_loss_func: 'score'  #
-  train_h_bond: False # (non-directional)
-  similarity_penalty: 0
+  packing_target_noise: 0.1 # randn noise magnitude  # DEPRECATED, but do not delete
+  train_vdw: True  # DEPRECATED
+  train_adversarially: False  # DEPRECATED
+  vdw_loss_func: inv  # not used / only 'inv'  # DEPRECATED
+  density_loss_func: l1  # 'l1' or 'mse'  # DEPRECATED
+  adversarial_loss_func: 'score'  #  # DEPRECATED
+  train_h_bond: False # (non-directional)  # DEPRECATED
+  similarity_penalty: 0  # DEPRECATED
 
   #generator optimizer and model
   optimizer:
@@ -86,20 +88,20 @@ generator:
     beta2: 0.999
     convergence_eps: 1.0e-04
     init_lr: 1.0e-4
-    lr_growth_lambda: 1.01
+    lr_growth_lambda: 1.05
     lr_schedule: true
-    lr_shrink_lambda: 0.9975
+    lr_shrink_lambda: 0.99
     max_lr: 2.0e-3
     min_lr: 1.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
-    weight_decay: 0.01
+    weight_decay: 0
 
   model:
     hidden_dim: 256
     dropout: 0
-    norm: 'layer'
-    num_layers: 8
+    norm: layer
+    num_layers: 4
     vector_norm: 'vector layer'
 
 

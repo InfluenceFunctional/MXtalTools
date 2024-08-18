@@ -23,6 +23,7 @@ class Logger:
         self.sample_reporting_frequency = config.logger.sample_reporting_frequency
 
         self.packing_loss_coefficient = None
+        self.prior_loss_coefficient = None
         self.epoch = None
         self.learning_rates = {name: None for name in self.model_names}
         self.batch_size = None
@@ -184,6 +185,7 @@ class Logger:
 
         metrics_to_log = {'epoch': self.epoch,
                           'packing_loss_coefficient': self.packing_loss_coefficient,
+                          'prior_loss_coefficient': self.prior_loss_coefficient,
                           'batch_size': self.batch_size}
 
         for key in self.learning_rates.keys():

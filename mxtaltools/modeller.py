@@ -1427,8 +1427,9 @@ class Modeller:
         target_rauv = (torch.ones_like(target_rauv)
                        + torch.randn_like(target_rauv) * self.config.generator.packing_target_noise)
 
-        variation_factor = torch.rand(size=(data.num_graphs,),device=self.device
-                                      ) * self.config.generator.variation_scale
+        # larger means we allow more freedom in the search
+        variation_factor = torch.rand(size=(data.num_graphs,), device=self.device
+                                      ).abs() * self.config.generator.variation_scale
 
         generated_samples, prior, generator_data \
             = self.get_generator_samples(data, target_rauv, variation_factor)
@@ -1623,25 +1624,24 @@ class Modeller:
             mol_data, _ = self.preprocess_ae_inputs(mol_data, no_noise=True, orientation_override=None)
             prior = self.generator_prior(data.num_graphs, mol_data.sg_ind).to(self.device)
             vector_mol_embedding = self.models_dict['autoencoder'].encode(mol_data.clone())
-
-            # q = self.models_dict['autoencoder'].check_embedding_quality(mol_data.clone())
-
             scalar_mol_embedding = self.models_dict['autoencoder'].scalarizer(vector_mol_embedding)
 
-            # append scalar and vector features
-            scalar_mol_embedding = torch.cat((scalar_mol_embedding,
-                                              target_auv[:, None],
-                                              prior[:, :9],
-                                              variation_factor[:, None]),
-                                             dim=1)
-            reference_vector = torch.eye(3, dtype=torch.float32, device=self.device
-                                         ).reshape(1, 3, 3
-                                                   ).repeat(data.num_graphs, 1, 1)
+            # loss, rmsd = self.models_dict['autoencoder'].check_embedding_quality(mol_data.clone())
 
-            vector_mol_embedding = torch.cat((vector_mol_embedding,
-                                              prior[:, 9:, None],
-                                              reference_vector),
-                                             dim=2)
+        # append scalar and vector features
+        scalar_mol_embedding = torch.cat((scalar_mol_embedding,
+                                          target_auv[:, None],
+                                          prior[:, :9],
+                                          variation_factor[:, None]),
+                                         dim=1)
+        reference_vector = torch.eye(3, dtype=torch.float32, device=self.device
+                                     ).reshape(1, 3, 3
+                                               ).repeat(data.num_graphs, 1, 1)
+
+        vector_mol_embedding = torch.cat((vector_mol_embedding,
+                                          prior[:, 9:, None],
+                                          reference_vector),
+                                         dim=2)
 
         generated_samples = self.models_dict['generator'].forward(scalar_mol_embedding,
                                                                   vector_mol_embedding,
@@ -1661,22 +1661,17 @@ class Modeller:
                              variation_factor,
                              skip_stats,
                              ):
+        scaling_factor = (self.generator_prior.norm_factors[data.sg_ind, :] + 1e-4)
+        scaled_deviation = torch.abs(prior - generated_samples) / scaling_factor
+        # prior_loss = F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)  # 'flashlight' search
+        prior_loss = torch.log(1 + torch.pow(scaled_deviation.norm(dim=1) / variation_factor, 4))
 
-        scaled_deviation = (prior - generated_samples) / (self.generator_prior.norm_factors[data.sg_ind, :] + 1e-4)
-        prior_loss = F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)
-
-        if False:  #self.config.generator.train_adversarially:  # not currently using this
+        if False:  # self.config.generator.train_adversarially:  # not currently using this
             d_output, dist_dict = self.score_adversarially(supercell_data)  # skip discriminator call - slow
         else:
             dist_dict = get_intermolecular_dists_dict(supercell_data,
                                                       6,
                                                       100)
-
-        # vdw_loss, vdw_score, _, _, _, lj_potential= vdw_overlap(self.vdw_radii,
-        #                                            dist_dict=dist_dict,
-        #                                            num_graphs=data.num_graphs,
-        #                                            graph_sizes=data.num_atoms,
-        #                                            loss_func=self.config.generator.vdw_loss_func)
 
         molwise_overlap, molwise_normed_overlap, lj_potential, lj_loss \
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, data.num_graphs)
@@ -1685,7 +1680,7 @@ class Modeller:
 
         vdw_loss = lj_loss.clone() / data.num_atoms
 
-        packing_loss, sample_rauv = \
+        _, sample_rauv = \
             self.generator_density_matching_loss(
                 target_rauv,
                 data,
@@ -1694,11 +1689,12 @@ class Modeller:
                 precomputed_volumes=generated_cell_volumes,
                 loss_func=self.config.generator.density_loss_func)
 
-        self.anneal_packing_loss(packing_loss)
+        # self.anneal_packing_loss(packing_loss)
+        self.anneal_prior_loss(prior_loss)
 
-        generator_losses = (prior_loss * self.prior_loss_coefficient +
-                            #packing_loss * self.packing_loss_coefficient +
-                            vdw_loss * self.vdw_loss_coefficient)
+        generator_losses = prior_loss * self.prior_loss_coefficient  #+
+        # packing_loss * self.packing_loss_coefficient +
+        #vdw_loss * self.vdw_loss_coefficient)
         supercell_data.loss = vdw_loss
 
         if skip_stats:
@@ -1708,13 +1704,15 @@ class Modeller:
                 'generator_per_mol_vdw_loss': vdw_loss.detach(),
                 'generator_per_mol_vdw_score': vdw_score.detach(),
                 'generator_prior_loss': prior_loss.detach(),
-                'generator_packing_loss': packing_loss.detach(),
+                # 'generator_packing_loss': packing_loss.detach(),
                 'generator_packing_prediction': sample_rauv.detach(),
                 'generator_packing_target': target_rauv.detach(),
                 'generator_prior': prior.detach(),
+                'generator_scaling_factor': scaling_factor.detach(),
                 'generated_cell_parameters': generated_samples.detach(),
                 'generator_scaled_deviation': scaled_deviation.detach(),
                 'generator_sample_lj_energy': lj_potential.detach(),
+                'generator_variation_factor': variation_factor.detach(),
             }
         return generator_losses, stats_dict, supercell_data.detach()
 
@@ -1725,6 +1723,15 @@ class Modeller:
         if (packing_loss.mean() > 0.03) and (self.packing_loss_coefficient < 10):
             self.packing_loss_coefficient *= 1.01
         self.logger.packing_loss_coefficient = self.packing_loss_coefficient
+
+    def anneal_prior_loss(self, prior_loss):
+        # dynamically soften the packing loss when the model is doing well
+        if prior_loss.mean() < self.config.generator.prior_coefficient_threshold:
+            self.prior_loss_coefficient *= 0.99
+        if (prior_loss.mean() > self.config.generator.prior_coefficient_threshold) and (
+                self.prior_loss_coefficient < 100):
+            self.prior_loss_coefficient *= 1.01
+        self.logger.prior_loss_coefficient = self.prior_loss_coefficient
 
     def init_gaussian_generator(self):
         """

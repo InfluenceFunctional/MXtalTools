@@ -686,9 +686,9 @@ class vectorMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
         if conditions is not None:
             x = torch.cat((x, conditions), dim=-1)
 
-        x = self.init_layer(x)  # get the right feature depth
-        if v is not None:
-            v = self.v_init_layer(v)
+        # get the right feature depth
+        x = self.init_layer(x)
+        v = self.v_init_layer(v)
 
         for i, (norm, linear, activation, dropout, v_norm, v_linear, v_act, s2v_norm, s2v_linear, s2v_act, v2s_linear) in enumerate(
                 zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts,
