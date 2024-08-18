@@ -13,7 +13,7 @@ configs_list = [
                     'num_layers': 4,
                     'vector_norm': 'vector layer'},
           'prior_loss_coefficient': 1,
-          'prior_coefficient_threshold': 1,
+          'prior_coefficient_threshold': 0.00001,
           'variation_scale': 2,
           'vdw_loss_coefficient': 0.0001
           }},

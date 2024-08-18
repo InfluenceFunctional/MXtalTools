@@ -1212,8 +1212,8 @@ def vdw_vs_variation_dist(epoch_stats_dict):
 def variation_vs_prior_dist(epoch_stats_dict):
     fig = go.Figure()
     variation_factor = epoch_stats_dict['generator_variation_factor']
-    vdw_loss = epoch_stats_dict['generator_prior_loss']
-    fig.add_histogram2d(x=variation_factor, y=vdw_loss, nbinsx=64, nbinsy=64)
+    prior_loss = epoch_stats_dict['generator_prior_loss']
+    fig.add_histogram2d(x=variation_factor, y=np.log(prior_loss), nbinsx=64, nbinsy=64)
     fig.update_layout(xaxis_title="Variation Factor",
                       yaxis_title="Prior Loss"
                       )
@@ -1231,12 +1231,11 @@ def variation_vs_deviation_dist(epoch_stats_dict):
     wandb.log({"Variation vs Deviation": fig}, commit=False)
 
 
-
 def vdw_vs_prior_dist(epoch_stats_dict):
     fig = go.Figure()
     prior_loss = epoch_stats_dict['generator_prior_loss']
     vdw_loss = epoch_stats_dict['generator_per_mol_vdw_loss']
-    fig.add_histogram2d(x=prior_loss, y=vdw_loss, nbinsx=64, nbinsy=64)
+    fig.add_histogram2d(x=np.log(prior_loss), y=vdw_loss, nbinsx=64, nbinsy=64)
     fig.update_layout(xaxis_title="Prior Loss",
                       yaxis_title="vdW Loss"
                       )
