@@ -17,6 +17,18 @@ configs_list = [
           'variation_scale': 2,
           'vdw_loss_coefficient': 0.0001
           }},
+    {'generate_sgs': ['P-1'],
+     'generator':
+         {'model': {'hidden_dim': 256,
+                    'dropout': 0,
+                    'norm': 'layer',
+                    'num_layers': 4,
+                    'vector_norm': 'vector layer'},
+          'prior_loss_coefficient': 1,
+          'prior_coefficient_threshold': 0.000001,
+          'variation_scale': 2,
+          'vdw_loss_coefficient': 1
+          }},
 ]
 
 

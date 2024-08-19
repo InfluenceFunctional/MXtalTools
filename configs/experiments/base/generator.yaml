@@ -69,7 +69,7 @@ supercell_size: 5
 generator:
   packing_loss_coefficient: 1  # DEPRECATED, but do not delete
   prior_loss_coefficient: 1
-  prior_coefficient_threshold: 1
+  prior_coefficient_threshold: 0.001
   vdw_loss_coefficient: 1
   variation_scale: 2  # maximum of the uniform distribution of search scales
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
