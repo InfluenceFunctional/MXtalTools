@@ -504,7 +504,10 @@ def flatten_wandb_params(config):
 
 
 def scale_lj_pot(lj_pot: torch.tensor) -> torch.tensor:
-    scaled_lj_pot = lj_pot.clone()
+    if torch.is_tensor(lj_pot):
+        scaled_lj_pot = lj_pot.clone()
+    else:
+        scaled_lj_pot = lj_pot.copy()
     scaled_lj_pot[scaled_lj_pot > 0] = torch.log(scaled_lj_pot[scaled_lj_pot > 0]) + 1
     # alternate GAUSS = 10 * np.exp(-(xx)**8/0.4) - np.exp(-(xx - 1)**2/0.25)
     return scaled_lj_pot
