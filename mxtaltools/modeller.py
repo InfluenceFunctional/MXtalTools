@@ -1665,8 +1665,11 @@ class Modeller:
                              ):
         scaling_factor = (self.generator_prior.norm_factors[data.sg_ind, :] + 1e-4)
         scaled_deviation = torch.abs(prior - generated_samples) / scaling_factor
-        # prior_loss = F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)  # 'flashlight' search
-        prior_loss = torch.log(1 + torch.pow(scaled_deviation.norm(dim=1) / variation_factor, 4))
+        prior_loss = F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)  # 'flashlight' search
+        #prior_loss = torch.log(1 + torch.pow(scaled_deviation.norm(dim=1) / variation_factor, 4))
+        # p1 = prior + 10
+        # g1 = generated_samples + 10 - variation_factor[:, None]
+        # prior_loss = F.mse_loss(p1, g1, reduction='none').sum(1)
 
         if False:  # self.config.generator.train_adversarially:  # not currently using this
             d_output, dist_dict = self.score_adversarially(supercell_data)  # skip discriminator call - slow

@@ -74,7 +74,7 @@ generator:
     lr_growth_lambda: 1.05
     lr_schedule: true
     lr_shrink_lambda: 0.99
-    max_lr: 2.0e-3
+    max_lr: 1.0e-3
     min_lr: 1.0e-06
     optimizer: adamw
     use_plateau_scheduler: false

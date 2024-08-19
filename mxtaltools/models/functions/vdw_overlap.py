@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch_scatter import scatter
 
+from mxtaltools.common.utils import scale_lj_pot
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.asymmetric_radius_graph import asymmetric_radius_graph
 
@@ -188,9 +189,10 @@ def vdw_analysis(vdw_radii: torch.Tensor,
 
     #inv_scaled_dists = 1 / (-torch.minimum(0.99 * torch.ones_like(normed_overlap), normed_overlap) + 1) - 1
     #molwise_loss = scatter(inv_scaled_dists, batch, reduce='sum', dim_size=num_graphs)  # use always the inv-type loss function
-    scaled_lj_pot = lj_pot.clone()
-    scaled_lj_pot[scaled_lj_pot > 0] = torch.log10(scaled_lj_pot[scaled_lj_pot > 0]) + 1
-    molwise_loss = scatter(scaled_lj_pot, batch, reduce='sum',dim_size=num_graphs)
+    scaled_lj_pot = scale_lj_pot(lj_pot)
+
+    molwise_loss = scatter(scaled_lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
     return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss
+
 

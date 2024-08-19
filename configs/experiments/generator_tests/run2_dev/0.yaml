@@ -19,10 +19,10 @@ generator:
   density_loss_func: l1
   model:
     dropout: 0
-    hidden_dim: 256
-    norm: layer
-    num_layers: 4
-    vector_norm: vector layer
+    hidden_dim: 512
+    norm: null
+    num_layers: 8
+    vector_norm: null
   optimizer:
     beta1: 0.9
     beta2: 0.999
@@ -31,21 +31,21 @@ generator:
     lr_growth_lambda: 1.05
     lr_schedule: true
     lr_shrink_lambda: 0.99
-    max_lr: 0.002
+    max_lr: 0.001
     min_lr: 1.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
     weight_decay: 0
   packing_loss_coefficient: 1
   packing_target_noise: 0.1
-  prior_coefficient_threshold: 1.0e-05
+  prior_coefficient_threshold: 0.01
   prior_loss_coefficient: 1
   similarity_penalty: 0
   train_adversarially: false
   train_h_bond: false
   train_vdw: true
-  variation_scale: 2
-  vdw_loss_coefficient: 0.0001
+  variation_scale: 3
+  vdw_loss_coefficient: 1
   vdw_loss_func: inv
 gradient_norm_clip: 1
 grow_batch_size: true

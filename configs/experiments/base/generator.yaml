@@ -70,7 +70,7 @@ generator:
   packing_loss_coefficient: 1  # DEPRECATED, but do not delete
   prior_loss_coefficient: 1
   prior_coefficient_threshold: 0.001
-  vdw_loss_coefficient: 1
+  vdw_loss_coefficient: 0.1
   variation_scale: 2  # maximum of the uniform distribution of search scales
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.1 # randn noise magnitude  # DEPRECATED, but do not delete
@@ -91,7 +91,7 @@ generator:
     lr_growth_lambda: 1.05
     lr_schedule: true
     lr_shrink_lambda: 0.99
-    max_lr: 2.0e-3
+    max_lr: 1.0e-3
     min_lr: 1.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
@@ -100,9 +100,9 @@ generator:
   model:
     hidden_dim: 256
     dropout: 0
-    norm: layer
+    norm: null
     num_layers: 4
-    vector_norm: 'vector layer'
+    vector_norm: null #'vector layer'
 
 
 

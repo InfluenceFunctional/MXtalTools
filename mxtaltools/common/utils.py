@@ -501,3 +501,10 @@ def flatten_wandb_params(config):
             flat_config_dict[key] = str(flat_config_dict[key])
     config.__dict__.update(flat_config_dict)
     return config
+
+
+def scale_lj_pot(lj_pot: torch.tensor) -> torch.tensor:
+    scaled_lj_pot = lj_pot.clone()
+    scaled_lj_pot[scaled_lj_pot > 0] = torch.log(scaled_lj_pot[scaled_lj_pot > 0]) + 1
+    # alternate GAUSS = 10 * np.exp(-(xx)**8/0.4) - np.exp(-(xx - 1)**2/0.25)
+    return scaled_lj_pot

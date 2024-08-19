@@ -15,7 +15,7 @@ from torch_scatter import scatter
 import torch.nn.functional as F
 
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
-from mxtaltools.common.utils import get_point_density, softmax_np
+from mxtaltools.common.utils import get_point_density, softmax_np, scale_lj_pot
 
 from mxtaltools.common.geometry_calculations import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
@@ -1220,7 +1220,7 @@ def variation_vs_prior_dist(epoch_stats_dict):
     wandb.log({"Variation vs Prior Loss": fig}, commit=False)
 
 
-def variation_vs_deviation_dist(epoch_stats_dict):
+def variation_vs_deviation_dist(epoch_stats_dict: dict):
     fig = go.Figure()
     variation_factor = epoch_stats_dict['generator_variation_factor']
     scaled_deviations = np.stack(epoch_stats_dict['generator_scaled_deviation'])
@@ -1231,7 +1231,7 @@ def variation_vs_deviation_dist(epoch_stats_dict):
     wandb.log({"Variation vs Deviation": fig}, commit=False)
 
 
-def vdw_vs_prior_dist(epoch_stats_dict):
+def vdw_vs_prior_dist(epoch_stats_dict: dict):
     fig = go.Figure()
     prior_loss = epoch_stats_dict['generator_prior_loss']
     vdw_loss = epoch_stats_dict['generator_per_mol_vdw_loss']
@@ -1273,8 +1273,7 @@ def log_crystal_samples(epoch_stats_dict):
 
 
 def new_cell_scatter(epoch_stats_dict, wandb, layout):
-    scaled_lj = 1 * epoch_stats_dict['generator_sample_lj_energy']
-    scaled_lj[scaled_lj > 0] = np.log10(scaled_lj[scaled_lj > 0]) + 1
+    scaled_lj = scale_lj_pot(epoch_stats_dict['generator_sample_lj_energy'])
     vdw_cutoff = max(-10, min(epoch_stats_dict['generator_per_mol_vdw_score']))
 
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'].clip(min=vdw_cutoff),
