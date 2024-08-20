@@ -45,6 +45,19 @@ configs_list = [
           'variation_scale': 3,
           'vdw_loss_coefficient': 1  # fucked up, actually zero
           }},
+    {'max_batch_size': 2000,
+     'generate_sgs': ['Pccm'],
+     'generator':
+         {'model': {'hidden_dim': 512,
+                    'dropout': 0,
+                    'norm': None,
+                    'num_layers': 8,
+                    'vector_norm': None},
+          'prior_loss_coefficient': 1,
+          'prior_coefficient_threshold': 0.01,
+          'variation_scale': 3,
+          'vdw_loss_coefficient': 1  # fucked up, actually zero
+          }},
 ]
 
 

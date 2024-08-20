@@ -1698,8 +1698,7 @@ class Modeller:
         self.anneal_prior_loss(prior_loss)
 
         generator_losses = (prior_loss * self.prior_loss_coefficient +
-        # packing_loss * self.packing_loss_coefficient +
-         vdw_loss * self.vdw_loss_coefficient)
+                            vdw_loss * self.vdw_loss_coefficient)
         supercell_data.loss = vdw_loss
 
         if skip_stats:

@@ -1213,7 +1213,7 @@ def variation_vs_prior_dist(epoch_stats_dict):
     fig = go.Figure()
     variation_factor = epoch_stats_dict['generator_variation_factor']
     prior_loss = epoch_stats_dict['generator_prior_loss']
-    fig.add_histogram2d(x=variation_factor, y=np.log(prior_loss), nbinsx=64, nbinsy=64)
+    fig.add_histogram2d(x=variation_factor, y=np.log10(prior_loss), nbinsx=64, nbinsy=64)
     fig.update_layout(xaxis_title="Variation Factor",
                       yaxis_title="Prior Loss"
                       )
@@ -1235,7 +1235,7 @@ def vdw_vs_prior_dist(epoch_stats_dict: dict):
     fig = go.Figure()
     prior_loss = epoch_stats_dict['generator_prior_loss']
     vdw_loss = epoch_stats_dict['generator_per_mol_vdw_loss']
-    fig.add_histogram2d(x=np.log(prior_loss), y=vdw_loss, nbinsx=64, nbinsy=64)
+    fig.add_histogram2d(x=np.log10(prior_loss), y=vdw_loss, nbinsx=64, nbinsy=64)
     fig.update_layout(xaxis_title="Prior Loss",
                       yaxis_title="vdW Loss"
                       )
@@ -1254,6 +1254,10 @@ def log_generator_distributions(epoch_stats_dict):
         wandb.log(
             data={key + '_distribution': wandb.Histogram(
                 np.nan_to_num(epoch_stats_dict[key], neginf=0, posinf=0))},
+            commit=False)
+        wandb.log(
+            data={key + '_log_distribution': wandb.Histogram(
+                np.nan_to_num(np.log10(epoch_stats_dict[key]), neginf=0, posinf=0))},
             commit=False)
 
 
@@ -1292,7 +1296,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
     fig = go.Figure()
     fig.add_scattergl(
         x=-np.log10(-(df['vdw_score'] - 1e-3)),
-        y=np.log10(1 + df['packing_prediction']),
+        y=np.clip(df['packing_prediction'], a_min=0,a_max=5),
         mode='markers',
         marker_color=df['lj_energy'],
         opacity=opacity,
@@ -1301,7 +1305,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
                 'colorscale': cscale},
     )
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='vdw score', yaxis_title='log(1 + Reduced Volume)')
+    fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
     fig.update_layout(xaxis_range=[-1, np.inf],
                       yaxis_range=[0, np.inf])
 

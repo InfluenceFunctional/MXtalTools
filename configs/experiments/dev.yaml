@@ -45,7 +45,7 @@ model_paths:
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
-generate_sgs: ['P-1']#,'C2/c','P21/c','P212121']
+generate_sgs: ['Pccm'] #['P-1']#,'C2/c','P21/c','P212121']
 
 autoencoder:
   infer_protons: False

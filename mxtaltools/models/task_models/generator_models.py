@@ -203,7 +203,7 @@ class GeneratorPrior(nn.Module):
             d1 = torch.abs(p1 - p2)
             scale = d1.mean(0)
 
-            norms[ind] = scale.detach().numpy()
+            norms[ind] = scale.detach().numpy()  # todo normalize this across DoF as well
             stds[ind] = p1.std(0).detach().numpy()
             means[ind] = p1.mean(0).detach().numpy()
 
