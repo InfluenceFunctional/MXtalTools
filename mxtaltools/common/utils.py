@@ -485,8 +485,7 @@ def make_sequential_directory(yaml_path, workdir):  # make working directory
     hopefully does not overlap with any other workdirs
     :return:
     """
-    run_identifier = str(yaml_path).split('.yaml')[0].split('configs')[1].replace('\\',
-                                                                                                         '_').replace(
+    run_identifier = str(yaml_path).split('.yaml')[0].split('configs')[1].replace('\\','_').replace(
         '/', '_') + '_' + datetime.today().strftime("%d-%m-%H-%M-%S")
     working_directory = workdir + run_identifier
     os.mkdir(working_directory)
