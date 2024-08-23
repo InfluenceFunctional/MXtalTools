@@ -125,7 +125,7 @@ def old_cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
         fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         fig.update_traces(opacity=0.5)
 
-        fig_dict['lattice_features_distribution'] = fig
+        fig_dict['Lattice Features Distribution'] = fig
 
         wandb.log(data=overlap_results, commit=False)
         wandb.log(data=fig_dict, commit=False)
@@ -166,7 +166,7 @@ def new_cell_params_analysis(wandb, stats_dict):
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
     fig.update_traces(opacity=0.5)
 
-    wandb.log(data={'lattice_features_distribution': fig}, commit=False)
+    wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
 
 
 def plotly_setup(config):
@@ -1182,12 +1182,10 @@ def cell_generation_analysis(config, dataDims, epoch_stats_dict):
     generator_losses, average_losses_dict = process_generator_losses(config, epoch_stats_dict)
     wandb.log(average_losses_dict, commit=False)
 
-    cell_density_plot(config, wandb, epoch_stats_dict, layout)
+    # cell_density_plot(config, wandb, epoch_stats_dict, layout)
     # plot_generator_loss_correlates(dataDims, wandb, epoch_stats_dict, generator_losses, layout)
     new_cell_scatter(epoch_stats_dict, wandb, layout)
-
     log_crystal_samples(epoch_stats_dict)
-
     log_generator_distributions(epoch_stats_dict)
 
     vdw_vs_prior_dist(epoch_stats_dict)
@@ -1263,12 +1261,12 @@ def log_generator_distributions(epoch_stats_dict):
 
 def log_crystal_samples(epoch_stats_dict):
     sample_crystals = epoch_stats_dict['generator_samples'][0]
-    topk_samples = torch.argsort(sample_crystals.loss)[:5]
+    topk_samples = torch.argsort(sample_crystals.loss)[:6]
 
     mols = [ase_mol_from_crystaldata(sample_crystals,
                                      index=int(topk_samples[ind]),
                                      exclusion_level='distance',
-                                     inclusion_distance=6) for ind in range(min(5, len(sample_crystals)))]
+                                     inclusion_distance=8) for ind in range(min(6, len(topk_samples)))]
     [ase.io.write(f'sample_{i}.cif', mols[i]) for i in range(len(mols))]
     for ind in range(len(mols)):
         wandb.log(
@@ -1293,10 +1291,13 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
     if zeroval == 0:
         cscale.pop(0)
         cscale.pop(0)
+    elif zeroval == 1:
+        cscale.pop(-1)
+        cscale.pip(-1)
     fig = go.Figure()
     fig.add_scattergl(
         x=-np.log10(-(df['vdw_score'] - 1e-3)),
-        y=np.clip(df['packing_prediction'], a_min=0,a_max=5),
+        y=np.clip(df['packing_prediction'], a_min=0, a_max=5),
         mode='markers',
         marker_color=df['lj_energy'],
         opacity=opacity,

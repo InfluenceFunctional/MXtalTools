@@ -43,7 +43,7 @@ configs_list = [
           'prior_loss_coefficient': 1,
           'prior_coefficient_threshold': 0.01,
           'variation_scale': 3,
-          'vdw_loss_coefficient': 1  # fucked up, actually zero
+          'vdw_loss_coefficient': 1  # fixed
           }},
     {'max_batch_size': 2000,
      'generate_sgs': ['Pccm'],
@@ -56,7 +56,7 @@ configs_list = [
           'prior_loss_coefficient': 1,
           'prior_coefficient_threshold': 0.01,
           'variation_scale': 3,
-          'vdw_loss_coefficient': 1  # fucked up, actually zero
+          'vdw_loss_coefficient': 1  # fixed
           }},
 ]
 

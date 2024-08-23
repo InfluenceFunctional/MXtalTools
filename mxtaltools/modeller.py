@@ -1423,20 +1423,19 @@ class Modeller:
         else:
             skip_stats = True
 
-        target_rauv = self.get_generator_density_target(data)  # doesn't work for QM9 data
-        target_rauv = (torch.ones_like(target_rauv)
-                       + torch.randn_like(target_rauv) * self.config.generator.packing_target_noise)
+        # target_rauv = self.get_generator_density_target(data)  # doesn't work for QM9 data
+        # target_rauv = (torch.ones_like(target_rauv)
+        #                + torch.randn_like(target_rauv) * self.config.generator.packing_target_noise)
 
         # larger means we allow more freedom in the search
         variation_factor = torch.rand(size=(data.num_graphs,), device=self.device
                                       ).abs() * self.config.generator.variation_scale
 
         generated_samples, prior, generator_data \
-            = self.get_generator_samples(data, target_rauv, variation_factor)
+            = self.get_generator_samples(data, variation_factor)
 
         # denormalize the predicted cell lengths
-        cell_lengths = data.radius[:, None] * torch.pow(generator_data.sym_mult, 1 / 3)[:, None] * generated_samples[:,
-                                                                                                   :3]
+        cell_lengths = data.radius[:, None] * torch.pow(generator_data.sym_mult, 1 / 3)[:, None] * generated_samples[:, :3]
         # rescale asymmetric units  # todo add assertions around these
         mol_positions = descale_asymmetric_unit(self.supercell_builder.asym_unit_dict,
                                                 generated_samples[:, 6:9],
@@ -1457,11 +1456,9 @@ class Modeller:
         generator_losses, losses_stats, supercell_data = self.get_generator_losses(
             data,
             generated_samples,
-            generated_samples_to_build,
             supercell_data,
             generated_cell_volumes,
             prior,
-            target_rauv,
             variation_factor,
             skip_stats,
         )
@@ -1597,7 +1594,7 @@ class Modeller:
         return (discriminator_output_on_real, discriminator_output_on_fake,
                 rdf_dists, stats)
 
-    def get_generator_samples(self, data, target_auv, variation_factor, alignment_override=None):
+    def get_generator_samples(self, data, variation_factor, alignment_override=None):
         """
         set conformer orientation, optionally add noise, set the space group & symmetry information
         pass to generator and get cell parameters
@@ -1631,7 +1628,7 @@ class Modeller:
 
         # append scalar and vector features
         scalar_mol_embedding = torch.cat((scalar_mol_embedding,
-                                          target_auv[:, None],
+                                          #target_auv[:, None],
                                           prior[:, :9],
                                           variation_factor[:, None],
                                           scaling_factor),
@@ -1655,28 +1652,18 @@ class Modeller:
     def get_generator_losses(self,
                              data,
                              generated_samples,
-                             generated_samples_to_build,
                              supercell_data,
                              generated_cell_volumes,
                              prior,
-                             target_rauv,
                              variation_factor,
                              skip_stats,
                              ):
         scaling_factor = (self.generator_prior.norm_factors[data.sg_ind, :] + 1e-4)
         scaled_deviation = torch.abs(prior - generated_samples) / scaling_factor
         prior_loss = F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)  # 'flashlight' search
-        #prior_loss = torch.log(1 + torch.pow(scaled_deviation.norm(dim=1) / variation_factor, 4))
-        # p1 = prior + 10
-        # g1 = generated_samples + 10 - variation_factor[:, None]
-        # prior_loss = F.mse_loss(p1, g1, reduction='none').sum(1)
+        # prior_loss = torch.log(1 + torch.pow(scaled_deviation.norm(dim=1) / variation_factor, 4))
 
-        if False:  # self.config.generator.train_adversarially:  # not currently using this
-            d_output, dist_dict = self.score_adversarially(supercell_data)  # skip discriminator call - slow
-        else:
-            dist_dict = get_intermolecular_dists_dict(supercell_data,
-                                                      6,
-                                                      100)
+        dist_dict = get_intermolecular_dists_dict(supercell_data,6,100)
 
         molwise_overlap, molwise_normed_overlap, lj_potential, lj_loss \
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, data.num_graphs)
@@ -1685,14 +1672,8 @@ class Modeller:
 
         vdw_loss = lj_loss.clone() / data.num_atoms
 
-        _, sample_rauv = \
-            self.generator_density_matching_loss(
-                target_rauv,
-                data,
-                supercell_data.sym_mult,
-                generated_samples_to_build,
-                precomputed_volumes=generated_cell_volumes,
-                loss_func=self.config.generator.density_loss_func)
+        reduced_volume = generated_cell_volumes / supercell_data.sym_mult
+        sample_rauv = reduced_volume / scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[data.x[:, 0]] ** 3, data.batch, reduce='sum')
 
         # self.anneal_packing_loss(packing_loss)
         self.anneal_prior_loss(prior_loss)
@@ -1710,7 +1691,7 @@ class Modeller:
                 'generator_prior_loss': prior_loss.detach(),
                 # 'generator_packing_loss': packing_loss.detach(),
                 'generator_packing_prediction': sample_rauv.detach(),
-                'generator_packing_target': target_rauv.detach(),
+                #'generator_packing_target': target_rauv.detach(),
                 'generator_prior': prior.detach(),
                 'generator_scaling_factor': scaling_factor.detach(),
                 'generated_cell_parameters': generated_samples.detach(),

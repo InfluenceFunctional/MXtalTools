@@ -181,18 +181,21 @@ def vdw_analysis(vdw_radii: torch.Tensor,
     # uniform lennard jones potential
     sigma_r6 = torch.pow(radii_sums / dists, 6)
     sigma_r12 = torch.pow(sigma_r6, 2)
-    lj_pot = 4 * 1 * (sigma_r12 - sigma_r6)
+    lj_pot = torch.nan_to_num(
+        4 * 1 * (sigma_r12 - sigma_r6),
+        nan=0.0, posinf=1e20, neginf=-1e-20
+    )
 
     molwise_overlap = scatter(overlap, batch, reduce='sum', dim_size=num_graphs)
     molwise_normed_overlap = scatter(normed_overlap, batch, reduce='sum', dim_size=num_graphs)
     molwise_lj_pot = scatter(lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
-    #inv_scaled_dists = 1 / (-torch.minimum(0.99 * torch.ones_like(normed_overlap), normed_overlap) + 1) - 1
-    #molwise_loss = scatter(inv_scaled_dists, batch, reduce='sum', dim_size=num_graphs)  # use always the inv-type loss function
+    # inv_scaled_dists = 1 / (-torch.minimum(0.99 * torch.ones_like(normed_overlap), normed_overlap) + 1) - 1
+    # molwise_loss = scatter(inv_scaled_dists, batch, reduce='sum', dim_size=num_graphs)  # use always the inv-type loss function
     scaled_lj_pot = scale_lj_pot(lj_pot)
 
     molwise_loss = scatter(scaled_lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
+    # assert torch.all(torch.isfinite(molwise_loss)), 'ahhhhh!'
+
     return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss
-
-

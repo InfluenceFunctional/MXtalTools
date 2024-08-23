@@ -77,10 +77,11 @@ class SupercellBuilder:
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             unit_cell_to_convolution_cluster(
                 combined_unit_cell_coords_list, cell_vector_list,
-                combined_T_fc_list, combined_atomic_number_list, molecule_data.sym_mult,
+                self.device,
+                combined_atomic_number_list, molecule_data.sym_mult,
+                sorted_fractional_translations=self.sorted_fractional_translations,
                 supercell_scale=supercell_size,
                 cutoff=graph_convolution_cutoff,
-                sorted_fractional_translations=self.sorted_fractional_translations,
                 pare_to_convolution_cluster=pare_to_convolution_cluster)
 
         supercell_data = update_supercell_data(molecule_data, supercell_atoms_list,
@@ -214,10 +215,14 @@ class SupercellBuilder:
         cell_vector_list = T_fc_list.permute(0, 2, 1)
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             unit_cell_to_convolution_cluster(
-                unit_cell_coords_list, cell_vector_list, T_fc_list, atomic_number_list, supercell_data.sym_mult,
+                unit_cell_coords_list,
+                cell_vector_list,
+                self.device,
+                atomic_number_list,
+                supercell_data.sym_mult,
+                sorted_fractional_translations=self.sorted_fractional_translations,
                 supercell_scale=supercell_size,
                 cutoff=graph_convolution_cutoff,
-                sorted_fractional_translations=self.sorted_fractional_translations,
                 pare_to_convolution_cluster=pare_to_convolution_cluster)
 
         supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list,
@@ -300,20 +305,26 @@ class SupercellBuilder:
         """
         supercell_data = supercell_data.clone().to(self.device)
 
-        atoms_list = []
-        for i in range(supercell_data.num_graphs):
-            atoms_i = supercell_data.x[supercell_data.batch == i]
-            atoms_list.append(atoms_i)
+        node_feats_list = []
+        for i in range(supercell_data.num_graphs):  # TODO seems slow and bad
+            nodes = supercell_data.x[supercell_data.batch == i]
+            node_feats_list.append(nodes)
 
         cell_vector_list = supercell_data.T_fc.permute(0, 2, 1)  # confirmed this is the right way to do this
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
-            unit_cell_to_convolution_cluster(supercell_data.unit_cell_pos, cell_vector_list,
-                                             supercell_data.T_fc, atoms_list, supercell_data.sym_mult,
-                                             supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
+            unit_cell_to_convolution_cluster(supercell_data.unit_cell_pos,
+                                             cell_vector_list,
+                                             self.device,
+                                             node_feats_list,
+                                             supercell_data.sym_mult,
                                              sorted_fractional_translations=self.sorted_fractional_translations,
+                                             supercell_scale=supercell_size, cutoff=graph_convolution_cutoff,
                                              pare_to_convolution_cluster=pare_to_convolution_cluster)
 
-        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list,
+        supercell_data = update_supercell_data(supercell_data,
+                                               supercell_atoms_list,
+                                               supercell_list,
+                                               ref_mol_inds_list,
                                                supercell_data.unit_cell_pos)
 
         return supercell_data.to(self.device)

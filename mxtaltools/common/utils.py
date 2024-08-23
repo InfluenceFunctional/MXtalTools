@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch_scatter import scatter
 from scipy.interpolate import interpn
-from typing import List, Optional
+from typing import List, Optional, Union
 import collections
 from copy import copy
 
@@ -513,3 +513,14 @@ def scale_lj_pot(lj_pot: torch.tensor) -> torch.tensor:
 
     # alternate GAUSS = 10 * np.exp(-(xx)**8/0.4) - np.exp(-(xx - 1)**2/0.25)
     return scaled_lj_pot
+
+
+def signed_log(y: Union[torch.tensor, np.ndarray]
+               ) -> Union[torch.tensor, np.ndarray]:
+    if torch.is_tensor(y):
+        out = torch.sign(y) * torch.log(1+torch.abs(y))
+
+    else:
+        out = np.sign(y) * np.log(1 + np.abs(y))
+
+    return out

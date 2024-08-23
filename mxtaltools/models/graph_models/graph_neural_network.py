@@ -367,6 +367,7 @@ class MolCrystalScalarGNN(torch.nn.Module):
     def periodize_molecular_crystal(self, inside_batch, inside_inds, n, n_repeats, ptr, x, aux_ind):
         for ii in range(len(ptr) - 1):  # enforce periodicity for each crystal, assuming invariant node features
             # copy the first asymmetric unit to all periodic images (safe since all are SE(3) invariant)
+            # assumes the crystals are ordered specifically in this way
             # todo check if this could be done faster with repeat_interleave
             x[ptr[ii]:ptr[ii + 1], :] = x[inside_inds[inside_batch == ii]].repeat(n_repeats[ii], 1)
 

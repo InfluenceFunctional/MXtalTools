@@ -1,0 +1,94 @@
+autoencoder:
+  filter_protons: false
+  infer_protons: false
+base_config_path: /experiments/base/generator.yaml
+batch_growth_increment: 0.25
+dataset:
+  max_dataset_length: 1000000000
+  test_fraction: 0.2
+dataset_name: qm9_dataset.pt
+device: cuda
+early_epochs_step_override: 5
+extra_test_period: 5
+extra_test_set_name: null
+generate_sgs:
+- 1
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+- 8
+- 9
+- 10
+- 11
+- 12
+- 13
+- 14
+- 15
+- 16
+- 17
+- 18
+- 19
+- 20
+generator:
+  adversarial_loss_func: score
+  canonical_conformer_orientation: random
+  density_loss_func: l1
+  model:
+    dropout: 0
+    hidden_dim: 256
+    norm: batch
+    num_layers: 4
+    vector_norm: null
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 0.0001
+    init_lr: 0.0001
+    lr_growth_lambda: 1.05
+    lr_schedule: true
+    lr_shrink_lambda: 0.99
+    max_lr: 0.001
+    min_lr: 1.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0
+  packing_loss_coefficient: 1
+  packing_target_noise: 0.1
+  prior_coefficient_threshold: 0.01
+  prior_loss_coefficient: 1
+  similarity_penalty: 0
+  train_adversarially: false
+  train_h_bond: false
+  train_vdw: true
+  variation_scale: 3
+  vdw_loss_coefficient: 1
+  vdw_loss_func: inv
+gradient_norm_clip: 10
+grow_batch_size: true
+history: 50
+logger:
+  experiment_tag: gen_dev3
+  run_name: gen_dev3_0_1
+  sample_reporting_frequency: 5
+  stats_reporting_frequency: 5
+machine: cluster
+max_batch_size: 100000
+max_epoch_steps: 500
+max_epochs: 10000
+min_batch_size: 25
+minimum_epochs: 10000
+model_paths:
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49
+  discriminator: null
+  embedding_regressor: null
+  generator: null
+  polymorph_classifier: null
+  regressor: null
+num_early_epochs: 0
+overfit_tolerance: 4
+save_checkpoints: true
+seeds:
+  dataset: 1

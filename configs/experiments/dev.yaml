@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/generator.yaml
-dataset_name: test_qm9_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+dataset_name: test_qm9_dataset.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: True
 #sweep_path: configs/experiments/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
@@ -17,12 +17,12 @@ seeds:
   dataset: 1
 
 # batching & convergence
-max_epoch_steps: 50
+max_epoch_steps: 100
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 25
-max_batch_size: 100
+max_batch_size: 500
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
@@ -32,7 +32,7 @@ gradient_norm_clip: 1
 extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  sample_reporting_frequency: 2  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
   stats_reporting_frequency: 1  # how many steps between which to move training stats to cpu
   experiment_tag: dev
   run_name: dev
@@ -45,7 +45,7 @@ model_paths:
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
-generate_sgs: ['Pccm'] #['P-1']#,'C2/c','P21/c','P212121']
+generate_sgs: ['P21/c'] #['P-1']#,'C2/c','P21/c','P212121']
 
 autoencoder:
   infer_protons: False

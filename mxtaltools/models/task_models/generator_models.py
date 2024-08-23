@@ -40,8 +40,8 @@ class CrystalGenerator(nn.Module):
                                filters=config.hidden_dim,
                                norm=config.norm,
                                dropout=config.dropout,
-                               # embedding, prior, target density (unused), target deviation, sg information, prior scaling
-                               input_dim=embedding_dim + 9 + 2 + 237 + 12,
+                               # embedding, prior, target deviation, sg information, prior scaling
+                               input_dim=embedding_dim + 9 + 1 + 237 + 12,
                                output_dim=6 + z_prime * 3,
                                vector_input_dim=embedding_dim + z_prime + 3,
                                vector_output_dim=z_prime,
