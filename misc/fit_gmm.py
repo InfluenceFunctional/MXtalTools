@@ -6,6 +6,7 @@ from scipy.special import logsumexp
 
 import torch
 
+# from https://github.com/ldeecke/gmm-torch/blob/master/gmm.py
 
 def calculate_matmul_n_times(n_components, mat_a, mat_b):
     """

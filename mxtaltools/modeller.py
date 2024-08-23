@@ -1442,7 +1442,7 @@ class Modeller:
                                                 generator_data.sg_ind)
         generated_samples_to_build = torch.cat(
             [cell_lengths, generated_samples[:, 3:6], mol_positions, generated_samples[:, 9:12]], dim=1)
-
+        assert torch.sum(torch.isnan(generated_samples)) == 0, "NaN in Generator Output!"
         supercell_data, generated_cell_volumes = (
             self.supercell_builder.build_zp1_supercells(
                 molecule_data=generator_data,
@@ -1463,6 +1463,8 @@ class Modeller:
             skip_stats,
         )
         generator_loss = generator_losses.mean()
+        if torch.sum(torch.logical_not(torch.isfinite(generator_losses))) > 0:
+            raise ValueError("Mean loss is NaN/Inf")
 
         if update_weights:
             self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
@@ -1670,7 +1672,7 @@ class Modeller:
 
         vdw_score = -molwise_normed_overlap / data.num_atoms
 
-        vdw_loss = lj_loss.clone() / data.num_atoms
+        vdw_loss = lj_loss / data.num_atoms
 
         reduced_volume = generated_cell_volumes / supercell_data.sym_mult
         sample_rauv = reduced_volume / scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[data.x[:, 0]] ** 3, data.batch, reduce='sum')

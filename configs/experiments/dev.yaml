@@ -39,7 +39,7 @@ logger:
 
 model_paths:
   discriminator: null
-  generator: null
+  generator: cluster/best_generator_experiments_generator_tests_run3_dev_6_23-08-08-57-22
   regressor: null #'volume_model.pt'
   autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49  # excellent proton model
   embedding_regressor: null

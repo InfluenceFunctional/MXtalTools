@@ -101,15 +101,19 @@ def unit_cell_to_convolution_cluster(unit_cell_pos_list: list,
             # todo this is the one part that might be tricky to parallelize
             successful_gconv = False
             extra_cutoff = 0
-            while not successful_gconv:
+            test_ind = 0
+            while not successful_gconv and test_ind <= 5:  # this actually just sucks and shouldn't be necessary
                 # ignore atoms which are more than 2 * mol_radius + conv_cutoff + buffer
                 convolve_mol_inds = \
                     torch.where((mol_centroid_dists <= (2 * ref_mol_radius + cutoff + extra_cutoff + 0.01)))[0]
 
-                if len(convolve_mol_inds) <= 9:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
+                if test_ind >= 5:
+                    convolve_mol_inds = torch.where(mol_centroid_dists < 100)[0]  # just take everything
+                elif len(convolve_mol_inds) <= 2:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
                     extra_cutoff += 1
                 else:
                     successful_gconv = True
+                test_ind += 1
 
             assert len(convolve_mol_inds) > 1  # must be more than one molecule in convolution
 
@@ -854,6 +858,8 @@ def new_unit_cell_to_convolution_cluster(supercell_data,
     # will never be duplicate entries because edges above are strictly many-to-one
     ref_mol_inds[edge_atoms[~good_bools]] = 2
     ref_mol_inds[canonical_conformer_node_inds] = 0
+
+    good_nodes_per_graph = scatter(torch.tensor(ref_mol_inds < 2, dtype=torch.int, device=device), supercell_batch, reduce='sum', dim=0, dim_size=num_graphs)
 
     '''generate supercell features array'''
     supercell_nodes = torch.cat([

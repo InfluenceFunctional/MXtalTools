@@ -226,7 +226,7 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
     emd = earth_movers_distance_torch(torch_rdf1_f, torch_rdf2)
 
     range_normed_emd = emd / len(torch_range) ** 2 * (
-                torch_range[-1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+            torch_range[-1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
     # do not adjust the above - distance is extensive weirdly extensive in bin scaling
     aggregation_weight = (rdf1.sum(1) + rdf2.sum(1)) / 2  # aggregate rdf components according to pairwise mean weight
     distance = (range_normed_emd * aggregation_weight).mean()
@@ -485,7 +485,7 @@ def make_sequential_directory(yaml_path, workdir):  # make working directory
     hopefully does not overlap with any other workdirs
     :return:
     """
-    run_identifier = str(yaml_path).split('.yaml')[0].split('configs')[1].replace('\\','_').replace(
+    run_identifier = str(yaml_path).split('.yaml')[0].split('configs')[1].replace('\\', '_').replace(
         '/', '_') + '_' + datetime.today().strftime("%d-%m-%H-%M-%S")
     working_directory = workdir + run_identifier
     os.mkdir(working_directory)
@@ -502,23 +502,32 @@ def flatten_wandb_params(config):
     return config
 
 
-def scale_lj_pot(lj_pot: torch.tensor) -> torch.tensor:
-    if torch.is_tensor(lj_pot):
-        scaled_lj_pot = lj_pot.clone()
-        scaled_lj_pot[scaled_lj_pot > 0] = torch.log(scaled_lj_pot[scaled_lj_pot > 0]) + torch.log(torch.ones_like(scaled_lj_pot[scaled_lj_pot>0]))
+def scale_lj_pot(xx: Union[np.ndarray, torch.tensor]) \
+        -> Union[np.ndarray, torch.tensor]:
+    # positive_bools = lj_pot > 0
+    # if torch.is_tensor(xx):
+    #     scaled_lj_pot = 50 * torch.exp(-(xx) ** 2 / 0.29) - 1.55*torch.exp(-(xx - 1) ** 2 / 0.25)
+    #
+    # #     scaled_lj_pot = lj_pot.clone()
+    # #     scaled_lj_pot[positive_bools] = (
+    # #         torch.log(scaled_lj_pot[positive_bools] + 1))
+    #     #scaled_lj_pot = 50 * torch.exp(-(xx) ** 8 / 0.25) - 1.05 * torch.exp(-(xx - 1) ** 2 / 0.25)
+    #
+    # else:
+    #     scaled_lj_pot = 50 * np.exp(-(xx) ** 2 / 0.29) - 1.55 * np.exp(-(xx - 1) ** 2 / 0.25)
+    #
+    #     # scaled_lj_pot = lj_pot.copy()
+    #     # scaled_lj_pot[positive_bools] = (
+    #     #     np.log(scaled_lj_pot[positive_bools] + 1))
+    #     #scaled_lj_pot = 50 * np.exp(-(xx) ** 8 / 0.25) - 1.05 * np.exp(-(xx - 1) ** 2 / 0.25)
 
-    else:
-        scaled_lj_pot = lj_pot.copy()
-        scaled_lj_pot[scaled_lj_pot > 0] = np.log(scaled_lj_pot[scaled_lj_pot > 0]) + np.log(np.ones_like(scaled_lj_pot[scaled_lj_pot>0]))
-
-    # alternate GAUSS = 10 * np.exp(-(xx)**8/0.4) - np.exp(-(xx - 1)**2/0.25)
-    return scaled_lj_pot
+    return xx.clip(max=10)
 
 
 def signed_log(y: Union[torch.tensor, np.ndarray]
                ) -> Union[torch.tensor, np.ndarray]:
     if torch.is_tensor(y):
-        out = torch.sign(y) * torch.log(1+torch.abs(y))
+        out = torch.sign(y) * torch.log(1 + torch.abs(y))
 
     else:
         out = np.sign(y) * np.log(1 + np.abs(y))

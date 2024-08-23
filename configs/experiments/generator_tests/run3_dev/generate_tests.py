@@ -130,7 +130,7 @@ configs_list = [
           'optimizer': {'max_lr': 1e-3}
 
           }},
-    # 8 - big with norm
+    # 8 - big with norm  # stalled out
     {'max_batch_size': 100000,
      'generate_sgs': SG_list,
      'generator':

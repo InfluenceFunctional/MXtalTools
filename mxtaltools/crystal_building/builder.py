@@ -8,7 +8,7 @@ from mxtaltools.crystal_building.utils import \
     (update_supercell_data, unit_cell_to_convolution_cluster,
      align_molecules_to_principal_axes,
      batch_asymmetric_unit_pose_analysis_torch, rotvec2rotmat, aunit2unit_cell, generate_sorted_fractional_translations,
-     get_symmetry_functions)
+     get_symmetry_functions, new_unit_cell_to_convolution_cluster)
 from mxtaltools.common.geometry_calculations import sph2rotvec
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.dataset_management.CrystalData import CrystalData
@@ -311,6 +311,10 @@ class SupercellBuilder:
             node_feats_list.append(nodes)
 
         cell_vector_list = supercell_data.T_fc.permute(0, 2, 1)  # confirmed this is the right way to do this
+
+        # supercell_data2, n_copies2 = new_unit_cell_to_convolution_cluster(supercell_data.clone(), cell_vector_list,
+        #                                                        self.sorted_fractional_translations, self.device)
+        # in misc/supercell_builder_test1.py see comparison between new and old methods
         supercell_list, supercell_atoms_list, ref_mol_inds_list, n_copies = \
             unit_cell_to_convolution_cluster(supercell_data.unit_cell_pos,
                                              cell_vector_list,

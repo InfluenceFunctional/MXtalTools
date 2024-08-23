@@ -1286,7 +1286,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
     opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 1e4)
     df = pd.DataFrame.from_dict(scatter_dict)
 
-    zeroval = abs((0 - (scaled_lj).min()) / np.ptp(scaled_lj))
+    zeroval = abs((0 - (scaled_lj).min()) / (np.ptp(scaled_lj) + 1e-3))
     cscale = [[0, 'green'], [zeroval * 0.95, 'blue'], [zeroval, "yellow"], [1, 'red']]
     if zeroval == 0:
         cscale.pop(0)
@@ -1941,73 +1941,6 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
 
     wandb.log(data={"Mini-CSP Cell Parameters": fig}, commit=False)
     return None
-
-
-#
-# TODO deprecated - rewrite for toy / demo purposes
-# def oneD_gaussian_overlap_plot(cmax, data, decoded_data, max_point_types, max_xval, min_xval, sigma):
-#     fig = make_subplots(rows=max_point_types, cols=min(4, data.num_graphs))
-#     x = np.linspace(min(-1, min_xval), max(1, max_xval), 1001)
-#     for j in range(max_point_types):
-#         for graph_ind in range(min(4, data.num_graphs)):
-#             row = j + 1
-#             col = graph_ind + 1
-#
-#             points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
-#             points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
-#
-#             ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
-#             pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
-#
-#             fig.add_scattergl(x=x, y=np.sum(np.exp(-(x - points_true[ref_type_inds]) ** 2 / sigma), axis=0),
-#                               line_color='blue', showlegend=True if (j == 0 and graph_ind == 0) else False,
-#                               name=f'True type {j}', legendgroup=f'Predicted type {j}', row=row, col=col)
-#
-#             fig.add_scattergl(x=x, y=np.sum(pred_type_weights * np.exp(-(x - points_pred) ** 2 / sigma), axis=0),
-#                               line_color='red', showlegend=True if j == 0 and graph_ind == 0 else False,
-#                               name=f'Predicted type {j}', legendgroup=f'Predicted type {j}', row=row, col=col)
-#
-#             # fig.add_scattergl(x=x, y=np.sum(np.exp(-(x - points_true[ref_type_inds]) ** 2 / 0.00001), axis=0), line_color='blue', showlegend=False, name='True', row=row, col=col)
-#             # fig.add_scattergl(x=x, y=np.sum(pred_type_weights * np.exp(-(x - points_pred) ** 2 / 0.00001), axis=0), line_color='red', showlegend=False, name='Predicted', row=row, col=col)
-#     fig.update_yaxes(range=[0, cmax])
-#     return fig
-#
-#
-# def twoD_gaussian_overlap_plot(cmax, data, decoded_data, max_point_types, max_xval, min_xval, sigma):
-#     fig = make_subplots(rows=max_point_types, cols=min(4, data.num_graphs))
-#     num_gridpoints = 25
-#     x = np.linspace(min(-1, min_xval), max(1, max_xval), num_gridpoints)
-#     y = np.copy(x)
-#     xx, yy = np.meshgrid(x, y)
-#     grid_array = np.stack((xx.flatten(), yy.flatten())).T
-#     for j in range(max_point_types):
-#         for graph_ind in range(min(4, data.num_graphs)):
-#             row = j + 1
-#             col = graph_ind + 1
-#
-#             points_true = data.pos[data.batch == graph_ind].cpu().detach().numpy()
-#             points_pred = decoded_data.pos[decoded_data.batch == graph_ind].cpu().detach().numpy()
-#
-#             ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
-#             pred_type_weights = decoded_data.x[decoded_data.batch == graph_ind, j].cpu().detach().numpy()[:, None]
-#
-#             pred_dist = np.sum(pred_type_weights.mean() * np.exp(-(cdist(grid_array, points_pred) ** 2 / sigma)), axis=-1).reshape(num_gridpoints, num_gridpoints)
-#
-#             fig.add_trace(go.Contour(x=x, y=y, z=pred_dist,
-#                                      showlegend=True if (j == 0 and graph_ind == 0) else False,
-#                                      name=f'Predicted type', legendgroup=f'Predicted type',
-#                                      coloraxis="coloraxis",
-#                                      contours=dict(start=0, end=cmax, size=cmax / 50)
-#                                      ), row=row, col=col)
-#
-#             fig.add_trace(go.Scattergl(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1],
-#                                        mode='markers', marker_color='white', marker_size=10, marker_line_width=2, marker_line_color='green',
-#                                        showlegend=True if (j == 0 and graph_ind == 0) else False,
-#                                        name=f'True type', legendgroup=f'True type'
-#                                        ), row=row, col=col)
-#     fig.update_coloraxes(cmin=0, cmax=cmax, autocolorscale=False, colorscale='viridis')
-#     return fig
-
 
 def polymorph_classification_trajectory_analysis(test_loader, stats_dict, traj_name):
     # analysis here comprises plotting relative polymorph compositions
