@@ -1684,7 +1684,7 @@ class Modeller:
 
         # self.anneal_packing_loss(packing_loss)
         self.anneal_prior_loss(prior_loss)
-        self.anneal_vdw_turnover(vdw_loss)
+        self.anneal_vdw_turnover(vdw_loss, prior_loss)
 
         generator_losses = (prior_loss * self.prior_loss_coefficient +
                             vdw_loss * self.vdw_loss_coefficient)
