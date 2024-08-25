@@ -1286,7 +1286,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
     opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 1e4)
     df = pd.DataFrame.from_dict(scatter_dict)
 
-    zeroval = abs((0 - (scaled_lj).min()) / (np.ptp(scaled_lj) + 1e-3))
+    zeroval = abs((0 - (scaled_lj).min()) / (np.ptp(scaled_lj) + 1e-6))
     cscale = [[0, 'green'], [zeroval * 0.95, 'blue'], [zeroval, "yellow"], [1, 'red']]
     if zeroval == 0:
         cscale.pop(0)
@@ -1295,7 +1295,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
         cscale.pop(-1)
         cscale.pip(-1)
     fig = go.Figure()
-    fig.add_scattergl(
+    fig.add_scatter(
         x=-np.log10(-(df['vdw_score'] - 1e-3)),
         y=np.clip(df['packing_prediction'], a_min=0, a_max=5),
         mode='markers',

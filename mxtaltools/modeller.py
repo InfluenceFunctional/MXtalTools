@@ -1444,7 +1444,9 @@ class Modeller:
                                                 generator_data.sg_ind)
         generated_samples_to_build = torch.cat(
             [cell_lengths, generated_samples[:, 3:6], mol_positions, generated_samples[:, 9:12]], dim=1)
-        assert torch.sum(torch.isnan(generated_samples)) == 0, "NaN in Generator Output!"
+        if torch.sum(torch.isnan(generated_samples)) > 0:
+            self.vdw_turnover_potential *= 0.75  # soften vdW
+            raise ValueError("Mean loss is NaN/Inf")
         supercell_data, generated_cell_volumes = (
             self.supercell_builder.build_zp1_supercells(
                 molecule_data=generator_data,

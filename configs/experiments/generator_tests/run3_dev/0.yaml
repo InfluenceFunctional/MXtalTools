@@ -46,7 +46,7 @@ generator:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 0.0001
-    init_lr: 0.0001
+    init_lr: 1.0e-05
     lr_growth_lambda: 1.05
     lr_schedule: true
     lr_shrink_lambda: 0.99
