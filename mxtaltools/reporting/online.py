@@ -1275,7 +1275,7 @@ def log_crystal_samples(epoch_stats_dict):
 
 
 def new_cell_scatter(epoch_stats_dict, wandb, layout):
-    scaled_lj = scale_lj_pot(epoch_stats_dict['generator_sample_lj_energy'])
+    scaled_lj = epoch_stats_dict['generator_sample_lj_loss']
     vdw_cutoff = max(-10, min(epoch_stats_dict['generator_per_mol_vdw_score']))
 
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'].clip(min=vdw_cutoff),

@@ -1275,6 +1275,7 @@ class Modeller:
         self.packing_loss_coefficient = self.config.generator.packing_loss_coefficient
         self.prior_loss_coefficient = self.config.generator.prior_loss_coefficient
         self.vdw_loss_coefficient = self.config.generator.vdw_loss_coefficient
+        self.vdw_turnover_potential = self.config.generator.vdw_turnover_potential
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
             self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in asym_unit_dict.keys()]
@@ -1435,7 +1436,8 @@ class Modeller:
             = self.get_generator_samples(data, variation_factor)
 
         # denormalize the predicted cell lengths
-        cell_lengths = data.radius[:, None] * torch.pow(generator_data.sym_mult, 1 / 3)[:, None] * generated_samples[:, :3]
+        cell_lengths = data.radius[:, None] * torch.pow(generator_data.sym_mult, 1 / 3)[:, None] * generated_samples[:,
+                                                                                                   :3]
         # rescale asymmetric units  # todo add assertions around these
         mol_positions = descale_asymmetric_unit(self.supercell_builder.asym_unit_dict,
                                                 generated_samples[:, 6:9],
@@ -1665,20 +1667,22 @@ class Modeller:
         prior_loss = F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor)  # 'flashlight' search
         # prior_loss = torch.log(1 + torch.pow(scaled_deviation.norm(dim=1) / variation_factor, 4))
 
-        dist_dict = get_intermolecular_dists_dict(supercell_data,6,100)
+        dist_dict = get_intermolecular_dists_dict(supercell_data, 6, 100)
 
         molwise_overlap, molwise_normed_overlap, lj_potential, lj_loss \
-            = vdw_analysis(self.vdw_radii_tensor, dist_dict, data.num_graphs)
+            = vdw_analysis(self.vdw_radii_tensor, dist_dict, data.num_graphs, self.vdw_turnover_potential)
 
         vdw_score = -molwise_normed_overlap / data.num_atoms
 
         vdw_loss = lj_loss / data.num_atoms
 
         reduced_volume = generated_cell_volumes / supercell_data.sym_mult
-        sample_rauv = reduced_volume / scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[data.x[:, 0]] ** 3, data.batch, reduce='sum')
+        sample_rauv = reduced_volume / scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[data.x[:, 0]] ** 3, data.batch,
+                                               reduce='sum')
 
         # self.anneal_packing_loss(packing_loss)
         self.anneal_prior_loss(prior_loss)
+        self.anneal_vdw_turnover(vdw_loss)
 
         generator_losses = (prior_loss * self.prior_loss_coefficient +
                             vdw_loss * self.vdw_loss_coefficient)
@@ -1699,6 +1703,7 @@ class Modeller:
                 'generated_cell_parameters': generated_samples.detach(),
                 'generator_scaled_deviation': scaled_deviation.detach(),
                 'generator_sample_lj_energy': lj_potential.detach(),
+                'generator_sample_lj_loss': vdw_loss.detach(),
                 'generator_variation_factor': variation_factor.detach(),
             }
         return generator_losses, stats_dict, supercell_data.detach()
@@ -1721,13 +1726,19 @@ class Modeller:
             self.prior_loss_coefficient *= 1.01
         self.logger.prior_loss_coefficient = self.prior_loss_coefficient
 
+    def anneal_vdw_turnover(self, vdw_loss):
+        # dynamically harden the LJ repulsive potential when the model is doing well
+
+        # if doing well and not hit max value, dynamically increase
+        if (vdw_loss.mean() < 0) and (self.vdw_turnover_potential < 10):
+            self.vdw_turnover_potential += 0.01
+        # never soften - monotonic convergence
+        self.logger.vdw_turnover_potential = self.vdw_turnover_potential
+
     def init_gaussian_generator(self):
         """
-
-        """
-        ''' 
         init gaussian generator for cell parameter sampling
-        '''
+        """
         self.gaussian_generator = IndependentGaussianGenerator(input_dim=12,
                                                                means=self.dataDims['lattice_means'],
                                                                stds=self.dataDims['lattice_stds'],

@@ -502,26 +502,23 @@ def flatten_wandb_params(config):
     return config
 
 
-def scale_lj_pot(xx: Union[np.ndarray, torch.tensor]) \
+def scale_lj_pot(lj_pot: Union[np.ndarray, torch.tensor],
+                 turnover_pot: float = 5,
+                 clip_max: float = 50) \
         -> Union[np.ndarray, torch.tensor]:
-    # positive_bools = lj_pot > 0
-    # if torch.is_tensor(xx):
-    #     scaled_lj_pot = 50 * torch.exp(-(xx) ** 2 / 0.29) - 1.55*torch.exp(-(xx - 1) ** 2 / 0.25)
-    #
-    # #     scaled_lj_pot = lj_pot.clone()
-    # #     scaled_lj_pot[positive_bools] = (
-    # #         torch.log(scaled_lj_pot[positive_bools] + 1))
-    #     #scaled_lj_pot = 50 * torch.exp(-(xx) ** 8 / 0.25) - 1.05 * torch.exp(-(xx - 1) ** 2 / 0.25)
-    #
-    # else:
-    #     scaled_lj_pot = 50 * np.exp(-(xx) ** 2 / 0.29) - 1.55 * np.exp(-(xx - 1) ** 2 / 0.25)
-    #
-    #     # scaled_lj_pot = lj_pot.copy()
-    #     # scaled_lj_pot[positive_bools] = (
-    #     #     np.log(scaled_lj_pot[positive_bools] + 1))
-    #     #scaled_lj_pot = 50 * np.exp(-(xx) ** 8 / 0.25) - 1.05 * np.exp(-(xx - 1) ** 2 / 0.25)
+    high_bools = lj_pot > turnover_pot
+    if torch.is_tensor(lj_pot):
 
-    return xx.clip(max=10)
+        scaled_lj_pot = lj_pot.clone()
+        scaled_lj_pot[high_bools] = (
+            torch.log(scaled_lj_pot[high_bools] + 1))
+
+    else:
+        scaled_lj_pot = lj_pot.copy()
+        scaled_lj_pot[high_bools] = (
+            np.log(scaled_lj_pot[high_bools] + 1))
+
+    return scaled_lj_pot.clip(max=clip_max)
 
 
 def signed_log(y: Union[torch.tensor, np.ndarray]

@@ -71,6 +71,7 @@ generator:
   prior_loss_coefficient: 1
   prior_coefficient_threshold: 0.01 #0.001
   vdw_loss_coefficient: 1
+  vdw_turnover_potential: 0
   variation_scale: 3  # maximum of the uniform distribution of search scales
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
   packing_target_noise: 0.1 # randn noise magnitude  # DEPRECATED, but do not delete

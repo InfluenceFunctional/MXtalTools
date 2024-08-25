@@ -162,6 +162,7 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None,
 def vdw_analysis(vdw_radii: torch.Tensor,
                  dist_dict: dict,
                  num_graphs: int,
+                 turnover_potential: float = 10,
                  ):
     """
     new version of the vdw_overlap function for analysis of intermolecular contacts
@@ -192,7 +193,7 @@ def vdw_analysis(vdw_radii: torch.Tensor,
 
     # inv_scaled_dists = 1 / (-torch.minimum(0.99 * torch.ones_like(normed_overlap), normed_overlap) + 1) - 1
     # molwise_loss = scatter(inv_scaled_dists, batch, reduce='sum', dim_size=num_graphs)  # use always the inv-type loss function
-    scaled_lj_pot = scale_lj_pot(lj_pot)  # gaussian approximation functionally clipped at 50
+    scaled_lj_pot = scale_lj_pot(lj_pot, turnover_pot=turnover_potential)  # gaussian approximation functionally clipped at 50
 
     molwise_loss = scatter(scaled_lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
