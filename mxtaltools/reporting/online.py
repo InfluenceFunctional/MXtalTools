@@ -1287,7 +1287,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
     df = pd.DataFrame.from_dict(scatter_dict)
 
     zeroval = abs((0 - (scaled_lj).min()) / (np.ptp(scaled_lj) + 1e-6))
-    cscale = [[0, 'green'], [zeroval * 0.95, 'blue'], [zeroval, "yellow"], [1, 'red']]
+    cscale = [[0, 'green'], [zeroval * 0.99, 'blue'], [zeroval, "yellow"], [1, 'red']]
     if zeroval == 0:
         cscale.pop(0)
         cscale.pop(0)
@@ -1310,7 +1310,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
     fig.update_layout(xaxis_range=[-1, np.inf],
                       yaxis_range=[0, np.inf])
 
-    if len(df['vdw_score']) > 50000:
+    if len(df['vdw_score']) > 1000:
         fig.write_image('fig.png', width=512, height=512)  # save the image rather than the fig, for size reasons
         wandb.log({'Generator Samples': wandb.Image('fig.png')}, commit=False)
     else:

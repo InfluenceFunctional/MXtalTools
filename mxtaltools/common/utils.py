@@ -511,12 +511,12 @@ def scale_lj_pot(lj_pot: Union[np.ndarray, torch.tensor],
 
         scaled_lj_pot = lj_pot.clone()
         scaled_lj_pot[high_bools] = (
-            torch.log(scaled_lj_pot[high_bools] + 1))
+            torch.log10(scaled_lj_pot[high_bools] + 1))
 
     else:
         scaled_lj_pot = lj_pot.copy()
         scaled_lj_pot[high_bools] = (
-            np.log(scaled_lj_pot[high_bools] + 1))
+            np.log10(scaled_lj_pot[high_bools] + 1))
 
     return scaled_lj_pot.clip(max=clip_max)
 

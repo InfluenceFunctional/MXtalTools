@@ -1724,15 +1724,16 @@ class Modeller:
                 self.prior_loss_coefficient > 0.01):
             self.prior_loss_coefficient *= 0.99
         if (prior_loss.mean() > self.config.generator.prior_coefficient_threshold) and (
-                self.prior_loss_coefficient < 100):
+                self.prior_loss_coefficient < 10):
             self.prior_loss_coefficient *= 1.01
         self.logger.prior_loss_coefficient = self.prior_loss_coefficient
 
-    def anneal_vdw_turnover(self, vdw_loss):
+    def anneal_vdw_turnover(self, vdw_loss, prior_loss):
         # dynamically harden the LJ repulsive potential when the model is doing well
-
-        # if doing well and not hit max value, dynamically increase
-        if (vdw_loss.mean() < 0) and (self.vdw_turnover_potential < 10):
+        # if doing well on prior and LJ, and not hit max value, dynamically increase
+        if ((vdw_loss.mean() < 0) and
+                (self.vdw_turnover_potential < 10) and
+                (prior_loss.mean() < self.config.generator.prior_coefficient_threshold)):
             self.vdw_turnover_potential += 0.01
         # never soften - monotonic convergence
         self.logger.vdw_turnover_potential = self.vdw_turnover_potential

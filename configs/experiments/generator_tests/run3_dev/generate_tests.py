@@ -160,6 +160,36 @@ configs_list = [
           'vdw_loss_coefficient': 1,
           'optimizer': {'max_lr': 1e-3}
           }},
+    # 10 - fat with 1 SG, lower LR, big variation scale
+    {'max_batch_size': 10000,
+     'generate_sgs': ['P21/c'],
+     'generator':
+         {'model': {'hidden_dim': 1024,
+                    'dropout': 0,
+                    'norm': None,
+                    'num_layers': 4,
+                    'vector_norm': None},
+          'prior_loss_coefficient': 1,
+          'prior_coefficient_threshold': 0.01,
+          'variation_scale': 8,
+          'vdw_loss_coefficient': 1,
+          'optimizer': {'max_lr': 1e-4}
+          }},
+    # 11 - 10, but even fatter
+    {'max_batch_size': 10000,
+     'generate_sgs': ['P21/c'],
+     'generator':
+         {'model': {'hidden_dim': 2048,
+                    'dropout': 0,
+                    'norm': None,
+                    'num_layers': 4,
+                    'vector_norm': None},
+          'prior_loss_coefficient': 1,
+          'prior_coefficient_threshold': 0.01,
+          'variation_scale': 8,
+          'vdw_loss_coefficient': 1,
+          'optimizer': {'max_lr': 1e-4}
+          }},
 ]
 
 
