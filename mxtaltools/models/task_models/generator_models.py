@@ -7,7 +7,7 @@ from torch.distributions import MultivariateNormal, Uniform, LogNormal
 
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.space_group_feature_tensor import SG_FEATURE_TENSOR
-from mxtaltools.models.modules.components import vectorMLP
+from mxtaltools.models.modules.components import vectorMLP, scalarMLP
 from mxtaltools.models.utils import enforce_crystal_system, enforce_1d_bound, clean_cell_params
 
 
@@ -36,30 +36,42 @@ class CrystalGenerator(nn.Module):
         self.register_buffer('SG_FEATURE_TENSOR', SG_FEATURE_TENSOR.clone())  # store space group information
 
         # generator model
-        self.model = vectorMLP(layers=config.num_layers,
+        # self.model = vectorMLP(layers=config.num_layers,
+        #                        filters=config.hidden_dim,
+        #                        norm=config.norm,
+        #                        dropout=config.dropout,
+        #                        # embedding, prior, target deviation, sg information, prior scaling
+        #                        input_dim=embedding_dim + 9 + 1 + 237 + 12,
+        #                        output_dim=6 + z_prime * 3,
+        #                        vector_input_dim=embedding_dim + z_prime + 3,
+        #                        vector_output_dim=z_prime,
+        #                        conditioning_dim=0,
+        #                        seed=seed,
+        #                        vector_norm=config.vector_norm
+        #                        )
+        self.model = scalarMLP(layers=config.num_layers,
                                filters=config.hidden_dim,
                                norm=config.norm,
                                dropout=config.dropout,
-                               # embedding, prior, target deviation, sg information, prior scaling
-                               input_dim=embedding_dim + 9 + 1 + 237 + 12,
-                               output_dim=6 + z_prime * 3,
-                               vector_input_dim=embedding_dim + z_prime + 3,
-                               vector_output_dim=z_prime,
-                               conditioning_dim=0,
-                               seed=seed,
-                               vector_norm=config.vector_norm
+                               # scalar embedding, prior, target deviation,
+                               # sg information, prior scaling, vector embedding,
+                               # reference vector
+                               input_dim=embedding_dim + 12 + 1 + 237 + 12 + embedding_dim * 3 + 9,
+                               output_dim=6 + z_prime * 6,
                                )
 
     def forward(self,
                 x: torch.Tensor,
                 v: torch.Tensor,
                 sg_ind_list: torch.LongTensor,
-                return_raw_sample=False) -> torch.Tensor:
+                ) -> torch.Tensor:
         x_w_sg = torch.cat([x, self.SG_FEATURE_TENSOR[sg_ind_list]], dim=1)
 
-        x, v = self.model(x=x_w_sg, v=v)
+        #x, v = self.model(x=x_w_sg, v=v)
+        #raw_sample = torch.cat([x, v[:, :, 0]], dim=-1) * self.stds[sg_ind_list] + self.means[sg_ind_list]
 
-        raw_sample = torch.cat([x, v[:, :, 0]], dim=-1) * self.stds[sg_ind_list] + self.means[sg_ind_list]
+        x_w_v = torch.cat([x_w_sg, v.reshape(v.shape[0], v.shape[1] * v.shape[2])], dim=1)
+        raw_sample = self.model(x=x_w_v)
 
         # force outputs into physical ranges
 
@@ -73,7 +85,7 @@ class CrystalGenerator(nn.Module):
         # for now, just enforce vector norm
         rotvec = raw_sample[:, 9:12]
         norm = torch.linalg.norm(rotvec, dim=1)
-        new_norm = enforce_1d_bound(norm, x_span=0.99 * torch.pi, x_center=torch.pi, mode='hard')  # MUST be nonzero
+        new_norm = enforce_1d_bound(norm, x_span=0.999 * torch.pi, x_center=torch.pi, mode='hard')  # MUST be nonzero
         new_rotvec = rotvec / norm[:, None] * new_norm[:, None]
         # invert_inds = torch.argwhere(new_rotvec[:, 2] < 0)
         # new_rotvec[invert_inds] = -new_rotvec[invert_inds]  # z direction always positive

@@ -194,9 +194,10 @@ def vdw_analysis(vdw_radii: torch.Tensor,
     # inv_scaled_dists = 1 / (-torch.minimum(0.99 * torch.ones_like(normed_overlap), normed_overlap) + 1) - 1
     # molwise_loss = scatter(inv_scaled_dists, batch, reduce='sum', dim_size=num_graphs)  # use always the inv-type loss function
     scaled_lj_pot = scale_lj_pot(lj_pot, turnover_pot=turnover_potential)  # gaussian approximation functionally clipped at 50
+    eval_lj_pot = scale_lj_pot(lj_pot, turnover_pot=10)  # gaussian approximation functionally clipped at 50
 
     molwise_loss = scatter(scaled_lj_pot, batch, reduce='sum', dim_size=num_graphs)
-
+    molwise_eval_loss = scatter(eval_lj_pot, batch, reduce='sum', dim_size=num_graphs)
     # assert torch.all(torch.isfinite(molwise_loss)), 'ahhhhh!'
 
-    return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss
+    return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss, molwise_eval_loss

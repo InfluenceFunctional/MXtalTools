@@ -319,7 +319,6 @@ def construct_radial_graph(pos: torch.FloatTensor,
         return {'edge_index': edge_index}
 
 
-
 # noinspection PyAttributeOutsideInit
 class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
     r"""
@@ -370,9 +369,6 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
         self.ramp_depth = ramp_depth
 
         torch.manual_seed(seed)
-        # addition of two normally distributed 3-vectors increases the norm by roughly this factor on average
-        # divide this out to combat vector elongation & poor gradient flow
-        self.vector_addition_rescaling_factor = 1.6
         self.init_scalar_filters(filters, layers)
         self.init_scalar_transforms()
 
@@ -548,7 +544,7 @@ class vectorMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
             self.same_depth = False
         else:
             self.n_filters = [filters for _ in range(layers)]
-            self.same_depth=True
+            self.same_depth = True
 
         if self.n_filters.count(self.n_filters[0]) != len(
                 self.n_filters):  # if they are not all the same, we need residue adjustments
@@ -690,7 +686,8 @@ class vectorMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
         x = self.init_layer(x)
         v = self.v_init_layer(v)
 
-        for i, (norm, linear, activation, dropout, v_norm, v_linear, v_act, s2v_norm, s2v_linear, s2v_act, v2s_linear) in enumerate(
+        for i, (norm, linear, activation, dropout, v_norm, v_linear, v_act, s2v_norm, s2v_linear, s2v_act,
+                v2s_linear) in enumerate(
                 zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts,
                     self.v_fc_norms, self.v_fc_layers, self.vector_activation,
                     self.scalar_to_vector_norm, self.s_to_v_gating_layers, self.s_to_v_activations,
@@ -740,10 +737,6 @@ class vectorMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
             v = self.v_residue_adjust[i](v)
 
         return x, v
-
-
-
-
 
 # old - deprecated
 # class GlobalAggregation(nn.Module):  # TODO upgrade/replace with new PyG aggregation module
@@ -861,7 +854,6 @@ class vectorMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
 #             return scalar_agg, vector_agg
 #         else:
 #             return self.agg(x, batch, size=output_dim)
-
 
 
 # old - replaced by separate scalar and vector models

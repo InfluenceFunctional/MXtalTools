@@ -1275,7 +1275,7 @@ def log_crystal_samples(epoch_stats_dict):
 
 
 def new_cell_scatter(epoch_stats_dict, wandb, layout):
-    scaled_lj = epoch_stats_dict['generator_sample_lj_loss']
+    scaled_lj = epoch_stats_dict['generator_per_mol_vdw_loss']
     vdw_cutoff = max(-10, min(epoch_stats_dict['generator_per_mol_vdw_score']))
 
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'].clip(min=vdw_cutoff),
@@ -1283,17 +1283,16 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
                     'prior_loss': epoch_stats_dict['generator_prior_loss'],
                     'lj_energy': scaled_lj,
                     }
-    opacity = max(0.1, 1 - len(scatter_dict['vdw_score']) / 1e4)
+    opacity = max(0.25, 1 - len(scatter_dict['vdw_score']) / 1e5)
     df = pd.DataFrame.from_dict(scatter_dict)
-
-    zeroval = abs((0 - (scaled_lj).min()) / (np.ptp(scaled_lj) + 1e-6))
-    cscale = [[0, 'green'], [zeroval * 0.99, 'blue'], [zeroval, "yellow"], [1, 'red']]
+    maxval = min(10, scaled_lj.max())
+    zeroval = max(0, (0 - scaled_lj.min()) / (maxval - scaled_lj.min()))
+    cscale = [[0, 'green'], [min(1, zeroval) * 0.99, 'blue'], [min(zeroval, 1), "yellow"], [1, 'red']]
     if zeroval == 0:
         cscale.pop(0)
         cscale.pop(0)
-    elif zeroval == 1:
+    elif zeroval >= 1:
         cscale.pop(-1)
-        cscale.pip(-1)
     fig = go.Figure()
     fig.add_scatter(
         x=-np.log10(-(df['vdw_score'] - 1e-3)),
@@ -1301,7 +1300,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
         mode='markers',
         marker_color=df['lj_energy'],
         opacity=opacity,
-        marker={"cmin": min(-1, np.amin(df['lj_energy'])), "cmax": 10,
+        marker={"cmin": min(-1, np.amin(df['lj_energy'])), "cmax": maxval,
                 "colorbar_title": "LJ Energy",
                 'colorscale': cscale},
     )
@@ -1941,6 +1940,7 @@ def log_csp_cell_params(config, wandb, generated_samples_dict, real_samples_dict
 
     wandb.log(data={"Mini-CSP Cell Parameters": fig}, commit=False)
     return None
+
 
 def polymorph_classification_trajectory_analysis(test_loader, stats_dict, traj_name):
     # analysis here comprises plotting relative polymorph compositions

@@ -508,16 +508,11 @@ def scale_lj_pot(lj_pot: Union[np.ndarray, torch.tensor],
         -> Union[np.ndarray, torch.tensor]:
     high_bools = lj_pot > turnover_pot
     if torch.is_tensor(lj_pot):
-
         scaled_lj_pot = lj_pot.clone()
-        scaled_lj_pot[high_bools] = (
-            torch.log10(scaled_lj_pot[high_bools] + 1))
-
+        scaled_lj_pot[high_bools] = turnover_pot + torch.log10(scaled_lj_pot[high_bools] + 1 - turnover_pot)
     else:
         scaled_lj_pot = lj_pot.copy()
-        scaled_lj_pot[high_bools] = (
-            np.log10(scaled_lj_pot[high_bools] + 1))
-
+        scaled_lj_pot[high_bools] = turnover_pot + np.log10(scaled_lj_pot[high_bools] + 1 - turnover_pot)
     return scaled_lj_pot.clip(max=clip_max)
 
 

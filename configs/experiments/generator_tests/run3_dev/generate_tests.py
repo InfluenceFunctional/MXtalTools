@@ -161,7 +161,7 @@ configs_list = [
           'optimizer': {'max_lr': 1e-3}
           }},
     # 10 - fat with 1 SG, lower LR, big variation scale
-    {'max_batch_size': 10000,
+    {'max_batch_size': 1000,
      'generate_sgs': ['P21/c'],
      'generator':
          {'model': {'hidden_dim': 1024,
@@ -176,7 +176,7 @@ configs_list = [
           'optimizer': {'max_lr': 1e-4}
           }},
     # 11 - 10, but even fatter
-    {'max_batch_size': 10000,
+    {'max_batch_size': 1000,
      'generate_sgs': ['P21/c'],
      'generator':
          {'model': {'hidden_dim': 2048,
