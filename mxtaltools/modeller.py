@@ -2069,7 +2069,7 @@ class Modeller:
     def reload_model_checkpoint_configs(self):
         for model_name, model_path in self.config.model_paths.__dict__.items():
             if model_path is not None:
-                checkpoint = torch.load(model_path)
+                checkpoint = torch.load(model_path, map_location=self.device)
                 model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
                 self.config.__dict__[model_name].optimizer = model_config.optimizer
                 self.config.__dict__[model_name].model = model_config.model
