@@ -25,6 +25,7 @@ dataset:
   dumps_rids: null
 
 # batching & convergence
+num_samples: 1.0E+8
 max_epoch_steps: 1.0E+8
 early_epochs_step_override: 0
 num_early_epochs: 0

@@ -186,7 +186,7 @@ def softmax_np(x: np.ndarray, temperature: float = 1):
     return probabilities
 
 
-def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
+def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_numpy: bool=False):
     """
     Compute a distance metric between two radial distribution functions including sub_rdfs where sub_rdfs are e.g., particular interatomic RDFS within a certain sample (elementwise or atomwise modes).
 
@@ -204,7 +204,6 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
 
     """
 
-    return_numpy = False
     if not torch.is_tensor(rdf1):
         torch_rdf1 = torch.Tensor(rdf1)
         torch_rdf2 = torch.Tensor(rdf2)
@@ -225,11 +224,13 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None):
 
     emd = earth_movers_distance_torch(torch_rdf1_f, torch_rdf2)
 
-    range_normed_emd = emd / len(torch_range) ** 2 * (
-            torch_range[-1] - torch_range[0])  # rescale the distance from units of bins to the real physical range
+    # rescale the distance from units of bins to the real physical range
+    range_normed_emd = emd / len(torch_range) ** 2 * (torch_range[-1] - torch_range[0])
     # do not adjust the above - distance is extensive weirdly extensive in bin scaling
-    aggregation_weight = (rdf1.sum(1) + rdf2.sum(1)) / 2  # aggregate rdf components according to pairwise mean weight
-    distance = (range_normed_emd * aggregation_weight).mean()
+
+    # aggregate rdf components according to pairwise mean weight
+    aggregation_weight = (torch_rdf1_f.sum(-1) + torch_rdf2.sum(-1)) / 2
+    distance = (range_normed_emd * aggregation_weight).mean(1)
 
     assert torch.sum(torch.isnan(distance)) == 0
     if return_numpy:
@@ -525,3 +526,7 @@ def signed_log(y: Union[torch.tensor, np.ndarray]
         out = np.sign(y) * np.log(1 + np.abs(y))
 
     return out
+
+
+def sample_uniform(num_samples, max_value, device):
+    return torch.rand(size=(num_samples,), device=device) * max_value

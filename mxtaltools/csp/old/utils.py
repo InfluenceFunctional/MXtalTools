@@ -10,7 +10,7 @@ import constants.asymmetric_units
 from mxtaltools.common.geometry_calculations import cell_vol_torch
 from mxtaltools.common.utils import compute_rdf_distance
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
-from mxtaltools.crystal_building.utils import update_crystal_symmetry_elements, DEPRECATED_write_sg_to_all_crystals
+from mxtaltools.crystal_building.utils import overwrite_symmetry_info, DEPRECATED_write_sg_to_all_crystals
 from mxtaltools.models.functions.crystal_rdf import crystal_rdf
 from mxtaltools.models.utils import softmax_and_score, undo_1d_bound
 from mxtaltools.models.functions.vdw_overlap import vdw_overlap
@@ -331,7 +331,7 @@ def rebuild_topk_crystals(scores_list, scores_dict, real_samples_dict, sampling_
         for n in tqdm.tqdm(range(topk_size)):
             real_data_i = real_data.clone()
 
-            real_data_i = update_crystal_symmetry_elements(real_data_i, best_samples_space_groups[:, n], supercell_builder.symmetries_dict, randomize_sgs=False)
+            real_data_i = overwrite_symmetry_info(real_data_i, best_samples_space_groups[:, n], supercell_builder.symmetries_dict, randomize_sgs=False)
 
             fake_supercell_data = supercell_builder.build_zp1_supercells(
                 real_data_i,

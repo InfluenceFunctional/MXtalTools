@@ -4,13 +4,15 @@ from typing import Union, Tuple
 import numpy as np
 import torch
 from scipy.stats import linregress
+from sklearn.cluster import AgglomerativeClustering
 from torch import optim, nn as nn
 from torch.nn import functional as F
 from torch.optim import lr_scheduler as lr_scheduler
 from torch_scatter import scatter, scatter_softmax
+from tqdm import tqdm
 
 from mxtaltools.common.geometry_calculations import cell_vol_torch
-from mxtaltools.common.utils import softmax_np, components2angle
+from mxtaltools.common.utils import softmax_np, components2angle, compute_rdf_distance
 from mxtaltools.crystal_building.utils import descale_asymmetric_unit, scale_asymmetric_unit
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.dataloader_utils import update_dataloader_batch_size
@@ -1003,3 +1005,132 @@ def get_intermolecular_dists_dict(supercell_data, conv_cutoff, max_num_neighbors
     dist_dict['intermolecular_dist_inds'] = edges_dict['edge_index_inter']
 
     return dist_dict
+
+
+def denormalize_generated_cell_params(generator_raw_samples, mol_data, asym_unit_dict):
+    # denormalize the predicted cell lengths
+    cell_lengths = (mol_data.radius[:, None] *
+                    torch.pow(mol_data.sym_mult, 1 / 3)[:, None] *
+                    generator_raw_samples[:, :3])
+    # rescale asymmetric units  # todo add assertions around these
+    mol_positions = descale_asymmetric_unit(asym_unit_dict,
+                                            generator_raw_samples[:, 6:9],
+                                            mol_data.sg_ind)
+    generated_samples_to_build = torch.cat(
+        [cell_lengths, generator_raw_samples[:, 3:6], mol_positions, generator_raw_samples[:, 9:12]], dim=1)
+    return generated_samples_to_build
+
+
+def compute_prior_loss(norm_factors: torch.Tensor,
+                       sg_inds: torch.LongTensor,
+                       generator_raw_samples: torch.Tensor,
+                       prior: torch.Tensor,
+                       variation_factor: torch.Tensor) -> torch.Tensor:
+    """
+    Take the norm of the scaled distances between prior and generated samples,
+    and apply a quadratic penalty when it is larger than variation_factor
+    Parameters
+    ----------
+    data
+    generator_raw_samples
+    prior
+    variation_factor
+
+    Returns
+    -------
+
+    """
+    scaling_factor = (norm_factors[sg_inds, :] + 1e-4)
+    scaled_deviation = torch.abs(prior - generator_raw_samples) / scaling_factor
+    prior_loss = F.relu(torch.linalg.norm(scaled_deviation, dim=1) - variation_factor) ** 2  # 'flashlight' search
+    return prior_loss, scaled_deviation
+
+
+def agglomerative_cluster(sample_score, dists, threshold):
+    # first, check if any samples are closer than the cutoff
+    if torch.sum(dists < threshold) == len(dists):
+        n_clusters = len(dists)
+        classes = torch.arange(n_clusters)
+    else:
+        model = AgglomerativeClustering(distance_threshold=threshold, linkage="average", affinity='precomputed',
+                                        n_clusters=None)
+        model = model.fit(dists.numpy())
+        n_clusters = model.n_clusters_
+        classes = model.labels_
+    # select representative samples from each class
+    if n_clusters < len(dists):
+        unique_classes, num_uniques = np.unique(classes, return_counts=True)
+        good_inds = []
+        for group, uniques in zip(unique_classes, num_uniques):
+            if uniques == 1:  # only one sample
+                good_inds.append(int(np.argwhere(classes == group)[0]))
+            else:
+                class_inds = np.where(classes == group)[0]
+                best_sample = np.argmin(sample_score[class_inds])
+                good_inds.append(class_inds[best_sample])
+    else:
+        good_inds = torch.arange(len(sample_score))
+
+    return torch.LongTensor(good_inds), n_clusters
+
+
+def coarse_crystal_filter(lj_record, lj_cutoff, rauv_record, rauv_cutoff):
+    """filtering - samples with exactly 0 LJ energy are too diffuse, and more than CUTOFF are overlapping"""
+    bad_inds = []
+    bad_bools1 = lj_record == 0
+    bad_bools2 = lj_record >= lj_cutoff
+    bad_bools3 = rauv_record >= rauv_cutoff
+    # if we got any of these, cut the sample
+    good_bools = (~bad_bools1)*(~bad_bools2)*(~bad_bools3)
+    good_inds = torch.argwhere(good_bools).flatten()
+
+    print(f"{bad_bools1.sum()} with zero LJ, {bad_bools2.sum()} above LJ cutoff, {bad_bools3.sum()} above density cutoff")
+
+    return bad_inds, good_inds
+
+
+def compute_rdf_distmat(rdf_record, rr):
+    rdf_dists = torch.zeros(rdf_record.shape[0], rdf_record.shape[0])
+    chunk_size = 250
+    for i in tqdm(range(1, len(rdf_record))):
+        num_chunks = i // chunk_size + 1
+        for j in range(num_chunks):
+            start_ind = j * chunk_size
+            stop_ind = min(i, (j+1)*chunk_size)
+            rdf_dists[i, start_ind:stop_ind] = compute_rdf_distance(
+                rdf_record[i],
+                rdf_record[start_ind:stop_ind],  # save on energy & memory
+                rr,
+                n_parallel_rdf2=stop_ind-start_ind)
+    rdf_dists = rdf_dists + rdf_dists.T  # symmetric distance matrix
+    rdf_dists = torch.log10(1 + rdf_dists)
+    return rdf_dists
+
+
+def crystal_filter_cluster(lj_record, rdf_record, rr, sample_record, rauv_record,
+                           rauv_cutoff,
+                           vdw_cutoff,
+                           cell_params_threshold,
+                           rdf_dist_threshold,
+                           ):
+    init_len = len(lj_record)
+    bad_inds, good_inds = coarse_crystal_filter(
+        lj_record, vdw_cutoff, rauv_record, rauv_cutoff)
+    lj_record, sample_record, rdf_record, rauv_record = (
+        lj_record[good_inds], sample_record[good_inds], rdf_record[good_inds], rauv_record[good_inds])
+
+    'cluster samples according to cell parameters'
+    param_dists = torch.cdist(sample_record, sample_record)
+    good_inds, n_clusters = agglomerative_cluster(lj_record, param_dists, threshold=cell_params_threshold)
+    lj_record, sample_record, rdf_record, rauv_record = (
+        lj_record[good_inds], sample_record[good_inds],
+        rdf_record[good_inds], rauv_record[good_inds])
+    'cluster samples according to rdf distances'
+    rdf_dists = compute_rdf_distmat(rdf_record, rr)
+    good_inds, n_clusters = agglomerative_cluster(lj_record, rdf_dists, threshold=rdf_dist_threshold)
+    lj_record, sample_record, rdf_record, rauv_record = (
+        lj_record[good_inds], sample_record[good_inds],
+        rdf_record[good_inds], rauv_record[good_inds])
+    print(f"Filtering and clustering caught {init_len - len(lj_record)} samples")
+
+    return lj_record, sample_record, rdf_record, rauv_record

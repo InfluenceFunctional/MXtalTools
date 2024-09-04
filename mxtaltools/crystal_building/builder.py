@@ -63,7 +63,7 @@ class SupercellBuilder:
             T_cf_list, sym_ops_list)
 
         if not skip_refeaturization:  # if the mol position is outside the asym unit, the below params will not correspond to the inputs
-            self.refeaturize_generated_cell(molwise_data, unit_cell_coords_list)
+            molwise_data = self.refeaturize_generated_cell(molwise_data, unit_cell_coords_list)
 
         (combined_T_fc_list, combined_atomic_number_list,
          combined_unit_cell_coords_list, mol_size_list,
@@ -209,7 +209,7 @@ class SupercellBuilder:
                                                 sym_ops_list)
 
         if not skip_refeaturization:  # if the mol position is outside the asym unit, the below params will not correspond to the inputs
-            self.refeaturize_generated_cell(supercell_data, unit_cell_coords_list)
+            supercell_data = self.refeaturize_generated_cell(supercell_data, unit_cell_coords_list)
 
         # get minimal supercell cluster for convolving about a given canonical conformer
         cell_vector_list = T_fc_list.permute(0, 2, 1)
@@ -225,7 +225,10 @@ class SupercellBuilder:
                 cutoff=graph_convolution_cutoff,
                 pare_to_convolution_cluster=pare_to_convolution_cluster)
 
-        supercell_data = update_supercell_data(supercell_data, supercell_atoms_list, supercell_list, ref_mol_inds_list,
+        supercell_data = update_supercell_data(supercell_data,
+                                               supercell_atoms_list,
+                                               supercell_list,
+                                               ref_mol_inds_list,
                                                unit_cell_coords_list)
 
         return supercell_data, generated_cell_volumes
@@ -286,12 +289,14 @@ class SupercellBuilder:
                 return_asym_unit_coords=True)
         # if not all(asym_unit_is_well_defined):  # todo solve this
         #     print("Warning: Some built crystals have ill defined asymmetric units")
+        # supercell_data.cell_params[:, 6:9] = mol_positions
         supercell_data.cell_params[:, 9:12] = mol_orientations  # overwrite to canonical parameters
         supercell_data.aunit_handedness = mol_handedness
         # if align_to_standardized_orientation:  # typically issue of handedness of the asymmetric unit
         #     if (torch.amax(torch.sum(torch.abs(mol_orientations - mol_rotation_i), dim=1)) > 1e-2 or
         #             torch.amax(torch.sum(torch.abs(mol_positions - mol_position), dim=1)) > 1e-2):  # in the spherical basis
         #         print("Warning: Rebuilt standardized crystal was not identical.")
+        return supercell_data
 
     def prebuilt_unit_cell_to_supercell(self, supercell_data,
                                         supercell_size=5,

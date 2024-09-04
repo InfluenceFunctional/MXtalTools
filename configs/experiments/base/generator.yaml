@@ -64,7 +64,6 @@ positional_noise:
 generate_sgs: null # ['P1','P-1']#,'C2/c','P21/c','P212121']
 supercell_size: 5
 
-
 # for GAN training
 generator:
   packing_loss_coefficient: 1  # DEPRECATED, but do not delete

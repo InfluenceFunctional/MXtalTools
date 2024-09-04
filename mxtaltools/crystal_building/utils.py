@@ -147,7 +147,10 @@ def unit_cell_to_convolution_cluster(unit_cell_pos_list: list,
     return supercell_coords_list, supercell_atoms_list, ref_mol_inds_list, n_copies
 
 
-def update_supercell_data(supercell_data, supercell_atoms_list, supercell_coords_list, ref_mol_inds_list,
+def update_supercell_data(supercell_data,
+                          supercell_atoms_list,
+                          supercell_coords_list,
+                          ref_mol_inds_list,
                           reference_cell_list):
     """
     copy new supercell data back onto original supercell objects, omitting symmetry information
@@ -677,10 +680,10 @@ def DEPRECATED_write_sg_to_all_crystals(override_sg, dataDims, supercell_data, s
     return supercell_data
 
 
-def update_crystal_symmetry_elements(mol_data, generate_sgs, symmetries_dict, randomize_sgs=False):
+def overwrite_symmetry_info(mol_data, generate_sgs, symmetries_dict, randomize_sgs=False):
     """
     update the symmetry information in molecule-wise crystaldata objects
-    """
+    """  # todo clean this up it's a mess
     # identify the SG numbers we want to generate
     if type(generate_sgs[0]) == str:
         generate_sg_inds = [list(symmetries_dict['space_groups'].values()).index(SG) + 1 for SG in
@@ -693,8 +696,12 @@ def update_crystal_symmetry_elements(mol_data, generate_sgs, symmetries_dict, ra
     # randomly assign SGs to samples
     if randomize_sgs:
         sample_sg_inds = np.random.choice(generate_sg_inds, size=mol_data.num_graphs, replace=True)
+    elif isinstance(generate_sgs, int):
+        sample_sg_inds = np.ones(mol_data.num_graphs, dtype=int) * generate_sgs
     else:
         sample_sg_inds = generate_sg_inds
+
+    assert len(sample_sg_inds) == mol_data.num_graphs, "Must have same number of sgs as graphs"
 
     # update sym ops
     mol_data.symmetry_operators = [torch.Tensor(symmetries_dict['sym_ops'][sg_ind]).to(mol_data.x.device) for sg_ind in

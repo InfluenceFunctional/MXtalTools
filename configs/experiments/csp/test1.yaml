@@ -1,4 +1,4 @@
-machine: "local"  # or "cluster"
+machine: "cluster"  # or "cluster"
 device: "cpu"  # or "cpu"
 base_config_path: /experiments/base/generator.yaml
 dataset_name: test_qm9_dataset.pt #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
@@ -17,6 +17,7 @@ seeds:
   dataset: 1
 
 # batching & convergence
+num_samples: 100000
 max_epoch_steps: 100
 early_epochs_step_override: 5
 num_early_epochs: 0
@@ -34,14 +35,14 @@ extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 logger:
   sample_reporting_frequency: 1  # how often to do detailed reporting with figures
   stats_reporting_frequency: 1   # how many steps between which to move training stats to cpu
-  experiment_tag: dev
-  run_name: dev
+  experiment_tag: csp_test1
+  run_name: csp_test1
 
 model_paths:
   discriminator: null
-  generator: cluster/best_generator_experiments_generator_tests_run4_dev_1_26-08-17-14-40
+  generator: best_generator_experiments_generator_tests_run4_dev_1_26-08-17-14-40
   regressor: null #'volume_model.pt'
-  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49  # excellent proton model
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49  # excellent proton model
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 

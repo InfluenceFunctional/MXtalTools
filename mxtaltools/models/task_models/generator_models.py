@@ -98,7 +98,7 @@ class CrystalGenerator(nn.Module):
         return sample
 
 
-class GeneratorPrior(nn.Module):
+class CSDPrior(nn.Module):
     """
     angle means and stds
     {'cubic': [tensor([1.5708, 1.5708, 1.5708]), tensor([0., 0., 0.])],
@@ -115,7 +115,7 @@ class GeneratorPrior(nn.Module):
     """
 
     def __init__(self, sym_info, device):
-        super(GeneratorPrior, self).__init__()
+        super(CSDPrior, self).__init__()
 
         self.device = device
         self.symmetries_dict = sym_info
