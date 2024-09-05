@@ -1070,6 +1070,7 @@ class Modeller:
                                                         variation_factor=0.1
                                                         )
             np.save('generator_sampling_results', g_results_dict)
+            del g_results_dict
             p_results_dict = sampler.sample_and_cluster(sample, num_samples, batch_size,
                                                         'random', [14 for _ in range(batch_size)],
                                                         'csd_prior',
