@@ -48,7 +48,7 @@ def stacked_property_distribution(y: Union[np.ndarray, torch.Tensor],
     else:
         num_stacks = y.shape[0]
 
-    colors = pc.n_colors('rgb(255, 150, 50)', 'rgb(0, 25, 250)', num_stacks, colortype='rgb')
+    colors = pc.n_colors('rgb(255, 150, 50)', 'rgb(0, 25, 250)', min(2, num_stacks), colortype='rgb')
 
     fig = go.Figure()
     if bandwidth is None:
@@ -83,7 +83,7 @@ def stacked_property_distribution_lists(y: list,
                                         ):
     num_stacks = len(y)
 
-    colors = pc.n_colors('rgb(255, 150, 50)', 'rgb(0, 25, 250)', num_stacks, colortype='rgb')
+    colors = pc.n_colors('rgb(255, 150, 50)', 'rgb(0, 25, 250)', min(2, num_stacks), colortype='rgb')
 
     fig = go.Figure()
     if bandwidth is None:
