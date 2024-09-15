@@ -4,32 +4,30 @@ from copy import copy
 
 base_config = load_yaml('base.yaml')
 
-SG_list = [1, 2, 3, 4, 5,
-           6, 7, 8, 9, 10,
-           11, 12, 13, 14, 15,
-           16, 17, 18, 19, 20]
 configs_list = [
-    # 0 - baseline
-    {'max_batch_size': 1000,
-     'generate_sgs': ['P21/c'],
-     'generator':
-         {'model': {'hidden_dim': 2048,
+    {'generator':
+         {'model': {'hidden_dim': 256,
                     'dropout': 0,
-                    'norm': None,
-                    'num_layers': 2,
-                    },
-          'optimizer': {'max_lr': 5e-4}
-          }},
-    # 1 - narrower
-    {'max_batch_size': 1000,
-     'generate_sgs': ['P21/c'],
-     'generator':
-         {'model': {'hidden_dim': 1024,
-                    'dropout': 0,
-                    'norm': None,
+                    'norm': 'layer',
                     'num_layers': 4,
-                    },
-          'optimizer': {'max_lr': 5e-4}
+                    'vector_norm': 'vector layer'}
+          }},
+    {'generator':
+         {'model': {'hidden_dim': 256,
+                    'dropout': 0,
+                    'norm': 'layer',
+                    'num_layers': 4,
+                    'vector_norm': 'vector layer'},
+          'prior_loss_coefficient': 100
+          }},
+    {'generate_sgs': ['P-1', 'C2/c', 'P21/c', 'P212121'],
+     'generator':
+         {'model': {'hidden_dim': 256,
+                    'dropout': 0,
+                    'norm': 'layer',
+                    'num_layers': 4,
+                    'vector_norm': 'vector layer'},
+          'prior_loss_coefficient': 100
           }},
 ]
 

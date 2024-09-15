@@ -53,14 +53,14 @@ class Sampler:
                 sg_to_sample, tot_samples,
                 show_tqdm=show_progress, variation_factor=variation_factor)
 
-            lj_potential, rdf, samples, rauv = \
+            lj_potential, samples, rdf, rauv, rdf_distmat = \
                 crystal_filter_cluster(lj_potential, rdf, rr, samples, rauv,
                                        rauv_cutoff, vdw_cutoff,
                                        cell_params_threshold, rdf_dist_threshold,
                                        )
 
         return {'lj_potential': lj_potential.numpy(), 'rdf': rdf.numpy(), 'samples': samples.numpy(),
-                'rauv': rauv.numpy()}
+                'rauv': rauv.numpy(), 'rdf_distmat': rdf_distmat}
 
     def do_sampling(self, batch_size, cc_orientation,
                     init_sample, sample_source,
@@ -99,7 +99,6 @@ class Sampler:
         elif sample_source == 'generator':
             generated_sample, descaled_generated_sample = self.sample_from_generator(
                 mol_data, scalar_mol_embedding, vector_mol_embedding, variation_factor)
-
         else:
             assert False, f"sample_source {sample_source} not supported"
 

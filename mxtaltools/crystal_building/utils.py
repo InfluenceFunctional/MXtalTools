@@ -109,13 +109,16 @@ def unit_cell_to_convolution_cluster(unit_cell_pos_list: list,
 
                 if test_ind >= 5:
                     convolve_mol_inds = torch.where(mol_centroid_dists < 100)[0]  # just take everything
-                elif len(convolve_mol_inds) <= 2:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
+                elif len(
+                        convolve_mol_inds) <= 2:  # if the crystal is too diffuse / there are no molecules close enough to convolve with, we open the window and try again
                     extra_cutoff += 1
                 else:
                     successful_gconv = True
                 test_ind += 1
 
-            assert len(convolve_mol_inds) > 1  # must be more than one molecule in convolution
+            if len(convolve_mol_inds) <= 2:
+                # just add the 5 closest so the code doesn't crash
+                convolve_mol_inds = torch.argsort(mol_centroid_dists)[:5]
 
             '''add final indexing of atoms which are canonical conformer: 0, kept symmetry images: 1, and otherwise tossed'''
             ref_mol_inds = torch.ones(len(convolve_mol_inds) * mol_num_atoms, dtype=int,
@@ -636,7 +639,7 @@ def descale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     input fractional coordinates are scaled on 0-1
     rescale these for the specific ranges according to each space group
     only space groups in asym_unit_dict will work - not all have been manually encoded
-    this approach will not work for asymmetric units which are not parallelpipeds
+    this approach will not work for asymmetric units which are not neat parallelpipeds
     Parameters
     ----------
     asym_unit_dict
@@ -654,7 +657,7 @@ def descale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     # asym_units = torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_ind])
     # scaled_mol_position = mol_position * asym_units
 
-    return mol_position / torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
+    return mol_position * torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
 
 
 def DEPRECATED_write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):
@@ -763,7 +766,6 @@ def get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotation
     # get transformation matrices
     T_fc_list, T_cf_list, generated_cell_volumes = compute_fractional_transform_torch(cell_lengths, cell_angles)
     supercell_data.T_fc = T_fc_list
-    supercell_data.cell_params = torch.cat((cell_lengths, cell_angles, mol_position, mol_rotation), dim=1)
     sym_ops_list, supercell_data = set_sym_ops(supercell_data)  # assign correct symmetry options
     return T_cf_list, T_fc_list, generated_cell_volumes, supercell_data, sym_ops_list
 
@@ -866,7 +868,8 @@ def new_unit_cell_to_convolution_cluster(supercell_data,
     ref_mol_inds[edge_atoms[~good_bools]] = 2
     ref_mol_inds[canonical_conformer_node_inds] = 0
 
-    good_nodes_per_graph = scatter(torch.tensor(ref_mol_inds < 2, dtype=torch.int, device=device), supercell_batch, reduce='sum', dim=0, dim_size=num_graphs)
+    good_nodes_per_graph = scatter(torch.tensor(ref_mol_inds < 2, dtype=torch.int, device=device), supercell_batch,
+                                   reduce='sum', dim=0, dim_size=num_graphs)
 
     '''generate supercell features array'''
     supercell_nodes = torch.cat([

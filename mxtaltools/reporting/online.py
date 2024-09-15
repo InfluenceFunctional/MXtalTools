@@ -15,11 +15,12 @@ from torch_scatter import scatter
 import torch.nn.functional as F
 
 from mxtaltools.common.ase_interface import ase_mol_from_crystaldata
-from mxtaltools.common.utils import get_point_density, softmax_np, scale_lj_pot
+from mxtaltools.common.utils import get_point_density, softmax_np
 
 from mxtaltools.common.geometry_calculations import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
 from mxtaltools.reporting.ae_reporting import autoencoder_evaluation_overlaps, gaussian_3d_overlap_plots
+from mxtaltools.reporting.csp import stacked_property_distribution_lists
 
 blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
     'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
@@ -46,128 +47,49 @@ target_identifiers = {
 }
 
 
-def old_cell_params_analysis(config, dataDims, wandb, epoch_stats_dict):
+def cell_params_hist(wandb, stats_dict, sample_sources_list):
     n_crystal_features = 12
-    samples = epoch_stats_dict['generated_cell_parameters']
+    samples_dict = {name: stats_dict[name] for name in sample_sources_list}
 
-    overlaps_1d = {}
-    sample_means = {}
-    sample_stds = {}
-    lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma', 'aunit_x', 'aunit_y',
-                        'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
-    for i, key in enumerate(lattice_features):
-        h1, r1 = dataDims['lattice_stats'][key]['histogram']
-        h1 = h1 / sum(h1)
+    for key in samples_dict.keys():
+        if isinstance(samples_dict[key], list):
+            samples_dict[key] = np.stack(samples_dict[key])
 
-        h2, r2 = np.histogram(samples[:, i], bins=r1)
-        h2 = h2 / len(samples[:, i])
-
-        overlaps_1d[f'{key}_1D_Overlap'] = np.min(np.concatenate((h1[None], h2[None]), axis=0), axis=0).sum()
-
-        sample_means[f'{key}_mean'] = np.mean(samples[:, i])
-        sample_stds[f'{key}_std'] = np.std(samples[:, i])
-
-    average_overlap = np.average([overlaps_1d[key] for key in overlaps_1d.keys()])
-    overlaps_1d['average_1D_overlap'] = average_overlap
-    overlap_results = {}
-    overlap_results.update(overlaps_1d)
-    overlap_results.update(sample_means)
-    overlap_results.update(sample_stds)
-
-    if config.logger.log_figures:
-        fig_dict = {}  # consider replacing by Joy plot
-
-        # bar graph of 1d overlaps
-        fig = go.Figure(go.Bar(
-            y=list(overlaps_1d.keys()),
-            x=[overlaps_1d[key] for key in overlaps_1d],
-            orientation='h',
-            marker=dict(color='red')
-        ))
-        fig_dict['1D_overlaps'] = fig
-
-        lattice_keys = list(dataDims['lattice_stats'].keys())
-        # 1d Histograms
-        fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
-        for i in range(n_crystal_features):
-            row = i // 3 + 1
-            col = i % 3 + 1
-            bins = dataDims['lattice_stats'][lattice_keys[i]]['histogram'][1][1:]
-            hist1 = np.histogram(samples[:, i], bins=bins)[0]
-            fig.add_trace(go.Bar(
-                x=bins,
-                y=dataDims['lattice_stats'][lattice_keys[i]]['histogram'][0] / sum(
-                    dataDims['lattice_stats'][lattice_keys[i]]['histogram'][0]),
-                legendgroup="Dataset Samples",
-                name="Dataset Samples",
-                showlegend=True if i == 0 else False,
-                marker_color='#1f77b4',
-            ), row=row, col=col)
-
-            fig.add_trace(go.Bar(
-                x=bins,
-                y=hist1 / sum(hist1),
-                legendgroup="Generated Samples",
-                name="Generated Samples",
-                showlegend=True if i == 0 else False,
-                marker_color='#ff7f0e',
-            ), row=row, col=col)
-            if raw_samples is not None:
-                hist2 = np.histogram(raw_samples[:, i], bins=bins)[0]
-                fig.add_trace(go.Bar(
-                    x=bins,
-                    y=hist2 / sum(hist2),
-                    legendgroup="Raw Generated Samples",
-                    name="Raw Generated Samples",
-                    showlegend=True if i == 0 else False,
-                    marker_color='#ec0000',
-                ), row=row, col=col)
-        fig.update_layout(barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-        fig.update_traces(opacity=0.5)
-
-        fig_dict['Lattice Features Distribution'] = fig
-
-        wandb.log(data=overlap_results, commit=False)
-        wandb.log(data=fig_dict, commit=False)
-
-
-def new_cell_params_analysis(wandb, stats_dict):
-    n_crystal_features = 12
-    samples = stats_dict['generated_cell_parameters']
-    prior = stats_dict['generator_prior']
-
-    if isinstance(samples, list):
-        samples = np.stack(samples)
-
-    if isinstance(prior, list):
-        prior = np.stack(prior)
-
-    lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma', 'aunit_x', 'aunit_y',
-                        'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
+    lattice_features = ['cell_normed_a', 'cell_normed_b', 'cell_normed_c',
+                        'cell_alpha', 'cell_beta', 'cell_gamma',
+                        'aunit_x', 'aunit_y','aunit_z',
+                        'orientation_1', 'orientation_2', 'orientation_2']
     # 1d Histograms
+    colors = n_colors('rgb(255,0,0)', 'rgb(0, 0, 255)', len(samples_dict.keys()) + 1, colortype='rgb')
     fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
     for i in range(n_crystal_features):
         row = i // 3 + 1
         col = i % 3 + 1
-        fig.add_trace(go.Violin(
-            x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
-            name='sample', legendgroup='sample', showlegend=True if i == 0 else False,
-            meanline_visible=True, bandwidth=float(np.ptp(prior[:, i]) / 100), points=False, line_color='blue',
-        ),
-            row=row, col=col
-        )
-        fig.add_trace(go.Violin(
-            x=prior[:, i], y=[0 for _ in range(len(prior))], side='positive', orientation='h', width=4, name='prior',
-            legendgroup='prior', showlegend=True if i == 0 else False,
-            meanline_visible=True, bandwidth=float(np.ptp(prior[:, i]) / 100), points=False, line_color='red',
-        ),
-            row=row, col=col
-        )
+        for k_ind, key in enumerate(samples_dict.keys()):
+            samples = samples_dict[key]
+            fig.add_trace(go.Violin(
+                x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
+                name=key, legendgroup=key, showlegend=True if i == 0 else False,
+                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False, line_color=colors[k_ind],
+            ),
+                row=row, col=col
+            )
+
     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
     fig.update_traces(opacity=0.5)
 
     wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
 
+
+def iter_wise_hist(stats_dict, target_key):
+    energy = stats_dict[target_key]
+    batch = stats_dict['generator_sample_iter']
+    vdw_list = [energy[batch == int(ind)] for ind in range(int(np.max(batch)) + 1)]
+    fig = stacked_property_distribution_lists(y=vdw_list,
+                                              xaxis_title='vdW Score',
+                                              yaxis_title='Sampling Iter',
+                                              )
+    return fig
 
 def plotly_setup(config):
     if config.machine == 'local':
@@ -1247,7 +1169,7 @@ def log_generator_distributions(epoch_stats_dict):
                 'generator_prior_loss',
                 'generator_packing_prediction',
                 'generator_scaling_factor',
-                'generator_sample_lj_energy',
+                'generator_sample_vdw_energy',
                 'generator_variation_factor']:
         wandb.log(
             data={key + '_distribution': wandb.Histogram(
@@ -1275,18 +1197,18 @@ def log_crystal_samples(epoch_stats_dict):
 
 
 def new_cell_scatter(epoch_stats_dict, wandb, layout):
-    scaled_lj = epoch_stats_dict['generator_per_mol_vdw_loss']
+    scaled_vdw = epoch_stats_dict['generator_per_mol_vdw_loss']
     vdw_cutoff = max(-10, min(epoch_stats_dict['generator_per_mol_vdw_score']))
 
     scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'].clip(min=vdw_cutoff),
                     'packing_prediction': epoch_stats_dict['generator_packing_prediction'],
                     'prior_loss': epoch_stats_dict['generator_prior_loss'],
-                    'lj_energy': scaled_lj,
+                    'vdw_energy': scaled_vdw,
                     }
     opacity = max(0.25, 1 - len(scatter_dict['vdw_score']) / 1e5)
     df = pd.DataFrame.from_dict(scatter_dict)
-    maxval = min(10, scaled_lj.max())
-    zeroval = max(0, (0 - scaled_lj.min()) / (maxval - scaled_lj.min()))
+    maxval = min(10, scaled_vdw.max())
+    zeroval = max(0, (0 - scaled_vdw.min()) / (maxval - scaled_vdw.min()))
     cscale = [[0, 'green'], [min(1, zeroval) * 0.99, 'blue'], [min(zeroval, 1), "yellow"], [1, 'red']]
     if zeroval == 0:
         cscale.pop(0)
@@ -1298,10 +1220,10 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
         x=-np.log10(-(df['vdw_score'] - 1e-3)),
         y=np.clip(df['packing_prediction'], a_min=0, a_max=5),
         mode='markers',
-        marker_color=df['lj_energy'],
+        marker_color=df['vdw_energy'],
         opacity=opacity,
-        marker={"cmin": min(-1, np.amin(df['lj_energy'])), "cmax": maxval,
-                "colorbar_title": "LJ Energy",
+        marker={"cmin": min(-1, np.amin(df['vdw_energy'])), "cmax": maxval,
+                "colorbar_title": "vdw Energy",
                 'colorscale': cscale},
     )
     fig.layout.margin = layout.margin
@@ -1316,40 +1238,6 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
         wandb.log({'Generator Samples': fig}, commit=False)
 
 
-def old_cell_scatter(epoch_stats_dict, wandb, layout, num_atoms_index, extra_category=None):
-    model_scores = epoch_stats_dict['generator_adversarial_score']
-    scatter_dict = {'vdw_score': epoch_stats_dict['generator_per_mol_vdw_score'],
-                    'model_score': model_scores,
-                    'volume_per_atom': epoch_stats_dict['generator_packing_prediction']
-                                       / epoch_stats_dict['tracking_features'][:, num_atoms_index]}
-    if extra_category is not None:
-        scatter_dict[extra_category] = epoch_stats_dict[extra_category]
-
-    vdw_cutoff = max(-1.5, np.amin(scatter_dict['vdw_score']))
-    opacity = max(0.1, 1 - len(model_scores) / 5e4)
-    df = pd.DataFrame.from_dict(scatter_dict)
-    if extra_category is not None:
-        fig = px.scatter(df,
-                         x='vdw_score', y='volume_per_atom',
-                         color='model_score', symbol=extra_category,
-                         marginal_x='histogram', marginal_y='histogram',
-                         range_color=(np.amin(model_scores), np.amax(model_scores)),
-                         opacity=opacity
-                         )
-        fig.update_layout(legend=dict(yanchor="top", y=0.99, xanchor="right", x=1))
-
-    else:
-        fig = px.scatter(df,
-                         x='vdw_score', y='volume_per_atom',
-                         color='model_score',
-                         marginal_x='histogram', marginal_y='histogram',
-                         opacity=opacity
-                         )
-    fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
-    fig.update_layout(xaxis_range=[vdw_cutoff, 0.1],
-                      yaxis_range=[scatter_dict['volume_per_atom'].min(), scatter_dict['volume_per_atom'].max()])
-    wandb.log({'Generator Samples': fig}, commit=False)
 
 
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
@@ -1543,21 +1431,30 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
     """
     if test_epoch_stats_dict is not None:
         if 'generated_cell_parameters' in test_epoch_stats_dict.keys():
-            if config.mode == 'generator':
-                if config.logger.log_figures:
-                    new_cell_params_analysis(wandb, test_epoch_stats_dict)
+            if config.logger.log_figures:
+                if config.mode == 'generator':
+                    cell_params_hist(wandb, test_epoch_stats_dict,
+                                     ['generator_prior','generated_cell_parameters'])
+                    wandb.log(data={'Iterwise vdW':
+                                        iter_wise_hist(test_epoch_stats_dict, 'generator_per_mol_vdw_loss')
+                                    }, commit=False)
+                    wandb.log(data={'Iterwise Prior Loss':
+                                        iter_wise_hist(test_epoch_stats_dict, 'generator_prior_loss')
+                                    }, commit=False)
+                    wandb.log(data={'Iterwise Packing Coeff':
+                                        iter_wise_hist(test_epoch_stats_dict, 'generator_packing_prediction')
+                                    }, commit=False)
 
                     log_mean_deviations(test_epoch_stats_dict)
-            else:
-                old_cell_params_analysis(config, dataDims, wandb, test_epoch_stats_dict)
+                else:
+                    cell_params_hist(wandb, test_epoch_stats_dict,
+                                     ['real_cell_parameters', 'generated_cell_parameters'])
 
-        if config.mode in ['gan', 'generator', 'discriminator']:
+        if config.mode == 'generator':
+            cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
 
-            if config.generator.train_vdw or config.generator.train_adversarially:
-                cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
-
-            if config.discriminator.train_on_distorted or config.discriminator.train_on_randn or config.discriminator.train_adversarially:
-                discriminator_analysis(config, dataDims, test_epoch_stats_dict, extra_test_dict)
+        if config.mode == 'discriminator':
+            discriminator_analysis(config, dataDims, test_epoch_stats_dict, extra_test_dict)
 
         elif config.mode == 'regression' or config.mode == 'embedding_regression':
             log_regression_accuracy(config, dataDims, test_epoch_stats_dict)

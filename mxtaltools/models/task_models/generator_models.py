@@ -107,14 +107,9 @@ class CSDPrior(nn.Module):
      'orthorhombic': [tensor([1.5708, 1.5708, 1.5708]), tensor([0.0001, 0.0001, 0.0000])],
      'tetragonal': [tensor([1.5708, 1.5708, 1.5708]), tensor([0., 0., 0.])],
      'triclinic': [tensor([1.5619, 1.5691, 1.5509]), tensor([0.2363, 0.2046, 0.2624])]} <- use this one for now
-
-    length_stds
-    tensor([0.5163, 0.5930, 0.6284])
-    length_means
-    tensor([1.2740, 1.4319, 1.7752])
     """
 
-    def __init__(self, sym_info, device):
+    def __init__(self, sym_info, device, cell_means, cell_stds, lengths_cov_mat):
         super(CSDPrior, self).__init__()
 
         self.device = device
@@ -126,12 +121,24 @@ class CSDPrior(nn.Module):
         for key in self.asym_unit_dict:
             self.asym_unit_dict[key] = torch.Tensor(self.asym_unit_dict[key])  # .to(self.device)
 
-        cell_means = torch.tensor([1.2740, 1.4319, 1.7752, 1.5619, 1.5691, 1.5509], dtype=torch.float32)
-        cell_stds = torch.tensor([0.5163, 0.5930, 0.6284, 0.2363, 0.2046, 0.2624], dtype=torch.float32)
+        #cell_means = torch.tensor(cell_means, dtype=torch.float32, device='cpu')
+        #cell_stds = torch.tensor(cell_stds, dtype=torch.float32, device='cpu')
+        #lengths_cov_mat = torch.tensor(lengths_cov_mat, dtype=torch.float32, device='cpu')
+        print("Using hardcoded CSD statistics for prior!")
+        cell_means = torch.tensor(
+            [1.0411, 1.1640, 1.4564,
+             1.5619, 1.5691, 1.5509],  # use triclinic
+            dtype=torch.float32)
+        cell_stds = torch.tensor(
+            [0.3846, 0.4280, 0.4864,
+             0.2363, 0.2046, 0.2624],
+            dtype=torch.float32)
 
-        lengths_cov_mat = torch.tensor([[0.2545, -0.0266, -0.0357],
-                                        [-0.0266, 0.3541, -0.0743],
-                                        [-0.0357, -0.0743, 0.3992]], dtype=torch.float32)
+        lengths_cov_mat = torch.tensor([
+            [0.1479, -0.0651, -0.0670],
+            [-0.0651, 0.1832, -0.1050],
+            [-0.0670, -0.1050, 0.2366]],
+            dtype=torch.float32)
 
         self.lengths_prior = MultivariateNormal(cell_means[:3], lengths_cov_mat)  # apply standardization
         self.angles_prior = MultivariateNormal(cell_means[3:], torch.eye(3) * cell_stds[3:])  # apply standardization
@@ -222,7 +229,6 @@ class CSDPrior(nn.Module):
         np.save('prior_norm_factors', norms)
         np.save('prior_stds', stds)
         np.save('prior_means', means)
-
 
 
 class IndependentGaussianGenerator(nn.Module):

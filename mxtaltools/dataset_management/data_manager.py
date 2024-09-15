@@ -11,6 +11,7 @@ from time import time
 import random
 import glob
 
+from mxtaltools.common.geometry_calculations import batch_molecule_vdW_volume
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
 from mxtaltools.dataset_management.md_data_processing import generate_dataset_from_dumps
@@ -93,7 +94,7 @@ class DataManager:
         else:
             chunks = []
             for pattern in chunks_patterns:
-                pattern = pattern.replace('\\','/').replace('/','_')
+                pattern = pattern.replace('\\', '/').replace('/', '_')
                 chunks.extend(glob.glob(f'{pattern}*.pt'))
 
         print(f'Loading {len(chunks)}:{chunks} chunks from {chunks_patterns}')
@@ -119,8 +120,8 @@ class DataManager:
                                    filter_duplicate_molecules=False,
                                    filter_protons=False,
                                    conv_cutoff: Optional[float] = None,
-                                   do_shuffle: bool=True,
-                                   precompute_edges: bool=False,
+                                   do_shuffle: bool = True,
+                                   precompute_edges: bool = False,
                                    ):
         """
 
@@ -146,14 +147,11 @@ class DataManager:
         else:
             self.load_training_dataset(dataset_name)
 
+        self.quick_compute_mol_volume()  # todo add this back to dataset featurization
         self.dataset_filtration(filter_conditions, filter_duplicate_molecules, filter_polymorphs)
-
         self.truncate_and_shuffle_dataset(override_length, do_shuffle=do_shuffle)
-
         self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
         self.dataset_stats = self.misc_dataset['dataset_stats']
-
-        self.get_cell_cov_mat()
         self.assign_targets()
         self.present_atom_types, _ = self.dataset_stats['atomic_number']['uniques']
         if filter_protons:
@@ -168,6 +166,24 @@ class DataManager:
 
         if precompute_edges:
             self.compute_edges(conv_cutoff)
+
+    def quick_compute_mol_volume(self):
+        dataset_to_analyze = self.collater(self.dataset)
+
+        molecule_volumes = batch_molecule_vdW_volume(dataset_to_analyze.x.flatten(),
+                                                     dataset_to_analyze.pos,
+                                                     dataset_to_analyze.batch,
+                                                     dataset_to_analyze.num_graphs,
+                                                     self.vdw_radii_tensor)
+        del dataset_to_analyze
+
+        for ind in range(len(self.dataset)):
+            self.dataset[ind].mol_volume = molecule_volumes[ind]
+        if self.dataset_type == 'crystal':
+            for ind in range(len(self.dataset)):
+                self.dataset[ind].packing_coeff = molecule_volumes[ind] / self.dataset[ind].reduced_volume
+                self.dataset[ind].cell_reduced_lengths = self.dataset[ind].cell_lengths / torch.pow(
+                    molecule_volumes[ind] * self.dataset[ind].sym_mult, 1 / 3)[:, None]
 
     def compute_edges(self, conv_cutoff):
         if self.dataset_type == 'mol_cluster':
@@ -214,7 +230,8 @@ class DataManager:
         if do_shuffle:
             inds_to_keep = list(np.random.choice(len(self.dataset), self.dataset_length, replace=False))
         else:
-            inds_to_keep = np.linspace(0, len(self.dataset) - 1, min(len(self.dataset), self.dataset_length)).astype(int)
+            inds_to_keep = np.linspace(0, len(self.dataset) - 1, min(len(self.dataset), self.dataset_length)).astype(
+                int)
 
         self.dataset = [self.dataset[ind] for ind in inds_to_keep]
         self.times['dataset_shuffle_end'] = time()
@@ -265,7 +282,7 @@ class DataManager:
     def get_data_dimensions(self):
         self.atom_keys = ['atomic_number', 'vdw_radii', 'atom_weight', 'electronegativity', 'group', 'period']
         self.molecule_keys = ['num_atoms', 'radius']
-        self.lattice_keys = ['cell_a', 'cell_b', 'cell_c',
+        self.lattice_keys = ['cell_reduced_a', 'cell_reduced_b', 'cell_reduced_c',
                              'cell_alpha', 'cell_beta', 'cell_gamma',
                              'aunit_x', 'aunit_y', 'aunit_z',
                              'aunit_theta', 'aunit_phi', 'aunit_r']
@@ -273,10 +290,13 @@ class DataManager:
             self.lattice_means = [self.dataset_stats[feat]['tight_mean'] for feat in self.lattice_keys]
             self.lattice_stds = [self.dataset_stats[feat]['tight_std'] for feat in self.lattice_keys]
             self.lattice_stats = {key: self.dataset_stats[key] for key in self.lattice_keys}
+            self.length_covariance_matrix = torch.cov(
+                torch.cat([self.dataset[ind].cell_reduced_lengths for ind in range(len(self.dataset))], dim=0).T)
         else:
             self.lattice_means = [0 for _ in range(12)]
             self.lattice_stds = [0.01 for _ in range(12)]
             self.lattice_stats = [[] for _ in range(12)]
+            self.length_covariance_matrix = torch.ones((3, 3))
         node_standardization_vector = np.asarray([[[self.dataset_stats[feat]['tight_mean'],
                                                     self.dataset_stats[feat]['tight_std']] for feat in
                                                    self.atom_keys]])[0]
@@ -294,7 +314,7 @@ class DataManager:
             'lattice_means': self.lattice_means,
             'lattice_stds': self.lattice_stds,
             'lattice_stats': self.lattice_stats,
-            'lattice_cov_mat': self.covariance_matrix,
+            'lattice_length_cov_mat': self.length_covariance_matrix,
 
             'regression_target': self.regression_target,
             'target_mean': self.target_mean,
@@ -325,6 +345,8 @@ class DataManager:
             elif self.regression_target in qm9_targets_list:
                 target_ind = qm9_targets_list.index(self.regression_target)
                 targets = torch.tensor([elem.y[:, target_ind] for elem in self.dataset])
+            elif self.regression_target == 'crystal_packing_coefficient':
+                targets = torch.tensor([elem.packing_coeff for elem in self.dataset])
             else:
                 assert False, "Unrecognized regression target"
 
@@ -375,25 +397,6 @@ class DataManager:
     #     fig.add_histogram(x=targets, nbinsx=100, histnorm='probability density', row=i % 4 + 1, col=i // 4 + 1)
     #
     # fig.show(renderer='browser')
-
-    def get_cell_cov_mat(self):
-        """
-        compute full covariance matrix, in raw basis
-        """
-        if self.dataset_type == 'crystal':
-            cell_params = torch.zeros((len(self.dataset), 12), dtype=torch.float32)
-
-            for ind in range(len(self.dataset)):
-                cell_params[ind] = torch.cat(
-                    [self.dataset[ind].cell_lengths, self.dataset[ind].cell_angles, self.dataset[ind].pose_params0],
-                    dim=1)
-        else:
-            cell_params = torch.ones((len(self.dataset), 12), dtype=torch.float32)
-
-        self.covariance_matrix = np.cov(cell_params, rowvar=False)
-
-        for i in range(len(self.covariance_matrix)):  # ensure it's well-conditioned
-            self.covariance_matrix[i, i] = max((0.01, self.covariance_matrix[i, i]))
 
     def rebuild_crystal_indices(self):
         # identify which molecules are in which crystals and vice-versa
@@ -476,6 +479,9 @@ class DataManager:
                 'cell_a': basic_stats(dataset_to_analyze.cell_lengths[:, 0].float()),
                 'cell_b': basic_stats(dataset_to_analyze.cell_lengths[:, 1].float()),
                 'cell_c': basic_stats(dataset_to_analyze.cell_lengths[:, 2].float()),
+                'cell_reduced_a': basic_stats(dataset_to_analyze.cell_reduced_lengths[:, 0].float()),
+                'cell_reduced_b': basic_stats(dataset_to_analyze.cell_reduced_lengths[:, 1].float()),
+                'cell_reduced_c': basic_stats(dataset_to_analyze.cell_reduced_lengths[:, 2].float()),
                 'cell_alpha': basic_stats(dataset_to_analyze.cell_angles[:, 0].float()),
                 'cell_beta': basic_stats(dataset_to_analyze.cell_angles[:, 1].float()),
                 'cell_gamma': basic_stats(dataset_to_analyze.cell_angles[:, 2].float()),
@@ -672,6 +678,8 @@ class DataManager:
             values = self.get_reduced_volume_fraction()
         elif condition_key == 'time_step':
             values = torch.Tensor([elem.time_step for elem in self.dataset])
+        elif condition_key == 'crystal_packing_coefficient':
+            values = torch.tensor([elem.packing_coeff for elem in self.dataset])
         else:
             assert False, f"{condition_key} is not implemented as a filterable item"
 

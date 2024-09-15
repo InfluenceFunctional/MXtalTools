@@ -18,7 +18,7 @@ max_epoch_steps: 500
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
-min_batch_size: 5
+min_batch_size: 25
 max_batch_size: 2000
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
@@ -31,8 +31,8 @@ extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 logger:
   sample_reporting_frequency: 5  # how often to do detailed reporting with figures
   stats_reporting_frequency: 5  # how many steps between which to move training stats to cpu
-  experiment_tag: gen_dev4
-  run_name: gen_dev4
+  experiment_tag: gen_dev1
+  run_name: gen_dev1
 
 model_paths:
   discriminator: null
@@ -42,7 +42,7 @@ model_paths:
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
-generate_sgs: ['P21/c'] #,'C2/c','P21/c','P212121']
+generate_sgs: ['P21/c']#,'C2/c','P21/c','P212121']
 
 autoencoder:
   infer_protons: False
@@ -50,32 +50,38 @@ autoencoder:
 
 # for GAN training
 generator:
-  samples_per_iter: 5
-  prior_loss_coefficient: 1  # initial value for the prior loss coefficient
-  prior_coefficient_threshold: 0.05 #0.001
+  packing_loss_coefficient: 1
+  prior_loss_coefficient: 10
   vdw_loss_coefficient: 1
-  vdw_turnover_potential: 10 # maximum value for LJ regularization
-  variation_scale: 1  # maximum of the uniform distribution of search scales
+  variation_scale: 2
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
+  packing_target_noise: 0.1 # randn noise magnitude
+  train_vdw: True
+  train_adversarially: False
+  vdw_loss_func: inv  # not used / only 'inv'
+  density_loss_func: l1  # 'l1' or 'mse'
+  adversarial_loss_func: 'score'  #
+  train_h_bond: False # (non-directional)
+  similarity_penalty: 0
 
   #generator optimizer and model
   optimizer:
     beta1: 0.9
     beta2: 0.999
     convergence_eps: 1.0e-04
-    init_lr: 1.0e-5
-    lr_growth_lambda: 1.05
+    init_lr: 1.0e-4
+    lr_growth_lambda: 1.01
     lr_schedule: true
-    lr_shrink_lambda: 0.99
-    max_lr: 5.0e-4
+    lr_shrink_lambda: 0.9975
+    max_lr: 2.0e-3
     min_lr: 1.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
-    weight_decay: 0
+    weight_decay: 0.01
 
   model:
     hidden_dim: 256
     dropout: 0
-    norm: null
-    num_layers: 1
-    vector_norm: null
+    norm: 'layer'
+    num_layers: 8
+    vector_norm: 'vector layer'

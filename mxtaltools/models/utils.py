@@ -210,7 +210,7 @@ def init_scheduler(optimizer, optimizer_config):
     return [scheduler1, scheduler2, scheduler3]
 
 
-def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, correct_discontinuity=True):
+def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, correct_discontinuity=True) -> Union[torch.Tensor, np.ndarray]:
     """
     Parameters
     ----------
@@ -1133,4 +1133,4 @@ def crystal_filter_cluster(lj_record, rdf_record, rr, sample_record, rauv_record
         rdf_record[good_inds], rauv_record[good_inds])
     print(f"Filtering and clustering caught {init_len - len(lj_record)} samples")
 
-    return lj_record, sample_record, rdf_record, rauv_record
+    return lj_record, sample_record, rdf_record, rauv_record, rdf_dists

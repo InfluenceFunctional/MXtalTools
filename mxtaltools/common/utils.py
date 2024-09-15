@@ -230,9 +230,9 @@ def compute_rdf_distance(rdf1, rdf2, rr, n_parallel_rdf2: int = None, return_num
 
     # aggregate rdf components according to pairwise mean weight
     aggregation_weight = (torch_rdf1_f.sum(-1) + torch_rdf2.sum(-1)) / 2
-    distance = (range_normed_emd * aggregation_weight).mean(1)
+    distance = (range_normed_emd * aggregation_weight).mean(-1)
 
-    assert torch.sum(torch.isnan(distance)) == 0
+    assert torch.sum(torch.isnan(distance)) == 0, "NaN EMD Distances Computed"
     if return_numpy:
         distance = distance.cpu().detach().numpy()
 
@@ -503,9 +503,9 @@ def flatten_wandb_params(config):
     return config
 
 
-def scale_lj_pot(lj_pot: Union[np.ndarray, torch.tensor],
-                 turnover_pot: float = 5,
-                 clip_max: float = 50) \
+def scale_vdw_pot(lj_pot: Union[np.ndarray, torch.tensor],
+                  turnover_pot: float = 5,
+                  clip_max: float = 50) \
         -> Union[np.ndarray, torch.tensor]:
     high_bools = lj_pot > turnover_pot
     if torch.is_tensor(lj_pot):

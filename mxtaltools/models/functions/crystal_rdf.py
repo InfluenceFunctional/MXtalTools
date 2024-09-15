@@ -232,6 +232,7 @@ def new_crystal_rdf(crystaldata,
         shell_volumes = (4 / 3) * torch.pi * ((bin_edges[:-1] + torch.diff(bin_edges)) ** 3 - bin_edges[:-1] ** 3)
         rdf = hist / shell_volumes[None, :] / rdf_density[:, None]  # un-smoothed radial density
         rdf = rdf.reshape(num_graphs, num_pairs, -1)  # sample-wise indexing    else:  # average over all atom types
+    else:
         dists_per_hist = [torch.sum(edge_in_crystal_number == n) for n in range(num_graphs)]
         sorted_dists = torch.cat([dists[edge_in_crystal_number == n] for n in range(num_graphs)])
         rdfs_dict = {}

@@ -104,21 +104,13 @@ embedding_regressor:
 
 # for GAN training
 generator:
-  packing_loss_coefficient: 1  # DEPRECATED, but do not delete
-  prior_loss_coefficient: 1
+  samples_per_iter: 5
+  prior_loss_coefficient: 1  # initial value for the prior loss coefficient
+  prior_coefficient_threshold: 0.05 #0.001
   vdw_loss_coefficient: 1
-  prior_coefficient_threshold: 1
-  vdw_turnover_potential: 0
-  variation_scale: 2  # maximum of the uniform distribution of search scales
+  vdw_turnover_potential: 10 # maximum value for LJ regularization
+  variation_scale: 1  # maximum of the uniform distribution of search scales
   canonical_conformer_orientation: 'random' # 'standardized' 'random'
-  packing_target_noise: 0.1 # randn noise magnitude  # DEPRECATED, but do not delete
-  train_vdw: True  # DEPRECATED
-  train_adversarially: False  # DEPRECATED
-  vdw_loss_func: inv  # not used / only 'inv'  # DEPRECATED
-  density_loss_func: l1  # 'l1' or 'mse'  # DEPRECATED
-  adversarial_loss_func: 'score'  #  # DEPRECATED
-  train_h_bond: False # (non-directional)  # DEPRECATED
-  similarity_penalty: 0  # DEPRECATED
 
   #generator optimizer and model
   optimizer: null

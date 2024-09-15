@@ -4,6 +4,8 @@ import numpy as np
 import torch
 from torch_scatter import scatter
 
+from mxtaltools.models.functions.asymmetric_radius_graph import radius
+
 
 def compute_principal_axes_np(coords):
     """
@@ -54,7 +56,8 @@ def compute_principal_axes_np(coords):
 
     Ip = (Ip.T * signs).T  # if the vectors have negative overlap, flip the direction
     if np.any(
-            np.abs(overlaps) < 1e-3):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
+            np.abs(
+                overlaps) < 1e-3):  # if any overlaps are vanishing, determine the direction via the RHR (if two overlaps are vanishing, this will not work)
         # align the 'good' vectors
         fix_ind = np.argmin(np.abs(overlaps))  # vector with vanishing overlap
         if compute_Ip_handedness(Ip) < 0:  # make sure result is right handed
@@ -259,7 +262,7 @@ def get_overlaps(Ip, direction):
     signs : torch.tensor(3)
     """
     overlaps = torch.einsum('nij,nj->ni', (
-    Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
+        Ip, direction))  # Ip.dot(direction) # check if the principal components point towards or away from the CoG
     signs = torch.sign(overlaps)  # we want any exactly zero overlaps to come with positive signs
     signs[signs == 0] = 1
     return overlaps, signs
@@ -482,10 +485,10 @@ def compute_fractional_transform_torch(cell_lengths, cell_angles):
     T_cf_list[:, 0, 0] = 1.0 / cell_lengths[:, 0]
     T_cf_list[:, 0, 1] = -cos_a[:, 2] / cell_lengths[:, 0] / sin_a[:, 2]
     T_cf_list[:, 0, 2] = cell_lengths[:, 1] * cell_lengths[:, 2] * (
-                cos_a[:, 0] * cos_a[:, 2] - cos_a[:, 1]) / vol / sin_a[:, 2]
+            cos_a[:, 0] * cos_a[:, 2] - cos_a[:, 1]) / vol / sin_a[:, 2]
     T_cf_list[:, 1, 1] = 1.0 / cell_lengths[:, 1] / sin_a[:, 2]
     T_cf_list[:, 1, 2] = cell_lengths[:, 0] * cell_lengths[:, 2] * (
-                cos_a[:, 1] * cos_a[:, 2] - cos_a[:, 0]) / vol / sin_a[:, 2]
+            cos_a[:, 1] * cos_a[:, 2] - cos_a[:, 0]) / vol / sin_a[:, 2]
     T_cf_list[:, 2, 2] = cell_lengths[:, 0] * cell_lengths[:, 1] * sin_a[:, 2] / vol
     ''' Converting from fractional to cartesian '''
     T_fc_list[:, 0, 0] = cell_lengths[:, 0]
@@ -635,3 +638,145 @@ def coor_trans_matrix_np(opt, v, a, return_vol=False):
         return m, np.abs(vol)
     else:
         return m
+
+
+def batch_molecule_vdW_volume(atom_types, pos, batch, num_graphs, vdw_radii_tensor):
+    atom_volumes = 4 / 3 * torch.pi * vdw_radii_tensor[atom_types] ** 3
+    raw_vdw_volumes = scatter(atom_volumes, batch, dim=0, dim_size=num_graphs, reduce='sum')
+    bonds_i, bonds_j = radius(pos, pos,
+                              r=2 * vdw_radii_tensor.max(),
+                              batch_x=batch,
+                              batch_y=batch,
+                              max_num_neighbors=6)
+    mask = ~(bonds_i >= bonds_j)  # eliminate duplicates
+    bonds_i, bonds_j = bonds_i[mask], bonds_j[mask]
+    bond_lengths = torch.linalg.norm(pos[bonds_i] - pos[bonds_j], dim=1)
+    radii_i, radii_j = vdw_radii_tensor[atom_types[bonds_i]], vdw_radii_tensor[atom_types[bonds_j]]
+    # https://mathworld.wolfram.com/Sphere-SphereIntersection.html
+    sphere_overlaps = (torch.pi * (radii_i + radii_j - bond_lengths) ** 2 *
+                       (bond_lengths ** 2 + 2 * bond_lengths * radii_j - 3 * radii_j ** 2
+                        + 2 * bond_lengths * radii_i + 6 * radii_j * radii_i - 3 * radii_i ** 2) / (12 * bond_lengths))
+    sphere_overlaps[bond_lengths > (radii_i + radii_j)] = 0
+    molwise_sphere_overlaps = scatter(sphere_overlaps, batch[bonds_i], dim=0, dim_size=num_graphs,
+                                      reduce='sum')
+    corrected_mol_volume = raw_vdw_volumes - molwise_sphere_overlaps
+    return corrected_mol_volume
+
+
+def grid_compute_molecule_volume(atom_types, pos, vdw_radii_tensor, eps):
+    """
+    brute force grid approach to computing vdW volume for a single molecule
+    Parameters
+    ----------
+    atom_types
+    pos
+    vdw_radii_tensor
+
+    Returns
+    -------
+
+    """
+    convergence_history = []
+    dx = 0.1
+    converged = False
+    ind = -1
+    max_iters = 10
+    while converged is False and ind < max_iters:
+        dx *= 0.75
+        xmin, ymin, zmin = (pos.amin(0) - vdw_radii_tensor.amax())
+        xmax, ymax, zmax = (pos.amax(0) + vdw_radii_tensor.amax())
+        num_x = int((xmax - xmin) / dx)
+        num_y = int((ymax - ymin) / dx)
+        num_z = int((zmax - zmin) / dx)
+        grid = torch.meshgrid(torch.linspace(xmin, xmax, num_x),
+                              torch.linspace(ymin, ymax, num_y),
+                              torch.linspace(zmin, zmax, num_z),
+                              indexing='xy'
+                              )
+        grid = torch.stack(grid)
+        grid_flat = grid.reshape(3, num_x * num_y * num_z).T
+
+        edges = radius(x=grid_flat, y=pos, r=vdw_radii_tensor.amax(),
+                       max_num_neighbors=int(1e12))
+
+        dists = torch.linalg.norm(pos[edges[0]] - grid_flat[edges[1]], dim=1)
+        close_enough = dists <= vdw_radii_tensor[atom_types[edges[0]]]
+
+        overlapped_points = len(edges[1, close_enough].unique())
+        box_volume = (xmax - xmin) * (ymax - ymin) * (zmax - zmin)
+        overlapping_fraction = overlapped_points / len(grid_flat)
+        occupied_volume = box_volume * overlapping_fraction
+        convergence_history.append(float(occupied_volume))
+        ind += 1
+        if ind > 1:
+            conv = abs(convergence_history[-2] - convergence_history[-1]) / convergence_history[1]
+            if conv < eps:
+                converged = True
+
+            print(ind)
+            print(conv)
+
+    return occupied_volume
+
+
+def grid_compute_molecule_volume_pointwise(atom_types, pos, vdw_radii_tensor, eps):
+    """
+    brute force grid approach to computing vdW volume for a single molecule
+    Parameters
+    ----------
+    atom_types
+    pos
+    vdw_radii_tensor
+
+    Returns
+    -------
+
+    """
+    convergence_history = []
+    dx = 0.1
+    converged = False
+    ind = -1
+    max_iters = 10
+    while converged is False and ind < max_iters:
+        dx *= 0.75
+        xmin, ymin, zmin = (pos.amin(0) - vdw_radii_tensor.amax())
+        xmax, ymax, zmax = (pos.amax(0) + vdw_radii_tensor.amax())
+        num_x = int((xmax - xmin) / dx)
+        num_y = int((ymax - ymin) / dx)
+        num_z = int((zmax - zmin) / dx)
+        grid = torch.meshgrid(torch.linspace(xmin, xmax, num_x),
+                              torch.linspace(ymin, ymax, num_y),
+                              torch.linspace(zmin, zmax, num_z),
+                              indexing='xy'
+                              )
+        grid = torch.stack(grid)
+        grid_flat = grid.reshape(3, num_x * num_y * num_z).T
+
+        edges = radius(x=grid_flat, y=pos, r=vdw_radii_tensor.amax(),
+                       max_num_neighbors=int(1e12))
+
+        dists = torch.linalg.norm(pos[edges[0]] - grid_flat[edges[1]], dim=1)
+        close_enough = dists <= vdw_radii_tensor[atom_types[edges[0]]]
+
+        overlapped_points = len(edges[1, close_enough].unique())
+        box_volume = (xmax - xmin) * (ymax - ymin) * (zmax - zmin)
+        overlapping_fraction = overlapped_points / len(grid_flat)
+        occupied_volume = box_volume * overlapping_fraction
+        convergence_history.append(float(occupied_volume))
+        ind += 1
+        if ind > 1:
+            conv = abs(convergence_history[-2] - convergence_history[-1]) / convergence_history[1]
+            if conv < eps:
+                converged = True
+
+            print(ind)
+            print(conv)
+
+    return occupied_volume
+
+def batch_compute_normed_cell_vectors(data):
+    return data.cell_lengths / torch.pow(data.sym_mult[:, None] * data.mol_volume[:, None], 1 / 3)
+
+
+def batch_denorm_cell_vectors(normed_cell_vecs, data):
+    return normed_cell_vecs * torch.pow(data.sym_mult[:, None] * data.mol_volume[:, None], 1 / 3)
