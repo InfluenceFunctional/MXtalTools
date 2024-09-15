@@ -1611,9 +1611,10 @@ class Modeller:
                                                self.config.gradient_norm_clip)  # gradient clipping
                 self.optimizers_dict['generator'].step()  # update parameters
 
-            if ind == 0: # scale these against sampling from the prior (most difficult)
-                self.anneal_prior_loss(prior_loss)
-                self.anneal_vdw_turnover(vdw_loss, prior_loss)
+            if ind == 0:  # scale these against sampling from the prior (most difficult)
+                if self.epoch_type == 'train':
+                    self.anneal_prior_loss(prior_loss)
+                    self.anneal_vdw_turnover(vdw_loss, prior_loss)
 
             if not skip_stats:
                 self.logger.update_current_losses('generator', self.epoch_type,
@@ -1840,7 +1841,6 @@ class Modeller:
 
         return (discriminator_output_on_real, discriminator_output_on_fake,
                 rdf_dists, stats)
-
 
     def anneal_prior_loss(self, prior_loss):
         # dynamically soften the packing loss when the model is doing well

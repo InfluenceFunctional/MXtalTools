@@ -86,7 +86,7 @@ def iter_wise_hist(stats_dict, target_key):
     batch = stats_dict['generator_sample_iter']
     vdw_list = [energy[batch == int(ind)] for ind in range(int(np.max(batch)) + 1)]
     fig = stacked_property_distribution_lists(y=vdw_list,
-                                              xaxis_title='vdW Score',
+                                              xaxis_title=target_key,
                                               yaxis_title='Sampling Iter',
                                               )
     return fig
