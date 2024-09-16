@@ -43,6 +43,18 @@ configs_list = [
           'optimizer': {'max_lr': 5e-4},
           'samples_per_iter': 1
           }},
+    # 3 - double-step
+    {'max_batch_size': 1000,
+     'generate_sgs': ['P21/c'],
+     'generator':
+         {'model': {'hidden_dim': 1024,
+                    'dropout': 0,
+                    'norm': None,
+                    'num_layers': 4,
+                    },
+          'optimizer': {'max_lr': 5e-4},
+          'samples_per_iter': 2
+          }},
 ]
 
 

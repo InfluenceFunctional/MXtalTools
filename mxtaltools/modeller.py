@@ -1383,7 +1383,7 @@ class Modeller:
                         update_weights=True,
                         iteration_override=None):
 
-        if not hasattr(self, 'packing_loss_coefficient'):  # first GAN epoch
+        if not hasattr(self, 'generator_prior'):  # first GAN epoch
             self.init_gan_constants()
 
         if update_weights:
@@ -1418,6 +1418,7 @@ class Modeller:
         self.prior_variation_scale = 0.05
         self.vdw_loss_coefficient = 0.01
         self.vdw_turnover_potential = 0.01
+
         '''set space groups to be included and generated'''
         if self.config.generate_sgs == 'all':
             self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in asym_unit_dict.keys()]
@@ -1533,25 +1534,7 @@ class Modeller:
             self.config.generate_sgs,
             no_noise=False)
 
-        prior, descaled_prior = self.sample_from_prior(mol_data)
-
-        supercell_data, generated_cell_volumes = (
-            self.supercell_builder.build_zp1_supercells(
-                molecule_data=mol_data,
-                cell_parameters=descaled_prior,
-                supercell_size=self.config.supercell_size,
-                graph_convolution_cutoff=self.config.discriminator.model.graph.cutoff,
-                align_to_standardized_orientation=False,
-                skip_refeaturization=True,
-            ))
-
-        (eval_vdw_loss, vdw_loss, vdw_potential,
-         molwise_normed_overlap, prior_loss,
-         packing_coeff, scaled_deviation) = self.analyze_generated_crystals(
-            mol_data.clone(),
-            generated_cell_volumes,
-            supercell_data,
-        )
+        prior, vdw_loss = self.sample_and_build_prior(mol_data)
 
         for ind in range(self.config.generator.samples_per_iter):
             if ind == 0:
@@ -1611,20 +1594,23 @@ class Modeller:
                                                self.config.gradient_norm_clip)  # gradient clipping
                 self.optimizers_dict['generator'].step()  # update parameters
 
-            if ind == 0:  # scale these against sampling from the prior (most difficult)
-                if self.epoch_type == 'train':
-                    self.anneal_prior_loss(prior_loss)
-                    self.anneal_vdw_turnover(vdw_loss, prior_loss)
+            # scale these against sampling from the prior (most difficult)
+            if ind == 0 and step > 0:
+                if len(self.logger.train_stats['generator_prior_loss']) > 1000:
+                    if self.epoch_type == 'train':
+                        self.anneal_prior_loss()
+                        self.anneal_vdw_turnover()
 
             if not skip_stats:
                 self.logger.update_current_losses('generator', self.epoch_type,
-                                                  generator_loss.data.cpu().detach().numpy(),
-                                                  generator_losses.cpu().detach().numpy())
+                                                  generator_loss.data.detach().cpu().numpy(),
+                                                  generator_losses.detach().cpu().numpy())
                 stats = {
                     'generated_space_group_numbers': supercell_data.sg_ind.detach(),
                     'identifiers': data.identifier,
                     'smiles': data.smiles,
                     'generator_per_mol_vdw_loss': eval_vdw_loss.detach(),
+                    'generator_per_mol_raw_vdw_loss': vdw_loss.detach(),
                     'generator_per_mol_vdw_score': vdw_score.detach(),
                     'generator_prior_loss': prior_loss.detach(),
                     'generator_packing_prediction': sample_packing_coeff.detach(),
@@ -1638,7 +1624,7 @@ class Modeller:
                     'generator_variation_factor': variation_factor.detach(),
                 }
                 if step == 0:
-                    stats['generator_samples'] = supercell_data.cpu().detach()
+                    stats['generator_samples'] = supercell_data.detach()
 
                 dict_of_tensors_to_cpu_numpy(stats)
 
@@ -1647,7 +1633,25 @@ class Modeller:
                                               stats.values(),
                                               mode='extend')
 
-
+    def sample_and_build_prior(self, mol_data):
+        prior, descaled_prior = self.sample_from_prior(mol_data)
+        supercell_data, generated_cell_volumes = (
+            self.supercell_builder.build_zp1_supercells(
+                molecule_data=mol_data,
+                cell_parameters=descaled_prior,
+                supercell_size=self.config.supercell_size,
+                graph_convolution_cutoff=self.config.discriminator.model.graph.cutoff,
+                align_to_standardized_orientation=False,
+                skip_refeaturization=True,
+            ))
+        (eval_vdw_loss, vdw_loss, vdw_potential,
+         molwise_normed_overlap, prior_loss,
+         packing_coeff, scaled_deviation) = self.analyze_generated_crystals(
+            mol_data.clone(),
+            generated_cell_volumes,
+            supercell_data,
+        )
+        return prior, vdw_loss
 
     def analyze_generated_crystals(self,
                                    mol_data,
@@ -1717,6 +1721,7 @@ class Modeller:
             conditioning_vector,
             vector_mol_embedding,
             mol_data.sg_ind,
+            prior,
         )
 
         generated_samples_to_build = denormalize_generated_cell_params(
@@ -1842,8 +1847,14 @@ class Modeller:
         return (discriminator_output_on_real, discriminator_output_on_fake,
                 rdf_dists, stats)
 
-    def anneal_prior_loss(self, prior_loss):
-        # dynamically soften the packing loss when the model is doing well
+    def anneal_prior_loss(self):
+        """
+        1. dynamically soften the packing loss when the model is doing well
+        2. also increase the range of variability when the model is doing well
+        3. if the model is not doing well, harden the loss
+        """
+        prior_loss = np.mean(self.logger.train_stats['generator_prior_loss'][-1000:])
+
         if prior_loss.mean() < self.config.generator.prior_coefficient_threshold:
             if self.prior_loss_coefficient > 1:
                 self.prior_loss_coefficient *= 0.99
@@ -1855,11 +1866,16 @@ class Modeller:
         self.logger.prior_loss_coefficient = self.prior_loss_coefficient
         self.logger.prior_variation_scale = self.prior_variation_scale
 
-    def anneal_vdw_turnover(self, vdw_loss, prior_loss):
-        # dynamically harden the vdw repulsive potential when the model is doing well
-        # if doing well on prior and vdw, and not hit max value, dynamically increase
+    def anneal_vdw_turnover(self):
+        """
+        1. harden the potential when the model is doing well on the prior
+        2. also boost the repulsion when the model is doing well on the prior AND at vdW business
+        3. if doing poorly, soften everything
+        """
+        prior_loss = np.mean(self.logger.train_stats['generator_prior_loss'][-1000:])
+        vdw_loss = np.mean(self.logger.train_stats['generator_per_mol_raw_vdw_loss'][-1000:])
+
         if prior_loss.mean() < self.config.generator.prior_coefficient_threshold:
-            # we are also allowed to boost the coefficient for this loss
             if self.vdw_loss_coefficient < self.config.generator.vdw_loss_coefficient:
                 self.vdw_loss_coefficient += 0.01
             if (vdw_loss.mean() < 0) and (self.vdw_turnover_potential < self.config.generator.vdw_turnover_potential):

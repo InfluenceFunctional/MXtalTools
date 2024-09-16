@@ -64,6 +64,7 @@ class CrystalGenerator(nn.Module):
                 x: torch.Tensor,
                 v: torch.Tensor,
                 sg_ind_list: torch.LongTensor,
+                prior: torch.Tensor,
                 ) -> torch.Tensor:
         x_w_sg = torch.cat([x, self.SG_FEATURE_TENSOR[sg_ind_list]], dim=1)
 
@@ -71,10 +72,15 @@ class CrystalGenerator(nn.Module):
         #raw_sample = torch.cat([x, v[:, :, 0]], dim=-1) * self.stds[sg_ind_list] + self.means[sg_ind_list]
 
         x_w_v = torch.cat([x_w_sg, v.reshape(v.shape[0], v.shape[1] * v.shape[2])], dim=1)
-        raw_sample = self.model(x=x_w_v)
+        delta = self.model(x=x_w_v)
+        raw_sample = prior + delta
 
+        sample = self.cleanup_sample(raw_sample, sg_ind_list)
+
+        return sample
+
+    def cleanup_sample(self, raw_sample, sg_ind_list):
         # force outputs into physical ranges
-
         # cell lengths have to be positive nonzero
         cell_lengths = softplus_shift(raw_sample[:, :3])
         # range from (0,pi) with 20% padding to prevent too-skinny cells
@@ -89,12 +95,10 @@ class CrystalGenerator(nn.Module):
         new_rotvec = rotvec / norm[:, None] * new_norm[:, None]
         # invert_inds = torch.argwhere(new_rotvec[:, 2] < 0)
         # new_rotvec[invert_inds] = -new_rotvec[invert_inds]  # z direction always positive
-
         # force cells to conform to crystal system
         cell_lengths, cell_angles = enforce_crystal_system(cell_lengths, cell_angles, sg_ind_list,
                                                            self.symmetries_dict)
         sample = torch.cat((cell_lengths, cell_angles, mol_positions, new_rotvec), dim=-1)
-
         return sample
 
 

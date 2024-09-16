@@ -793,6 +793,8 @@ def dict_of_tensors_to_cpu_numpy(stats):
     for key, value in stats.items():
         if torch.is_tensor(value):
             stats[key] = value.cpu().numpy()
+        elif 'CrystalDataBatch' in str(type(value)):
+            stats[key] = value.cpu()
 
 
 def init_decoded_data(data, decoding, device, num_nodes):
@@ -1009,9 +1011,7 @@ def get_intermolecular_dists_dict(supercell_data, conv_cutoff, max_num_neighbors
 
 def denormalize_generated_cell_params(generator_raw_samples, mol_data, asym_unit_dict):
     # denormalize the predicted cell lengths
-    cell_lengths = (mol_data.radius[:, None] *
-                    torch.pow(mol_data.sym_mult, 1 / 3)[:, None] *
-                    generator_raw_samples[:, :3])
+    cell_lengths = torch.pow(mol_data.sym_mult * mol_data.mol_volume, 1 / 3)[:, None] * generator_raw_samples[:, :3]
     # rescale asymmetric units  # todo add assertions around these
     mol_positions = descale_asymmetric_unit(asym_unit_dict,
                                             generator_raw_samples[:, 6:9],

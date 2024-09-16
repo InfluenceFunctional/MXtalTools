@@ -87,7 +87,7 @@ def stacked_property_distribution_lists(y: list,
 
     fig = go.Figure()
     if bandwidth is None:
-        bandwidth = float(np.ptp(np.concatenate(y)) / 400)
+        bandwidth = float(np.ptp(np.concatenate(y)) / 200)
 
     for ind in range(num_stacks):
         fig.add_trace(go.Violin(
