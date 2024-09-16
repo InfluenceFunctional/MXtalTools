@@ -1673,7 +1673,7 @@ class Modeller:
             scaled_deviation = torch.zeros_like(generated_cell_volumes)
 
         reduced_volume = generated_cell_volumes / supercell_data.sym_mult
-        packing_coeff = reduced_volume / mol_data.mol_volume
+        packing_coeff = mol_data.mol_volume / reduced_volume
 
         dist_dict = get_intermolecular_dists_dict(supercell_data, 6, 100)
         molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, eval_vdw_loss \
