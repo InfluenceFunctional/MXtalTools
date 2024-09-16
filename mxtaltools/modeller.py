@@ -1580,8 +1580,9 @@ class Modeller:
             eval_vdw_loss = eval_vdw_loss / mol_data.num_atoms
             supercell_data.loss = vdw_loss
 
+            vdw_delta = vdw_loss - prev_vdw_loss
             generator_losses = (prior_loss * self.prior_loss_coefficient +
-                                (vdw_loss - prev_vdw_loss) * self.vdw_loss_coefficient)
+                                (vdw_delta) * self.vdw_loss_coefficient)
 
             generator_loss = generator_losses.mean()
             if torch.sum(torch.logical_not(torch.isfinite(generator_losses))) > 0:
@@ -1596,10 +1597,11 @@ class Modeller:
 
             # scale these against sampling from the prior (most difficult)
             if ind == 0 and step > 0:
-                if len(self.logger.train_stats['generator_prior_loss']) > 1000:
+                good_inds = np.argwhere(np.array(self.logger.train_stats['generator_sample_iter']) == 0).flatten()
+                if len(good_inds) > 1000:
                     if self.epoch_type == 'train':
-                        self.anneal_prior_loss()
-                        self.anneal_vdw_turnover()
+                        self.anneal_prior_loss(good_inds)
+                        self.anneal_vdw_turnover(good_inds)
 
             if not skip_stats:
                 self.logger.update_current_losses('generator', self.epoch_type,
@@ -1609,6 +1611,7 @@ class Modeller:
                     'generated_space_group_numbers': supercell_data.sg_ind.detach(),
                     'identifiers': data.identifier,
                     'smiles': data.smiles,
+                    'generator_vdw_delta': vdw_delta.detach(),
                     'generator_per_mol_vdw_loss': eval_vdw_loss.detach(),
                     'generator_per_mol_raw_vdw_loss': vdw_loss.detach(),
                     'generator_per_mol_vdw_score': vdw_score.detach(),
@@ -1847,13 +1850,13 @@ class Modeller:
         return (discriminator_output_on_real, discriminator_output_on_fake,
                 rdf_dists, stats)
 
-    def anneal_prior_loss(self):
+    def anneal_prior_loss(self, good_inds):
         """
         1. dynamically soften the packing loss when the model is doing well
         2. also increase the range of variability when the model is doing well
         3. if the model is not doing well, harden the loss
         """
-        prior_loss = np.mean(self.logger.train_stats['generator_prior_loss'][-1000:])
+        prior_loss = np.mean(np.array(self.logger.train_stats['generator_prior_loss'])[good_inds[-1000:]])
 
         if prior_loss.mean() < self.config.generator.prior_coefficient_threshold:
             if self.prior_loss_coefficient > 1:
@@ -1866,14 +1869,14 @@ class Modeller:
         self.logger.prior_loss_coefficient = self.prior_loss_coefficient
         self.logger.prior_variation_scale = self.prior_variation_scale
 
-    def anneal_vdw_turnover(self):
+    def anneal_vdw_turnover(self, good_inds):
         """
         1. harden the potential when the model is doing well on the prior
         2. also boost the repulsion when the model is doing well on the prior AND at vdW business
         3. if doing poorly, soften everything
         """
-        prior_loss = np.mean(self.logger.train_stats['generator_prior_loss'][-1000:])
-        vdw_loss = np.mean(self.logger.train_stats['generator_per_mol_raw_vdw_loss'][-1000:])
+        prior_loss = np.mean(np.array(self.logger.train_stats['generator_prior_loss'])[good_inds[-1000:]])
+        vdw_loss = np.mean(np.array(self.logger.train_stats['generator_per_mol_raw_vdw_loss'])[good_inds[-1000:]])
 
         if prior_loss.mean() < self.config.generator.prior_coefficient_threshold:
             if self.vdw_loss_coefficient < self.config.generator.vdw_loss_coefficient:

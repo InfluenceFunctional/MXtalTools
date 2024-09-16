@@ -1227,7 +1227,7 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
                 'colorscale': cscale},
     )
     fig.layout.margin = layout.margin
-    fig.update_layout(xaxis_title='vdw score', yaxis_title='Reduced Volume')
+    fig.update_layout(xaxis_title='vdw score', yaxis_title='Packing Coeff')
     fig.update_layout(xaxis_range=[-1, np.inf],
                       yaxis_range=[0, np.inf])
 
