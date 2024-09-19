@@ -438,10 +438,8 @@ class DataManager:
                          max_chunks=max_chunks,
                          samples_per_chunk=samples_per_chunk)
 
-        # collation here so we don't slow down saving above
-        self.dataset = self.collater(self.dataset)
+        self.quick_compute_mol_volume()
         self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
-        # save smaller test dataset
 
         if save_dataset:
             np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, self.misc_dataset)

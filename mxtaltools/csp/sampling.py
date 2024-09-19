@@ -40,48 +40,48 @@ class Sampler:
     def sample_and_cluster(self, init_sample, tot_samples,
                            batch_size, cc_orientation,
                            sg_to_sample, sample_source, show_progress=True,
-                           rauv_cutoff=1.2,
+                           packing_coeff_cutoff=1.2,
                            vdw_cutoff=1,
                            cell_params_threshold=0.01,
                            rdf_dist_threshold=0.05,
                            variation_factor=None,
                            ):
         with torch.no_grad():
-            samples, lj_potential, rauv, rdf, rr = self.do_sampling(
+            samples, vdw_potential, packing_coeff, rdf, rr = self.do_sampling(
                 batch_size, cc_orientation,
                 init_sample, sample_source,
                 sg_to_sample, tot_samples,
                 show_tqdm=show_progress, variation_factor=variation_factor)
 
-            lj_potential, samples, rdf, rauv, rdf_distmat = \
-                crystal_filter_cluster(lj_potential, rdf, rr, samples, rauv,
-                                       rauv_cutoff, vdw_cutoff,
+            vdw_potential, samples, rdf, packing_coeff, rdf_distmat = \
+                crystal_filter_cluster(vdw_potential, rdf, rr, samples, packing_coeff,
+                                       packing_coeff_cutoff, vdw_cutoff,
                                        cell_params_threshold, rdf_dist_threshold,
                                        )
 
-        return {'lj_potential': lj_potential.numpy(), 'rdf': rdf.numpy(), 'samples': samples.numpy(),
-                'rauv': rauv.numpy(), 'rdf_distmat': rdf_distmat}
+        return {'vdw_potential': vdw_potential.numpy(), 'rdf': rdf.numpy(), 'samples': samples.numpy(),
+                'packing_coeff': packing_coeff.numpy(), 'rdf_distmat': rdf_distmat}
 
     def do_sampling(self, batch_size, cc_orientation,
                     init_sample, sample_source,
                     sg_to_sample, tot_samples,
                     show_tqdm=True, variation_factor=None):
         num_batches = tot_samples // batch_size + 1
-        sample_record, lj_potential_record, rauv_record, rdf_record = [], [], [], []
+        sample_record, vdw_potential_record, packing_coeff_record, rdf_record = [], [], [], []
         for _ in tqdm(range(num_batches), disable=not show_tqdm):
-            samples, lj_potential, rauv, rdf, rr = self.sample_iter(
+            samples, vdw_potential, packing_coeff, rdf, rr = self.sample_iter(
                 init_sample, batch_size, cc_orientation,
                 sg_to_sample, sample_source, variation_factor)
-            sample_record.append(samples)
-            lj_potential_record.append(lj_potential)
-            rauv_record.append(rauv)
-            rdf_record.append(rdf)
+            sample_record.append(samples.cpu())
+            vdw_potential_record.append(vdw_potential.cpu())
+            packing_coeff_record.append(packing_coeff.cpu())
+            rdf_record.append(rdf.cpu())
 
         return (torch.cat(sample_record),
-                torch.cat(lj_potential_record),
-                torch.cat(rauv_record),
+                torch.cat(vdw_potential_record),
+                torch.cat(packing_coeff_record),
                 torch.cat(rdf_record),
-                rr
+                rr.cpu()
                 )
 
     def sample_iter(self, init_sample, batch_size, cc_orientation, sg_to_sample, sample_source, variation_factor=None):
@@ -112,9 +112,9 @@ class Sampler:
                 skip_refeaturization=False,
             ))
 
-        (eval_lj_loss, lj_loss, lj_potential,
+        (eval_vdw_loss, vdw_loss, vdw_potential,
          molwise_normed_overlap, prior_loss,
-         sample_rauv, scaled_deviation,
+         packing_coeff, scaled_deviation,
          dist_dict) = self.analyze_generated_crystals(
             mol_data,
             generated_cell_volumes,
@@ -132,7 +132,7 @@ class Sampler:
                                      atomic_numbers_override=mol_data.x.unique().long())
 
         return sample_to_compare.detach(), (
-                    lj_potential / mol_data.num_atoms).detach(), sample_rauv.detach(), rdf.detach(), rr.detach()
+                    vdw_potential / mol_data.num_atoms).detach(), packing_coeff.detach(), rdf.detach(), rr.detach()
 
     def sample_from_prior(self, mol_data) -> Tuple[torch.Tensor, torch.Tensor]:
         raw_samples = self.prior(mol_data.num_graphs, mol_data.sg_ind).to(self.device)
@@ -169,6 +169,7 @@ class Sampler:
             conditioning_vector,
             vector_mol_embedding,
             mol_data.sg_ind,
+            prior,
         )
 
         samples_to_build = denormalize_generated_cell_params(
@@ -259,20 +260,197 @@ class Sampler:
             scaled_deviation = torch.zeros_like(generated_cell_volumes)
 
         reduced_volume = generated_cell_volumes / supercell_data.sym_mult
-        atom_volumes = scatter(4 / 3 * torch.pi * self.vdw_radii_tensor[mol_data.x[:, 0]] ** 3, mol_data.batch,
-                               reduce='sum')
-        sample_rauv = reduced_volume / atom_volumes
+        packing_coeff = mol_data.mol_volume / reduced_volume
 
         dist_dict = get_intermolecular_dists_dict(supercell_data, self.cutoff, 100)
-        molwise_overlap, molwise_normed_overlap, lj_potential, lj_loss, eval_lj_loss \
+        molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, eval_vdw_loss \
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_data.num_graphs, vdw_turnover_potential)
 
         if return_dist_dict:
-            return (eval_lj_loss, lj_loss, lj_potential,
+            return (eval_vdw_loss, vdw_loss, vdw_potential,
                     molwise_normed_overlap, prior_loss,
-                    sample_rauv, scaled_deviation, dist_dict)
+                    packing_coeff, scaled_deviation, dist_dict)
 
         else:
-            return (eval_lj_loss, lj_loss, lj_potential,
+            return (eval_vdw_loss, vdw_loss, vdw_potential,
                     molwise_normed_overlap, prior_loss,
-                    sample_rauv, scaled_deviation)
+                    packing_coeff, scaled_deviation)
+
+
+
+
+'''old code'''
+
+#
+# def crystal_search(self, molecule_data, batch_size=None, data_contains_ground_truth=True):  # currently deprecated
+#     """
+#     execute a search for a single crystal target
+#     if the target is known, compare it to our best guesses
+#     """
+#     self.source_directory = os.getcwd()
+#     self.prep_new_working_directory()
+#
+#     with wandb.init(config=self.config,
+#                     project=self.config.wandb.project_name,
+#                     entity=self.config.wandb.username,
+#                     tags=[self.config.logger.experiment_tag],
+#                     settings=wandb.Settings(code_dir=".")):
+#
+#         wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+#
+#         if batch_size is None:
+#             batch_size = self.config.min_batch_size
+#
+#         num_discriminator_opt_steps = 100
+#         num_mcmc_opt_steps = 100
+#         max_iters = 10
+#
+#         self.init_gaussian_generator()
+#         self.initialize_models_optimizers_schedulers()
+#
+#         self.models_dict['generator'].eval()
+#         self.models_dict['regressor'].eval()
+#         self.models_dict['discriminator'].eval()
+#
+#         '''instantiate batch'''
+#         crystaldata_batch = self.collater([molecule_data for _ in range(batch_size)]).to(self.device)
+#         refresh_inds = torch.arange(batch_size)
+#         converged_samples_list = []
+#         optimization_trajectories = []
+#
+#         for opt_iter in range(max_iters):
+#             crystaldata_batch = self.refresh_crystal_batch(crystaldata_batch, refresh_inds=refresh_inds)
+#
+#             crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(
+#                 crystaldata_batch,
+#                 mode='mcmc',
+#                 num_steps=num_mcmc_opt_steps,
+#                 temperature=0.05,
+#                 step_size=0.01)
+#             optimization_trajectories.append(opt_traj)
+#
+#             crystaldata_batch, opt_traj = self.optimize_crystaldata_batch(
+#                 crystaldata_batch,
+#                 mode='discriminator',
+#                 num_steps=num_discriminator_opt_steps)
+#             optimization_trajectories.append(opt_traj)
+#
+#             crystaldata_batch, refresh_inds, converged_samples = self.prune_crystaldata_batch(crystaldata_batch,
+#                                                                                               optimization_trajectories)
+#
+#             converged_samples_list.extend(converged_samples)
+#
+#         aa = 1
+#         # do clustering
+#
+#         # compare to ground truth
+#         # add convergence flags based on completeness of sampling
+#
+#         # '''compare samples to ground truth'''
+#         # if data_contains_ground_truth:
+#         #     ground_truth_analysis = self.analyze_real_crystal(molecule_data)
+#         #
+
+# def prune_crystaldata_batch(self, crystaldata_batch, optimization_trajectories):
+#     """
+#     Identify trajectories which have converged.
+#     """
+#
+#     """
+#     combined_traj_dict = {key: np.concatenate(
+#         [traj[key] for traj in optimization_trajectories], axis=0)
+#         for key in optimization_trajectories[1].keys()}
+#
+#     from plotly.subplots import make_subplots
+#     import plotly.graph_objects as go
+#
+#     from plotly.subplots import make_subplots
+#     import plotly.graph_objects as go
+#     fig = make_subplots(cols=3, rows=1, subplot_titles=['score','vdw_score','packing_coeff'])
+#     for i in range(crystaldata_batch.num_graphs):
+#         for j, key in enumerate(['score','vdw_score','packing_coeff']):
+#             col = j % 3 + 1
+#             row = j // 3 + 1
+#             fig.add_scattergl(y=combined_traj_dict[key][:, i], name=i, legendgroup=i, showlegend=True if j == 0 else False, row=row, col=col)
+#     fig.show(renderer='browser')
+#
+#     """
+#
+#     refresh_inds = np.arange(crystaldata_batch.num_graphs)  # todo write a function that actually checks for this
+#     converged_samples = [crystaldata_batch[i] for i in refresh_inds.tolist()]
+#
+#     return crystaldata_batch, refresh_inds, converged_samples
+
+# def optimize_crystaldata_batch(self, batch, mode, num_steps, temperature=None, step_size=None):  # DEPRECATED todo redevelop
+#     """
+#     method which takes a batch of crystaldata objects
+#     and optimzies them according to a score model either
+#     with MCMC or gradient descent
+#     """
+#     if mode.lower() == 'mcmc':
+#         sampling_dict = mcmc_sampling(
+#             self.models_dict['discriminator'], batch,
+#             self.supercell_builder,
+#             num_steps, self.vdw_radii,
+#             supercell_size=5, cutoff=6,
+#             sampling_temperature=temperature,
+#             lattice_means=self.dataDims['lattice_means'],
+#             lattice_stds=self.dataDims['lattice_stds'],
+#             step_size=step_size,
+#         )
+#     elif mode.lower() == 'discriminator':
+#         sampling_dict = gradient_descent_sampling(
+#             self.models_dict['discriminator'], batch,
+#             self.supercell_builder,
+#             num_steps, 1e-3,
+#             torch.optim.Rprop, self.vdw_radii,
+#             lattice_means=self.dataDims['lattice_means'],
+#             lattice_stds=self.dataDims['lattice_stds'],
+#             supercell_size=5, cutoff=6,
+#         )
+#     else:
+#         assert False, f"{mode.lower()} is not a valid sampling mode!"
+#
+#     '''return best sample'''
+#     best_inds = np.argmax(sampling_dict['score'], axis=0)
+#     best_samples = sampling_dict['std_cell_params'][best_inds, np.arange(batch.num_graphs), :]
+#     supercell_data, _ = \
+#         self.supercell_builder.build_zp1_supercells(
+#             batch, torch.tensor(best_samples, dtype=torch.float32, device=batch.x.device),
+#             5, 6,
+#             align_to_standardized_orientation=True,
+#             target_handedness=batch.aunit_handedness)
+#
+#     output, proposed_dist_dict = self.models_dict['discriminator'](supercell_data.clone().cuda(), return_dists=True)
+#
+#     rebuilt_sample_scores = softmax_and_score(output[:, :2]).cpu().detach().numpy()
+#
+#     cell_params_difference = np.amax(
+#         np.sum(np.abs(supercell_data.cell_params.cpu().detach().numpy() - best_samples), axis=1))
+#     rebuilt_scores_difference = np.amax(np.abs(rebuilt_sample_scores - sampling_dict['score'].max(0)))
+#
+#     if rebuilt_scores_difference > 1e-2 or cell_params_difference > 1e-2:
+#         aa = 1
+#         assert False, "Best cell rebuilding failed!"  # confirm we rebuilt the cells correctly
+#
+#     sampling_dict['best_samples'] = best_samples
+#     sampling_dict['best_scores'] = sampling_dict['score'].max(0)
+#     sampling_dict['best_vdws'] = np.diag(sampling_dict['vdw_score'][best_inds, :])
+#
+#     best_batch = batch.clone()
+#     best_batch.cell_params = torch.tensor(best_samples, dtype=torch.float32, device=supercell_data.x.device)
+#
+#     return best_batch, sampling_dict
+#
+# def refresh_crystal_batch(self, crystaldata, refresh_inds, generator='gaussian', space_groups: torch.tensor = None):
+#     # crystaldata = self.set_molecule_alignment(crystaldata, right_handed=False, mode_override=mol_orientation)
+#
+#     if space_groups is not None:
+#         crystaldata.sg_ind = space_groups
+#
+#     if generator == 'gaussian':
+#         samples = self.gaussian_generator.forward(crystaldata.num_graphs, crystaldata).to(self.config.device)
+#         crystaldata.cell_params = samples[refresh_inds]
+#         # todo add option for generator here
+#
+#     return crystaldata

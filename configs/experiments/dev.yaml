@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
-device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/generator.yaml
-dataset_name: test_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+device: "cpu"  # or "cpu"
+base_config_path: /experiments/base/qm9_csp.yaml
+dataset_name: CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
 save_checkpoints: True
 #sweep_path: configs/experiments/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
@@ -23,11 +23,11 @@ early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 5
-max_batch_size: 80
+max_batch_size: 20
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
-max_epochs: 100000 # 0 epochs takes us straight to sampling/evaluation (WIP)
+max_epochs: 0 # 0 epochs takes us straight to sampling/evaluation (WIP)
 history: 50 # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)

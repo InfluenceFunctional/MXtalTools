@@ -84,7 +84,6 @@ class CrystalData(BaseData):
 
     tracking: array of graph-wise features for tracking & analysis
     smiles: SMILES strings of molecule in crystal
-    mol_size: number of nodes per molecule
     csd_identifier: unique identifier string for this crystal structure
     mol_volume: volume of a single molecule # TODO deprecate this is unreliably computed
 
@@ -173,7 +172,7 @@ class CrystalData(BaseData):
                 self.symmetry_operators = np.stack(SYM_OPS[sg_ind])
                 self.nonstandard_symmetry = False
 
-            self.sym_mult = len(self.symmetry_operators)
+            self.sym_mult = torch.ones(1, dtype=torch.long) * len(self.symmetry_operators)
             self.z_prime = z_prime
 
             # fix box

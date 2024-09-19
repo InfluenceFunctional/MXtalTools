@@ -40,6 +40,8 @@ def process_dataset_chunks(n_chunks: int,
             chunk_data_list = process_chunk(chunk, chunk_ind, use_filenames_for_identifiers)
             if len(chunk_data_list) > 0:
                 torch.save(chunk_data_list, chunks_path + f"{chunk_prefix}_chunk_{chunk_ind}.pkl")
+            else:
+                torch.save([], chunks_path + f"{chunk_prefix}_chunk_{chunk_ind}.pkl")
 
 
 def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
@@ -57,10 +59,13 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
             except RuntimeError:  # some crystals fail to load due to timeout in refine_bonds
                 continue  # skip this crystal
 
-            passed_filter, unit_cell, rd_mols = crystal_filter(crystal)
+            passed_filter, unit_cell, rd_mols = crystal_filter(crystal,
+                                                               max_heavy_atoms=9,
+                                                               protonation_state='protonated',
+                                                               max_atomic_number=9)
             if not passed_filter:
                 failed_checks_counter += 1
-            else:  # filter various undesirable traits
+            else:
                 if use_filenames_for_identifiers:  # filename includes BT target, group name, any built-in identifications, and an extra index for safety
                     identifier = cif_path.split('.cif')[0] + '_' + crystal.identifier + '_' + str(crystal_ind)
                 else:
@@ -69,7 +74,8 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                 crystal_dict = extract_crystal_data(identifier, crystal, unit_cell)
                 molecules = []
                 for i_c, rd_mol in enumerate(rd_mols):  # one crystal may have Z prime molecules
-                    molecules.append(featurize_molecule(crystal, rd_mol, component_num=i_c))
+                    molecules.append(featurize_molecule(crystal, rd_mol, component_num=i_c,
+                                                        protonation_state='protonated'))
 
                 # check for custom metrics in the CIF text
                 crystal_dict = extract_custom_cif_data(cif_path, crystal_dict)
@@ -92,33 +98,11 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
                                                                                                     crystal_dict)
 
                 if parameterization_and_reconstruction_successful:  # if we can confidently analyze and rebuild this crystal
-                    crystaldata = CrystalData(
-                        x=torch.tensor(atomic_numbers, dtype=torch.long),
-                        pos=reparameterized_aunit_coords_tensor,
-                        mol_ind=torch.tensor(mol_ind, dtype=torch.int32),
-                        cell_lengths=torch.tensor(
-                            np.stack([
-                                crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c']
-                            ]), dtype=torch.float32),
-                        cell_angles=torch.tensor(
-                            np.stack([
-                                crystal_dict['lattice_alpha'], crystal_dict['lattice_beta'],
-                                crystal_dict['lattice_gamma']
-                            ]), dtype=torch.float32),
-                        z_prime=int(crystal_dict['z_prime']),
-                        sg_ind=int(crystal_dict['space_group_number']),  # default to P1
-                        pose_parameters=[torch.tensor(pose_params_list[zp], dtype=torch.float32) for zp in
-                                         range(int(crystal_dict['z_prime']))],
-                        smiles='Z'.join([mol['molecule_smiles'] for mol in molecules]),  # separate molecules by 'Z'
-                        identifier=crystal_dict['identifier'],
-                        unit_cell_pos=reconstructed_unit_cell_coords_tensor,
-                        nonstandard_symmetry=not sym_ops_are_standard,
-                        symmetry_operators=sym_ops,
-                        aunit_handedness=[int(handedness_list[zp]) for zp in range(int(crystal_dict['z_prime']))],
-                        is_well_defined=is_well_defined,
-                        fingerprint=np.concatenate([np.array(mol['molecule_fingerprint']) for mol in molecules]),
-                        y=torch.ones(1),  # this dummy variable helps us later on - save us having to rebuild the dataset at runtime
-                    )
+                    crystaldata = generate_crystaldata_sample(atomic_numbers, crystal_dict, handedness_list,
+                                                              is_well_defined, mol_ind, molecules, pose_params_list,
+                                                              reconstructed_unit_cell_coords_tensor,
+                                                              reparameterized_aunit_coords_tensor, sym_ops,
+                                                              sym_ops_are_standard)
 
                     data_list.append(crystaldata)
                 else:
@@ -128,6 +112,39 @@ def process_chunk(chunk, chunk_ind, use_filenames_for_identifiers):
     print(f"Cell analysis failed {failed_checks_counter} times out of {len(chunk)}")
 
     return data_list
+
+
+def generate_crystaldata_sample(atomic_numbers, crystal_dict, handedness_list, is_well_defined, mol_ind, molecules,
+                                pose_params_list, reconstructed_unit_cell_coords_tensor,
+                                reparameterized_aunit_coords_tensor, sym_ops, sym_ops_are_standard):
+    crystaldata = CrystalData(
+        x=torch.tensor(atomic_numbers, dtype=torch.long),
+        pos=reparameterized_aunit_coords_tensor,
+        mol_ind=torch.tensor(mol_ind, dtype=torch.int32),
+        cell_lengths=torch.tensor(
+            np.stack([
+                crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c']
+            ]), dtype=torch.float32),
+        cell_angles=torch.tensor(
+            np.stack([
+                crystal_dict['lattice_alpha'], crystal_dict['lattice_beta'],
+                crystal_dict['lattice_gamma']
+            ]), dtype=torch.float32),
+        z_prime=int(crystal_dict['z_prime']),
+        sg_ind=int(crystal_dict['space_group_number']),  # default to P1
+        pose_parameters=[torch.tensor(pose_params_list[zp], dtype=torch.float32) for zp in
+                         range(int(crystal_dict['z_prime']))],
+        smiles='Z'.join([mol['molecule_smiles'] for mol in molecules]),  # separate molecules by 'Z'
+        identifier=crystal_dict['identifier'],
+        unit_cell_pos=reconstructed_unit_cell_coords_tensor,
+        nonstandard_symmetry=not sym_ops_are_standard,
+        symmetry_operators=sym_ops,
+        aunit_handedness=[int(handedness_list[zp]) for zp in range(int(crystal_dict['z_prime']))],
+        is_well_defined=is_well_defined,
+        fingerprint=np.concatenate([np.array(mol['molecule_fingerprint']) for mol in molecules]),
+        y=torch.ones(1),  # this dummy variable helps us later on - save us having to rebuild the dataset at runtime
+    )
+    return crystaldata
 
 
 '''  # for processing aspirin dataset
@@ -156,9 +173,17 @@ cifs_path = r'D:\crystal_datasets\blind_test_3-6_cifs\blind_test_6\gp5080sup2
 '''
 
 if __name__ == '__main__':
+    # process_dataset_chunks(n_chunks=1000,
+    #                        cifs_path='D:/crystal_datasets/CSD_cifs/',
+    #                        chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
+    #                        chunk_prefix='',
+    #                        use_filenames_for_identifiers=False,
+    #                        target_identifiers=None,
+    #                        filter_by_targets=False)
+
     process_dataset_chunks(n_chunks=1000,
                            cifs_path='D:/crystal_datasets/CSD_cifs/',
-                           chunks_path='D:/crystal_datasets/CSD_featurized_chunks/',
+                           chunks_path='D:/crystal_datasets/CSD_QM9_featurized_chunks/',
                            chunk_prefix='',
                            use_filenames_for_identifiers=False,
                            target_identifiers=None,

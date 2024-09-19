@@ -17,7 +17,7 @@ from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from tqdm import tqdm
 
-from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch, rotvec2sph
+from mxtaltools.common.geometry_calculations import rotvec2sph
 from mxtaltools.common.training_utils import instantiate_models
 from mxtaltools.common.utils import init_sym_info, compute_rdf_distance, make_sequential_directory, \
     flatten_wandb_params, sample_uniform
@@ -221,7 +221,7 @@ class Modeller:
             filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
             conv_cutoff=conv_cutoff,
             do_shuffle=override_shuffle,
-            precompute_edges=not nonzero_positional_noise and (
+            precompute_edges=not nonzero_positional_noise and (  # TODO have a better think about this
                     self.config.mode not in ['gan', 'discriminator', 'generator']),
         )
         self.dataDims = data_manager.dataDims
@@ -679,7 +679,7 @@ class Modeller:
 
     def evaluate_model(self):
         if self.config.mode == 'generator':
-            self.csp()
+            self.crystal_search()
         else:
             with (wandb.init(config=self.config,
                              project=self.config.wandb.project_name,
@@ -1011,7 +1011,7 @@ class Modeller:
         self.logger.concatenate_stats_dict(self.epoch_type)
         self.ae_annealing()
 
-    def csp(self):
+    def crystal_search(self):
         with (wandb.init(config=self.config,
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
@@ -1038,59 +1038,82 @@ class Modeller:
             self.models_dict['generator'].eval()
             self.models_dict['autoencoder'].eval()
 
-            # 15613 is a nice molecule - but the prior packs it too densely
-            nice_mol_ind = [ind for ind in range(len(data_loader.dataset)) if
-                            data_loader.dataset[ind].identifier == 15613]
-            sample = data_loader.dataset[int(nice_mol_ind[0])]
+            ids = [data_loader.dataset[ind].identifier for ind in range(len(data_loader.dataset))]
 
-            batch_size = self.config.max_batch_size
-            num_samples = self.config.num_samples
+            sample = data_loader.dataset[ids.index('DUNVEN01')]
+
+            # fairly rigid molecules: ampyrd, axosow, benzac, bepnit, bertoh, bzamid,
+            # nicoam, DUNVEN, dovcat, NECMUD,
 
             sampler = Sampler(0,
                               self.device,
                               self.generator_prior,
                               self.models_dict['generator'],
                               self.models_dict['autoencoder'])
+            # batch_size = self.config.max_batch_size
+            # num_samples = self.config.num_samples
 
-            g_results_dict = sampler.sample_and_cluster(sample, num_samples, batch_size,
-                                                        'random', [14 for _ in range(batch_size)],
-                                                        'generator',
-                                                        show_progress=True,
-                                                        rauv_cutoff=1.2,
-                                                        vdw_cutoff=10,
-                                                        cell_params_threshold=0.01,
-                                                        rdf_dist_threshold=0.005,
-                                                        variation_factor=0.1
-                                                        )
-            np.save('generator_sampling_results', g_results_dict)
-            del g_results_dict
-            p_results_dict = sampler.sample_and_cluster(sample, num_samples, batch_size,
-                                                        'random', [14 for _ in range(batch_size)],
-                                                        'csd_prior',
-                                                        show_progress=True,
-                                                        rauv_cutoff=1.2,
-                                                        vdw_cutoff=10,
-                                                        cell_params_threshold=0.01,
-                                                        rdf_dist_threshold=0.005,
-                                                        )
-            np.save('prior_sampling_results', p_results_dict)
+            # p_results_dict = sampler.sample_and_cluster(sample, num_samples, batch_size,
+            #                                             'random', [14 for _ in range(batch_size)],
+            #                                             'csd_prior',
+            #                                             show_progress=True,
+            #                                             packing_coeff_cutoff=[0.5, 0.9],
+            #                                             vdw_cutoff=10,
+            #                                             cell_params_threshold=0.01,
+            #                                             rdf_dist_threshold=0.005,
+            #                                             )
+            #
+            # np.save('prior_sampling_results', p_results_dict)
+            # del p_results_dict
+            #
+            # g_results_dict = sampler.sample_and_cluster(sample, num_samples, batch_size,
+            #                                             'random', [14 for _ in range(batch_size)],
+            #                                             'generator',
+            #                                             show_progress=True,
+            #                                             packing_coeff_cutoff=1.2,
+            #                                             vdw_cutoff=10,
+            #                                             cell_params_threshold=0.01,
+            #                                             rdf_dist_threshold=0.005,
+            #                                             variation_factor=0.1
+            #                                             )
+            # np.save('generator_sampling_results', g_results_dict)
+            # del g_results_dict
+            num_cpus = mp.cpu_count() - 1
+            pool = mp.Pool(num_cpus)
 
-            # pool = mp.Pool(mp.cpu_count() - 1)
-            # out = []
-            # for ind in range(10):
-            #     out.append(
-            #         pool.apply_async(sampler.sample_and_cluster,
-            #                          (sample, 1000, 100,
-            #                           'random', [14 for _ in range(100)], 'csd_prior',
-            #                           False,
-            #                           1.2, 1, 0.01, 0.05,
-            #                           )
-            #                          ).get()
-            #     )
-            # pool.close()
-            # pool.join()
+            batch_size = self.config.max_batch_size
+            num_samples = self.config.num_samples
 
-            # print(len(out))
+            out = []
+            for ind in range(num_cpus):
+                out.append(
+                    pool.apply_async(sampler.sample_and_cluster,
+                                     (sample,
+                                      num_samples // num_cpus,
+                                      batch_size,
+                                      'random',
+                                      [14 for _ in range(batch_size)],
+                                      'csd_prior',
+                                      False,
+                                      [0.5, 0.9],
+                                      10,
+                                      0.01,
+                                      0.005,
+                                      )
+                                     )#.get()
+                )
+            pool.close()
+            pool.join()
+            out = [elem.get() for elem in out]
+            combo_dict = {}
+            for key in out[0].keys():
+                if 'distmat' not in key:
+                    array = []
+                    for ind in range(len(out)):
+                        array.extend(out[ind][key])
+                    combo_dict[key] = np.array(array)
+
+            np.save('prior_sampling_results', combo_dict)
             aa = 1
 
     def sample_build_analyze_from_prior(self, num_iters, batch_size, sample):
@@ -1617,7 +1640,7 @@ class Modeller:
                     'generator_per_mol_vdw_score': vdw_score.detach(),
                     'generator_prior_loss': prior_loss.detach(),
                     'generator_packing_prediction': sample_packing_coeff.detach(),
-                    'generator_sample_iter': torch.ones(len(prior_loss))*ind,
+                    'generator_sample_iter': torch.ones(len(prior_loss)) * ind,
                     'generator_prior': prior.detach(),
                     'generator_scaling_factor': scaling_factor.detach(),
                     'generated_cell_parameters': torch.cat(
@@ -1839,7 +1862,8 @@ class Modeller:
                                                   return_score_only=True).detach(),
                  'fake_vdw_penalty': -vdw_overlap(self.vdw_radii, crystaldata=fake_supercell_data,
                                                   return_score_only=True).detach(),
-                 'real_cell_parameters': torch.cat([data.cell_lengths, data.cell_angles, data.pose_params0], dim=1).detach(),
+                 'real_cell_parameters': torch.cat([data.cell_lengths, data.cell_angles, data.pose_params0],
+                                                   dim=1).detach(),
                  'generated_cell_parameters': canonical_fake_cell_params.detach(),
                  'real_volume_fractions': real_volume_fractions.detach(),
                  'generated_volume_fractions': fake_volume_fractions.detach(),
@@ -1964,7 +1988,8 @@ class Modeller:
         destandardize
         make sure samples are appropriately cleaned
         """
-        real_cell_params = torch.cat([real_data.cell_reduced_lengths, real_data.cell_angles, real_data.pose_params0], dim=1)
+        real_cell_params = torch.cat([real_data.cell_reduced_lengths, real_data.cell_angles, real_data.pose_params0],
+                                     dim=1)
         generated_samples_std = (real_cell_params - self.lattice_means) / self.lattice_stds
 
         if distortion_override is not None:
@@ -1995,7 +2020,8 @@ class Modeller:
             self.sym_info, self.supercell_builder.asym_unit_dict,
             rescale_asymmetric_unit=False, destandardize=True, mode='hard')
 
-        distorted_samples_clean[:, :3] *= torch.pow(real_data.mol_volume * real_data.sym_mult, 1/3)[:, None] # denorm cell lengths
+        distorted_samples_clean[:, :3] *= torch.pow(real_data.mol_volume * real_data.sym_mult, 1 / 3)[:,
+                                          None]  # denorm cell lengths
 
         return distorted_samples_clean, distortion
 

@@ -1071,20 +1071,22 @@ def agglomerative_cluster(sample_score, dists, threshold):
     else:
         good_inds = torch.arange(len(sample_score))
 
-    return torch.LongTensor(good_inds), n_clusters
+    return torch.LongTensor(good_inds), n_clusters, classes
 
 
-def coarse_crystal_filter(lj_record, lj_cutoff, rauv_record, rauv_cutoff):
+def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cutoff):
     """filtering - samples with exactly 0 LJ energy are too diffuse, and more than CUTOFF are overlapping"""
     bad_inds = []
     bad_bools1 = lj_record == 0
     bad_bools2 = lj_record >= lj_cutoff
-    bad_bools3 = rauv_record >= rauv_cutoff
+    bad_bools3 = packing_coeff_record >= packing_cutoff[-1]
+    bad_bools4 = packing_coeff_record <= packing_cutoff[0]
+
     # if we got any of these, cut the sample
-    good_bools = (~bad_bools1)*(~bad_bools2)*(~bad_bools3)
+    good_bools = (~bad_bools1)*(~bad_bools2)*(~bad_bools3)*(~bad_bools4)
     good_inds = torch.argwhere(good_bools).flatten()
 
-    print(f"{bad_bools1.sum()} with zero LJ, {bad_bools2.sum()} above LJ cutoff, {bad_bools3.sum()} above density cutoff")
+    print(f"{bad_bools1.sum()} with zero vdW, {bad_bools2.sum()} above vdW cutoff, {bad_bools3.sum()} outside density cutoff")
 
     return bad_inds, good_inds
 
@@ -1107,30 +1109,30 @@ def compute_rdf_distmat(rdf_record, rr):
     return rdf_dists
 
 
-def crystal_filter_cluster(lj_record, rdf_record, rr, sample_record, rauv_record,
-                           rauv_cutoff,
+def crystal_filter_cluster(vdw_record, rdf_record, rr, sample_record, packing_coeff_record,
+                           packing_cutoff,
                            vdw_cutoff,
                            cell_params_threshold,
                            rdf_dist_threshold,
                            ):
-    init_len = len(lj_record)
+    init_len = len(vdw_record)
     bad_inds, good_inds = coarse_crystal_filter(
-        lj_record, vdw_cutoff, rauv_record, rauv_cutoff)
-    lj_record, sample_record, rdf_record, rauv_record = (
-        lj_record[good_inds], sample_record[good_inds], rdf_record[good_inds], rauv_record[good_inds])
+        vdw_record, vdw_cutoff, packing_coeff_record, packing_cutoff)
+    vdw_record, sample_record, rdf_record, packing_coeff_record = (
+        vdw_record[good_inds], sample_record[good_inds], rdf_record[good_inds], packing_coeff_record[good_inds])
 
     'cluster samples according to cell parameters'
     param_dists = torch.cdist(sample_record, sample_record)
-    good_inds, n_clusters = agglomerative_cluster(lj_record, param_dists, threshold=cell_params_threshold)
-    lj_record, sample_record, rdf_record, rauv_record = (
-        lj_record[good_inds], sample_record[good_inds],
-        rdf_record[good_inds], rauv_record[good_inds])
+    good_inds, n_clusters, cluster_inds = agglomerative_cluster(vdw_record, param_dists, threshold=cell_params_threshold)
+    vdw_record, sample_record, rdf_record, packing_coeff_record = (
+        vdw_record[good_inds], sample_record[good_inds],
+        rdf_record[good_inds], packing_coeff_record[good_inds])
     'cluster samples according to rdf distances'
     rdf_dists = compute_rdf_distmat(rdf_record, rr)
-    good_inds, n_clusters = agglomerative_cluster(lj_record, rdf_dists, threshold=rdf_dist_threshold)
-    lj_record, sample_record, rdf_record, rauv_record = (
-        lj_record[good_inds], sample_record[good_inds],
-        rdf_record[good_inds], rauv_record[good_inds])
-    print(f"Filtering and clustering caught {init_len - len(lj_record)} samples")
+    good_inds, n_clusters, cluster_inds = agglomerative_cluster(vdw_record, rdf_dists, threshold=rdf_dist_threshold)
+    vdw_record, sample_record, rdf_record, packing_coeff_record = (
+        vdw_record[good_inds], sample_record[good_inds],
+        rdf_record[good_inds], packing_coeff_record[good_inds])
+    print(f"Filtering and clustering caught {init_len - len(vdw_record)} samples")
 
-    return lj_record, sample_record, rdf_record, rauv_record, rdf_dists
+    return vdw_record, sample_record, rdf_record, packing_coeff_record, rdf_dists

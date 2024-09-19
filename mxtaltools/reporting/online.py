@@ -20,7 +20,7 @@ from mxtaltools.common.utils import get_point_density, softmax_np
 from mxtaltools.common.geometry_calculations import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
 from mxtaltools.reporting.ae_reporting import autoencoder_evaluation_overlaps, gaussian_3d_overlap_plots
-from mxtaltools.reporting.csp import stacked_property_distribution_lists
+from mxtaltools.reporting.crystal_search_visualizations import stacked_property_distribution_lists
 
 blind_test_targets = [  # 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X',
     'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX',
@@ -81,13 +81,14 @@ def cell_params_hist(wandb, stats_dict, sample_sources_list):
     wandb.log(data={'Lattice Features Distribution': fig}, commit=False)
 
 
-def iter_wise_hist(stats_dict, target_key):
+def iter_wise_hist(stats_dict, target_key, log=False):
     energy = stats_dict[target_key]
     batch = stats_dict['generator_sample_iter']
     vdw_list = [energy[batch == int(ind)] for ind in range(int(np.max(batch)) + 1)]
     fig = stacked_property_distribution_lists(y=vdw_list,
                                               xaxis_title=target_key,
                                               yaxis_title='Sampling Iter',
+                                              log=log,
                                               )
     return fig
 
@@ -1439,7 +1440,7 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
                                         iter_wise_hist(test_epoch_stats_dict, 'generator_per_mol_vdw_loss')
                                     }, commit=False)
                     wandb.log(data={'Iterwise Prior Loss':
-                                        iter_wise_hist(test_epoch_stats_dict, 'generator_prior_loss')
+                                        iter_wise_hist(test_epoch_stats_dict, 'generator_prior_loss', log=True)
                                     }, commit=False)
                     wandb.log(data={'Iterwise Packing Coeff':
                                         iter_wise_hist(test_epoch_stats_dict, 'generator_packing_prediction')

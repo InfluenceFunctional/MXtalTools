@@ -34,19 +34,18 @@ for key in electronegativity_dict.keys():
     if electronegativity_dict[key] is None:
         electronegativity_dict[key] = 0
 
-HDonorSmarts = Chem.MolFromSmarts('[$([N;!H0;v3]),$([N;!H0;+1;v4]),$([O,S;H1;+0]),$([n;H1;+0])]')  # from rdkit lipinski https://github.com/rdkit/rdkit/blob/7c6d9cf4e9d95b4daa954f4f094e026093dbc13f/rdkit/Chem/Lipinski.py#L26
-HAcceptorSmarts = Chem.MolFromSmarts('[$([O,S;H1;v2]-[!$(*=[O,N,P,S])]),' + '$([O,S;H0;v2]),$([O,S;-]),$([N;v3;!$(N-*=!@[O,N,P,S])]),' + '$([nH0,o,s;+0])]')
+HDonorSmarts = Chem.MolFromSmarts(
+    '[$([N;!H0;v3]),$([N;!H0;+1;v4]),$([O,S;H1;+0]),$([n;H1;+0])]')  # from rdkit lipinski https://github.com/rdkit/rdkit/blob/7c6d9cf4e9d95b4daa954f4f094e026093dbc13f/rdkit/Chem/Lipinski.py#L26
+HAcceptorSmarts = Chem.MolFromSmarts(
+    '[$([O,S;H1;v2]-[!$(*=[O,N,P,S])]),' + '$([O,S;H0;v2]),$([O,S;-]),$([N;v3;!$(N-*=!@[O,N,P,S])]),' + '$([nH0,o,s;+0])]')
 
 sg_numbers = {}
 for i in range(1, 231):
     sg_numbers[SPACE_GROUPS[i]] = i
 
-
-
 asym_unit_dict = asym_unit_dict.copy()
 for key in asym_unit_dict:
     asym_unit_dict[key] = torch.tensor(asym_unit_dict[key], dtype=torch.float32)
-
 
 
 def chunkify(lst: list, n: int):
@@ -97,15 +96,19 @@ def extract_crystal_data(identifier, crystal, unit_cell):
     crystal_dict['space_group_number'], crystal_dict['space_group_setting'] = crystal.spacegroup_number_and_setting
     crystal_dict['space_group_symbol'] = crystal.spacegroup_symbol
     #crystal_dict['system'] = crystal.crystal_system
-    crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c'] = np.asarray(crystal.cell_lengths, dtype=float)
-    crystal_dict['lattice_alpha'], crystal_dict['lattice_beta'], crystal_dict['lattice_gamma'] = np.asarray(crystal.cell_angles, dtype=float) / 180 * np.pi
+    crystal_dict['lattice_a'], crystal_dict['lattice_b'], crystal_dict['lattice_c'] = np.asarray(crystal.cell_lengths,
+                                                                                                 dtype=float)
+    crystal_dict['lattice_alpha'], crystal_dict['lattice_beta'], crystal_dict['lattice_gamma'] = np.asarray(
+        crystal.cell_angles, dtype=float) / 180 * np.pi
     # NOTE this calls a (probably mol volume) calculation which is by far the heaviest part of this function
     # it differs from the below method by usually less than 1% but sometimes up to 5%. Molecule volume in general is not straightforward to accurately estimate
     # crystal_dict['packing_coefficient'] = crystal.packing_coefficient
     # crystal_dict['is_organic'] = crystal.molecule.is_organic
     # crystal_dict['is_organometallic'] = crystal.molecule.is_organometallic
 
-    crystal_dict['fc_transform'], crystal_dict['cell_volume'] = (coor_trans_matrix_np('f_to_c', np.asarray(crystal.cell_lengths), np.asarray(crystal.cell_angles) / 180 * np.pi, return_vol=True))
+    crystal_dict['fc_transform'], crystal_dict['cell_volume'] = (
+        coor_trans_matrix_np('f_to_c', np.asarray(crystal.cell_lengths), np.asarray(crystal.cell_angles) / 180 * np.pi,
+                             return_vol=True))
     # crystal_dict['cf_transform'] = (coor_trans_matrix('c_to_f', np.asarray(crystal.cell_lengths), np.asarray(crystal.cell_angles) / 180 * np.pi, return_vol=False))
     # crystal_dict['density'] = crystal.calculated_density
     crystal_dict['reduced_volume'] = crystal_dict['cell_volume'] / crystal_dict['symmetry_multiplicity']
@@ -115,13 +118,19 @@ def extract_crystal_data(identifier, crystal, unit_cell):
     # this uses a pattern over the asymmetric unit molecule, which is sometimes different from the 'molecule' molecule
     # e.g., extra (erroneous or dubious) atoms in silly places
     # currently, we just toss such structures in the filter
-    crystal_dict['unit_cell_coordinates'] = [np.asarray([np.asarray(heavy_atom.coordinates) for heavy_atom in component.heavy_atoms]) for component in unit_cell.components]
+    crystal_dict['unit_cell_coordinates'] = [
+        np.asarray([np.asarray(heavy_atom.coordinates) for heavy_atom in component.heavy_atoms]) for component in
+        unit_cell.components]
     # crystal_dict['unit_cell_fractional_coordinates'] = [np.asarray([heavy_atom.fractional_coordinates for heavy_atom in component.heavy_atoms]) for component in unit_cell.components]
-    crystal_dict['unit_cell_atomic_numbers'] = [np.asarray([heavy_atom.atomic_number for heavy_atom in component.heavy_atoms]) for component in unit_cell.components]
+    crystal_dict['unit_cell_atomic_numbers'] = [
+        np.asarray([heavy_atom.atomic_number for heavy_atom in component.heavy_atoms]) for component in
+        unit_cell.components]
     # confirm packing above has correct number of components
-    assert len(crystal_dict['unit_cell_coordinates']) == int(crystal_dict['symmetry_multiplicity'] * crystal_dict['z_prime']), "crystal multiplicity error in unit cell packing"
+    assert len(crystal_dict['unit_cell_coordinates']) == int(crystal_dict['symmetry_multiplicity'] * crystal_dict[
+        'z_prime']), "crystal multiplicity error in unit cell packing"
 
-    if crystal_dict['space_group_number'] != 0:  # sometimes the sg number is broken, but if not, assign a consistent canonical SG symbol
+    if crystal_dict[
+        'space_group_number'] != 0:  # sometimes the sg number is broken, but if not, assign a consistent canonical SG symbol
         crystal_dict['space_group_symbol'] = SPACE_GROUPS[crystal_dict['space_group_number']]
     else:  # in which case, try reverse assigning the number, given the space group
         crystal_dict['space_group_number'] = sg_numbers[crystal_dict['space group symbol']]
@@ -132,7 +141,7 @@ def extract_crystal_data(identifier, crystal, unit_cell):
     return crystal_dict
 
 
-def featurize_molecule(crystal, rd_mol, component_num):
+def featurize_molecule(crystal, rd_mol, component_num, protonation_state = 'deprotonated'):
     """
     extract atom & molecule-scale features
     """
@@ -141,9 +150,10 @@ def featurize_molecule(crystal, rd_mol, component_num):
 
     # extract a single asymmetric unit features (not necessarily the canonical unit)
     component = crystal.molecule.components[component_num]  # opt for Z': int>= 1 systems
-    molecule_dict['atom_coordinates'] = np.asarray([heavy_atom.coordinates for heavy_atom in component.heavy_atoms])
+    molecule_dict['atom_coordinates'] = np.asarray([atom.coordinates for atom in component.atoms])
     # molecule_dict['atom_fractional_coordinates'] = np.asarray([heavy_atom.fractional_coordinates for heavy_atom in component.heavy_atoms])
-    molecule_dict['atom_atomic_numbers'] = np.asarray([heavy_atom.atomic_number for heavy_atom in component.heavy_atoms])
+    molecule_dict['atom_atomic_numbers'] = np.asarray(
+        [atom.atomic_number for atom in component.atoms])
 
     # confirm mol2 file as read by rdkit agrees with CSD output
     atoms = rd_mol.GetAtoms()
@@ -153,7 +163,8 @@ def featurize_molecule(crystal, rd_mol, component_num):
     atomic_numbers = np.asarray([atom.GetAtomicNum() for atom in rd_mol.GetAtoms()])
 
     # confirm RDKit and CSD agree on order of atoms
-    assert np.mean(np.abs(coords - molecule_dict['atom_coordinates'])) < 1e-3  # we do this with both RDKit and CSD to double-check they agree. Probably unnecessary
+    assert np.mean(np.abs(coords - molecule_dict[
+        'atom_coordinates'])) < 1e-3  # we do this with both RDKit and CSD to double-check they agree. Probably unnecessary
     assert np.sum(np.abs(atomic_numbers - molecule_dict['atom_atomic_numbers'])) == 0
 
     h_donors = list(sum(rd_mol.GetSubstructMatches(HDonorSmarts, uniquify=1), ()))  # convert tuple to list
@@ -173,7 +184,8 @@ def featurize_molecule(crystal, rd_mol, component_num):
     # molecule_dict['atom_group'] = [group_dict[atom] for atom in molecule_dict['atom_atomic_numbers']]
     # molecule_dict['atom_period'] = [period_dict[atom] for atom in molecule_dict['atom_atomic_numbers']]
 
-    assert sum(np.asarray(molecule_dict['atom_atomic_numbers']) == 1) == 0  # positively assert there are absolutely no protons
+    if protonation_state == 'deprotonated':
+        assert sum(np.asarray(molecule_dict['atom_atomic_numbers']) == 1) == 0
 
     '''molecule-wise features'''
     molecule_dict['molecule_fingerprint'] = fingerprint_generator.GetFingerprintAsNumPy(rd_mol)
@@ -194,7 +206,8 @@ def featurize_molecule(crystal, rd_mol, component_num):
     # molecule_dict['molecule_num_rotatable_bonds'] = rdMolDescriptors.CalcNumRotatableBonds(rd_mol)
     # molecule_dict['molecule_planarity'] = rdMolDescriptors.CalcPBF(rd_mol)
     # molecule_dict['molecule_radius_of_gyration'] = rdMolDescriptors.CalcRadiusOfGyration(rd_mol)
-    molecule_dict['molecule_radius'] = np.amax(np.linalg.norm(molecule_dict['atom_coordinates'] - molecule_dict['atom_coordinates'].mean(0), axis=-1))
+    molecule_dict['molecule_radius'] = np.amax(
+        np.linalg.norm(molecule_dict['atom_coordinates'] - molecule_dict['atom_coordinates'].mean(0), axis=-1))
 
     # for anum in range(1, 36):
     #     molecule_dict[f'molecule_{element_symbols_dict[anum]}_fraction'] = get_fraction(molecule_dict['atom_atomic_numbers'], anum)
@@ -206,7 +219,8 @@ def featurize_molecule(crystal, rd_mol, component_num):
     molecule_dict['molecule_smiles'] = Chem.MolToSmiles(rd_mol)
     molecule_dict['molecule_chemical_formula'] = rdMolDescriptors.CalcMolFormula(rd_mol)
 
-    Ip, Ipm, _ = compute_principal_axes_np(np.asarray(molecule_dict['atom_coordinates']))  # rdMolTransforms.ComputePrincipalAxesAndMoments(rd_mol.GetConformer(), ignoreHs=False) # this does it column-wise
+    Ip, Ipm, _ = compute_principal_axes_np(np.asarray(molecule_dict[
+                                                          'atom_coordinates']))  # rdMolTransforms.ComputePrincipalAxesAndMoments(rd_mol.GetConformer(), ignoreHs=False) # this does it column-wise
     molecule_dict['molecule_principal_axes'] = Ip  # row-wise principal_axes
     molecule_dict['molecule_principal_moment_1'] = Ipm[0]
     molecule_dict['molecule_principal_moment_2'] = Ipm[1]
@@ -222,7 +236,10 @@ def featurize_molecule(crystal, rd_mol, component_num):
     return molecule_dict
 
 
-def crystal_filter(crystal):
+def crystal_filter(crystal,
+                   max_heavy_atoms=1000,
+                   protonation_state='deprotonated',
+                   max_atomic_number=1000):
     """
     apply checks to see if this is a valid crystal to be featurized and put in the dataset
     disorder
@@ -259,7 +276,8 @@ def crystal_filter(crystal):
         return False, None, None
     if any([len(component.atoms) == 0 for component in crystal.molecule.components]):
         return False, None, None
-    if len(crystal.asymmetric_unit_molecule.heavy_atoms) != len(crystal.molecule.heavy_atoms):  # could make this done Z'-by-Z'
+    if len(crystal.asymmetric_unit_molecule.heavy_atoms) != len(
+            crystal.molecule.heavy_atoms):  # could make this done Z'-by-Z'
         return False, None, None
     if len(crystal.asymmetric_unit_molecule.components) != crystal.z_prime:  # can relax this if we build our own reference cells
         return False, None, None
@@ -288,13 +306,54 @@ def crystal_filter(crystal):
     # molecule check via RDKit. If RDKit doesn't see it as a real molecule, don't accept it to the dataset.
     rd_mols = []
     for component in crystal.molecule.components:
-        mol = Chem.MolFromMol2Block(component.to_string('mol2'), sanitize=True, removeHs=True)
-        try:
-            rd_mols.append(Chem.RemoveAllHs(mol))
-        except:  # todo add exception type
-            passed_molecule_checks = False
+        mol = Chem.MolFromMol2Block(component.to_string('mol2'),
+                                    sanitize=True,
+                                    removeHs=True if protonation_state == 'deprotonated' else False)
         if mol is None:
             passed_molecule_checks = False
+        else:
+            try:
+                num_heavy_atoms = mol.GetNumHeavyAtoms()
+                if num_heavy_atoms > max_heavy_atoms:
+                    passed_molecule_checks = False
+                    continue
+
+                atomic_numbers = np.asarray([atom.GetAtomicNum() for atom in mol.GetAtoms()])
+                if np.max(atomic_numbers) > max_atomic_number:
+                    passed_molecule_checks = False
+                    continue
+
+                if protonation_state == 'protonated':
+                    # num_heavy_atoms = rdMolDescriptors.CalcNumHeavyAtoms(mol)
+                    # structure_is_protonated = num_heavy_atoms != len(atomic_numbers)
+                    mol_formula = rdMolDescriptors.CalcMolFormula(mol)
+
+                    H_index = mol_formula.index('H')
+                    inds = []
+                    for ind in range(1, 3+1):
+                        try:
+                            value = int(mol_formula[ind + H_index])
+                            inds.append(mol_formula[ind + H_index])
+                        except ValueError:
+                            break
+                    if len(inds) == 0:
+                        passed_molecule_checks = False # zero or one hydrogens
+                        continue
+
+                    num_expected_hydrogens = int(''.join(inds))
+                    num_actual_hydrogens = np.sum(atomic_numbers == 1)
+
+                    if not num_expected_hydrogens == num_actual_hydrogens:
+                        passed_molecule_checks = False
+                        continue
+
+                if protonation_state == 'deprotonated':
+                    rd_mols.append(Chem.RemoveAllHs(mol))
+                else:
+                    rd_mols.append(mol)
+
+            except:  # todo add exception type
+                passed_molecule_checks = False
 
     if not passed_molecule_checks:
         pass  # print(f'{crystal.identifier} failed molecule checks')
@@ -352,7 +411,7 @@ def rebuild_reparameterize_unit_cell(molecules, crystal_dict):
         # rebuild combined cell and compare to original TODO
         # these functions are built to be fast and parallel - but should be reasonable one at a time as well
 
-        zp_unit_cell_coords = aunit2unit_cell(torch.tensor(len(crystal_dict['symmetry_operators']), dtype=torch.int32),
+        zp_unit_cell_coords = aunit2unit_cell(torch.tensor(len(crystal_dict['symmetry_operators']), dtype=torch.int32)[None],
                                               [torch.tensor(mol['atom_coordinates'], dtype=torch.float32)],
                                               T_fc[None, :, :],
                                               T_cf[None, :, :],
@@ -381,7 +440,7 @@ def rebuild_reparameterize_unit_cell(molecules, crystal_dict):
     # sometimes, the symmetries place a molecule on the opposite side of a cell due to disagreements in centroid positioning
     # convert to all-inside unit cell and get dists
     orig_cell_coords = torch.tensor(np.concatenate(crystal_dict['unit_cell_coordinates'], axis=0),
-                                           dtype=torch.float32)
+                                    dtype=torch.float32)
     orig_cell_coords_f = fractional_transform(orig_cell_coords, T_cf)
     orig_cell_coords_f -= orig_cell_coords_f.floor()
     orig_cell_coords_f -= orig_cell_coords_f.mean(0)
@@ -410,7 +469,8 @@ def rebuild_reparameterize_unit_cell(molecules, crystal_dict):
     #            positions=orig_cell_coords.reshape(z_value * num_atoms, 3), cell=crystal_dict['fc_transform'].T)
     # view([m1, m2])
 
-    return pose_params_list, handedness_list, all(is_well_defined), reconstructed_cell_coords, reparameterized_aunit_coords, parameterization_and_reconstruction_successful
+    return pose_params_list, handedness_list, all(
+        is_well_defined), reconstructed_cell_coords, reparameterized_aunit_coords, parameterization_and_reconstruction_successful
 
 
 def featurize_xyz_molecule(molecule_dict, text):
