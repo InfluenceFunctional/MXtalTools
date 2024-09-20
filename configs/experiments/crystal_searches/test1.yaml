@@ -18,6 +18,18 @@ dataset:
 # batching & convergence
 min_batch_size: 100
 num_samples: 1000000
+max_epoch_steps: 1000
+early_epochs_step_override: 5
+num_early_epochs: 0
+grow_batch_size: True
+max_batch_size: 20
+batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
+overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
+minimum_epochs: 10000
+max_epochs: 0 # 0 epochs takes us straight to sampling/evaluation (WIP)
+history: 50 # for convergence checks
+gradient_norm_clip: 1
+extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 model_paths:
   discriminator: null

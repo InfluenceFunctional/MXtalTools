@@ -18,10 +18,22 @@ dataset:
 # batching & convergence
 min_batch_size: 80
 num_samples: 10000
+max_epoch_steps: 1000
+early_epochs_step_override: 5
+num_early_epochs: 0
+grow_batch_size: True
+max_batch_size: 20
+batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
+overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
+minimum_epochs: 10000
+max_epochs: 0 # 0 epochs takes us straight to sampling/evaluation (WIP)
+history: 50 # for convergence checks
+gradient_norm_clip: 1
+extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 model_paths:
   discriminator: null
-  generator: null #cluster/best_generator_experiments_generator_tests_run4_dev_1_26-08-17-14-40
+  generator: cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
   regressor: null #'volume_model.pt'
   autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49  # excellent proton model
   embedding_regressor: null

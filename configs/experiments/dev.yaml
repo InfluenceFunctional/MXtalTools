@@ -38,13 +38,13 @@ logger:
   experiment_tag: dev
   run_name: dev
 
-model_paths:
-  discriminator: null
-  generator: null #cluster/best_generator_experiments_generator_tests_run4_dev_1_26-08-17-14-40
-  regressor: null #'volume_model.pt'
-  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49  # excellent proton model
-  embedding_regressor: null
-  polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
+#model_paths:
+#  discriminator: null
+#  generator: null #cluster/best_generator_experiments_generator_tests_run4_dev_1_26-08-17-14-40
+#  regressor: null #'volume_model.pt'
+#  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49  # excellent proton model
+#  embedding_regressor: null
+#  polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
 generate_sgs: ['P21/c'] #['P-1']#,'C2/c','P21/c','P212121']
 
