@@ -80,6 +80,9 @@ generator:
     vector_norm: null #'vector layer'
 
 
+autoencoder:
+  infer_protons: False
+  filter_protons: False
 
 discriminator:
   # settings
