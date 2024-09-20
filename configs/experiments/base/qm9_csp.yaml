@@ -48,6 +48,10 @@ logger:
 generate_sgs: null # ['P1','P-1']#,'C2/c','P21/c','P212121']
 supercell_size: 5
 
+autoencoder:
+  infer_protons: False
+  filter_protons: False
+
 # for GAN training
 generator:
   samples_per_iter: 1
