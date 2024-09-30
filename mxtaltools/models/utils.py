@@ -4,15 +4,13 @@ from typing import Union, Tuple
 import numpy as np
 import torch
 from scipy.stats import linregress
-from sklearn.cluster import AgglomerativeClustering
 from torch import optim, nn as nn
 from torch.nn import functional as F
 from torch.optim import lr_scheduler as lr_scheduler
 from torch_scatter import scatter, scatter_softmax
-from tqdm import tqdm
 
 from mxtaltools.common.geometry_calculations import cell_vol_torch
-from mxtaltools.common.utils import softmax_np, components2angle, compute_rdf_distance
+from mxtaltools.common.utils import softmax_np, components2angle
 from mxtaltools.crystal_building.utils import descale_asymmetric_unit, scale_asymmetric_unit
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.dataloader_utils import update_dataloader_batch_size
@@ -210,7 +208,8 @@ def init_scheduler(optimizer, optimizer_config):
     return [scheduler1, scheduler2, scheduler3]
 
 
-def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, correct_discontinuity=True) -> Union[torch.Tensor, np.ndarray]:
+def softmax_and_score(raw_classwise_output, temperature=1, old_method=False, correct_discontinuity=True) -> Union[
+    torch.Tensor, np.ndarray]:
     """
     Parameters
     ----------
@@ -897,8 +896,8 @@ def ae_reconstruction_loss(data, decoded_data, nodewise_weights, num_atom_types,
         decoded_data.x * nodewise_weights[:, None], decoded_data.batch[:, None], dim=0, reduce='sum')
 
     nodewise_type_loss = (
-                F.binary_cross_entropy(per_graph_pred_types.clip(min=1e-6, max=1 - 1e-6), per_graph_true_types) -
-                F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
+            F.binary_cross_entropy(per_graph_pred_types.clip(min=1e-6, max=1 - 1e-6), per_graph_true_types) -
+            F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
 
     nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
     graph_reconstruction_loss = scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')
@@ -982,7 +981,10 @@ def clean_cell_params(samples,
 
     return final_samples
 
-def get_intermolecular_dists_dict(supercell_data, conv_cutoff, max_num_neighbors):
+
+def get_intermolecular_dists_dict(supercell_data: CrystalData,
+                                  conv_cutoff: float,
+                                  max_num_neighbors: int = 10000):
     dist_dict = {}
     edges_dict = construct_radial_graph(
         supercell_data.pos,
@@ -995,7 +997,8 @@ def get_intermolecular_dists_dict(supercell_data, conv_cutoff, max_num_neighbors
     )
     dist_dict.update(edges_dict)
     dist_dict['intermolecular_dist'] = (
-        (supercell_data.pos[edges_dict['edge_index_inter'][0]] - supercell_data.pos[edges_dict['edge_index_inter'][1]]).pow(2).sum(
+        (supercell_data.pos[edges_dict['edge_index_inter'][0]] - supercell_data.pos[
+            edges_dict['edge_index_inter'][1]]).pow(2).sum(
             dim=-1).sqrt())
 
     dist_dict['intermolecular_dist_batch'] = supercell_data.batch[edges_dict['edge_index_inter'][0]]
@@ -1046,34 +1049,6 @@ def compute_prior_loss(norm_factors: torch.Tensor,
     return prior_loss, scaled_deviation
 
 
-def agglomerative_cluster(sample_score, dists, threshold):
-    # first, check if any samples are closer than the cutoff
-    if torch.sum(dists < threshold) == len(dists):
-        n_clusters = len(dists)
-        classes = torch.arange(n_clusters)
-    else:
-        model = AgglomerativeClustering(distance_threshold=threshold, linkage="average", affinity='precomputed',
-                                        n_clusters=None)
-        model = model.fit(dists.numpy())
-        n_clusters = model.n_clusters_
-        classes = model.labels_
-    # select representative samples from each class
-    if n_clusters < len(dists):
-        unique_classes, num_uniques = np.unique(classes, return_counts=True)
-        good_inds = []
-        for group, uniques in zip(unique_classes, num_uniques):
-            if uniques == 1:  # only one sample
-                good_inds.append(int(np.argwhere(classes == group)[0]))
-            else:
-                class_inds = np.where(classes == group)[0]
-                best_sample = np.argmin(sample_score[class_inds])
-                good_inds.append(class_inds[best_sample])
-    else:
-        good_inds = torch.arange(len(sample_score))
-
-    return torch.LongTensor(good_inds), n_clusters, classes
-
-
 def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cutoff):
     """filtering - samples with exactly 0 LJ energy are too diffuse, and more than CUTOFF are overlapping"""
     bad_inds = []
@@ -1083,56 +1058,20 @@ def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cu
     bad_bools4 = packing_coeff_record <= packing_cutoff[0]
 
     # if we got any of these, cut the sample
-    good_bools = (~bad_bools1)*(~bad_bools2)*(~bad_bools3)*(~bad_bools4)
+    good_bools = (~bad_bools1) * (~bad_bools2) * (~bad_bools3) * (~bad_bools4)
     good_inds = torch.argwhere(good_bools).flatten()
 
-    print(f"{bad_bools1.sum()} with zero vdW, {bad_bools2.sum()} above vdW cutoff, {bad_bools3.sum()} outside density cutoff")
+    print(f"{bad_bools1.sum()} with zero vdW, "
+          f"{bad_bools2.sum()} above vdW cutoff, "
+          f"{bad_bools3.sum()} outside density cutoff,"
+          f"leaving {len(good_inds)} samples")
 
     return bad_inds, good_inds
 
 
-def compute_rdf_distmat(rdf_record, rr):
-    rdf_dists = torch.zeros(rdf_record.shape[0], rdf_record.shape[0])
-    chunk_size = 250
-    for i in tqdm(range(1, len(rdf_record))):
-        num_chunks = i // chunk_size + 1
-        for j in range(num_chunks):
-            start_ind = j * chunk_size
-            stop_ind = min(i, (j+1)*chunk_size)
-            rdf_dists[i, start_ind:stop_ind] = compute_rdf_distance(
-                rdf_record[i],
-                rdf_record[start_ind:stop_ind],  # save on energy & memory
-                rr,
-                n_parallel_rdf2=stop_ind-start_ind)
-    rdf_dists = rdf_dists + rdf_dists.T  # symmetric distance matrix
-    rdf_dists = torch.log10(1 + rdf_dists)
-    return rdf_dists
+'''
+import plotly.graph_objects as go
+fig = go.Figure(go.Heatmap(z=distmat)).show()
+'''
 
 
-def crystal_filter_cluster(vdw_record, rdf_record, rr, sample_record, packing_coeff_record,
-                           packing_cutoff,
-                           vdw_cutoff,
-                           cell_params_threshold,
-                           rdf_dist_threshold,
-                           ):
-    init_len = len(vdw_record)
-    bad_inds, good_inds = coarse_crystal_filter(
-        vdw_record, vdw_cutoff, packing_coeff_record, packing_cutoff)
-    vdw_record, sample_record, rdf_record, packing_coeff_record = (
-        vdw_record[good_inds], sample_record[good_inds], rdf_record[good_inds], packing_coeff_record[good_inds])
-
-    'cluster samples according to cell parameters'
-    param_dists = torch.cdist(sample_record, sample_record)
-    good_inds, n_clusters, cluster_inds = agglomerative_cluster(vdw_record, param_dists, threshold=cell_params_threshold)
-    vdw_record, sample_record, rdf_record, packing_coeff_record = (
-        vdw_record[good_inds], sample_record[good_inds],
-        rdf_record[good_inds], packing_coeff_record[good_inds])
-    'cluster samples according to rdf distances'
-    rdf_dists = compute_rdf_distmat(rdf_record, rr)
-    good_inds, n_clusters, cluster_inds = agglomerative_cluster(vdw_record, rdf_dists, threshold=rdf_dist_threshold)
-    vdw_record, sample_record, rdf_record, packing_coeff_record = (
-        vdw_record[good_inds], sample_record[good_inds],
-        rdf_record[good_inds], packing_coeff_record[good_inds])
-    print(f"Filtering and clustering caught {init_len - len(vdw_record)} samples")
-
-    return vdw_record, sample_record, rdf_record, packing_coeff_record, rdf_dists

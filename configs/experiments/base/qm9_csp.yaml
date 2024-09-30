@@ -13,7 +13,7 @@ sweep_id: null
 sweep_path: null
 
 dataset:
-  regression_target: crystal_packing_coefficient
+  regression_target: null
 
 # batching & convergence
 min_batch_size: 80

@@ -163,8 +163,8 @@ def featurize_molecule(crystal, rd_mol, component_num, protonation_state = 'depr
     atomic_numbers = np.asarray([atom.GetAtomicNum() for atom in rd_mol.GetAtoms()])
 
     # confirm RDKit and CSD agree on order of atoms
-    assert np.mean(np.abs(coords - molecule_dict[
-        'atom_coordinates'])) < 1e-3  # we do this with both RDKit and CSD to double-check they agree. Probably unnecessary
+    # we do this with both RDKit and CSD to double-check they agree. Probably unnecessary
+    assert np.mean(np.abs(coords - molecule_dict['atom_coordinates'])) < 1e-3
     assert np.sum(np.abs(atomic_numbers - molecule_dict['atom_atomic_numbers'])) == 0
 
     h_donors = list(sum(rd_mol.GetSubstructMatches(HDonorSmarts, uniquify=1), ()))  # convert tuple to list

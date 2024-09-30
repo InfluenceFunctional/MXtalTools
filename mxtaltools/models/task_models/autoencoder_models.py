@@ -7,7 +7,7 @@ from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
 from mxtaltools.models.graph_models.molecule_graph_model import VectorMoleculeGraphModel
 from mxtaltools.models.modules.components import Scalarizer, vectorMLP
 from mxtaltools.models.utils import collate_decoded_data, ae_reconstruction_loss
-from mxtaltools.reporting.ae_reporting import gaussian_3d_overlap_plots
+from mxtaltools.reporting.ae_reporting import gaussian_3d_overlap_plots, scaffolded_decoder_clustering, swarm_vs_tgt_fig
 
 
 # noinspection PyAttributeOutsideInit
@@ -91,6 +91,7 @@ class Mo3ENet(BaseGraphModel):
                                 # todo next two should be properties of the model
                                 node_weight_temperature=1,
                                 num_atom_types=5,
+                                visualize=False,
                                 ):
         encoding = self.encode(data.clone())
         decoding = self.decode(encoding)
@@ -113,12 +114,21 @@ class Mo3ENet(BaseGraphModel):
                                                     type_distance_scaling,
                                                     sigma)
 
-        fig, fig2, rmsd, max_dist, tot_overlap, match_successful = (
-            gaussian_3d_overlap_plots(data, decoded_data,
-                                      num_atom_types,
-                                      ))
+        rmsds = torch.zeros(data.num_graphs)
+        max_dists = torch.zeros_like(rmsds)
+        tot_overlaps = torch.zeros_like(rmsds)
+        match_successful = torch.zeros_like(rmsds)
+        for ind in range(data.num_graphs):
+            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind], fig2 = scaffolded_decoder_clustering(ind,
+                                                                                                                       data,
+                                                                                                                       decoded_data,
+                                                                                                                       num_atom_types,
+                                                                                                                       return_fig=True)
+        if visualize:
+            for ind in range(data.num_graphs):
+                swarm_vs_tgt_fig(data, decoded_data, num_atom_types, graph_ind=ind).show()
 
-        return reconstruction_loss, rmsd
+        return reconstruction_loss, rmsds, max_dists, tot_overlaps, match_successful
 
 
 class Mo3ENetDecoder(nn.Module):

@@ -6,7 +6,7 @@
 seed: 1
 max_dataset_length: 1000000000
 save_dataset: False
-type: 'crystal'
+type: 'molecule'
 regression_target: 'crystal_packing_coefficient' # 'crystal_reduced_cell_volume' 'crystal_density' 'crystal_packing_coefficient'
 single_molecule_dataset_identifier: null
 test_fraction: 0.2

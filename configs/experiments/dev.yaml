@@ -1,7 +1,8 @@
 machine: "local"  # or "cluster"
 device: "cpu"  # or "cpu"
-base_config_path: /experiments/base/qm9_csp.yaml
-dataset_name: CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+base_config_path: /experiments/base/autoencoder.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
+dataset_name: test_qm9_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+#misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
 extra_test_set_name: null
 save_checkpoints: True
 #sweep_path: configs/experiments/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
@@ -18,38 +19,37 @@ seeds:
 
 # batching & convergence
 num_samples: 10000
-max_epoch_steps: 1000
+max_epoch_steps: 100
 early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 5
-max_batch_size: 20
+max_batch_size: 200
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
-max_epochs: 0 # 0 epochs takes us straight to sampling/evaluation (WIP)
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (WIP)
 history: 50 # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
   sample_reporting_frequency: 1  # how often to do detailed reporting with figures
-  stats_reporting_frequency: 1  # how many steps between which to move training stats to cpu
+  stats_reporting_frequency: 5  # how many steps between which to move training stats to cpu
   experiment_tag: dev
   run_name: dev
 
-#model_paths:
-#  discriminator: null
-#  generator: null #cluster/best_generator_experiments_generator_tests_run4_dev_1_26-08-17-14-40
-#  regressor: null #'volume_model.pt'
-#  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49  # excellent proton model
-#  embedding_regressor: null
-#  polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
+model_paths:
+  discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
+  generator: null #cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
+  regressor: null #'volume_model.pt'
+  autoencoder: null #cluster/best_autoencoder_experiments_autoencoder_tests_new_qm9_13-08-13-38-49  # excellent proton model
+  embedding_regressor: null
+  polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
-generate_sgs: ['P21/c'] #['P-1']#,'C2/c','P21/c','P212121']
+generate_sgs: null #['P21/c'] #['P-1']#,'C2/c','P21/c','P212121']
 
 autoencoder:
   infer_protons: False
   filter_protons: False
-
 

@@ -221,9 +221,13 @@ def find_coord_in_box_torch(coords, box, epsilon=0):
                        (coords[:, 2] <= (box[2] + epsilon)))[0]
 
 
-def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list, sg_ind_list, asym_unit_dict,
-                                              T_fc_list, enforce_right_handedness=False,
-                                              rotation_basis='cartesian', return_asym_unit_coords=False):
+def batch_asymmetric_unit_pose_analysis_torch(unit_cell_coords_list,
+                                              sg_ind_list,
+                                              asym_unit_dict,
+                                              T_fc_list,
+                                              enforce_right_handedness=False,
+                                              rotation_basis='cartesian',
+                                              return_asym_unit_coords=False):
     """
     Parameters
     ----------
@@ -755,7 +759,7 @@ def set_molecule_alignment(data, mode, right_handed=False, include_inversion=Fal
                 if hand == -1:
                     data.pos[data.batch == ind] = -data.pos[data.batch == ind]  # invert
 
-            data.aunit_handedness = torch.ones_like(data.aunit_handedness)
+            data.aunit_handedness = torch.ones(data.num_graphs, dtype=torch.long, device=data.x.device)
     elif mode == 'as is' or mode is None:
         pass  # do nothing
 

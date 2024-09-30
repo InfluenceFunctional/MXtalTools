@@ -6,7 +6,7 @@ import pandas as pd
 import torch
 
 from mxtaltools.constants.atom_properties import VDW_RADII
-from mxtaltools.crystal_building.builder import SupercellBuilder
+from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.models.task_models.generator_models import CSDPrior
 from mxtaltools.models.utils import denormalize_generated_cell_params, get_intermolecular_dists_dict
 
@@ -65,7 +65,7 @@ prior_generator = CSDPrior(
                 cell_stds=None,
                 lengths_cov_mat=None, )
 
-supercell_builder = SupercellBuilder(device=device, rotation_basis=rotation_basis)
+supercell_builder = CrystalBuilder(device=device, rotation_basis=rotation_basis)
 
 reasonable_cell_params = [[] for _ in SGS_TO_SEARCH]  # initialize record
 with torch.no_grad():

@@ -36,7 +36,6 @@ extra_test_period: 4 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how ofte
 logger:
   run_name: dev
   experiment_tag: dev
-  mini_csp_frequency: 5  # how often to run CSP-style search WIP
   sample_reporting_frequency: 2  # how often to do detailed reporting with figures
   log_figures: True
   stats_reporting_frequency: 5
@@ -76,55 +75,40 @@ discriminator:
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 1.0E-5
-    max_lr: 1.0E-6
+    init_lr: 1.0E-4
+    max_lr: 5.0E-4
     min_lr: 5.0E-6
     lr_schedule: True
     beta1: 0.9
     beta2: 0.999
     weight_decay: 0.1
     convergence_eps: 0.0001
-    lr_growth_lambda: 1.00
+    lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.95
     use_plateau_scheduler: False
 
   model:
-    graph_aggregator: 'softmax'
-    periodic_convolution_type: 'all_layers'  # or 'last_layer'
     activation: 'gelu'
 
     graph:
-      node_dim: 256
-      message_dim: 128
-      embedding_dim: 256
-      num_convs: 4
+      node_dim: 128
+      message_dim: 64
+      embedding_dim: 128
+      num_convs: 2
       fcs_per_gc: 1
-      num_radial: 32
+      num_radial: 12
       num_input_classes: 101
       norm: 'graph layer'
       dropout: 0.05
 
-      atom_type_embedding_dim: 32
+      atom_type_embedding_dim: 12
       radial_embedding: 'bessel'
       cutoff: 6
       max_num_neighbors: 100
       envelope_exponent: 5
 
     fc:
-      hidden_dim: 256
-      num_layers: 4
+      hidden_dim: 128
+      num_layers: 2
       dropout: 0.05
       norm: 'layer'
-
-
-# for GAN training
-generator:
-  train_vdw: False
-  train_adversarially: False
-  train_h_bond: False # (non-directional)
-  canonical_conformer_orientation: 'random'
-
-  #generator optimizer and model
-  optimizer: null
-  model: null
-

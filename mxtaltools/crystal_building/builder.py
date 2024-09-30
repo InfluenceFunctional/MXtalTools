@@ -14,7 +14,7 @@ from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.dataset_management.CrystalData import CrystalData
 
 
-class SupercellBuilder:
+class CrystalBuilder:
     def __init__(self, supercell_size=5, device='cuda', rotation_basis='spherical'):
         """
         class for converting single molecules -> unit cells -> supercells/clusters
@@ -211,8 +211,9 @@ class SupercellBuilder:
 
         supercell_data.cell_params = cell_parameters
         if not skip_refeaturization:  # if the mol position is outside the asym unit, the below params will not correspond to the inputs
-            supercell_data, mol_orientation, aunit_handedness = self.refeaturize_generated_cell(supercell_data, unit_cell_coords_list)
-            supercell_data.cell_params[:, 9:] = mol_orientation
+            supercell_data, mol_orientation, aunit_handedness = (
+                self.refeaturize_generated_cell(supercell_data, unit_cell_coords_list))
+            supercell_data.cell_params = torch.cat([supercell_data.cell_params[:, :9], mol_orientation], dim=1)
 
         # get minimal supercell cluster for convolving about a given canonical conformer
         cell_vector_list = T_fc_list.permute(0, 2, 1)

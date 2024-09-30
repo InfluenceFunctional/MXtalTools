@@ -1,9 +1,11 @@
 import plotly.graph_objects as go
 import numpy as np
 import torch
-from typing import Union
+from typing import Union, Optional
 import plotly.express.colors as pc
 from plotly.subplots import make_subplots
+
+from mxtaltools.common.utils import get_point_density
 
 
 def single_property_distribution(y: Union[np.ndarray, torch.Tensor],
@@ -116,8 +118,8 @@ def stacked_property_distribution_lists(y: list,
 
 
 def stacked_cell_distributions(samples: Union[np.ndarray, torch.Tensor],
-                               xaxis_title: str,
-                               yaxis_title: str,
+                               xaxis_title: Optional[str] = None,
+                               yaxis_title: Optional[str] = None,
                                ):
     lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma',
                         'aunit_x', 'aunit_y',
@@ -160,6 +162,37 @@ def stacked_cell_distributions(samples: Union[np.ndarray, torch.Tensor],
     fig.update_xaxes(title=xaxis_title)
     fig.update_yaxes(title=yaxis_title)
 
+    return fig
+
+
+def cell_params_vs_scores(samples, scores):
+    lattice_features = ['cell_a', 'cell_b', 'cell_c', 'cell_alpha', 'cell_beta', 'cell_gamma',
+                        'aunit_x', 'aunit_y',
+                        'aunit_z', 'aunit_theta', 'aunit_phi', 'aunit_r']
+    n_crystal_features = 12
+
+    if torch.is_tensor(samples):
+        samples = samples.cpu().detach().numpy()
+
+    fig = make_subplots(rows=4, cols=3, subplot_titles=lattice_features)
+    for i in range(n_crystal_features):
+        row = i // 3 + 1
+        col = i % 3 + 1
+        xy = np.vstack([samples[:, i], scores])
+        z = get_point_density(xy)
+        fig.add_trace(go.Scatter(x=samples[:, i], y=scores,
+                                 mode='markers',
+                                 marker_color=z,
+                                 opacity=0.5,
+                                 ),
+                      row=row, col=col
+                      )
+
+    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', violinmode='overlay')
+    fig.update_traces(opacity=0.5)
+
+    fig.update_xaxes(title='Param')
+    fig.update_yaxes(title='vdW Energy')
     return fig
 
 

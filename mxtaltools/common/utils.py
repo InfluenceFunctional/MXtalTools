@@ -505,7 +505,7 @@ def flatten_wandb_params(config):
 
 def scale_vdw_pot(lj_pot: Union[np.ndarray, torch.tensor],
                   turnover_pot: float = 5,
-                  clip_max: float = 50) \
+                  clip_max: float = 100) \
         -> Union[np.ndarray, torch.tensor]:
     high_bools = lj_pot > turnover_pot
     if torch.is_tensor(lj_pot):

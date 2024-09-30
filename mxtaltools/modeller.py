@@ -1,8 +1,6 @@
 import gc
 import os
 from argparse import Namespace
-from distutils.dir_util import copy_tree
-from shutil import copy
 from time import time
 from typing import Tuple
 
@@ -18,12 +16,13 @@ from torch_scatter import scatter
 from tqdm import tqdm
 
 from mxtaltools.common.geometry_calculations import rotvec2sph
+from mxtaltools.modelling.utils import get_model_sizes, copy_source_to_workdir
 from mxtaltools.common.training_utils import instantiate_models
 from mxtaltools.common.utils import init_sym_info, compute_rdf_distance, make_sequential_directory, \
     flatten_wandb_params, sample_uniform
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
 from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD
-from mxtaltools.crystal_building.builder import SupercellBuilder
+from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import overwrite_symmetry_info
 from mxtaltools.crystal_building.utils import (set_molecule_alignment)
 from mxtaltools.dataset_management.CrystalData import CrystalData
@@ -32,7 +31,6 @@ from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, upda
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.functions.vdw_overlap import vdw_overlap, vdw_analysis
 from mxtaltools.models.task_models.generator_models import CSDPrior
-from mxtaltools.models.utils import (get_n_config)
 from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_score, save_checkpoint, set_lr,
                                      init_optimizer, get_regression_loss,
                                      slash_batch, compute_type_evaluation_overlap,
@@ -46,42 +44,17 @@ from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
 
 from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
-from mxtaltools.csp.sampling import Sampler
+from mxtaltools.crystal_search.sampling import Sampler
 import multiprocessing as mp
 
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-
-
 # noinspection PyAttributeOutsideInit
-
-
-def copy_source_to_workdir(working_directory, yaml_path, config):
-    os.mkdir(working_directory + '/source')
-    copy_tree("mxtaltools/common", working_directory + "/source/common")
-    copy_tree("mxtaltools/crystal_building", working_directory + "/source/crystal_building")
-    copy_tree("mxtaltools/dataset_management", working_directory + "/source/dataset_management")
-    copy_tree("mxtaltools/models", working_directory + "/source/models")
-    copy_tree("mxtaltools/reporting", working_directory + "/source/reporting")
-    copy("mxtaltools/modeller.py", working_directory + "/source")
-    copy("main.py", working_directory + "/source")
-    np.save(working_directory + '/run_config', config)
-    os.chdir(working_directory)  # move to working dir
-    copy(yaml_path, os.getcwd())  # copy full config for reference
-
-
-def get_model_sizes(models_dict: dict):
-    num_params_dict = {model_name + "_num_params": get_n_config(model) for model_name, model in
-                       models_dict.items()}
-    [print(
-        f'{model_name} {num_params_dict[model_name] / 1e6:.3f} million or {int(num_params_dict[model_name])} parameters')
-        for model_name in num_params_dict.keys()]
-    return num_params_dict
 
 
 class Modeller:
     """
-    Main class brining together
+    Class for training models
     -: data loading
     -: model initialization & training
     -: model evaluation & reporting
@@ -105,8 +78,9 @@ class Modeller:
         self.load_physical_constants()
         self.config = flatten_wandb_params(self.config)
 
-        self.supercell_builder = SupercellBuilder(device=self.config.device,
-                                                  rotation_basis='spherical' if self.config.mode != 'generator' else 'cartesian')
+        self.crystal_builder = CrystalBuilder(device=self.config.device,
+                                              rotation_basis='spherical' if self.config.mode != 'generator' else 'cartesian')
+
         self.collater = Collater(None, None)
 
         self.train_models_dict = {
@@ -225,7 +199,6 @@ class Modeller:
                     self.config.mode not in ['gan', 'discriminator', 'generator']),
         )
         self.dataDims = data_manager.dataDims
-        # todo replace by new parameterization
         self.lattice_means = torch.tensor(self.dataDims['lattice_means'], device=self.device)
         self.lattice_stds = torch.tensor(self.dataDims['lattice_stds'], device=self.device)
 
@@ -290,13 +263,16 @@ class Modeller:
                          override_batch_size: int = None,
                          override_shuffle=None):
         """
-        get training, test, ane optionall extra validation dataloaders
+        get training, test, and optionally extra validation dataloaders
         """
+
         self.times['dataloader_start'] = time()
+
         if override_batch_size is None:
             loader_batch_size = self.config.min_batch_size
         else:
             loader_batch_size = override_batch_size
+
         if override_shuffle is not None:
             shuffle = override_shuffle
         else:
@@ -618,7 +594,7 @@ class Modeller:
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
-            #with torch.autograd.set_detect_anomaly(False):
+            # with torch.autograd.set_detect_anomaly(False):
             while (epoch < self.config.max_epochs) and not converged:
                 print(self.separator_string)
                 print("Starting Epoch {}".format(epoch))  # index from 0
@@ -679,7 +655,7 @@ class Modeller:
 
     def evaluate_model(self):
         if self.config.mode == 'generator':
-            self.crystal_search()
+            self.crystal_structure_prediction()
         else:
             with (wandb.init(config=self.config,
                              project=self.config.wandb.project_name,
@@ -765,7 +741,7 @@ class Modeller:
                 (self.config.discriminator.train_adversarially, self.config.discriminator.train_on_distorted,
                  self.config.discriminator.train_on_randn)))
                              or (self.config.model_paths.discriminator is not None),
-            'generator': (self.config.mode in ['gan', 'generator', 'discriminator']),
+            'generator': (self.config.mode in ['gan', 'generator']),
             'regressor': self.config.mode == 'regression',
             'autoencoder': self.config.mode == 'autoencoder',
             'embedding_regressor': self.config.mode == 'embedding_regression',
@@ -1011,7 +987,7 @@ class Modeller:
         self.logger.concatenate_stats_dict(self.epoch_type)
         self.ae_annealing()
 
-    def crystal_search(self):
+    def crystal_structure_prediction(self):
         with (wandb.init(config=self.config,
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
@@ -1037,131 +1013,59 @@ class Modeller:
 
             self.models_dict['generator'].eval()
             self.models_dict['autoencoder'].eval()
+            self.models_dict['discriminator'].eval()
 
+            # test autoencoder performance on this sample
+            sample = self.collater(data_loader.dataset[0:200])
+            data, input_data = self.preprocess_ae_inputs(sample.to(self.device), no_noise=True,
+                                                         orientation_override=None)
+            loss, rmsd, max_dist, tot_overlap, matched = self.models_dict['autoencoder'].check_embedding_quality(
+                input_data.clone())
+            # topk_samples = self.collater([data_loader.dataset[ind] for ind in torch.argsort(loss)])
+            # sample = data_loader.dataset[torch.argmin(loss)]
+            # 131369 is a good molecule, good reconstruction loss and flat-ish double ring
             ids = [data_loader.dataset[ind].identifier for ind in range(len(data_loader.dataset))]
+            sample = data_loader.dataset[ids.index(131369)]
 
-            sample = data_loader.dataset[ids.index('DUNVEN01')]
+            # for use with QM9/CSD dataset
+            # ids = [data_loader.dataset[ind].identifier for ind in range(len(data_loader.dataset))]
+            #
+            # sample = data_loader.dataset[ids.index('DUNVEN01')]
 
             # fairly rigid molecules: ampyrd, axosow, benzac, bepnit, bertoh, bzamid,
             # nicoam, DUNVEN, dovcat, NECMUD,
 
             sampler = Sampler(0,
                               self.device,
+                              self.config.machine,
                               self.generator_prior,
                               self.models_dict['generator'],
-                              self.models_dict['autoencoder'])
-            # batch_size = self.config.max_batch_size
-            # num_samples = self.config.num_samples
-
-            # p_results_dict = sampler.sample_and_cluster(sample, num_samples, batch_size,
-            #                                             'random', [14 for _ in range(batch_size)],
-            #                                             'csd_prior',
-            #                                             show_progress=True,
-            #                                             packing_coeff_cutoff=[0.5, 0.9],
-            #                                             vdw_cutoff=10,
-            #                                             cell_params_threshold=0.01,
-            #                                             rdf_dist_threshold=0.005,
-            #                                             )
-            #
-            # np.save('prior_sampling_results', p_results_dict)
-            # del p_results_dict
-            #
-            # g_results_dict = sampler.sample_and_cluster(sample, num_samples, batch_size,
-            #                                             'random', [14 for _ in range(batch_size)],
-            #                                             'generator',
-            #                                             show_progress=True,
-            #                                             packing_coeff_cutoff=1.2,
-            #                                             vdw_cutoff=10,
-            #                                             cell_params_threshold=0.01,
-            #                                             rdf_dist_threshold=0.005,
-            #                                             variation_factor=0.1
-            #                                             )
-            # np.save('generator_sampling_results', g_results_dict)
-            # del g_results_dict
-            num_cpus = mp.cpu_count() - 1
-            pool = mp.Pool(num_cpus)
+                              self.models_dict['autoencoder'],
+                              self.models_dict['discriminator'],
+                              show_tqdm=True,
+                              skip_rdf=True,
+                              gd_score_func='discriminator',
+                              )
 
             batch_size = self.config.max_batch_size
             num_samples = self.config.num_samples
 
-            out = []
-            for ind in range(num_cpus):
-                out.append(
-                    pool.apply_async(sampler.sample_and_cluster,
-                                     (sample,
-                                      num_samples // num_cpus,
-                                      batch_size,
-                                      'random',
-                                      [14 for _ in range(batch_size)],
-                                      'csd_prior',
-                                      False,
-                                      [0.5, 0.9],
-                                      10,
-                                      0.01,
-                                      0.005,
-                                      )
-                                     )#.get()
-                )
-            pool.close()
-            pool.join()
-            out = [elem.get() for elem in out]
-            combo_dict = {}
-            for key in out[0].keys():
-                if 'distmat' not in key:
-                    array = []
-                    for ind in range(len(out)):
-                        array.extend(out[ind][key])
-                    combo_dict[key] = np.array(array)
+            sampling_dict = sampler.crystal_search(sample,
+                                                   'prior',
+                                                   num_samples,
+                                                   batch_size,
+                                                   torch.LongTensor([14 for _ in range(batch_size)]),
+                                                   packing_coeff_range=[0.5, 2.0],
+                                                   vdw_threshold=10000,
+                                                   rdf_cutoff=0.025,
+                                                   opt_eps=1e-2,
+                                                   cell_params_cutoff=0.05,
+                                                   chain_length=10,
+                                                   step_size=0.1,  # 0.1
+                                                   parallel=True,
+                                                   )
+            np.save(f'../sampling_results/{str(int(sample.identifier))}_{self.run_identifier}_sampling_results', sampling_dict)
 
-            np.save('prior_sampling_results', combo_dict)
-            aa = 1
-
-    def sample_build_analyze_from_prior(self, num_iters, batch_size, sample):
-        sample = self.collater([sample for _ in range(batch_size)]).to(self.device)
-
-        sample_record, vdw_record, rdf_record = [], [], []
-        for ind in range(num_iters):
-            mol_data, scalar_mol_embedding, vector_mol_embedding = self.process_embed_for_generator(
-                sample,
-                self.config.generator.canonical_conformer_orientation,
-                self.config.generate_sgs,
-                no_noise=False)
-
-            prior, descaled_prior = self.sample_from_prior(mol_data)
-
-            supercell_data, generated_cell_volumes = (
-                self.supercell_builder.build_zp1_supercells(
-                    molecule_data=mol_data,
-                    cell_parameters=descaled_prior,
-                    supercell_size=self.config.supercell_size,
-                    graph_convolution_cutoff=self.config.discriminator.model.graph.cutoff,
-                    align_to_standardized_orientation=False,
-                    skip_refeaturization=False,
-                ))
-
-            (eval_vdw_loss, vdw_loss, vdw_potential,
-             molwise_normed_overlap, prior_loss,
-             sample_rauv, scaled_deviation,
-             dist_dict) = self.analyze_generated_crystals(
-                mol_data,
-                generated_cell_volumes,
-                supercell_data,
-                return_dist_dict=True
-            )
-            prior_to_compare = prior.clone()
-            prior_to_compare[:, 9:] = supercell_data.cell_params[:, 9:]
-
-            rdf, rr, _ = new_crystal_rdf(supercell_data, dist_dict,
-                                         rrange=[0, 6], bins=2000,
-                                         mode='intermolecular', elementwise=True,
-                                         raw_density=True, cpu_detach=False,
-                                         atomic_numbers_override=mol_data.x.unique().long())
-
-            rdf_record.extend(rdf.cpu().detach())
-            sample_record.extend(prior_to_compare.cpu().detach())
-            vdw_record.extend((vdw_potential / mol_data.num_atoms).cpu().detach())
-
-        return torch.Tensor(vdw_record), torch.stack(sample_record), torch.stack(rdf_record), rr.cpu().detach()
 
     def ae_annealing(self):
         # if we have learned the existing distribution
@@ -1371,7 +1275,7 @@ class Modeller:
                             update_weights=True,
                             iteration_override=None):
 
-        if not hasattr(self, 'packing_loss_coefficient'):  # first GAN epoch
+        if not hasattr(self, 'generator_prior'):  # first GAN epoch
             self.init_gan_constants()
 
         if update_weights:
@@ -1578,7 +1482,7 @@ class Modeller:
                 raise ValueError("Mean loss is NaN/Inf")
 
             supercell_data, generated_cell_volumes = (
-                self.supercell_builder.build_zp1_supercells(
+                self.crystal_builder.build_zp1_supercells(
                     molecule_data=mol_data.clone(),
                     cell_parameters=generated_samples_to_build,
                     supercell_size=self.config.supercell_size,
@@ -1662,7 +1566,7 @@ class Modeller:
     def sample_and_build_prior(self, mol_data):
         prior, descaled_prior = self.sample_from_prior(mol_data)
         supercell_data, generated_cell_volumes = (
-            self.supercell_builder.build_zp1_supercells(
+            self.crystal_builder.build_zp1_supercells(
                 molecule_data=mol_data,
                 cell_parameters=descaled_prior,
                 supercell_size=self.config.supercell_size,
@@ -1753,7 +1657,7 @@ class Modeller:
         generated_samples_to_build = denormalize_generated_cell_params(
             generator_raw_samples,
             mol_data,
-            self.supercell_builder.asym_unit_dict
+            self.crystal_builder.asym_unit_dict
         )
 
         return generated_samples_to_build, generator_raw_samples, scaling_factor, variation_factor
@@ -1764,7 +1668,7 @@ class Modeller:
         samples_to_build = denormalize_generated_cell_params(
             raw_samples,
             mol_data,
-            self.supercell_builder.asym_unit_dict
+            self.crystal_builder.asym_unit_dict
         )
 
         return raw_samples, samples_to_build
@@ -1795,14 +1699,14 @@ class Modeller:
         and score them
         """
         '''get real supercells'''
-        real_supercell_data = self.supercell_builder.prebuilt_unit_cell_to_supercell(
+        real_supercell_data = self.crystal_builder.prebuilt_unit_cell_to_supercell(
             data, self.config.supercell_size, self.config.discriminator.model.graph.cutoff)
 
         '''get fake supercells'''
         generated_samples_i, negative_type, generator_data, negatives_stats = \
             self.generate_discriminator_negatives(data, i, orientation='random')
 
-        fake_supercell_data, generated_cell_volumes = self.supercell_builder.build_zp1_supercells(
+        fake_supercell_data, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
             self.config.discriminator.model.graph.cutoff,
             align_to_standardized_orientation=(negative_type != 'generated'),  # take generator samples as-given
@@ -2017,7 +1921,7 @@ class Modeller:
         distorted_samples_clean = clean_cell_params(
             distorted_samples_std, real_data.sg_ind,
             self.lattice_means, self.lattice_stds,
-            self.sym_info, self.supercell_builder.asym_unit_dict,
+            self.sym_info, self.crystal_builder.asym_unit_dict,
             rescale_asymmetric_unit=False, destandardize=True, mode='hard')
 
         distorted_samples_clean[:, :3] *= torch.pow(real_data.mol_volume * real_data.sym_mult, 1 / 3)[:,

@@ -19,7 +19,7 @@ from torch_scatter import scatter
 from mxtaltools.common.config_processing import process_main_config, dict2namespace
 from mxtaltools.common.geometry_calculations import cell_vol_torch
 from mxtaltools.constants.atom_properties import VDW_RADII
-from mxtaltools.crystal_building.builder import SupercellBuilder
+from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.vdw_overlap import vdw_overlap
 from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
@@ -79,7 +79,7 @@ class CrystalAnalyzer(torch.nn.Module):
         self.vdw_radii = torch.tensor(list(VDW_RADII.values()))
 
         self.collater = Collater(None, None)
-        self.supercell_builder = SupercellBuilder(device=self.device, rotation_basis='spherical')
+        self.supercell_builder = CrystalBuilder(device=self.device, rotation_basis='spherical')
 
     def load_models(self):
         """"""
