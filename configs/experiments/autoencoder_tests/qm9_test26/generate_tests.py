@@ -9,8 +9,8 @@ config_list = [
         'dataset': {'filter_protons': True},
         'autoencoder': {
             'infer_protons': False
-                }
-    },  # 0 - baseline
+        }
+    },  # 0 - baseline - awful
     {
         'dataset': {'filter_protons': True},
         'positional_noise': {'autoencoder': 0},
@@ -46,7 +46,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 256
                 }}}
-    },  # 1 - narrower model
+    },  # 1 - narrower model - awful
     {
         'dataset': {'filter_protons': True},
         'positional_noise': {'autoencoder': 1},
@@ -54,11 +54,47 @@ config_list = [
     {
         'dataset': {'filter_protons': True},
         'positional_noise': {'autoencoder': .5},
-    },  # 2 - 0 with noise
+    },  # 3 - 0 with noise
     {
         'dataset': {'filter_protons': True},
         'positional_noise': {'autoencoder': .1},
-    },  # 2 - 0 with noise
+    },  # 4 - 0 with noise
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 5e-5,
+                'decoder_init_lr': 5e-5,
+                'max_lr': 2e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 1,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 6,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 1024,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 5 - fast overfit attempt
 ]
 
 
