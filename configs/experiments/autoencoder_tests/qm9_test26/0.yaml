@@ -94,6 +94,11 @@ model_paths:
   regressor: null
 num_early_epochs: 0
 overfit_tolerance: 4
+positional_noise:
+  autoencoder: 0
+  discriminator: 0
+  generator: 0
+  regressor: 0
 save_checkpoints: true
 seeds:
   dataset: 1

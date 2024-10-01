@@ -5,6 +5,11 @@ dataset_name: qm9_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_datase
 extra_test_set_name: null
 save_checkpoints: True
 
+positional_noise:
+  discriminator: 0
+  generator: 0
+  regressor: 0
+  autoencoder: 0
 
 dataset:
   max_dataset_length: 10000000  # non-functional for on-disk datasets.
