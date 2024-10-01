@@ -51,6 +51,14 @@ config_list = [
         'dataset': {'filter_protons': True},
         'positional_noise': {'autoencoder': 1},
     },  # 2 - 0 with noise
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': .5},
+    },  # 2 - 0 with noise
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': .1},
+    },  # 2 - 0 with noise
 ]
 
 
