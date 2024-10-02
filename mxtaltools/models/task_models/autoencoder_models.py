@@ -79,11 +79,18 @@ class Mo3ENet(BaseGraphModel):
         '''combine vector and scalar features to n*nodes x m'''
         # de-normalize predicted node positions and rearrange to correct format
         decoding = torch.cat([
-            vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_decoder_nodes, 3) * self.radial_normalization,
+            vector_decoding.permute(0, 2, 1).reshape(len(vector_decoding) * self.num_decoder_nodes,
+                                                     3) * self.radial_normalization,
             scalar_decoding.reshape(len(scalar_decoding) * self.num_decoder_nodes, self.output_depth - 3)],
             dim=-1)
 
         return decoding
+
+    def compile_self(self, dynamic=True, fullgraph=False):
+        self.encoder = torch.compile(self.encoder, dynamic=dynamic, fullgraph=fullgraph)
+        self.decoder = torch.compile(self.decoder, dynamic=dynamic, fullgraph=fullgraph)
+        self.scalarizer = torch.compile(self.scalarizer, dynamic=dynamic, fullgraph=fullgraph)
+
 
     def check_embedding_quality(self, data,
                                 sigma=0.35,
@@ -119,11 +126,12 @@ class Mo3ENet(BaseGraphModel):
         tot_overlaps = torch.zeros_like(rmsds)
         match_successful = torch.zeros_like(rmsds)
         for ind in range(data.num_graphs):
-            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind], fig2 = scaffolded_decoder_clustering(ind,
-                                                                                                                       data,
-                                                                                                                       decoded_data,
-                                                                                                                       num_atom_types,
-                                                                                                                       return_fig=True)
+            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind], fig2 = scaffolded_decoder_clustering(
+                ind,
+                data,
+                decoded_data,
+                num_atom_types,
+                return_fig=True)
         if visualize:
             for ind in range(data.num_graphs):
                 swarm_vs_tgt_fig(data, decoded_data, num_atom_types, graph_ind=ind).show()

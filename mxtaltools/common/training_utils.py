@@ -98,9 +98,9 @@ def instantiate_models(config: Namespace,
     models_dict.update(null_models)
 
     # compile models
-    if compile:
-        for key in models_dict.keys():
-            models_dict[key].compile_self()
+   # if compile:
+    for key in models_dict.keys():
+        models_dict[key].compile_self()
 
     if config.device.lower() == 'cuda':
         torch.backends.cudnn.benchmark = True
