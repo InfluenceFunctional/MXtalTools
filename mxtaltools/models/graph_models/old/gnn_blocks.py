@@ -74,46 +74,6 @@ class GCBlock(torch.nn.Module):
             # reshape to node dimension
             return self.message_to_node(x)
 
-
-class FCBlock(torch.nn.Module):
-    """
-    Pure wrapper for MLP class
-    """
-    def __init__(self,
-                 nodewise_fc_layers: int,
-                 node_embedding_depth: int,
-                 activation: str,
-                 nodewise_norm: str,
-                 nodewise_dropout: float,
-                 equivariant: bool = False,
-                 vector_norm: str = None,
-                 ):
-        super(FCBlock, self).__init__()
-        self.equivariant = equivariant
-
-        self.model = EMLP(layers=nodewise_fc_layers,
-                          filters=node_embedding_depth,
-                          input_dim=node_embedding_depth,
-                          output_dim=node_embedding_depth,
-                          conditioning_dim=node_embedding_depth if equivariant else 0,
-                          activation=activation,
-                          norm=nodewise_norm,
-                          dropout=nodewise_dropout,
-                          add_vector_channel=equivariant,
-                          vector_norm=vector_norm)
-
-    def forward(self,
-                x: Tensor,
-                v: Optional[Tensor] = None,
-                return_latent: bool = False,
-                batch: Optional[torch.LongTensor] = None):
-        return self.model(x,
-                          v=v,
-                          conditions=torch.linalg.norm(v, dim=1) if v is not None else None,
-                          return_latent=return_latent,
-                          batch=batch)
-
-
 class OutputBlock(torch.nn.Module):
     def __init__(self, node_dim, embedding_dim, equivariant_graph):
 

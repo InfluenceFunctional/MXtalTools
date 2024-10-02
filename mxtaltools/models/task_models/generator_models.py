@@ -45,7 +45,6 @@ class CrystalGenerator(nn.Module):
         #                        output_dim=6 + z_prime * 3,
         #                        vector_input_dim=embedding_dim + z_prime + 3,
         #                        vector_output_dim=z_prime,
-        #                        conditioning_dim=0,
         #                        seed=seed,
         #                        vector_norm=config.vector_norm
         #                        )

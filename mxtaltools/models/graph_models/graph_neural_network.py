@@ -52,7 +52,6 @@ class ScalarGNN(torch.nn.Module):
                                          filters=node_dim,
                                          input_dim=node_dim,
                                          output_dim=node_dim,
-                                         conditioning_dim=0,
                                          activation=activation,
                                          norm=norm,
                                          dropout=dropout)
@@ -72,7 +71,6 @@ class ScalarGNN(torch.nn.Module):
                       filters=node_dim,
                       input_dim=node_dim,
                       output_dim=node_dim,
-                      conditioning_dim=0,
                       activation=activation,
                       norm=norm,
                       dropout=dropout)
@@ -163,7 +161,6 @@ class VectorGNN(torch.nn.Module):
                                          filters=node_dim,
                                          input_dim=node_dim,
                                          output_dim=node_dim,
-                                         conditioning_dim=0,
                                          activation=activation,
                                          norm=norm,
                                          dropout=dropout,
@@ -195,7 +192,6 @@ class VectorGNN(torch.nn.Module):
                       filters=node_dim,
                       input_dim=node_dim,
                       output_dim=node_dim,
-                      conditioning_dim=0,
                       activation=activation,
                       norm=norm,
                       dropout=dropout,
@@ -290,7 +286,6 @@ class MolCrystalScalarGNN(torch.nn.Module):
                                          filters=node_dim,
                                          input_dim=node_dim,
                                          output_dim=node_dim,
-                                         conditioning_dim=0,
                                          activation=activation,
                                          norm=norm,
                                          dropout=dropout)
@@ -310,7 +305,6 @@ class MolCrystalScalarGNN(torch.nn.Module):
                       filters=node_dim,
                       input_dim=node_dim,
                       output_dim=node_dim,
-                      conditioning_dim=0,
                       activation=activation,
                       norm=norm,
                       dropout=dropout)

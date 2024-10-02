@@ -133,7 +133,7 @@ class Modeller:
                                               self.model_names,
                                               self.autoencoder_type_index,
                                               self.sym_info,
-                                              compile=self.config.machine=='cluster',
+                                              compile=self.config.machine == 'cluster',
                                               )
 
         self.init_optimizers()
@@ -1067,8 +1067,8 @@ class Modeller:
                                                    step_size=0.1,  # 0.1
                                                    parallel=True,
                                                    )
-            np.save(f'../sampling_results/{str(int(sample.identifier))}_{self.run_identifier}_sampling_results', sampling_dict)
-
+            np.save(f'../sampling_results/{str(int(sample.identifier))}_{self.run_identifier}_sampling_results',
+                    sampling_dict)
 
     def ae_annealing(self):
         # if we have learned the existing distribution
