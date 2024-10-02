@@ -132,7 +132,10 @@ class Modeller:
                                               self.dataDims,
                                               self.model_names,
                                               self.autoencoder_type_index,
-                                              self.sym_info)
+                                              self.sym_info,
+                                              compile=self.config.machine=='cluster',
+                                              )
+
         self.init_optimizers()
         self.reload_models()
         self.init_schedulers()

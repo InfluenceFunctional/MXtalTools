@@ -15,7 +15,8 @@ def instantiate_models(config: Namespace,
                        dataDims: dict,
                        model_names,
                        autoencoder_type_index,
-                       sym_info) -> dict:
+                       sym_info,
+                       compile=False) -> dict:
     print("Initializing model(s) for " + config.mode)
     models_dict = {}
     if config.mode in ['gan', 'search', 'generator']:
@@ -96,9 +97,10 @@ def instantiate_models(config: Namespace,
                    name not in models_dict.keys()}  # initialize null models
     models_dict.update(null_models)
 
-    # # compile models
-    # for key in models_dict.keys():
-    #     models_dict[key].compile_self()
+    # compile models
+    if compile:
+        for key in models_dict.keys():
+            models_dict[key].compile_self()
 
     if config.device.lower() == 'cuda':
         torch.backends.cudnn.benchmark = True

@@ -1,5 +1,5 @@
 machine: "local"  # or "cluster"
-device: "cpu"  # or "cpu"
+device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
 dataset_name: test_qm9_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 #misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
