@@ -964,6 +964,10 @@ class Modeller:
                                                               self.models_dict['autoencoder'],
                                                               self.config.device)
 
+        # if self.epoch_type == 'test':
+        #     if encoder_equivariance_loss.mean() > 0.01:
+        #         aa = 1
+
         return encoder_equivariance_loss, decoder_equivariance_loss
 
     def ae_epoch(self,

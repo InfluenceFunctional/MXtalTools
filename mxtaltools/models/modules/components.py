@@ -465,7 +465,7 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
 
 
 # noinspection PyAttributeOutsideInit
-class vectorMLP(scalarMLP):  # todo simplify and smooth out +1's and other custom methods for a general depth controller
+class vectorMLP(scalarMLP):
     r"""
     scalarMLP model with l=1 vector track added with o3 equivariance
     """
@@ -598,9 +598,9 @@ class vectorMLP(scalarMLP):  # todo simplify and smooth out +1's and other custo
             'scalar forward'
             if self.v_to_s_combination == 'concatenate':
                 # concatenate vector lengths to scalar values
-                x = torch.cat([x, v2s_linear(res_v)], dim=-1)
+                x = torch.cat([x, v2s_linear(v)], dim=-1)
             elif self.v_to_s_combination == 'sum':
-                x = x + v2s_linear(res_v)
+                x = x + v2s_linear(v)
             else:
                 assert False, f'{self.v_to_s_combination} not implemented'
 
