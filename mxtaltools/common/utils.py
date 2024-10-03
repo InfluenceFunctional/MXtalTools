@@ -530,3 +530,14 @@ def signed_log(y: Union[torch.tensor, np.ndarray]
 
 def sample_uniform(num_samples, max_value, device):
     return torch.rand(size=(num_samples,), device=device) * max_value
+
+
+def parse_to_torch(array: Union[torch.Tensor, np.ndarray, list],
+                   device: Union[torch.device, str],
+                   dtype=torch.float32) -> torch.Tensor:
+    if torch.is_tensor(array):
+        return torch.tensor(array.clone().detach(), dtype=dtype, device=device)
+    elif isinstance(array, np.ndarray):
+        return torch.Tensor(array, dtype=dtype, device=device)
+    elif isinstance(array, list):
+        return torch.Tensor(array, dtype=dtype, device=device)

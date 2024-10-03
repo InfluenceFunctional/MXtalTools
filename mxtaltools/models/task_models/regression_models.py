@@ -21,7 +21,7 @@ class MoleculeScalarRegressor(BaseGraphModel):
         """
         super(MoleculeScalarRegressor, self).__init__()
         torch.manual_seed(seed)
-
+        # TODO save target mean and std inside this class
         self.get_data_stats(atom_features,
                             molecule_features,
                             node_standardization_tensor,

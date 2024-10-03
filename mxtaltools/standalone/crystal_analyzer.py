@@ -6,26 +6,26 @@ requirements numpy, scipy, torch, torch_geometric, torch_scatter, torch_cluster,
 """
 import pathlib
 from argparse import Namespace
-from pathlib import Path
 from typing import Union, Tuple, Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-import yaml
 from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 
-from mxtaltools.common.config_processing import process_main_config, dict2namespace
+from mxtaltools.common.config_processing import process_main_config, dict2namespace, load_yaml
 from mxtaltools.common.geometry_calculations import cell_vol_torch
+from mxtaltools.common.utils import parse_to_torch
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.dataset_management.CrystalData import CrystalData
-from mxtaltools.models.functions.vdw_overlap import vdw_overlap
+from mxtaltools.models.functions.vdw_overlap import vdw_overlap, vdw_analysis
 from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
 from mxtaltools.models.task_models.crystal_models import MolecularCrystalModel
 from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
-from mxtaltools.models.utils import softmax_and_score, reload_model, collate_decoded_data, ae_reconstruction_loss
+from mxtaltools.models.utils import softmax_and_score, reload_model, collate_decoded_data, ae_reconstruction_loss, \
+    get_intermolecular_dists_dict
 
 module_path = str(pathlib.Path(__file__).parent.resolve())
 
@@ -34,63 +34,35 @@ volume_checkpoint_path = module_path + '/models/volume_model.pt'
 autoencoder_checkpoint_path = module_path + '/models/autoencoder_model.pt'  # checkpoint with protons in I/O
 
 
-def parse_to_torch(array: Union[torch.Tensor, np.ndarray, list],
-                   device: Union[torch.device, str],
-                   dtype=torch.float32) -> torch.Tensor:
-    if torch.is_tensor(array):
-        return torch.tensor(array.clone().detach(), dtype=dtype, device=device)
-    elif isinstance(array, np.ndarray):
-        return torch.Tensor(array, dtype=dtype, device=device)
-    elif isinstance(array, list):
-        return torch.Tensor(array, dtype=dtype, device=device)
-
-
-def load_yaml(path):
-    yaml_path = Path(path)
-    assert yaml_path.exists()
-    assert yaml_path.suffix in {".yaml", ".yml"}
-    with yaml_path.open("r") as f:
-        target_dict = yaml.safe_load(f)
-
-    return target_dict
-
-
 # noinspection PyAttributeOutsideInit
 class CrystalAnalyzer(torch.nn.Module):
     def __init__(self,
                  device,
                  machine='local',
-                 supercell_size=5):
+                 supercell_size=5,
+                 load_models=False):
         super(CrystalAnalyzer, self).__init__()
 
         self.device = device
         self.machine = machine
-
-        self.config = process_main_config(None,
-                                          user_yaml_path='../../configs/users/mkilgour.yaml',
-                                          main_yaml_path='../../configs/standalone/crystal_analyzer.yaml',
-                                          machine=machine)
-
         self.supercell_size = supercell_size
-        self.load_models()
+        if load_models:  # todo models need to be retrained - not necessary for basic analysis
+            self.config = process_main_config(None,
+                                              user_yaml_path='../../configs/users/mkilgour.yaml',
+                                              main_yaml_path='../../configs/standalone/crystal_analyzer.yaml',
+                                              machine=machine)
+            self.load_models()
 
-        self.auvol_mean = self.r_dataDims['target_mean']
-        self.auvol_std = self.r_dataDims['target_std']
-        self.vdw_radii = torch.tensor(list(VDW_RADII.values()))
-
+        self.vdw_radii = torch.tensor(list(VDW_RADII.values())).to(self.device)
         self.collater = Collater(None, None)
-        self.supercell_builder = CrystalBuilder(device=self.device, rotation_basis='spherical')
+        self.supercell_builder = CrystalBuilder(device=self.device, rotation_basis='cartesian')
 
     def load_models(self):
-        """"""
-        # update configs from checkpoints
         self.load_crystal_score_model()
-
-        self.load_volume_prediction_model()
-
+        self.load_density_model()
         self.load_autoencoder_model()
 
-    def load_autoencoder_model(self):
+    def load_autoencoder_model(self):  # todo retest this
         """Equivariant molecular point cloud autoencoder model"""
         checkpoint = torch.load(autoencoder_checkpoint_path, map_location=self.device)
         model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
@@ -119,7 +91,7 @@ class CrystalAnalyzer(torch.nn.Module):
         self.autoencoder_model.eval()
         self.autoencoder_model.to(self.device)
 
-    def load_volume_prediction_model(self):
+    def load_density_model(self):  # todo retest this
         'asymmetric unit volume prediction model'
         checkpoint = torch.load(volume_checkpoint_path, map_location=self.device)
         model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
@@ -138,7 +110,7 @@ class CrystalAnalyzer(torch.nn.Module):
         self.volume_model.eval()
         self.volume_model.to(self.device)
 
-    def load_crystal_score_model(self):
+    def load_crystal_score_model(self):  # todo retest this
         """crystal scoring model"""
         checkpoint = torch.load(discriminator_checkpoint_path, map_location=self.device)
         model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
@@ -165,20 +137,21 @@ class CrystalAnalyzer(torch.nn.Module):
                       cell_angles: Union[torch.Tensor, np.ndarray, list],
                       space_group_number: int,
                       pose_parameters: Optional[Union[torch.Tensor, np.ndarray, list]] = None,
-                      use_existing_pose: bool = False
+                      turnover_potential: float = 10,
                       ):
         """
         score a single proposed molecular crystal
+        Inefficient for large-scale analysis, but clean & simple for single-crystal work
 
         Parameters
         ----------
-        use_existing_pose
         atomic_numbers
         atom_coordinates
         cell_lengths
         cell_angles
         space_group_number
         pose_parameters
+        turnover_potential: stiffness of the repulsive Lennard-Jones term
 
         Returns
         -------
@@ -187,37 +160,37 @@ class CrystalAnalyzer(torch.nn.Module):
 
         atomic_numbers = parse_to_torch(atomic_numbers, dtype=torch.long, device=self.device)
         atom_coordinates = parse_to_torch(atom_coordinates, dtype=torch.float32, device=self.device)
-
         cell_lengths = parse_to_torch(cell_lengths, dtype=torch.long, device=self.device)
         cell_angles = parse_to_torch(cell_angles, dtype=torch.float32, device=self.device)
+        pose_parameters = parse_to_torch(pose_parameters, dtype=torch.float32, device=self.device)
 
-        assert cell_lengths.min() > 0
-        assert cell_angles.min() >= 0
-        assert cell_angles.max() <= torch.pi
+        assert cell_lengths.amin() > 0, "Cell lengths must be positive"
+        assert all(torch.pi >= cell_angles >= 0), "Cell angles must be within 0-pi"
+        assert all(0 <= pose_parameters[:3] <= 1)
 
-        if pose_parameters is not None:
-            pose_parameters = parse_to_torch(pose_parameters, dtype=torch.float32, device=self.device)
-            assert 0 <= pose_parameters[:3].min()
-            assert 1 >= pose_parameters[:3].max()
-
-        crystal_batch = self.prep_crystal_data_batch([atomic_numbers],
+        crystal_batch, cell_volume = self.prep_crystal_data_batch([atomic_numbers],
                                                      [atom_coordinates],
                                                      [cell_lengths],
                                                      [cell_angles],
                                                      [pose_parameters],
                                                      [space_group_number],
-                                                     use_existing_pose)
+                                                     filter_hydrogens=False)
+        # todo reimplement when we retrain the crystal discriminator
+        # discriminator_output, pair_dist_dict = self.adversarial_score(crystal_batch.clone())
+        # classification_score = softmax_and_score(discriminator_output[:, :2])
+        # predicted_distance = F.softplus(discriminator_output[:, -1])
 
-        discriminator_output, pair_dist_dict = self.adversarial_score(crystal_batch.clone())
-        classification_score = softmax_and_score(discriminator_output[:, :2])
-        predicted_distance = F.softplus(discriminator_output[:, -1])
-        vdw_loss, vdw_score, _, _, _, lj_potential = vdw_overlap(self.vdw_radii,
-                                                   crystaldata=crystal_batch,
-                                                   return_score_only=False,
-                                                   loss_func='inv')
-        sample_auv = self.compute_aunit_volume(cell_lengths, cell_angles, crystal_batch.sym_mult)
+        dist_dict = get_intermolecular_dists_dict(crystal_batch, self.cutoff, 100)
+        molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, eval_vdw_loss \
+            = vdw_analysis(self.vdw_radii,
+                           dist_dict,
+                           crystal_batch.num_graphs,
+                           turnover_potential=turnover_potential)
 
-        return classification_score, predicted_distance, vdw_score, sample_auv
+        reduced_volume = cell_volume / crystal_batch.sym_mult
+        packing_coeff = crystal_batch.mol_volume / reduced_volume
+
+        return vdw_potential, vdw_loss, packing_coeff
 
     def prep_crystal_data_batch(self,
                                 atom_types_list,
@@ -226,11 +199,13 @@ class CrystalAnalyzer(torch.nn.Module):
                                 cell_angles,
                                 pose_parameters,
                                 space_group_number,
-                                use_existing_pose):
-        for ind, (pos, z) in enumerate(zip(coords_list, atom_types_list)):
-            good_inds = torch.argwhere(z.flatten() != 1).flatten()
-            coords_list[ind] = pos[good_inds]
-            atom_types_list[ind] = z[good_inds]
+                                filter_hydrogens: bool = False,
+                                ):
+        if filter:
+            for ind, (pos, z) in enumerate(zip(coords_list, atom_types_list)):  # filtering hydrogens
+                good_inds = torch.argwhere(z.flatten() != 1).flatten()
+                coords_list[ind] = pos[good_inds]
+                atom_types_list[ind] = z[good_inds]
 
         data_batch = [
             CrystalData(
@@ -245,34 +220,29 @@ class CrystalAnalyzer(torch.nn.Module):
             )
             for ind in range(len(coords_list))
         ]
-        data_batch = self.collater(data_batch)
-        data_batch.to(self.device)
+        data_batch = self.collater(data_batch).to(self.device)
 
-        if pose_parameters[0] is not None and not use_existing_pose:
-            crystal_batch, proposed_cell_volumes = self.supercell_builder.build_zp1_supercells(
-                data_batch, data_batch.cell_parameters(), self.supercell_size,
-                self.config.discriminator.model.graph.cutoff,
-                align_to_standardized_orientation=True,
-                target_handedness=data_batch.aunit_handedness,
-                skip_refeaturization=True,
-            )
-        else:  # skip posing the molecule
-            crystal_batch, proposed_cell_volumes = self.supercell_builder.build_zp1_supercells(
-                data_batch, data_batch.cell_parameters(), self.supercell_size,
-                self.config.discriminator.model.graph.cutoff,
-                align_to_standardized_orientation=True,
-                target_handedness=data_batch.aunit_handedness,
-                skip_refeaturization=True,
-                skip_molecule_posing=True,
-            )
+        crystal_batch, cell_volumes = self.supercell_builder.build_zp1_supercells(
+            data_batch,
+            data_batch.cell_parameters(),
+            self.supercell_size,
+            self.config.discriminator.model.graph.cutoff,
+            align_to_standardized_orientation=True,
+            target_handedness=data_batch.aunit_handedness,
+            skip_refeaturization=True,
+        )
 
-        return crystal_batch
+        return crystal_batch, cell_volumes
 
-    def predict_aunit_volume(self,
-                             atomic_numbers: Union[torch.Tensor, np.ndarray, list],
-                             atom_coordinates: Union[torch.Tensor, np.ndarray, list],
-                             dropout_repeats: int = 10
-                             ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def predict_packing_coeff(self,
+                              atomic_numbers: Union[torch.Tensor, np.ndarray, list],
+                              atom_coordinates: Union[torch.Tensor, np.ndarray, list],
+                              dropout_repeats: int = 10
+                              ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        take a single molecule conformer and return the mean and std deviation of
+        the predicted packing coefficient, according to a trained model
+        """
 
         atomic_numbers = parse_to_torch(atomic_numbers, dtype=torch.long, device=self.device)
         atom_coordinates = parse_to_torch(atom_coordinates, dtype=torch.float32, device=self.device)
@@ -285,17 +255,11 @@ class CrystalAnalyzer(torch.nn.Module):
         molecules_batch = self.prep_molecule_data_batch([atomic_numbers for _ in range(dropout_repeats)],
                                                         [atom_coordinates for _ in range(dropout_repeats)])
 
-        reduced_auv = self.volume_model(molecules_batch.clone()) * self.auvol_std + self.auvol_mean
+        packing_coeff = self.volume_model(molecules_batch.clone()) * self.volume_model.std + self.volume_model.mean
 
-        # asymmetric unit volume = reduced_auv * SUM_atoms[atom vdw volume]
-        auv = reduced_auv.flatten() * scatter(
-            4 / 3 * torch.pi * self.vdw_radii[molecules_batch.x.flatten().long()] ** 3,
-            index=molecules_batch.batch,
-            reduce='sum')
+        return packing_coeff.mean(), packing_coeff.std()
 
-        return auv, reduced_auv  # todo work on uncertainty
-
-    def encode_molecule(self,
+    def encode_molecule(self,  # to rewrite
                         atomic_numbers: Union[torch.Tensor, np.ndarray, list],
                         atom_coordinates: Union[torch.Tensor, np.ndarray, list],
                         check_reconstruction: bool = False,
@@ -343,21 +307,8 @@ class CrystalAnalyzer(torch.nn.Module):
             )
             for ind in range(len(coords_list))
         ]
-        data_batch = self.collater(data_batch)
-        data_batch.to(self.device)
 
-        return data_batch
-
-    def compute_aunit_volume(self,
-                             cell_lengths: torch.Tensor,
-                             cell_angles: torch.Tensor,
-                             multiplicity: torch.Tensor):
-        volumes_list = []
-        for i in range(len(cell_lengths)):
-            volumes_list.append(cell_vol_torch(cell_lengths[i], cell_angles[i]))
-
-        volumes_list = torch.tensor(volumes_list, dtype=torch.float32, device=self.device)
-        return volumes_list / multiplicity
+        return self.collater(data_batch).to(self.device)
 
     def adversarial_score(self, data):
         """
@@ -373,8 +324,7 @@ if __name__ == '__main__':
                                machine='local',
                                supercell_size=5)
 
-
-    'Asymmetric unit volume prediction'
+    # load up some data
     from mxtaltools.dataset_management.data_manager import DataManager
 
     miner = DataManager(device='cpu',
@@ -390,27 +340,28 @@ if __name__ == '__main__':
                                          ['molecule_num_atoms', 'range', [3, 100]],
                                          ['molecule_radius', 'range', [1, 5]],
                                          ['asymmetric_unit_is_well_defined', 'in', [True]],
-                                         ['reduced_volume_fraction', 'range', [0.75, 1.15]],
+                                         ['crystal_packing_coefficient', 'range', [0.5, 0.95]],
                                      ])
 
-    predictions = []
-    for ind in range(10):
-        auv, red_auv = analyzer.predict_aunit_volume(atomic_numbers=miner.dataset[ind].x,
-                                                     atom_coordinates=miner.dataset[ind].pos)
-        predictions.append(red_auv.cpu().detach().mean())
-
-    reference_red_auvs = torch.tensor(
-        [elem.y * analyzer.auvol_std + analyzer.auvol_mean for elem in miner.dataset[0:10]])
-    volume_error = F.l1_loss(torch.stack(predictions).flatten(), reference_red_auvs)
-
-    'Stability analysis - from parameters'
-    for ind in range(10):
-        crystal_analysis = analyzer.score_crystal(atomic_numbers=miner.dataset[ind].x,
-                                                  atom_coordinates=miner.dataset[ind].pos,
-                                                  cell_lengths=miner.dataset[ind].cell_lengths,
-                                                  cell_angles=miner.dataset[ind].cell_angles,
-                                                  space_group_number=miner.dataset[ind].sg_ind,
-                                                  pose_parameters=miner.dataset[ind].pose_params1,
-                                                  use_existing_pose=True,
-                                                  )  # todo fix handedness issue in parameterization
-        print(crystal_analysis)
+    # todo all this has to be redone for our new features
+    # predictions = []
+    # for ind in range(10):
+    #     auv, red_auv = analyzer.predict_aunit_volume(atomic_numbers=miner.dataset[ind].x,
+    #                                                  atom_coordinates=miner.dataset[ind].pos)
+    #     predictions.append(red_auv.cpu().detach().mean())
+    #
+    # reference_red_auvs = torch.tensor(
+    #     [elem.y * analyzer.auvol_std + analyzer.packing_coeff_mean for elem in miner.dataset[0:10]])
+    # volume_error = F.l1_loss(torch.stack(predictions).flatten(), reference_red_auvs)
+    #
+    # 'Stability analysis - from parameters'
+    # for ind in range(10):
+    #     crystal_analysis = analyzer.score_crystal(atomic_numbers=miner.dataset[ind].x,
+    #                                               atom_coordinates=miner.dataset[ind].pos,
+    #                                               cell_lengths=miner.dataset[ind].cell_lengths,
+    #                                               cell_angles=miner.dataset[ind].cell_angles,
+    #                                               space_group_number=miner.dataset[ind].sg_ind,
+    #                                               pose_parameters=miner.dataset[ind].pose_params1,
+    #                                               use_existing_pose=True,
+    #                                               )  # todo fix handedness
+    #     print(crystal_analysis)
