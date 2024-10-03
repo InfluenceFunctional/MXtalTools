@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 base_config_path: /experiments/base/autoencoder.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
-dataset_name: test_qm9_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+dataset_name: qm9_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 #misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
 extra_test_set_name: null
 save_checkpoints: True
@@ -39,6 +39,12 @@ logger:
   experiment_tag: dev
   run_name: dev
 
+positional_noise:
+  discriminator: 0
+  generator: 0
+  regressor: 0
+  autoencoder: 0
+
 model_paths:
   discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
   generator: null #cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
@@ -51,5 +57,5 @@ generate_sgs: null #['P21/c'] #['P-1']#,'C2/c','P21/c','P212121']
 
 autoencoder:
   infer_protons: False
-  filter_protons: False
+  filter_protons: True
 
