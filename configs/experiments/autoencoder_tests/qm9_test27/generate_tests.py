@@ -439,6 +439,367 @@ config_list = [
                     'num_nodes': 256
                 }}}
     },  # 11 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': 'layer'},
+                    'num_nodes': 256
+                }}}
+
+    },  # 12 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': 'graph layer'
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 13 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 6,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 14 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 2,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 15 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0.25,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 16 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc':14,
+                        'dropout': 0.25,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 17 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 18 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.975,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 4,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 19 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.1,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 4,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 20 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0,
+                'lr_growth_lambda': 1.1,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 4,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 1,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 21 - small and bare-bones
 
 ]
 
