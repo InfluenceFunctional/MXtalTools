@@ -642,7 +642,7 @@ config_list = [
                         'message_dim': 64,
                         'embedding_dim': 256,
                         'num_convs': 1,
-                        'fcs_per_gc':14,
+                        'fcs_per_gc': 14,
                         'dropout': 0.25,
                         'cutoff': 3,
                         'norm': None
@@ -800,6 +800,42 @@ config_list = [
                     'num_nodes': 256
                 }}}
     },  # 21 - small and bare-bones
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 256,
+                        'embedding_dim': 512,
+                        'num_convs': 1,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 8,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 512
+                }}}
+    },  # 22 - new large baseline
 
 ]
 
