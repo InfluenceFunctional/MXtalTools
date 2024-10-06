@@ -872,7 +872,42 @@ config_list = [
                     'num_nodes': 362
                 }}}
     },  # 23 - slightly smaller big baseline
-
+    {
+        'dataset': {'filter_protons': True},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 128,
+                        'embedding_dim': 256,
+                        'num_convs': 1,
+                        'fcs_per_gc': 1,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 8,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 24 - big bottleneck and deep decoder
 ]
 
 
