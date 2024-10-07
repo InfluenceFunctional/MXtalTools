@@ -4,7 +4,6 @@ import torch
 import torch_cluster
 
 
-# TODO try this with radius_cuda
 def radius(x: torch.Tensor, y: torch.Tensor, r: float,
            batch_x: Optional[torch.Tensor] = None,
            batch_y: Optional[torch.Tensor] = None,
@@ -152,4 +151,3 @@ def asymmetric_radius_graph(x: torch.Tensor,
         row, col = row[mask], col[mask]
 
     return torch.stack([row, col], dim=0)
-
