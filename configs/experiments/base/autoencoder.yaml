@@ -69,7 +69,7 @@ autoencoder:
   init_sigma: 1.05  # real-space valued
   evaluation_sigma: 0.35  # real-space valued
   sigma_lambda: 0.99
-  sigma_threshold: 0.01
+  sigma_threshold: 0.05
   overlap_eps:
     test: 1.0E-3
   max_overlap_threshold: 0.25
@@ -129,7 +129,7 @@ autoencoder:
         norm: 'layer'
         vector_norm: 'vector layer'
 
-      num_nodes: 128
+      num_nodes: 512
       ramp_depth: True
 
 
