@@ -282,7 +282,7 @@ class CrystalAnalyzer(torch.nn.Module):
                                      self.config.autoencoder.node_weight_temperature,
                                      self.device))
 
-            nodewise_reconstruction_loss, nodewise_type_loss, reconstruction_loss, self_likelihoods = (
+            nodewise_reconstruction_loss, nodewise_type_loss, reconstruction_loss, self_likelihoods, _, _ = (
                 ae_reconstruction_loss(molecules_batch, decoded_data, nodewise_weights,
                                        self.dataDims['num_atom_types'],
                                        self.config.autoencoder.type_distance_scaling,

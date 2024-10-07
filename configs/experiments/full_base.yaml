@@ -74,18 +74,17 @@ supercell_size: 5
 
 autoencoder:
   infer_protons: False
-  KLD_weight: 0.001
-  KLD_threshold: 0.95
-  random_fraction: 0
-  type_distance_scaling: 0.5
-  init_sigma: 0.07 #0.15
-  evaluation_sigma: 0.05
+  filter_protons: True
+  nearest_node_loss_coefficient: 1
+  clumping_loss_coefficient: 1
+  type_distance_scaling: 2
+  init_sigma: 1.05  # real-space valued
+  evaluation_sigma: 0.35  # real-space valued
   sigma_lambda: 0.99
   sigma_threshold: 0.01
   overlap_eps:
     test: 1.0E-3
-  max_overlap_threshold: 0.25  # guessed
-  independent_node_weights: True
+  max_overlap_threshold: 0.25
   node_weight_temperature: 1
 
   optimizer: null

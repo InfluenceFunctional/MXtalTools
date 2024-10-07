@@ -655,7 +655,7 @@ config_list = [
                         'norm': None},
                     'num_nodes': 256
                 }}}
-    },  # 17 - small and bare-bones
+    },  # 17 - small and bare-bones  # failed
     {
         'dataset': {'filter_protons': True},
         'positional_noise': {'autoencoder': 0},

@@ -64,7 +64,7 @@ def gaussian_3d_overlap_plots(data, decoded_data, max_point_types):
 
 
 def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cutoff):
-    ag = AgglomerativeClustering(n_clusters=None, metric='euclidean', linkage='complete',
+    ag = AgglomerativeClustering(n_clusters=None, affinity='euclidean', linkage='complete',
                                  distance_threshold=intrapoint_cutoff).fit_predict(points_pred[:, :3])
     n_clusters = len(np.unique(ag))
     pred_particle_weights = np.zeros(n_clusters)

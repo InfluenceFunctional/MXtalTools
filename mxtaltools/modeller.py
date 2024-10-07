@@ -918,8 +918,8 @@ class Modeller:
     def detailed_autoencoder_step_analysis(self, data, decoded_data, stats):
         # equivariance checks
         encoder_equivariance_loss, decoder_equivariance_loss = self.ae_equivariance_loss(data.clone())
-        stats['encoder_equivariance_loss'] = encoder_equivariance_loss.mean().detach()
-        stats['decoder_equivariance_loss'] = decoder_equivariance_loss.mean().detach()
+        stats['encoder_equivariance_loss'] = encoder_equivariance_loss.detach().mean()
+        stats['decoder_equivariance_loss'] = decoder_equivariance_loss.detach().mean()
 
         # do evaluation on current sample and save this as our loss for tracking purposes
         nodewise_weights_tensor = decoded_data.aux_ind
@@ -1153,12 +1153,16 @@ class Modeller:
         (nodewise_reconstruction_loss,
          nodewise_type_loss,
          reconstruction_loss,
-         self_likelihoods) = ae_reconstruction_loss(data,
-                                                    decoded_data,
-                                                    nodewise_weights,
-                                                    self.dataDims['num_atom_types'],
-                                                    self.config.autoencoder.type_distance_scaling,
-                                                    self.config.autoencoder_sigma)
+         self_likelihoods,
+         nearest_node_loss,
+         clumping_loss) = ae_reconstruction_loss(
+            data,
+            decoded_data,
+            nodewise_weights,
+            self.dataDims['num_atom_types'],
+            self.config.autoencoder.type_distance_scaling,
+            self.config.autoencoder_sigma,
+            skip_clumping_loss=self.config.autoencoder.clumping_loss_coefficient == 0)
 
         matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
 
@@ -1176,19 +1180,24 @@ class Modeller:
             decoded_data.batch)  # don't let these get too small
 
         # sum losses
-        losses = reconstruction_loss + constraining_loss + node_weight_constraining_loss
+        losses = (reconstruction_loss +
+                  constraining_loss + node_weight_constraining_loss +
+                  self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss +
+                  self.config.autoencoder.clumping_loss_coefficient * clumping_loss)
 
         if not skip_stats:
-            stats = {'constraining_loss': constraining_loss.mean().detach(),
-                     'reconstruction_loss': reconstruction_loss.mean().detach(),
+            stats = {'constraining_loss': constraining_loss.detach().mean(),
+                     'reconstruction_loss': reconstruction_loss.detach().mean(),
                      'nodewise_type_loss': nodewise_type_loss.detach(),
                      'scaled_reconstruction_loss': (
                              reconstruction_loss.mean() * self.config.autoencoder_sigma).detach(),
                      'sigma': self.config.autoencoder_sigma,
-                     'mean_self_overlap': scatter(self_likelihoods, data.batch, reduce='mean').mean().detach(),
+                     'mean_self_overlap': scatter(self_likelihoods, data.batch, reduce='mean').detach().mean(),
                      'matching_nodes_fraction': matching_nodes_fraction.detach(),
                      'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
-                     'node_weight_constraining_loss': node_weight_constraining_loss.mean().detach(),
+                     'node_weight_constraining_loss': node_weight_constraining_loss.detach().mean(),
+                     'nearest_node_loss': nearest_node_loss.detach().mean(),
+                     'clumping_loss': clumping_loss.detach().mean(),
                      }
         else:
             stats = {}

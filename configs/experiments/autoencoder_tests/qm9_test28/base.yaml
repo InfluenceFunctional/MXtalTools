@@ -1,55 +1,9 @@
-machine: "local"  # or "cluster"
+machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
-anomaly_detection: False  # slows down the code
-mode: autoencoder
-dataset_name: 'test_qm9_dataset.pt'
-misc_dataset_name: 'misc_data_for_qm9_dataset.npy'
-dataset_yaml_path: '/qm9_autoencoder.yaml' # '/dataset/full_discriminator.yaml' #
+base_config_path: /experiments/base/autoencoder.yaml
+dataset_name: qm9_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 extra_test_set_name: null
-save_checkpoints: True # will do it always on cluster, only locally if True
-checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
-model_names: ['autoencoder']
-sweep_id: null
-sweep_path: null
-
-dataset:
-  type: 'molecule'
-  max_dataset_length: 10000000
-  test_fraction: 0.2
-  regression_target: null
-
-# batching & convergence
-early_epochs_step_override: 5
-num_early_epochs: 0
-grow_batch_size: True
-min_batch_size: 10
-max_batch_size: 500
-batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
-overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 2000
-max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 100  # for convergence checks
-gradient_norm_clip: 1
-extra_test_period: 1 # unused
-
-logger:
-  run_name: dev
-  experiment_tag: dev
-  mini_csp_frequency: 1 # unused here
-  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
-  log_figures: True
-
-seeds:
-  model: 12345
-  dataset: 0
-
-# for reloading prior checkpoints
-model_paths:
-  discriminator: null
-  generator: null
-  regressor: null
-  autoencoder: null
-  embedding_regressor: null
+save_checkpoints: True
 
 positional_noise:
   discriminator: 0
@@ -57,14 +11,46 @@ positional_noise:
   regressor: 0
   autoencoder: 0
 
-generate_sgs: null
-supercell_size: 5
+dataset:
+  max_dataset_length: 10000000  # non-functional for on-disk datasets.
+  test_fraction: 0.2
+
+seeds:
+  dataset: 1
+
+# batching & convergence
+max_epoch_steps: 500
+early_epochs_step_override: 5
+num_early_epochs: 0
+grow_batch_size: True
+min_batch_size: 10
+max_batch_size: 500
+batch_growth_increment: 0.05 # fraction of batch size to grow by each epoch
+overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
+minimum_epochs: 10000
+max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (WIP)
+history: 50 # for convergence checks
+gradient_norm_clip: 1
+extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+
+logger:
+  sample_reporting_frequency: 10  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 10  # how many steps between which to move training stats to cpu
+  experiment_tag: qm9_test28
+  run_name: qm9_test28
+
+model_paths:
+  discriminator: null
+  generator: null
+  regressor: null #'volume_model.pt'
+  autoencoder: null
+  embedding_regressor: null
+  polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
+
 
 autoencoder:
   infer_protons: False
-  filter_protons: True
-  nearest_node_loss_coefficient: 1
-  clumping_loss_coefficient: 1
+  filter_protons: False
   type_distance_scaling: 2
   init_sigma: 1.05  # real-space valued
   evaluation_sigma: 0.35  # real-space valued
@@ -78,10 +64,10 @@ autoencoder:
   # discriminator optimizer and model
   optimizer:
     optimizer: adamw
-    init_lr: 5.0E-5  # dummy
-    encoder_init_lr: 1.0E-4
-    decoder_init_lr: 1.0E-4
-    max_lr: 1.0E-3
+    init_lr: 1.0E-4  # dummy
+    encoder_init_lr: 5.0E-5
+    decoder_init_lr: 5.0E-5
+    max_lr: 2.0E-4
     min_lr: 1.0E-6
     lr_schedule: True
     beta1: 0.9
@@ -103,8 +89,8 @@ autoencoder:
         num_convs: 2
         fcs_per_gc: 2
         num_radial: 50
-        norm: 'graph layer'
-        dropout: 0
+        norm: null
+        dropout: 0.1
         vector_norm: 'graph vector layer'
 
         atom_type_embedding_dim: 32
@@ -116,7 +102,7 @@ autoencoder:
       fc: # generally unused
         hidden_dim: 256
         num_layers: 0
-        dropout: 0
+        dropout: 0.1
         norm: null
         vector_norm: 'vector layer'
 
@@ -124,12 +110,12 @@ autoencoder:
       activation: 'gelu'
       fc:
         hidden_dim: 512
-        num_layers: 4
+        num_layers: 1
         dropout: 0
         norm: 'layer'
         vector_norm: 'vector layer'
 
-      num_nodes: 128
+      num_nodes: 512
       ramp_depth: True
 
 
