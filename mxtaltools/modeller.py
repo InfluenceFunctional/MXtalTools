@@ -921,8 +921,8 @@ class Modeller:
     def detailed_autoencoder_step_analysis(self, data, decoded_data, stats):
         # equivariance checks
         encoder_equivariance_loss, decoder_equivariance_loss = self.ae_equivariance_loss(data.clone())
-        stats['encoder_equivariance_loss'] = encoder_equivariance_loss.detach().mean()
-        stats['decoder_equivariance_loss'] = decoder_equivariance_loss.detach().mean()
+        stats['encoder_equivariance_loss'] = encoder_equivariance_loss.mean().detach()
+        stats['decoder_equivariance_loss'] = decoder_equivariance_loss.mean().detach()
 
         # do evaluation on current sample and save this as our loss for tracking purposes
         nodewise_weights_tensor = decoded_data.aux_ind
@@ -1159,15 +1159,15 @@ class Modeller:
          self_likelihoods
          #nearest_node_loss,
          #clumping_loss)
-         )= ae_reconstruction_loss(
+         ) = ae_reconstruction_loss(
             data,
             decoded_data,
             nodewise_weights,
             self.dataDims['num_atom_types'],
             self.config.autoencoder.type_distance_scaling,
             self.config.autoencoder_sigma,
-            skip_clumping_loss=True, #self.config.autoencoder.clumping_loss_coefficient == 0
-            )
+            skip_clumping_loss=True,  #self.config.autoencoder.clumping_loss_coefficient == 0
+        )
 
         matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
 
@@ -1189,21 +1189,21 @@ class Modeller:
                   constraining_loss + node_weight_constraining_loss
                   #+ self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss
                   #+ self.config.autoencoder.clumping_loss_coefficient * clumping_loss
-        )
+                  )
 
         if not skip_stats:
-            stats = {'constraining_loss': constraining_loss.detach().mean(),
-                     'reconstruction_loss': reconstruction_loss.detach().mean(),
+            stats = {'constraining_loss': constraining_loss.mean().detach(),
+                     'reconstruction_loss': reconstruction_loss.mean().detach(),
                      'nodewise_type_loss': nodewise_type_loss.detach(),
                      'scaled_reconstruction_loss': (
                              reconstruction_loss.mean() * self.config.autoencoder_sigma).detach(),
                      'sigma': self.config.autoencoder_sigma,
-                     'mean_self_overlap': scatter(self_likelihoods, data.batch, reduce='mean').detach().mean(),
+                     'mean_self_overlap': scatter(self_likelihoods, data.batch, reduce='mean').mean().detach(),
                      'matching_nodes_fraction': matching_nodes_fraction.detach(),
                      'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
-                     'node_weight_constraining_loss': node_weight_constraining_loss.detach().mean(),
-                     #'nearest_node_loss': nearest_node_loss.detach().mean(),
-                     #'clumping_loss': clumping_loss.detach().mean(),
+                     'node_weight_constraining_loss': node_weight_constraining_loss.mean().detach(),
+                     #'nearest_node_loss': nearest_node_loss.mean().detach(),
+                     #'clumping_loss': clumping_loss.mean().detach(),
                      }
         else:
             stats = {}
@@ -1346,12 +1346,6 @@ class Modeller:
             '''
             self.proxy_discriminator_step(data, i, update_weights, skip_step=False)
 
-            '''
-            record some stats
-            '''
-            self.logger.update_stats_dict(self.epoch_type, ['identifiers'], data.identifier, mode='extend')
-            self.logger.update_stats_dict(self.epoch_type, ['smiles'], data.smiles, mode='extend')
-
             if iteration_override is not None:
                 if i >= iteration_override:
                     break  # stop training early
@@ -1460,43 +1454,39 @@ class Modeller:
                                           stats.values(),
                                           mode='extend')
 
-    def proxy_discriminator_step(self, data, i, update_weights, skip_step):
+    def proxy_discriminator_step(self, mol_batch, i, update_weights, skip_step):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
         """
-        if self.train_models_dict['discriminator']:
-            (discriminator_output_on_real, discriminator_output_on_fake,
-             real_fake_rdf_distances, stats) \
-                = self.get_discriminator_output(data, i)
+        (discriminator_output, vdw_score, stats) \
+            = self.get_proxy_discriminator_output(mol_batch, i)
 
-            discriminator_losses, loss_stats = self.aggregate_discriminator_losses(
-                discriminator_output_on_real,
-                discriminator_output_on_fake,
-                real_fake_rdf_distances)
+        discriminator_losses = F.smooth_l1_loss(discriminator_output.flatten(),
+                                              vdw_score.flatten(),
+                                              reduction='none')
 
-            stats.update(loss_stats)
-            discriminator_loss = discriminator_losses.mean()
+        discriminator_loss = discriminator_losses.mean()
 
-            if update_weights and (not skip_step):
-                self.optimizers_dict['discriminator'].zero_grad(
-                    set_to_none=True)  # reset gradients from previous passes
-                discriminator_loss.backward()  # back-propagation
-                torch.nn.utils.clip_grad_norm_(self.models_dict['discriminator'].parameters(),
-                                               self.config.gradient_norm_clip)  # gradient clipping
-                self.optimizers_dict['discriminator'].step()  # update parameters
+        if update_weights and (not skip_step):
+            self.optimizers_dict['proxy_discriminator'].zero_grad(
+                set_to_none=True)  # reset gradients from previous passes
+            discriminator_loss.backward()  # back-propagation
+            torch.nn.utils.clip_grad_norm_(self.models_dict['proxy_discriminator'].parameters(),
+                                           self.config.gradient_norm_clip)  # gradient clipping
+            self.optimizers_dict['proxy_discriminator'].step()  # update parameters
 
-            # don't move anything to the CPU until after the backward pass
-            self.logger.update_current_losses('discriminator', self.epoch_type,
-                                              discriminator_losses.mean().cpu().detach().numpy(),
-                                              discriminator_losses.cpu().detach().numpy())
+        # don't move anything to the CPU until after the backward pass
+        self.logger.update_current_losses('discriminator', self.epoch_type,
+                                          discriminator_losses.mean().cpu().detach().numpy(),
+                                          discriminator_losses.cpu().detach().numpy())
 
-            dict_of_tensors_to_cpu_numpy(stats)
+        dict_of_tensors_to_cpu_numpy(stats)
 
-            self.logger.update_stats_dict(self.epoch_type,
-                                          stats.keys(),
-                                          stats.values(),
-                                          mode='extend')
+        self.logger.update_stats_dict(self.epoch_type,
+                                      stats.keys(),
+                                      stats.values(),
+                                      mode='extend')
 
     def aggregate_discriminator_losses(self,
                                        discriminator_output_on_real,
@@ -1789,13 +1779,13 @@ class Modeller:
         generate real and fake crystals
         and score them
         """
-        '''get real supercells'''
+        '''get real supercells'''  # todo revise this function with packing coeff, vdw overlap calc
         real_supercell_data = self.crystal_builder.prebuilt_unit_cell_to_supercell(
             data, self.config.supercell_size, self.config.discriminator.model.graph.cutoff)
 
         '''get fake supercells'''
         generated_samples_i, negative_type, generator_data, negatives_stats = \
-            self.generate_discriminator_negatives(data, i, orientation='random')
+            self.generate_discriminator_negatives(data, orientation='random')
 
         fake_supercell_data, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
@@ -1869,6 +1859,50 @@ class Modeller:
         return (discriminator_output_on_real, discriminator_output_on_fake,
                 rdf_dists, stats)
 
+    def get_proxy_discriminator_output(self, mol_batch, i):
+        """
+        generate real and fake crystals
+        and score them
+        """
+        # todo assign sg inds
+        '''get fake supercells'''
+        generated_samples_i, negative_type, generator_data, negatives_stats = \
+            self.generate_discriminator_negatives(mol_batch, orientation='random')
+
+        supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
+            generator_data, generated_samples_i, self.config.supercell_size,
+            self.config.discriminator.model.graph.cutoff,
+            align_to_standardized_orientation=(negative_type != 'generated'),  # take generator samples as-given
+            target_handedness=generator_data.aunit_handedness,
+            skip_refeaturization=True,
+        )
+
+        '''apply noise'''
+        if self.config.positional_noise.discriminator > 0:
+            supercell_batch.pos += \
+                torch.randn_like(supercell_batch.pos) * self.config.positional_noise.discriminator
+
+        '''score'''
+        output, extra_outputs = self.models_dict['proxy_discriminator'](
+            supercell_batch.clone(), return_dists=True, return_latent=False)
+
+        reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
+        packing_coeff = mol_batch.mol_volume / reduced_volume
+
+        dist_dict = extra_outputs['dist_dict']
+
+        _, _, vdw_potential, vdw_loss, eval_vdw_loss \
+            = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_batch.num_graphs, self.vdw_turnover_potential)
+
+        stats = {'vdw_potential': vdw_potential.detach(),
+                 'vdw_score': vdw_loss.detach(),
+                 'generated_cell_parameters': supercell_batch.cell_params.detach(),
+                 'packing_coeff': packing_coeff.detach()}
+
+        stats.update(negatives_stats)
+
+        return output, vdw_loss, stats
+
     def anneal_prior_loss(self, good_inds):
         """
         1. dynamically soften the packing loss when the model is doing well
@@ -1934,12 +1968,13 @@ class Modeller:
 
         return n_generators, generator_ind
 
-    def generate_discriminator_negatives(self, real_data, i, override_adversarial=False, override_randn=False,
+    def generate_discriminator_negatives(self, real_data, override_adversarial=False, override_randn=False,
                                          override_distorted=False, orientation='random'):
         """
         use one of the available cell generation tools to sample cell parameters, to be fed to the discriminator
         """
-        n_generators, generator_ind = self.what_generators_to_use(override_randn, override_distorted,
+        n_generators, generator_ind = self.what_generators_to_use(override_randn,
+                                                                  override_distorted,
                                                                   override_adversarial)
 
         if False:  # TODO this is deprecated (self.config.discriminator.train_adversarially or override_adversarial) and (generator_ind == 1):
