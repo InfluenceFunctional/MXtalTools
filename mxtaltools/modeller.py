@@ -799,6 +799,9 @@ class Modeller:
         elif self.config.mode == 'polymorph_classification':
             self.polymorph_classification_epoch(data_loader, update_weights, iteration_override)
 
+        elif self.config.mode == 'proxy_discriminator':
+            self.proxy_discriminator_epoch(data_loader, update_weights, iteration_override)
+
         self.times[epoch_type + "_epoch_end"] = time()
 
     def embedding_regression_epoch(self, data_loader, update_weights, iteration_override):
@@ -992,7 +995,8 @@ class Modeller:
                     break
 
         self.logger.concatenate_stats_dict(self.epoch_type)
-        self.ae_annealing()
+        if self.epoch_type == 'train':
+            self.ae_annealing()
 
     def crystal_structure_prediction(self):
         with (wandb.init(config=self.config,
@@ -1078,11 +1082,10 @@ class Modeller:
         # if we have learned the existing distribution
         if self.logger.train_stats['reconstruction_loss'][-100:].mean() < self.config.autoencoder.sigma_threshold:
             # and we more self-overlap than desired
-            if self.epoch_type == 'test':  # the overlap we ultimately care about is in the Test
-                if np.abs(1 - self.logger.test_stats['mean_self_overlap'][
-                              -100:]).mean() > self.config.autoencoder.overlap_eps.test:
-                    # tighten the target distribution
-                    self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
+            if (np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean()
+                    > self.config.autoencoder.overlap_eps.test):
+                # tighten the target distribution
+                self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
         # if we have way too much overlap, just tighten right away
         if np.abs(1 - self.logger.train_stats['mean_self_overlap'][
@@ -1153,16 +1156,18 @@ class Modeller:
         (nodewise_reconstruction_loss,
          nodewise_type_loss,
          reconstruction_loss,
-         self_likelihoods,
-         nearest_node_loss,
-         clumping_loss) = ae_reconstruction_loss(
+         self_likelihoods
+         #nearest_node_loss,
+         #clumping_loss)
+         )= ae_reconstruction_loss(
             data,
             decoded_data,
             nodewise_weights,
             self.dataDims['num_atom_types'],
             self.config.autoencoder.type_distance_scaling,
             self.config.autoencoder_sigma,
-            skip_clumping_loss=self.config.autoencoder.clumping_loss_coefficient == 0)
+            skip_clumping_loss=True, #self.config.autoencoder.clumping_loss_coefficient == 0
+            )
 
         matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
 
@@ -1181,9 +1186,10 @@ class Modeller:
 
         # sum losses
         losses = (reconstruction_loss +
-                  constraining_loss + node_weight_constraining_loss +
-                  self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss +
-                  self.config.autoencoder.clumping_loss_coefficient * clumping_loss)
+                  constraining_loss + node_weight_constraining_loss
+                  #+ self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss
+                  #+ self.config.autoencoder.clumping_loss_coefficient * clumping_loss
+        )
 
         if not skip_stats:
             stats = {'constraining_loss': constraining_loss.detach().mean(),
@@ -1196,8 +1202,8 @@ class Modeller:
                      'matching_nodes_fraction': matching_nodes_fraction.detach(),
                      'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
                      'node_weight_constraining_loss': node_weight_constraining_loss.detach().mean(),
-                     'nearest_node_loss': nearest_node_loss.detach().mean(),
-                     'clumping_loss': clumping_loss.detach().mean(),
+                     #'nearest_node_loss': nearest_node_loss.detach().mean(),
+                     #'clumping_loss': clumping_loss.detach().mean(),
                      }
         else:
             stats = {}
@@ -1295,10 +1301,8 @@ class Modeller:
             self.init_gan_constants()
 
         if update_weights:
-            self.models_dict['generator'].train(True)
             self.models_dict['discriminator'].train(True)
         else:
-            self.models_dict['generator'].eval()
             self.models_dict['discriminator'].eval()
 
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
@@ -1308,6 +1312,39 @@ class Modeller:
             train discriminator
             '''
             self.discriminator_step(data, i, update_weights, skip_step=False)
+
+            '''
+            record some stats
+            '''
+            self.logger.update_stats_dict(self.epoch_type, ['identifiers'], data.identifier, mode='extend')
+            self.logger.update_stats_dict(self.epoch_type, ['smiles'], data.smiles, mode='extend')
+
+            if iteration_override is not None:
+                if i >= iteration_override:
+                    break  # stop training early
+
+        self.logger.concatenate_stats_dict(self.epoch_type)
+
+    def proxy_discriminator_epoch(self,
+                                  data_loader=None,
+                                  update_weights=True,
+                                  iteration_override=None):
+
+        if not hasattr(self, 'generator_prior'):  # first GAN epoch
+            self.init_gan_constants()
+
+        if update_weights:
+            self.models_dict['proxy_discriminator'].train(True)
+        else:
+            self.models_dict['proxy_discriminator'].eval()
+
+        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+            data = data.to(self.config.device)
+
+            '''
+            train discriminator
+            '''
+            self.proxy_discriminator_step(data, i, update_weights, skip_step=False)
 
             '''
             record some stats
@@ -1386,6 +1423,44 @@ class Modeller:
             return output, extra_outputs['dists_dict']
 
     def discriminator_step(self, data, i, update_weights, skip_step):
+        """
+        execute a complete training step for the discriminator
+        compute losses, do reporting, update gradients
+        """
+        if self.train_models_dict['discriminator']:
+            (discriminator_output_on_real, discriminator_output_on_fake,
+             real_fake_rdf_distances, stats) \
+                = self.get_discriminator_output(data, i)
+
+            discriminator_losses, loss_stats = self.aggregate_discriminator_losses(
+                discriminator_output_on_real,
+                discriminator_output_on_fake,
+                real_fake_rdf_distances)
+
+            stats.update(loss_stats)
+            discriminator_loss = discriminator_losses.mean()
+
+            if update_weights and (not skip_step):
+                self.optimizers_dict['discriminator'].zero_grad(
+                    set_to_none=True)  # reset gradients from previous passes
+                discriminator_loss.backward()  # back-propagation
+                torch.nn.utils.clip_grad_norm_(self.models_dict['discriminator'].parameters(),
+                                               self.config.gradient_norm_clip)  # gradient clipping
+                self.optimizers_dict['discriminator'].step()  # update parameters
+
+            # don't move anything to the CPU until after the backward pass
+            self.logger.update_current_losses('discriminator', self.epoch_type,
+                                              discriminator_losses.mean().cpu().detach().numpy(),
+                                              discriminator_losses.cpu().detach().numpy())
+
+            dict_of_tensors_to_cpu_numpy(stats)
+
+            self.logger.update_stats_dict(self.epoch_type,
+                                          stats.keys(),
+                                          stats.values(),
+                                          mode='extend')
+
+    def proxy_discriminator_step(self, data, i, update_weights, skip_step):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients

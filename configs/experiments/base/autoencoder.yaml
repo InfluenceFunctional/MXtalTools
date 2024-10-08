@@ -62,7 +62,7 @@ supercell_size: 5
 
 autoencoder:
   infer_protons: False
-  filter_protons: True
+  filter_protons: False
   nearest_node_loss_coefficient: 1
   clumping_loss_coefficient: 1
   type_distance_scaling: 2

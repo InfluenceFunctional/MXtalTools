@@ -1461,10 +1461,12 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
             log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
 
         elif config.mode == 'autoencoder':
-            log_autoencoder_analysis(config, dataDims, train_epoch_stats_dict,
-                                     'train')
-            log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict,
-                                     'test')
+            if len(train_epoch_stats_dict) > 0:
+                log_autoencoder_analysis(config, dataDims, train_epoch_stats_dict,
+                                         'train')
+            if len(test_epoch_stats_dict) > 0:
+                log_autoencoder_analysis(config, dataDims, test_epoch_stats_dict,
+                                         'test')
 
         elif config.mode == 'polymorph_classification':
             if train_epoch_stats_dict != {}:

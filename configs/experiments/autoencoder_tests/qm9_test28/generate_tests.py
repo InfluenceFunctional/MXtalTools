@@ -6,7 +6,7 @@ base_config = load_yaml('base.yaml')
 
 config_list = [
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0.1,
@@ -45,7 +45,7 @@ config_list = [
                 }}}
     },  # 0 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0,
@@ -84,7 +84,7 @@ config_list = [
                 }}}
     },  # 1 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0,
@@ -123,7 +123,7 @@ config_list = [
                 }}}
     },  # 2 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0.1,
@@ -162,7 +162,7 @@ config_list = [
                 }}}
     },  # 3 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0.1,
@@ -201,7 +201,7 @@ config_list = [
                 }}}
     },  # 4 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 1,
@@ -240,7 +240,7 @@ config_list = [
                 }}}
     },  # 5 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0.1,
@@ -279,7 +279,7 @@ config_list = [
                 }}}
     },  # 0 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0,
@@ -318,7 +318,7 @@ config_list = [
                 }}}
     },  # 1 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0,
@@ -357,7 +357,7 @@ config_list = [
                 }}}
     },  # 2 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0.1,
@@ -396,7 +396,7 @@ config_list = [
                 }}}
     },  # 3 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0.1,
@@ -435,7 +435,7 @@ config_list = [
                 }}}
     },  # 4 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 1,
@@ -474,7 +474,7 @@ config_list = [
                 }}}
     },  # 5 - baseline w new losses
     {
-        'dataset': {'filter_protons': True},
+        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0.1,
