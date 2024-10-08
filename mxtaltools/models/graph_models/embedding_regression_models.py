@@ -7,7 +7,7 @@ from mxtaltools.models.modules.components import vectorMLP
 class EmbeddingRegressor(BaseGraphModel):
     """single property prediction head for pretrained embeddings"""
 
-    def __init__(self, seed, config, num_targets: int = 1):
+    def __init__(self, seed, config, num_targets: int = 1, conditions_dim: int = 0):
         super(EmbeddingRegressor, self).__init__()
 
         torch.manual_seed(seed)
@@ -20,7 +20,7 @@ class EmbeddingRegressor(BaseGraphModel):
                                filters=config.hidden_dim,
                                norm=config.norm,
                                dropout=config.dropout,
-                               input_dim=config.bottleneck_dim,
+                               input_dim=config.bottleneck_dim + conditions_dim,
                                output_dim=self.output_dim,
                                vector_input_dim=config.bottleneck_dim,
                                vector_output_dim=self.output_dim,

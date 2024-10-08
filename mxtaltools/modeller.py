@@ -89,6 +89,7 @@ class Modeller:
             'regressor': False,
             'autoencoder': False,
             'embedding_regressor': False,
+            'proxy_discriminator': False,
         }
 
     def load_physical_constants(self):
@@ -749,6 +750,7 @@ class Modeller:
             'autoencoder': self.config.mode == 'autoencoder',
             'embedding_regressor': self.config.mode == 'embedding_regression',
             'polymorph_classifier': self.config.mode == 'polymorph_classification',
+            'proxy_discriminator': self.config.mode == 'proxy_discriminator',
         }
 
     def process_sweep_config(self):
@@ -1342,7 +1344,7 @@ class Modeller:
             data = data.to(self.config.device)
 
             '''
-            train discriminator
+            train proxy discriminator
             '''
             self.proxy_discriminator_step(data, i, update_weights, skip_step=False)
 
@@ -1463,8 +1465,8 @@ class Modeller:
             = self.get_proxy_discriminator_output(mol_batch, i)
 
         discriminator_losses = F.smooth_l1_loss(discriminator_output.flatten(),
-                                              vdw_score.flatten(),
-                                              reduction='none')
+                                                vdw_score.flatten(),
+                                                reduction='none')
 
         discriminator_loss = discriminator_losses.mean()
 
@@ -1477,7 +1479,7 @@ class Modeller:
             self.optimizers_dict['proxy_discriminator'].step()  # update parameters
 
         # don't move anything to the CPU until after the backward pass
-        self.logger.update_current_losses('discriminator', self.epoch_type,
+        self.logger.update_current_losses('proxy_discriminator', self.epoch_type,
                                           discriminator_losses.mean().cpu().detach().numpy(),
                                           discriminator_losses.cpu().detach().numpy())
 
