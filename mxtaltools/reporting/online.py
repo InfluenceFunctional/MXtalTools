@@ -1447,15 +1447,21 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
                                     }, commit=False)
 
                     log_mean_deviations(test_epoch_stats_dict)
-                else:
+                elif config.mode == 'discriminator':
                     cell_params_hist(wandb, test_epoch_stats_dict,
                                      ['real_cell_parameters', 'generated_cell_parameters'])
+                elif config.mode == 'proxy_discriminator':
+                    cell_params_hist(wandb, test_epoch_stats_dict,
+                                     ['generated_cell_parameters'])
 
         if config.mode == 'generator':
             cell_generation_analysis(config, dataDims, test_epoch_stats_dict)
 
         if config.mode == 'discriminator':
             discriminator_analysis(config, dataDims, test_epoch_stats_dict, extra_test_dict)
+
+        elif config.mode == 'proxy_discriminator':
+            proxy_discriminator_analysis(config, dataDims, test_epoch_stats_dict, extra_test_dict)
 
         elif config.mode == 'regression' or config.mode == 'embedding_regression':
             log_regression_accuracy(config, dataDims, test_epoch_stats_dict)
@@ -1612,6 +1618,35 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
 
 
 def discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=None):
+    """
+    do analysis and plotting for cell discriminator
+
+    -: scores distribution and vdw penalty by sample source
+    -: loss correlates
+    """
+    fig_dict = {}
+    layout = plotly_setup(config)
+    scores_dict, vdw_penalty_dict, reduced_volume_dict, pred_distance_dict, true_distance_dict \
+        = process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict)
+
+    fig_dict.update(discriminator_scores_plots(scores_dict, vdw_penalty_dict, reduced_volume_dict, layout))
+    fig_dict['Distance Results'], dist_rvalue, dist_slope = discriminator_distances_plots(
+        pred_distance_dict, true_distance_dict, epoch_stats_dict)
+
+    fig_dict['Score vs. Distance'] = score_vs_distance_plot(pred_distance_dict, scores_dict)
+
+    for key, fig in fig_dict.items():
+        fig.write_image(key + 'fig.png', width=1024, height=512)  # save the image rather than the fig, for size reasons
+        fig_dict[key] = wandb.Image(key + 'fig.png')
+
+    wandb.log(data=fig_dict, commit=False)
+    wandb.log(data={"distance_R_value": dist_rvalue,
+                    "distance_slope": dist_slope}, commit=False)
+
+    return None
+
+
+def proxy_discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_dict=None):
     """
     do analysis and plotting for cell discriminator
 

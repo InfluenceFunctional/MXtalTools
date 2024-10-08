@@ -174,7 +174,7 @@ class Modeller:
         use dataset builder to generate crystaldata objects
         return dataloaders
         """
-
+        self.reload_model_checkpoint_configs()
         nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
         if self.config.mode == 'polymorph_classification':
             conv_cutoff = self.config.polymorph_classifier.model.graph.cutoff
@@ -184,6 +184,8 @@ class Modeller:
             conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
         elif self.config.mode in ['gan', 'generator', 'discriminator']:
             conv_cutoff = self.config.discriminator.model.graph.cutoff
+        elif self.config.mode == 'proxy_discriminator' or self.config.mode == 'embedding_regression':
+            conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
         else:
             assert False, "Missing convolutional cutoff information"
 
@@ -1399,12 +1401,11 @@ class Modeller:
         if self.config.generate_sgs == 'all':
             self.config.generate_sgs = [self.sym_info['space_groups'][int(key)] for key in asym_unit_dict.keys()]
 
-        if self.train_models_dict['generator'] or self.train_models_dict['discriminator']:
-            self.generator_prior = CSDPrior(
-                sym_info=self.sym_info, device=self.config.device,
-                cell_means=self.lattice_means[:6],
-                cell_stds=self.lattice_stds[:6],
-                lengths_cov_mat=self.dataDims['lattice_length_cov_mat'], )
+        self.generator_prior = CSDPrior(
+            sym_info=self.sym_info, device=self.config.device,
+            cell_means=self.lattice_means[:6],
+            cell_stds=self.lattice_stds[:6],
+            lengths_cov_mat=self.dataDims['lattice_length_cov_mat'], )
 
     def adversarial_score(self, data, return_latent=False):
         """
@@ -1669,7 +1670,7 @@ class Modeller:
     def analyze_generated_crystals(self,
                                    mol_data,
                                    generated_cell_volumes,
-                                   supercell_data,
+                                   supercell_batch,
                                    generator_raw_samples=None,
                                    variation_factor=None,
                                    prior=None,
@@ -1685,10 +1686,10 @@ class Modeller:
             prior_loss = torch.zeros_like(generated_cell_volumes)
             scaled_deviation = torch.zeros_like(generated_cell_volumes)
 
-        reduced_volume = generated_cell_volumes / supercell_data.sym_mult
+        reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
         packing_coeff = mol_data.mol_volume / reduced_volume
 
-        dist_dict = get_intermolecular_dists_dict(supercell_data, 6, 100)
+        dist_dict = get_intermolecular_dists_dict(supercell_batch, 6, 100)
         molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, eval_vdw_loss \
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_data.num_graphs, self.vdw_turnover_potential)
 
@@ -1787,7 +1788,11 @@ class Modeller:
 
         '''get fake supercells'''
         generated_samples_i, negative_type, generator_data, negatives_stats = \
-            self.generate_discriminator_negatives(data, orientation='random')
+            self.generate_discriminator_negatives(data,
+                                                  train_adversarial=self.config.discriminator.train_adversarially,
+                                                  train_on_randn=self.config.discriminator.train_on_randn,
+                                                  train_on_distorted=self.config.discriminator.train_on_distorted,
+                                                  orientation='random')
 
         fake_supercell_data, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
@@ -1866,14 +1871,27 @@ class Modeller:
         generate real and fake crystals
         and score them
         """
-        # todo assign sg inds
-        '''get fake supercells'''
+        _, mol_batch = self.preprocess_ae_inputs(mol_batch,
+                                                 no_noise=True,
+                                                 orientation_override='random')
+        v_embedding = self.models_dict['autoencoder'].encode(mol_batch)
+        s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
+
+        mol_batch = overwrite_symmetry_info(mol_batch,
+                                            self.config.generate_sgs,
+                                            self.sym_info,
+                                            randomize_sgs=True)
+
         generated_samples_i, negative_type, generator_data, negatives_stats = \
-            self.generate_discriminator_negatives(mol_batch, orientation='random')
+            self.generate_discriminator_negatives(mol_batch,
+                                                  train_adversarial=False,
+                                                  train_on_randn=self.config.proxy_discriminator.train_on_randn,
+                                                  train_on_distorted=False,
+                                                  orientation='random')
 
         supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
-            self.config.discriminator.model.graph.cutoff,
+            self.config.proxy_discriminator.cutoff,
             align_to_standardized_orientation=(negative_type != 'generated'),  # take generator samples as-given
             target_handedness=generator_data.aunit_handedness,
             skip_refeaturization=True,
@@ -1885,14 +1903,14 @@ class Modeller:
                 torch.randn_like(supercell_batch.pos) * self.config.positional_noise.discriminator
 
         '''score'''
-        output, extra_outputs = self.models_dict['proxy_discriminator'](
-            supercell_batch.clone(), return_dists=True, return_latent=False)
+        output = self.models_dict['proxy_discriminator'](
+            torch.cat([s_embedding, supercell_batch.cell_params.detach()], dim=1),
+            v_embedding)[:, 0]
 
         reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
         packing_coeff = mol_batch.mol_volume / reduced_volume
 
-        dist_dict = extra_outputs['dist_dict']
-
+        dist_dict = get_intermolecular_dists_dict(supercell_batch, 6, 100)
         _, _, vdw_potential, vdw_loss, eval_vdw_loss \
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_batch.num_graphs, self.vdw_turnover_potential)
 
@@ -1970,14 +1988,14 @@ class Modeller:
 
         return n_generators, generator_ind
 
-    def generate_discriminator_negatives(self, real_data, override_adversarial=False, override_randn=False,
-                                         override_distorted=False, orientation='random'):
+    def generate_discriminator_negatives(self, real_data, train_adversarial=False, train_on_randn=False,
+                                         train_on_distorted=False, orientation='random'):
         """
         use one of the available cell generation tools to sample cell parameters, to be fed to the discriminator
         """
-        n_generators, generator_ind = self.what_generators_to_use(override_randn,
-                                                                  override_distorted,
-                                                                  override_adversarial)
+        n_generators, generator_ind = self.what_generators_to_use(train_on_randn,
+                                                                  train_on_distorted,
+                                                                  train_adversarial)
 
         if False:  # TODO this is deprecated (self.config.discriminator.train_adversarially or override_adversarial) and (generator_ind == 1):
             negative_type = 'generator'
@@ -1987,14 +2005,14 @@ class Modeller:
 
             stats = {'generator_sample_source': np.zeros(len(generated_samples))}
 
-        elif (self.config.discriminator.train_on_randn or override_randn) and (generator_ind == 2):
+        elif train_on_randn and (generator_ind == 2):
             generator_data = set_molecule_alignment(real_data.clone(), mode=orientation)
             negative_type = 'randn'
             _, generated_samples = self.sample_from_prior(real_data)
             generated_samples[:, 9:] = rotvec2sph(generated_samples[:, 9:])
             stats = {'generator_sample_source': np.ones(len(generated_samples))}
 
-        elif (self.config.discriminator.train_on_distorted or override_distorted) and (generator_ind == 3):
+        elif train_on_distorted and (generator_ind == 3):
             # will be standardized anyway in cell builder
             generator_data = set_molecule_alignment(real_data.clone(), mode='as is')
             negative_type = 'distorted'

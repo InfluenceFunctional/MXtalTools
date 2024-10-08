@@ -94,17 +94,19 @@ def instantiate_models(config: Namespace,
             dataDims['graph_standardization_vector'],
         )
     if config.mode == 'proxy_discriminator':
-        config.embedding_regressor.model.bottleneck_dim = config.autoencoder.model.bottleneck_dim
+        config.proxy_discriminator.model.bottleneck_dim = config.autoencoder.model.bottleneck_dim
         models_dict['proxy_discriminator'] = EmbeddingRegressor(
             config.seeds.model,
             config.proxy_discriminator.model,
-            num_targets=1
+            num_targets=1,
+            conditions_dim=12,
         )
         assert config.model_paths.autoencoder is not None  # must preload the encoder
 
     null_models = {name: nn.Linear(1, 1) for name in model_names if
                    name not in models_dict.keys()}  # initialize null models
     models_dict.update(null_models)
+
     # # not currently working on any platform
     # # compile models
     # if compile:

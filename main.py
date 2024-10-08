@@ -48,7 +48,8 @@ if __name__ == '__main__':
                            'regression', 'autoencoder',
                            'embedding_regression',
                            'polymorph_classification',
-                           'generator']:
+                           'generator',
+                           'proxy_discriminator']:
             if config.max_epochs > 0:
                 predictor.fit_models()
             elif config.max_epochs == 0:
@@ -63,3 +64,5 @@ if __name__ == '__main__':
 
         # elif config.mode == 'mol_generation':
         #     predictor.autoencoder_molecule_generation()
+        else:
+            print('Not doing anything! Check main.py')
