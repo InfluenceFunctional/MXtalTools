@@ -85,5 +85,5 @@ proxy_discriminator:
     hidden_dim: 128
     dropout: 0.1
     norm: layer
-    num_layers: 12
+    num_layers: 4
     vector_norm: 'vector layer'

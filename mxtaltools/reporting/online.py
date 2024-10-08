@@ -1655,22 +1655,42 @@ def proxy_discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_
     """
     fig_dict = {}
     layout = plotly_setup(config)
-    scores_dict, vdw_penalty_dict, reduced_volume_dict, pred_distance_dict, true_distance_dict \
-        = process_discriminator_outputs(dataDims, epoch_stats_dict, extra_test_dict)
+    tgt_value = epoch_stats_dict['vdw_score']
+    pred_value = epoch_stats_dict['vdw_prediction']
 
-    fig_dict.update(discriminator_scores_plots(scores_dict, vdw_penalty_dict, reduced_volume_dict, layout))
-    fig_dict['Distance Results'], dist_rvalue, dist_slope = discriminator_distances_plots(
-        pred_distance_dict, true_distance_dict, epoch_stats_dict)
+    linreg_result = linregress(tgt_value, pred_value)
 
-    fig_dict['Score vs. Distance'] = score_vs_distance_plot(pred_distance_dict, scores_dict)
+    # predictions vs target trace
+    xline = np.linspace(max(min(tgt_value), min(pred_value)),
+                        min(max(tgt_value), max(pred_value)), 2)
+
+    opacity = 0.35
+
+    scatter_dict = {'true_energy': tgt_value, 'predicted_energy': pred_value}
+    df = pd.DataFrame.from_dict(scatter_dict)
+    fig = px.scatter(df,
+                     x='true_energy', y='predicted_energy',
+                     marginal_x='histogram', marginal_y='histogram',
+                     opacity=opacity
+                     )
+    fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=True, name='Diagonal', marker_color='rgba(0,0,0,1)'),
+                  )
+    # fig.add_trace(go.Histogram2d(x=df['true_distance'], y=df['predicted_distance'], nbinsx=100, nbinsy=100, colorbar_dtick="log", showlegend=False))
+
+    fig.update_layout(xaxis_title='Target Distance', yaxis_title='Predicted Distance')
+
+    fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+
+    fig_dict['Proxy Discriminator Parity Plot'] = fig
 
     for key, fig in fig_dict.items():
-        fig.write_image(key + 'fig.png', width=1024, height=512)  # save the image rather than the fig, for size reasons
+        fig.write_image(key + 'fig.png', width=1024, height=1024)  # save the image rather than the fig, for size reasons
         fig_dict[key] = wandb.Image(key + 'fig.png')
 
     wandb.log(data=fig_dict, commit=False)
-    wandb.log(data={"distance_R_value": dist_rvalue,
-                    "distance_slope": dist_slope}, commit=False)
+    wandb.log(data={"proxy_discrim_R_value": linreg_result.rvalue,
+                    "proxy_discrim_slope": linreg_result.slope}, commit=False)
 
     return None
 

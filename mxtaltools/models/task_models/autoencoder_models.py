@@ -114,12 +114,12 @@ class Mo3ENet(BaseGraphModel):
          nodewise_type_loss,
          reconstruction_loss,
          self_likelihoods,
-         _, _) = ae_reconstruction_loss(data,
-                                                    decoded_data,
-                                                    nodewise_weights,
-                                                    num_atom_types,
-                                                    type_distance_scaling,
-                                                    sigma)
+         ) = ae_reconstruction_loss(data,
+                                        decoded_data,
+                                        nodewise_weights,
+                                        num_atom_types,
+                                        type_distance_scaling,
+                                        sigma)
 
         rmsds = torch.zeros(data.num_graphs)
         max_dists = torch.zeros_like(rmsds)

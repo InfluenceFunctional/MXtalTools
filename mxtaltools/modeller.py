@@ -1342,6 +1342,8 @@ class Modeller:
         else:
             self.models_dict['proxy_discriminator'].eval()
 
+        self.models_dict['autoencoder'].eval()
+
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
             data = data.to(self.config.device)
 
@@ -1873,8 +1875,8 @@ class Modeller:
         """
         _, mol_batch = self.preprocess_ae_inputs(mol_batch,
                                                  no_noise=True,
-                                                 orientation_override='random')
-        v_embedding = self.models_dict['autoencoder'].encode(mol_batch)
+                                                 orientation_override='standardized')
+        v_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
         s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
 
         mol_batch = overwrite_symmetry_info(mol_batch,
@@ -1892,7 +1894,7 @@ class Modeller:
         supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
             self.config.proxy_discriminator.cutoff,
-            align_to_standardized_orientation=(negative_type != 'generated'),  # take generator samples as-given
+            align_to_standardized_orientation=True,  # take generator samples as-given
             target_handedness=generator_data.aunit_handedness,
             skip_refeaturization=True,
         )
@@ -1914,14 +1916,16 @@ class Modeller:
         _, _, vdw_potential, vdw_loss, eval_vdw_loss \
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_batch.num_graphs, self.vdw_turnover_potential)
 
-        stats = {'vdw_potential': vdw_potential.detach(),
-                 'vdw_score': vdw_loss.detach(),
+        stats = {'vdw_potential': (vdw_potential/mol_batch.num_atoms).detach(),
+                 'vdw_score': (vdw_loss/mol_batch.num_atoms).detach(),
                  'generated_cell_parameters': supercell_batch.cell_params.detach(),
-                 'packing_coeff': packing_coeff.detach()}
+                 'packing_coeff': packing_coeff.detach(),
+                 'vdw_prediction': output.detach(),
+                 }
 
         stats.update(negatives_stats)
 
-        return output, vdw_loss, stats
+        return output, vdw_loss/mol_batch.num_atoms, stats
 
     def anneal_prior_loss(self, good_inds):
         """

@@ -65,7 +65,6 @@ autoencoder:
 base_config_path: /experiments/base/autoencoder.yaml
 batch_growth_increment: 0.05
 dataset:
-  filter_protons: true
   max_dataset_length: 10000000
   test_fraction: 0.2
 dataset_name: qm9_dataset.pt

@@ -6,7 +6,6 @@ base_config = load_yaml('base.yaml')
 
 config_list = [
     {
-        
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'nearest_node_loss_coefficient': 0.1,
@@ -512,6 +511,44 @@ config_list = [
                     'num_nodes': 128
                 }}}
     },  # 12 - small output speed test
+    {
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'nearest_node_loss_coefficient': 0,
+            'clumping_loss_coefficient': 0,
+            'sigma_threshold': 0.05,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.99,
+            },
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 128,
+                        'embedding_dim': 256,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 4,
+                        'dropout': 0,
+                        'norm': None},
+                    'num_nodes': 256
+                }}}
+    },  # 13 - faster run
 ]
 
 
