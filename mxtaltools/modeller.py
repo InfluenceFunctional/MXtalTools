@@ -1905,9 +1905,10 @@ class Modeller:
                 torch.randn_like(supercell_batch.pos) * self.config.positional_noise.discriminator
 
         '''score'''
+        temp_std = 15
         output = self.models_dict['proxy_discriminator'](
             torch.cat([s_embedding, supercell_batch.cell_params.detach()], dim=1),
-            v_embedding)[:, 0]
+            v_embedding)[:, 0] * temp_std
 
         reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
         packing_coeff = mol_batch.mol_volume / reduced_volume

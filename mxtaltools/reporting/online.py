@@ -1665,11 +1665,17 @@ def proxy_discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_
                         min(max(tgt_value), max(pred_value)), 2)
 
     opacity = 0.35
+    xy = np.vstack([tgt_value, pred_value])
+    try:
+        z = get_point_density(xy, bins=25)
+    except:
+        z = np.ones(len(xy))
 
-    scatter_dict = {'true_energy': tgt_value, 'predicted_energy': pred_value}
+    scatter_dict = {'true_energy': tgt_value, 'predicted_energy': pred_value, 'point_density': z}
     df = pd.DataFrame.from_dict(scatter_dict)
     fig = px.scatter(df,
                      x='true_energy', y='predicted_energy',
+                     color='point_density',
                      marginal_x='histogram', marginal_y='histogram',
                      opacity=opacity
                      )
