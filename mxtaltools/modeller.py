@@ -1875,11 +1875,12 @@ class Modeller:
         generate real and fake crystals
         and score them
         """
-        _, mol_batch = self.preprocess_ae_inputs(mol_batch,
-                                                 no_noise=True,
-                                                 orientation_override='standardized')
-        v_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
-        s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
+        with torch.no_grad():
+            _, mol_batch = self.preprocess_ae_inputs(mol_batch,
+                                                     no_noise=True,
+                                                     orientation_override='standardized')
+            v_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
+            s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
 
         mol_batch = overwrite_symmetry_info(mol_batch,
                                             self.config.generate_sgs,
