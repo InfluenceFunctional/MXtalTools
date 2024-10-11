@@ -1469,8 +1469,9 @@ class Modeller:
         (discriminator_output, vdw_score, stats) \
             = self.get_proxy_discriminator_output(mol_batch, i)
 
+        temp_std = 15
         discriminator_losses = F.smooth_l1_loss(discriminator_output.flatten(),
-                                                vdw_score.flatten(),
+                                                vdw_score.flatten() / temp_std,
                                                 reduction='none')
 
         discriminator_loss = discriminator_losses.mean()
@@ -1882,36 +1883,35 @@ class Modeller:
             v_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
             s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
 
-        mol_batch = overwrite_symmetry_info(mol_batch,
-                                            self.config.generate_sgs,
-                                            self.sym_info,
-                                            randomize_sgs=True)
+            mol_batch = overwrite_symmetry_info(mol_batch,
+                                                self.config.generate_sgs,
+                                                self.sym_info,
+                                                randomize_sgs=True)
 
-        generated_samples_i, negative_type, generator_data, negatives_stats = \
-            self.generate_discriminator_negatives(mol_batch,
-                                                  train_adversarial=False,
-                                                  train_on_randn=self.config.proxy_discriminator.train_on_randn,
-                                                  train_on_distorted=False,
-                                                  orientation='random')
+            generated_samples_i, negative_type, generator_data, negatives_stats = \
+                self.generate_discriminator_negatives(mol_batch,
+                                                      train_adversarial=False,
+                                                      train_on_randn=self.config.proxy_discriminator.train_on_randn,
+                                                      train_on_distorted=False,
+                                                      orientation='random')
 
-        supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
-            generator_data, generated_samples_i, self.config.supercell_size,
-            self.config.proxy_discriminator.cutoff,
-            align_to_standardized_orientation=True,  # take generator samples as-given
-            target_handedness=generator_data.aunit_handedness,
-            skip_refeaturization=True,
-        )
+            supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
+                generator_data, generated_samples_i, self.config.supercell_size,
+                self.config.proxy_discriminator.cutoff,
+                align_to_standardized_orientation=True,  # take generator samples as-given
+                target_handedness=generator_data.aunit_handedness,
+                skip_refeaturization=True,
+            )
 
-        '''apply noise'''
-        if self.config.positional_noise.discriminator > 0:
-            supercell_batch.pos += \
-                torch.randn_like(supercell_batch.pos) * self.config.positional_noise.discriminator
+            '''apply noise'''
+            if self.config.positional_noise.discriminator > 0:
+                supercell_batch.pos += \
+                    torch.randn_like(supercell_batch.pos) * self.config.positional_noise.discriminator
 
         '''score'''
-        temp_std = 15
         output = self.models_dict['proxy_discriminator'](
             torch.cat([s_embedding, supercell_batch.cell_params.detach()], dim=1),
-            v_embedding)[:, 0] * temp_std
+            v_embedding)[:, 0]
 
         reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
         packing_coeff = mol_batch.mol_volume / reduced_volume
