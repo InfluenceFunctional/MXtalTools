@@ -53,11 +53,11 @@ proxy_discriminator:
   max_batch_size: 200
   model:
     depth: 256
-    dropout: 256
+    dropout: 0
     hidden_dim: 256
-    norm: 256
+    norm: layer
     num_layers: 4
-    vector_norm: 256
+    vector_norm: vector layer
   optimizer:
     beta1: 0.9
     beta2: 0.999

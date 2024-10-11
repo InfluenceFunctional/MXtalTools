@@ -33,9 +33,9 @@ for ii in range(len(configs)):
     config['proxy_discriminator']['model']['num_layers'] = configs[ii][0]
     config['proxy_discriminator']['model']['depth'] = configs[ii][1]
     config['proxy_discriminator']['max_batch_size'] = configs[ii][2]
-    config['proxy_discriminator']['model']['norm'] = configs[ii][1]
-    config['proxy_discriminator']['model']['vector_norm'] = configs[ii][1]
-    config['proxy_discriminator']['model']['dropout'] = configs[ii][1]
+    config['proxy_discriminator']['model']['norm'] = configs[ii][3]
+    config['proxy_discriminator']['model']['vector_norm'] = configs[ii][4]
+    config['proxy_discriminator']['model']['dropout'] = configs[ii][5]
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
