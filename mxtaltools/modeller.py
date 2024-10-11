@@ -1096,35 +1096,37 @@ class Modeller:
                       -100:]).mean() > self.config.autoencoder.max_overlap_threshold:
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
-    def preprocess_ae_inputs(self, data, no_noise=False,
+    def preprocess_ae_inputs(self,
+                             mol_batch,
+                             no_noise=False,
                              orientation_override=None,
                              noise_override=None,
                              deprotonation_override=False):
         # atomwise random noise
         if not no_noise:
             if noise_override is not None:
-                data.pos += torch.randn_like(data.pos) * noise_override
+                mol_batch.pos += torch.randn_like(mol_batch.pos) * noise_override
             elif self.config.positional_noise.autoencoder > 0:
-                data.pos += torch.randn_like(data.pos) * self.config.positional_noise.autoencoder
+                mol_batch.pos += torch.randn_like(mol_batch.pos) * self.config.positional_noise.autoencoder
 
         # random global roto-inversion
         if orientation_override is not None:
-            data = set_molecule_alignment(data,
-                                          mode=orientation_override,
-                                          right_handed=False,
-                                          include_inversion=True)
+            mol_batch = set_molecule_alignment(mol_batch,
+                                               mode=orientation_override,
+                                               right_handed=False,
+                                               include_inversion=True)
 
         # optionally, deprotonate
-        input_data = self.fix_autoencoder_protonation(data,
+        input_data = self.fix_autoencoder_protonation(mol_batch,
                                                       override_deprotonate=deprotonation_override)
 
         # subtract mean OF THE INPUT from BOTH reference and input
         centroids = scatter(input_data.pos, input_data.batch, reduce='mean', dim=0)
-        data.pos -= torch.repeat_interleave(centroids, data.num_atoms, dim=0, output_size=data.num_nodes)
+        mol_batch.pos -= torch.repeat_interleave(centroids, mol_batch.num_atoms, dim=0, output_size=mol_batch.num_nodes)
         input_data.pos -= torch.repeat_interleave(centroids, input_data.num_atoms, dim=0,
                                                   output_size=input_data.num_nodes)
 
-        return data, input_data
+        return mol_batch, input_data
 
     def compute_autoencoder_loss(self,
                                  decoding: torch.Tensor,
