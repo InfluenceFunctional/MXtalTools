@@ -1920,11 +1920,12 @@ class Modeller:
         _, _, vdw_potential, vdw_loss, eval_vdw_loss \
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_batch.num_graphs, self.vdw_turnover_potential)
 
+        temp_std = 15
         stats = {'vdw_potential': (vdw_potential/mol_batch.num_atoms).detach(),
                  'vdw_score': (vdw_loss/mol_batch.num_atoms).detach(),
                  'generated_cell_parameters': supercell_batch.cell_params.detach(),
                  'packing_coeff': packing_coeff.detach(),
-                 'vdw_prediction': output.detach(),
+                 'vdw_prediction': (output * temp_std).detach(),
                  }
 
         stats.update(negatives_stats)
