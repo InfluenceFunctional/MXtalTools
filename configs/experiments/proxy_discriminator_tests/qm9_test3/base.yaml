@@ -27,7 +27,7 @@ batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 10  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 50
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 50  # for convergence checks
+history: 250  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
@@ -75,7 +75,7 @@ proxy_discriminator:
     lr_growth_lambda: 1.05
     lr_schedule: true
     lr_shrink_lambda: 0.995
-    max_lr: 1.0e-03
+    max_lr: 2.0e-04
     min_lr: 5.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
