@@ -1671,32 +1671,36 @@ def proxy_discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_
     except:
         z = np.ones(len(xy))
 
-    scatter_dict = {'true_energy': tgt_value, 'predicted_energy': pred_value, 'point_density': z}
-    df = pd.DataFrame.from_dict(scatter_dict)
-    fig = px.scatter(df,
-                     x='true_energy', y='predicted_energy',
-                     color='point_density',
-                     marginal_x='histogram', marginal_y='histogram',
-                     opacity=opacity
-                     )
-    fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=True, name='Diagonal', marker_color='rgba(0,0,0,1)'),
-                  )
-    # fig.add_trace(go.Histogram2d(x=df['true_distance'], y=df['predicted_distance'], nbinsx=100, nbinsy=100, colorbar_dtick="log", showlegend=False))
+    try:
+        scatter_dict = {'true_energy': tgt_value, 'predicted_energy': pred_value, 'point_density': z}
+        df = pd.DataFrame.from_dict(scatter_dict)
+        fig = px.scatter(df,
+                         x='true_energy', y='predicted_energy',
+                         color='point_density',
+                         marginal_x='histogram', marginal_y='histogram',
+                         opacity=opacity
+                         )
+        fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=True, name='Diagonal', marker_color='rgba(0,0,0,1)'),
+                      )
+        # fig.add_trace(go.Histogram2d(x=df['true_distance'], y=df['predicted_distance'], nbinsx=100, nbinsy=100, colorbar_dtick="log", showlegend=False))
 
-    fig.update_layout(xaxis_title='Target Distance', yaxis_title='Predicted Distance')
+        fig.update_layout(xaxis_title='Target Distance', yaxis_title='Predicted Distance')
 
-    fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
-    fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
 
-    fig_dict['Proxy Discriminator Parity Plot'] = fig
+        fig_dict['Proxy Discriminator Parity Plot'] = fig
 
-    for key, fig in fig_dict.items():
-        fig.write_image(key + 'fig.png', width=1024, height=1024)  # save the image rather than the fig, for size reasons
-        fig_dict[key] = wandb.Image(key + 'fig.png')
+        for key, fig in fig_dict.items():
+            fig.write_image(key + 'fig.png', width=1024, height=1024)  # save the image rather than the fig, for size reasons
+            fig_dict[key] = wandb.Image(key + 'fig.png')
 
-    wandb.log(data=fig_dict, commit=False)
-    wandb.log(data={"proxy_discrim_R_value": linreg_result.rvalue,
-                    "proxy_discrim_slope": linreg_result.slope}, commit=False)
+        wandb.log(data=fig_dict, commit=False)
+        wandb.log(data={"proxy_discrim_R_value": linreg_result.rvalue,
+                        "proxy_discrim_slope": linreg_result.slope}, commit=False)
+
+    except:  # sometimes it fails, but I never want it to crash
+        pass
 
     return None
 

@@ -7,23 +7,17 @@ base_config = load_yaml('base.yaml')
 """
 Proxy discriminator params
 """
-
+# layers, depth, max batch, norm, vector norm, dropout
 configs = [
-    # max batch size -- failed - didn't assign the right config
-    [4, 256, 200, 'layer', 'vector layer', 0],  #
-    [4, 256, 500, 'layer', 'vector layer', 0],  #
-    [4, 256, 1000, 'layer', 'vector layer', 0],  #
-    [4, 256, 2000, 'layer', 'vector layer', 0],  #
-    [4, 256, 5000, 'layer', 'vector layer', 0],  #
-    # simple model & size
-    [4, 256, 2000, None, None, 0],  #
-    [4, 512, 2000, None, None, 0],  #
-    [4, 1024, 2000, None, None, 0],  #
-    [8, 256, 2000, None, None, 0],  #
-    [16, 256, 2000, None, None, 0],  #
-    [24, 256, 2000, None, None, 0],  #
-    # big & regularized
-    [16, 512, 2000, 'layer', 'vector layer', 0.25],  #
+    [4, 1024, 100, None, None, 0],  # 0
+    [4, 1024, 500, None, None, 0],  # 1
+    [4, 1024, 1000, None, None, 0],  # 2
+    [4, 1024, 2000, None, None, 0],  # 3
+    [4, 1024, 4000, None, None, 0],  # 4
+
+    [4, 2048, 2000, None, None, 0],  # 5
+    [8, 1024, 2000, None, None, 0],  # 6
+
 ]
 
 ind = 0
@@ -32,7 +26,7 @@ for ii in range(len(configs)):
     config['logger']['run_name'] = config['logger']['run_name'] + '_' + str(ind)
     config['proxy_discriminator']['model']['num_layers'] = configs[ii][0]
     config['proxy_discriminator']['model']['depth'] = configs[ii][1]
-    config['proxy_discriminator']['max_batch_size'] = configs[ii][2]
+    config['max_batch_size'] = configs[ii][2]
     config['proxy_discriminator']['model']['norm'] = configs[ii][3]
     config['proxy_discriminator']['model']['vector_norm'] = configs[ii][4]
     config['proxy_discriminator']['model']['dropout'] = configs[ii][5]
