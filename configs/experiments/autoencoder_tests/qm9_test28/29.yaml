@@ -10,9 +10,9 @@ autoencoder:
     decoder:
       activation: gelu
       fc:
-        dropout: 0
+        dropout: 0.25
         hidden_dim: 512
-        norm: null
+        norm: layer
         num_layers: 4
         vector_norm: vector layer
       num_nodes: 512
@@ -28,14 +28,14 @@ autoencoder:
       graph:
         atom_type_embedding_dim: 32
         cutoff: 3
-        dropout: 0
+        dropout: 0.25
         embedding_dim: 512
         envelope_exponent: 5
         fcs_per_gc: 2
         max_num_neighbors: 100
         message_dim: 128
         node_dim: 512
-        norm: null
+        norm: graph layer
         num_convs: 2
         num_radial: 50
         radial_embedding: bessel
@@ -51,7 +51,7 @@ autoencoder:
     init_lr: 5.0e-05
     lr_growth_lambda: 1.05
     lr_schedule: true
-    lr_shrink_lambda: 0.99
+    lr_shrink_lambda: 0.995
     max_lr: 0.001
     min_lr: 1.0e-06
     optimizer: adamw
@@ -60,7 +60,7 @@ autoencoder:
   overlap_eps:
     test: 0.001
   sigma_lambda: 0.99
-  sigma_threshold: 0.1
+  sigma_threshold: 0.15
   type_distance_scaling: 2
 base_config_path: /experiments/base/autoencoder.yaml
 batch_growth_increment: 0.05
@@ -77,7 +77,7 @@ grow_batch_size: true
 history: 50
 logger:
   experiment_tag: qm9_test28
-  run_name: qm9_test28_0_1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21_22
+  run_name: qm9_test28_0_1_2_3_4_5_6_7_8_9_10_11_12_13_14_15_16_17_18_19_20_21_22_23_24_25_26_27_28_29
   sample_reporting_frequency: 10
   stats_reporting_frequency: 10
 machine: cluster
