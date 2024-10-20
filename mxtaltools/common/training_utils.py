@@ -80,7 +80,8 @@ def instantiate_models(config: Namespace,
         models_dict['embedding_regressor'] = EmbeddingRegressor(
             config.seeds.model,
             config.embedding_regressor.model,
-            num_targets=config.embedding_regressor.num_targets
+            num_targets=config.embedding_regressor.num_targets,
+            prediction_type=config.embedding_regressor.prediction_type,
         )
         assert config.model_paths.autoencoder is not None  # must preload the encoder
     if config.mode == 'polymorph_classification':
@@ -100,6 +101,7 @@ def instantiate_models(config: Namespace,
             config.proxy_discriminator.model,
             num_targets=1,
             conditions_dim=12,
+            prediction_type='scalar'
         )
         assert config.model_paths.autoencoder is not None  # must preload the encoder
 

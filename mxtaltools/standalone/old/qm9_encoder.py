@@ -104,7 +104,7 @@ class Qm9Autoencoder(torch.nn.Module):
             nodewise_weights_tensor = decoded_data.aux_ind
 
             true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.num_atom_types).float()
-            full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes,
+            full_overlap, self_overlap, rmsd, nodewise_dist, matched_graph, matched_node = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes,
                                                                          sigma=0.05, distance_scaling=0.5)
 
             fidelity = 1 - torch.abs(1 - full_overlap / self_overlap).cpu().detach().numpy()  # higher is better

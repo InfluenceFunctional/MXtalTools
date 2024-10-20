@@ -654,19 +654,19 @@ def slash_batch(train_loader, test_loader, slash_fraction):
 
 
 def compute_gaussian_overlap(ref_types,
-                             data,
+                             mol_batch,
                              decoded_data,
                              sigma,
                              nodewise_weights,
                              dist_to_self=False,
                              isolate_dimensions: list = None,
                              type_distance_scaling=0.1,
-                             return_radial=False):
+                             ):
     """
     same as previous version
     except atom type differences are treated as high dimensional distances
     """
-    ref_points = torch.cat((data.pos, ref_types * type_distance_scaling), dim=1)
+    ref_points = torch.cat((mol_batch.pos, ref_types * type_distance_scaling), dim=1)
 
     if dist_to_self:
         pred_points = ref_points
@@ -683,29 +683,114 @@ def compute_gaussian_overlap(ref_types,
                    # alternatively any point which will have even a small overlap - should be faster by ignoring unimportant edges, where the gradient will anyway be vanishing
                    r=4 * sigma,
                    max_num_neighbors=10000,
-                   batch_x=data.batch,
+                   batch_x=mol_batch.batch,
                    batch_y=decoded_data.batch)  # this step is slower than before
     dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
-
-    # if overlap_type == 'gaussian':
     overlap = torch.exp(-torch.pow(dists / sigma, 2))
-    # elif overlap_type == 'inverse':
-    #     overlap = 1 / (dists / sigma + 1)
-    # elif overlap_type == 'exponential':
-    #     overlap = torch.exp(-dists / sigma)
-    # else:
-    #     assert False, f"{overlap_type} is not an implemented overlap function"
-
     scaled_overlap = overlap * nodewise_weights[edges[0]]  # reweight appropriately
     nodewise_overlap = scatter(scaled_overlap,
                                edges[1],
                                reduce='sum',
-                               dim_size=data.num_nodes)
+                               dim_size=mol_batch.num_nodes)
 
-    if return_radial:
-        return nodewise_overlap, edges, dists
-    else:
-        return nodewise_overlap
+    return nodewise_overlap
+
+
+def batch_rmsd(mol_batch,
+               decoded_mol_batch,
+               true_node_one_hot,
+               intrapoint_cutoff: float = 0.5,
+               probability_threshold: float = 0.25,
+               type_distance_scaling: float = 2):
+
+    ref_types = true_node_one_hot.float()
+    ref_points = torch.cat((mol_batch.pos, ref_types * type_distance_scaling), dim=1)
+    pred_types = decoded_mol_batch.x * type_distance_scaling  # nodes are already weighted at 1
+    pred_points = torch.cat((decoded_mol_batch.pos, pred_types), dim=1)  # assume input x has already been normalized
+    nodewise_weights = decoded_mol_batch.aux_ind
+
+    edges = radius(ref_points,
+                   pred_points,
+                   r=intrapoint_cutoff,
+                   max_num_neighbors=10000,
+                   batch_x=mol_batch.batch,
+                   batch_y=decoded_mol_batch.batch)  # this step is slower than before
+    dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
+
+    collect_bools = dists < intrapoint_cutoff
+    inds_within_cutoff = edges[0][collect_bools]
+    inside_edge_nodes = edges[1][collect_bools]
+    collected_particles = pred_points[inds_within_cutoff]
+    collected_particle_weights = nodewise_weights[inds_within_cutoff]
+    # # confirm each output is mapped to a single input
+    # a, b = torch.unique(edges[0][collect_bools], return_counts=True)
+    # assert b.max() == 1
+    pred_particle_weights = scatter(collected_particle_weights,
+                                    inside_edge_nodes,
+                                    reduce='sum',
+                                    dim_size=mol_batch.num_nodes,
+                                    )
+    # filter here for where we do not match the scaffold (no nearby nodes, or insufficient probability mass)
+    missing_particle_bools = (1 - pred_particle_weights).abs() >= probability_threshold
+    complete_graph_bools = scatter((~missing_particle_bools).long(),
+                                   mol_batch.batch,
+                                   reduce='mul',
+                                   dim_size=mol_batch.num_graphs,
+                                   dim=0
+                                   ).bool()
+    pred_particle_points = scatter(collected_particles * collected_particle_weights[:, None],
+                                   inside_edge_nodes,
+                                   reduce='sum',
+                                   dim=0,
+                                   dim_size=mol_batch.num_nodes,
+                                   )
+    pred_dists = torch.linalg.norm(ref_points - pred_particle_points, dim=1)
+    rmsd = scatter(pred_dists, mol_batch.batch, reduce='mean', dim_size=mol_batch.num_graphs)
+    rmsd[~complete_graph_bools] = torch.nan
+    pred_particle_points[missing_particle_bools] *= torch.nan
+
+    return rmsd, pred_dists, complete_graph_bools, ~missing_particle_bools, pred_particle_points
+
+
+""" # new cheap RMSD calculation
+
+# get radius about which to collect points for each input node
+
+# intra_dists = torch.linalg.norm(ref_points[intra_edges[1]] - ref_points[intra_edges[0]], dim=1)
+# intra_edges = radius(ref_points, ref_points,
+#                # r=2 * ref_points[:, :3].norm(dim=1).amax(),  # max range encompasses largest molecule in the batch
+#                # alternatively any point which will have even a small overlap - should be faster by ignoring unimportant edges, where the gradient will anyway be vanishing
+#                r=4 * sigma,
+#                max_num_neighbors=10000,
+#                batch_x=data.batch,
+#                batch_y=data.batch)  # this step is slower than before
+# intrapoint_cutoff = intra_dists[intra_dists!=0].min()/2
+intrapoint_cutoff = 0.6
+
+collect_bools = dists < intrapoint_cutoff
+collected_particles = pred_points[edges[0][collect_bools]]
+collected_particle_weights = nodewise_weights[edges[0][collect_bools]]
+
+# # confirm each output is mapped to a single input
+# a, b = torch.unique(edges[0][collect_bools], return_counts=True)  
+# assert b.max() == 1
+
+pred_particle_weights = scatter(collected_particle_weights, 
+                                edges[1][collect_bools],
+                                reduce='sum',
+                                dim_size=data.num_nodes,
+                                )
+pred_particle_points = scatter(collected_particles * collected_particle_weights[:, None],
+                               edges[1][collect_bools],
+                               reduce='sum',
+                               dim = 0,
+                               dim_size=data.num_nodes,
+                               )
+
+pred_dists = torch.linalg.norm(ref_points - pred_particle_points, dim=1)
+
+rmsd = scatter(pred_dists, data.batch, reduce='mean', dim_size=data.num_graphs)
+"""
 
 
 def direction_coefficient(v):
@@ -731,59 +816,95 @@ def get_model_nans(model):
         return 0
 
 
-def compute_type_evaluation_overlap(config, data, num_atom_types, decoded_data, nodewise_weights_tensor, true_nodes):
-    type_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
-                                            nodewise_weights=nodewise_weights_tensor,
-                                            isolate_dimensions=[3, 3 + num_atom_types],
-                                            type_distance_scaling=config.autoencoder.type_distance_scaling)
-    self_type_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                 nodewise_weights=torch.ones(len(data.x), device=data.x.device,
-                                                                             dtype=data.x.dtype), dist_to_self=True,
-                                                 isolate_dimensions=[3, 3 + num_atom_types],
-                                                 type_distance_scaling=config.autoencoder.type_distance_scaling)
+def compute_type_evaluation_overlap(config,
+                                    data,
+                                    num_atom_types,
+                                    decoded_data,
+                                    true_nodes):
+    type_overlap = compute_gaussian_overlap(
+        true_nodes,
+        data,
+        decoded_data,
+        config.autoencoder.evaluation_sigma,
+        nodewise_weights=decoded_data.aux_ind,
+        isolate_dimensions=[3, 3 + num_atom_types],
+        type_distance_scaling=config.autoencoder.type_distance_scaling
+    )
+    self_type_overlap = compute_gaussian_overlap(
+        true_nodes,
+        data,
+        data,
+        config.autoencoder.evaluation_sigma,
+        nodewise_weights=torch.ones(len(data.x), device=data.x.device,dtype=data.x.dtype),
+        dist_to_self=True,
+        isolate_dimensions=[3, 3 + num_atom_types],
+        type_distance_scaling=config.autoencoder.type_distance_scaling
+    )
     return self_type_overlap, type_overlap
 
 
-def compute_coord_evaluation_overlap(config, data, decoded_data, nodewise_weights_tensor, true_nodes):
-    coord_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, config.autoencoder.evaluation_sigma,
-                                             nodewise_weights=nodewise_weights_tensor, isolate_dimensions=[0, 3],
-                                             type_distance_scaling=config.autoencoder.type_distance_scaling)
-    self_coord_overlap = compute_gaussian_overlap(true_nodes, data, data, config.autoencoder.evaluation_sigma,
-                                                  nodewise_weights=torch.ones(len(data.x), device=data.x.device,
-                                                                              dtype=data.x.dtype), dist_to_self=True,
-                                                  isolate_dimensions=[0, 3],
-                                                  type_distance_scaling=config.autoencoder.type_distance_scaling)
+def compute_coord_evaluation_overlap(
+        config,
+        data,
+        decoded_data,
+        true_nodes):
+    coord_overlap = compute_gaussian_overlap(
+        true_nodes,
+        data,
+        decoded_data,
+        config.autoencoder.evaluation_sigma,
+        nodewise_weights=decoded_data.aux_ind,
+        isolate_dimensions=[0, 3],
+        type_distance_scaling=config.autoencoder.type_distance_scaling
+    )
+    self_coord_overlap = compute_gaussian_overlap(
+        true_nodes,
+        data,
+        data,
+        config.autoencoder.evaluation_sigma,
+        nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
+        dist_to_self=True,
+        isolate_dimensions=[0, 3],
+        type_distance_scaling=config.autoencoder.type_distance_scaling
+    )
     return coord_overlap, self_coord_overlap
 
 
-def compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor, true_nodes,
+def compute_full_evaluation_overlap(mol_batch,
+                                    decoded_mol_batch,
+                                    true_nodes,
                                     sigma=None, distance_scaling=None):
-    full_overlap = compute_gaussian_overlap(true_nodes, data, decoded_data, sigma,
-                                            nodewise_weights=nodewise_weights_tensor,
-                                            type_distance_scaling=distance_scaling)
-    self_overlap = compute_gaussian_overlap(true_nodes, data, data, sigma,
-                                            nodewise_weights=torch.ones(len(data.x), device=data.x.device,
-                                                                        dtype=data.x.dtype), dist_to_self=True,
-                                            type_distance_scaling=distance_scaling)
+    full_overlap = compute_gaussian_overlap(
+        true_nodes, mol_batch, decoded_mol_batch, sigma,
+        nodewise_weights=decoded_mol_batch.aux_ind,
+        type_distance_scaling=distance_scaling,
+    )
+    self_overlap = compute_gaussian_overlap(
+        true_nodes, mol_batch, mol_batch, sigma,
+        nodewise_weights=torch.ones(len(mol_batch.x), device=mol_batch.x.device, dtype=mol_batch.x.dtype),
+        dist_to_self=True,
+        type_distance_scaling=distance_scaling)
     return full_overlap, self_overlap
 
 
-def get_node_weights(data, decoded_data, decoding, num_decoder_nodes, node_weight_temperature):
+def get_node_weights(mol_batch, decoded_mol_batch, decoding, num_decoder_nodes, node_weight_temperature):
     # per-atom weights of each graph
-    graph_weights = data.num_atoms / num_decoder_nodes
+    molwise_weight_per_swarm_point = mol_batch.num_atoms / num_decoder_nodes
+
     # cast to num_decoder_nodes
+    weight_per_swarm_point = molwise_weight_per_swarm_point.repeat_interleave(num_decoder_nodes)
 
-    nodewise_graph_weights = graph_weights.repeat_interleave(num_decoder_nodes)
-
-    # softmax over decoding weight dimension
+    # softmax over decoding weight dimension, adjusted by temperature
     nodewise_weights = scatter_softmax(decoding[:, -1] / node_weight_temperature,
-                                       decoded_data.batch, dim=0)
+                                       decoded_mol_batch.batch,
+                                       dim=0,
+                                       dim_size=num_decoder_nodes)
 
     # reweigh against the number of atoms
-    nodewise_weights_tensor = nodewise_weights * data.num_atoms.repeat_interleave(
+    nodewise_weights_tensor = nodewise_weights * mol_batch.num_atoms.repeat_interleave(
         num_decoder_nodes)
 
-    return nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
+    return weight_per_swarm_point, nodewise_weights, nodewise_weights_tensor
 
 
 def dict_of_tensors_to_cpu_numpy(stats):
@@ -876,15 +997,14 @@ def ae_reconstruction_loss(data,
                            num_atom_types,
                            type_distance_scaling,
                            autoencoder_sigma,
-                           skip_clumping_loss=False):
-
+                           ):
     true_node_one_hot = F.one_hot(data.x.flatten().long(), num_classes=num_atom_types).float()
 
-    decoder_likelihoods = (#, input2output_edges, input2output_dists = (
+    decoder_likelihoods = (  #, input2output_edges, input2output_dists = (
         compute_gaussian_overlap(true_node_one_hot, data, decoded_data, autoencoder_sigma,
                                  nodewise_weights=decoded_data.aux_ind,
                                  type_distance_scaling=type_distance_scaling,
-                                 return_radial=False))
+                                 ))
 
     # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
     self_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, data, autoencoder_sigma,
@@ -925,7 +1045,7 @@ def ae_reconstruction_loss(data,
 
     return (nodewise_reconstruction_loss, nodewise_type_loss,
             graph_reconstruction_loss, self_likelihoods,
-            )#nearest_node_loss, graph_clumping_loss)
+            )  #nearest_node_loss, graph_clumping_loss)
 
 
 def clean_cell_params(samples,

@@ -240,7 +240,11 @@ class DataManager:
         self.times['dataset_targets_assignment_start'] = time()
         targets = self.get_target()  # todo assign targets element-by-element in data list rather than as batch, omitting collation
         for ind in range(len(self.dataset)):
-            self.dataset[ind].y = targets[ind]
+            if targets.ndim > 1:
+                if targets.shape[1] > 1:
+                    self.dataset[ind].y = targets[None, ind]
+            else:
+                self.dataset[ind].y = targets[ind]
         self.times['dataset_targets_assignment_end'] = time()
 
     def dataset_filtration(self, filter_conditions, filter_duplicate_molecules, filter_polymorphs):
@@ -347,8 +351,13 @@ class DataManager:
                 targets = torch.tensor([elem.y[:, target_ind] for elem in self.dataset])
             elif self.regression_target == 'crystal_packing_coefficient':
                 targets = torch.tensor([elem.packing_coeff for elem in self.dataset])
+            elif self.regression_target == 'dipole':
+                targets = torch.cat([elem.dipole for elem in self.dataset])
             else:
-                assert False, "Unrecognized regression target"
+                try:
+                    targets = torch.cat([elem.__dict__[self.regression_target] for elem in self.dataset])
+                except:
+                    assert False, "Unrecognized regression target"
 
             clipped_targets = targets.clip(min=torch.quantile(targets, 0.05), max=torch.quantile(targets, 0.95))
 
@@ -413,9 +422,12 @@ class DataManager:
             print("Dataset is in pre-collated format, which slows down initial loading!")
 
         """get miscellaneous data"""
-        self.misc_dataset = np.load(
-            self.datasets_path + 'misc_data_for_' + dataset_name[:-3].split('test_')[-1] + '.npy',
-            allow_pickle=True).item()
+        misc_data_path = self.datasets_path + 'misc_data_for_' + dataset_name[:-3].split('test_')[-1] + '.npy'
+        if os.path.exists(misc_data_path):
+            self.misc_dataset = np.load(misc_data_path, allow_pickle=True).item()
+        else:
+            self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
+
         self.times['dataset_loading_end'] = time()
         for key in self.misc_dataset.keys():
             setattr(self, key, self.misc_dataset[key])

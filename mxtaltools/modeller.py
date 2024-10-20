@@ -39,7 +39,7 @@ from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_s
                                      dict_of_tensors_to_cpu_numpy,
                                      test_decoder_equivariance, test_encoder_equivariance, collate_decoded_data,
                                      ae_reconstruction_loss, clean_cell_params, get_intermolecular_dists_dict,
-                                     denormalize_generated_cell_params, compute_prior_loss)
+                                     denormalize_generated_cell_params, compute_prior_loss, batch_rmsd)
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
 
@@ -473,8 +473,8 @@ class Modeller:
     def ae_embedding_step(self, data):
         data = data.to(self.device)
         data, input_data = self.preprocess_ae_inputs(data, no_noise=True)
-        if not self.models_dict['autoencoder'].protons_in_input and not self.models_dict[
-            'autoencoder'].inferring_protons:
+        if (not self.models_dict['autoencoder'].protons_in_input and
+                not self.models_dict['autoencoder'].inferring_protons):
             data = input_data.clone()  # deprotonate the reference if we are not inferring protons
 
         decoding, encoding = self.models_dict['autoencoder'](input_data.clone(), return_encoding=True)
@@ -482,12 +482,12 @@ class Modeller:
 
         self.ae_evaluation_sample_analysis(data, decoding, encoding, scalar_encoding)
 
-    def ae_evaluation_sample_analysis(self, data, decoding, encoding, scalar_encoding):
+    def ae_evaluation_sample_analysis(self, mol_batch, decoding, encoding, scalar_encoding):
         """
 
         Parameters
         ----------
-        data
+        mol_batch
         decoding
         encoding
         scalar_encoding
@@ -497,32 +497,43 @@ class Modeller:
 
         """
         'standard analysis'
-        autoencoder_losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone())
+        autoencoder_losses, stats, decoded_mol_batch = self.compute_autoencoder_loss(decoding, mol_batch.clone())
 
         'extra analysis'
-        data.x = self.models_dict['autoencoder'].atom_embedding_vector[data.x]
-        nodewise_weights_tensor = decoded_data.aux_ind
-        true_nodes = F.one_hot(data.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
+        mol_batch.x = self.models_dict['autoencoder'].atom_embedding_vector[mol_batch.x]
+        true_nodes = F.one_hot(mol_batch.x[:, 0].long(), num_classes=self.dataDims['num_atom_types']).float()
 
-        full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor,
-                                                                     true_nodes,
-                                                                     sigma=self.config.autoencoder.evaluation_sigma,
-                                                                     distance_scaling=self.config.autoencoder.type_distance_scaling
-                                                                     )
-        coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(self.config, data, decoded_data,
-                                                                             nodewise_weights_tensor, true_nodes)
-        self_type_overlap, type_overlap = compute_type_evaluation_overlap(self.config, data,
-                                                                          self.dataDims['num_atom_types'],
-                                                                          decoded_data, nodewise_weights_tensor,
-                                                                          true_nodes)
+        full_overlap, self_overlap = compute_full_evaluation_overlap(
+            mol_batch,
+            decoded_mol_batch,
+            true_nodes,
+            sigma=self.config.autoencoder.evaluation_sigma,
+            distance_scaling=self.config.autoencoder.type_distance_scaling
+        )
+        coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(
+            self.config,
+            mol_batch,
+            decoded_mol_batch,
+            true_nodes
+        )
+        self_type_overlap, type_overlap = compute_type_evaluation_overlap(
+            self.config,
+            mol_batch,
+            self.dataDims['num_atom_types'],
+            decoded_mol_batch,
+            true_nodes
+        )
+        #
+        # rmsd, nodewise_dist, matched_graph, matched_node = batch_rmsd(mol_batch,
+        #                                                               decoded_mol_batch)
 
         Ip, Ipm, I = batch_molecule_principal_axes_torch(
-            [data.pos[data.batch == ind] for ind in range(data.num_graphs)])
+            [mol_batch.pos[mol_batch.batch == ind] for ind in range(mol_batch.num_graphs)])
 
         scaffold_rmsds, scaffold_max_dists, scaffold_matched = [], [], []
         #glom_rmsds, glom_max_dists = [], []
-        for ind in range(data.num_graphs):  # somewhat slow
-            rmsd, max_dist, weight_mean, match_successful = scaffolded_decoder_clustering(ind, data, decoded_data,
+        for ind in range(mol_batch.num_graphs):  # somewhat slow
+            rmsd, max_dist, weight_mean, match_successful = scaffolded_decoder_clustering(ind, mol_batch, decoded_mol_batch,
                                                                                           self.dataDims[
                                                                                               'num_atom_types'],
                                                                                           return_fig=False)
@@ -540,11 +551,11 @@ class Modeller:
             # glom_max_dists.append(glom_max_dist)
 
         stats_values = [encoding.cpu().detach().numpy(),
-                        data.radius.cpu().detach().numpy(),
+                        mol_batch.radius.cpu().detach().numpy(),
                         scalar_encoding.cpu().detach().numpy(),
-                        scatter(full_overlap / self_overlap, data.batch, reduce='mean').cpu().detach().numpy(),
-                        scatter(coord_overlap / self_coord_overlap, data.batch, reduce='mean').cpu().detach().numpy(),
-                        scatter(self_type_overlap / type_overlap, data.batch, reduce='mean').cpu().detach().numpy(),
+                        scatter(full_overlap / self_overlap, mol_batch.batch, reduce='mean').cpu().detach().numpy(),
+                        scatter(coord_overlap / self_coord_overlap, mol_batch.batch, reduce='mean').cpu().detach().numpy(),
+                        scatter(self_type_overlap / type_overlap, mol_batch.batch, reduce='mean').cpu().detach().numpy(),
                         Ip.cpu().detach().numpy(),
                         Ipm.cpu().detach().numpy(),
                         np.asarray(scaffold_rmsds),
@@ -552,7 +563,7 @@ class Modeller:
                         np.asarray(scaffold_matched),
                         # np.asarray(glom_rmsds),
                         # np.asarray(glom_max_dists),
-                        data.smiles
+                        mol_batch.smiles
                         ]
         stats_keys = ['encoding',
                       'molecule_radius',
@@ -832,13 +843,16 @@ class Modeller:
         v_embedding = self.models_dict['autoencoder'].encode(data)
         s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
 
-        predictions = self.models_dict['embedding_regressor'](s_embedding, v_embedding)[:, 0]
-        losses = F.smooth_l1_loss(predictions, data.y, reduction='none')
-        predictions = predictions * self.dataDims['target_std'] + self.dataDims['target_mean']
-        targets = data.y * self.dataDims['target_std'] + self.dataDims['target_mean']
+        s_predictions, v_predictions = self.models_dict['embedding_regressor'](s_embedding, v_embedding)
+        if self.models_dict['embedding_regressor'].prediction_type == 'scalar':
+            losses = F.smooth_l1_loss(s_predictions[..., 0], data.y, reduction='none')
+            predictions = s_predictions * self.dataDims['target_std'] + self.dataDims['target_mean']
 
-        if self.config.embedding_regressor.prediction_type == 'vector':  # this is quite fast
-            assert False, "Vector predictions are not implemented"
+        elif self.models_dict['embedding_regressor'].prediction_type == 'vector':
+            losses = F.smooth_l1_loss(v_predictions[..., 0], data.y, reduction='none')
+            predictions = v_predictions * self.dataDims['target_std'] + self.dataDims['target_mean']
+
+        targets = data.y * self.dataDims['target_std'] + self.dataDims['target_mean']
 
         regression_loss = losses.mean()
         if update_weights:
@@ -856,10 +870,10 @@ class Modeller:
                                       stats_values,
                                       mode='extend')
 
-    def ae_step(self, input_data, data, update_weights, step, last_step=False):
+    def ae_step(self, input_data, mol_batch, update_weights, step, last_step=False):
         if (not self.models_dict['autoencoder'].protons_in_input and
                 not self.models_dict['autoencoder'].inferring_protons):
-            data = input_data.detach().clone()
+            mol_batch = input_data.detach().clone()
 
         if step % self.config.logger.stats_reporting_frequency == 0:
             skip_stats = False
@@ -869,7 +883,7 @@ class Modeller:
             skip_stats = True
 
         decoding = self.models_dict['autoencoder'](input_data.clone(), return_latent=False)
-        losses, stats, decoded_data = self.compute_autoencoder_loss(decoding, data.clone(), skip_stats=skip_stats)
+        losses, stats, decoded_mol_batch = self.compute_autoencoder_loss(decoding, mol_batch.clone(), skip_stats=skip_stats)
 
         mean_loss = losses.mean()
         if torch.sum(torch.logical_not(torch.isfinite(mean_loss))) > 0:
@@ -883,7 +897,7 @@ class Modeller:
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
         if not skip_stats:
-            self.ae_stats_and_reporting(data, decoded_data, last_step, stats, step)
+            self.ae_stats_and_reporting(mol_batch, decoded_mol_batch, last_step, stats, step)
 
     def fix_autoencoder_protonation(self, data, override_deprotonate=False):
         if (not self.models_dict['autoencoder'].inferring_protons and
@@ -922,34 +936,45 @@ class Modeller:
                                       stats.values(),
                                       mode='append')
 
-    def detailed_autoencoder_step_analysis(self, data, decoded_data, stats):
+    def detailed_autoencoder_step_analysis(self, mol_batch, decoded_mol_batch, stats):
         # equivariance checks
-        encoder_equivariance_loss, decoder_equivariance_loss = self.ae_equivariance_loss(data.clone())
+        encoder_equivariance_loss, decoder_equivariance_loss = self.ae_equivariance_loss(mol_batch.clone())
         stats['encoder_equivariance_loss'] = encoder_equivariance_loss.mean().detach()
         stats['decoder_equivariance_loss'] = decoder_equivariance_loss.mean().detach()
 
         # do evaluation on current sample and save this as our loss for tracking purposes
-        nodewise_weights_tensor = decoded_data.aux_ind
-        true_nodes = F.one_hot(self.models_dict['autoencoder'].atom_embedding_vector[data.x.long()],
+        nodewise_weights_tensor = decoded_mol_batch.aux_ind
+        true_nodes = F.one_hot(self.models_dict['autoencoder'].atom_embedding_vector[mol_batch.x.long()],
                                num_classes=self.dataDims['num_atom_types']).float()
-        full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data, nodewise_weights_tensor,
-                                                                     true_nodes,
-                                                                     sigma=self.config.autoencoder.evaluation_sigma,
-                                                                     distance_scaling=self.config.autoencoder.type_distance_scaling
-                                                                     )
+        full_overlap, self_overlap = compute_full_evaluation_overlap(
+            mol_batch, decoded_mol_batch,
+            true_nodes,
+            sigma=self.config.autoencoder.evaluation_sigma,
+            distance_scaling=self.config.autoencoder.type_distance_scaling
+        )
+
         '''log losses and other tracking values'''
         # for the purpose of convergence, we track the evaluation overlap rather than the loss, which is sigma-dependent
         # it's also expensive to compute so do it rarely
         overlap = (full_overlap / self_overlap).detach()
         tracking_loss = torch.abs(1 - overlap)
-        stats['evaluation_overlap'] = scatter(overlap, data.batch, reduce='mean').detach()
+        stats['evaluation_overlap'] = scatter(overlap, mol_batch.batch, reduce='mean').detach()
+        rmsd, _, matched_graphs, matched_nodes, _ = batch_rmsd(
+            mol_batch,
+            decoded_mol_batch,
+            true_nodes,
+        )
+        stats['RMSD'] = rmsd[matched_graphs].mean().detach()
+        stats['matching_graph_fraction'] = (torch.sum(matched_graphs)/len(matched_graphs)).detach()
+        stats['matching_node_fraction'] = (torch.sum(matched_nodes)/len(matched_nodes)).detach()
+
         self.logger.update_current_losses('autoencoder', self.epoch_type,
                                           tracking_loss.mean().cpu().detach().numpy(),
                                           tracking_loss.cpu().detach().numpy())
 
         self.logger.update_stats_dict(self.epoch_type,
                                       ['sample', 'decoded_sample'],
-                                      [data.cpu().detach(), decoded_data.cpu().detach()
+                                      [mol_batch.cpu().detach(), decoded_mol_batch.cpu().detach()
                                        ], mode='append')
 
     def ae_equivariance_loss(self, data: CrystalData) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -1130,7 +1155,7 @@ class Modeller:
 
     def compute_autoencoder_loss(self,
                                  decoding: torch.Tensor,
-                                 data: CrystalData,
+                                 mol_batch: CrystalData,
                                  skip_stats: bool = False,
                                  ) -> Tuple[torch.Tensor, dict, CrystalData]:
         """
@@ -1141,7 +1166,7 @@ class Modeller:
         ----------
         decoding : Tensor
             raw output for gaussian mixture
-        data : CrystalData
+        mol_batch : CrystalData
             Input data to be reconstructed
         skip_stats : bool
             Whether to skip saving summary statistics for this step
@@ -1151,9 +1176,9 @@ class Modeller:
 
         """
         # reduce to relevant atom types
-        data.x = self.models_dict['autoencoder'].atom_embedding_vector[data.x].flatten()
-        decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
-            collate_decoded_data(data,
+        mol_batch.x = self.models_dict['autoencoder'].atom_embedding_vector[mol_batch.x].flatten()
+        decoded_mol_batch, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
+            collate_decoded_data(mol_batch,
                                  decoding,
                                  self.models_dict['autoencoder'].num_decoder_nodes,
                                  self.config.autoencoder.node_weight_temperature,
@@ -1163,38 +1188,33 @@ class Modeller:
          nodewise_type_loss,
          reconstruction_loss,
          self_likelihoods
-         #nearest_node_loss,
-         #clumping_loss)
          ) = ae_reconstruction_loss(
-            data,
-            decoded_data,
+            mol_batch,
+            decoded_mol_batch,
             nodewise_weights,
             self.dataDims['num_atom_types'],
             self.config.autoencoder.type_distance_scaling,
             self.config.autoencoder_sigma,
-            skip_clumping_loss=True,  #self.config.autoencoder.clumping_loss_coefficient == 0
         )
 
-        matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / data.num_nodes  # within 1% matching
+        matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / mol_batch.num_nodes  # within 1% matching
 
         # node radius constraining loss
-        decoded_dists = torch.linalg.norm(decoded_data.pos, dim=1)
+        decoded_dists = torch.linalg.norm(decoded_mol_batch.pos, dim=1)
         constraining_loss = scatter(
             F.relu(
                 decoded_dists -  #self.models_dict['autoencoder'].radial_normalization),
-                torch.repeat_interleave(data.radius, self.models_dict['autoencoder'].num_decoder_nodes, dim=0)),
-            decoded_data.batch, reduce='mean')
+                torch.repeat_interleave(mol_batch.radius, self.models_dict['autoencoder'].num_decoder_nodes, dim=0)),
+            decoded_mol_batch.batch, reduce='mean')
 
         # node weight constraining loss
         node_weight_constraining_loss = scatter(
             F.relu(-torch.log10(nodewise_weights_tensor / torch.amin(nodewise_graph_weights)) - 2),
-            decoded_data.batch)  # don't let these get too small
+            decoded_mol_batch.batch)  # don't let these get too
 
         # sum losses
         losses = (reconstruction_loss +
                   constraining_loss + node_weight_constraining_loss
-                  #+ self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss
-                  #+ self.config.autoencoder.clumping_loss_coefficient * clumping_loss
                   )
 
         if not skip_stats:
@@ -1204,17 +1224,15 @@ class Modeller:
                      'scaled_reconstruction_loss': (
                              reconstruction_loss.mean() * self.config.autoencoder_sigma).detach(),
                      'sigma': self.config.autoencoder_sigma,
-                     'mean_self_overlap': scatter(self_likelihoods, data.batch, reduce='mean').mean().detach(),
+                     'mean_self_overlap': scatter(self_likelihoods, mol_batch.batch, reduce='mean').mean().detach(),
                      'matching_nodes_fraction': matching_nodes_fraction.detach(),
                      'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
                      'node_weight_constraining_loss': node_weight_constraining_loss.mean().detach(),
-                     #'nearest_node_loss': nearest_node_loss.mean().detach(),
-                     #'clumping_loss': clumping_loss.mean().detach(),
                      }
         else:
             stats = {}
 
-        return losses, stats, decoded_data
+        return losses, stats, decoded_mol_batch
 
     def regression_epoch(self, data_loader, update_weights=True, iteration_override=None):
         if update_weights:

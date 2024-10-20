@@ -15,7 +15,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: gap_energy
+  regression_target: dipole
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -62,7 +62,7 @@ generate_sgs: null
 supercell_size: 5
 
 embedding_regressor:
-  prediction_type: scalar
+  prediction_type: vector
   num_targets: 1
   optimizer:
     beta1: 0.9
@@ -71,16 +71,16 @@ embedding_regressor:
     init_lr: 1.0e-4
     lr_growth_lambda: 1.1
     lr_schedule: true
-    lr_shrink_lambda: 0.95
-    max_lr: 5.0e-04
+    lr_shrink_lambda: 0.9975
+    max_lr: 1.0e-03
     min_lr: 5.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
     weight_decay: 0.1
 
   model:
-    hidden_dim: 128
+    hidden_dim: 256
     dropout: 0.1
     norm: layer
-    num_layers: 12
+    num_layers: 8
     vector_norm: 'vector layer'

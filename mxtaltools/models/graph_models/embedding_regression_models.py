@@ -7,12 +7,15 @@ from mxtaltools.models.modules.components import vectorMLP
 class EmbeddingRegressor(BaseGraphModel):
     """single property prediction head for pretrained embeddings"""
 
-    def __init__(self, seed, config, num_targets: int = 1, conditions_dim: int = 0):
+    def __init__(self, seed, config,
+                 num_targets: int = 1,
+                 conditions_dim: int = 0,
+                 prediction_type: str = 'scalar'):
         super(EmbeddingRegressor, self).__init__()
 
         torch.manual_seed(seed)
 
-        self.prediction_type = 'scalar'
+        self.prediction_type = prediction_type
         self.output_dim = int(1 * num_targets)
 
         # regression model
@@ -30,10 +33,10 @@ class EmbeddingRegressor(BaseGraphModel):
 
     def forward(self,
                 x: torch.Tensor,
-                v: torch.Tensor) -> torch.Tensor:
+                v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """no need to do standardization, inputs are raw outputs from autoencoder model
         """
 
         x, v = self.model(x=x, v=v)
 
-        return x
+        return x, v

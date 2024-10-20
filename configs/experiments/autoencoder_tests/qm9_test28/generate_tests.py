@@ -1071,7 +1071,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 27 - no dropout baseline
+    },  # 27 - no dropout baseline  # great, but overfitting
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -1107,7 +1107,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 28 - decoder dropout
+    },  # 28 - decoder dropout # good, then improving a lot with minimal overfit
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -1143,7 +1143,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 29 double dropout
+    },  # 29 double dropout  # terrible
     {
         'positional_noise': {'autoencoder': 0.05},
         'autoencoder': {
@@ -1179,7 +1179,82 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 30 - decocer dropout and a little noise
+    },  # 30 - decoder dropout and a little noise  # OK, overfits
+    # 28 permutations
+    # slower lr drop
+
+    {
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'sigma_threshold': 0.15,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9975,
+            },
+            'model': {
+                'bottleneck_dim': 760,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 760,
+                        'message_dim': 128,
+                        'embedding_dim': 760,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': 'graph layer'
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 760,
+                        'num_layers': 4,
+                        'dropout': 0.25,
+                        'norm': 'layer'},
+                    'num_nodes': 512
+                }}}
+    },  # 31 - larger model
+    {
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'sigma_threshold': 0.15,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9975,
+            },
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': 'graph layer'
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 4,
+                        'dropout': 0.5,
+                        'norm': 'layer'},
+                    'num_nodes': 512
+                }}}
+    },  # 32 - more dropout
 
 ]
 

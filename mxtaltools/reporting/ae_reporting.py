@@ -6,9 +6,11 @@ from plotly.subplots import make_subplots
 from scipy.spatial.distance import cdist
 from sklearn.cluster import AgglomerativeClustering
 from torch.nn import functional as F
+from torch_scatter import scatter_softmax
 
+from mxtaltools.models.functions.asymmetric_radius_graph import radius
 from mxtaltools.models.utils import compute_full_evaluation_overlap, compute_coord_evaluation_overlap, \
-    compute_type_evaluation_overlap
+    compute_type_evaluation_overlap, compute_gaussian_overlap, collate_decoded_data, get_node_weights, batch_rmsd
 
 
 def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims):
@@ -18,49 +20,39 @@ def autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims):
     # compute overlaps with evaluation settings
     nodewise_weights_tensor = decoded_data.aux_ind
     true_nodes = F.one_hot(data.x.long(), num_classes=dataDims['num_atom_types']).float()
-    full_overlap, self_overlap = compute_full_evaluation_overlap(data, decoded_data,
-                                                                 nodewise_weights_tensor,
+    full_overlap, self_overlap = compute_full_evaluation_overlap(data,
+                                                                 decoded_data,
                                                                  true_nodes,
                                                                  sigma=config.autoencoder.evaluation_sigma,
                                                                  distance_scaling=config.autoencoder.type_distance_scaling
                                                                  )
     coord_overlap, self_coord_overlap = compute_coord_evaluation_overlap(config, data, decoded_data,
-                                                                         nodewise_weights_tensor, true_nodes)
+                                                                         true_nodes)
     self_type_overlap, type_overlap = compute_type_evaluation_overlap(config, data, dataDims['num_atom_types'],
-                                                                      decoded_data, nodewise_weights_tensor, true_nodes)
+                                                                      decoded_data, true_nodes)
 
     return coord_overlap, full_overlap, self_coord_overlap, self_overlap, self_type_overlap, type_overlap
 
 
-def gaussian_3d_overlap_plots(data, decoded_data, max_point_types):
+def gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch, max_point_types):
     # 3D swarm fig
-    fig = swarm_vs_tgt_fig(data, decoded_data, max_point_types)
+    fig = swarm_vs_tgt_fig(mol_batch, decoded_mol_batch, max_point_types)
 
-    # RMSD calculation and scaffolded clustering figures
-    num_rmsd_samples = min(100, data.num_graphs)
-    rmsds = np.zeros(num_rmsd_samples)
-    max_dists = np.zeros_like(rmsds)
-    tot_overlaps = np.zeros_like(rmsds)
-    match_successful = np.zeros_like(rmsds)
-    for ind in range(num_rmsd_samples):
-        if ind == 0:
-            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind], fig2 = scaffolded_decoder_clustering(ind,
-                                                                                                                  data,
-                                                                                                                  decoded_data,
-                                                                                                                  max_point_types,
-                                                                                                                  return_fig=True)
-        else:
-            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind] = scaffolded_decoder_clustering(ind, data,
-                                                                                                            decoded_data,
-                                                                                                            max_point_types,
-                                                                                                            return_fig=False)
+    # rmsd, nodewise_dist, matched_graph, matched_node, pred_particle_points = batch_rmsd(
+    #     mol_batch,
+    #     decoded_mol_batch,
+    #     F.one_hot(mol_batch.x.long(), decoded_mol_batch.x.shape[1]).float(),
+    # )
+    #
+    # best_ind = int(torch.argmin(rmsd[matched_graph]))
+    #
+    # fig2 = swarm_cluster_fig(mol_batch.x[mol_batch.batch == best_ind],
+    #                          best_ind,
+    #                          pred_particle_points[mol_batch.batch == best_ind],
+    #                          decoded_mol_batch.aux_ind[decoded_mol_batch.batch == best_ind],
+    #                          ref_points[mol_batch.batch==best_ind])
 
-    return (fig, fig2,
-            np.mean(rmsds[np.isfinite(rmsds)]),
-            np.mean(max_dists[np.isfinite(max_dists)]),
-            tot_overlaps.mean(),
-            match_successful
-            )
+    return fig  #, fig2
 
 
 def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cutoff):
@@ -116,6 +108,7 @@ def decoder_agglomerative_clustering(points_pred, sample_weights, intrapoint_cut
 
 def scaffolded_decoder_clustering(graph_ind, data, decoded_data, num_classes,
                                   return_fig=True):  # todo parallelize over samples
+    assert False, "This has been obviated in gaussian_3d_overlap_plots"
     (pred_particles, pred_particle_weights, points_true) = (
         decoder_scaffolded_clustering(data, decoded_data, graph_ind, num_classes))
 
@@ -123,7 +116,11 @@ def scaffolded_decoder_clustering(graph_ind, data, decoded_data, num_classes,
                                                                                    pred_particles)
 
     if return_fig:
-        fig2 = swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights, pred_particles, points_true)
+        fig2 = swarm_cluster_fig(data,
+                                 graph_ind,
+                                 matched_particles,
+                                 pred_particle_weights,
+                                 points_true)
 
         return rmsd, max_dist, pred_particle_weights.mean(), match_successful, fig2
     else:
@@ -154,8 +151,11 @@ def decoder_scaffolded_clustering(data, decoded_data, graph_ind, num_classes):
         collected_particle_weights = sample_weights[collect_inds]
         # sum the probability mass within the cutoff of this scaffold particle
         pred_particle_weights[ind] = collected_particle_weights.sum()
-        # aggregate the nearby6 swarm into a single synthetic particle
-        pred_particles[ind] = np.sum(collected_particle_weights[:, None] * collected_particles, axis=0)
+        # aggregate the nearby swarm into a single synthetic particle
+        pred_particles[ind] = np.sum(
+            collected_particle_weights[:, None] * collected_particles,
+            axis=0
+        )
 
     return pred_particles, pred_particle_weights, points_true
 
@@ -181,16 +181,19 @@ def compute_point_cloud_rmsd(points_true, pred_particle_weights, pred_particles,
     return matched_particles, max_dist, rmsd, match_successful
 
 
-def extract_true_and_predicted_points(data, decoded_data, graph_ind, num_classes,
+def extract_true_and_predicted_points(mol_batch,
+                                      decoded_mol_batch,
+                                      graph_ind,
+                                      num_classes,
                                       to_numpy=False):
-    if data.x.ndim > 1:
-        data.x = data.x[:, 0]
-    coords_true = data.pos[data.batch == graph_ind]
-    coords_pred = decoded_data.pos[decoded_data.batch == graph_ind]
+    if mol_batch.x.ndim > 1:
+        mol_batch.x = mol_batch.x[:, 0]
+    coords_true = mol_batch.pos[mol_batch.batch == graph_ind]
+    coords_pred = decoded_mol_batch.pos[decoded_mol_batch.batch == graph_ind]
     points_true = torch.cat(
-        [coords_true, F.one_hot(data.x[data.batch == graph_ind].long(), num_classes=num_classes)], dim=1)
-    points_pred = torch.cat([coords_pred, decoded_data.x[decoded_data.batch == graph_ind]], dim=1)
-    sample_weights = decoded_data.aux_ind[decoded_data.batch == graph_ind]
+        [coords_true, F.one_hot(mol_batch.x[mol_batch.batch == graph_ind].long(), num_classes=num_classes)], dim=1)
+    points_pred = torch.cat([coords_pred, decoded_mol_batch.x[decoded_mol_batch.batch == graph_ind]], dim=1)
+    sample_weights = decoded_mol_batch.aux_ind[decoded_mol_batch.batch == graph_ind]
 
     if to_numpy:
         return (coords_true.cpu().detach().numpy(), coords_pred.cpu().detach().numpy(),
@@ -200,18 +203,28 @@ def extract_true_and_predicted_points(data, decoded_data, graph_ind, num_classes
         return coords_true, coords_pred, points_true, points_pred, sample_weights
 
 
-def swarm_cluster_fig(data, graph_ind, matched_particles, pred_particle_weights, pred_particles, points_true):
+def swarm_cluster_fig(atom_types,
+                      graph_ind,
+                      pred_particles,
+                      pred_particle_weights,
+                      points_true):
     fig2 = go.Figure()
     colors = (
         'rgb(229, 134, 6)', 'rgb(93, 105, 177)', 'rgb(82, 188, 163)', 'rgb(153, 201, 69)', 'rgb(204, 97, 176)',
         'rgb(36, 121, 108)', 'rgb(218, 165, 27)', 'rgb(47, 138, 196)', 'rgb(118, 78, 159)', 'rgb(237, 100, 90)',
         'rgb(165, 170, 153)')
     for j in range(len(points_true)):
-        vec = np.stack([matched_particles[j, :3], points_true[j, :3]])
+        vec = np.stack([pred_particles[j, :3], points_true[j, :3]])
         fig2.add_trace(
-            go.Scatter3d(x=vec[:, 0], y=vec[:, 1], z=vec[:, 2], mode='lines', line_color='black', showlegend=False))
-    for j in range(pred_particles.shape[-1] - 4):
-        ref_type_inds = torch.argwhere(data.x[data.batch == graph_ind] == j)[:, 0].cpu().detach().numpy()
+            go.Scatter3d(x=vec[:, 0],
+                         y=vec[:, 1],
+                         z=vec[:, 2],
+                         mode='lines',
+                         line_color='black',
+                         showlegend=False))
+
+    for j in range(points_true.shape[-1] - 3):
+        ref_type_inds = torch.argwhere(atom_types == j)[:, 0].cpu().detach().numpy()
         pred_type_inds = np.argwhere(pred_particles[:, 3:].argmax(1) == j)[:, 0]
         fig2.add_trace(go.Scatter3d(x=points_true[ref_type_inds][:, 0], y=points_true[ref_type_inds][:, 1],
                                     z=points_true[ref_type_inds][:, 2],

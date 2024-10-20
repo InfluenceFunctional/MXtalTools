@@ -19,6 +19,7 @@ from mxtaltools.common.utils import get_point_density, softmax_np
 
 from mxtaltools.common.geometry_calculations import cell_vol_np
 from mxtaltools.constants.mol_classifier_constants import polymorph2form
+from mxtaltools.models.utils import batch_rmsd
 from mxtaltools.reporting.ae_reporting import autoencoder_evaluation_overlaps, gaussian_3d_overlap_plots
 from mxtaltools.reporting.crystal_search_visualizations import stacked_property_distribution_lists
 
@@ -57,7 +58,7 @@ def cell_params_hist(wandb, stats_dict, sample_sources_list):
 
     lattice_features = ['cell_normed_a', 'cell_normed_b', 'cell_normed_c',
                         'cell_alpha', 'cell_beta', 'cell_gamma',
-                        'aunit_x', 'aunit_y','aunit_z',
+                        'aunit_x', 'aunit_y', 'aunit_z',
                         'orientation_1', 'orientation_2', 'orientation_2']
     # 1d Histograms
     colors = n_colors('rgb(255,0,0)', 'rgb(0, 0, 255)', len(samples_dict.keys()) + 1, colortype='rgb')
@@ -70,7 +71,8 @@ def cell_params_hist(wandb, stats_dict, sample_sources_list):
             fig.add_trace(go.Violin(
                 x=samples[:, i], y=[0 for _ in range(len(samples))], side='positive', orientation='h', width=4,
                 name=key, legendgroup=key, showlegend=True if i == 0 else False,
-                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False, line_color=colors[k_ind],
+                meanline_visible=True, bandwidth=float(np.ptp(samples[:, i]) / 100), points=False,
+                line_color=colors[k_ind],
             ),
                 row=row, col=col
             )
@@ -91,6 +93,7 @@ def iter_wise_hist(stats_dict, target_key, log=False):
                                               log=log,
                                               )
     return fig
+
 
 def plotly_setup(config):
     if config.machine == 'local':
@@ -1239,8 +1242,6 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
         wandb.log({'Generator Samples': fig}, commit=False)
 
 
-
-
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     target_key = config.dataset.regression_target
 
@@ -1435,7 +1436,7 @@ def detailed_reporting(config, dataDims, train_epoch_stats_dict, test_epoch_stat
             if config.logger.log_figures:
                 if config.mode == 'generator':
                     cell_params_hist(wandb, test_epoch_stats_dict,
-                                     ['generator_prior','generated_cell_parameters'])
+                                     ['generator_prior', 'generated_cell_parameters'])
                     wandb.log(data={'Iterwise vdW':
                                         iter_wise_hist(test_epoch_stats_dict, 'generator_per_mol_vdw_loss')
                                     }, commit=False)
@@ -1573,44 +1574,52 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
     type_index_tensor = torch.tensor(type_translation_index, dtype=torch.long, device='cpu')
 
     # get samples
-    data = epoch_stats_dict['sample'][0]
-    data.x = type_index_tensor[data.x.flatten().long()]
-    decoded_data = epoch_stats_dict['decoded_sample'][0]
+    mol_batch = epoch_stats_dict['sample'][0]
+    mol_batch.x = type_index_tensor[mol_batch.x.flatten().long()]
+    decoded_mol_batch = epoch_stats_dict['decoded_sample'][0]
 
     # compute various distribution overlaps
     (coord_overlap, full_overlap,
      self_coord_overlap, self_overlap,
-     self_type_overlap, type_overlap) = (
-        autoencoder_evaluation_overlaps(data, decoded_data, config, dataDims))
+     self_type_overlap, type_overlap,
+     ) = (
+        autoencoder_evaluation_overlaps(mol_batch, decoded_mol_batch, config, dataDims))
 
-    overall_overlap = scatter(full_overlap / self_overlap, data.batch, reduce='mean').cpu().detach().numpy()
-    evaluation_overlap_loss = scatter(F.smooth_l1_loss(self_overlap, full_overlap, reduction='none'), data.batch,
+    rmsd, _, matched_graphs, matched_nodes, _ = batch_rmsd(
+        mol_batch,
+        decoded_mol_batch,
+        F.one_hot(mol_batch.x.long(), decoded_mol_batch.x.shape[1]).float(),
+    )
+
+    overall_overlap = scatter(full_overlap / self_overlap, mol_batch.batch, reduce='mean').cpu().detach().numpy()
+    evaluation_overlap_loss = scatter(F.smooth_l1_loss(self_overlap, full_overlap, reduction='none'), mol_batch.batch,
                                       reduce='mean')
-
-    wandb.log(data={epoch_type + "_evaluation_positions_wise_overlap":
-                        scatter(coord_overlap / self_coord_overlap, data.batch,
-                                reduce='mean').mean().cpu().detach().numpy(),
-                    epoch_type + "_evaluation_typewise_overlap":
-                        scatter(type_overlap / self_type_overlap, data.batch,
-                                reduce='mean').mean().cpu().detach().numpy(),
-                    epoch_type + "_evaluation_overall_overlap": overall_overlap.mean(),
-                    epoch_type + "_evaluation_matching_clouds_fraction": (np.sum(1 - overall_overlap) < 0.01).mean(),
-                    epoch_type + "_evaluation_overlap_loss": evaluation_overlap_loss.mean().cpu().detach().numpy(),
-                    },
+    eval_stats = {epoch_type + "_evaluation_positions_wise_overlap":
+                      scatter(coord_overlap / self_coord_overlap, mol_batch.batch,
+                              reduce='mean').mean().cpu().detach().numpy(),
+                  epoch_type + "_evaluation_typewise_overlap":
+                      scatter(type_overlap / self_type_overlap, mol_batch.batch,
+                              reduce='mean').mean().cpu().detach().numpy(),
+                  epoch_type + "_evaluation_overall_overlap": overall_overlap.mean(),
+                  epoch_type + "_evaluation_matching_clouds_fraction": (np.sum(1 - overall_overlap) < 0.01).mean(),
+                  epoch_type + "_evaluation_overlap_loss": evaluation_overlap_loss.mean().cpu().detach().numpy(),
+                  epoch_type + "_rmsd": rmsd[matched_graphs].cpu().detach().numpy(),
+                  epoch_type + "_matched_graph_fraction": (
+                          torch.sum(matched_graphs) / len(matched_graphs)).cpu().detach().numpy(),
+                  epoch_type + "_matched_node_fraction": (
+                          torch.sum(matched_nodes) / len(matched_nodes)).cpu().detach().numpy(),
+                  }
+    wandb.log(data=eval_stats,
               commit=False)
 
     if config.logger.log_figures:
-        fig, fig2, rmsd, max_dist, tot_overlap, match_successful = (
-            gaussian_3d_overlap_plots(data, decoded_data,
+        fig = (
+            gaussian_3d_overlap_plots(mol_batch, decoded_mol_batch,
                                       dataDims['num_atom_types'],
                                       ))
         wandb.log(data={
             epoch_type + "_pointwise_sample_distribution": fig,
-            epoch_type + "_cluster_sample_distribution": fig2,
-            epoch_type + "_sample_RMSD": rmsd,
-            epoch_type + "_max_dist": max_dist,
-            epoch_type + "_probability_mass_overlap": tot_overlap,
-            epoch_type + "_rmsd_scaffolding_success_rate": np.mean(match_successful),
+            #epoch_type + "_cluster_sample_distribution": fig2,
         },
             commit=False)
 
@@ -1692,7 +1701,8 @@ def proxy_discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_
         fig_dict['Proxy Discriminator Parity Plot'] = fig
 
         for key, fig in fig_dict.items():
-            fig.write_image(key + 'fig.png', width=1024, height=1024)  # save the image rather than the fig, for size reasons
+            fig.write_image(key + 'fig.png', width=1024,
+                            height=1024)  # save the image rather than the fig, for size reasons
             fig_dict[key] = wandb.Image(key + 'fig.png')
 
         wandb.log(data=fig_dict, commit=False)

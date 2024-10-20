@@ -12,7 +12,7 @@ configs = [
     [4, 1024, 100, None, None, 0],  # 0
     [4, 1024, 500, None, None, 0],  # 1
     [4, 1024, 1000, None, None, 0],  # 2
-    [4, 1024, 2000, None, None, 0],  # 3
+    [4, 1024, 2000, None, None, 0],  # 3 - converged fastest/best
     [4, 1024, 4000, None, None, 0],  # 4
 
     [4, 2048, 2000, None, None, 0],  # 5
