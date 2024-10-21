@@ -15,7 +15,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: dipole
+  regression_target: quadrupole  # dipole, quadrupole
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -63,7 +63,7 @@ supercell_size: 5
 
 embedding_regressor:
   prediction_type: vector
-  num_targets: 1
+  num_targets: 24
   optimizer:
     beta1: 0.9
     beta2: 0.999

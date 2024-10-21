@@ -71,7 +71,7 @@ class Modeller:
         self.sweep_config = sweep_config
         self.device = self.config.device
         self.separator_string = "⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅⋅.˳˳.⋅ॱ˙˙ॱ⋅.˳˳.⋅ॱ˙˙ॱᐧ.˳˳.⋅"
-
+        self.always_do_analysis = False
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
 
@@ -671,6 +671,10 @@ class Modeller:
         return test_loader, train_loader, prev_epoch_failed
 
     def evaluate_model(self):
+        self.config.sample_reporting_frequency = 1
+        self.config.stats_reporting_frequency = 1
+        self.always_do_analysis = True
+
         if self.config.mode == 'generator':
             self.crystal_structure_prediction()
         else:
@@ -701,8 +705,12 @@ class Modeller:
                                    )
 
                 self.post_epoch_logging_analysis(data_loader, 0)
-
                 self.logger.evaluation_analysis(data_loader, self.config.mode)
+                for model_name in self.model_names:
+                    if self.train_models_dict[model_name]:
+                        self.logger.save_stats_dict(prefix=f'best_{model_name}_')
+
+                #self.logger.save_stats_dict(prefix=f'best_{model_name}_')
 
     def train_test_validate(self, epoch, extra_test_loader, steps_override, test_loader, train_loader):
         self.run_epoch(epoch_type='train',
@@ -839,7 +847,7 @@ class Modeller:
 
     def embedding_regression_step(self, data, update_weights):
         data = data.to(self.device)
-        _, data = self.preprocess_ae_inputs(data, no_noise=True, orientation_override='random')
+        _, data = self.preprocess_ae_inputs(data, no_noise=True, orientation_override=None)
         v_embedding = self.models_dict['autoencoder'].encode(data)
         s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
 
@@ -851,6 +859,8 @@ class Modeller:
         elif self.models_dict['embedding_regressor'].prediction_type == 'vector':
             losses = F.smooth_l1_loss(v_predictions[..., 0], data.y, reduction='none')
             predictions = v_predictions * self.dataDims['target_std'] + self.dataDims['target_mean']
+        else:
+            assert False, "Embedding regressor must be in scalar or vector mode"
 
         targets = data.y * self.dataDims['target_std'] + self.dataDims['target_mean']
 
@@ -863,7 +873,7 @@ class Modeller:
         self.logger.update_current_losses('embedding_regressor', self.epoch_type,
                                           regression_loss.cpu().detach().numpy(),
                                           losses.cpu().detach().numpy())
-        stats_values = [predictions.cpu().detach().numpy(), targets.cpu().detach().numpy()]
+        stats_values = [predictions[...,0].cpu().detach().numpy(), targets.cpu().detach().numpy()]
 
         self.logger.update_stats_dict(self.epoch_type,
                                       ['regressor_prediction', 'regressor_target'],
@@ -897,7 +907,17 @@ class Modeller:
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
         if not skip_stats:
-            self.ae_stats_and_reporting(mol_batch, decoded_mol_batch, last_step, stats, step)
+            # with torch.no_grad():
+            #     _, vector_embedding = self.models_dict['autoencoder'](input_data.clone(), return_latent=True)
+            #     scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
+            # stats['scalar_embedding'] = scalar_embedding.detach()
+            # stats['vector_embedding'] = vector_embedding.detach()
+            self.ae_stats_and_reporting(mol_batch,
+                                        decoded_mol_batch,
+                                        last_step,
+                                        stats,
+                                        step,
+                                        override_do_analysis=self.always_do_analysis)
 
     def fix_autoencoder_protonation(self, data, override_deprotonate=False):
         if (not self.models_dict['autoencoder'].inferring_protons and
@@ -921,12 +941,13 @@ class Modeller:
                                decoded_data: CrystalData,
                                last_step: bool,
                                stats: dict,
-                               step: int):
+                               step: int,
+                               override_do_analysis: bool = False):
         # if self.logger.epoch % self.config.logger.sample_reporting_frequency == 0:
         #     if step % 10 == 0:
         #         stats['encoding'] = encoding.detach()
 
-        if step == 0 or last_step:
+        if any([step == 0, last_step, override_do_analysis]):
             self.detailed_autoencoder_step_analysis(data, decoded_data, stats)
 
         dict_of_tensors_to_cpu_numpy(stats)
@@ -936,7 +957,10 @@ class Modeller:
                                       stats.values(),
                                       mode='append')
 
-    def detailed_autoencoder_step_analysis(self, mol_batch, decoded_mol_batch, stats):
+    def detailed_autoencoder_step_analysis(self,
+                                           mol_batch,
+                                           decoded_mol_batch,
+                                           stats):
         # equivariance checks
         encoder_equivariance_loss, decoder_equivariance_loss = self.ae_equivariance_loss(mol_batch.clone())
         stats['encoder_equivariance_loss'] = encoder_equivariance_loss.mean().detach()
@@ -959,7 +983,7 @@ class Modeller:
         overlap = (full_overlap / self_overlap).detach()
         tracking_loss = torch.abs(1 - overlap)
         stats['evaluation_overlap'] = scatter(overlap, mol_batch.batch, reduce='mean').detach()
-        rmsd, _, matched_graphs, matched_nodes, _ = batch_rmsd(
+        rmsd, nodewise_dists, matched_graphs, matched_nodes, _, pred_particle_weights = batch_rmsd(
             mol_batch,
             decoded_mol_batch,
             true_nodes,
@@ -967,6 +991,10 @@ class Modeller:
         stats['RMSD'] = rmsd[matched_graphs].mean().detach()
         stats['matching_graph_fraction'] = (torch.sum(matched_graphs)/len(matched_graphs)).detach()
         stats['matching_node_fraction'] = (torch.sum(matched_nodes)/len(matched_nodes)).detach()
+        stats['nodewise_dists'] = nodewise_dists[matched_nodes].mean().detach()
+        stats['nodewise_dists_dist'] = nodewise_dists[matched_nodes].detach()
+        stats['RMSD_dist'] = rmsd[matched_graphs].detach()
+        #stats['samples'] = mol_batch.detach()
 
         self.logger.update_current_losses('autoencoder', self.epoch_type,
                                           tracking_loss.mean().cpu().detach().numpy(),
@@ -1556,14 +1584,14 @@ class Modeller:
 
         return discriminator_losses, stats
 
-    def generator_step(self, data, step, update_weights, skip_stats):
+    def generator_step(self, mol_batch, step, update_weights, skip_stats):
         """
         execute a complete training step for the generator
         get sample losses, do reporting, update gradients
         """
 
         mol_data, scalar_mol_embedding, vector_mol_embedding = self.process_embed_for_generator(
-            data,
+            mol_batch,
             self.config.generator.canonical_conformer_orientation,
             self.config.generate_sgs,
             no_noise=False)
@@ -1643,8 +1671,8 @@ class Modeller:
                                                   generator_losses.detach().cpu().numpy())
                 stats = {
                     'generated_space_group_numbers': supercell_data.sg_ind.detach(),
-                    'identifiers': data.identifier,
-                    'smiles': data.smiles,
+                    'identifiers': mol_batch.identifier,
+                    'smiles': mol_batch.smiles,
                     'generator_vdw_delta': vdw_delta.detach(),
                     'generator_per_mol_vdw_loss': eval_vdw_loss.detach(),
                     'generator_per_mol_raw_vdw_loss': vdw_loss.detach(),

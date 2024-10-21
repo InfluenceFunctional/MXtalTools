@@ -749,7 +749,7 @@ def batch_rmsd(mol_batch,
     rmsd[~complete_graph_bools] = torch.nan
     pred_particle_points[missing_particle_bools] *= torch.nan
 
-    return rmsd, pred_dists, complete_graph_bools, ~missing_particle_bools, pred_particle_points
+    return rmsd, pred_dists, complete_graph_bools, ~missing_particle_bools, pred_particle_points, pred_particle_weights
 
 
 """ # new cheap RMSD calculation

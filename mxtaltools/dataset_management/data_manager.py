@@ -355,7 +355,7 @@ class DataManager:
                 targets = torch.cat([elem.dipole for elem in self.dataset])
             else:
                 try:
-                    targets = torch.cat([elem.__dict__[self.regression_target] for elem in self.dataset])
+                    targets = torch.cat([elem.__dict__['_store'][self.regression_target] for elem in self.dataset])
                 except:
                     assert False, "Unrecognized regression target"
 
@@ -370,7 +370,7 @@ class DataManager:
 
         else:  # need have something just to fill the space
             self.target_mean, self.target_std = 0, 1
-            return [0 for _ in range(len(self.dataset))]
+            return torch.tensor([0 for _ in range(len(self.dataset))])
 
     def get_reduced_volume_fraction(self):
         red_vol = torch.tensor([elem.reduced_volume for elem in self.dataset])

@@ -1245,11 +1245,9 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     target_key = config.dataset.regression_target
 
-    target = np.asarray(epoch_stats_dict['regressor_target'])
-    prediction = np.asarray(epoch_stats_dict['regressor_prediction'])
+    target = np.asarray(epoch_stats_dict['regressor_target']).flatten()
+    prediction = np.asarray(epoch_stats_dict['regressor_prediction']).flatten()
 
-    tgt_value = target
-    pred_value = prediction
     losses = ['abs_error', 'abs_normed_error', 'squared_error']
     loss_dict = {}
     fig_dict = {}
@@ -1266,31 +1264,31 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         loss_dict[loss + '_mean'] = np.mean(loss_i)
         loss_dict[loss + '_std'] = np.std(loss_i)
 
-        linreg_result = linregress(tgt_value, pred_value)
+        linreg_result = linregress(target, prediction)
         loss_dict['regression_R_value'] = linreg_result.rvalue
         loss_dict['regression_slope'] = linreg_result.slope
 
     # predictions vs target trace
-    xline = np.linspace(max(min(tgt_value), min(pred_value)),
-                        min(max(tgt_value), max(pred_value)), 2)
+    xline = np.linspace(max(min(target), min(prediction)),
+                        min(max(target), max(prediction)), 2)
 
-    xy = np.vstack([tgt_value, pred_value])
+    xy = np.vstack([target, prediction])
     try:
         z = get_point_density(xy)
     except:
-        z = np.ones_like(tgt_value)
+        z = np.ones_like(target)
 
     fig = make_subplots(cols=2, rows=1)
 
-    num_points = len(pred_value)
+    num_points = len(prediction)
     opacity = max(0.1, np.exp(-num_points / 10000))
-    fig.add_trace(go.Scattergl(x=tgt_value, y=pred_value, mode='markers', marker=dict(color=z), opacity=opacity,
+    fig.add_trace(go.Scattergl(x=target, y=prediction, mode='markers', marker=dict(color=z), opacity=opacity,
                                showlegend=False),
                   row=1, col=1)
     fig.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
                   row=1, col=1)
 
-    fig.add_trace(go.Histogram(x=pred_value - tgt_value,
+    fig.add_trace(go.Histogram(x=prediction - target,
                                histnorm='probability density',
                                nbinsx=100,
                                name="Error Distribution",
@@ -1585,7 +1583,7 @@ def log_autoencoder_analysis(config, dataDims, epoch_stats_dict, epoch_type):
      ) = (
         autoencoder_evaluation_overlaps(mol_batch, decoded_mol_batch, config, dataDims))
 
-    rmsd, _, matched_graphs, matched_nodes, _ = batch_rmsd(
+    rmsd, nodewise_dists, matched_graphs, matched_nodes, _, pred_particle_weights = batch_rmsd(
         mol_batch,
         decoded_mol_batch,
         F.one_hot(mol_batch.x.long(), decoded_mol_batch.x.shape[1]).float(),
