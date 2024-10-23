@@ -9,7 +9,7 @@ paths:
 
   # where to dfind datasets
   local_dataset_dir_path: "D:/crystal_datasets/"
-  cluster_dataset_dir_path: '/vast/mk8347/' #'/scratch/mk8347/csd_runs/datasets/'
+  cluster_dataset_dir_path: '/scratch/mk8347/csd_runs/datasets/'
 
   # where to do the run
   local_workdir_path: 'C:/Users/mikem/crystals/CSP_runs/'
