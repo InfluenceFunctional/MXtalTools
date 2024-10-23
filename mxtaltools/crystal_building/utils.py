@@ -611,33 +611,6 @@ def old_aunit2unit_cell(symmetry_multiplicity, aunit_coords_list, fc_transform_l
 
     return reference_cell_list
 
-
-def scale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
-    """
-    input fractional coordinates are scaled on 0-1
-    rescale these for the specific ranges according to each space group
-    only space groups in asym_unit_dict will work - not all have been manually encoded
-    this approach will not work for asymmetric units which are not parallelpipeds
-    Parameters
-    ----------
-    asym_unit_dict
-    mol_position
-    sg_inds
-
-    Returns
-    -------
-    """
-    # scaled_mol_position = mol_position.clone()
-    # for i, ind in enumerate(sg_ind):
-    #     scaled_mol_position[i, :] = mol_position[i, :] * asym_unit_dict[str(int(ind))]
-
-    # vectorized for speed
-    # asym_units = torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_ind])
-    # scaled_mol_position = mol_position * asym_units
-
-    return mol_position * torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
-
-
 def descale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     """
     input fractional coordinates are scaled on 0-1
@@ -653,15 +626,26 @@ def descale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
     Returns
     -------
     """
-    # scaled_mol_position = mol_position.clone()
-    # for i, ind in enumerate(sg_ind):
-    #     scaled_mol_position[i, :] = mol_position[i, :] * asym_unit_dict[str(int(ind))]
-
-    # vectorized for speed
-    # asym_units = torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_ind])
-    # scaled_mol_position = mol_position * asym_units
 
     return mol_position * torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
+
+
+def rescale_asymmetric_unit(asym_unit_dict, mol_position, sg_inds):
+    """
+    input fractional coordinates are scaled on 0-max
+    rescale these for the specific ranges according to each space group
+    only space groups in asym_unit_dict will work - not all have been manually encoded
+    this approach will not work for asymmetric units which are not neat parallelpipeds
+    Parameters
+    ----------
+    asym_unit_dict
+    mol_position
+    sg_inds
+
+    Returns
+    -------
+    """
+    return mol_position / torch.stack([asym_unit_dict[str(int(ind))] for ind in sg_inds])
 
 
 def DEPRECATED_write_sg_to_all_crystals(override_sg, dataDims, supercell_data, symmetries_dict, sym_ops_list):

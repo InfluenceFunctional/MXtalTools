@@ -4,7 +4,7 @@ test module for crystal builder utilities
 
 from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
-from mxtaltools.crystal_building.utils import (rotvec2rotmat, aunit2unit_cell, scale_asymmetric_unit,
+from mxtaltools.crystal_building.utils import (rotvec2rotmat, aunit2unit_cell, descale_asymmetric_unit,
                                                align_molecules_to_principal_axes, batch_asymmetric_unit_pose_analysis_torch)
 from scipy.spatial.transform import Rotation
 from mxtaltools.common.geometry_calculations import sph2rotvec, rotvec2sph, batch_molecule_principal_axes_torch

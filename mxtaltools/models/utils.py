@@ -11,7 +11,7 @@ from torch_scatter import scatter, scatter_softmax
 
 from mxtaltools.common.geometry_calculations import cell_vol_torch
 from mxtaltools.common.utils import softmax_np, components2angle
-from mxtaltools.crystal_building.utils import descale_asymmetric_unit, scale_asymmetric_unit
+from mxtaltools.crystal_building.utils import descale_asymmetric_unit, descale_asymmetric_unit, rescale_asymmetric_unit
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.dataloader_utils import update_dataloader_batch_size
 from mxtaltools.models.functions.asymmetric_radius_graph import radius
@@ -1110,7 +1110,7 @@ def clean_cell_params(samples,
         enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_dict))
 
     if rescale_asymmetric_unit:
-        fixed_positions = scale_asymmetric_unit(asym_unit_dict, mol_positions, sg_inds)
+        fixed_positions = descale_asymmetric_unit(asym_unit_dict, mol_positions, sg_inds)
     else:
         fixed_positions = mol_positions * 1
 
@@ -1155,7 +1155,10 @@ def get_intermolecular_dists_dict(supercell_data: CrystalData,
     return dist_dict
 
 
-def denormalize_generated_cell_params(generator_raw_samples, mol_data, asym_unit_dict):
+def denormalize_generated_cell_params(
+        generator_raw_samples,
+        mol_data,
+        asym_unit_dict):
     # denormalize the predicted cell lengths
     cell_lengths = torch.pow(mol_data.sym_mult * mol_data.mol_volume, 1 / 3)[:, None] * generator_raw_samples[:, :3]
     # rescale asymmetric units  # todo add assertions around these
@@ -1166,6 +1169,20 @@ def denormalize_generated_cell_params(generator_raw_samples, mol_data, asym_unit
         [cell_lengths, generator_raw_samples[:, 3:6], mol_positions, generator_raw_samples[:, 9:12]], dim=1)
     return generated_samples_to_build
 
+
+def renormalize_generated_cell_params(
+        generator_raw_samples,
+        mol_data,
+        asym_unit_dict):
+    # renormalize the predicted cell lengths
+    cell_lengths = generator_raw_samples[:, :3] / torch.pow(mol_data.sym_mult * mol_data.mol_volume, 1 / 3)[:, None]
+    # rescale asymmetric units  # todo add assertions around these
+    mol_positions = rescale_asymmetric_unit(asym_unit_dict,
+                                            generator_raw_samples[:, 6:9],
+                                            mol_data.sg_ind)
+    generated_samples_to_build = torch.cat(
+        [cell_lengths, generator_raw_samples[:, 3:6], mol_positions, generator_raw_samples[:, 9:12]], dim=1)
+    return generated_samples_to_build
 
 def compute_prior_loss(norm_factors: torch.Tensor,
                        sg_inds: torch.LongTensor,

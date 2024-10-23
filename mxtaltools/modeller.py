@@ -40,7 +40,8 @@ from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_s
                                      dict_of_tensors_to_cpu_numpy,
                                      test_decoder_equivariance, test_encoder_equivariance, collate_decoded_data,
                                      ae_reconstruction_loss, clean_cell_params, get_intermolecular_dists_dict,
-                                     denormalize_generated_cell_params, compute_prior_loss, batch_rmsd)
+                                     denormalize_generated_cell_params, compute_prior_loss, batch_rmsd,
+                                     renormalize_generated_cell_params)
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
 
@@ -1968,10 +1969,31 @@ class Modeller:
                     torch.randn_like(supercell_batch.pos) * self.config.positional_noise.discriminator
 
         '''score'''
-        output = self.models_dict['proxy_discriminator'](
-            torch.cat([s_embedding, supercell_batch.cell_params.detach()], dim=1),
-            v_embedding)[:, 0]
+        # rescale to nicer normalized basis
+        normed_params = renormalize_generated_cell_params(
+            supercell_batch.cell_params.detach(),
+            mol_batch,
+            self.crystal_builder.asym_unit_dict
+        )
+        # subtract means
+        lattice_means = torch.tensor([
+            1, 1, 1,
+            torch.pi/2, torch.pi/2, torch.pi/2,
+            0.5, 0.5, 0.5,
+            torch.pi/4, 0, torch.pi/2
+        ], device=self.device, dtype=torch.float32)
+        lattice_stds = torch.tensor([
+            .35, .35, .35,
+            .45, .45, .45,
+            0.25, 0.25, 0.25,
+            0.33, torch.pi/2, torch.pi/2
+        ], device=self.device, dtype=torch.float32)
+        scaled_params = (normed_params - lattice_means[None, :]) / lattice_stds[None, :]
 
+        output, _ = self.models_dict['proxy_discriminator'](
+            torch.cat([s_embedding, scaled_params], dim=1),
+            v_embedding)
+        prediction = output[:, 0]
         reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
         packing_coeff = mol_batch.mol_volume / reduced_volume
 
@@ -1984,12 +2006,12 @@ class Modeller:
                  'vdw_score': (vdw_loss/mol_batch.num_atoms).detach(),
                  'generated_cell_parameters': supercell_batch.cell_params.detach(),
                  'packing_coeff': packing_coeff.detach(),
-                 'vdw_prediction': (output * temp_std).detach(),
+                 'vdw_prediction': (prediction * temp_std).detach(),
                  }
 
         stats.update(negatives_stats)
 
-        return output, vdw_loss/mol_batch.num_atoms, stats
+        return prediction, vdw_loss/mol_batch.num_atoms, stats
 
     def anneal_prior_loss(self, good_inds):
         """

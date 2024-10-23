@@ -1,6 +1,6 @@
 from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.modeller import Modeller
-from mxtaltools.crystal_building.utils import (rotvec2rotmat, aunit2unit_cell, scale_asymmetric_unit,
+from mxtaltools.crystal_building.utils import (rotvec2rotmat, aunit2unit_cell, descale_asymmetric_unit,
                                                align_molecules_to_principal_axes, batch_asymmetric_unit_pose_analysis_torch)
 from scipy.spatial.transform import Rotation
 from mxtaltools.common.geometry_calculations import sph2rotvec, rotvec2sph, batch_molecule_principal_axes_torch
@@ -67,7 +67,7 @@ class TestClass:
     def WIP_scale_asymmetric_unit(self):
         space_groups = torch.tensor(np.asarray(list(supercell_builder.asym_unit_dict.keys())).astype(int))
         centroid_coords = torch.Tensor(np.random.uniform(0, 1, size=(len(space_groups), 3)))
-        scaled_centroids = scale_asymmetric_unit(supercell_builder.asym_unit_dict, mol_position=centroid_coords, sg_inds=space_groups)
+        scaled_centroids = descale_asymmetric_unit(supercell_builder.asym_unit_dict, mol_position=centroid_coords, sg_inds=space_groups)
         return None
 
     # todo this check may fail for high symmetry molecules - need either to get rid of them or find a way to deal with them
