@@ -80,13 +80,6 @@ class CrystalAnalyzer(torch.nn.Module):
         # self.atom_types = torch.tensor([8, 7, 7, 6, 6, 6, 6, 6, 6], dtype=torch.long, device=self.device)
         # self.mol_mass = 122.12
 
-    def adversarial_score(self, data):
-        """
-        get the score from the discriminator on data
-        """
-        output, extra_outputs = self.model(data.clone(), return_dists=True, return_latent=False)
-        return output, extra_outputs['dists_dict']
-
     @torch.no_grad()
     def score_single_crystal(self,
                              atomic_numbers: Union[torch.Tensor, np.ndarray, list],
@@ -152,8 +145,8 @@ class CrystalAnalyzer(torch.nn.Module):
                             atom_coordinates: Union[torch.Tensor, np.ndarray, list],
                             cell_lengths: Union[torch.Tensor, np.ndarray, list],
                             cell_angles: Union[torch.Tensor, np.ndarray, list],
-                            space_group_number: int,
-                            pose_parameters: Optional[Union[torch.Tensor, np.ndarray, list]] = None,
+                            space_group_number: Union[torch.LongTensor, np.ndarray, list],
+                            pose_parameters: Union[torch.Tensor, np.ndarray, list],
                             turnover_potential: float = 10,
                             ):
         """
@@ -449,6 +442,13 @@ class CrystalAnalyzer(torch.nn.Module):
 #                                          ['asymmetric_unit_is_well_defined', 'in', [True]],
 #                                          ['crystal_packing_coefficient', 'range', [0.5, 0.95]],
 #                                      ])
+    #
+    # def adversarial_score(self, data):
+    #     """
+    #     get the score from the discriminator on data
+    #     """
+    #     output, extra_outputs = self.model(data.clone(), return_dists=True, return_latent=False)
+    #     return output, extra_outputs['dists_dict']
 
 # todo all this has to be redone for our new features
 # predictions = []
