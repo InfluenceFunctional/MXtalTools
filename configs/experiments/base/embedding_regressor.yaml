@@ -62,7 +62,7 @@ generate_sgs: null
 supercell_size: 5
 
 embedding_regressor:
-  prediction_type: vector
+  prediction_type: tensor
   num_targets: 24
   optimizer:
     beta1: 0.9

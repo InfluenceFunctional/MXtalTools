@@ -4,7 +4,7 @@ wandb:
 
 paths:
   # where to look for configs
-  local_config_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/'
+  local_config_path: 'C:\Users\mikem\PycharmProjects\Python_Codes/MXtalTools/configs/'
   cluster_config_path: '/scratch/mk8347/mcrygan/configs/'
 
   # where to dfind datasets
@@ -22,7 +22,7 @@ paths:
   cluster_checkpoints_path: '/scratch/mk8347/csd_runs/models/'
 
  # default config if not specified on command line
-  yaml_path: 'C:/Users/mikem/OneDrive/NYU/CSD/MCryGAN/configs/experiments/dev.yaml'
+  yaml_path: 'C:\Users\mikem\PycharmProjects\Python_Codes/MXtalTools/configs/experiments/dev.yaml'
 
   # paths for polymorph classification only
   local_classifier_results_path: 'D:\crystals_extra\classifier_training\results/'

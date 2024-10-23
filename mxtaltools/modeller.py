@@ -16,6 +16,7 @@ from torch_scatter import scatter
 from tqdm import tqdm
 
 from mxtaltools.common.geometry_calculations import rotvec2sph
+from mxtaltools.common.spherical_harmonics import spherical_harmonics
 from mxtaltools.modelling.utils import get_model_sizes, copy_source_to_workdir
 from mxtaltools.common.training_utils import instantiate_models
 from mxtaltools.common.utils import init_sym_info, compute_rdf_distance, make_sequential_directory, \
@@ -859,6 +860,18 @@ class Modeller:
         elif self.models_dict['embedding_regressor'].prediction_type == 'vector':
             losses = F.smooth_l1_loss(v_predictions[..., 0], data.y, reduction='none')
             predictions = v_predictions * self.dataDims['target_std'] + self.dataDims['target_mean']
+
+        elif self.models_dict['embedding_regressor'].prediction_type == 'tensor':
+            # create a basis of tensors
+            # do a weighted sum with learned weights
+            # TODO this is not the correct way to make a symmetric rank 2 tensor
+            assert False
+            sph = spherical_harmonics(2, v_predictions)
+            weights = v_predictions.norm(dim=1)
+            t_predictions = torch.sum(weights[:, None, :] * sph, dim=2)
+            losses = F.smooth_l1_loss(t_predictions, data.y, reduction='none')
+            predictions = t_predictions[..., None] * self.dataDims['target_std'] + self.dataDims['target_mean']
+
         else:
             assert False, "Embedding regressor must be in scalar or vector mode"
 
