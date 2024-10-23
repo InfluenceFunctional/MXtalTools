@@ -956,7 +956,7 @@ def test_encoder_equivariance(data: CrystalData,
     check encoder end-to-end equivariance
     """
     '''embed the input data then rotate the embedding'''
-    encoding = autoencoder.encode(data.clone())
+    encoding = autoencoder.encode(data.clone(), override_centering=True)
     rotated_encoding = torch.einsum('nij, njk->nik',
                                     rotations,
                                     encoding
@@ -966,7 +966,7 @@ def test_encoder_equivariance(data: CrystalData,
     '''rotate the input data and embed it'''
     data.pos = torch.cat([torch.einsum('ij, kj->ki', rotations[ind], data.pos[data.batch == ind])
                           for ind in range(data.num_graphs)])
-    encoding2 = autoencoder.encode(data.clone())
+    encoding2 = autoencoder.encode(data.clone(), override_centering=True)
     encoding2 = encoding2.reshape(data.num_graphs, encoding2.shape[-1] * 3)
     '''compare the embeddings - should be identical for an equivariant embedding'''
     encoder_equivariance_loss = (torch.abs(rotated_encoding - encoding2) / torch.abs(rotated_encoding)).mean(-1)

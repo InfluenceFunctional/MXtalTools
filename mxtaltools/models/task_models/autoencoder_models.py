@@ -64,9 +64,12 @@ class Mo3ENet(BaseGraphModel):
         else:
             return decoding
 
-    def encode(self, data):
+    def encode(self,
+               data,
+               override_centering: bool=False):
         # normalize radii
-        assert torch.linalg.norm(data.pos.mean(0)) < 1e-3, "Encoder trained only for centered molecules!"
+        if not override_centering:
+            assert torch.linalg.norm(data.pos.mean(0)) < 1e-3, "Encoder trained only for centered molecules!"
         data.pos /= self.radial_normalization
         _, encoding = self.encoder(data)
 
