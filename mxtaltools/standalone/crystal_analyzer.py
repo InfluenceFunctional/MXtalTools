@@ -5,25 +5,19 @@ requirements numpy, scipy, torch, torch_geometric, torch_scatter, torch_cluster,
 # todo visualizer, autoencoder functions, cif i/o
 """
 import pathlib
-from argparse import Namespace
-from typing import Union, Tuple, Optional
+from typing import Union, Optional
 
 import numpy as np
 import torch
 from torch_geometric.loader.dataloader import Collater
 
-from mxtaltools.common.config_processing import process_main_config, dict2namespace, load_yaml
+from mxtaltools.common.config_processing import process_main_config
 from mxtaltools.common.utils import parse_to_torch
 from mxtaltools.constants.atom_properties import VDW_RADII
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.vdw_overlap import vdw_analysis
-from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
-from mxtaltools.models.task_models.crystal_models import MolecularCrystalModel
-from mxtaltools.models.task_models.generator_models import softplus_shift
-from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
-from mxtaltools.models.utils import reload_model, collate_decoded_data, ae_reconstruction_loss, \
-    get_intermolecular_dists_dict, enforce_1d_bound, enforce_crystal_system, clean_cell_params, \
+from mxtaltools.models.utils import get_intermolecular_dists_dict, clean_cell_params, \
     denormalize_generated_cell_params
 
 module_path = str(pathlib.Path(__file__).parent.resolve())
