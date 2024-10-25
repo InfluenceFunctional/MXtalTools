@@ -10,7 +10,11 @@ Proxy discriminator params
 # layers, depth, max batch, norm, vector norm, dropout
 configs = [
     [4, 1024, 2000, None, None, 0],  # 0
-    [12, 128, 2000, None, None, 0],  # 0
+    [12, 128, 2000, None, None, 0],  # 1
+    [4, 1024, 2000, 'layer', None, 0],  # 2
+    [4, 1024, 2000, None, 'vector layer', 0],  # 2
+    [4, 1024, 2000, None, None, 0.1],  # 2
+    [4, 1024, 500, None, None, 0],  # 0
 ]
 
 ind = 0
