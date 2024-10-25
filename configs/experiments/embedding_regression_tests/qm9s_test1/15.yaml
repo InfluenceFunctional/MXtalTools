@@ -4,10 +4,10 @@ checkpointing_loss_type: test
 dataset:
   filter_protons: false
   max_dataset_length: 10000000
-  regression_target: heat_capacity_STP
+  regression_target: dipole
   test_fraction: 0.2
   type: molecule
-dataset_name: qm9_dataset.pt
+dataset_name: qm9s_dataset.pt
 dataset_yaml_path: /qm9_autoencoder.yaml
 device: cuda
 early_epochs_step_override: 5
@@ -34,7 +34,7 @@ embedding_regressor:
     optimizer: adamw
     use_plateau_scheduler: false
     weight_decay: 0.1
-  prediction_type: scalar
+  prediction_type: vector
 extra_test_period: 1
 generate_sgs: null
 gradient_norm_clip: 1

@@ -51,6 +51,7 @@ for ind in range(len(targets)):  # 0-19 main production runs
 
     config_list.append(bb)
 
+config_list = config_list[1:]
 ind = 0
 for ix1 in range(
         len(config_list)):  # note for later use - 'depth' here is not a config which is used! we were fooling ourselves!!

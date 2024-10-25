@@ -15,7 +15,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: octapole  # dipole, quadrupole
+  regression_target: dipole_moment  # dipole, quadrupole
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -62,8 +62,8 @@ generate_sgs: null
 supercell_size: 5
 
 embedding_regressor:
-  prediction_type: '3-tensor'
-  num_targets: 129  # must cleanly divide tensor order
+  prediction_type: 'scalar'
+  num_targets: 1  # must cleanly divide tensor order
   optimizer:
     beta1: 0.9
     beta2: 0.999

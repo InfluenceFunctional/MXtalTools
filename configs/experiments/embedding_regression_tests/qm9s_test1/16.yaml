@@ -4,7 +4,7 @@ checkpointing_loss_type: test
 dataset:
   filter_protons: false
   max_dataset_length: 10000000
-  regression_target: dipole
+  regression_target: polar
   test_fraction: 0.2
   type: molecule
 dataset_name: qm9s_dataset.pt
@@ -20,7 +20,7 @@ embedding_regressor:
     norm_mode: batch
     num_layers: 12
     vector_norm: vector layer
-  num_targets: 1
+  num_targets: 128
   optimizer:
     beta1: 0.9
     beta2: 0.999
@@ -34,7 +34,7 @@ embedding_regressor:
     optimizer: adamw
     use_plateau_scheduler: false
     weight_decay: 0.1
-  prediction_type: vector
+  prediction_type: 2-tensor
 extra_test_period: 1
 generate_sgs: null
 gradient_norm_clip: 1

@@ -1245,8 +1245,12 @@ def new_cell_scatter(epoch_stats_dict, wandb, layout):
 def log_regression_accuracy(config, dataDims, epoch_stats_dict):
     target_key = config.dataset.regression_target
 
-    raw_target = np.asarray(epoch_stats_dict['regressor_target'])
-    raw_prediction = np.asarray(epoch_stats_dict['regressor_prediction'])
+    try:
+        raw_target = np.asarray(epoch_stats_dict['regressor_target'])
+        raw_prediction = np.asarray(epoch_stats_dict['regressor_prediction'])
+    except:
+        raw_target = np.concatenate(epoch_stats_dict['regressor_target'])
+        raw_prediction = np.concatenate(epoch_stats_dict['regressor_prediction'])
 
     if False: #raw_target.ndim > 2 and raw_target.shape[1] > 1:
         aa = 1
