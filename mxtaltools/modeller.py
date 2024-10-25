@@ -535,7 +535,8 @@ class Modeller:
         scaffold_rmsds, scaffold_max_dists, scaffold_matched = [], [], []
         #glom_rmsds, glom_max_dists = [], []
         for ind in range(mol_batch.num_graphs):  # somewhat slow
-            rmsd, max_dist, weight_mean, match_successful = scaffolded_decoder_clustering(ind, mol_batch, decoded_mol_batch,
+            rmsd, max_dist, weight_mean, match_successful = scaffolded_decoder_clustering(ind, mol_batch,
+                                                                                          decoded_mol_batch,
                                                                                           self.dataDims[
                                                                                               'num_atom_types'],
                                                                                           return_fig=False)
@@ -556,8 +557,10 @@ class Modeller:
                         mol_batch.radius.cpu().detach().numpy(),
                         scalar_encoding.cpu().detach().numpy(),
                         scatter(full_overlap / self_overlap, mol_batch.batch, reduce='mean').cpu().detach().numpy(),
-                        scatter(coord_overlap / self_coord_overlap, mol_batch.batch, reduce='mean').cpu().detach().numpy(),
-                        scatter(self_type_overlap / type_overlap, mol_batch.batch, reduce='mean').cpu().detach().numpy(),
+                        scatter(coord_overlap / self_coord_overlap, mol_batch.batch,
+                                reduce='mean').cpu().detach().numpy(),
+                        scatter(self_type_overlap / type_overlap, mol_batch.batch,
+                                reduce='mean').cpu().detach().numpy(),
                         Ip.cpu().detach().numpy(),
                         Ipm.cpu().detach().numpy(),
                         np.asarray(scaffold_rmsds),
@@ -856,27 +859,61 @@ class Modeller:
         s_predictions, v_predictions = self.models_dict['embedding_regressor'](s_embedding, v_embedding)
         if self.models_dict['embedding_regressor'].prediction_type == 'scalar':
             losses = F.smooth_l1_loss(s_predictions[..., 0], data.y, reduction='none')
-            predictions = s_predictions * self.dataDims['target_std'] + self.dataDims['target_mean']
+            predictions = s_predictions
 
         elif self.models_dict['embedding_regressor'].prediction_type == 'vector':
             losses = F.smooth_l1_loss(v_predictions[..., 0], data.y, reduction='none')
-            predictions = v_predictions * self.dataDims['target_std'] + self.dataDims['target_mean']
+            predictions = v_predictions
 
-        elif self.models_dict['embedding_regressor'].prediction_type == 'tensor':
-            # create a basis of tensors
+        elif self.models_dict['embedding_regressor'].prediction_type == '2-tensor':
+            # generate a batch of rank 2 even (2e) symmetric tensors
             # do a weighted sum with learned weights
-            # TODO this is not the correct way to make a symmetric rank 2 tensor
-            assert False
-            sph = spherical_harmonics(2, v_predictions)
-            weights = v_predictions.norm(dim=1)
-            t_predictions = torch.sum(weights[:, None, :] * sph, dim=2)
+            a, b = v_predictions.split(v_predictions.shape[-1] // 2, dim=2)
+
+            t1 = torch.einsum('nik,njk->nijk', a, b)
+            t2 = torch.einsum('nik,njk->nijk', b, a)
+
+            # linearly combine them, weighted by the scalar outputs
+            weights = F.softmax(s_predictions[:, a.shape[-1]:], dim=1)
+            isotropic_part = (s_predictions[:, :a.shape[-1], None, None].sum(1) *
+                              torch.eye(3, device=self.device, dtype=torch.float32
+                                        ).repeat(data.num_graphs, 1, 1))
+
+            symmetric_tensor = ((t1 + t2) / 2)
+            t_predictions = torch.sum(weights[:, None, None, :] * symmetric_tensor, dim=-1) + isotropic_part
             losses = F.smooth_l1_loss(t_predictions, data.y, reduction='none')
-            predictions = t_predictions[..., None] * self.dataDims['target_std'] + self.dataDims['target_mean']
+            predictions = t_predictions
+
+        elif self.models_dict['embedding_regressor'].prediction_type == '3-tensor':
+            # create a basis of rand 3 odd (3o) symmetric tensors
+            # do a weighted sum with learned weights
+            a, b, c = v_predictions.split([v_predictions.shape[-1] // 3 for _ in range(3)], dim=2)
+
+            t12 = torch.einsum('nik,njk->nijk', a, b)
+            t21 = torch.einsum('nik,njk->nijk', b, a)
+            t23 = torch.einsum('nik,njk->nijk', b, c)
+            t32 = torch.einsum('nik,njk->nijk', c, b)
+            t13 = torch.einsum('nik,njk->nijk', a, c)
+            t31 = torch.einsum('nik,njk->nijk', c, a)
+
+            t123 = torch.einsum('nijk,nlk->nijlk', t12, c)
+            t213 = torch.einsum('nijk,nlk->nijlk', t21, c)
+            t231 = torch.einsum('nijk,nlk->nijlk', t23, a)
+            t321 = torch.einsum('nijk,nlk->nijlk', t32, a)
+            t132 = torch.einsum('nijk,nlk->nijlk', t13, b)
+            t312 = torch.einsum('nijk,nlk->nijlk', t31, b)
+
+            symmetric_tensor = (1/6)*(t123+t213+t231+t321+t132+t312)
+
+            # linearly combine them, weighted by the scalar outputs
+            weights = F.softmax(s_predictions[:, :a.shape[-1]], dim=1)
+
+            t_predictions = torch.sum(weights[:, None, None, None, :] * symmetric_tensor, dim=-1)# + isotropic_part
+            losses = F.smooth_l1_loss(t_predictions, data.y, reduction='none')
+            predictions = t_predictions
 
         else:
             assert False, "Embedding regressor must be in scalar or vector mode"
-
-        targets = data.y * self.dataDims['target_std'] + self.dataDims['target_mean']
 
         regression_loss = losses.mean()
         if update_weights:
@@ -887,7 +924,9 @@ class Modeller:
         self.logger.update_current_losses('embedding_regressor', self.epoch_type,
                                           regression_loss.cpu().detach().numpy(),
                                           losses.cpu().detach().numpy())
-        stats_values = [predictions[...,0].cpu().detach().numpy(), targets.cpu().detach().numpy()]
+        stats_values = [
+            (predictions.cpu().detach() * self.dataDims['target_std'] + self.dataDims['target_mean'])[None,...].numpy(),
+            (data.y.cpu().detach() * self.dataDims['target_std'] + self.dataDims['target_mean'])[None,...].numpy()]
 
         self.logger.update_stats_dict(self.epoch_type,
                                       ['regressor_prediction', 'regressor_target'],
@@ -907,7 +946,8 @@ class Modeller:
             skip_stats = True
 
         decoding = self.models_dict['autoencoder'](input_data.clone(), return_latent=False)
-        losses, stats, decoded_mol_batch = self.compute_autoencoder_loss(decoding, mol_batch.clone(), skip_stats=skip_stats)
+        losses, stats, decoded_mol_batch = self.compute_autoencoder_loss(decoding, mol_batch.clone(),
+                                                                         skip_stats=skip_stats)
 
         mean_loss = losses.mean()
         if torch.sum(torch.logical_not(torch.isfinite(mean_loss))) > 0:
@@ -1003,8 +1043,8 @@ class Modeller:
             true_nodes,
         )
         stats['RMSD'] = rmsd[matched_graphs].mean().detach()
-        stats['matching_graph_fraction'] = (torch.sum(matched_graphs)/len(matched_graphs)).detach()
-        stats['matching_node_fraction'] = (torch.sum(matched_nodes)/len(matched_nodes)).detach()
+        stats['matching_graph_fraction'] = (torch.sum(matched_graphs) / len(matched_graphs)).detach()
+        stats['matching_node_fraction'] = (torch.sum(matched_nodes) / len(matched_nodes)).detach()
         stats['nodewise_dists'] = nodewise_dists[matched_nodes].mean().detach()
         stats['nodewise_dists_dist'] = nodewise_dists[matched_nodes].detach()
         stats['RMSD_dist'] = rmsd[matched_graphs].detach()
@@ -1239,7 +1279,8 @@ class Modeller:
             self.config.autoencoder_sigma,
         )
 
-        matching_nodes_fraction = torch.sum(nodewise_reconstruction_loss < 0.01) / mol_batch.num_nodes  # within 1% matching
+        matching_nodes_fraction = torch.sum(
+            nodewise_reconstruction_loss < 0.01) / mol_batch.num_nodes  # within 1% matching
 
         # node radius constraining loss
         decoded_dists = torch.linalg.norm(decoded_mol_batch.pos, dim=1)
@@ -1978,15 +2019,15 @@ class Modeller:
         # subtract means
         lattice_means = torch.tensor([
             1, 1, 1,
-            torch.pi/2, torch.pi/2, torch.pi/2,
+            torch.pi / 2, torch.pi / 2, torch.pi / 2,
             0.5, 0.5, 0.5,
-            torch.pi/4, 0, torch.pi/2
+            torch.pi / 4, 0, torch.pi / 2
         ], device=self.device, dtype=torch.float32)
         lattice_stds = torch.tensor([
             .35, .35, .35,
             .45, .45, .45,
             0.25, 0.25, 0.25,
-            0.33, torch.pi/2, torch.pi/2
+            0.33, torch.pi / 2, torch.pi / 2
         ], device=self.device, dtype=torch.float32)
         scaled_params = (normed_params - lattice_means[None, :]) / lattice_stds[None, :]
 
@@ -2002,8 +2043,8 @@ class Modeller:
             = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_batch.num_graphs, self.vdw_turnover_potential)
 
         temp_std = 15
-        stats = {'vdw_potential': (vdw_potential/mol_batch.num_atoms).detach(),
-                 'vdw_score': (vdw_loss/mol_batch.num_atoms).detach(),
+        stats = {'vdw_potential': (vdw_potential / mol_batch.num_atoms).detach(),
+                 'vdw_score': (vdw_loss / mol_batch.num_atoms).detach(),
                  'generated_cell_parameters': supercell_batch.cell_params.detach(),
                  'packing_coeff': packing_coeff.detach(),
                  'vdw_prediction': (prediction * temp_std).detach(),
@@ -2011,7 +2052,7 @@ class Modeller:
 
         stats.update(negatives_stats)
 
-        return prediction, vdw_loss/mol_batch.num_atoms, stats
+        return prediction, vdw_loss / mol_batch.num_atoms, stats
 
     def anneal_prior_loss(self, good_inds):
         """

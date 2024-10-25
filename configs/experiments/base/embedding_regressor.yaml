@@ -15,7 +15,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
   filter_protons: False
-  regression_target: quadrupole  # dipole, quadrupole
+  regression_target: octapole  # dipole, quadrupole
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -25,9 +25,9 @@ min_batch_size: 50
 max_batch_size: 2000
 batch_growth_increment: 0.1 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 50
+minimum_epochs: 100
 max_epochs: 10000 # 0 epochs takes us straight to sampling/evaluation (only implemented for GAN)
-history: 50  # for convergence checks
+history: 100  # for convergence checks
 gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
@@ -62,8 +62,8 @@ generate_sgs: null
 supercell_size: 5
 
 embedding_regressor:
-  prediction_type: tensor
-  num_targets: 24
+  prediction_type: '3-tensor'
+  num_targets: 129  # must cleanly divide tensor order
   optimizer:
     beta1: 0.9
     beta2: 0.999

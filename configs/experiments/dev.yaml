@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/autoencoder.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
-dataset_name: test_qm9_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+base_config_path: /experiments/base/embedding_regressor.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
+dataset_name: test_qm9s_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 #misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
 extra_test_set_name: null
 save_checkpoints: True
@@ -50,11 +50,11 @@ model_paths:
   discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
   generator: null #cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
   regressor: null #'volume_model.pt'
-  autoencoder: null #cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test28_27_15-10-20-22-51
+  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test28_27_15-10-20-22-51
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
 autoencoder:
-  infer_protons: True
+  infer_protons: False
   filter_protons: False
 

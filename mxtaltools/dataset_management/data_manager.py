@@ -361,12 +361,19 @@ class DataManager:
 
             clipped_targets = targets.clip(min=torch.quantile(targets, 0.05), max=torch.quantile(targets, 0.95))
 
-            self.target_mean = clipped_targets.mean()
-            self.target_std = clipped_targets.std()
-            if self.target_std < 1e-4:
-                self.target_std = 1
+            if targets[0].ndim > 1:
+                self.target_mean = clipped_targets.mean(0)
+                self.target_std = clipped_targets.std(0)
+            else:
+                self.target_mean = clipped_targets.mean()
+                self.target_std = clipped_targets.std()
 
-            return (targets - self.target_mean) / self.target_std
+            if self.target_std.max() < 1e-4:
+                self.target_std = torch.ones_like(self.target_std)
+
+            std_targets = (targets - self.target_mean) / self.target_std
+
+            return std_targets
 
         else:  # need have something just to fill the space
             self.target_mean, self.target_std = 0, 1

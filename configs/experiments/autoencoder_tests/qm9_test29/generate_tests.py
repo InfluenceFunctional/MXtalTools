@@ -6,6 +6,7 @@ base_config = load_yaml('base.yaml')
 
 config_list = [
        {
+        'max_batch_size': 300,
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'filter_protons': True,
@@ -15,7 +16,7 @@ config_list = [
                 'init_lr': 5e-5,
                 'encoder_init_lr': 1e-4,
                 'decoder_init_lr': 1e-4,
-                'max_lr': 1e-3,
+                'max_lr': 5e-4,
                 'min_lr': 1e-6,
                 'weight_decay': 0.05,
                 'lr_growth_lambda': 1.05,
@@ -42,7 +43,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 0 - baseline - no proton
+    },  # 0 - baseline - no proton - crashed - rerun
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
