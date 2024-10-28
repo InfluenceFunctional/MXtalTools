@@ -1,6 +1,6 @@
 autoencoder:
   evaluation_sigma: 0.35
-  filter_protons: true
+  filter_protons: false
   infer_protons: false
   init_sigma: 1.05
   max_overlap_threshold: 0.25
@@ -9,7 +9,7 @@ autoencoder:
     decoder:
       activation: gelu
       fc:
-        dropout: 0.25
+        dropout: 0.5
         hidden_dim: 512
         norm: layer
         num_layers: 4
@@ -50,7 +50,7 @@ autoencoder:
     lr_growth_lambda: 1.05
     lr_schedule: true
     lr_shrink_lambda: 0.9975
-    max_lr: 0.0005
+    max_lr: 0.001
     min_lr: 1.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
@@ -74,12 +74,12 @@ gradient_norm_clip: 1
 grow_batch_size: true
 history: 50
 logger:
-  experiment_tag: qm9_test28
-  run_name: qm9_test28_0
+  experiment_tag: qm9_test30
+  run_name: qm9_test30_0
   sample_reporting_frequency: 10
   stats_reporting_frequency: 10
 machine: cluster
-max_batch_size: 300
+max_batch_size: 500
 max_epoch_steps: 500
 max_epochs: 10000
 min_batch_size: 10

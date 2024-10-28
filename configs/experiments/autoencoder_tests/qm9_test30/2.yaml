@@ -1,7 +1,7 @@
 autoencoder:
   evaluation_sigma: 0.35
-  filter_protons: true
-  infer_protons: false
+  filter_protons: false
+  infer_protons: true
   init_sigma: 1.05
   max_overlap_threshold: 0.25
   model:
@@ -75,7 +75,7 @@ grow_batch_size: true
 history: 50
 logger:
   experiment_tag: qm9_test30
-  run_name: qm9_test30_0_1
+  run_name: qm9_test30_0_1_2
   sample_reporting_frequency: 10
   stats_reporting_frequency: 10
 machine: cluster
