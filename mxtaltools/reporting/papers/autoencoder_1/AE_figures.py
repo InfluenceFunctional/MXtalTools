@@ -8,22 +8,13 @@ from PIL import Image
 import os
 from scipy.interpolate import interpn
 from scipy.stats import linregress
+from model_paths import ae_results_paths, er_results_paths, targets, proxy_results_paths
 
-stats_dict_paths = [
-    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_18_10-05-13-11-30_fixed.npy',
-    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_25_11-05-19-15-19.npy',
-    r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test24_27_11-05-11-26-48.npy',
-]
-# best results from previous runs
-# stats_dict_paths = [r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_4_26-02-22-29-57.npy',
-#                     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_7_27-02-14-34-41.npy',
-#                     r'C:\Users\mikem\crystals\CSP_runs\models/_tests_qm9_test23_8_27-02-15-35-51.npy']
+stats_dict_names = ["With Hydrogen",
+                    "Without Hydrogen",
+                    "Inferred Hydrogen"]
 
-stats_dict_names = ["Without Hydrogen",
-                    "With Hydrogen",
-                    "Inferred Hydrogens"]
-
-colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', len(stats_dict_paths), colortype='rgb')
+colors = n_colors('rgb(250,50,5)', 'rgb(5,120,200)', len(ae_results_paths), colortype='rgb')
 
 
 def get_fraction(atomic_numbers, target: int):
@@ -95,8 +86,8 @@ def RMSD_fig():
     """
     # load test stats
     stats_dicts = {}
-    for ind in range(len(stats_dict_paths)):
-        d = np.load(stats_dict_paths[ind], allow_pickle=True).item()
+    for ind in range(len(ae_results_paths)):
+        d = np.load(ae_results_paths[ind], allow_pickle=True).item()
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
 
     bandwidth = 0.005
@@ -104,11 +95,10 @@ def RMSD_fig():
     for ind, run_name in enumerate(stats_dicts.keys()):
         stats_dict = stats_dicts[run_name]
 
-        x = np.concatenate(stats_dict['scaffold_rmsds'])
-        matched = np.concatenate(stats_dict['scaffold_matched'])
-        matched_inds = np.argwhere(matched).flatten()
+        x = np.concatenate(stats_dict['RMSD_dist'])
+        matched = np.concatenate(stats_dict['matched_graphs'])
         unmatched = np.mean(np.invert(matched))
-        finite_x = x[matched_inds]
+        finite_x = x[matched]
         print(finite_x.mean())
 
         fig.add_annotation(x=0.4, y=ind + 0.3, showarrow=False,
@@ -218,18 +208,41 @@ def UMAP_fig(max_entries=10000000):
     generate and plot embeddings
     correlate against molecule features - maybe a mixed colour scheme?
     """
-    # load test stats
-    stats_dicts = {}
-    for ind in range(len(stats_dict_paths)):
-        d = np.load(stats_dict_paths[ind], allow_pickle=True).item()
-        stats_dicts[stats_dict_names[ind]] = d['test_stats']
-    run_name = "With Hydrogen"
-
-    stats_dict = stats_dicts[run_name]
-    del stats_dicts
+    stats_dict = np.load(ae_results_paths[0], allow_pickle=True).item()
     import umap
+    # combine train and test stats
+    for key in stats_dict['train_stats'].keys():
+        try:
+            combo = np.concatenate([stats_dict['train_stats'][key], stats_dict['test_stats'][key]])
+
+
+        except:
+            try:
+                combo = np.concatenate([np.concatenate(stats_dict['train_stats'][key]),
+                                        np.concatenate(stats_dict['test_stats'][key])])
+            except:
+                try:
+                    combo = stats_dict['train_stats'][key] + stats_dict['test_stats'][key]
+                except:
+                    print(key)
+                    print('noo!')
+        stats_dict[key] = combo
+
+    del stats_dict['train_stats'], stats_dict['test_stats']
+
+    from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
+    Ipm = []
+    for elem in stats_dict['sample']:
+        _, ipm, _ = batch_molecule_principal_axes_torch([elem.pos[elem.batch == ind] for ind in range(elem.num_graphs)])
+        Ipm.extend(ipm)
+
+    Ipm = np.stack(Ipm)
+    Ip1 = Ipm[:, 0]
+    Ip2 = Ipm[:, 1]
+    Ip3 = Ipm[:, 2]
 
     from rdkit.Chem import rdMolDescriptors
+    stats_dict['molecule_smiles'] = stats_dict['molecule_smiles'].flatten()
     c_fraction = np.zeros(len(stats_dict['molecule_smiles']))
     n_fraction = np.zeros_like(c_fraction)
     o_fraction = np.zeros_like(c_fraction)
@@ -250,14 +263,10 @@ def UMAP_fig(max_entries=10000000):
 
     PR_triangle_points = np.asarray([[1, 1], [0, 1], [0.5, 0.5]])  # principal inertial ratio points on the triangle
 
-    stats_dict['molecule_principal_moment_1'] = stats_dict['principal_inertial_moments'][:, 0]
-    stats_dict['molecule_principal_moment_2'] = stats_dict['principal_inertial_moments'][:, 1]
-    stats_dict['molecule_principal_moment_3'] = stats_dict['principal_inertial_moments'][:, 2]
-    # conventional principal ratios - our convention agreeing with QMUGS
-    principal_ratio1 = stats_dict['molecule_principal_moment_2'] / stats_dict['molecule_principal_moment_3']  # + 1e-3)
+    principal_ratio1 = Ip2 / Ip3  # + 1e-3)
     principal_ratio1 = np.nan_to_num(principal_ratio1, posinf=0, neginf=0)[:max_entries]
     principal_ratio1 /= np.quantile(principal_ratio1, 0.9999)
-    principal_ratio2 = stats_dict['molecule_principal_moment_1'] / stats_dict['molecule_principal_moment_3']  # + 1e-3)
+    principal_ratio2 = Ip1/Ip3  # + 1e-3)
     principal_ratio2 = np.nan_to_num(principal_ratio2)[:max_entries]
     principal_ratio2 /= np.quantile(principal_ratio2, 0.9999)
 
@@ -307,7 +316,7 @@ def UMAP_fig(max_entries=10000000):
                         metric='cosine',
                         n_neighbors=10,
                         min_dist=0.2)
-    scalar_encodings = stats_dict['scalar_encoding'][:max_entries]
+    scalar_encodings = stats_dict['scalar_embedding'][:max_entries]
 
     embedding = reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std())
 
@@ -444,49 +453,37 @@ def normalize_colors(composition_coloration):
 
 
 def embedding_regression_figure():
-    os.chdir(r'C:\Users\mikem\crystals\CSP_runs\er7_results')
-    elem = os.listdir()
-    ers = [thing for thing in elem if '_embedding_regression_' in thing]
-    target_names = ["rotational_constant_a",  # 0
-                    "rotational_constant_b",  # 1
-                    "rotational_constant_c",  # 2
-                    "dipole_moment",  # 3
-                    "isotropic_polarizability",  # 4
-                    "HOMO_energy",  # 5
-                    "LUMO_energy",  # 6
-                    "gap_energy",  # 7
-                    "el_spatial_extent",  # 8
-                    "zpv_energy",  # 9
-                    "internal_energy_0",  # 10
-                    "internal_energy_STP",  # 11
-                    "enthalpy_STP",  # 12
-                    "free_energy_STP",  # 13
-                    "heat_capacity_STP",  # 14
-                    ]
+    target_names = [t[0] for t in targets]
+
     pretty_target_names = [r"$\large{(a)\ Rotational\ Constant\ A\ /GHz}$",
                            r"$\large{(b)\ Rotational\ Constant\ B\ /GHz}$",
                            r"$\large{(c)\ Rotational\ Constant\ C\ /GHz}$",
                            r"$\large{(d)\ Dipole\ Moment\ /Deb}$",
                            r"$\large{(e)\ Iso.\ Polarizability\ /Bohr^3}$",
-                           r"$\large{(f)\ HOMO\ Energy\ /Hartree}$",
-                           r"$\large{(g)\ LUMO\ Energy\ /Hartree}$",
-                           r"$\large{(h)\ Gap\ Energy\ /Hartree}$",
+                           r"$\large{(f)\ HOMO\ Energy\ /E_h}$",
+                           r"$\large{(g)\ LUMO\ Energy\ /E_h}$",
+                           r"$\large{(h)\ Gap\ Energy\ /E_h}$",
                            r"$\large{(i)\ Electronic\ Spatial\ Extent\ /Bohr^2}$",
-                           r"$\large{(j)\ ZPV\ Energy\ /Hartree}$",
-                           r"$\large{(k)\ Internal\ Energy\ (T=0)\ /Hartree}$",
-                           r"$\large{(l)\ Internal\ Energy\ 298K\ /Hartree}$",
-                           r"$\large{(m)\ Enthalpy\ 298K\ /Hartree}$",
-                           r"$\large{(n)\ Free\ Energy\ 298K\ /Hartree}$",
-                           r"$\large{(o)\ Heat\ Capacity\ 298K\ /cal\ mol^{-1}\ K^{-1}}$"]
+                           r"$\large{(j)\ ZPV\ Energy\ /E_h}$",
+                           r"$\large{(k)\ Internal\ Energy\ (T=0)\ /E_h}$",
+                           r"$\large{(l)\ Internal\ Energy\ 298K\ /E_h}$",
+                           r"$\large{(m)\ Enthalpy\ 298K\ /E_h}$",
+                           r"$\large{(n)\ Free\ Energy\ 298K\ /E_h}$",
+                           r"$\large{(o)\ Heat\ Capacity\ 298K\ /cal\ mol^{-1}\ K^{-1}}$",
+                           r"$\large{(p)\ Dipole\ Moment\ /D}$",
+                           r"$\large{(q)\ Polarizability\ Tensor\ /a_0^3}$",
+                           r"$\large{(r)\ Quadrupole\ Moment\ /D*A}$",
+                           r"$\large{(s)\ Octapole\ Moment\ /D*A^2}$",
+                           r"$\large{(t)\ Hyperpolarizability\ /a.u.}$",
+                           ]
 
     MAE_dict = {}
     NMAE_dict = {}
     R_dict = {}
-    for ind, (path, target_name) in enumerate(zip(ers, target_names)):
-        dpath = path + '/best_embedding_regressor_test_stats_dict.npy'
-        stats_dict = np.load(dpath, allow_pickle=True).item()
-        target = stats_dict['regressor_target']
-        prediction = stats_dict['regressor_prediction']
+    for ind, (path, target_name) in enumerate(zip(er_results_paths, target_names)):
+        stats_dict = np.load(path, allow_pickle=True).item()
+        target = np.concatenate(stats_dict['test_stats']['regressor_target']).flatten()
+        prediction = np.concatenate(stats_dict['test_stats']['regressor_prediction']).flatten()
 
         MAE = np.abs(target - prediction).mean()
         NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
@@ -498,29 +495,34 @@ def embedding_regression_figure():
         NMAE_dict[target_name] = NMAE
         R_dict[target_name] = R_value
 
-    fig3 = make_subplots(cols=5, rows=3, subplot_titles=pretty_target_names, horizontal_spacing=0.06,
+    fig3 = make_subplots(cols=5, rows=4,
+                         subplot_titles=pretty_target_names,
+                         horizontal_spacing=0.06,
                          vertical_spacing=0.1)
 
     annotations = []
-    for ind, (path, target_name) in enumerate(zip(ers, target_names)):
-        dpath = path + '/best_embedding_regressor_test_stats_dict.npy'
-        stats_dict = np.load(dpath, allow_pickle=True).item()
-        target = stats_dict['regressor_target']
-        prediction = stats_dict['regressor_prediction']
+    for ind, (path, target_name) in enumerate(zip(er_results_paths, target_names)):
+        stats_dict = np.load(path, allow_pickle=True).item()
+        target = np.concatenate(stats_dict['test_stats']['regressor_target']).flatten()
+        prediction = np.concatenate(stats_dict['test_stats']['regressor_prediction']).flatten()
 
         xline = np.linspace(max(min(target), min(prediction)),
                             min(max(target), max(prediction)), 2)
 
         xy = np.vstack([target, prediction])
         try:
-            z = get_point_density(xy, bins=1000)
+            z = get_point_density(xy, bins=50)
         except:
             z = np.ones_like(target)
 
         row = ind // 5 + 1
         col = ind % 5 + 1
         opacity = 0.05  # np.exp(-num_points / 10000)
-        fig3.add_trace(go.Scattergl(x=target, y=prediction, mode='markers', marker=dict(color=z), opacity=opacity,
+        fig3.add_trace(go.Scattergl(x=target,
+                                    y=prediction,
+                                    mode='markers',
+                                    marker=dict(color=z),
+                                    opacity=opacity,
                                     showlegend=False),
                        row=row, col=col)
         fig3.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
@@ -534,7 +536,7 @@ def embedding_regression_figure():
                                 x=minval + np.ptp(prediction) * 0.25,
                                 y=maxval - np.ptp(prediction) * 0.2,
                                 showarrow=False,
-                                text=f"R={R_dict[target_name]:.2f} <br> MAE={MAE_dict[target_name]:.3g}"
+                                text=f"R={R_dict[target_name]:.4f} <br> MAE={MAE_dict[target_name]:.3g}"
                                 ))
 
     fig3['layout']['annotations'] += tuple(annotations)
@@ -547,7 +549,7 @@ def embedding_regression_figure():
     fig3.update_xaxes(linecolor='black', mirror=True,
                       showgrid=True, zeroline=True)
     fig3.update_layout(yaxis6_title='Predicted Value')
-    fig3.update_layout(xaxis13_title='Target Value')
+    fig3.update_layout(xaxis18_title='Target Value')
     fig3.update_layout(font=dict(size=20))
     fig3.update_annotations(font_size=20)
     fig3.update_annotations(yshift=10)
@@ -623,16 +625,109 @@ def regression_training_curve():
     return fig4
 
 
+def proxy_discriminator_figure():
+    target_names = ['vdW Energy']
+    pretty_target_names = [None]
+
+    MAE_dict = {}
+    NMAE_dict = {}
+    R_dict = {}
+    for ind, (path, target_name) in enumerate(zip(proxy_results_paths, target_names)):
+        stats_dict = np.load(path, allow_pickle=True).item()
+        target = stats_dict['test_stats']['vdw_score']
+        prediction = stats_dict['test_stats']['vdw_prediction']
+
+        MAE = np.abs(target - prediction).mean()
+        NMAE = (np.abs((target - prediction) / np.abs(target))).mean()
+
+        linreg_result = linregress(target, prediction)
+        R_value = linreg_result.rvalue
+        slope = linreg_result.slope
+        MAE_dict[target_name] = MAE
+        NMAE_dict[target_name] = NMAE
+        R_dict[target_name] = R_value
+
+    fig5 = make_subplots(cols=1, rows=1,
+                         subplot_titles=pretty_target_names,
+                         horizontal_spacing=0.06,
+                         vertical_spacing=0.1)
+
+    annotations = []
+    for ind, (path, target_name) in enumerate(zip(proxy_results_paths, target_names)):
+        stats_dict = np.load(path, allow_pickle=True).item()
+        target = stats_dict['test_stats']['vdw_score']
+        prediction = stats_dict['test_stats']['vdw_prediction']
+
+        xline = np.linspace(max(min(target), min(prediction)),
+                            min(max(target), max(prediction)), 2)
+
+        xy = np.vstack([target, prediction])
+        try:
+            z = get_point_density(xy, bins=50)
+        except:
+            z = np.ones_like(target)
+
+        row = ind // 5 + 1
+        col = ind % 5 + 1
+        opacity = 0.05  # np.exp(-num_points / 10000)
+        fig5.add_trace(go.Scattergl(x=target,
+                                    y=prediction,
+                                    mode='markers',
+                                    marker=dict(color=z),
+                                    opacity=opacity,
+                                    showlegend=False),
+                       row=row, col=col)
+        fig5.add_trace(go.Scattergl(x=xline, y=xline, showlegend=False, marker_color='rgba(0,0,0,1)'),
+                       row=row, col=col)
+
+        minval = max([np.amin(target), np.amin(prediction)])
+        maxval = min([np.amax(target), np.amax(prediction)])
+        fig5.update_layout({f'xaxis{ind + 1}_range': [minval, maxval]})
+
+        annotations.append(dict(xref="x" + str(ind + 1), yref="y" + str(ind + 1),
+                                x=minval + np.ptp(prediction) * 0.25,
+                                y=maxval - np.ptp(prediction) * 0.2,
+                                showarrow=False,
+                                text=f"R={R_dict[target_name]:.4f} <br> MAE={MAE_dict[target_name]:.3g}"
+                                ))
+
+    fig5['layout']['annotations'] += tuple(annotations)
+    fig5.update_annotations(font=dict(size=18))
+    fig5.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+    fig5.update_xaxes(gridcolor='lightgrey', zerolinecolor='lightgrey')
+    fig5.update_yaxes(gridcolor='lightgrey', zerolinecolor='lightgrey')
+    fig5.update_yaxes(linecolor='black', mirror=True,
+                      showgrid=True, zeroline=True)
+    fig5.update_xaxes(linecolor='black', mirror=True,
+                      showgrid=True, zeroline=True)
+    fig5.update_layout(yaxis1_title='Predicted vdW Energy')
+    fig5.update_layout(xaxis1_title='Target vdW Energy')
+    fig5.update_layout(font=dict(size=20))
+    fig5.update_annotations(font_size=20)
+    fig5.update_annotations(yshift=10)
+    fig5.update_xaxes(tickangle=0)
+    fig5.show(renderer='browser')
+
+    return fig5
+
+
+fig = RMSD_fig()
+fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+
+
+# fig2 = UMAP_fig(max_entries=1000000)
+# fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
+
 #
-#fig = RMSD_fig()
-#fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
-
-#fig2 = UMAP_fig(max_entries=1000000)
-#fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
-
-fig3 = embedding_regression_figure()
-fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+# fig3 = embedding_regression_figure()
+# fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+#
 
 #fig4 = regression_training_curve()
 #fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
+
+# fig5 = proxy_discriminator_figure()
+# fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=1200, height=800)
+
+
 aa = 1

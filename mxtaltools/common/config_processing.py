@@ -139,7 +139,7 @@ def write_non_overlapping_configs(c1, c2):
     return c1
 
 
-def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=None, machine=None):
+def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=None, machine=None, append_model_paths=True):
     """
     Combines YAML configuration file, command line arguments and default arguments into
     a single configuration dictionary.
@@ -186,7 +186,9 @@ def process_main_config(override_args=None, user_yaml_path=None, main_yaml_path=
 
     for model in main_config['model_paths'].keys():
         if main_config['model_paths'][model] is not None:
-            main_config['model_paths'][model] = user_config['paths'][machine_type + '_checkpoints_path'] + main_config['model_paths'][model]
+            if append_model_paths:
+                main_config['model_paths'][model] = user_config['paths'][machine_type + '_checkpoints_path'] + main_config['model_paths'][model]
+
 
     # always save checkpoints on cluster
     if machine_type == 'cluster':

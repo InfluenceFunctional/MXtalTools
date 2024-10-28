@@ -437,7 +437,7 @@ class Modeller:
         }
 
         '''initialize datasets and useful classes'''
-        _, data_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
+        _, test_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
         self.initialize_models_optimizers_schedulers()
 
         self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
@@ -458,19 +458,147 @@ class Modeller:
 
             self.models_dict['autoencoder'].eval()
             self.models_dict['embedding_regressor'].eval()
-            self.epoch_type = 'test'
-
             with torch.no_grad():
-                for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 25))):
+                # self.epoch_type = 'train'
+                #
+                # for i, data in enumerate(tqdm(train_loader, miniters=int(len(train_loader) / 25))):
+                #     self.embedding_regression_step(data, update_weights=False)
+                #
+                # # post epoch processing
+                # self.logger.concatenate_stats_dict(self.epoch_type)
+
+                self.epoch_type = 'test'
+                for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
                     self.embedding_regression_step(data, update_weights=False)
 
-            # post epoch processing
-            self.logger.concatenate_stats_dict(self.epoch_type)
+                # post epoch processing
+                self.logger.concatenate_stats_dict(self.epoch_type)
 
             # save results
-            np.save(self.config.checkpoint_dir_path +
-                    self.config.model_paths.EmbeddingRegressor.split('embedding_regressor')[-1],
+            np.save(r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\embedding_regressor\results/'
+            + self.config.model_paths.embedding_regressor.split("\\")[-1] + '_results.npy',
                     {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
+
+
+    def ae_analysis(self):
+        """prep workdir"""
+        self.source_directory = os.getcwd()
+        self.prep_new_working_directory()
+
+        self.train_models_dict = {
+            'discriminator': False,
+            'generator': False,
+            'regressor': False,
+            'autoencoder': True,
+            'embedding_regressor': False,
+        }
+
+        '''initialize datasets and useful classes'''
+        train_loader, test_loader, _ = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
+        self.initialize_models_optimizers_schedulers()
+
+        self.config.autoencoder_sigma = self.config.autoencoder.evaluation_sigma
+        self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius']['max']
+
+        self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
+
+        with (wandb.init(config=self.config,
+                         project=self.config.wandb.project_name,
+                         entity=self.config.wandb.username,
+                         tags=[self.config.logger.experiment_tag],
+                         settings=wandb.Settings(code_dir="."))):
+            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+            wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
+            wandb.log(self.num_params_dict)
+            wandb.log({"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
+                       "Initial Batch Size": self.config.current_batch_size})
+
+            self.always_do_analysis = True
+            self.models_dict['autoencoder'].eval()
+            update_weights = False
+            with torch.no_grad():
+                self.epoch_type = 'train'
+
+                for i, data in enumerate(tqdm(train_loader, miniters=int(len(train_loader) / 25))):
+                    data = data.to(self.device)
+                    data.x = data.x.flatten()
+                    data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
+                    self.ae_step(input_data, data, update_weights, step=i, last_step=True)
+
+                # post epoch processing
+                self.logger.concatenate_stats_dict(self.epoch_type)
+
+                self.epoch_type = 'test'
+
+                for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
+                    data = data.to(self.device)
+                    data.x = data.x.flatten()
+                    data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
+                    self.ae_step(input_data, data, update_weights, step=i, last_step=True)
+
+                # post epoch processing
+                self.logger.concatenate_stats_dict(self.epoch_type)
+
+            # save results
+            np.save(self.config.model_paths.autoencoder[:-3] + '_results.npy',
+                    {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
+
+
+    def proxy_discriminator_analysis(self, samples_per_molecule:int = 1):
+        """prep workdir"""
+        self.source_directory = os.getcwd()
+        self.prep_new_working_directory()
+
+        self.train_models_dict = {
+            'discriminator': False,
+            'generator': False,
+            'regressor': False,
+            'autoencoder': True,
+            'embedding_regressor': False,
+            'proxy_discriminator': True
+        }
+
+        '''initialize datasets and useful classes'''
+        train_loader, test_loader, _ = self.load_dataset_and_dataloaders(override_test_fraction=0.2)
+        self.initialize_models_optimizers_schedulers()
+
+        self.config.autoencoder_sigma = self.config.autoencoder.evaluation_sigma
+        self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius']['max']
+
+        self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
+
+        with (wandb.init(config=self.config,
+                         project=self.config.wandb.project_name,
+                         entity=self.config.wandb.username,
+                         tags=[self.config.logger.experiment_tag],
+                         settings=wandb.Settings(code_dir="."))):
+            wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
+            wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
+            wandb.log(self.num_params_dict)
+            wandb.log({"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
+                       "Initial Batch Size": self.config.current_batch_size})
+
+            self.always_do_analysis = True
+            self.models_dict['autoencoder'].eval()
+            self.models_dict['proxy_discriminator'].eval()
+            update_weights = False
+            with torch.no_grad():
+                self.init_gan_constants()
+
+                self.epoch_type = 'test'
+                for ind in range(samples_per_molecule):
+                    for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
+                        data = data.to(self.config.device)
+                        self.proxy_discriminator_step(data, i, update_weights, skip_step=False)
+
+                # post epoch processing
+                self.logger.concatenate_stats_dict(self.epoch_type)
+
+            # save results
+            np.save(
+                r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\proxy_discriminator\results/'
+                + self.config.model_paths.proxy_discriminator.split("\\")[-1] + '_results.npy',
+                {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
     def ae_embedding_step(self, data):
         data = data.to(self.device)
@@ -887,6 +1015,8 @@ class Modeller:
         elif self.models_dict['embedding_regressor'].prediction_type == '3-tensor':
             # create a basis of rand 3 odd (3o) symmetric tensors
             # do a weighted sum with learned weights
+
+            # construct symmetric 3-tensor
             a, b, c = v_predictions.split([v_predictions.shape[-1] // 3 for _ in range(3)], dim=2)
 
             t12 = torch.einsum('nik,njk->nijk', a, b)
@@ -961,11 +1091,14 @@ class Modeller:
             self.optimizers_dict['autoencoder'].step()  # update parameters
 
         if not skip_stats:
-            # with torch.no_grad():
-            #     _, vector_embedding = self.models_dict['autoencoder'](input_data.clone(), return_latent=True)
-            #     scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
-            # stats['scalar_embedding'] = scalar_embedding.detach()
-            # stats['vector_embedding'] = vector_embedding.detach()
+            if self.always_do_analysis:
+                with torch.no_grad():
+                    _, vector_embedding = self.models_dict['autoencoder'](input_data.clone(), return_latent=True)
+                    scalar_embedding = self.models_dict['autoencoder'].scalarizer(vector_embedding)
+                stats['scalar_embedding'] = scalar_embedding.detach()
+                stats['vector_embedding'] = vector_embedding.detach()
+                stats['molecule_smiles'] = input_data.smiles
+
             self.ae_stats_and_reporting(mol_batch,
                                         decoded_mol_batch,
                                         last_step,
@@ -997,9 +1130,6 @@ class Modeller:
                                stats: dict,
                                step: int,
                                override_do_analysis: bool = False):
-        # if self.logger.epoch % self.config.logger.sample_reporting_frequency == 0:
-        #     if step % 10 == 0:
-        #         stats['encoding'] = encoding.detach()
 
         if any([step == 0, last_step, override_do_analysis]):
             self.detailed_autoencoder_step_analysis(data, decoded_data, stats)
@@ -1046,9 +1176,10 @@ class Modeller:
         stats['matching_graph_fraction'] = (torch.sum(matched_graphs) / len(matched_graphs)).detach()
         stats['matching_node_fraction'] = (torch.sum(matched_nodes) / len(matched_nodes)).detach()
         stats['nodewise_dists'] = nodewise_dists[matched_nodes].mean().detach()
-        stats['nodewise_dists_dist'] = nodewise_dists[matched_nodes].detach()
-        stats['RMSD_dist'] = rmsd[matched_graphs].detach()
-        #stats['samples'] = mol_batch.detach()
+        stats['nodewise_dists_dist'] = nodewise_dists.detach()
+        stats['RMSD_dist'] = rmsd.detach()
+        stats['matched_nodes'] = matched_nodes.detach()
+        stats['matched_graphs'] = matched_graphs.detach()
 
         self.logger.update_current_losses('autoencoder', self.epoch_type,
                                           tracking_loss.mean().cpu().detach().numpy(),
