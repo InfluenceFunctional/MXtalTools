@@ -441,7 +441,8 @@ class Modeller:
         self.initialize_models_optimizers_schedulers()
 
         self.config.autoencoder_sigma = self.config.autoencoder.init_sigma
-        self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius']['max']
+        self.config.autoencoder.molecule_radius_normalization = self.models_dict[
+            'autoencoder'].radial_normalization  #self.dataDims['standardization_dict']['radius']['max']
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
@@ -475,10 +476,10 @@ class Modeller:
                 self.logger.concatenate_stats_dict(self.epoch_type)
 
             # save results
-            np.save(r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\embedding_regressor\results/'
-            + self.config.model_paths.embedding_regressor.split("\\")[-1] + '_results.npy',
-                    {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
-
+            np.save(
+                r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts\embedding_regressor\results/'
+                + self.config.model_paths.embedding_regressor.split("\\")[-1] + '_results.npy',
+                {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
     def ae_analysis(self):
         """prep workdir"""
@@ -498,7 +499,8 @@ class Modeller:
         self.initialize_models_optimizers_schedulers()
 
         self.config.autoencoder_sigma = self.config.autoencoder.evaluation_sigma
-        self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius']['max']
+        self.config.autoencoder.molecule_radius_normalization = self.models_dict['autoencoder'].radial_normalization
+        #self.dataDims['standardization_dict']['radius']['max']
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
@@ -513,16 +515,23 @@ class Modeller:
             wandb.log({"All Models Parameters": np.sum(np.asarray(list(self.num_params_dict.values()))),
                        "Initial Batch Size": self.config.current_batch_size})
 
+            self.config.sample_reporting_frequency = 1
+            self.config.stats_reporting_frequency = 1
             self.always_do_analysis = True
             self.models_dict['autoencoder'].eval()
             update_weights = False
+
+            print(self.separator_string)
+            print("Starting Evaluation")
+
             with torch.no_grad():
                 self.epoch_type = 'train'
 
                 for i, data in enumerate(tqdm(train_loader, miniters=int(len(train_loader) / 25))):
                     data = data.to(self.device)
                     data.x = data.x.flatten()
-                    data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
+                    data, input_data = self.preprocess_ae_inputs(data,
+                                                                 no_noise=self.epoch_type == 'test')
                     self.ae_step(input_data, data, update_weights, step=i, last_step=True)
 
                 # post epoch processing
@@ -543,8 +552,7 @@ class Modeller:
             np.save(self.config.model_paths.autoencoder[:-3] + '_results.npy',
                     {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
-
-    def proxy_discriminator_analysis(self, samples_per_molecule:int = 1):
+    def proxy_discriminator_analysis(self, samples_per_molecule: int = 1):
         """prep workdir"""
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
@@ -563,7 +571,8 @@ class Modeller:
         self.initialize_models_optimizers_schedulers()
 
         self.config.autoencoder_sigma = self.config.autoencoder.evaluation_sigma
-        self.config.autoencoder.molecule_radius_normalization = self.dataDims['standardization_dict']['radius']['max']
+        self.config.autoencoder.molecule_radius_normalization = self.models_dict[
+            'autoencoder'].radial_normalization  #self.dataDims['standardization_dict']['radius']['max']
 
         self.logger = Logger(self.config, self.dataDims, wandb, self.model_names)
 
@@ -1033,12 +1042,12 @@ class Modeller:
             t132 = torch.einsum('nijk,nlk->nijlk', t13, b)
             t312 = torch.einsum('nijk,nlk->nijlk', t31, b)
 
-            symmetric_tensor = (1/6)*(t123+t213+t231+t321+t132+t312)
+            symmetric_tensor = (1 / 6) * (t123 + t213 + t231 + t321 + t132 + t312)
 
             # linearly combine them, weighted by the scalar outputs
             weights = F.softmax(s_predictions[:, :a.shape[-1]], dim=1)
 
-            t_predictions = torch.sum(weights[:, None, None, None, :] * symmetric_tensor, dim=-1)# + isotropic_part
+            t_predictions = torch.sum(weights[:, None, None, None, :] * symmetric_tensor, dim=-1)  # + isotropic_part
             losses = F.smooth_l1_loss(t_predictions, data.y, reduction='none')
             predictions = t_predictions
 
@@ -1055,8 +1064,9 @@ class Modeller:
                                           regression_loss.cpu().detach().numpy(),
                                           losses.cpu().detach().numpy())
         stats_values = [
-            (predictions.cpu().detach() * self.dataDims['target_std'] + self.dataDims['target_mean'])[None,...].numpy(),
-            (data.y.cpu().detach() * self.dataDims['target_std'] + self.dataDims['target_mean'])[None,...].numpy()]
+            (predictions.cpu().detach() * self.dataDims['target_std'] + self.dataDims['target_mean'])[
+                None, ...].numpy(),
+            (data.y.cpu().detach() * self.dataDims['target_std'] + self.dataDims['target_mean'])[None, ...].numpy()]
 
         self.logger.update_stats_dict(self.epoch_type,
                                       ['regressor_prediction', 'regressor_target'],

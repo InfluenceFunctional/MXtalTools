@@ -8,9 +8,9 @@ from model_paths import ae_paths
 from mxtaltools.common.config_processing import load_yaml, process_main_config
 from mxtaltools.modeller import Modeller
 
-filter_protons = [False, True, False]
-infer_protons = [False, False, True]
-max_dataset_length = 1000000
+filter_protons = [True, False]#[False, True, False]
+infer_protons = [False, False] #[False, False, True]
+max_dataset_length = 1000
 
 mxt_path = r'C:\\Users\\mikem\\PycharmProjects\\Python_Codes\\MXtalTools'
 
