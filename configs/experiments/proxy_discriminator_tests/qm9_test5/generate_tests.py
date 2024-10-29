@@ -23,7 +23,7 @@ for ii in range(len(configs)):
     config['proxy_discriminator']['model']['norm'] = configs[ii][3]
     config['proxy_discriminator']['model']['vector_norm'] = configs[ii][4]
     config['proxy_discriminator']['model']['dropout'] = configs[ii][5]
-    config['generate_sgs'] = sgs_list[ii]
+    config['generate_sgs'] = [sgs_list[ii]]
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)

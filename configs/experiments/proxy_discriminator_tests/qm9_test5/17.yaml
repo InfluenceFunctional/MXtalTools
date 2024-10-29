@@ -12,7 +12,8 @@ dataset_yaml_path: /qm9_autoencoder.yaml
 device: cuda
 early_epochs_step_override: 5
 extra_test_period: 1
-generate_sgs: P21212
+generate_sgs:
+- P21212
 gradient_norm_clip: 1
 grow_batch_size: true
 history: 250
