@@ -72,6 +72,7 @@ proxy_discriminator:
     use_plateau_scheduler: false
     weight_decay: 0.1
   train_on_randn: true
+  vdw_turnover_potential: 10
 sample_steps: 100
 save_checkpoints: true
 seeds:

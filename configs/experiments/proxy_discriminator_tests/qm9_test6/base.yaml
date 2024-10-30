@@ -67,6 +67,7 @@ supercell_size: 5
 proxy_discriminator:
   train_on_randn: True
   embedding_type: autoencoder
+  vdw_turnover_potential: 10
   cutoff: 6
   optimizer:
     beta1: 0.9
