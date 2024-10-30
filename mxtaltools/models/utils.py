@@ -424,8 +424,10 @@ def save_checkpoint(epoch: int,
 
 
 def weight_reset(m):
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or isinstance(m, nn.Conv3d) or isinstance(m,
-                                                                                                      nn.ConvTranspose3d):
+    if (isinstance(m, nn.Conv2d)
+            or isinstance(m, nn.Linear)
+            or isinstance(m, nn.Conv3d)
+            or isinstance(m,nn.ConvTranspose3d)):
         m.reset_parameters()
 
 

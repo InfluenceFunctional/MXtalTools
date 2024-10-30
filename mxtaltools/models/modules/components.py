@@ -37,10 +37,11 @@ class Scalarizer(nn.Module):
             output_dim = hidden_dim
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
+        reduced_dim = max(hidden_dim // 4, 1)
         #self.linear = nn.Linear(int(hidden_dim * (1 + embedding_dim)), hidden_dim, bias=True)
-        self.embedding = nn.Linear(hidden_dim // 4, embedding_dim, bias=False)
-        self.dim_red = nn.Linear(hidden_dim, hidden_dim // 4, bias=False)
-        self.linear = nn.Linear(hidden_dim // 4 * 4, output_dim, bias=True)
+        self.embedding = nn.Linear(reduced_dim, embedding_dim, bias=False)
+        self.dim_red = nn.Linear(hidden_dim, reduced_dim, bias=False)
+        self.linear = nn.Linear(reduced_dim * 4, output_dim, bias=True)
         self.norm = Normalization(norm_mode, output_dim)
         self.activation = Activation(act_func, output_dim)
         self.dropout = nn.Dropout(p=dropout)

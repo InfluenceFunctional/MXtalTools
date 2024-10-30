@@ -16,7 +16,6 @@ from torch_scatter import scatter
 from tqdm import tqdm
 
 from mxtaltools.common.geometry_calculations import rotvec2sph
-from mxtaltools.common.spherical_harmonics import spherical_harmonics
 from mxtaltools.modelling.utils import get_model_sizes, copy_source_to_workdir
 from mxtaltools.common.training_utils import instantiate_models
 from mxtaltools.common.utils import init_sym_info, compute_rdf_distance, make_sequential_directory, \
@@ -1708,12 +1707,11 @@ class Modeller:
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
         """
-        (discriminator_output, vdw_score, stats) \
+        (discriminator_output, vdw_score, stats, temp_std, temp_mean) \
             = self.get_proxy_discriminator_output(mol_batch, i)
 
-        temp_std = 15
         discriminator_losses = F.smooth_l1_loss(discriminator_output.flatten(),
-                                                vdw_score.flatten() / temp_std,
+                                                (vdw_score.flatten() - temp_mean) / temp_std,
                                                 reduction='none')
 
         discriminator_loss = discriminator_losses.mean()
@@ -2121,34 +2119,38 @@ class Modeller:
         with torch.no_grad():
             _, mol_batch = self.preprocess_ae_inputs(mol_batch,
                                                      no_noise=True,
-                                                     orientation_override='standardized')
-            v_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
-            s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
+                                                     orientation_override='random')
+            s_embedding, v_embedding = self.get_mol_embedding_for_proxy(mol_batch)
 
             mol_batch = overwrite_symmetry_info(mol_batch,
                                                 self.config.generate_sgs,
                                                 self.sym_info,
                                                 randomize_sgs=True)
 
-            generated_samples_i, negative_type, generator_data, negatives_stats = \
-                self.generate_discriminator_negatives(mol_batch,
-                                                      train_adversarial=False,
-                                                      train_on_randn=self.config.proxy_discriminator.train_on_randn,
-                                                      train_on_distorted=False,
-                                                      orientation='random')
+        generated_samples_i, negative_type, generator_data, negatives_stats = \
+            self.generate_discriminator_negatives(mol_batch,
+                                                  train_adversarial=False,
+                                                  train_on_randn=self.config.proxy_discriminator.train_on_randn,
+                                                  train_on_distorted=False,
+                                                  orientation='random')
 
-            supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
-                generator_data, generated_samples_i, self.config.supercell_size,
-                self.config.proxy_discriminator.cutoff,
-                align_to_standardized_orientation=True,  # take generator samples as-given
-                target_handedness=generator_data.aunit_handedness,
-                skip_refeaturization=True,
-            )
+        supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
+            generator_data, generated_samples_i, self.config.supercell_size,
+            self.config.proxy_discriminator.cutoff,
+            align_to_standardized_orientation=False,  # take generator samples as-given
+            target_handedness=None,
+            skip_refeaturization=True,
+        )
 
-            '''apply noise'''
-            if self.config.positional_noise.discriminator > 0:
-                supercell_batch.pos += \
-                    torch.randn_like(supercell_batch.pos) * self.config.positional_noise.discriminator
+        '''apply noise'''
+        if self.config.positional_noise.discriminator > 0:
+            supercell_batch.pos += \
+                torch.randn_like(supercell_batch.pos) * self.config.positional_noise.discriminator
+
+        dist_dict = get_intermolecular_dists_dict(supercell_batch, 6, 100)
+        _, _, vdw_potential, vdw_loss, eval_vdw_loss \
+            = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_batch.num_graphs,
+                           self.config.proxy_discriminator.vdw_turnover_potential)
 
         '''score'''
         # rescale to nicer normalized basis
@@ -2170,6 +2172,7 @@ class Modeller:
             0.25, 0.25, 0.25,
             0.33, torch.pi / 2, torch.pi / 2
         ], device=self.device, dtype=torch.float32)
+
         scaled_params = (normed_params - lattice_means[None, :]) / lattice_stds[None, :]
 
         output, _ = self.models_dict['proxy_discriminator'](
@@ -2179,21 +2182,53 @@ class Modeller:
         reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
         packing_coeff = mol_batch.mol_volume / reduced_volume
 
-        dist_dict = get_intermolecular_dists_dict(supercell_batch, 6, 100)
-        _, _, vdw_potential, vdw_loss, eval_vdw_loss \
-            = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_batch.num_graphs, self.vdw_turnover_potential)
-
-        temp_std = 15
+        temp_std = 80
+        temp_mean = 60
         stats = {'vdw_potential': (vdw_potential / mol_batch.num_atoms).detach(),
                  'vdw_score': (vdw_loss / mol_batch.num_atoms).detach(),
                  'generated_cell_parameters': supercell_batch.cell_params.detach(),
                  'packing_coeff': packing_coeff.detach(),
-                 'vdw_prediction': (prediction * temp_std).detach(),
+                 'vdw_prediction': (prediction * temp_std + temp_mean).detach(),
                  }
 
         stats.update(negatives_stats)
 
-        return prediction, vdw_loss / mol_batch.num_atoms, stats
+        return prediction, vdw_loss / mol_batch.num_atoms, stats, temp_std, temp_mean
+
+    def get_mol_embedding_for_proxy(self, mol_batch):
+        if self.config.proxy_discriminator.embedding_type == 'autoencoder':
+            v_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
+            s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)
+        elif self.config.proxy_discriminator.embedding_type == 'principal_axes':
+            v_embedding_i, s_embedding_i, _ = batch_molecule_principal_axes_torch(
+                [mol_batch.pos[mol_batch.batch == ind] for ind in range(mol_batch.num_graphs)])
+
+            if not hasattr(self, 'ipm_means'):
+                self.ipm_means = s_embedding_i.mean(0)
+
+            s_embedding = s_embedding_i / self.ipm_means[None, :]
+            v_embedding = v_embedding_i.permute(0, 2, 1)
+
+        elif self.config.proxy_discriminator.embedding_type == 'principal_moments':
+            Ip, s_embedding_i, _ = batch_molecule_principal_axes_torch(
+                [mol_batch.pos[mol_batch.batch == ind] for ind in range(mol_batch.num_graphs)])
+            v_embedding = torch.zeros_like(Ip)
+
+            if not hasattr(self, 'ipm_means'):
+                self.ipm_means = s_embedding_i.mean(0)
+
+            s_embedding = s_embedding_i / self.ipm_means[None, :]
+
+        elif self.config.proxy_discriminator.embedding_type == 'mol_volume':
+            if not hasattr(self, 'mol_volume_mean'):
+                self.mol_volume_mean = mol_batch.mol_volume.mean()
+
+            s_embedding = mol_batch.mol_volume[:, None].repeat(1,3) / self.mol_volume_mean
+            v_embedding = torch.zeros((mol_batch.num_graphs, 3, 3), dtype=torch.float32, device=self.device)
+        else:
+            assert False, f"{self.config.proxy_discriminator.embedding_type} is not an implemented proxy discriminator embedding"
+
+        return s_embedding, v_embedding
 
     def anneal_prior_loss(self, good_inds):
         """

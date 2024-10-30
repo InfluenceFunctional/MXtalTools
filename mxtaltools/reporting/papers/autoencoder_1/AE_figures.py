@@ -266,7 +266,7 @@ def UMAP_fig(max_entries=10000000):
     principal_ratio1 = Ip2 / Ip3  # + 1e-3)
     principal_ratio1 = np.nan_to_num(principal_ratio1, posinf=0, neginf=0)[:max_entries]
     principal_ratio1 /= np.quantile(principal_ratio1, 0.9999)
-    principal_ratio2 = Ip1/Ip3  # + 1e-3)
+    principal_ratio2 = Ip1 / Ip3  # + 1e-3)
     principal_ratio2 = np.nan_to_num(principal_ratio2)[:max_entries]
     principal_ratio2 /= np.quantile(principal_ratio2, 0.9999)
 
@@ -706,28 +706,27 @@ def proxy_discriminator_figure():
     fig5.update_annotations(font_size=20)
     fig5.update_annotations(yshift=10)
     fig5.update_xaxes(tickangle=0)
+    fig5.update_xaxes(range=[min(xline), max(xline)])
+    fig5.update_yaxes(range=[min(xline), max(xline)])
     fig5.show(renderer='browser')
 
     return fig5
 
 
-fig = RMSD_fig()
-fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
+if __name__ == '__main__':
+    fig = RMSD_fig()
+    fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
+    fig2 = UMAP_fig(max_entries=1000000)
+    fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
 
-# fig2 = UMAP_fig(max_entries=1000000)
-# fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
+    fig3 = embedding_regression_figure()
+    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
 
-#
-# fig3 = embedding_regression_figure()
-# fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
-#
+    fig4 = regression_training_curve()
+    fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
 
-#fig4 = regression_training_curve()
-#fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
-
-# fig5 = proxy_discriminator_figure()
-# fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=1200, height=800)
-
+    fig5 = proxy_discriminator_figure()
+    fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=600, height=600)
 
 aa = 1

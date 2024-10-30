@@ -163,7 +163,7 @@ def single_molecule_principal_axes_torch(coords: torch.tensor, masses=None, retu
         return Ip, Ipm, I
 
 
-def batch_molecule_principal_axes_torch(coords_list: list, skip_centring=False):
+def batch_molecule_principal_axes_torch(coords_list: list = None, skip_centring=False):
     """
     Parallel computation of principal inertial axes from a list of coordinate lists.
 
@@ -306,20 +306,23 @@ def scatter_compute_Ip(all_coords, batch):
     Ipm : torch.tensor(num_graphs, 3)
     I : torch.tensor(num_graphs, 3, 3)
     """
-    Ixy = -scatter(all_coords[:, 0] * all_coords[:, 1], batch)
-    Iyz = -scatter(all_coords[:, 1] * all_coords[:, 2], batch)
-    Ixz = -scatter(all_coords[:, 0] * all_coords[:, 2], batch)
+    Ixy = -scatter(all_coords[:, 0] * all_coords[:, 1],
+                   batch, reduce='sum')
+    Iyz = -scatter(all_coords[:, 1] * all_coords[:, 2],
+                   batch, reduce='sum')
+    Ixz = -scatter(all_coords[:, 0] * all_coords[:, 2],
+                   batch, reduce='sum')
+    Ixx = scatter(all_coords[:, 1] ** 2 + all_coords[:, 2] ** 2,
+                  batch, reduce='sum')
+    Iyy = scatter(all_coords[:, 0] ** 2 + all_coords[:, 2] ** 2,
+                  batch, reduce='sum')
+    Izz = scatter(all_coords[:, 0] ** 2 + all_coords[:, 1] ** 2,
+                  batch, reduce='sum')
 
     inertial_tensor = torch.cat(
-        (torch.vstack((scatter(all_coords[:, 1] ** 2 + all_coords[:, 2] ** 2, batch), Ixy, Ixz))[:, None, :].permute(2,
-                                                                                                                     1,
-                                                                                                                     0),
-         torch.vstack((Ixy, scatter(all_coords[:, 0] ** 2 + all_coords[:, 2] ** 2, batch), Iyz))[:, None, :].permute(2,
-                                                                                                                     1,
-                                                                                                                     0),
-         torch.vstack((Ixz, Iyz, scatter(all_coords[:, 0] ** 2 + all_coords[:, 1] ** 2, batch)))[:, None, :].permute(2,
-                                                                                                                     1,
-                                                                                                                     0)
+        (torch.vstack((Ixx, Ixy, Ixz))[:, None, :].permute(2, 1, 0),
+         torch.vstack((Ixy, Iyy, Iyz))[:, None, :].permute(2, 1, 0),
+         torch.vstack((Ixz, Iyz, Izz))[:, None, :].permute(2, 1, 0)
          ), dim=-2)  # inertial tensor
 
     Ipm, Ip = torch.linalg.eig(inertial_tensor)  # principal inertial tensor
@@ -773,6 +776,7 @@ def grid_compute_molecule_volume_pointwise(atom_types, pos, vdw_radii_tensor, ep
             print(conv)
 
     return occupied_volume
+
 
 def batch_compute_normed_cell_vectors(data):
     return data.cell_lengths / torch.pow(data.sym_mult[:, None] * data.mol_volume[:, None], 1 / 3)

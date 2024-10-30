@@ -95,7 +95,18 @@ def instantiate_models(config: Namespace,
             dataDims['graph_standardization_vector'],
         )
     if config.mode == 'proxy_discriminator':
-        config.proxy_discriminator.model.bottleneck_dim = config.autoencoder.model.bottleneck_dim
+        if config.proxy_discriminator.embedding_type == 'autoencoder':
+            config.proxy_discriminator.model.bottleneck_dim = config.autoencoder.model.bottleneck_dim
+
+        elif config.proxy_discriminator.embedding_type == 'principal_axes':
+            config.proxy_discriminator.model.bottleneck_dim = 3
+
+        elif config.proxy_discriminator.embedding_type == 'principal_moments':
+            config.proxy_discriminator.model.bottleneck_dim = 3
+
+        elif config.proxy_discriminator.embedding_type == 'mol_volume':
+            config.proxy_discriminator.model.bottleneck_dim = 3
+
         models_dict['proxy_discriminator'] = EmbeddingRegressor(
             config.seeds.model,
             config.proxy_discriminator.model,

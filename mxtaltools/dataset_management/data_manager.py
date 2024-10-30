@@ -285,7 +285,7 @@ class DataManager:
 
     def get_data_dimensions(self):
         self.atom_keys = ['atomic_number', 'vdw_radii', 'atom_weight', 'electronegativity', 'group', 'period']
-        self.molecule_keys = ['num_atoms', 'radius']
+        self.molecule_keys = ['num_atoms', 'radius', 'mol_volume']
         self.lattice_keys = ['cell_reduced_a', 'cell_reduced_b', 'cell_reduced_c',
                              'cell_alpha', 'cell_beta', 'cell_gamma',
                              'aunit_x', 'aunit_y', 'aunit_z',
@@ -489,6 +489,7 @@ class DataManager:
                 'period': basic_stats(self.period_tensor[dataset_to_analyze.x.long()].long()),
                 'num_atoms': basic_stats(dataset_to_analyze.num_atoms.long()),
                 'radius': basic_stats(dataset_to_analyze.radius.float()),
+                'mol_volume': basic_stats(dataset_to_analyze.mol_volume.float()),
             }
         }
         if self.dataset_type == 'crystal':
