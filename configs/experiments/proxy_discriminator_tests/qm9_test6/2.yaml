@@ -52,11 +52,11 @@ proxy_discriminator:
   cutoff: 6
   embedding_type: principal_axes
   model:
-    depth: 1024
+    depth: 512
     dropout: 0
     hidden_dim: 256
-    norm: batch
-    num_layers: 4
+    norm: null
+    num_layers: 8
     vector_norm: null
   optimizer:
     beta1: 0.9

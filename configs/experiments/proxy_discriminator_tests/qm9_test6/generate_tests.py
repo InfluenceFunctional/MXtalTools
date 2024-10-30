@@ -9,7 +9,7 @@ base_config = load_yaml('base.yaml')
 Proxy discriminator params
 """
 # layers, depth, max batch, norm, vector norm, dropout
-c1 = [4, 1024, 1000, 'batch', None, 0]  # 0
+c1 = [8, 512, 1000, None, None, 0]  # 0
 
 configs = [c1 for _ in range(4)]
 
