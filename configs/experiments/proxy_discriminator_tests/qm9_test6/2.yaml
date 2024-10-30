@@ -50,8 +50,7 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  embedding_type:
-  - principal_axes
+  embedding_type: principal_axes
   model:
     depth: 1024
     dropout: 0

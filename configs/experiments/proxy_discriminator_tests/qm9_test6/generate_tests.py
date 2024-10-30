@@ -13,7 +13,7 @@ c1 = [4, 1024, 1000, 'batch', None, 0]  # 0
 
 configs = [c1 for _ in range(4)]
 
-embeddings_list = ['mol_volume','principal_moments','principal_axes','autoencoder']
+embeddings_list = ['mol_volume', 'principal_moments', 'principal_axes', 'autoencoder']
 ind = 0
 for ii in range(len(configs)):
     config = copy(base_config)
@@ -24,7 +24,7 @@ for ii in range(len(configs)):
     config['proxy_discriminator']['model']['norm'] = configs[ii][3]
     config['proxy_discriminator']['model']['vector_norm'] = configs[ii][4]
     config['proxy_discriminator']['model']['dropout'] = configs[ii][5]
-    config['proxy_discriminator']['embedding_type'] = [embeddings_list[ii]]
+    config['proxy_discriminator']['embedding_type'] = embeddings_list[ii]
 
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
