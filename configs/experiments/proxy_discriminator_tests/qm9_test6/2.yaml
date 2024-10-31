@@ -27,7 +27,7 @@ machine: cluster
 max_batch_size: 1000
 max_epochs: 10000
 min_batch_size: 50
-minimum_epochs: 50
+minimum_epochs: 10000
 mode: proxy_discriminator
 model_names:
 - autoencoder
