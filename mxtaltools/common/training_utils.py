@@ -107,11 +107,17 @@ def instantiate_models(config: Namespace,
         elif config.proxy_discriminator.embedding_type == 'mol_volume':
             config.proxy_discriminator.model.bottleneck_dim = 3
 
+        elif config.proxy_discriminator.embedding_type is None:
+            config.proxy_discriminator.model.bottleneck_dim = 3
+
+        else:
+            assert False
+
         models_dict['proxy_discriminator'] = EmbeddingRegressor(
             config.seeds.model,
             config.proxy_discriminator.model,
             num_targets=1,
-            conditions_dim=12,
+            conditions_dim=9,
             prediction_type='scalar'
         )
         assert config.model_paths.autoencoder is not None  # must preload the encoder

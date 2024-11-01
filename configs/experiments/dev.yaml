@@ -9,7 +9,7 @@ save_checkpoints: True
 #sweep_id: jao9tqo9
 
 dataset:
-  max_dataset_length: 100000000  # non-functional for on-disk datasets.
+  max_dataset_length: 1000000  # non-functional for on-disk datasets.
   test_fraction: 0.2
 
   #on_disk_data_dir: '/zinc22_3d/zinc3d.lmdb/'
@@ -25,7 +25,7 @@ early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 5
-max_batch_size: 500
+max_batch_size: 100
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000

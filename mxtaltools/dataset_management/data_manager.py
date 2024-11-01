@@ -122,6 +122,7 @@ class DataManager:
                                    conv_cutoff: Optional[float] = None,
                                    do_shuffle: bool = True,
                                    precompute_edges: bool = False,
+                                   single_identifier=None
                                    ):
         """
 
@@ -166,6 +167,11 @@ class DataManager:
 
         if precompute_edges:
             self.compute_edges(conv_cutoff)
+
+        if single_identifier is not None:  # replace dataset with copies of one element
+            idents = [elem.identifier for elem in self.dataset]
+            good_ind = idents.index(single_identifier)
+            self.dataset = [self.dataset[good_ind] for _ in range(len(self.dataset))]
 
     def quick_compute_mol_volume(self):
         dataset_to_analyze = self.collater(self.dataset)

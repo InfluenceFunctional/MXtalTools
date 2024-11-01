@@ -23,6 +23,7 @@ dataset:
   regression_target: null # crystal_reduced_volume #
   on_disk_data_dir: null
   dumps_rids: null
+  single_identifier: null
 
 # batching & convergence
 num_samples: 1.0E+8
@@ -101,10 +102,17 @@ embedding_regressor:
   model: null
 
 proxy_discriminator:
-  prediction_type: scalar
-  num_targets: 1
-  optimizer: null
-  model: null
+  train_on_randn: True
+  embedding_type: 'autoencoder' # autoencoder, principal_axes, principal_moments, mol_volume
+  vdw_turnover_potential: 10
+  cutoff: 6
+
+  model:
+    hidden_dim: 1024
+    dropout: 0
+    norm: null
+    num_layers: 4
+    vector_norm: null
 
 # for GAN training
 generator:

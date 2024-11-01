@@ -15,8 +15,8 @@ from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from tqdm import tqdm
 
+from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
 from mxtaltools.common.geometry_calculations import rotvec2sph
-from mxtaltools.modelling.utils import get_model_sizes, copy_source_to_workdir
 from mxtaltools.common.training_utils import instantiate_models
 from mxtaltools.common.utils import init_sym_info, compute_rdf_distance, make_sequential_directory, \
     flatten_wandb_params, sample_uniform
@@ -25,9 +25,11 @@ from mxtaltools.constants.atom_properties import VDW_RADII, ATOM_WEIGHTS, ELECTR
 from mxtaltools.crystal_building.builder import CrystalBuilder
 from mxtaltools.crystal_building.utils import overwrite_symmetry_info
 from mxtaltools.crystal_building.utils import (set_molecule_alignment)
+from mxtaltools.crystal_search.sampling import Sampler
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
+from mxtaltools.modelling.utils import get_model_sizes, copy_source_to_workdir
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.functions.vdw_overlap import vdw_overlap, vdw_analysis
 from mxtaltools.models.task_models.generator_models import CSDPrior
@@ -43,10 +45,6 @@ from mxtaltools.models.utils import (reload_model, init_scheduler, softmax_and_s
                                      renormalize_generated_cell_params)
 from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
-
-from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
-from mxtaltools.crystal_search.sampling import Sampler
-import multiprocessing as mp
 
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
@@ -204,6 +202,7 @@ class Modeller:
             do_shuffle=override_shuffle,
             precompute_edges=not nonzero_positional_noise and (  # TODO have a better think about this
                     self.config.mode not in ['gan', 'discriminator', 'generator']),
+            single_identifier = self.config.dataset.single_identifier,
         )
         self.dataDims = data_manager.dataDims
         self.lattice_means = torch.tensor(self.dataDims['lattice_means'], device=self.device)
@@ -1055,7 +1054,8 @@ class Modeller:
                                            dtype=torch.float32,
                                            device=self.device)
 
-            vec_embedding = torch.einsum('nik, ij -> njk', d, vec_to_3_tensor).reshape(data.num_graphs, 3,3,3, d.shape[-1])
+            vec_embedding = torch.einsum('nik, ij -> njk', d, vec_to_3_tensor).reshape(data.num_graphs, 3, 3, 3,
+                                                                                       d.shape[-1])
 
             # linearly combine them, weighted by the scalar outputs
             t_weights = F.softmax(s_predictions[:, :a.shape[-1]], dim=1)
@@ -1603,7 +1603,7 @@ class Modeller:
             self.models_dict['proxy_discriminator'].eval()
 
         self.models_dict['autoencoder'].eval()
-
+        self.crystal_builder.rotation_basis = 'cartesian'
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
             data = data.to(self.config.device)
 
@@ -2134,45 +2134,66 @@ class Modeller:
         and score them
         """
         with torch.no_grad():
-            _, mol_batch = self.preprocess_ae_inputs(mol_batch,
-                                                     no_noise=True,
-                                                     orientation_override='random')
-            s_embedding, v_embedding = self.get_mol_embedding_for_proxy(mol_batch)
+            mol_batch = set_molecule_alignment(mol_batch,
+                                               mode='random',
+                                               right_handed=False,
+                                               include_inversion=True)
+
+            _, generated_samples = self.sample_from_prior(mol_batch)
 
             mol_batch = overwrite_symmetry_info(mol_batch,
                                                 self.config.generate_sgs,
                                                 self.sym_info,
                                                 randomize_sgs=True)
 
-        generated_samples_i, negative_type, generator_data, negatives_stats = \
-            self.generate_discriminator_negatives(mol_batch,
-                                                  train_adversarial=False,
-                                                  train_on_randn=self.config.proxy_discriminator.train_on_randn,
-                                                  train_on_distorted=False,
-                                                  orientation='as is')
+            supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
+                mol_batch,
+                generated_samples,
+                self.config.supercell_size,
+                self.config.proxy_discriminator.cutoff,
+                align_to_standardized_orientation=False,  # take generator samples as-given
+                target_handedness=None,
+                skip_refeaturization=True,
+            )
 
-        supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
-            generator_data, generated_samples_i, self.config.supercell_size,
-            self.config.proxy_discriminator.cutoff,
-            align_to_standardized_orientation=False,  # take generator samples as-given
-            target_handedness=None,
-            skip_refeaturization=True,
-        )
+            dist_dict = get_intermolecular_dists_dict(supercell_batch, 6, 100)
+            _, _, vdw_potential, vdw_loss, eval_vdw_loss \
+                = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_batch.num_graphs,
+                               self.config.proxy_discriminator.vdw_turnover_potential)
 
-        '''apply noise'''
-        if self.config.positional_noise.discriminator > 0:
-            supercell_batch.pos += \
-                torch.randn_like(supercell_batch.pos) * self.config.positional_noise.discriminator
+            p1 = supercell_batch.pos[supercell_batch.aux_ind == 0]  # write crystal orientation to molecule
+            # re-center the molecule
+            p2 = torch.cat(
+                [p1[mol_batch.batch == ind] - p1[mol_batch.batch == ind].mean(0) for ind in range(mol_batch.num_graphs)
+                 ])
+            mol_batch.pos = p2
+            s_embedding, v_embedding = self.get_mol_embedding_for_proxy(mol_batch)
+            scaled_params = self.rescale_proxy_discrim_cell_params(mol_batch, supercell_batch.cell_params)
 
-        dist_dict = get_intermolecular_dists_dict(supercell_batch, 6, 100)
-        _, _, vdw_potential, vdw_loss, eval_vdw_loss \
-            = vdw_analysis(self.vdw_radii_tensor, dist_dict, mol_batch.num_graphs,
-                           self.config.proxy_discriminator.vdw_turnover_potential)
+            reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
+            packing_coeff = mol_batch.mol_volume / reduced_volume
 
-        '''score'''
+        output, _ = self.models_dict['proxy_discriminator'](
+            x=torch.cat([s_embedding, scaled_params[:, :9]], dim=1),
+            v=v_embedding)
+
+        prediction = output[:, 0]
+
+        temp_std = 80
+        temp_mean = 60
+        stats = {'vdw_potential': (vdw_potential / mol_batch.num_atoms).detach(),
+                 'vdw_score': (vdw_loss / mol_batch.num_atoms).detach(),
+                 'generated_cell_parameters': supercell_batch.cell_params.detach(),
+                 'packing_coeff': packing_coeff.detach(),
+                 'vdw_prediction': (prediction * temp_std + temp_mean).detach(),
+                 }
+
+        return prediction, vdw_loss / mol_batch.num_atoms, stats, temp_std, temp_mean
+
+    def rescale_proxy_discrim_cell_params(self, mol_batch, cell_params):
         # rescale to nicer normalized basis
         normed_params = renormalize_generated_cell_params(
-            supercell_batch.cell_params.detach(),
+            cell_params,
             mol_batch,
             self.crystal_builder.asym_unit_dict
         )
@@ -2189,28 +2210,8 @@ class Modeller:
             0.25, 0.25, 0.25,
             0.33, torch.pi / 2, torch.pi / 2
         ], device=self.device, dtype=torch.float32)
-
         scaled_params = (normed_params - lattice_means[None, :]) / lattice_stds[None, :]
-
-        output, _ = self.models_dict['proxy_discriminator'](
-            torch.cat([s_embedding, scaled_params], dim=1),
-            v_embedding)
-        prediction = output[:, 0]
-        reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
-        packing_coeff = mol_batch.mol_volume / reduced_volume
-
-        temp_std = 80
-        temp_mean = 60
-        stats = {'vdw_potential': (vdw_potential / mol_batch.num_atoms).detach(),
-                 'vdw_score': (vdw_loss / mol_batch.num_atoms).detach(),
-                 'generated_cell_parameters': supercell_batch.cell_params.detach(),
-                 'packing_coeff': packing_coeff.detach(),
-                 'vdw_prediction': (prediction * temp_std + temp_mean).detach(),
-                 }
-
-        stats.update(negatives_stats)
-
-        return prediction, vdw_loss / mol_batch.num_atoms, stats, temp_std, temp_mean
+        return scaled_params
 
     def get_mol_embedding_for_proxy(self, mol_batch):
         if self.config.proxy_discriminator.embedding_type == 'autoencoder':
@@ -2241,6 +2242,10 @@ class Modeller:
                 self.mol_volume_mean = mol_batch.mol_volume.mean()
 
             s_embedding = mol_batch.mol_volume[:, None].repeat(1, 3) / self.mol_volume_mean
+            v_embedding = torch.zeros((mol_batch.num_graphs, 3, 3), dtype=torch.float32, device=self.device)
+        elif self.config.proxy_discriminator.embedding_type is None:
+
+            s_embedding = torch.zeros_like(mol_batch.mol_volume[:, None].repeat(1, 3))
             v_embedding = torch.zeros((mol_batch.num_graphs, 3, 3), dtype=torch.float32, device=self.device)
         else:
             assert False, f"{self.config.proxy_discriminator.embedding_type} is not an implemented proxy discriminator embedding"
@@ -2312,8 +2317,10 @@ class Modeller:
 
         return n_generators, generator_ind
 
-    def generate_discriminator_negatives(self, real_data, train_adversarial=False, train_on_randn=False,
-                                         train_on_distorted=False, orientation='random'):
+    def generate_discriminator_negatives(self, real_data, train_adversarial=False,
+                                         train_on_randn=False,
+                                         train_on_distorted=False,
+                                         orientation='random'):
         """
         use one of the available cell generation tools to sample cell parameters, to be fed to the discriminator
         """
