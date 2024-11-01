@@ -1025,7 +1025,7 @@ class Modeller:
             # do a weighted sum with learned weights
 
             # construct symmetric 3-tensor
-            a, b, c = v_predictions.split([v_predictions.shape[-1] // 3 for _ in range(3)], dim=2)
+            a, b, c, d = v_predictions.split([v_predictions.shape[-1] // 4 for _ in range(4)], dim=2)
 
             t12 = torch.einsum('nik,njk->nijk', a, b)
             t21 = torch.einsum('nik,njk->nijk', b, a)
@@ -1043,10 +1043,27 @@ class Modeller:
 
             symmetric_tensor = (1 / 6) * (t123 + t213 + t231 + t321 + t132 + t312)
 
-            # linearly combine them, weighted by the scalar outputs
-            weights = F.softmax(s_predictions[:, :a.shape[-1]], dim=1)
+            vec_to_3_tensor = torch.tensor([[0.7746, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582,
+                                             0.0000, 0.2582, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+                                             0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000],
+                                            [0.0000, 0.2582, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000,
+                                             0.2582, 0.0000, 0.0000, 0.0000, 0.7746, 0.0000, 0.0000, 0.0000, 0.2582,
+                                             0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.2582, 0.0000],
+                                            [0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000,
+                                             0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.2582, 0.0000,
+                                             0.2582, 0.0000, 0.0000, 0.0000, 0.2582, 0.0000, 0.0000, 0.0000, 0.7746]],
+                                           dtype=torch.float32,
+                                           device=self.device)
 
-            t_predictions = torch.sum(weights[:, None, None, None, :] * symmetric_tensor, dim=-1)  # + isotropic_part
+            vec_embedding = torch.einsum('nik, ij -> njk', d, vec_to_3_tensor).reshape(data.num_graphs, 3,3,3, d.shape[-1])
+
+            # linearly combine them, weighted by the scalar outputs
+            t_weights = F.softmax(s_predictions[:, :a.shape[-1]], dim=1)
+            v_weights = F.softmax(s_predictions[:, -a.shape[-1]:], dim=1)
+
+            t_predictions = (torch.sum(t_weights[:, None, None, None, :] * symmetric_tensor, dim=-1)
+                             + torch.sum(v_weights[:, None, None, None, :] * vec_embedding, dim=-1)
+                             )
             losses = F.smooth_l1_loss(t_predictions, data.y, reduction='none')
             predictions = t_predictions
 
@@ -2132,7 +2149,7 @@ class Modeller:
                                                   train_adversarial=False,
                                                   train_on_randn=self.config.proxy_discriminator.train_on_randn,
                                                   train_on_distorted=False,
-                                                  orientation='random')
+                                                  orientation='as is')
 
         supercell_batch, generated_cell_volumes = self.crystal_builder.build_zp1_supercells(
             generator_data, generated_samples_i, self.config.supercell_size,
@@ -2223,7 +2240,7 @@ class Modeller:
             if not hasattr(self, 'mol_volume_mean'):
                 self.mol_volume_mean = mol_batch.mol_volume.mean()
 
-            s_embedding = mol_batch.mol_volume[:, None].repeat(1,3) / self.mol_volume_mean
+            s_embedding = mol_batch.mol_volume[:, None].repeat(1, 3) / self.mol_volume_mean
             v_embedding = torch.zeros((mol_batch.num_graphs, 3, 3), dtype=torch.float32, device=self.device)
         else:
             assert False, f"{self.config.proxy_discriminator.embedding_type} is not an implemented proxy discriminator embedding"

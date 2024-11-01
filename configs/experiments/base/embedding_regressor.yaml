@@ -63,7 +63,7 @@ supercell_size: 5
 
 embedding_regressor:
   prediction_type: '3-tensor'
-  num_targets: 16  # must cleanly divide tensor order
+  num_targets: 24  # must cleanly divide tensor order
   optimizer:
     beta1: 0.9
     beta2: 0.999

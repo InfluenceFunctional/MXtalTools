@@ -1817,8 +1817,8 @@ def proxy_discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_
         fig_dict['Proxy Discriminator Parity Plot'] = fig
 
         for key, fig in fig_dict.items():
-            fig.write_image(key + 'fig.png', width=1024,
-                            height=1024)  # save the image rather than the fig, for size reasons
+            fig.write_image(key + 'fig.png', width=480,
+                            height=480)  # save the image rather than the fig, for size reasons
             fig_dict[key] = wandb.Image(key + 'fig.png')
 
         wandb.log(data=fig_dict, commit=False)

@@ -433,6 +433,7 @@ class DataManager:
         if os.path.exists(misc_data_path):
             self.misc_dataset = np.load(misc_data_path, allow_pickle=True).item()
         else:
+            self.quick_compute_mol_volume()  # todo add this back to dataset featurization
             self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
 
         self.times['dataset_loading_end'] = time()
