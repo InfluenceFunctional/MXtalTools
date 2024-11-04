@@ -12,7 +12,7 @@ from mxtaltools.reporting.papers.autoencoder_1.AE_figures import RMSD_fig, UMAP_
 if __name__ == '__main__':
     filter_protons = [False, True, False]
     infer_protons = [False, False, True]
-    max_dataset_length = 1000
+    max_dataset_length = 10000
 
     mxt_path = r'C:\\Users\\mikem\\PycharmProjects\\Python_Codes\\MXtalTools'
 

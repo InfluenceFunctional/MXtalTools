@@ -5,7 +5,7 @@ from copy import copy
 base_config = load_yaml('base.yaml')
 
 models = [
-    r'best_autoencoder_experiments_autoencoder_tests_qm9_test30_1_28-10-15-51-50'  # model with protons
+    r'best_autoencoder_experiments_autoencoder_tests_qm9_test30_0_28-10-15-51-07'  # model with protons
     ]
 
 targets = [
