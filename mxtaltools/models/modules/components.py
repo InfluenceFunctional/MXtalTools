@@ -403,7 +403,7 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
 
         '''working layers'''
         self.fc_layers = torch.nn.ModuleList([
-            nn.Linear(self.s_filters_in[i] + (self.v_filters_in[i] if self.v_to_s_combination == 'concatenate' else 0),
+            nn.Linear(self.s_filters_in[i],
                       self.s_filters_out[i], bias=self.bias)
             for i in range(self.n_layers)
         ])
@@ -419,8 +419,7 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
         else:
             self.fc_norms = torch.nn.ModuleList([
                 Normalization(self.norm_mode,
-                              self.s_filters_in[i] + (
-                                  self.v_filters_in[i] if self.v_to_s_combination == 'concatenate' else 0)
+                              self.s_filters_in[i]
                               )
                 for i in range(self.n_layers)
             ])
@@ -441,23 +440,22 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
                 batch: Optional[torch.LongTensor] = None
                 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
 
-        'initialize to correct feature dimension'
-        x = self.init_layer(x)
+        """initialize to correct feature dimension"""
 
         for i, (norm, linear, activation, dropout) in enumerate(
                 zip(self.fc_norms, self.fc_layers, self.fc_activations, self.fc_dropouts)):
 
             'get residue'
             if self.same_depth:
-                x = x.clone()
+                res_x = x.clone()
             else:
-                x = self.residue_adjust[i](x)
+                res_x = self.residue_adjust[i](x)
 
             'linear layer'
             if self.norm_after_linear:
-                x = x + dropout(activation(norm(linear(x), batch=batch)))
+                x = res_x + dropout(activation(norm(linear(x), batch=batch)))
             else:
-                x = x + dropout(activation(linear(norm(x, batch=batch))))
+                x = res_x + dropout(activation(linear(norm(x, batch=batch))))
 
         if return_latent:
             return self.output_layer(x), x

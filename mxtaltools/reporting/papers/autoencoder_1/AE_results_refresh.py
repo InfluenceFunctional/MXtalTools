@@ -7,7 +7,6 @@ from model_paths import ae_paths
 
 from mxtaltools.common.config_processing import load_yaml, process_main_config
 from mxtaltools.modeller import Modeller
-from mxtaltools.reporting.papers.autoencoder_1.AE_figures import RMSD_fig, UMAP_fig
 
 if __name__ == '__main__':
     filter_protons = [False, True, False]
@@ -36,6 +35,8 @@ if __name__ == '__main__':
         predictor.ae_analysis()
 
     # generate figures
+    from mxtaltools.reporting.papers.autoencoder_1.AE_figures import RMSD_fig, UMAP_fig
+
     fig = RMSD_fig()
     fig2 = UMAP_fig(max_entries=1000000)
     if False:

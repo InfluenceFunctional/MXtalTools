@@ -52,7 +52,8 @@ def instantiate_models(config: Namespace,
             dataDims['molecule_features'],
             dataDims['node_standardization_vector'],
             dataDims['graph_standardization_vector'],
-            config.seeds.model
+            torch.tensor([dataDims['target_mean'], dataDims['target_std']]),
+            config.seeds.model,
         )
     if config.mode == 'autoencoder' or config.model_paths.autoencoder is not None:
         models_dict['autoencoder'] = Mo3ENet(

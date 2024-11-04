@@ -44,10 +44,10 @@ targets = [
     ["free_energy_STP", 'scalar', 1, 'qm9_dataset.pt'],  # 13
     ["heat_capacity_STP", 'scalar', 1, 'qm9_dataset.pt'],  # 14
     ["dipole", 'vector', 1, 'qm9s_dataset.pt'],  # 15
-    ["polar", '2-tensor', 128, 'qm9s_dataset.pt'],  # 16
-    ["quadrupole", '2-tensor', 128, 'qm9s_dataset.pt'],  # 17
-    ["octapole", '3-tensor', 129, 'qm9s_dataset.pt'],  # 18
-    ["hyperpolar", '3-tensor', 129, 'qm9s_dataset.pt'],  # 19
+    ["polar", '2-tensor', 16, 'qm9s_dataset.pt'],  # 16
+    ["quadrupole", '2-tensor', 16, 'qm9s_dataset.pt'],  # 17
+    ["octapole", '3-tensor', 16, 'qm9s_dataset.pt'],  # 18
+    ["hyperpolar", '3-tensor', 16, 'qm9s_dataset.pt'],  # 19
 ]
 er_results_path = er_path.joinpath('results')
 er_results_paths = os.listdir(er_results_path)

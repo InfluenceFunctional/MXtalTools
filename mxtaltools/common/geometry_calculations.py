@@ -643,7 +643,12 @@ def coor_trans_matrix_np(opt, v, a, return_vol=False):
         return m
 
 
-def batch_molecule_vdW_volume(atom_types, pos, batch, num_graphs, vdw_radii_tensor):
+def batch_molecule_vdW_volume(atom_types_in, pos, batch, num_graphs, vdw_radii_tensor):
+    if atom_types_in.ndim > 1:
+        atom_types = atom_types_in[:, 0]
+    else:
+        atom_types = atom_types_in.clone()
+
     atom_volumes = 4 / 3 * torch.pi * vdw_radii_tensor[atom_types] ** 3
     raw_vdw_volumes = scatter(atom_volumes, batch, dim=0, dim_size=num_graphs, reduce='sum')
     bonds_i, bonds_j = radius(pos, pos,

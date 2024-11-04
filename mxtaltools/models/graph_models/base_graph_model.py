@@ -73,6 +73,8 @@ class BaseGraphModel(torch.nn.Module):
                 mol_x_list.append(data.num_atoms)
             if 'radius' in self.mol_feats:
                 mol_x_list.append(data.radius)
+            if 'mol_volume' in self.mol_feats:
+                mol_x_list.append(data.mol_volume)
             data.mol_x = torch.stack(mol_x_list).T
 
         return data
