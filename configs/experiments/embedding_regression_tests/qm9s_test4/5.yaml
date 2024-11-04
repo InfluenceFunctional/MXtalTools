@@ -1,0 +1,78 @@
+anomaly_detection: false
+batch_growth_increment: 0.1
+checkpointing_loss_type: test
+dataset:
+  filter_protons: false
+  max_dataset_length: 10000000
+  regression_target: HOMO_energy
+  test_fraction: 0.2
+  type: molecule
+dataset_name: qm9_dataset.pt
+dataset_yaml_path: /qm9_autoencoder.yaml
+device: cuda
+early_epochs_step_override: 5
+embedding_regressor:
+  model:
+    depth: 256
+    dropout: 0.1
+    hidden_dim: 256
+    norm: layer
+    norm_mode: null
+    num_layers: 4
+    vector_norm: vector layer
+  num_targets: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 0.0001
+    init_lr: 0.0001
+    lr_growth_lambda: 1.1
+    lr_schedule: true
+    lr_shrink_lambda: 0.9975
+    max_lr: 0.0002
+    min_lr: 5.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.1
+  prediction_type: scalar
+extra_test_period: 1
+generate_sgs: null
+gradient_norm_clip: 1
+grow_batch_size: true
+history: 100
+logger:
+  experiment_tag: embedding_regression_qm9s_test4
+  log_figures: true
+  mini_csp_frequency: 5
+  run_name: embedding_regression_qm9s_test4_0_1_2_3_4_5
+  sample_reporting_frequency: 5
+machine: cluster
+max_batch_size: 2000
+max_epochs: 10000
+min_batch_size: 50
+minimum_epochs: 100
+mode: embedding_regression
+model_names:
+- autoencoder
+- embedding_regressor
+model_paths:
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_qm9_test30_1_28-10-15-51-50
+  discriminator: null
+  embedding_regressor: null
+  generator: null
+  regressor: null
+num_early_epochs: 0
+overfit_tolerance: 4
+positional_noise:
+  autoencoder: 0
+  discriminator: 0
+  generator: 0
+  regressor: 0
+sample_steps: 100
+save_checkpoints: true
+seeds:
+  dataset: 0
+  model: 12345
+supercell_size: 5
+sweep_id: null
+sweep_path: null

@@ -4,11 +4,11 @@ from pathlib import Path
 head_path = Path(r'C:\Users\mikem\crystals\CSP_runs\models\ae_draft2_models_and_artifacts')
 #--------------------------------------
 ae_path = head_path.joinpath('autoencoder')
-ae_paths = [#'with_protons.pt',
+ae_paths = ['with_protons.pt',
             'without_protons.pt',
             'inferred_protons.pt'
             ]
-ae_results_paths = [#'with_protons_results.npy',
+ae_results_paths = ['with_protons_results.npy',
                     'without_protons_results.npy',
                     'inferred_protons_results.npy'
                     ]
