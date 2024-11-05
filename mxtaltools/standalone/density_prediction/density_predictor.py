@@ -12,13 +12,12 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.loader.dataloader import Collater
 
-from mxtaltools.common.config_processing import dict2namespace, load_yaml
-from mxtaltools.common.geometry_calculations import batch_molecule_vdW_volume
-from mxtaltools.common.utils import parse_to_torch
-from mxtaltools.constants.atom_properties import VDW_RADII
-from mxtaltools.dataset_management.CrystalData import CrystalData
-from mxtaltools.models.task_models.regression_models import MoleculeScalarRegressor
-from mxtaltools.models.utils import reload_model
+from mxtaltools.standalone.density_prediction.utils import (
+    dict2namespace, load_yaml, batch_molecule_vdW_volume,
+    VDW_RADII, ATOM_WEIGHTS, reload_model
+)
+from mxtaltools.standalone.density_prediction.CrystalData import CrystalData
+from mxtaltools.standalone.density_prediction.models import MoleculeScalarRegressor
 
 module_path = str(pathlib.Path(__file__).parent.resolve())
 density_model_path = module_path + '/models/density_model.pt'
@@ -35,9 +34,9 @@ class DensityPredictor(torch.nn.Module):
         self.device = device
         self.machine = machine
 
-        self.initialize_test_molecule()
         self.load_models()
         self.vdw_radii = torch.tensor(list(VDW_RADII.values())).to(self.device)
+        self.atomic_weights = torch.tensor(list(ATOM_WEIGHTS.values())).to(self.device)
         self.collater = Collater(None, None)
 
     @torch.no_grad()
@@ -55,18 +54,20 @@ class DensityPredictor(torch.nn.Module):
 
         """
 
-        atomic_numbers = parse_to_torch(atomic_numbers, dtype=torch.long, device=self.device)
-        atom_coordinates = parse_to_torch(atom_coordinates, dtype=torch.float32, device=self.device)
-
-        mol_batch = self.prep_molecule_batch([atomic_numbers],
-                                             [atom_coordinates],
+        mol_batch = self.prep_molecule_batch(atomic_numbers,
+                                             atom_coordinates,
                                              )
 
         all_samples = torch.zeros((num_samples, mol_batch.num_graphs), dtype=torch.float32, device=self.device)
         for d_ind in range(num_samples):
-            all_samples[d_ind] = self.gnn(mol_batch) * self.gnn.target_std + self.gnn.target_mean
+            all_samples[d_ind] = self.gnn(mol_batch).flatten() * self.gnn.target_std + self.gnn.target_mean
 
-        return all_samples.mean(0), all_samples.std(0)
+        packing_coeffs = all_samples.mean(0)
+        packing_coeff_stds = all_samples.std(0)
+
+        return (packing_coeffs.cpu().detach().numpy(),
+                packing_coeff_stds.cpu().detach().numpy(),
+                mol_batch.mol_volume.cpu().detach().numpy())
 
     def prep_molecule_batch(self,
                             atom_types_list,
@@ -98,10 +99,9 @@ class DensityPredictor(torch.nn.Module):
 
     #
     def load_models(self):
-        # todo redevelop this with our up-to-date models
         self.load_density_model()
 
-    def load_density_model(self):  # todo retest this
+    def load_density_model(self):
         """asymmetric unit volume prediction model"""
         checkpoint = torch.load(density_model_path, map_location=self.device)
         model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
@@ -135,10 +135,10 @@ if __name__ == '__main__':
     # load up some data
     from mxtaltools.dataset_management.data_manager import DataManager
 
-    miner = DataManager(device='cpu',
+    miner = DataManager(device='cuda',
                         datasets_path=r"D:\crystal_datasets/",
                         dataset_type='crystal',
-                        config=dict2namespace(load_yaml('../..//configs/dataset/skinny_regression.yaml')))
+                        config=dict2namespace(load_yaml('../../..///configs/dataset/skinny_regression.yaml')))
 
     miner.load_dataset_for_modelling(dataset_name='test_CSD_dataset.pt',
                                      filter_conditions=[
@@ -152,13 +152,22 @@ if __name__ == '__main__':
                                      ])
 
     predictions = []
+    stds = []
+    batch_size = 50
     for ind in range(10):
-        coeff, std = analyzer.predict(atomic_numbers=miner.dataset[ind].x,
-                                 atom_coordinates=miner.dataset[ind].pos)
-        predictions.append(coeff.cpu().detach().mean())
+        packing_coeff, packing_std, mol_volume = analyzer.predict(
+            atomic_numbers=[miner.dataset[ii].x for ii in range(ind*batch_size,(ind+1)*batch_size)],
+            atom_coordinates=[miner.dataset[ii].pos for ii in range(ind*batch_size,(ind+1)*batch_size)]
+        )
+        predictions.extend(packing_coeff)
+        stds.extend(packing_std)
 
+    predictions = torch.Tensor(predictions)
+    stds = torch.Tensor(stds)
     reference_coeffs = torch.tensor(
-        [elem.packing_coeff for elem in miner.dataset[0:10]])
-    volume_error = F.l1_loss(torch.stack(predictions).flatten(), reference_coeffs, reduction='none')
+        [elem.packing_coeff for elem in miner.dataset[0:10*batch_size]])
+    volume_error = F.l1_loss(predictions, reference_coeffs, reduction='none')
+    import plotly.graph_objects as go
+    fig = go.Figure(go.Scatter(x=reference_coeffs, y=predictions,mode='markers')).show(renderer='browser')
 
     aa = 1

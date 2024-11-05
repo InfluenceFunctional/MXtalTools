@@ -538,6 +538,9 @@ def parse_to_torch(array: Union[torch.Tensor, np.ndarray, list],
     if torch.is_tensor(array):
         return torch.tensor(array.clone().detach(), dtype=dtype, device=device)
     elif isinstance(array, np.ndarray):
-        return torch.Tensor(array, dtype=dtype, device=device)
+        return torch.tensor(array, dtype=dtype, device=device)
     elif isinstance(array, list):
-        return torch.Tensor(array, dtype=dtype, device=device)
+        if torch.is_tensor(array[0]):
+            return torch.cat(array, dim=0).to(device)
+        else:
+            return torch.tensor(array, dtype=dtype, device=device)

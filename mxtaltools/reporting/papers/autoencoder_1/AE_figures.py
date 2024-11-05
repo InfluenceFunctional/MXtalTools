@@ -91,18 +91,18 @@ def RMSD_fig():
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
 
     bandwidth = 0.005
-    fig = make_subplots(rows=1, cols=1)
-    for ind, run_name in enumerate(stats_dicts.keys()):
+    fig = make_subplots(rows=1, cols=2, subplot_titles=['Whole Molecule', 'Atomwise'], horizontal_spacing=0.2)
+    for ind, run_name in enumerate(['Without Hydrogen', 'With Hydrogen', 'Inferred Hydrogen']):
         stats_dict = stats_dicts[run_name]
 
         x = np.concatenate(stats_dict['RMSD_dist'])
         matched = np.concatenate(stats_dict['matched_graphs'])
         unmatched = np.mean(np.invert(matched))
         finite_x = x[matched]
-        print(finite_x.mean())
 
-        fig.add_annotation(x=0.4, y=ind + 0.3, showarrow=False,
+        fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
                            text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.0f}%',
+                           font_size=20,
                            row=1, col=1)
         fig.add_trace(go.Violin(  # y=np.zeros_like(x),
             x=finite_x, side='positive', orientation='h',
@@ -115,21 +115,51 @@ def RMSD_fig():
             row=1, col=1
         )
 
-    fig.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
-    fig.update_layout(
-        xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
-    fig.update_layout(yaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
+        x = stats_dict['nodewise_dists_dist']
+        matched = stats_dict['matched_nodes']
+        unmatched = np.mean(np.invert(matched))
+        finite_x = x[matched]
 
-    fig.update_layout(xaxis1_range=[0, .75])
-    fig.update_layout(font=dict(size=30))
-    fig.update_xaxes(title_font=dict(size=24), tickfont=dict(size=20))
-    fig.update_yaxes(title_font=dict(size=24), tickfont=dict(size=20))
+        fig.add_annotation(x=0.6, y=ind + 0.3, showarrow=False,
+                           text=f'Matched RMSD: {finite_x.mean():.2f} <br> Unmatched Frac.: {unmatched * 100:.0f}%',
+                           font_size=20,
+                           row=1, col=2)
+        fig.add_trace(go.Violin(  # y=np.zeros_like(x),
+            x=finite_x, side='positive', orientation='h',
+            bandwidth=bandwidth, width=4, showlegend=False, opacity=1,  # .5,
+            name=run_name,
+            # scalegroup='',
+            meanline_visible=True,
+            line_color=colors[ind],
+            points=False),
+            row=1, col=2
+        )
+
+    fig.update_layout(barmode='group', plot_bgcolor='rgba(0,0,0,0)')
+
+    fig.update_layout(font=dict(size=20))
+    fig.update_xaxes(title_font=dict(size=20), tickfont=dict(size=20))
+    fig.update_yaxes(title_font=dict(size=20), tickfont=dict(size=20))
     fig.update_layout(violingap=0, violinmode='overlay')
     fig.update_layout(legend_traceorder='reversed')  # , yaxis_showgrid=True)
+    fig.update_annotations(font_size=24)
+
+    fig.update_layout(
+        xaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
+    fig.update_layout(xaxis1_range=[0, .75])
     fig.update_layout(xaxis1_title='RSMD (Angstrom)')
-    fig.update_layout(xaxis1_tick0=0, xaxis1_dtick=0.05)
+    fig.update_layout(xaxis1_tick0=0, xaxis1_dtick=0.1)
+    fig.update_layout(yaxis1={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
+
+    fig.update_layout(
+        xaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})  # , 'linecolor': 'white', 'linewidth': 5})
+    fig.update_layout(xaxis2_range=[0, .75])
+    fig.update_layout(xaxis2_title='RSMD (Angstrom)')
+    fig.update_layout(xaxis2_tick0=0, xaxis1_dtick=0.1)
+    fig.update_layout(yaxis2={'gridcolor': 'lightgrey', 'zerolinecolor': 'black'})
 
     fig.show(renderer='browser')
+
     return fig
 
 

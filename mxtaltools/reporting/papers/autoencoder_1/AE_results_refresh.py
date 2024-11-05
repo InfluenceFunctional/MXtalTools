@@ -11,7 +11,7 @@ from mxtaltools.modeller import Modeller
 if __name__ == '__main__':
     filter_protons = [False, True, False]
     infer_protons = [False, False, True]
-    max_dataset_length = 10000
+    max_dataset_length = 1000000000
 
     mxt_path = r'C:\\Users\\mikem\\PycharmProjects\\Python_Codes\\MXtalTools'
 

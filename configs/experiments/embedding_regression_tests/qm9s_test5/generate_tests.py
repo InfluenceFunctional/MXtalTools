@@ -86,6 +86,30 @@ config_list = [
         '3-tensor', 16, 'qm9s_dataset.pt',
         500
     ],
+    [  # 12 - baseline
+        models[0], False, 'hyperpolar',
+        128, 4, 0, None, 10000000,
+        '3-tensor', 32, 'qm9s_dataset.pt',
+        10000
+    ],
+    [  # 13 - baseline
+        models[0], False, 'hyperpolar',
+        128, 4, 0, None, 10000000,
+        '3-tensor', 64, 'qm9s_dataset.pt',
+        2000
+    ],
+    [  # 14 - baseline
+        models[0], False, 'hyperpolar',
+        128, 12, 0, None, 10000000,
+        '3-tensor', 32, 'qm9s_dataset.pt',
+        2000
+    ],
+    [  # 15 - baseline
+        models[0], False, 'hyperpolar',
+        128, 12, 0, None, 10000000,
+        '3-tensor', 64, 'qm9s_dataset.pt',
+        10000
+    ],
 ]
 
 
