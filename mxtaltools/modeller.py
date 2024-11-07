@@ -1644,7 +1644,7 @@ class Modeller:
 
         new_samples = torch.stack(buffer['new_samples'], dim=0)
         new_values = torch.tensor(buffer['new_values'], dtype=torch.float32, device='cpu')
-        randoms_to_add = np.random.choice(len(new_samples), int(len(new_samples) * 0.05), replace=False)
+        randoms_to_add = np.random.choice(len(new_samples) - 1, int(len(new_samples) * 0.05), replace=False)
 
         if self.logger.epoch > 0:
             all_samples = torch.cat([buffer['samples'], new_samples], dim=0)
