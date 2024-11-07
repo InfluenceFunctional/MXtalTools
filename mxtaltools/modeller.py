@@ -1614,6 +1614,13 @@ class Modeller:
             else:
                 generate_samples = False
 
+            if not generate_samples:  # cycle through the buffer
+                if self.epoch_type == 'train':
+                    if (i - 1) * self.config.current_batch_size >= len(self.train_buffer['samples']):
+                        break
+                if self.epoch_type == 'test':
+                    if (i - 1) * self.config.current_batch_size >= len(self.test_buffer['samples']):
+                        break
             '''
             train proxy discriminator
             '''
@@ -1622,13 +1629,7 @@ class Modeller:
             if iteration_override is not None:
                 if i >= iteration_override:
                     break  # stop training early
-            if not generate_samples:  # cycle through the buffer
-                if self.epoch_type == 'train':
-                    if (i - 1) * self.config.current_batch_size >= len(self.train_buffer['samples']):
-                        break
-                if self.epoch_type == 'test':
-                    if (i - 1) * self.config.current_batch_size >= len(self.test_buffer['samples']):
-                        break
+
 
         self.update_buffers()
         self.logger.concatenate_stats_dict(self.epoch_type)
@@ -1644,7 +1645,6 @@ class Modeller:
 
         new_samples = torch.stack(buffer['new_samples'], dim=0)
         new_values = torch.tensor(buffer['new_values'], dtype=torch.float32, device='cpu')
-        randoms_to_add = np.random.choice(len(new_samples), int(len(new_samples) * 0.05), replace=False)
 
         if self.logger.epoch > 0:
             all_samples = torch.cat([buffer['samples'], new_samples], dim=0)
@@ -1652,11 +1652,23 @@ class Modeller:
         else:
             all_samples = new_samples
             all_values = new_values
-        sort_inds = torch.argsort(all_values)[:self.config.dataset.buffer_size]  # keep the lowest energy samples
-        sort_inds = torch.unique(torch.cat([sort_inds, torch.tensor(randoms_to_add)]))
 
-        buffer['samples'] = torch.cat([all_samples[sort_inds], new_samples[randoms_to_add]])
-        buffer['values'] = torch.cat([all_values[sort_inds], new_values[randoms_to_add]])
+        # keep a random set, biased towards lower energies
+        if len(all_values) > int(self.config.dataset.buffer_size * 1.05):
+            temperature = 10
+            sort_inds = np.random.choice(len(all_values),
+                                         int(self.config.dataset.buffer_size * 1.05),
+                                         p=np.exp(-all_values.numpy() / temperature) / np.sum(
+                                             np.exp(-all_values.numpy() / temperature)),
+                                         replace=False)
+
+            # randomly drop 5% to boost mixing
+            sort_inds = sort_inds[:self.config.dataset.buffer_size]
+        else:
+            sort_inds = torch.arange(len(all_samples))
+
+        buffer['samples'] = all_samples[sort_inds]
+        buffer['values'] = all_values[sort_inds]
         buffer['new_samples'], buffer['new_values'] = [], []
 
     def init_sample_buffers(self):

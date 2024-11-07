@@ -17,7 +17,7 @@ dataset:
   filter_protons: False
   regression_target: gap_energy
   single_identifier: null #100558
-  buffer_size: 100000
+  buffer_size: 1000
   resample_each: 5
 
 # batching & convergence
