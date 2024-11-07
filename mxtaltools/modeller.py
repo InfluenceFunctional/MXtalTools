@@ -1644,7 +1644,7 @@ class Modeller:
 
         new_samples = torch.stack(buffer['new_samples'], dim=0)
         new_values = torch.tensor(buffer['new_values'], dtype=torch.float32, device='cpu')
-        randoms_to_add = np.random.choice(len(new_samples) - 1, int(len(new_samples) * 0.05), replace=False)
+        randoms_to_add = np.random.choice(len(new_samples), int(len(new_samples) * 0.05), replace=False)
 
         if self.logger.epoch > 0:
             all_samples = torch.cat([buffer['samples'], new_samples], dim=0)
@@ -1654,8 +1654,9 @@ class Modeller:
             all_values = new_values
         sort_inds = torch.argsort(all_values)[:self.config.dataset.buffer_size]  # keep the lowest energy samples
         sort_inds = torch.unique(torch.cat([sort_inds, torch.tensor(randoms_to_add)]))
-        buffer['samples'] = all_samples[sort_inds]
-        buffer['values'] = all_values[sort_inds]
+
+        buffer['samples'] = torch.cat([all_samples[sort_inds], new_samples[randoms_to_add]])
+        buffer['values'] = torch.cat([all_values[sort_inds], new_values[randoms_to_add]])
         buffer['new_samples'], buffer['new_values'] = [], []
 
     def init_sample_buffers(self):
