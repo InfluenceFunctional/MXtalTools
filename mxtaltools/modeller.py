@@ -202,7 +202,7 @@ class Modeller:
             do_shuffle=override_shuffle,
             precompute_edges=not nonzero_positional_noise and (  # TODO have a better think about this
                     self.config.mode not in ['gan', 'discriminator', 'generator']),
-            single_identifier = self.config.dataset.single_identifier,
+            single_identifier=self.config.dataset.single_identifier,
         )
         self.dataDims = data_manager.dataDims
         self.lattice_means = torch.tensor(self.dataDims['lattice_means'], device=self.device)
@@ -1596,6 +1596,8 @@ class Modeller:
 
         if not hasattr(self, 'generator_prior'):  # first GAN epoch
             self.init_gan_constants()
+        if not hasattr(self, 'train_buffer'):
+            self.init_sample_buffers()
 
         if update_weights:
             self.models_dict['proxy_discriminator'].train(True)
@@ -1604,19 +1606,73 @@ class Modeller:
 
         self.models_dict['autoencoder'].eval()
         self.crystal_builder.rotation_basis = 'cartesian'
+
         for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
             data = data.to(self.config.device)
+            if i % self.config.dataset.resample_each == 0 or self.logger.epoch == 0:
+                generate_samples = True
+            else:
+                generate_samples = False
 
             '''
             train proxy discriminator
             '''
-            self.proxy_discriminator_step(data, i, update_weights, skip_step=False)
+            self.proxy_discriminator_step(data, i, update_weights, skip_step=False, generate_samples=generate_samples)
 
             if iteration_override is not None:
                 if i >= iteration_override:
                     break  # stop training early
+            if not generate_samples:  # cycle through the buffer
+                if self.epoch_type == 'train':
+                    if (i - 1) * self.config.current_batch_size >= len(self.train_buffer['samples']):
+                        break
+                if self.epoch_type == 'test':
+                    if (i - 1) * self.config.current_batch_size >= len(self.test_buffer['samples']):
+                        break
 
+        self.update_buffers()
         self.logger.concatenate_stats_dict(self.epoch_type)
+
+    def update_buffers(self):
+        # reprocess buffers
+        if self.epoch_type == 'train':
+            buffer = self.train_buffer
+        elif self.epoch_type == 'test':
+            buffer = self.test_buffer
+        else:
+            assert False
+
+        new_samples = torch.stack(buffer['new_samples'], dim=0)
+        new_values = torch.tensor(buffer['new_values'], dtype=torch.float32, device='cpu')
+        randoms_to_add = np.random.choice(len(new_samples), int(len(new_samples) * 0.05), replace=False)
+
+        if self.logger.epoch > 0:
+            all_samples = torch.cat([buffer['samples'], new_samples], dim=0)
+            all_values = torch.cat([buffer['values'], new_values], dim=0)
+        else:
+            all_samples = new_samples
+            all_values = new_values
+        sort_inds = torch.argsort(all_values)[:self.config.dataset.buffer_size]  # keep the lowest energy samples
+        sort_inds = torch.unique(torch.cat([sort_inds, torch.tensor(randoms_to_add)]))
+        buffer['samples'] = all_samples[sort_inds]
+        buffer['values'] = all_values[sort_inds]
+        buffer['new_samples'], buffer['new_values'] = [], []
+
+    def init_sample_buffers(self):
+        self.train_buffer = {'samples': torch.zeros((self.config.dataset.buffer_size,
+                                                     self.config.proxy_discriminator.model.bottleneck_dim),
+                                                    dtype=torch.float32, device='cpu'),
+                             'values': torch.zeros(self.config.proxy_discriminator.model.bottleneck_dim,
+                                                   dtype=torch.float32, device='cpu'),
+                             'new_samples': [], 'new_values': []
+                             }
+        self.test_buffer = {'samples': torch.zeros((self.config.dataset.buffer_size,
+                                                    self.config.proxy_discriminator.model.bottleneck_dim),
+                                                   dtype=torch.float32, device='cpu'),
+                            'values': torch.zeros(self.config.dataset.buffer_size,
+                                                  dtype=torch.float32, device='cpu'),
+                            'new_samples': [], 'new_values': []
+                            }
 
     def generator_epoch(self,
                         data_loader=None,
@@ -1719,13 +1775,13 @@ class Modeller:
                                           stats.values(),
                                           mode='extend')
 
-    def proxy_discriminator_step(self, mol_batch, i, update_weights, skip_step):
+    def proxy_discriminator_step(self, mol_batch, i, update_weights, skip_step, generate_samples=True):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
         """
         (discriminator_output, vdw_score, stats, temp_std, temp_mean) \
-            = self.get_proxy_discriminator_output(mol_batch, i)
+            = self.get_proxy_discriminator_output(mol_batch, i, generate_samples)
 
         discriminator_losses = F.smooth_l1_loss(discriminator_output.flatten(),
                                                 (vdw_score.flatten() - temp_mean) / temp_std,
@@ -2128,11 +2184,43 @@ class Modeller:
         return (discriminator_output_on_real, discriminator_output_on_fake,
                 rdf_dists, stats)
 
-    def get_proxy_discriminator_output(self, mol_batch, i):
+    def get_proxy_discriminator_output(self, mol_batch, i, generate_samples):
         """
         generate real and fake crystals
         and score them
         """
+        if generate_samples:
+            mol_batch, embedding, stats, vdw_loss = self.proxy_discriminator_sampling(mol_batch)
+        else:  # draw samples from buffer
+            embedding, stats, vdw_loss = self.sample_from_buffer(i)
+
+        output = self.models_dict['proxy_discriminator'](x=embedding)
+        prediction = output[:, 0]
+
+        temp_std = 15
+        temp_mean = 5
+        stats.update({
+            'vdw_prediction': (prediction * temp_std + temp_mean).detach(),
+            'vdw_score': vdw_loss.detach(),
+        })
+
+        return prediction, vdw_loss, stats, temp_std, temp_mean
+
+    def sample_from_buffer(self, i):
+        stats = {}
+        sample_inds = torch.arange(i * self.config.current_batch_size, (i + 1) * self.config.current_batch_size)
+        if self.epoch_type == 'train':
+            embedding = self.train_buffer['samples'][sample_inds].to(self.device)
+            vdw_loss = self.train_buffer['values'][sample_inds].to(self.device)
+
+        elif self.epoch_type == 'test':
+            embedding = self.test_buffer['samples'][sample_inds].to(self.device)
+            vdw_loss = self.test_buffer['values'][sample_inds].to(self.device)
+        else:
+            assert False
+        return embedding, stats, vdw_loss
+
+    def proxy_discriminator_sampling(self, mol_batch):
         with torch.no_grad():
             mol_batch = set_molecule_alignment(mol_batch,
                                                mode='random',
@@ -2140,6 +2228,10 @@ class Modeller:
                                                include_inversion=True)
 
             _, generated_samples = self.sample_from_prior(mol_batch)
+
+            # even simpler for P1
+            generated_samples[:, 3:6] = torch.pi / 2
+            generated_samples[:, 6:9] = 0.5
 
             mol_batch = overwrite_symmetry_info(mol_batch,
                                                 self.config.generate_sgs,
@@ -2167,28 +2259,27 @@ class Modeller:
                 [p1[mol_batch.batch == ind] - p1[mol_batch.batch == ind].mean(0) for ind in range(mol_batch.num_graphs)
                  ])
             mol_batch.pos = p2
-            s_embedding, v_embedding = self.get_mol_embedding_for_proxy(mol_batch)
+            embedding = self.get_mol_embedding_for_proxy(mol_batch)
             scaled_params = self.rescale_proxy_discrim_cell_params(mol_batch, supercell_batch.cell_params)
+            embedding = torch.cat([embedding, scaled_params], dim=1)
 
             reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
             packing_coeff = mol_batch.mol_volume / reduced_volume
 
-        output, _ = self.models_dict['proxy_discriminator'](
-            x=torch.cat([s_embedding, scaled_params[:, :9]], dim=1),
-            v=v_embedding)
+            stats = {
+                'vdw_potential': (vdw_potential / mol_batch.num_atoms).detach(),
+                'generated_cell_parameters': supercell_batch.cell_params.detach(),
+                'packing_coeff': packing_coeff.detach(),
+            }
 
-        prediction = output[:, 0]
+            if self.epoch_type == 'train':
+                self.train_buffer['new_samples'].extend(embedding.cpu().detach())
+                self.train_buffer['new_values'].extend((vdw_loss / mol_batch.num_atoms).cpu().detach())
+            if self.epoch_type == 'test':
+                self.test_buffer['new_samples'].extend(embedding.cpu().detach())
+                self.test_buffer['new_values'].extend((vdw_loss / mol_batch.num_atoms).cpu().detach())
 
-        temp_std = 80
-        temp_mean = 60
-        stats = {'vdw_potential': (vdw_potential / mol_batch.num_atoms).detach(),
-                 'vdw_score': (vdw_loss / mol_batch.num_atoms).detach(),
-                 'generated_cell_parameters': supercell_batch.cell_params.detach(),
-                 'packing_coeff': packing_coeff.detach(),
-                 'vdw_prediction': (prediction * temp_std + temp_mean).detach(),
-                 }
-
-        return prediction, vdw_loss / mol_batch.num_atoms, stats, temp_std, temp_mean
+        return mol_batch, embedding, stats, vdw_loss / mol_batch.num_atoms
 
     def rescale_proxy_discrim_cell_params(self, mol_batch, cell_params):
         # rescale to nicer normalized basis
@@ -2250,7 +2341,7 @@ class Modeller:
         else:
             assert False, f"{self.config.proxy_discriminator.embedding_type} is not an implemented proxy discriminator embedding"
 
-        return s_embedding, v_embedding
+        return torch.cat([s_embedding, v_embedding.flatten(-2)], dim=-1)
 
     def anneal_prior_loss(self, good_inds):
         """

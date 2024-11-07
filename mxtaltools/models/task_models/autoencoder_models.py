@@ -1,13 +1,12 @@
 import torch
 from torch import nn as nn
-from torch_scatter import scatter
 
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.graph_models.base_graph_model import BaseGraphModel
 from mxtaltools.models.graph_models.molecule_graph_model import VectorMoleculeGraphModel
 from mxtaltools.models.modules.components import Scalarizer, vectorMLP
 from mxtaltools.models.utils import collate_decoded_data, ae_reconstruction_loss
-from mxtaltools.reporting.ae_reporting import gaussian_3d_overlap_plots, scaffolded_decoder_clustering, swarm_vs_tgt_fig
+from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering, swarm_vs_tgt_fig
 
 
 # noinspection PyAttributeOutsideInit
@@ -66,7 +65,7 @@ class Mo3ENet(BaseGraphModel):
 
     def encode(self,
                data,
-               override_centering: bool=False):
+               override_centering: bool = False):
         # normalize radii
         if not override_centering:
             assert torch.linalg.norm(data.pos.mean(0)) < 1e-3, "Encoder trained only for centered molecules!"
@@ -118,11 +117,11 @@ class Mo3ENet(BaseGraphModel):
          reconstruction_loss,
          self_likelihoods,
          ) = ae_reconstruction_loss(data,
-                                        decoded_data,
-                                        nodewise_weights,
-                                        num_atom_types,
-                                        type_distance_scaling,
-                                        sigma)
+                                    decoded_data,
+                                    nodewise_weights,
+                                    num_atom_types,
+                                    type_distance_scaling,
+                                    sigma)
 
         rmsds = torch.zeros(data.num_graphs)
         max_dists = torch.zeros_like(rmsds)

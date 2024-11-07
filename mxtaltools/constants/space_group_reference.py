@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 
+
 # todo reload and write as dict OR deprecate, as I don't think we're using this anywhere
 def loadSpaceGroups():
     """
@@ -8,7 +9,8 @@ def loadSpaceGroups():
     not currently used
     """
     sgDict = pd.DataFrame(columns=['system', 'laue', 'class', 'ce', 'SG'], index=np.arange(0, 230 + 1))
-    sgDict.loc[0] = pd.Series({'system': 'n/a', 'laue': 'n/a', 'class': 'n/a', 'ce': 'n/a', 'SG': 'n/a'})  # add an entry for misc / throwaway categories
+    sgDict.loc[0] = pd.Series({'system': 'n/a', 'laue': 'n/a', 'class': 'n/a', 'ce': 'n/a',
+                               'SG': 'n/a'})  # add an entry for misc / throwaway categories
 
     # Triclinic
     i = 1
@@ -1349,7 +1351,8 @@ def loadSpaceGroups():
                                'laue': '6/mmm',
                                'class': '-62m',
                                'ce': 'p',
-                               'SG': 'P-62c'  # error in source, missing negative http://pd.chem.ucl.ac.uk/pdnn/symm3/allsgp.htm
+                               'SG': 'P-62c'
+                               # error in source, missing negative http://pd.chem.ucl.ac.uk/pdnn/symm3/allsgp.htm
                                })
     i += 1
     sgDict.loc[i] = pd.Series({'system': 'hexagonal',

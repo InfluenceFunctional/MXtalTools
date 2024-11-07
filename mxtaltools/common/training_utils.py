@@ -3,7 +3,8 @@ from argparse import Namespace
 import torch
 from torch import nn as nn
 
-from mxtaltools.models.graph_models.embedding_regression_models import EmbeddingRegressor
+from mxtaltools.models.graph_models.embedding_regression_models import EquivariantEmbeddingRegressor, \
+    InvariantEmbeddingRegressor
 from mxtaltools.models.task_models.autoencoder_models import Mo3ENet
 from mxtaltools.models.task_models.crystal_models import MolecularCrystalModel
 from mxtaltools.models.task_models.generator_models import CrystalGenerator
@@ -78,7 +79,7 @@ def instantiate_models(config: Namespace,
         for param in models_dict['autoencoder'].parameters():  # freeze encoder
             param.requires_grad = False
         config.embedding_regressor.model.bottleneck_dim = config.autoencoder.model.bottleneck_dim
-        models_dict['embedding_regressor'] = EmbeddingRegressor(
+        models_dict['embedding_regressor'] = EquivariantEmbeddingRegressor(
             config.seeds.model,
             config.embedding_regressor.model,
             num_targets=config.embedding_regressor.num_targets,
@@ -97,29 +98,28 @@ def instantiate_models(config: Namespace,
         )
     if config.mode == 'proxy_discriminator':
         if config.proxy_discriminator.embedding_type == 'autoencoder':
-            config.proxy_discriminator.model.bottleneck_dim = config.autoencoder.model.bottleneck_dim
+            config.proxy_discriminator.model.bottleneck_dim = 4 * config.autoencoder.model.bottleneck_dim
 
         elif config.proxy_discriminator.embedding_type == 'principal_axes':
-            config.proxy_discriminator.model.bottleneck_dim = 3
+            config.proxy_discriminator.model.bottleneck_dim = 3 * 4
 
         elif config.proxy_discriminator.embedding_type == 'principal_moments':
-            config.proxy_discriminator.model.bottleneck_dim = 3
+            config.proxy_discriminator.model.bottleneck_dim = 3 * 4
 
         elif config.proxy_discriminator.embedding_type == 'mol_volume':
-            config.proxy_discriminator.model.bottleneck_dim = 3
+            config.proxy_discriminator.model.bottleneck_dim = 3 * 4
 
         elif config.proxy_discriminator.embedding_type is None:
-            config.proxy_discriminator.model.bottleneck_dim = 3
+            config.proxy_discriminator.model.bottleneck_dim = 3 * 4
 
         else:
             assert False
 
-        models_dict['proxy_discriminator'] = EmbeddingRegressor(
+        models_dict['proxy_discriminator'] = InvariantEmbeddingRegressor(
             config.seeds.model,
             config.proxy_discriminator.model,
             num_targets=1,
-            conditions_dim=9,
-            prediction_type='scalar'
+            conditions_dim=12,
         )
         assert config.model_paths.autoencoder is not None  # must preload the encoder
 

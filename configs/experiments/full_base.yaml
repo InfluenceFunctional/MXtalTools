@@ -24,6 +24,8 @@ dataset:
   on_disk_data_dir: null
   dumps_rids: null
   single_identifier: null
+  buffer_size: 100000
+  resample_each: 1
 
 # batching & convergence
 num_samples: 1.0E+8

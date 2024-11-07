@@ -91,7 +91,7 @@ def RMSD_fig():
         stats_dicts[stats_dict_names[ind]] = d['test_stats']
 
     bandwidth = 0.005
-    fig = make_subplots(rows=1, cols=2, subplot_titles=['Whole Molecule', 'Atomwise'], horizontal_spacing=0.2)
+    fig = make_subplots(rows=1, cols=2, subplot_titles=['(a) Whole Molecule', '(b) Atomwise'], horizontal_spacing=0.2)
     for ind, run_name in enumerate(['Without Hydrogen', 'With Hydrogen', 'Inferred Hydrogen']):
         stats_dict = stats_dicts[run_name]
 
@@ -344,15 +344,15 @@ def UMAP_fig(max_entries=10000000):
 
     reducer = umap.UMAP(n_components=2,
                         metric='cosine',
-                        n_neighbors=10,
-                        min_dist=0.2)
+                        n_neighbors=50,
+                        min_dist=0.01)
     scalar_encodings = stats_dict['scalar_embedding'][:max_entries]
 
     embedding = reducer.fit_transform((scalar_encodings - scalar_encodings.mean()) / scalar_encodings.std())
 
     'embeddings'
     fig2 = make_subplots(rows=1, cols=2, horizontal_spacing=.01, vertical_spacing=0.05,
-                         #specs=[[{'rowspan': 3}, {'rowspan': 3}, {'rowspan': 3}, None],
+                         # specs=[[{'rowspan': 3}, {'rowspan': 3}, {'rowspan': 3}, None],
                          #       [None, None, None, {}],
                          #       [None, None, None, None]],
                          subplot_titles=(
@@ -423,25 +423,27 @@ def UMAP_fig(max_entries=10000000):
     ylim = 1.2
     fig2.update_layout(xaxis1_range=[xlim, ylim], yaxis1_range=[xlim, ylim],
                        xaxis2_range=[xlim, ylim], yaxis2_range=[xlim, ylim],
-                       #xaxis3_range=[xlim, ylim], yaxis3_range=[xlim, ylim],
-                       #xaxis4_range=[-.2, 1.2], yaxis4_range=[0.3, 1.2],
-                       #xaxis5_range=[-.2, 1.2], yaxis5_range=[.3, 1.2],
-                       #xaxis6_range=[-.2, 1.2], yaxis6_range=[.3, 1.2],
+                       # xaxis3_range=[xlim, ylim], yaxis3_range=[xlim, ylim],
+                       # xaxis4_range=[-.2, 1.2], yaxis4_range=[0.3, 1.2],
+                       # xaxis5_range=[-.2, 1.2], yaxis5_range=[.3, 1.2],
+                       # xaxis6_range=[-.2, 1.2], yaxis6_range=[.3, 1.2],
                        )
 
-    fig2.update_layout(
-        xaxis_title='Component 1',
-        yaxis1_title='Component 2',
-        #yaxis4_title='Ip1/Ip3',
-        #xaxis4_title='Ip2/Ip3'
-    )
-    fig2.update_layout(legend={'itemsizing': 'constant'})  #, 'orientation': 'h'})
+    # fig2.update_layout(
+        # xaxis_title='Component 1',
+        # yaxis1_title='Component 2',
+        # yaxis4_title='Ip1/Ip3',
+        # xaxis4_title='Ip2/Ip3'
+    # )
+    fig2.update_layout(legend={'itemsizing': 'constant'})  # , 'orientation': 'h'})
 
     fig2.update_xaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig2.update_yaxes(tickfont=dict(color="rgba(0,0,0,0)", size=1))
     fig2.update_layout(font=dict(size=30))
 
     fig2.show(renderer='browser')
+
+    #----------------------- legend figs ------------------
 
     fig = go.Figure()
     fig.add_trace(go.Scatterternary({
@@ -747,16 +749,16 @@ if __name__ == '__main__':
     fig = RMSD_fig()
     fig.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\RMSD.png', width=1920, height=840)
 
-    fig2 = UMAP_fig(max_entries=1000000)
+    fig2 = UMAP_fig(max_entries=100000000)
     fig2.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\latent_space.png', width=1920, height=840)
 
-    fig3 = embedding_regression_figure()
-    fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
-
-    fig4 = regression_training_curve()
-    fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
-
-    fig5 = proxy_discriminator_figure()
-    fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=600, height=600)
+    # fig3 = embedding_regression_figure()
+    # fig3.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\QM9_properties.png', width=1920, height=840)
+    #
+    # fig4 = regression_training_curve()
+    # fig4.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\gap_traning_curve.png', width=1200, height=800)
+    #
+    # fig5 = proxy_discriminator_figure()
+    # fig5.write_image(r'C:\Users\mikem\OneDrive\NYU\CSD\papers\ae_paper1\proxy_discrim.png', width=600, height=600)
 
 aa = 1
