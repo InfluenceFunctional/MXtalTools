@@ -20,9 +20,9 @@ gradient_norm_clip: 1
 grow_batch_size: true
 history: 250
 logger:
-  experiment_tag: qm9_test10
+  experiment_tag: qm9_test9
   log_figures: true
-  run_name: qm9_test10_0_1_2_3_4_5
+  run_name: qm9_test9_0_1_2_3_4_5
   sample_reporting_frequency: 10
   stats_reporting_frequency: 20
 machine: cluster

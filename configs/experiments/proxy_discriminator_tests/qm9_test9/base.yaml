@@ -34,8 +34,8 @@ gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  run_name: qm9_test10
-  experiment_tag: qm9_test10
+  run_name: qm9_test9
+  experiment_tag: qm9_test9
   sample_reporting_frequency: 10  # how often to do detailed reporting with figures
   stats_reporting_frequency: 20  # how many steps between which to move training stats to cpu
   log_figures: True
