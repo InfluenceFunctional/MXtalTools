@@ -213,7 +213,7 @@ class CrystalAnalyzer(torch.nn.Module):
                 coords_list[ind] = pos[good_inds]
                 atom_types_list[ind] = z[good_inds]
 
-        data_batch = [
+        mol_batch = [
             CrystalData(
                 x=atom_types_list[ind],
                 pos=coords_list[ind],
@@ -226,15 +226,15 @@ class CrystalAnalyzer(torch.nn.Module):
             )
             for ind in range(len(coords_list))
         ]
-        data_batch = self.collater(data_batch).to(self.device)
+        mol_batch = self.collater(mol_batch).to(self.device)
 
         crystal_batch, cell_volumes = self.crystal_builder.build_zp1_supercells(
-            data_batch,
-            data_batch.cell_parameters(),
+            mol_batch,
+            mol_batch.cell_parameters(),
             self.supercell_size,
             self.config.discriminator.model.graph.cutoff,
             align_to_standardized_orientation=True,
-            target_handedness=data_batch.aunit_handedness,
+            target_handedness=mol_batch.aunit_handedness,
             skip_refeaturization=True,
         )
 
