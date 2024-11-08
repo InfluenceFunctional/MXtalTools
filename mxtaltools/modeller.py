@@ -1616,10 +1616,10 @@ class Modeller:
 
             if not generate_samples:  # cycle through the buffer
                 if self.epoch_type == 'train':
-                    if (i - 1) * self.config.current_batch_size >= len(self.train_buffer['samples']):
+                    if (i + 1) * self.config.current_batch_size >= len(self.train_buffer['samples']):
                         break
                 if self.epoch_type == 'test':
-                    if (i - 1) * self.config.current_batch_size >= len(self.test_buffer['samples']):
+                    if (i + 1) * self.config.current_batch_size >= len(self.test_buffer['samples']):
                         break
             '''
             train proxy discriminator
@@ -1629,7 +1629,6 @@ class Modeller:
             if iteration_override is not None:
                 if i >= iteration_override:
                     break  # stop training early
-
 
         self.update_buffers()
         self.logger.concatenate_stats_dict(self.epoch_type)
