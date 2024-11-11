@@ -449,7 +449,7 @@ class Modeller:
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
                          tags=[self.config.logger.experiment_tag],
-                                                              # online=False,
+                         # online=False,
                          settings=wandb.Settings(code_dir="."))):
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
@@ -1657,7 +1657,6 @@ class Modeller:
             buffer['samples'] = new_samples
             buffer['values'] = new_values
 
-
         elif len(buffer['new_samples']) + len(buffer['samples']) <= self.config.dataset.buffer_size:
             # take everything during the buffer building phase
             buffer['samples'] = torch.cat([buffer['samples'], new_samples], dim=0)
@@ -1666,15 +1665,18 @@ class Modeller:
             # more samples than we need
             # new buffer is always 50% old (weighted) and 50% new
             # keep a random set, biased towards lower energies
+
             temperature = 10
             old_samples = buffer['samples']
             old_values = buffer['values']
+            samples_to_add = min(len(old_samples) // 2, len(new_samples))
             old_rands = np.random.choice(len(old_samples),
-                                     len(old_samples)//2,
-                                     p=np.exp(-old_values.numpy() / temperature) / np.sum(np.exp(-old_values.numpy() / temperature)),
-                                     replace=False
-                                     )
-            new_rands = np.random.choice(len(new_samples), len(new_samples)//2, replace=False)
+                                         len(old_samples) - samples_to_add,
+                                         p=np.exp(-old_values.numpy() / temperature) / np.sum(
+                                             np.exp(-old_values.numpy() / temperature)),
+                                         replace=False
+                                         )
+            new_rands = np.random.choice(len(new_samples), samples_to_add, replace=False)
             buffer['samples'] = torch.cat([old_samples[old_rands], new_samples[new_rands]], dim=0)
             buffer['values'] = torch.cat([old_values[old_rands], new_values[new_rands]], dim=0)
 
