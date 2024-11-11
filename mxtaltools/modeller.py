@@ -362,6 +362,7 @@ class Modeller:
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
                          tags=[self.config.logger.experiment_tag],
+                         # online=False,
                          settings=wandb.Settings(code_dir="."))):
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
@@ -448,6 +449,7 @@ class Modeller:
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
                          tags=[self.config.logger.experiment_tag],
+                                                              # online=False,
                          settings=wandb.Settings(code_dir="."))):
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
@@ -505,6 +507,7 @@ class Modeller:
         with (wandb.init(config=self.config,
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
+                         # online=False,
                          tags=[self.config.logger.experiment_tag],
                          settings=wandb.Settings(code_dir="."))):
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
@@ -578,6 +581,7 @@ class Modeller:
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
                          tags=[self.config.logger.experiment_tag],
+                         # online=False,
                          settings=wandb.Settings(code_dir="."))):
             wandb.run.name = self.config.machine + '_' + self.config.mode + '_' + self.working_directory  # overwrite procedurally generated run name with our run name
             wandb.watch([model for model in self.models_dict.values()], log_graph=True, log_freq=100)
@@ -742,6 +746,7 @@ class Modeller:
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
                          tags=[self.config.logger.experiment_tag],
+                         # online=False,
                          settings=wandb.Settings(code_dir="."))):
             self.process_sweep_config()
             self.source_directory = os.getcwd()
@@ -822,6 +827,7 @@ class Modeller:
                              project=self.config.wandb.project_name,
                              entity=self.config.wandb.username,
                              tags=[self.config.logger.experiment_tag],
+                             # online=False,
                              settings=wandb.Settings(code_dir="."))):
                 self.source_directory = os.getcwd()
                 self.prep_new_working_directory()
@@ -1271,6 +1277,7 @@ class Modeller:
                          project=self.config.wandb.project_name,
                          entity=self.config.wandb.username,
                          tags=[self.config.logger.experiment_tag],
+                         # online=False,
                          settings=wandb.Settings(code_dir="."))):
             self.source_directory = os.getcwd()
             self.prep_new_working_directory()
@@ -1645,29 +1652,32 @@ class Modeller:
         new_samples = torch.stack(buffer['new_samples'], dim=0)
         new_values = torch.tensor(buffer['new_values'], dtype=torch.float32, device='cpu')
 
-        if self.logger.epoch > 0:
-            all_samples = torch.cat([buffer['samples'], new_samples], dim=0)
-            all_values = torch.cat([buffer['values'], new_values], dim=0)
-        else:
-            all_samples = new_samples
-            all_values = new_values
+        if self.logger.epoch == 0:
+            # first epoch, no new samples
+            buffer['samples'] = new_samples
+            buffer['values'] = new_values
 
-        # keep a random set, biased towards lower energies
-        if len(all_values) > int(self.config.dataset.buffer_size * 1.05):
+
+        elif len(buffer['new_samples']) + len(buffer['samples']) <= self.config.dataset.buffer_size:
+            # take everything during the buffer building phase
+            buffer['samples'] = torch.cat([buffer['samples'], new_samples], dim=0)
+            buffer['values'] = torch.cat([buffer['values'], new_values], dim=0)
+        else:
+            # more samples than we need
+            # new buffer is always 50% old (weighted) and 50% new
+            # keep a random set, biased towards lower energies
             temperature = 10
-            sort_inds = np.random.choice(len(all_values),
-                                         int(self.config.dataset.buffer_size * 1.05),
-                                         p=np.exp(-all_values.numpy() / temperature) / np.sum(
-                                             np.exp(-all_values.numpy() / temperature)),
-                                         replace=False)
+            old_samples = buffer['samples']
+            old_values = buffer['values']
+            old_rands = np.random.choice(len(old_samples),
+                                     len(old_samples)//2,
+                                     p=np.exp(-old_values.numpy() / temperature) / np.sum(np.exp(-old_values.numpy() / temperature)),
+                                     replace=False
+                                     )
+            new_rands = np.random.choice(len(new_samples), len(new_samples)//2, replace=False)
+            buffer['samples'] = torch.cat([old_samples[old_rands], new_samples[new_rands]], dim=0)
+            buffer['values'] = torch.cat([old_values[old_rands], new_values[new_rands]], dim=0)
 
-            # randomly drop 5% to boost mixing
-            sort_inds = sort_inds[:self.config.dataset.buffer_size]
-        else:
-            sort_inds = torch.arange(len(all_samples))
-
-        buffer['samples'] = all_samples[sort_inds]
-        buffer['values'] = all_values[sort_inds]
         buffer['new_samples'], buffer['new_values'] = [], []
 
     def init_sample_buffers(self):
@@ -2209,8 +2219,8 @@ class Modeller:
         output = self.models_dict['proxy_discriminator'](x=embedding)
         prediction = output[:, 0]
 
-        temp_std = 15
-        temp_mean = 5
+        temp_std = 60
+        temp_mean = 20
         stats.update({
             'vdw_prediction': (prediction * temp_std + temp_mean).detach(),
             'vdw_score': vdw_loss.detach(),

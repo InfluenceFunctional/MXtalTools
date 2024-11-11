@@ -170,6 +170,9 @@ configs = [
     },  # 9 - more width
 ]
 
+# upshots:
+# low weight decay, not too slow LR annealing, moderate batch size, big model, infrequent resampling
+
 ind = 0
 for ii, config_i in enumerate(configs):
     config = copy(base_config)

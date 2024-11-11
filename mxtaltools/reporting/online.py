@@ -1252,7 +1252,7 @@ def log_regression_accuracy(config, dataDims, epoch_stats_dict):
         raw_target = np.concatenate(epoch_stats_dict['regressor_target'])
         raw_prediction = np.concatenate(epoch_stats_dict['regressor_prediction'])
 
-    if False: #raw_target.ndim > 2 and raw_target.shape[1] > 1:
+    if False:  #raw_target.ndim > 2 and raw_target.shape[1] > 1:
         aa = 1
         # 'treat each element, even in a tensor, as an independent regression problem'
         # flat_target = raw_target.reshape(len(raw_target), np.prod(raw_target.shape[1:]))
@@ -1813,8 +1813,24 @@ def proxy_discriminator_analysis(config, dataDims, epoch_stats_dict, extra_test_
 
         fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
         fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
-
         fig_dict['Proxy Discriminator Parity Plot'] = fig
+
+        # --------- residuals ----------
+        opacity = 0.35
+        xy = np.vstack([tgt_value, tgt_value - pred_value])
+        try:
+            z = get_point_density(xy, bins=25)
+        except:
+            z = np.ones(len(xy))
+
+        fig = go.Figure()
+        fig.add_scatter(x=tgt_value, y=tgt_value - pred_value,
+                        mode='markers', marker_color=z, opacity=opacity)
+        fig.update_xaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_yaxes(title_font=dict(size=16), tickfont=dict(size=14))
+        fig.update_layout(xaxis_title='Target Distance', yaxis_title='Error')
+
+        fig_dict['Proxy Residuals'] = fig
 
         for key, fig in fig_dict.items():
             fig.write_image(key + 'fig.png', width=480,
