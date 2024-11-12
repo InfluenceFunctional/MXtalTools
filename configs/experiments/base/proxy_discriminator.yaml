@@ -17,7 +17,7 @@ dataset:
   filter_protons: False
   regression_target: gap_energy
   single_identifier: null #100558
-  buffer_size: 1000
+  buffer_size: 100000
   resample_each: 5
 
 # batching & convergence
@@ -69,7 +69,7 @@ supercell_size: 5
 
 proxy_discriminator:
   train_on_randn: True
-  embedding_type: 'principal_axes' # autoencoder, principal_axes, principal_moments, mol_volume
+  embedding_type: 'autoencoder' # autoencoder, principal_axes, principal_moments, mol_volume
   vdw_turnover_potential: 0
   cutoff: 6
   optimizer:

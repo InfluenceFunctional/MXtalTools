@@ -1663,24 +1663,29 @@ class Modeller:
             buffer['values'] = torch.cat([buffer['values'], new_values], dim=0)
         else:
             # more samples than we need
-            # new buffer is always 50% old (weighted) and 50% new
-            # keep a random set, biased towards lower energies
+            # replace old samples with new samples
+            # weigh samples to replace by energy
 
             temperature = 10
             old_samples = buffer['samples']
             old_values = buffer['values']
-            samples_to_add = min(len(old_samples) // 2, len(new_samples))
+            samples_to_add = min(len(new_samples), self.config.dataset.buffer_size)
             old_rands = np.random.choice(len(old_samples),
-                                         len(old_samples) - samples_to_add,
-                                         p=np.exp(-old_values.numpy() / temperature) / np.sum(
-                                             np.exp(-old_values.numpy() / temperature)),
+                                         samples_to_add,
+                                         p=np.exp(old_values.numpy() / temperature) / np.sum(
+                                             np.exp(old_values.numpy() / temperature)),
                                          replace=False
                                          )
-            new_rands = np.random.choice(len(new_samples), samples_to_add, replace=False)
-            buffer['samples'] = torch.cat([old_samples[old_rands], new_samples[new_rands]], dim=0)
-            buffer['values'] = torch.cat([old_values[old_rands], new_values[new_rands]], dim=0)
+            old_samples[old_rands] = new_samples[:self.config.dataset.buffer_size]
+            old_values[old_rands] = new_values[:self.config.dataset.buffer_size]
+            buffer['samples'] = old_samples[:self.config.dataset.buffer_size]
+            buffer['values'] = old_values[:self.config.dataset.buffer_size]
 
         buffer['new_samples'], buffer['new_values'] = [], []
+        if self.epoch_type == 'train':
+            self.logger.train_buffer_size = len(buffer['samples'])
+        elif self.epoch_type == 'test':
+            self.logger.test_buffer_size = len(buffer['samples'])
 
     def init_sample_buffers(self):
         self.train_buffer = {'samples': torch.zeros((self.config.dataset.buffer_size,
@@ -2285,7 +2290,7 @@ class Modeller:
             mol_batch.pos = p2
             embedding = self.get_mol_embedding_for_proxy(mol_batch)
             scaled_params = self.rescale_proxy_discrim_cell_params(mol_batch, supercell_batch.cell_params)
-            embedding = torch.cat([embedding, scaled_params], dim=1)
+            embedding = torch.cat([embedding, scaled_params[:, :9]], dim=1)
 
             reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
             packing_coeff = mol_batch.mol_volume / reduced_volume

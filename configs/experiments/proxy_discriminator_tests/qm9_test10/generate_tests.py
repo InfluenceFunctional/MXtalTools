@@ -56,6 +56,54 @@ configs = [
         'weight_decay': 0.0001,
         'vdw_turnover_potential': 10,
     },  # 2 - with norm
+    {
+        'num_layers': 20,
+        'depth': 512,
+        'dropout': 0,
+        'norm': 'layer',
+        'max_batch_size': 2000,
+        'embedding_type': 'autoencoder',
+        'resample_each': 40,
+        'buffer_size': 130000,
+        'max_lr': 5e-4,
+        'init_lr': 1e-4,
+        'lr_growth_lambda': 1.01,
+        'lr_shrink_lambda': 0.99975,
+        'weight_decay': 0.0001,
+        'vdw_turnover_potential': 10,
+    },  # 3 - with norm and fixed buffer
+    {
+        'num_layers': 20,
+        'depth': 512,
+        'dropout': 0,
+        'norm': 'layer',
+        'max_batch_size': 2000,
+        'embedding_type': 'principal_axes',
+        'resample_each': 40,
+        'buffer_size': 130000,
+        'max_lr': 5e-4,
+        'init_lr': 1e-4,
+        'lr_growth_lambda': 1.01,
+        'lr_shrink_lambda': 0.99975,
+        'weight_decay': 0.0001,
+        'vdw_turnover_potential': 10,
+    },  # 4 - with norm, Ips, with fixed buffer
+    {
+        'num_layers': 40,
+        'depth': 512,
+        'dropout': 0,
+        'norm': 'layer',
+        'max_batch_size': 2000,
+        'embedding_type': 'autoencoder',
+        'resample_each': 40,
+        'buffer_size': 130000,
+        'max_lr': 5e-4,
+        'init_lr': 1e-4,
+        'lr_growth_lambda': 1.01,
+        'lr_shrink_lambda': 0.99975,
+        'weight_decay': 0.0001,
+        'vdw_turnover_potential': 10,
+    },  # 5 - 3 with even bigger model
 ]
 
 # upshots:

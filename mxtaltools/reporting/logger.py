@@ -25,11 +25,13 @@ class Logger:
         self.packing_loss_coefficient = None
         self.prior_loss_coefficient = None
         self.vdw_turnover_potential = None
-        self.vdw_loss_coefficient=None
+        self.vdw_loss_coefficient = None
         self.prior_variation_scale = None
         self.epoch = None
         self.learning_rates = {name: None for name in self.model_names}
         self.batch_size = None
+        self.train_buffer_size = None
+        self.test_buffer_size = None
 
         self.converged_flags = {model_name: False for model_name in self.model_names}
 
@@ -192,7 +194,10 @@ class Logger:
                           'vdw_turnover_potential': self.vdw_turnover_potential,
                           'vdw_loss_coefficient': self.vdw_loss_coefficient,
                           'prior_variation_scale': self.prior_variation_scale,
-                          'batch_size': self.batch_size}
+                          'batch_size': self.batch_size,
+                          'train_buffer_size': self.train_buffer_size,
+                          'test_buffer_size': self.test_buffer_size,
+                          }
 
         for key in self.learning_rates.keys():
             metrics_to_log[f'{key}_learning_rate'] = self.learning_rates[key]

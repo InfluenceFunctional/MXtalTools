@@ -127,13 +127,13 @@ class Mo3ENet(BaseGraphModel):
         max_dists = torch.zeros_like(rmsds)
         tot_overlaps = torch.zeros_like(rmsds)
         match_successful = torch.zeros_like(rmsds)
-        for ind in range(data.num_graphs):
-            rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind], fig2 = scaffolded_decoder_clustering(
-                ind,
-                data,
-                decoded_data,
-                num_atom_types,
-                return_fig=True)
+        # for ind in range(data.num_graphs):
+        #     rmsds[ind], max_dists[ind], tot_overlaps[ind], match_successful[ind], fig2 = scaffolded_decoder_clustering(
+        #         ind,
+        #         data,
+        #         decoded_data,
+        #         num_atom_types,
+        #         return_fig=True)
         if visualize:
             for ind in range(data.num_graphs):
                 swarm_vs_tgt_fig(data, decoded_data, num_atom_types, graph_ind=ind).show()
