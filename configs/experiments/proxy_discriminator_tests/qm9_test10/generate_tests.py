@@ -97,13 +97,29 @@ configs = [
         'embedding_type': 'autoencoder',
         'resample_each': 40,
         'buffer_size': 130000,
-        'max_lr': 5e-4,
-        'init_lr': 1e-4,
+        'max_lr': 1e-4,
+        'init_lr': 1e-5,
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
         'vdw_turnover_potential': 10,
-    },  # 5 - 3 with even bigger model
+    },  # 5 - 3 with even bigger model, lower LR
+    {
+        'num_layers': 40,
+        'depth': 256,
+        'dropout': 0,
+        'norm': 'layer',
+        'max_batch_size': 2000,
+        'embedding_type': 'autoencoder',
+        'resample_each': 40,
+        'buffer_size': 130000,
+        'max_lr': 2e-4,
+        'init_lr': 2e-5,
+        'lr_growth_lambda': 1.01,
+        'lr_shrink_lambda': 0.99975,
+        'weight_decay': 0.0001,
+        'vdw_turnover_potential': 10,
+    },  # 6 - 5 with thinner model, lower LR
 ]
 
 # upshots:
