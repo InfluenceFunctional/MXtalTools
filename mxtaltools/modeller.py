@@ -1670,10 +1670,13 @@ class Modeller:
             old_samples = buffer['samples']
             old_values = buffer['values']
             samples_to_add = min(len(new_samples), self.config.dataset.buffer_size)
+            probs = np.exp(old_values.numpy() / temperature) / np.sum(
+                                             np.exp(old_values.numpy() / temperature))
+            probs = np.nan_to_num(probs,posinf=0,neginf=0,nan=0)
+            probs /= probs.sum()
             old_rands = np.random.choice(len(old_samples),
                                          samples_to_add,
-                                         p=np.exp(old_values.numpy() / temperature) / np.sum(
-                                             np.exp(old_values.numpy() / temperature)),
+                                         p=probs,
                                          replace=False
                                          )
             old_samples[old_rands] = new_samples[:self.config.dataset.buffer_size]
@@ -1815,7 +1818,7 @@ class Modeller:
         discriminator_losses = F.smooth_l1_loss(discriminator_output.flatten(),
                                                 (vdw_score.flatten() - temp_mean) / temp_std,
                                                 reduction='none')
-
+ran
         discriminator_loss = discriminator_losses.mean()
 
         if update_weights and (not skip_step):
