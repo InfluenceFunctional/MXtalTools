@@ -1818,7 +1818,7 @@ class Modeller:
         discriminator_losses = F.smooth_l1_loss(discriminator_output.flatten(),
                                                 (vdw_score.flatten() - temp_mean) / temp_std,
                                                 reduction='none')
-ran
+
         discriminator_loss = discriminator_losses.mean()
 
         if update_weights and (not skip_step):
