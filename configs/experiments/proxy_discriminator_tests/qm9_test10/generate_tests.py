@@ -151,7 +151,7 @@ configs = [
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
         'vdw_turnover_potential': 1,
-    },  # 9 - 4, turnover 50
+    },  # 8 - 4, turnover 1
     {
         'num_layers': 20,
         'depth': 512,
@@ -166,8 +166,8 @@ configs = [
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
-        'vdw_turnover_potential': 1,
-    },  # 7 - 3, turnover 1
+        'vdw_turnover_potential': 50,
+    },  # 9 - 3, turnover 50
     {
         'num_layers': 20,
         'depth': 512,
