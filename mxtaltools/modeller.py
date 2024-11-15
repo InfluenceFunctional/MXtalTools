@@ -1670,7 +1670,7 @@ class Modeller:
             old_samples = buffer['samples']
             old_values = buffer['values']
             samples_to_add = min(len(new_samples), self.config.dataset.buffer_size)
-            old_values = old_values.clip(max=100)
+            # old_values = old_values.clip(max=100)
             # probs = np.exp(old_values.numpy() / temperature) / np.sum(
             #     np.exp(old_values.numpy() / temperature))
             # probs = np.nan_to_num(probs, posinf=0, neginf=0, nan=0)
