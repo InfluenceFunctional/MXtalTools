@@ -119,6 +119,7 @@ class Mo3ENet(BaseGraphModel):
          ) = ae_reconstruction_loss(data,
                                     decoded_data,
                                     nodewise_weights,
+                                    nodewise_weights_tensor,
                                     num_atom_types,
                                     type_distance_scaling,
                                     sigma)

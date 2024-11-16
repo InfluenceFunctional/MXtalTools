@@ -663,6 +663,7 @@ def compute_gaussian_overlap(ref_types,
                              dist_to_self=False,
                              isolate_dimensions: list = None,
                              type_distance_scaling=0.1,
+                             return_dists=False
                              ):
     """
     same as previous version
@@ -695,7 +696,10 @@ def compute_gaussian_overlap(ref_types,
                                reduce='sum',
                                dim_size=mol_batch.num_nodes)
 
-    return nodewise_overlap
+    if not return_dists:
+        return nodewise_overlap
+    else:
+        return nodewise_overlap, edges, dists
 
 
 def batch_rmsd(mol_batch,
@@ -993,61 +997,63 @@ def collate_decoded_data(data, decoding, num_decoder_nodes, node_weight_temperat
     return decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
 
 
-def ae_reconstruction_loss(data,
-                           decoded_data,
-                           nodewise_weights,
+def ae_reconstruction_loss(mol_batch,
+                           decoded_mol_batch,
+                           graph_normed_nodewise_weights,
+                           nodewise_weights_tensor,
                            num_atom_types,
                            type_distance_scaling,
                            autoencoder_sigma,
                            ):
-    true_node_one_hot = F.one_hot(data.x.flatten().long(), num_classes=num_atom_types).float()
+    true_node_one_hot = F.one_hot(mol_batch.x.flatten().long(), num_classes=num_atom_types).float()
 
-    decoder_likelihoods = (  #, input2output_edges, input2output_dists = (
-        compute_gaussian_overlap(true_node_one_hot, data, decoded_data, autoencoder_sigma,
-                                 nodewise_weights=decoded_data.aux_ind,
+    decoder_likelihoods, input2output_edges, input2output_dists = (
+        compute_gaussian_overlap(true_node_one_hot, mol_batch, decoded_mol_batch, autoencoder_sigma,
+                                 nodewise_weights=decoded_mol_batch.aux_ind,
                                  type_distance_scaling=type_distance_scaling,
+                                 return_dists=True
                                  ))
 
     # if sigma is too large, these can be > 1, so we map to the overlap of the true density with itself
-    self_likelihoods = compute_gaussian_overlap(true_node_one_hot, data, data, autoencoder_sigma,
-                                                nodewise_weights=data.aux_ind, dist_to_self=True,
+    self_likelihoods = compute_gaussian_overlap(true_node_one_hot, mol_batch, mol_batch, autoencoder_sigma,
+                                                nodewise_weights=mol_batch.aux_ind, dist_to_self=True,
                                                 type_distance_scaling=type_distance_scaling)
 
     # typewise agreement for whole graph
     per_graph_true_types = scatter(
-        true_node_one_hot, data.batch[:, None], dim=0, reduce='mean')
+        true_node_one_hot, mol_batch.batch[:, None], dim=0, reduce='mean')
     per_graph_pred_types = scatter(
-        decoded_data.x * nodewise_weights[:, None], decoded_data.batch[:, None], dim=0, reduce='sum')
+        decoded_mol_batch.x * graph_normed_nodewise_weights[:, None], decoded_mol_batch.batch[:, None], dim=0, reduce='sum')
 
     nodewise_type_loss = (
             F.binary_cross_entropy(per_graph_pred_types.clip(min=1e-6, max=1 - 1e-6), per_graph_true_types) -
             F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
 
     nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
-    graph_reconstruction_loss = scatter(nodewise_reconstruction_loss, data.batch, reduce='mean')
+    graph_reconstruction_loss = scatter(nodewise_reconstruction_loss, mol_batch.batch, reduce='mean')
 
     # new losses -
-    # 1 penalize components for distance to nearest atom
-    # nearest_node_dist = scatter(input2output_dists, input2output_edges[0], reduce='min',
-    #                             dim_size=decoded_data.num_nodes)
-    # nearest_node_loss = scatter(nearest_node_dist, decoded_data.batch, reduce='mean', dim_size=data.num_graphs)
-    #
-    # if not skip_clumping_loss:
-    #     # 2 penalize components for not being a part of an atom-size clump
-    #     d_self_likelihoods = compute_gaussian_overlap(
-    #         torch.zeros((decoded_data.num_nodes, 1), dtype=torch.float32, device=true_node_one_hot.device),  # dummy one-hot
-    #         decoded_data, decoded_data, 0.35, # standard evalation sigma
-    #         nodewise_weights=decoded_data.aux_ind, dist_to_self=True,
-    #         type_distance_scaling=type_distance_scaling)
-    #     # can't compare to input node-wise so we use a small sigma and make this a 'short range' clumping tool
-    #     nodewise_clumping_loss = F.smooth_l1_loss(d_self_likelihoods, torch.ones_like(d_self_likelihoods), reduction='none')
-    #     graph_clumping_loss = scatter(nodewise_clumping_loss, decoded_data.batch, reduce='mean')
-    # else:
-    #     graph_clumping_loss = torch.zeros_like(nearest_node_loss)
+    #1 penalize components for distance to nearest atom
+    nearest_node_dist = scatter(input2output_dists, input2output_edges[0], reduce='min', dim_size=decoded_mol_batch.num_nodes)
+    nearest_node_loss = scatter(nearest_node_dist, decoded_mol_batch.batch, reduce='mean', dim_size=mol_batch.num_graphs)
+
+    # 2 penalize area near an atom for not being a part of an exactly atom-size clump
+    collect_bools = input2output_dists < 0.5
+    inds_within_cutoff = input2output_edges[0][collect_bools]
+    inside_edge_nodes = input2output_edges[1][collect_bools]
+    collected_particle_weights = nodewise_weights_tensor[inds_within_cutoff]
+    pred_particle_weights = scatter(collected_particle_weights,
+                                    inside_edge_nodes,
+                                    reduce='sum',
+                                    dim_size=mol_batch.num_nodes,
+                                    )
+
+    nodewise_clumping_loss = F.smooth_l1_loss(pred_particle_weights, torch.ones_like(pred_particle_weights), reduction='none')
+    graph_clumping_loss = scatter(nodewise_clumping_loss, mol_batch.batch, reduce='mean')
 
     return (nodewise_reconstruction_loss, nodewise_type_loss,
             graph_reconstruction_loss, self_likelihoods,
-            )  #nearest_node_loss, graph_clumping_loss)
+            nearest_node_loss, graph_clumping_loss)
 
 
 def clean_cell_params(samples,

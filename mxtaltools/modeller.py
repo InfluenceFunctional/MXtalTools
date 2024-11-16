@@ -1433,11 +1433,14 @@ class Modeller:
         (nodewise_reconstruction_loss,
          nodewise_type_loss,
          reconstruction_loss,
-         self_likelihoods
+         self_likelihoods,
+         nearest_node_loss,
+         clumping_loss
          ) = ae_reconstruction_loss(
             mol_batch,
             decoded_mol_batch,
             nodewise_weights,
+            nodewise_weights_tensor,
             self.dataDims['num_atom_types'],
             self.config.autoencoder.type_distance_scaling,
             self.config.autoencoder_sigma,
@@ -1461,8 +1464,9 @@ class Modeller:
 
         # sum losses
         losses = (reconstruction_loss +
-                  constraining_loss + node_weight_constraining_loss
-                  )
+                  constraining_loss + node_weight_constraining_loss +
+                  self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss +
+                  self.config.autoencoder.clumping_loss_coefficient * clumping_loss)
 
         if not skip_stats:
             stats = {'constraining_loss': constraining_loss.mean().detach(),
@@ -1475,6 +1479,8 @@ class Modeller:
                      'matching_nodes_fraction': matching_nodes_fraction.detach(),
                      'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
                      'node_weight_constraining_loss': node_weight_constraining_loss.mean().detach(),
+                                          'nearest_node_loss': nearest_node_loss.detach().mean(),
+                     'clumping_loss': clumping_loss.detach().mean(),
                      }
         else:
             stats = {}
