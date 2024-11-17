@@ -904,7 +904,7 @@ def get_node_weights(mol_batch, decoded_mol_batch, decoding, num_decoder_nodes, 
     nodewise_weights = scatter_softmax(decoding[:, -1] / node_weight_temperature,
                                        decoded_mol_batch.batch,
                                        dim=0,
-                                       dim_size=num_decoder_nodes)
+                                       dim_size=decoded_mol_batch.num_nodes)
 
     # reweigh against the number of atoms
     nodewise_weights_tensor = nodewise_weights * mol_batch.num_atoms.repeat_interleave(
@@ -981,20 +981,22 @@ def test_encoder_equivariance(data: CrystalData,
 
 def collate_decoded_data(data, decoding, num_decoder_nodes, node_weight_temperature, device):
     # generate input reconstructed as a data type
-    decoded_data = init_decoded_data(data, decoding,
-                                     device,
-                                     num_decoder_nodes)
+    decoded_mol_batch = init_decoded_data(data,
+                                          decoding,
+                                          device,
+                                          num_decoder_nodes
+                                          )
     # compute the distributional weight of each node
     nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = \
-        get_node_weights(data, decoded_data, decoding,
+        get_node_weights(data, decoded_mol_batch, decoding,
                          num_decoder_nodes,
                          node_weight_temperature)
-    decoded_data.aux_ind = nodewise_weights_tensor
+    decoded_mol_batch.aux_ind = nodewise_weights_tensor
     # input node weights are always 1 - corresponding each to an atom
     data.aux_ind = torch.ones(data.num_nodes, dtype=torch.float32, device=device)
     # get probability distribution over type dimensions
-    decoded_data.x = F.softmax(decoding[:, 3:-1], dim=1)
-    return decoded_data, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
+    decoded_mol_batch.x = F.softmax(decoding[:, 3:-1], dim=1)
+    return decoded_mol_batch, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor
 
 
 def ae_reconstruction_loss(mol_batch,

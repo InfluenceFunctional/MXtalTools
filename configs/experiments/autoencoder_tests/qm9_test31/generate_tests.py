@@ -285,6 +285,206 @@ config_list = [
                     'num_nodes': 256
                 }}}
     },  # 6 - 256 bottleneck and nodes
+    {
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'nearest_node_loss_coefficient': .0001,
+            'clumping_loss_coefficient': .0001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9975,
+            },
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': 'graph layer'
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 4,
+                        'dropout': 0.5,
+                        'norm': 'layer'},
+                    'num_nodes': 512
+                }}}
+    },  # 7 - baseline with weak losses
+    {
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'nearest_node_loss_coefficient': .0001,
+            'clumping_loss_coefficient': .0001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-3,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9975,
+            },
+            'model': {
+                'bottleneck_dim': 64,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': 'graph layer'
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 4,
+                        'dropout': 0.5,
+                        'norm': 'layer'},
+                    'num_nodes': 512
+                }}}
+    },  # 8 - 64 bottleneck weak
+    {
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'nearest_node_loss_coefficient': .0001,
+            'clumping_loss_coefficient': .0001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9975,
+            },
+            'model': {
+                'bottleneck_dim': 512,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': 'graph layer'
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 4,
+                        'dropout': 0.5,
+                        'norm': 'layer'},
+                    'num_nodes': 64
+                }}}
+    },  # 9 - 64 num nodes weak
+    {
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'nearest_node_loss_coefficient': .0001,
+            'clumping_loss_coefficient': .0001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9975,
+            },
+            'model': {
+                'bottleneck_dim': 64,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': 'graph layer'
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 4,
+                        'dropout': 0.5,
+                        'norm': 'layer'},
+                    'num_nodes': 64
+                }}}
+    },  # 10 - 65 bottleneck and nodes weak
+    {
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'nearest_node_loss_coefficient': .0001,
+            'clumping_loss_coefficient': .0001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 1e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9975,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 128,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': 'graph layer'
+                    }},
+                'decoder': {
+                    'fc': {
+                        'hidden_dim': 512,
+                        'num_layers': 4,
+                        'dropout': 0.5,
+                        'norm': 'layer'},
+                    'num_nodes': 256
+                }}}
+    },  # 11 - 256 bottleneck and nodes, weak
 ]
 
 

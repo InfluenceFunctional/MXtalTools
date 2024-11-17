@@ -25,7 +25,7 @@ early_epochs_step_override: 5
 num_early_epochs: 0
 grow_batch_size: True
 min_batch_size: 20
-max_batch_size: 20
+max_batch_size: 200
 batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
 overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
 minimum_epochs: 10000
@@ -50,7 +50,7 @@ model_paths:
   discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
   generator: null #cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
   regressor: null #'volume_model.pt'
-  autoencoder: cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test30_0_28-10-15-51-07
+  autoencoder: null #cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test30_0_28-10-15-51-07
   embedding_regressor: null
   polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
 
