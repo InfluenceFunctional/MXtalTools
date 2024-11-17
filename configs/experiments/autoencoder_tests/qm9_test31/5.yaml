@@ -52,7 +52,7 @@ autoencoder:
     lr_growth_lambda: 1.05
     lr_schedule: true
     lr_shrink_lambda: 0.9975
-    max_lr: 0.001
+    max_lr: 0.0001
     min_lr: 1.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
