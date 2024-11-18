@@ -427,7 +427,7 @@ def weight_reset(m):
     if (isinstance(m, nn.Conv2d)
             or isinstance(m, nn.Linear)
             or isinstance(m, nn.Conv3d)
-            or isinstance(m,nn.ConvTranspose3d)):
+            or isinstance(m, nn.ConvTranspose3d)):
         m.reset_parameters()
 
 
@@ -708,7 +708,6 @@ def batch_rmsd(mol_batch,
                intrapoint_cutoff: float = 0.5,
                probability_threshold: float = 0.25,
                type_distance_scaling: float = 2):
-
     ref_types = true_node_one_hot.float()
     ref_points = torch.cat((mol_batch.pos, ref_types * type_distance_scaling), dim=1)
     pred_types = decoded_mol_batch.x * type_distance_scaling  # nodes are already weighted at 1
@@ -841,7 +840,7 @@ def compute_type_evaluation_overlap(config,
         data,
         data,
         config.autoencoder.evaluation_sigma,
-        nodewise_weights=torch.ones(len(data.x), device=data.x.device,dtype=data.x.dtype),
+        nodewise_weights=torch.ones(len(data.x), device=data.x.device, dtype=data.x.dtype),
         dist_to_self=True,
         isolate_dimensions=[3, 3 + num_atom_types],
         type_distance_scaling=config.autoencoder.type_distance_scaling
@@ -1025,7 +1024,8 @@ def ae_reconstruction_loss(mol_batch,
     per_graph_true_types = scatter(
         true_node_one_hot, mol_batch.batch[:, None], dim=0, reduce='mean')
     per_graph_pred_types = scatter(
-        decoded_mol_batch.x * graph_normed_nodewise_weights[:, None], decoded_mol_batch.batch[:, None], dim=0, reduce='sum')
+        decoded_mol_batch.x * graph_normed_nodewise_weights[:, None], decoded_mol_batch.batch[:, None], dim=0,
+        reduce='sum')
 
     nodewise_type_loss = (
             F.binary_cross_entropy(per_graph_pred_types.clip(min=1e-6, max=1 - 1e-6), per_graph_true_types) -
@@ -1035,9 +1035,14 @@ def ae_reconstruction_loss(mol_batch,
     graph_reconstruction_loss = scatter(nodewise_reconstruction_loss, mol_batch.batch, reduce='mean')
 
     # new losses -
-    #1 penalize components for distance to nearest atom
-    nearest_node_dist = scatter(input2output_dists, input2output_edges[0], reduce='min', dim_size=decoded_mol_batch.num_nodes)
-    nearest_node_loss = scatter(nearest_node_dist, decoded_mol_batch.batch, reduce='mean', dim_size=mol_batch.num_graphs)
+    # 1 penalize components for distance to nearest atom
+    nearest_node_dist = scatter(input2output_dists,
+                                input2output_edges[0],
+                                reduce='min',
+                                dim_size=decoded_mol_batch.num_nodes
+                                )
+    nearest_node_loss = scatter(nearest_node_dist, decoded_mol_batch.batch, reduce='mean',
+                                dim_size=mol_batch.num_graphs)
 
     # 2 penalize area near an atom for not being a part of an exactly atom-size clump
     collect_bools = input2output_dists < 0.5
@@ -1050,7 +1055,8 @@ def ae_reconstruction_loss(mol_batch,
                                     dim_size=mol_batch.num_nodes,
                                     )
 
-    nodewise_clumping_loss = F.smooth_l1_loss(pred_particle_weights, torch.ones_like(pred_particle_weights), reduction='none')
+    nodewise_clumping_loss = F.smooth_l1_loss(pred_particle_weights, torch.ones_like(pred_particle_weights),
+                                              reduction='none')
     graph_clumping_loss = scatter(nodewise_clumping_loss, mol_batch.batch, reduce='mean')
 
     return (nodewise_reconstruction_loss, nodewise_type_loss,
@@ -1193,6 +1199,7 @@ def renormalize_generated_cell_params(
     generated_samples_to_build = torch.cat(
         [cell_lengths, generator_raw_samples[:, 3:6], mol_positions, generator_raw_samples[:, 9:12]], dim=1)
     return generated_samples_to_build
+
 
 def compute_prior_loss(norm_factors: torch.Tensor,
                        sg_inds: torch.LongTensor,
