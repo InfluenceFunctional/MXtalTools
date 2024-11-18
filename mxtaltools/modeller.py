@@ -1466,7 +1466,7 @@ class Modeller:
             F.relu(equal_to_actual_ratio - 10),  # maximum of 10x the 'equal distribution'
             decoded_mol_batch.batch,
             dim=0,
-            dim_size=decoded_mol_batch.num_nodes
+            dim_size=decoded_mol_batch.num_graphs
         )
 
         # sum losses
