@@ -1462,7 +1462,12 @@ class Modeller:
         #     F.relu(-torch.log10(nodewise_weights_tensor / torch.amin(nodewise_graph_weights)) - 2),  # -2 was too much leeway here
         #     decoded_mol_batch.batch)  # don't let these get too small
         equal_to_actual_ratio = nodewise_graph_weights/nodewise_weights_tensor
-        node_weight_constraining_loss = F.relu(equal_to_actual_ratio - 10)  # maximum of 10x the 'equal distribution'
+        node_weight_constraining_loss = scatter(
+            F.relu(equal_to_actual_ratio - 10),  # maximum of 10x the 'equal distribution'
+            decoded_mol_batch.batch,
+            dim=0,
+            dim_size=decoded_mol_batch.num_nodes
+        )
 
         # sum losses
         losses = (reconstruction_loss +
