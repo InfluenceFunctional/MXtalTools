@@ -135,7 +135,9 @@ class VectorGNN(torch.nn.Module):
                  vector_norm: Optional[str] = None,
                  dropout: float = 0,
                  radial_embedding: str = 'bessel',
-                 override_cutoff: Optional[float] = None
+                 override_cutoff: Optional[float] = None,
+                 v_embedding_dim: Optional[int] = None,
+                 v_input_node_dim: Optional[int] = None,
                  ):
         super(VectorGNN, self).__init__()
 
@@ -151,11 +153,16 @@ class VectorGNN(torch.nn.Module):
         elif radial_embedding == 'gaussian':
             self.rbf = GaussianEmbedding(start=0.0, stop=self.cutoff, num_gaussians=num_radial)
 
-        self.init_node_embedding = EmbeddingBlock(node_dim,
-                                                  num_input_classes,
-                                                  input_node_dim,
-                                                  atom_type_embedding_dim)
-        self.init_vector_embedding = self.init_vector_embedding = nn.Linear(1, node_dim, bias=False)
+        if atom_type_embedding_dim == 0:
+            self.init_node_embedding = nn.Identity()
+        else:
+            self.init_node_embedding = EmbeddingBlock(node_dim,
+                                                      num_input_classes,
+                                                      input_node_dim,
+                                                      atom_type_embedding_dim)
+        if v_input_node_dim is None:
+            v_input_node_dim = 1
+        self.init_vector_embedding = self.init_vector_embedding = nn.Linear(v_input_node_dim, node_dim, bias=False)
 
         self.zeroth_fc_block = vectorMLP(layers=fcs_per_gc,
                                          filters=node_dim,
@@ -202,11 +209,17 @@ class VectorGNN(torch.nn.Module):
         ])
 
         if node_dim != embedding_dim:
-            self.output_layer, self.v_output_layer = nn.Linear(node_dim, embedding_dim, bias=False), nn.Linear(node_dim,
-                                                                                                               embedding_dim,
-                                                                                                               bias=False)
+            self.output_layer = nn.Linear(node_dim, embedding_dim, bias=False)
         else:
-            self.output_layer, self.v_output_layer = nn.Identity(), nn.Identity()
+            self.output_layer = nn.Identity()
+
+        if v_embedding_dim is None:
+            v_embedding_dim = embedding_dim
+
+        if node_dim != v_embedding_dim:
+            self.v_output_layer = nn.Linear(node_dim, v_embedding_dim, bias=False)
+        else:
+            self.v_output_layer = nn.Identity()
 
     def radial_embedding(self,
                          edge_index: torch.LongTensor,
@@ -371,8 +384,6 @@ class MolCrystalScalarGNN(torch.nn.Module):
             x = x[inside_inds]  # reduce to inside image on the final convolution
 
         return x
-
-
 
 # old method - has since been broken up into separate models
 # class GraphNeuralNetwork(torch.nn.Module):

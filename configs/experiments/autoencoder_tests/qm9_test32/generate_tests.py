@@ -4,7 +4,7 @@ from copy import copy
 
 base_config = load_yaml('base.yaml')
 
-config_list = [
+config_list = [ # COMPARISON vs TEST31 - CONSISTENTLY BAD IN HIGH LR REGIME WHEN WE HAVE LOTS OF NODES, BETTER WITH LESS NODES
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -44,7 +44,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 0 - new baseline
+    },  # 0 - new baseline - SLOW, BAD, CRASHED
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -84,7 +84,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 1 - weak clump
+    },  # 1 - weak clump - SLOW, BAD
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -124,7 +124,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 2 - weak nearest node
+    },  # 2 - weak nearest node - WORSE THEN OK
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -164,7 +164,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 3 - 64 bottleneck
+    },  # 3 - 64 bottleneck - BETTER, BUT SPIKED
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -204,7 +204,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 64
                 }}}
-    },  # 4 - 64 num nodes
+    },  # 4 - 64 num nodes - BETTER
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -244,7 +244,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 64
                 }}}
-    },  # 5 - 65 bottleneck and nodes
+    },  # 5 - 65 bottleneck and nodes - BIT BETTER
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -284,7 +284,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 256
                 }}}
-    },  # 6 - 256 bottleneck and nodes
+    },  # 6 - 256 bottleneck and nodes - BIT WORSE
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -324,7 +324,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 7 - baseline with weak losses
+    },  # 7 - baseline with weak losses - MUCH WORSE IN HIGH LR
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -364,7 +364,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 8 - 64 bottleneck weak
+    },  # 8 - 64 bottleneck weak - WORSE OVERALL
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -404,7 +404,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 64
                 }}}
-    },  # 9 - 64 num nodes weak
+    },  # 9 - 64 num nodes weak - APPROXIMATELY SIMILAR, BIT WORSE
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -444,7 +444,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 64
                 }}}
-    },  # 10 - 65 bottleneck and nodes weak
+    },  # 10 - 65 bottleneck and nodes weak - VERY SLIGHTLY WORSE
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -484,7 +484,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 256
                 }}}
-    },  # 11 - 256 bottleneck and nodes, weak
+    },  # 11 - 256 bottleneck and nodes, weak - DRAMATICALLY WORSE
 ]
 
 

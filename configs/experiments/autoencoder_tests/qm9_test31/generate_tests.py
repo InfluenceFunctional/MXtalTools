@@ -44,7 +44,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 0 - new baseline
+    },  # 0 - new baseline - BAD
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -84,7 +84,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 1 - weak clump
+    },  # 1 - weak clump - BAD
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -124,7 +124,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 2 - weak nearest node
+    },  # 2 - weak nearest node - BETTER THAN OLD BASELINE
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -164,7 +164,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 3 - 64 bottleneck
+    },  # 3 - 64 bottleneck - VERY SLOW AT FIRST THEN DIVES
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -204,7 +204,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 64
                 }}}
-    },  # 4 - 64 num nodes
+    },  # 4 - 64 num nodes - VERY SLOW THROUGHOUT
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -244,7 +244,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 64
                 }}}
-    },  # 5 - 65 bottleneck and nodes
+    },  # 5 - 64 bottleneck and nodes - BIT LESS SLOW
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -284,7 +284,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 256
                 }}}
-    },  # 6 - 256 bottleneck and nodes
+    },  # 6 - 256 bottleneck and nodes - GOOD, NOT QUITE AS GOOD
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -324,7 +324,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 7 - baseline with weak losses
+    },  # 7 - baseline with weak losses - BIT BETTER THAN BASE
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -364,7 +364,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 512
                 }}}
-    },  # 8 - 64 bottleneck weak
+    },  # 8 - 64 bottleneck weak - GOOD BUT SLOW CONV
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -404,7 +404,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 64
                 }}}
-    },  # 9 - 64 num nodes weak
+    },  # 9 - 64 num nodes weak - SIMILAR TO BASELINE BUT LEVELS OUT
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -444,7 +444,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 64
                 }}}
-    },  # 10 - 65 bottleneck and nodes weak
+    },  # 10 - 64 bottleneck and nodes weak - HIGHER LEVEL OUT
     {
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
@@ -484,7 +484,7 @@ config_list = [
                         'norm': 'layer'},
                     'num_nodes': 256
                 }}}
-    },  # 11 - 256 bottleneck and nodes, weak
+    },  # 11 - 256 bottleneck and nodes, weak - BEST EVER
 ]
 
 

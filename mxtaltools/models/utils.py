@@ -936,11 +936,13 @@ def test_decoder_equivariance(data: CrystalData,
     """
     check decoder end-to-end equivariance
     """
-    '''take a given embedding and decoded it'''
+    '''take a given embedding and decode it'''
     decoding = autoencoder.decode(encoding)
+
     '''rotate embedding and decode'''
     decoding2 = autoencoder.decode(
         rotated_encoding.reshape(data.num_graphs, 3, encoding.shape[-1]))
+
     '''rotate first decoding and compare'''
     decoded_batch = torch.arange(data.num_graphs).repeat_interleave(autoencoder.num_decoder_nodes).to(device)
     rotated_decoding_positions = torch.cat(
