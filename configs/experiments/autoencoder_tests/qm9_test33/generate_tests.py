@@ -84,7 +84,7 @@ config_list = [
                 'decoder': {
                     'model_type': 'gnn',
                     'fc': {
-                        'hidden_dim': 256,
+                        'hidden_dim': 64,
                         'num_layers': 4,
                         'dropout': 0,
                         'norm': None,

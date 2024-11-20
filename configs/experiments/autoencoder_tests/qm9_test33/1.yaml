@@ -11,7 +11,7 @@ autoencoder:
       activation: gelu
       fc:
         dropout: 0
-        hidden_dim: 256
+        hidden_dim: 64
         norm: null
         num_layers: 4
         vector_norm: null
