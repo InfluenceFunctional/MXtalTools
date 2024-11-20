@@ -1,5 +1,5 @@
 autoencoder:
-  clumping_loss_coefficient: 1
+  clumping_loss_coefficient: 0.001
   evaluation_sigma: 0.35
   filter_protons: false
   infer_protons: false
@@ -41,7 +41,7 @@ autoencoder:
         num_radial: 50
         radial_embedding: bessel
         vector_norm: null
-  nearest_node_loss_coefficient: 1
+  nearest_node_loss_coefficient: 0.001
   node_weight_temperature: 1
   optimizer:
     beta1: 0.9

@@ -11,8 +11,8 @@ config_list = [
             'filter_protons': False,
             'infer_protons': False,
             'sigma_threshold': 0.15,
-            'nearest_node_loss_coefficient': 1,
-            'clumping_loss_coefficient': 1,
+            'nearest_node_loss_coefficient': 0.001,
+            'clumping_loss_coefficient': 0.001,
             'optimizer': {
                 'init_lr': 5e-5,
                 'encoder_init_lr': 1e-4,
@@ -55,12 +55,12 @@ config_list = [
             'filter_protons': False,
             'infer_protons': False,
             'sigma_threshold': 0.15,
-            'nearest_node_loss_coefficient': 1,
-            'clumping_loss_coefficient': 1,
+            'nearest_node_loss_coefficient': 0.001,
+            'clumping_loss_coefficient': 0.001,
             'optimizer': {
                 'init_lr': 5e-5,
-                'encoder_init_lr': 1e-5,
-                'decoder_init_lr': 1e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
                 'max_lr': 5e-4,
                 'min_lr': 1e-6,
                 'weight_decay': 0.05,
@@ -68,12 +68,12 @@ config_list = [
                 'lr_shrink_lambda': 0.9975,
             },
             'model': {
-                'bottleneck_dim': 64,
+                'bottleneck_dim': 256,
                 'encoder': {
                     'graph': {
-                        'node_dim': 64,
+                        'node_dim': 256,
                         'message_dim': 64,
-                        'embedding_dim': 64,
+                        'embedding_dim': 256,
                         'num_convs': 2,
                         'fcs_per_gc': 2,
                         'dropout': 0,
@@ -84,7 +84,7 @@ config_list = [
                 'decoder': {
                     'model_type': 'gnn',
                     'fc': {
-                        'hidden_dim': 64,
+                        'hidden_dim': 256,
                         'num_layers': 4,
                         'dropout': 0,
                         'norm': None,
