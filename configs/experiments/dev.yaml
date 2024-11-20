@@ -1,60 +1,167 @@
-machine: "local"  # or "cluster"
-device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/autoencoder.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
-dataset_name: test_qm9_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
-#misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
-extra_test_set_name: null
-save_checkpoints: True
-#sweep_path: configs/experiments/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
-#sweep_id: jao9tqo9
+#machine: "local"  # or "cluster"
+#device: "cpu"  # or "cpu"
+#base_config_path: /experiments/base/autoencoder.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
+#dataset_name: test_qm9_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+##misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
+#extra_test_set_name: null
+#save_checkpoints: True
+##sweep_path: configs/experiments/autoencoder_tests/geom_sweep1/geom_sweep1.yaml
+##sweep_id: jao9tqo9
+#
+#dataset:
+#  max_dataset_length: 1000000  # non-functional for on-disk datasets.
+#  test_fraction: 0.2
+#
+#  #on_disk_data_dir: '/zinc22_3d/zinc3d.lmdb/'
+#  #dumps_dirs: ['acridine_melt_interface18/5']
+#
+#seeds:
+#  dataset: 1
+#
+## batching & convergence
+#num_samples: 10000
+#max_epoch_steps: 100
+#early_epochs_step_override: 5
+#num_early_epochs: 0
+#grow_batch_size: True
+#min_batch_size: 20
+#max_batch_size: 200
+#batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
+#overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
+#minimum_epochs: 10000
+#max_epochs: 1000000 # 0 epochs takes us straight to sampling/evaluation (WIP)
+#history: 50 # for convergence checks
+#gradient_norm_clip: 1
+#extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
+#
+#logger:
+#  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
+#  stats_reporting_frequency: 5  # how many steps between which to move training stats to cpu
+#  experiment_tag: dev
+#  run_name: dev
+#
+#positional_noise:
+#  discriminator: 0
+#  generator: 0
+#  regressor: 0
+#  autoencoder: 0
+#
+#model_paths:
+#  discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
+#  generator: null #cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
+#  regressor: null #'volume_model.pt'
+#  autoencoder: null #cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test30_0_28-10-15-51-07
+#  embedding_regressor: null
+#  polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
+#
+#autoencoder:
+#  infer_protons: False
+#  filter_protons: False
+#
 
+autoencoder:
+  clumping_loss_coefficient: 1
+  evaluation_sigma: 0.35
+  filter_protons: false
+  infer_protons: false
+  init_sigma: 1.05
+  max_overlap_threshold: 0.25
+  model:
+    bottleneck_dim: 256
+    decoder:
+      activation: gelu
+      fc:
+        dropout: 0
+        hidden_dim: 64
+        norm: null
+        num_layers: 4
+        vector_norm: null
+      model_type: gnn
+      num_nodes: 64
+      ramp_depth: true
+    encoder:
+      activation: gelu
+      fc:
+        dropout: 0.1
+        hidden_dim: 256
+        norm: null
+        num_layers: 0
+        vector_norm: vector layer
+      graph:
+        atom_type_embedding_dim: 32
+        cutoff: 3
+        dropout: 0
+        embedding_dim: 256
+        envelope_exponent: 5
+        fcs_per_gc: 2
+        max_num_neighbors: 100
+        message_dim: 64
+        node_dim: 256
+        norm: null
+        num_convs: 2
+        num_radial: 50
+        radial_embedding: bessel
+        vector_norm: null
+  nearest_node_loss_coefficient: 1
+  node_weight_temperature: 1
+  optimizer:
+    beta1: 0.9
+    beta2: 0.999
+    convergence_eps: 1.0e-07
+    decoder_init_lr: 0.0001
+    encoder_init_lr: 0.0001
+    init_lr: 5.0e-05
+    lr_growth_lambda: 1.05
+    lr_schedule: true
+    lr_shrink_lambda: 0.9975
+    max_lr: 0.0005
+    min_lr: 1.0e-06
+    optimizer: adamw
+    use_plateau_scheduler: false
+    weight_decay: 0.05
+  overlap_eps:
+    test: 0.001
+  sigma_lambda: 0.99
+  sigma_threshold: 0.15
+  type_distance_scaling: 2
+base_config_path: /experiments/base/autoencoder.yaml
+batch_growth_increment: 0.05
 dataset:
-  max_dataset_length: 1000000  # non-functional for on-disk datasets.
+  max_dataset_length: 10000000
   test_fraction: 0.2
-
-  #on_disk_data_dir: '/zinc22_3d/zinc3d.lmdb/'
-  #dumps_dirs: ['acridine_melt_interface18/5']
-
-seeds:
-  dataset: 1
-
-# batching & convergence
-num_samples: 10000
-max_epoch_steps: 100
+dataset_name: qm9_dataset.pt
+device: cpu
 early_epochs_step_override: 5
-num_early_epochs: 0
-grow_batch_size: True
-min_batch_size: 20
-max_batch_size: 200
-batch_growth_increment: 0.25 # fraction of batch size to grow by each epoch
-overfit_tolerance: 4  # maximum allowed ratio of test_loss/train_loss
-minimum_epochs: 10000
-max_epochs: 1000000 # 0 epochs takes us straight to sampling/evaluation (WIP)
-history: 50 # for convergence checks
+extra_test_period: 5
+extra_test_set_name: null
 gradient_norm_clip: 1
-extra_test_period: 5 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
-
+grow_batch_size: true
+history: 50
 logger:
-  sample_reporting_frequency: 1  # how often to do detailed reporting with figures
-  stats_reporting_frequency: 5  # how many steps between which to move training stats to cpu
-  experiment_tag: dev
-  run_name: dev
-
+  experiment_tag: qm9_test33
+  run_name: qm9_test33_0_1
+  sample_reporting_frequency: 10
+  stats_reporting_frequency: 10
+machine: local
+max_batch_size: 500
+max_epoch_steps: 500
+max_epochs: 10000
+min_batch_size: 10
+minimum_epochs: 10000
+model_paths:
+  autoencoder: null
+  discriminator: null
+  embedding_regressor: null
+  generator: null
+  polymorph_classifier: null
+  regressor: null
+num_early_epochs: 0
+overfit_tolerance: 4
 positional_noise:
+  autoencoder: 0
   discriminator: 0
   generator: 0
   regressor: 0
-  autoencoder: 0
-
-model_paths:
-  discriminator: null #best_discriminator_experiments_dev_27-09-19-24-55
-  generator: null #cluster/best_generator_experiments_generator_tests_run1_dev_8_18-09-12-52-04
-  regressor: null #'volume_model.pt'
-  autoencoder: null #cluster/best_autoencoder_experiments_autoencoder_tests_qm9_test30_0_28-10-15-51-07
-  embedding_regressor: null
-  polymorph_classifier: null # 'best_polymorph_classifier_experiments_dev_25-06-17-41-37'
-
-autoencoder:
-  infer_protons: False
-  filter_protons: False
-
+save_checkpoints: true
+seeds:
+  dataset: 1

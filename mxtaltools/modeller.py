@@ -1108,6 +1108,9 @@ class Modeller:
             skip_stats = True
 
         decoding = self.models_dict['autoencoder'](input_data.clone(), return_latent=False)
+        if torch.sum(torch.isnan(decoding)) > 0:
+            raise ValueError("Mean loss is NaN/Inf")
+
         losses, stats, decoded_mol_batch = self.compute_autoencoder_loss(decoding, mol_batch.clone(),
                                                                          skip_stats=skip_stats)
 

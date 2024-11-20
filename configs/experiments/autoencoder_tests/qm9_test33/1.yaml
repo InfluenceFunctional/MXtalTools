@@ -69,7 +69,7 @@ dataset:
   max_dataset_length: 10000000
   test_fraction: 0.2
 dataset_name: qm9_dataset.pt
-device: cpu
+device: cuda
 early_epochs_step_override: 5
 extra_test_period: 5
 extra_test_set_name: null
