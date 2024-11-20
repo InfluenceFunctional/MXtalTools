@@ -103,9 +103,9 @@ autoencoder:
         num_convs: 2
         fcs_per_gc: 2
         num_radial: 50
-        norm: 'graph layer'
+        norm: null
         dropout: 0
-        vector_norm: 'graph vector layer'
+        vector_norm: null
 
         atom_type_embedding_dim: 32
         radial_embedding: 'bessel'
@@ -118,19 +118,19 @@ autoencoder:
         num_layers: 0
         dropout: 0
         norm: null
-        vector_norm: 'vector layer'
+        vector_norm: null
 
     decoder:
       model_type: 'gnn'
       activation: 'gelu'
       fc:
-        hidden_dim: 32
+        hidden_dim: 64
         num_layers: 4
         dropout: 0
         norm: null
         vector_norm: null
 
-      num_nodes: 36
+      num_nodes: 64
       ramp_depth: True
 
 
