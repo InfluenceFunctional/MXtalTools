@@ -6,7 +6,7 @@ autoencoder:
   init_sigma: 1.05
   max_overlap_threshold: 0.25
   model:
-    bottleneck_dim: 256
+    bottleneck_dim: 64
     decoder:
       activation: gelu
       fc:
@@ -30,12 +30,12 @@ autoencoder:
         atom_type_embedding_dim: 32
         cutoff: 3
         dropout: 0
-        embedding_dim: 256
+        embedding_dim: 64
         envelope_exponent: 5
         fcs_per_gc: 2
         max_num_neighbors: 100
         message_dim: 64
-        node_dim: 256
+        node_dim: 64
         norm: null
         num_convs: 2
         num_radial: 50

@@ -68,12 +68,12 @@ config_list = [
                 'lr_shrink_lambda': 0.9975,
             },
             'model': {
-                'bottleneck_dim': 256,
+                'bottleneck_dim': 64,
                 'encoder': {
                     'graph': {
-                        'node_dim': 256,
+                        'node_dim': 64,
                         'message_dim': 64,
-                        'embedding_dim': 256,
+                        'embedding_dim': 64,
                         'num_convs': 2,
                         'fcs_per_gc': 2,
                         'dropout': 0,
