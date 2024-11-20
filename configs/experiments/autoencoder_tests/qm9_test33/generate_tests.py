@@ -59,8 +59,8 @@ config_list = [
             'clumping_loss_coefficient': 1,
             'optimizer': {
                 'init_lr': 5e-5,
-                'encoder_init_lr': 1e-4,
-                'decoder_init_lr': 1e-4,
+                'encoder_init_lr': 1e-5,
+                'decoder_init_lr': 1e-5,
                 'max_lr': 5e-4,
                 'min_lr': 1e-6,
                 'weight_decay': 0.05,
