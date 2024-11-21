@@ -756,48 +756,48 @@ class Modeller:
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
-            # with torch.autograd.set_detect_anomaly(False):
-            while (epoch < self.config.max_epochs) and not converged:
-                print(self.separator_string)
-                print("Starting Epoch {}".format(epoch))  # index from 0
-                self.times['full_epoch_start'] = time()
-                self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
+            with torch.autograd.set_detect_anomaly(True, check_nan=True):
+                while (epoch < self.config.max_epochs) and not converged:
+                    print(self.separator_string)
+                    print("Starting Epoch {}".format(epoch))  # index from 0
+                    self.times['full_epoch_start'] = time()
+                    self.logger.reset_for_new_epoch(epoch, test_loader.batch_size)
 
-                if epoch < self.config.num_early_epochs:
-                    steps_override = self.config.early_epochs_step_override
-                else:
-                    steps_override = self.config.max_epoch_steps
-
-                try:  # try this batch size
-                    self.train_test_validate(epoch, extra_test_loader, steps_override, test_loader, train_loader)
-                    self.post_epoch_logging_analysis(test_loader, epoch)
-
-                    if all(list(self.logger.converged_flags.values())):  # todo confirm this works
-                        print('Training has converged!')
-                        break
-
-                    if self.config.mode != 'polymorph_classification':
-                        train_loader, test_loader, extra_test_loader = \
-                            self.increment_batch_size(train_loader, test_loader, extra_test_loader)
-
-                    prev_epoch_failed = False
-
-                except (RuntimeError, ValueError) as e:  # if we do hit OOM, slash the batch size
-                    if "CUDA out of memory" in str(
-                            e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
-                        test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed,
-                                                                                       test_loader, train_loader)
-                    elif "Mean loss is NaN/Inf" == str(e):
-                        self.handle_nan(e, epoch)
+                    if epoch < self.config.num_early_epochs:
+                        steps_override = self.config.early_epochs_step_override
                     else:
-                        raise e  # will simply raise error if other or if training on CPU
+                        steps_override = self.config.max_epoch_steps
 
-                self.times['full_epoch_end'] = time()
-                self.logger.log_times(self.times)
-                self.times = {}
-                epoch += 1
+                    try:  # try this batch size
+                        self.train_test_validate(epoch, extra_test_loader, steps_override, test_loader, train_loader)
+                        self.post_epoch_logging_analysis(test_loader, epoch)
 
-            self.logger.evaluation_analysis(test_loader, self.config.mode)
+                        if all(list(self.logger.converged_flags.values())):  # todo confirm this works
+                            print('Training has converged!')
+                            break
+
+                        if self.config.mode != 'polymorph_classification':
+                            train_loader, test_loader, extra_test_loader = \
+                                self.increment_batch_size(train_loader, test_loader, extra_test_loader)
+
+                        prev_epoch_failed = False
+
+                    except (RuntimeError, ValueError) as e:  # if we do hit OOM, slash the batch size
+                        if "CUDA out of memory" in str(
+                                e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
+                            test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed,
+                                                                                           test_loader, train_loader)
+                        elif "Mean loss is NaN/Inf" == str(e):
+                            self.handle_nan(e, epoch)
+                        else:
+                            raise e  # will simply raise error if other or if training on CPU
+
+                    self.times['full_epoch_end'] = time()
+                    self.logger.log_times(self.times)
+                    self.times = {}
+                    epoch += 1
+
+                self.logger.evaluation_analysis(test_loader, self.config.mode)
 
     def handle_nan(self, e, epoch):
         print(e)
@@ -1466,20 +1466,21 @@ class Modeller:
         # node_weight_constraining_loss = scatter(
         #     F.relu(-torch.log10(nodewise_weights_tensor / torch.amin(nodewise_graph_weights)) - 2),  # -2 was too much leeway here
         #     decoded_mol_batch.batch)  # don't let these get too small
-        equal_to_actual_ratio = torch.log10(nodewise_graph_weights/nodewise_weights_tensor)
+        equal_to_actual_ratio = torch.log10(nodewise_graph_weights / nodewise_weights_tensor)
         node_weight_constraining_loss = scatter(
             F.relu(equal_to_actual_ratio - 1),  # maximum of 10x the 'equal distribution'
             decoded_mol_batch.batch,
             dim=0,
             dim_size=decoded_mol_batch.num_graphs
-        )
+        ).clip(max=1)
 
         # sum losses
         losses = (reconstruction_loss +
                   constraining_loss +
-                  node_weight_constraining_loss +
-                  self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss +
-                  self.config.autoencoder.clumping_loss_coefficient * clumping_loss)
+                  node_weight_constraining_loss
+                  )  #+
+        #self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss +
+        #self.config.autoencoder.clumping_loss_coefficient * clumping_loss)
 
         if not skip_stats:
             stats = {'constraining_loss': constraining_loss.mean().detach(),
@@ -1492,7 +1493,7 @@ class Modeller:
                      'matching_nodes_fraction': matching_nodes_fraction.detach(),
                      'matching_nodes_loss': 1 - matching_nodes_fraction.detach(),
                      'node_weight_constraining_loss': node_weight_constraining_loss.mean().detach(),
-                                          'nearest_node_loss': nearest_node_loss.detach().mean(),
+                     'nearest_node_loss': nearest_node_loss.detach().mean(),
                      'clumping_loss': clumping_loss.detach().mean(),
                      }
         else:
