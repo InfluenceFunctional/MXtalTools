@@ -93,7 +93,94 @@ config_list = [
                     'num_nodes': 64
                 }}}
     },  # 1 - baseline gnn
-
+    {
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'nearest_node_loss_coefficient': 0.001,
+            'clumping_loss_coefficient': 0.001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9975,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None,
+                        'vector_norm': None,
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 64,
+                        'num_layers': 4,
+                        'dropout': 0,
+                        'norm': None,
+                        'vector_norm': None,
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 2 - smaller gnn
+    {
+        'positional_noise': {'autoencoder': 0.1},
+        'autoencoder': {
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'nearest_node_loss_coefficient': 0.001,
+            'clumping_loss_coefficient': 0.001,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9975,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None,
+                        'vector_norm': None,
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 4,
+                        'dropout': 0,
+                        'norm': None,
+                        'vector_norm': None,
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 3 - gnn with noise
 ]
 
 

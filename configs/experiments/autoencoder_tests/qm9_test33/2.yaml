@@ -11,7 +11,7 @@ autoencoder:
       activation: gelu
       fc:
         dropout: 0
-        hidden_dim: 256
+        hidden_dim: 64
         norm: null
         num_layers: 4
         vector_norm: null
@@ -78,7 +78,7 @@ grow_batch_size: true
 history: 50
 logger:
   experiment_tag: qm9_test33
-  run_name: qm9_test33_0_1
+  run_name: qm9_test33_0_1_2
   sample_reporting_frequency: 10
   stats_reporting_frequency: 10
 machine: cluster
