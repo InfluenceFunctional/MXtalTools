@@ -122,7 +122,7 @@ class DataManager:
                                    conv_cutoff: Optional[float] = None,
                                    do_shuffle: bool = True,
                                    precompute_edges: bool = False,
-                                   single_identifier=None
+                                   single_identifier = None
                                    ):
         """
 

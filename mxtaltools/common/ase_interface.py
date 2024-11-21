@@ -5,7 +5,8 @@ from ase.spacegroup import crystal as ase_crystal
 from ase.visualize import view
 
 
-def crystaldata_batch_to_ase_mols_list(crystaldata_batch, max_ind: int = np.inf, specific_inds = None, show_mols: bool = False, **kwargs):
+def crystaldata_batch_to_ase_mols_list(crystaldata_batch, max_ind: int = np.inf, specific_inds=None,
+                                       show_mols: bool = False, **kwargs):
     """
     Helper function for converting Crystaldata batches into lists of ase objects.
 
@@ -137,7 +138,10 @@ def ase_mol_from_crystaldata(data,
     if highlight_canonical_conformer:  # highlight the atom aux index
         numbers = data.aux_ind[atom_inds].cpu().detach().numpy() + 6
     else:
-        numbers = data.x[atom_inds, 0].cpu().detach().numpy()
+        if data.x.ndim > 0:
+            numbers = data.x[atom_inds, 0].cpu().detach().numpy()
+        else:
+            numbers = data.x[atom_inds].cpu().detach().numpy()
 
     if index is not None:
         cell = data.T_fc[index].T.cpu().detach().numpy()

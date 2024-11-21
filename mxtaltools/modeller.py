@@ -752,7 +752,7 @@ class Modeller:
             self.source_directory = os.getcwd()
             self.prep_new_working_directory()
             self.get_training_mode()
-            train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders()
+            train_loader, test_loader, extra_test_loader = self.load_dataset_and_dataloaders(override_shuffle=True)
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
@@ -1124,6 +1124,8 @@ class Modeller:
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
             self.optimizers_dict['autoencoder'].step()  # update parameters
+            if not torch.stack([torch.isfinite(p).any() for p in self.models_dict['autoencoder'].parameters()]).all():
+                aa = 1
 
         if not skip_stats:
             if self.always_do_analysis:
