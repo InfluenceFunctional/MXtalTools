@@ -22,23 +22,23 @@ def check_tensor_similarity(t1, t2, eps=1e-4):
     assert diff < eps, f"Difference is too large {diff:.5f}"
 
 
-def is_module_equivariant(v, rotation_matrix, module, batch=None, x=None):  # todo rewrite with all kwargs
+def is_module_equivariant(v, rotation_matrix, module, batch=None, x=None, **kwargs):  # todo rewrite with all kwargs
 
     rotated_vector_batch = torch.einsum('ij, njk -> nik', rotation_matrix, v)
     if x is None:
         if batch is None:
-            output = module(v)
-            output_from_rotated = module(rotated_vector_batch)
+            output = module(v,  **kwargs)
+            output_from_rotated = module(rotated_vector_batch, **kwargs)
         else:
-            output = module(v, batch=batch)
-            output_from_rotated = module(rotated_vector_batch, batch=batch)
+            output = module(v, batch=batch, **kwargs)
+            output_from_rotated = module(rotated_vector_batch, batch=batch, **kwargs)
     else:
         if batch is None:
-            output = module(x=x, v=v)
-            output_from_rotated = module(x=x, v=rotated_vector_batch)
+            output = module(x=x, v=v,  **kwargs)
+            output_from_rotated = module(x=x, v=rotated_vector_batch,  **kwargs)
         else:
-            output = module(x=x, v=v, batch=batch)
-            output_from_rotated = module(x=x, v=rotated_vector_batch, batch=batch)
+            output = module(x=x, v=v, batch=batch,  **kwargs)
+            output_from_rotated = module(x=x, v=rotated_vector_batch, batch=batch,  **kwargs)
 
     if isinstance(output, tuple):
         output = output[1]

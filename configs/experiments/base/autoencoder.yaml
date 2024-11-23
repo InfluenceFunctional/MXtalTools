@@ -62,7 +62,7 @@ supercell_size: 5
 
 autoencoder:
   infer_protons: False
-  filter_protons: False
+  filter_protons: True
   nearest_node_loss_coefficient: 0.01
   clumping_loss_coefficient: 0.01
   type_distance_scaling: 2
@@ -93,7 +93,7 @@ autoencoder:
     use_plateau_scheduler: False
 
   model:
-    bottleneck_dim: 256
+    bottleneck_dim: 16
     encoder:
       activation: 'gelu'
       graph:

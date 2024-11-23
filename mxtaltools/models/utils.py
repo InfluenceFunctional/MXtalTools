@@ -952,8 +952,8 @@ def test_decoder_equivariance(data: CrystalData,
     rotated_decoding[:, :3] = rotated_decoding_positions
     # first three dimensions should be equivariant and all trailing invariant
     decoder_equivariance_loss = (
-            torch.abs(rotated_decoding[:, :3] - decoding2[:, :3]) / torch.abs(rotated_decoding[:, :3])).mean(-1)
-    return decoder_equivariance_loss
+            torch.abs(rotated_decoding[:, :3] - decoding2[:, :3]) / (1e-3 + torch.abs(rotated_decoding[:, :3])))
+    return decoder_equivariance_loss.mean(-1)
 
 
 def test_encoder_equivariance(data: CrystalData,

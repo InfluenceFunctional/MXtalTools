@@ -111,6 +111,33 @@ class Mo3ENet(BaseGraphModel):
 
         return decoding
 
+    ''' equivariance testing
+    from scipy.spatial.transform import Rotation as R
+    import numpy as np
+    
+    v = encoding.clone()
+    
+    'initialize rotations'
+    rotations = torch.tensor(
+        R.random(len(v)).as_matrix() *
+        np.random.choice((-1, 1), replace=True, size=len(v))[:, None, None],
+        dtype=torch.float,
+        device=v.device)
+    'rotate input'
+    r_v = torch.einsum('ij, njk -> nik', rotations[0], v)
+    
+    'get output'
+    s1, out1 = self.decoder(self.scalarizer(v), v=v)
+    s2, out2 = self.decoder(self.scalarizer(r_v), v=r_v)
+    
+    'rotated output'
+    r_out1 = torch.einsum('ij, njk -> nik', rotations[0], out1)
+    
+    print(torch.mean(torch.abs(r_out1 - out2) / out2.abs()))
+    print(torch.mean(torch.abs(s1 - s2) / s2.abs()))
+
+    '''
+
     def compile_self(self, dynamic=True, fullgraph=False):
         self.encoder = torch.compile(self.encoder, dynamic=dynamic, fullgraph=fullgraph)
         self.decoder = torch.compile(self.decoder, dynamic=dynamic, fullgraph=fullgraph)
@@ -230,40 +257,135 @@ class Mo3ENetGraphDecoder(nn.Module):
             edges.append(
                 batch_ind + torch.cat([edges_i, torch.fliplr(edges_i)], dim=0)
             )
+        batch = torch.arange(num_graphs, device=x.device).repeat_interleave(self.num_nodes)
         edges = torch.cat(edges, dim=0)
         edges_dict = {'edge_index': edges.T}
 
-        x = self.s_to_nodes(x).reshape(self.num_nodes * num_graphs, self.hidden_dim)
-        pos = self.v_to_pos(v).reshape(self.num_nodes * num_graphs, 3, 1)[..., 0]
-        v = self.v_to_nodes(v).reshape(num_graphs, 3, self.hidden_dim, self.num_nodes)
-        v = v.permute(0, 3, 1, 2).flatten(0, 1)
-        batch = torch.arange(num_graphs, device=x.device).repeat(self.num_nodes)
+        x = self.s_to_nodes(x).reshape(num_graphs * self.num_nodes, self.hidden_dim)
+        pos = self.v_to_pos(v).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, 3, 1)[..., 0]
+        v = self.v_to_nodes(v).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, self.hidden_dim, 3).permute(0, 2, 1)
 
         return self.model(x, v, pos, batch, edges_dict)
 
     ''' equivariance test
+    def v_to_node(v, num_graphs):
+        v2 = self.v_to_nodes(v).reshape(num_graphs, 3, self.hidden_dim, self.num_nodes)
+        v2 = v2.permute(0, 3, 1, 2).flatten(0, 1)
+        return v2
+    
     from scipy.spatial.transform import Rotation as R
     import numpy as np
     
+    'initialize rotations'
     rotations = torch.tensor(
         R.random(num_graphs).as_matrix() *
         np.random.choice((-1, 1), replace=True, size=num_graphs)[:, None, None],
         dtype=torch.float,
         device=x.device)
     
-    rotated_v = torch.einsum('ij, njk -> nik', rotations[0], v)
+    'rotate input'
+    r_v = torch.einsum('ij, njk -> nik', rotations[0], v)
     
+    'get output'
+    out1 = v_to_node(v, num_graphs)
+    out2 = v_to_node(r_v, num_graphs)
+    
+    'rotated output'
+    r_out1 = torch.einsum('ij, njk -> nik', rotations[0], out1)
+    
+    print(torch.mean(torch.abs(r_out1 - out2)/out2.abs()))
+
+    import plotly.graph_objects as go
+    
+    fig = go.Figure(go.Histogram(x=((out2 - r_out1)/out2.abs()).flatten().abs().log10().cpu().detach().numpy(), nbinsx=100)).show()
+
+    def v_to_node(v, num_graphs):
     v2 = self.v_to_nodes(v).reshape(num_graphs, 3, self.hidden_dim, self.num_nodes)
     v2 = v2.permute(0, 3, 1, 2).flatten(0, 1)
+    return v2
     
-    rotated_v2 = torch.einsum('ij, njk -> nik', rotations[0], v2)
+    # ---- graph model --- 
+    from scipy.spatial.transform import Rotation as R
+    import numpy as np
     
-    v3 = self.v_to_nodes(rotated_v).reshape(num_graphs, 3, self.hidden_dim, self.num_nodes)
-    v3 = v3.permute(0, 3, 1, 2).flatten(0, 1)
+    'initialize rotations'
+    rotations = torch.tensor(
+        R.random(num_graphs).as_matrix() *
+        np.random.choice((-1, 1), replace=True, size=num_graphs)[:, None, None],
+        dtype=torch.float,
+        device=x.device)
     
-    print(torch.sum(torch.abs(v3-rotated_v2)))
-    import plotly.graph_objects as go
-    fig = go.Figure(go.Histogram(x=(v3-rotated_v2).flatten().abs().log().clip(min=-6).cpu().detach().numpy(),nbinsx=100)).show()
+    'rotate input'
+    r_v = torch.einsum('ij, njk -> nik', rotations[0], v)
+    r_pos = torch.einsum('ij, nj -> ni', rotations[0], pos)
+    
+    'get output'
+    s1, out1 = self.model(x, v, pos, batch, edges_dict)
+    s2, out2 = self.model(x, r_v, r_pos, batch, edges_dict)
+    
+    'rotated output'
+    r_out1 = torch.einsum('ij, njk -> nik', rotations[0], out1)
+    
+    print(torch.mean(torch.abs(r_out1 - out2)/out2.abs()))
+
+    # final equivariance test
+    if not hasattr(self, 'v0'):
+    self.x0 = x.clone()
+    self.v0 = v.clone()
+
+from scipy.spatial.transform import Rotation as R
+import numpy as np
+
+num_graphs = len(x)
+
+# all combinations of edges within each graph
+edges = []
+edges_i = torch.combinations(torch.arange(self.num_nodes), r=2, with_replacement=False).to(x.device)
+
+for ind in range(num_graphs):
+    batch_ind = ind * self.num_nodes
+    edges.append(
+        batch_ind + torch.cat([edges_i, torch.fliplr(edges_i)], dim=0)
+    )
+edges = torch.cat(edges, dim=0)
+edges_dict = {'edge_index': edges.T}
+batch = torch.arange(num_graphs, device=x.device).repeat_interleave(self.num_nodes)
+
+'initialize rotations'
+rotations = torch.tensor(
+    R.random(num_graphs).as_matrix() *
+    np.random.choice((-1, 1), replace=True, size=num_graphs)[:, None, None],
+    dtype=torch.float,
+    device=x.device)
+
+x = self.x0.clone()
+v = self.v0.clone()
+
+def rotate_object(rotations, thing, batch, num_graphs):
+    return torch.cat(
+    [torch.einsum('ij, njk->nik', rotations[ind], thing[batch == ind])
+     for ind in range(num_graphs)])
+
+rv = rotate_object(rotations, v, torch.arange(num_graphs, device=x.device), num_graphs)
+
+xf = self.s_to_nodes(x).reshape(num_graphs * self.num_nodes, self.hidden_dim)
+pos = self.v_to_pos(v).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, 3, 1)[..., 0]
+vf = self.v_to_nodes(v).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, self.hidden_dim, 3).permute(0, 2, 1)
+rpos = self.v_to_pos(rv).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, 3, 1)[..., 0]
+
+posr = rotate_object(rotations, pos[:, :, None], batch, num_graphs)[..., 0]
+
+vfr = rotate_object(rotations, vf, batch, num_graphs)
+rvf = self.v_to_nodes(rv).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, self.hidden_dim, 3).permute(0, 2, 1)
+
+xo, yo = self.model(xf, vf, pos, batch, edges_dict)
+rxo, ryo = self.model(xf, rvf, rpos, batch, edges_dict)
+
+yor = rotate_object(rotations, yo, batch, num_graphs)
+
+print(((vfr-rvf).abs()/rvf.abs()).mean())
+print(((yor-ryo).abs()/ryo.abs()).mean())
+print(((rpos-posr).abs()/rpos.abs()).mean())
     '''
 
 
