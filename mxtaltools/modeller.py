@@ -47,7 +47,7 @@ from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
 
 
-# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 # noinspection PyAttributeOutsideInit
 
 class Modeller:
@@ -755,8 +755,8 @@ class Modeller:
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
-            with torch.autograd.set_detect_anomaly(self.config.anomaly_detection,
-                                                   check_nan=self.config.anomaly_detection):
+            with torch.autograd.set_detect_anomaly(True, #self.config.anomaly_detection,
+                                                   check_nan=True): #self.config.anomaly_detection):
                 while (epoch < self.config.max_epochs) and not converged:
                     print(self.separator_string)
                     print("Starting Epoch {}".format(epoch))  # index from 0
