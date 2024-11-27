@@ -8,7 +8,7 @@ import tqdm
 from ccdc import io
 
 from mxtaltools.dataset_management.CrystalData import CrystalData
-from mxtaltools.dataset_management.featurization_utils import extract_crystal_data, featurize_molecule, crystal_filter, \
+from mxtaltools.dataset_management.dataset_generation.featurization_utils import extract_crystal_data, featurize_molecule, crystal_filter, \
     chunkify_path_list, extract_custom_cif_data, rebuild_reparameterize_unit_cell
 from mxtaltools.constants.space_group_info import SYM_OPS
 

@@ -7,7 +7,7 @@ from mxtaltools.models.graph_models.graph_neural_network import VectorGNN
 from mxtaltools.models.graph_models.molecule_graph_model import VectorMoleculeGraphModel
 from mxtaltools.models.modules.components import Scalarizer, vectorMLP
 from mxtaltools.models.utils import collate_decoded_data, ae_reconstruction_loss
-from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering, swarm_vs_tgt_fig
+from mxtaltools.reporting.ae_reporting import swarm_vs_tgt_fig
 
 
 # noinspection PyAttributeOutsideInit
@@ -228,7 +228,7 @@ class Mo3ENetGraphDecoder(nn.Module):
             num_convs=config.fc.num_layers,
             num_radial=32,
             num_input_classes=101,
-            cutoff=1,
+            cutoff=2,
             max_num_neighbors=32,
             envelope_exponent=5,
             activation='gelu',
@@ -262,7 +262,8 @@ class Mo3ENetGraphDecoder(nn.Module):
         edges_dict = {'edge_index': edges.T}
 
         x = self.s_to_nodes(x).reshape(num_graphs * self.num_nodes, self.hidden_dim)
-        pos = self.v_to_pos(v).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, 3, 1)[..., 0]
+        directions = self.v_to_pos(v).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, 3, 1)[..., 0]
+        pos = directions / (1e-4 + torch.linalg.norm(directions, dim=1))[:, None]
         v = self.v_to_nodes(v).permute(0, 2, 1).reshape(num_graphs * self.num_nodes, self.hidden_dim, 3).permute(0, 2, 1)
 
         return self.model(x, v, pos, batch, edges_dict)

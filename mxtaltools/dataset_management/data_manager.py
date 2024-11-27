@@ -1,15 +1,15 @@
+import glob
+import os
+import random
+from pathlib import Path
+from time import time
 from typing import Optional
 
-import torch
-from tqdm import tqdm
-from torch_geometric import nn as gnn
-
-import os
 import numpy as np
+import torch
+from torch_geometric import nn as gnn
 from torch_geometric.loader.dataloader import Collater
-from time import time
-import random
-import glob
+from tqdm import tqdm
 
 from mxtaltools.common.geometry_calculations import batch_molecule_vdW_volume
 from mxtaltools.constants.asymmetric_units import asym_unit_dict
@@ -45,17 +45,18 @@ class DataManager:
                  seed=0, config=None,
                  dataset_type=None):
         self.datapoints = None
-        self.datasets_path = datasets_path
+        self.datasets_path = Path(datasets_path)
         if chunks_path is not None:
-            self.chunks_path = chunks_path
+            self.chunks_path = Path(chunks_path)
         else:
-            self.chunks_path = self.datasets_path + '/classifier_chunks/'
+            self.chunks_path = self.datasets_path.joinpath('/classifier_chunks/')
 
         self.device = device  # cpu or cuda
         self.mode = mode  # standard or 'blind test'
         self.dataset_type = None
         self.config = config
         self.dataset_stats = None
+        self.regression_target = None
 
         if dataset_type is not None:
             self.dataset_type = dataset_type
@@ -85,7 +86,8 @@ class DataManager:
         self.group_tensor = torch.tensor(list(GROUP.values()))
         self.period_tensor = torch.tensor(list(PERIOD.values()))
 
-    def load_chunks(self, chunks_patterns=None,
+    def load_chunks(self,
+                    chunks_patterns=None,
                     max_chunks=1e8,
                     samples_per_chunk=1e8):
         os.chdir(self.chunks_path)
@@ -96,6 +98,7 @@ class DataManager:
             for pattern in chunks_patterns:
                 pattern = pattern.replace('\\', '/').replace('/', '_')
                 chunks.extend(glob.glob(f'{pattern}*.pt'))
+                chunks.extend(glob.glob(f'{pattern}*.pkl'))
 
         print(f'Loading {len(chunks)}:{chunks} chunks from {chunks_patterns}')
 
@@ -122,7 +125,7 @@ class DataManager:
                                    conv_cutoff: Optional[float] = None,
                                    do_shuffle: bool = True,
                                    precompute_edges: bool = False,
-                                   single_identifier = None
+                                   single_identifier=None
                                    ):
         """
 
@@ -204,10 +207,10 @@ class DataManager:
                                                                 flow='source_to_target')  # note - requires batch be monotonically increasing
 
     def molecule_cluster_dataset_processing(self, dataset_name):
-        if not os.path.exists(self.datasets_path + dataset_name) and 'dumps_dirs' in self.config.__dict__.keys():
+        if not os.path.exists(self.datasets_path.joinpath(dataset_name)) and 'dumps_dirs' in self.config.__dict__.keys():
             # if it hasn't already been done, convert the relevant LAMMPS trajectories into trainable data objects
-            generate_dataset_from_dumps([self.datasets_path + dir_name for dir_name in self.config.dumps_dirs],
-                                        self.datasets_path + '/classifier_chunks/',
+            generate_dataset_from_dumps([self.datasets_path.joinpath(dir_name) for dir_name in self.config.dumps_dirs],
+                                        self.datasets_path.joinpath('classifier_chunks'),
                                         steps_per_save=1)
 
         self.process_new_dataset(new_dataset_name=None,
@@ -231,7 +234,13 @@ class DataManager:
         """defines train/test split as well as overall dataset size"""
         self.times['dataset_shuffle_start'] = time()
         # get dataset length & shuffle
-        self.max_dataset_length = override_length if override_length is not None else self.config.max_dataset_length
+        if override_length is not None:
+            self.max_dataset_length = override_length
+        elif self.config is not None:
+            self.max_dataset_length = self.config.max_dataset_length
+        else:
+            self.max_dataset_length = 1000000000000
+
         self.dataset_length = min(len(self.dataset), self.max_dataset_length)
         if do_shuffle:
             inds_to_keep = list(np.random.choice(len(self.dataset), self.dataset_length, replace=False))
@@ -427,7 +436,7 @@ class DataManager:
 
     def load_training_dataset(self, dataset_name):
         self.times['dataset_loading_start'] = time()
-        self.dataset = torch.load(self.datasets_path + dataset_name)
+        self.dataset = torch.load(self.datasets_path.joinpath(dataset_name))
 
         if 'batch' in str(type(self.dataset)):
             # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches but as data lists
@@ -435,7 +444,7 @@ class DataManager:
             print("Dataset is in pre-collated format, which slows down initial loading!")
 
         """get miscellaneous data"""
-        misc_data_path = self.datasets_path + 'misc_data_for_' + dataset_name[:-3].split('test_')[-1] + '.npy'
+        misc_data_path = self.datasets_path.joinpath('misc_data_for_' + dataset_name[:-3].split('test_')[-1] + '.npy')
         if os.path.exists(misc_data_path):
             self.misc_dataset = np.load(misc_data_path, allow_pickle=True).item()
         else:
@@ -468,17 +477,25 @@ class DataManager:
         self.misc_dataset = self.extract_misc_stats_and_indices(self.dataset)
 
         if save_dataset:
-            np.save(self.datasets_path + 'misc_data_for_' + new_dataset_name, self.misc_dataset)
+            if isinstance(self.datasets_path, str):
+                self.datasets_path = Path(self.datasets_path)
+            misc_dataset_path = self.datasets_path.joinpath('misc_data_for_' + new_dataset_name)
+            np.save(misc_dataset_path, self.misc_dataset)
 
             # dataset for functionality testing
             ints = list(
                 np.random.choice(min(len(self.dataset), test_dataset_size),
                                  min(len(self.dataset), test_dataset_size),
                                  replace=False))
-            torch.save([self.dataset[ind] for ind in ints], self.datasets_path + 'test_' + new_dataset_name + '.pt')
+
+            test_dataset_path = self.datasets_path.joinpath('test_' + new_dataset_name + '.pt')
+            torch.save([self.dataset[ind] for ind in ints],
+                       test_dataset_path)
 
             # save full dataset
-            torch.save(self.dataset, self.datasets_path + new_dataset_name + '.pt')
+            train_dataset_path = self.datasets_path.joinpath(new_dataset_name + '.pt')
+            torch.save(self.dataset,
+                       train_dataset_path)
 
     def extract_misc_stats_and_indices(self, dataset):
         if isinstance(dataset, list):
@@ -783,3 +800,4 @@ if __name__ == '__main__':
                                          #['crystal_identifier', 'not_in', ['OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ','NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04','XAFQON','XAFQIH']],  # omit blind test 5 & 6 targets
                                          #['crystal_space_group_number','in',[2,14,19]]
                                      ])
+

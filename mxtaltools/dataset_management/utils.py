@@ -3,7 +3,21 @@ import numpy as np
 import torch
 
 from torch import Tensor
-from torch_geometric.loader.dataloader import Collater
+from torch_geometric.loader.dataloader import Collater, DataLoader
+
+
+def quick_combine_dataloaders(dataset, data_loader, batch_size, max_size):
+    dataset.extend(data_loader.dataset)
+    dataset = dataset[:max_size]  # truncate at expense of old data
+
+    if 'batch' in str(type(dataset)):
+        # if it's batched, revert to data list - this is slow, so if possible don't store datasets as batches but as data lists
+        dataset = dataset.to_data_list()
+
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True,
+                            drop_last=False)
+
+    return dataloader
 
 
 def filter_graph_nodewise(data, keep_index=None, delete_index=None):
@@ -54,7 +68,8 @@ def filter_batch_graphwise(data, keep_index=None, delete_index=None):
 
 
 def basic_stats(values: torch.tensor) -> dict[str, Tensor]:
-    clipped_values = values.clip(min=torch.quantile(values[:int(16e6)].float(), 0.05), max=torch.quantile(values[:int(16e6)].float(), 0.95))
+    clipped_values = values.clip(min=torch.quantile(values[:int(16e6)].float(), 0.05),
+                                 max=torch.quantile(values[:int(16e6)].float(), 0.95))
 
     return {'max': torch.amax(values),
             'min': torch.amin(values),

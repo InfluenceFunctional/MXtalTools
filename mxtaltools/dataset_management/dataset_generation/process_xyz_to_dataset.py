@@ -8,7 +8,7 @@ from mxtaltools.constants.atom_properties import ATOM_WEIGHTS, VDW_RADII, ATOMIC
 from rdkit import Chem as Chem
 
 from mxtaltools.dataset_management.CrystalData import CrystalData
-from mxtaltools.dataset_management.featurization_utils import chunkify_path_list, featurize_xyz_molecule, \
+from mxtaltools.dataset_management.dataset_generation.featurization_utils import chunkify_path_list, featurize_xyz_molecule, \
     get_qm9_properties
 
 HDonorSmarts = Chem.MolFromSmarts(
@@ -54,9 +54,10 @@ def process_dataset_chunks(xyzs_path, chunks_path, n_chunks):
                         x=torch.tensor(molecule_dict['atom_atomic_numbers'], dtype=torch.long),
                         pos=torch.tensor(molecule_dict['atom_coordinates'], dtype=torch.float32),
                         smiles=molecule_dict['molecule_smiles'],
-                        identifier=molecule_dict['identifier'],
+                        identifier=molecule_dict['molecule_smiles'], #molecule_dict['identifier'],
                         # QM9 molecule properties
-                        y=torch.tensor([float(prop) for prop in props[1:-1]], dtype=torch.float32)[None,:] if 'qm9' in chunks_path.lower() else None
+                        y=torch.tensor([float(prop) for prop in props[1:-1]], dtype=torch.float32)[None,:] if 'qm9' in chunks_path.lower() else None,
+                        require_crystal_features=False,
                     )
 
                     data_list.append(crystaldata)

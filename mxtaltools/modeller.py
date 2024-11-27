@@ -1,6 +1,7 @@
 import gc
 import os
 from argparse import Namespace
+from pathlib import Path
 from time import time
 from typing import Tuple
 
@@ -29,6 +30,8 @@ from mxtaltools.crystal_search.sampling import Sampler
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataloader_utils import get_dataloaders, update_dataloader_batch_size
+from mxtaltools.dataset_management.utils import quick_combine_dataloaders
+from mxtaltools.dataset_management.otf_conf_gen import async_generate_random_conformer_dataset
 from mxtaltools.modelling.utils import get_model_sizes, copy_source_to_workdir
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
 from mxtaltools.models.functions.vdw_overlap import vdw_overlap, vdw_analysis
@@ -47,7 +50,7 @@ from mxtaltools.reporting.ae_reporting import scaffolded_decoder_clustering
 from mxtaltools.reporting.logger import Logger
 
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+#os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 # noinspection PyAttributeOutsideInit
 
 class Modeller:
@@ -283,43 +286,11 @@ class Modeller:
         else:
             shuffle = True
 
-        if self.config.dataset.on_disk_data_dir is not None:
-            print(f"Loading on-disk dataset {self.config.dataset.on_disk_data_dir}")
-            from mxtaltools.dataset_management.lmdb_dataset import lmdbDataset
-            from torch_geometric.data import DataLoader
-            train_dataset = lmdbDataset(self.config.dataset_path + self.config.dataset.on_disk_data_dir)
-            num_workers = 2  #min(os.cpu_count(), 16)  # min(os.cpu_count(), 8)
-            print(f'{num_workers} workers set for dataloaders')
-            train_loader = DataLoader(train_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-                                      pin_memory=True, drop_last=False,
-                                      num_workers=0,  #num_workers if self.config.machine == 'cluster' else 0,
-                                      persistent_workers=False,  #True if self.config.machine == 'cluster' else False
-                                      )
-            del train_dataset
-            #
-            # test_dataset = lmdbDataset(
-            #     self.config.dataset_path + self.config.dataset.on_disk_data_dir.replace('train', 'test'))
-            # test_loader = DataLoader(test_dataset, batch_size=loader_batch_size, shuffle=shuffle,
-            #                          pin_memory=True, drop_last=False,
-            #                          num_workers=0,  #num_workers if self.config.machine == 'cluster' else 0,
-            #                          persistent_workers=False,
-            #                          #True, #True if self.config.machine == 'cluster' else False,
-            #                          )
-
-            #del test_dataset
-
-            # test dataset is pre-generated
-            test_loader, _ = get_dataloaders(dataset_builder,
-                                             machine=self.config.machine,
-                                             batch_size=loader_batch_size,
-                                             test_fraction=0,
-                                             shuffle=shuffle)
-        else:
-            train_loader, test_loader = get_dataloaders(dataset_builder,
-                                                        machine=self.config.machine,
-                                                        batch_size=loader_batch_size,
-                                                        test_fraction=test_fraction,
-                                                        shuffle=shuffle)
+        train_loader, test_loader = get_dataloaders(dataset_builder,
+                                                    machine=self.config.machine,
+                                                    batch_size=loader_batch_size,
+                                                    test_fraction=test_fraction,
+                                                    shuffle=shuffle)
         self.config.current_batch_size = loader_batch_size
         print("Initial training batch size set to {}".format(self.config.current_batch_size))
         del dataset_builder
@@ -755,8 +726,8 @@ class Modeller:
             self.initialize_models_optimizers_schedulers()
             converged, epoch, prev_epoch_failed = self.init_logging()
 
-            with torch.autograd.set_detect_anomaly(True, #self.config.anomaly_detection,
-                                                   check_nan=True): #self.config.anomaly_detection):
+            with torch.autograd.set_detect_anomaly(self.config.anomaly_detection,
+                                                   check_nan=self.config.anomaly_detection):
                 while (epoch < self.config.max_epochs) and not converged:
                     print(self.separator_string)
                     print("Starting Epoch {}".format(epoch))  # index from 0
@@ -771,6 +742,9 @@ class Modeller:
                     try:  # try this batch size
                         self.train_test_validate(epoch, extra_test_loader, steps_override, test_loader, train_loader)
                         self.post_epoch_logging_analysis(test_loader, epoch)
+                        if hasattr(self, 'train_loader_to_replace'):  # dynamically update train loader
+                            train_loader = self.train_loader_to_replace
+                            del self.train_loader_to_replace
 
                         if all(list(self.logger.converged_flags.values())):  # todo confirm this works
                             print('Training has converged!')
@@ -863,6 +837,7 @@ class Modeller:
                        data_loader=train_loader,
                        update_weights=True,
                        iteration_override=steps_override)
+
         with torch.no_grad():
             self.run_epoch(epoch_type='test',
                            data_loader=test_loader,
@@ -1256,6 +1231,11 @@ class Modeller:
                  data_loader,
                  update_weights: bool,
                  iteration_override: bool = None):
+
+        if self.config.dataset.otf_build_size > 0 and self.epoch_type == 'train' and os.cpu_count() > 1:
+            self.train_loader_to_replace = self.parallel_refresh_conformers(data_loader)
+            data_loader = self.train_loader_to_replace
+
         if update_weights:
             self.models_dict['autoencoder'].train(True)
         else:
@@ -1265,7 +1245,10 @@ class Modeller:
             data = data.to(self.device)
             data.x = data.x.flatten()
 
-            data, input_data = self.preprocess_ae_inputs(data, no_noise=self.epoch_type == 'test')
+            data, input_data = self.preprocess_ae_inputs(data,
+                                                         no_noise=self.epoch_type == 'test',
+                                                         noise=self.config.positional_noise.autoencoder,
+                                                         affine_scale=self.config.autoencoder.affine_scale_factor)
             self.ae_step(input_data, data, update_weights, step=i,
                          last_step=(i == len(data_loader) - 1) or (i == iteration_override))
 
@@ -1276,6 +1259,69 @@ class Modeller:
         self.logger.concatenate_stats_dict(self.epoch_type)
         if self.epoch_type == 'train':
             self.ae_annealing()
+
+    def parallel_refresh_conformers(self, data_loader):
+        temp_dataset_path = Path(self.working_directory).joinpath('otf_dataset.pt')
+        # if previous batch is finished, or we are in first epoch,
+        # initiate parallel otf conformer generation
+        chunks_path = Path(self.working_directory).joinpath('chunks')
+        if not os.path.exists(chunks_path):
+            os.mkdir(chunks_path)
+
+        if self.logger.epoch == 0:  # refresh
+            [os.remove(chunks_path.joinpath(elem)) for elem in os.listdir(chunks_path)]
+
+        num_processes = os.cpu_count() - 1
+        if (len(os.listdir(chunks_path)) >= num_processes
+                or len(os.listdir(chunks_path)) == 0
+                or self.logger.epoch == 0):
+            async_generate_random_conformer_dataset(self.config.dataset.otf_build_size,
+                                                    self.config.dataset.smiles_source,
+                                                    temp_dataset_path,
+                                                    workdir=chunks_path,
+                                                    allowed_atom_types=list(
+                                                        self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
+                                                    num_processes=num_processes,
+                                                    synchronize=False)
+
+        # if a batch is finished, merge it with our existing dataset
+        if len(os.listdir(chunks_path)) >= num_processes:
+            # generate temporary training dataset
+            miner = self.process_otf_dataset(chunks_path)
+            data_loader = quick_combine_dataloaders(miner.dataset,
+                                                    data_loader,
+                                                    data_loader.batch_size,
+                                                    self.config.dataset.max_dataset_length)
+            os.remove(temp_dataset_path)  # delete loaded dataset
+            self.logger.train_buffer_size = len(data_loader.dataset)
+        os.chdir(self.working_directory)
+        return data_loader
+
+    def process_otf_dataset(self, chunks_path):
+        miner = DataManager(device='cpu',
+                            config=self.config.dataset,
+                            datasets_path=self.working_directory,
+                            chunks_path=chunks_path,
+                            dataset_type='molecule', )
+        miner.process_new_dataset(new_dataset_name='otf_dataset',
+                                  chunks_patterns=['chunk'])
+        # kill old chunks so we don't re-use
+        [os.remove(elem) for elem in os.listdir(chunks_path)]
+        conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
+        nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
+        miner.load_dataset_for_modelling(
+            'otf_dataset.pt',
+            filter_conditions=self.config.dataset.filter_conditions,
+            filter_polymorphs=self.config.dataset.filter_polymorphs,
+            filter_duplicate_molecules=self.config.dataset.filter_duplicate_molecules,
+            filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
+            conv_cutoff=conv_cutoff,
+            do_shuffle=True,
+            precompute_edges=not nonzero_positional_noise and (
+                    self.config.mode not in ['gan', 'discriminator', 'generator']),
+            single_identifier=self.config.dataset.single_identifier,
+        )
+        return miner
 
     def crystal_structure_prediction(self):
         with (wandb.init(config=self.config,
@@ -1368,22 +1414,27 @@ class Modeller:
                 self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
         # if we have way too much overlap, just tighten right away
-        if np.abs(1 - self.logger.train_stats['mean_self_overlap'][
-                      -100:]).mean() > self.config.autoencoder.max_overlap_threshold:
+        if (np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean()
+                > self.config.autoencoder.max_overlap_threshold):
             self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
 
     def preprocess_ae_inputs(self,
                              mol_batch,
                              no_noise=False,
                              orientation_override=None,
-                             noise_override=None,
-                             deprotonation_override=False):
+                             noise=None,
+                             deprotonation_override=False,
+                             affine_scale=None):
         # atomwise random noise
-        if not no_noise:
-            if noise_override is not None:
-                mol_batch.pos += torch.randn_like(mol_batch.pos) * noise_override
-            elif self.config.positional_noise.autoencoder > 0:
-                mol_batch.pos += torch.randn_like(mol_batch.pos) * self.config.positional_noise.autoencoder
+        if not no_noise:  # TODO combine these args
+            if noise is not None:
+                mol_batch.pos += torch.randn_like(mol_batch.pos) * noise
+
+        if affine_scale is not None:
+            graph_scale_factor = torch.randn(mol_batch.num_graphs, device=mol_batch.pos.device, dtype=torch.float32)
+            graph_scale_factor = (graph_scale_factor / 10 + affine_scale).clip(min=0.9, max=1.25)
+            atomwise_scaling = graph_scale_factor.repeat_interleave(mol_batch.num_atoms)
+            mol_batch.pos *= atomwise_scaling[:, None]
 
         # random global roto-inversion
         if orientation_override is not None:
@@ -1477,10 +1528,9 @@ class Modeller:
         # sum losses
         losses = (reconstruction_loss +
                   constraining_loss +
-                  node_weight_constraining_loss
-                  )  #+
-        #self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss +
-        #self.config.autoencoder.clumping_loss_coefficient * clumping_loss)
+                  node_weight_constraining_loss +
+                  self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss +
+                  self.config.autoencoder.clumping_loss_coefficient * clumping_loss)
 
         if not skip_stats:
             stats = {'constraining_loss': constraining_loss.mean().detach(),
@@ -2133,7 +2183,7 @@ class Modeller:
         _, mol_data = self.preprocess_ae_inputs(
             data,
             no_noise=any([no_noise, self.config.positional_noise.generator == 0]),
-            noise_override=self.config.positional_noise.generator,
+            noise=self.config.positional_noise.generator,
             orientation_override=orientation)
 
         # embed molecules

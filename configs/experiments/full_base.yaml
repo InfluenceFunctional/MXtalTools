@@ -26,6 +26,8 @@ dataset:
   single_identifier: null
   buffer_size: 100000
   resample_each: 1
+  smiles_source: null
+  otf_build_size: 100000
 
 # batching & convergence
 num_samples: 1.0E+8
@@ -76,6 +78,7 @@ generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in
 supercell_size: 5
 
 autoencoder:
+  affine_scale_factor: null # 1
   infer_protons: False
   filter_protons: True
   nearest_node_loss_coefficient: 1

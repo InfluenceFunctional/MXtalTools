@@ -163,7 +163,7 @@ class CrystalData(BaseData):
 
             # fix symmetries
             self.sg_ind = sg_ind
-            if nonstandard_symmetry:  # set as list fo correct collation behavior
+            if nonstandard_symmetry:  # set as list for correct collation behavior
                 self.symmetry_operators = symmetry_operators
                 self.nonstandard_symmetry = True
             else:  # standard symmetry
