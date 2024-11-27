@@ -12,9 +12,9 @@ positional_noise:
   autoencoder: 0.1
 
 dataset:
-  max_dataset_length: 500000  # non-functional for on-disk datasets.
+  max_dataset_length: 200000  # non-functional for on-disk datasets.
   test_fraction: 0.2
-  otf_build_size: 10000
+  otf_build_size: 1000
   smiles_source: /scratch/mk8347/zinc22
 
 seeds:

@@ -67,8 +67,8 @@ autoencoder:
 base_config_path: /experiments/base/autoencoder.yaml
 batch_growth_increment: 0.05
 dataset:
-  max_dataset_length: 500000
-  otf_build_size: 10000
+  max_dataset_length: 200000
+  otf_build_size: 1000
   smiles_source: /scratch/mk8347/zinc22
   test_fraction: 0.2
 dataset_name: qm9_dataset.pt
