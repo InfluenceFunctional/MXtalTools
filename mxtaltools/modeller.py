@@ -1261,6 +1261,7 @@ class Modeller:
             self.ae_annealing()
 
     def parallel_refresh_conformers(self, data_loader):
+        self.times['otc_refresh_start'] = time()
         temp_dataset_path = Path(self.working_directory).joinpath('otf_dataset.pt')
         # if previous batch is finished, or we are in first epoch,
         # initiate parallel otf conformer generation
@@ -1299,6 +1300,7 @@ class Modeller:
             self.logger.train_buffer_size = len(data_loader.dataset)
         os.chdir(self.working_directory)
         print("Finished otc integration")
+        self.times['otc_refresh_end'] = time()
         return data_loader
 
     def process_otf_dataset(self, chunks_path):
