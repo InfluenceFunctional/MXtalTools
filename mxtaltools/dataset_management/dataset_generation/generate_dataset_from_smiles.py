@@ -25,6 +25,7 @@ def process_smiles_list(lines: list, chunk_path, allowed_atom_types, **conf_kwar
         if sample is not None:
             samples.append(sample)
 
+    print(f"finished processing smiles list with {len(samples)} samples")
     torch.save(samples, chunk_path)
     # with open(chunk_path, 'wb') as handle:
     #     pickle.dump(samples, handle, protocol=pickle.HIGHEST_PROTOCOL)

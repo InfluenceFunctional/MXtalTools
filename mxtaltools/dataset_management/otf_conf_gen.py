@@ -30,6 +30,7 @@ def async_generate_random_conformer_dataset(dataset_length,
     min_ind = len(os.listdir(chunks_path)) + 1  # always add one
 
     for ind, chunk in enumerate(chunks):
+        print(f'starting chunk {ind} with {len(chunk)} smiles')
         chunk_ind = min_ind + ind
         chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
         pool.apply_async(process_smiles_list,
@@ -42,6 +43,7 @@ def async_generate_random_conformer_dataset(dataset_length,
                          })
 
     pool.close()
+    print(f"finished processing smiles chunks")
     if synchronize:
         pool.join()
 
