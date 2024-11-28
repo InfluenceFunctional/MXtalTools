@@ -1284,10 +1284,13 @@ class Modeller:
                                                     num_processes=num_processes,
                                                     synchronize=False)
 
+            print("generated all chunks")
+
         # if a batch is finished, merge it with our existing dataset
         if len(os.listdir(chunks_path)) >= num_processes:
             # generate temporary training dataset
             miner = self.process_otf_dataset(chunks_path)
+            print("integrating otc dataset into dataloader")
             data_loader = quick_combine_dataloaders(miner.dataset,
                                                     data_loader,
                                                     data_loader.batch_size,
@@ -1295,20 +1298,26 @@ class Modeller:
             os.remove(temp_dataset_path)  # delete loaded dataset
             self.logger.train_buffer_size = len(data_loader.dataset)
         os.chdir(self.working_directory)
+        print("Finished otc integration")
         return data_loader
 
     def process_otf_dataset(self, chunks_path):
+        print("starting otf dataset collation")
         miner = DataManager(device='cpu',
                             config=self.config.dataset,
                             datasets_path=self.working_directory,
                             chunks_path=chunks_path,
                             dataset_type='molecule', )
+        print("processing new dataset")
         miner.process_new_dataset(new_dataset_name='otf_dataset',
                                   chunks_patterns=['chunk'])
+        del miner.dataset
+        print("processed new dataset")
         # kill old chunks so we don't re-use
         [os.remove(elem) for elem in os.listdir(chunks_path)]
         conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
         nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
+        print("loading otc dataset for modelling")
         miner.load_dataset_for_modelling(
             'otf_dataset.pt',
             filter_conditions=self.config.dataset.filter_conditions,
@@ -1321,6 +1330,7 @@ class Modeller:
                     self.config.mode not in ['gan', 'discriminator', 'generator']),
             single_identifier=self.config.dataset.single_identifier,
         )
+        print("otc dataset loaded")
         return miner
 
     def crystal_structure_prediction(self):
