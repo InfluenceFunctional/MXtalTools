@@ -86,8 +86,8 @@ def get_smiles_list(dataset_length, num_processes, smiles_path):
             p=file_sizes / np.sum(file_sizes)
         )[0]
         with gzip.open(smiles_paths[file_to_add], 'r') as f:
-            lines = f.readlines()
-            smiles_list.extend(lines)
+            for line in f:
+                smiles_list.append(line.rstrip())
     chunks = chunkify(smiles_list, num_processes)
     return chunks
 

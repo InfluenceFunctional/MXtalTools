@@ -28,6 +28,7 @@ dataset:
   resample_each: 1
   smiles_source: null
   otf_build_size: 100000
+  num_processes: 1
 
 # batching & convergence
 num_samples: 1.0E+8

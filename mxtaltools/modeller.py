@@ -1271,7 +1271,7 @@ class Modeller:
         if self.logger.epoch == 0:  # refresh
             [os.remove(chunks_path.joinpath(elem)) for elem in os.listdir(chunks_path)]
 
-        num_processes = os.cpu_count() - 1
+        num_processes = self.config.dataset.num_processes
         if (len(os.listdir(chunks_path)) >= num_processes
                 or len(os.listdir(chunks_path)) == 0
                 or self.logger.epoch == 0):
