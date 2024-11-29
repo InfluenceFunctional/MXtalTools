@@ -16,6 +16,7 @@ def async_generate_random_conformer_dataset(dataset_length,
                                             workdir,
                                             allowed_atom_types: list,
                                             num_processes: int,
+                                            pool,
                                             synchronize=True):
     dataset_path = Path(dataset_name)
     chunks_path = Path(workdir)
@@ -26,7 +27,6 @@ def async_generate_random_conformer_dataset(dataset_length,
     os.chdir(chunks_path)
 
     # generate samples
-    pool = mp.Pool(num_processes)
     min_ind = len(os.listdir(chunks_path)) + 1  # always add one
 
     for ind, chunk in enumerate(chunks):
@@ -46,15 +46,17 @@ def async_generate_random_conformer_dataset(dataset_length,
     print(f"finished processing smiles chunks")
     if synchronize:
         pool.join()
-
-        # generate temporary training dataset
-        miner = DataManager(device='cpu',
-                            datasets_path=dataset_path,
-                            chunks_path=chunks_path,
-                            dataset_type='molecule',)
-        miner.process_new_dataset(new_dataset_name='temp_zinc_conf_dataset',
-                                  )
+        #
+        # # generate temporary training dataset
+        # miner = DataManager(device='cpu',
+        #                     datasets_path=dataset_path,
+        #                     chunks_path=chunks_path,
+        #                     dataset_type='molecule',)
+        # miner.process_new_dataset(new_dataset_name='temp_zinc_conf_dataset',
+        #                           )
         #os.rmdir('chunks')
+    else:
+        return pool
 
 
 def get_smiles_list(dataset_length, num_processes, smiles_path):

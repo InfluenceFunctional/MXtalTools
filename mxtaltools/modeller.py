@@ -15,7 +15,7 @@ from torch.nn import functional as F
 from torch_geometric.loader.dataloader import Collater
 from torch_scatter import scatter
 from tqdm import tqdm
-
+import multiprocessing as mp
 from mxtaltools.common.geometry_calculations import batch_molecule_principal_axes_torch
 from mxtaltools.common.geometry_calculations import rotvec2sph
 from mxtaltools.common.training_utils import instantiate_models
@@ -1271,24 +1271,30 @@ class Modeller:
 
         if self.logger.epoch == 0:  # refresh
             [os.remove(chunks_path.joinpath(elem)) for elem in os.listdir(chunks_path)]
+            self.integrated_dataset = False
 
         num_processes = self.config.dataset.num_processes
-        if (len(os.listdir(chunks_path)) >= num_processes
-                or len(os.listdir(chunks_path)) == 0
-                or self.logger.epoch == 0):
-            async_generate_random_conformer_dataset(self.config.dataset.otf_build_size,
-                                                    self.config.dataset.smiles_source,
-                                                    temp_dataset_path,
-                                                    workdir=chunks_path,
-                                                    allowed_atom_types=list(
-                                                        self.dataDims['allowed_atom_types'].cpu().detach().numpy()),
-                                                    num_processes=num_processes,
-                                                    synchronize=False)
+        if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
+            if self.logger.epoch == 0 or self.integrated_dataset == True:
+                self.mp_pool = mp.Pool(num_processes)
+                self.mp_pool = async_generate_random_conformer_dataset(self.config.dataset.otf_build_size,
+                                                                       self.config.dataset.smiles_source,
+                                                                       temp_dataset_path,
+                                                                       workdir=chunks_path,
+                                                                       allowed_atom_types=list(
+                                                                           self.dataDims[
+                                                                               'allowed_atom_types'].cpu().detach().numpy()),
+                                                                       num_processes=num_processes,
+                                                                       pool=self.mp_pool,
+                                                                       synchronize=False)
 
-            print("generated all chunks")
+                print("generated all chunks")
 
         # if a batch is finished, merge it with our existing dataset
-        if len(os.listdir(chunks_path)) >= num_processes:
+        if len(os.listdir(chunks_path)) == num_processes:  # only integrate when the batch is exactly complete
+            self.times['otc_dataset_join_start'] = time()
+            self.mp_pool.join()  # join only when the batch is already finished
+            self.times['otc_dataset_join_end'] = time()
             # generate temporary training dataset
             miner = self.process_otf_dataset(chunks_path)
             print("integrating otc dataset into dataloader")
@@ -1297,9 +1303,9 @@ class Modeller:
                                                     data_loader.batch_size,
                                                     self.config.dataset.max_dataset_length)
             os.remove(temp_dataset_path)  # delete loaded dataset
-            self.logger.train_buffer_size = len(data_loader.dataset)
+            self.integrated_dataset = True
+        self.logger.train_buffer_size = len(data_loader.dataset)
         os.chdir(self.working_directory)
-        print("Finished otc integration")
         self.times['otc_refresh_end'] = time()
         return data_loader
 

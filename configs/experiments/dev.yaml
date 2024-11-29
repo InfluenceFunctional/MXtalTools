@@ -14,7 +14,7 @@ dataset:
   test_fraction: 0.2
   otf_build_size: 1000
   smiles_source: 'D:\crystal_datasets\zinc22'  # /scratch/mk8347/zinc22
-  num_processes: 4
+  num_processes: 8
 
   #on_disk_data_dir: '/zinc22_3d/zinc3d.lmdb/'
   #dumps_dirs: ['acridine_melt_interface18/5']
