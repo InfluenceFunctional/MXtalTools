@@ -1,5 +1,5 @@
 autoencoder:
-  affine_scale_factor: null
+  affine_scale_factor: 1
   clumping_loss_coefficient: 0.01
   evaluation_sigma: 0.35
   filter_protons: false
@@ -69,7 +69,7 @@ batch_growth_increment: 0.05
 dataset:
   max_dataset_length: 200000
   num_processes: 4
-  otf_build_size: 10000
+  otf_build_size: 1000
   smiles_source: /scratch/mk8347/zinc22
   test_fraction: 0.2
 dataset_name: qm9_dataset.pt
@@ -82,7 +82,7 @@ grow_batch_size: true
 history: 50
 logger:
   experiment_tag: otf_zinc_test1
-  run_name: otf_zinc_test1_0_1
+  run_name: otf_zinc_test1_0_1_2
   sample_reporting_frequency: 10
   stats_reporting_frequency: 10
 machine: cluster
@@ -101,7 +101,7 @@ model_paths:
 num_early_epochs: 0
 overfit_tolerance: 4
 positional_noise:
-  autoencoder: 0
+  autoencoder: 0.1
   discriminator: 0
   generator: 0
   regressor: 0
