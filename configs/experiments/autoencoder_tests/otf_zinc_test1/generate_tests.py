@@ -6,6 +6,7 @@ base_config = load_yaml('base.yaml')
 
 config_list = [
     {
+        'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'affine_scale_factor': None,
@@ -51,6 +52,7 @@ config_list = [
                 }}}
     },  # 0 - baseline mlp
     {
+        'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
         'autoencoder': {
             'affine_scale_factor': None,

@@ -90,7 +90,7 @@ def get_smiles_list(dataset_length, num_processes, smiles_path):
         with gzip.open(smiles_paths[file_to_add], 'r') as f:
             for line in f:
                 smiles_list.append(line.rstrip())
-    chunks = chunkify(smiles_list, num_processes)
+    chunks = chunkify(smiles_list[:dataset_length], num_processes)
     return chunks
 
 
