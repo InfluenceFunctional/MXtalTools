@@ -1287,6 +1287,7 @@ class Modeller:
                                                                        num_processes=num_processes,
                                                                        pool=self.mp_pool,
                                                                        synchronize=False)
+                self.integrated_dataset = False
 
                 print("generated all chunks")
 
