@@ -21,42 +21,59 @@ from mxtaltools.dataset_management.data_manager import DataManager
 def process_smiles_list(lines: list, chunk_path, allowed_atom_types, **conf_kwargs):
     samples = []
     for line in lines:
-        sample = process_smiles(line, allowed_atom_types, to_dict=False, **conf_kwargs)
+        sample, reason = process_smiles(line, allowed_atom_types, to_dict=False, **conf_kwargs)
         if sample is not None:
             samples.append(sample)
 
     print(f"finished processing smiles list with {len(samples)} samples")
     torch.save(samples, chunk_path)
-    del samples
-    # with open(chunk_path, 'wb') as handle:
-    #     pickle.dump(samples, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def process_smiles(smile: str,
                    allowed_atom_types,
+                   max_num_atoms: int = 1000,
+                   max_num_heavy_atoms: int = 100,
                    to_dict: bool = True,
                    max_radius: float = 15,
                    protonate: bool = True,
                    rotamers_per_sample: int = 1,
-                   allow_simple_hydrogen_rotations: bool = False):
+                   allow_simple_hydrogen_rotations: bool = False,
+                   pare_to_size: int = None):
     if rotamers_per_sample > 1:
         assert False, "Multiple rotamers not implemented"
-    coords, atom_types = generate_random_conformers_from_smiles(smile,
+    coords, atom_types, mask_rotate, mask_edges = generate_random_conformers_from_smiles(smile,
                                                                 protonate=protonate,
                                                                 max_rotamers_per_samples=rotamers_per_sample,
                                                                 allow_simple_hydrogen_rotations=allow_simple_hydrogen_rotations)
+
     if coords is False:
-        return None
+        return None, 'no coordinates'
 
     coords = coords[0]
     atom_types = atom_types[0]
+
+    # use rotatable bonds as fragmentation sites to pare the molecule
+    if pare_to_size is not None:
+        while np.sum(atom_types > 1) > pare_to_size and len(mask_rotate) > 0:
+            fragment_size = np.sum(mask_rotate, axis=1)
+            min_atoms_to_remove = len(coords) - pare_to_size
+            fragment_to_pare = np.argmin(np.abs(min_atoms_to_remove - fragment_size))
+            atoms_to_pare = mask_rotate[fragment_to_pare, :]
+            coords, atom_types = coords[~atoms_to_pare], atom_types[~atoms_to_pare]
+            mask_rotate = np.delete(mask_rotate, fragment_to_pare, axis=0)
+            mask_rotate = mask_rotate[:, ~atoms_to_pare]
+
     # molecule sizes filter
-    if len(atom_types) < 6 or len(atom_types) > 100:
-        return None
+    if np.sum(atom_types > 1) > max_num_heavy_atoms:
+        return None, "too many heavy atoms"
+    elif len(atom_types) < 6:
+        return None, "too few atoms"
+    elif len(atom_types) > max_num_atoms:
+        return None, "too many atoms"
 
     # atom types filter
     if not set(atom_types).issubset(allowed_atom_types):  #[1, 5, 6, 7, 8, 9, 14, 15, 16, 17, 35, 53]):
-        return None
+        return None, "invalid atom types"
 
     sample = CrystalData(
         x=torch.tensor(atom_types, dtype=torch.long),
@@ -69,12 +86,12 @@ def process_smiles(smile: str,
 
     # molecule radius filter
     if sample.radius > max_radius:
-        return None
+        return None, "molecule too large"
 
     if to_dict:
-        return sample.to_dict()
+        return sample.to_dict(), None
     else:
-        return sample
+        return sample, None
 
 
 if __name__ == '__main__':

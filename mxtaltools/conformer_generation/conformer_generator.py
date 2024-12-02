@@ -137,17 +137,18 @@ def generate_random_conformers_from_smiles(smile: str,
                                            ):
     mol = embed_mol(smile, protonate)
     if not mol:  # embedding failed
-        return False, False
+        return False, False, False, False
     try:
         conf = mol.GetConformer()
     except ValueError:
-        return False, False
+        return False, False, False, False
     mol, conf, pos, z, edge_index, adjacency_matrix, G = extract_mol_info(mol, conf)
 
     coords, types = [], []
     "Adjust conformational DoF"
     mask_edges, mask_rotate = get_rotatable_edges(G, edge_index)
 
+    "restrict trivial rotations"
     if not allow_simple_hydrogen_rotations:
         nontrivial_rotations = []
         for rot_ind, rotation_mask in enumerate(mask_rotate):
@@ -171,6 +172,7 @@ def generate_random_conformers_from_smiles(smile: str,
     else:
         nontrivial_rotations = np.arange(len(mask_rotate))
 
+    "apply rotations"
     if len(mask_rotate) > len(nontrivial_rotations):  # rotate bonds
         for c_ind in range(max_rotamers_per_samples):
             torsion_updates = np.random.uniform(low=-np.pi, high=np.pi, size=len(mask_rotate))
@@ -188,15 +190,14 @@ def generate_random_conformers_from_smiles(smile: str,
     else:
         pos, converged = minimal_minimization(mol, conf, pos, adjacency_matrix)
         if not converged:
-            return False, False
-
+            return False, False, False, False
         coords.append(pos)
         types.append(z)
 
     if len(coords) == 0:
-        return False, False
+        return False, False, False, False
 
-    return coords, types
+    return coords, types, mask_rotate, mask_edges
 
 
 def generate_random_conformers_from_smiles_list(smiles, dump_path, chunk_ind):

@@ -775,6 +775,9 @@ class Modeller:
 
     def handle_nan(self, e, epoch):
         print(e)
+        if self.nan_last_epoch:
+            raise e
+        self.nan_last_epoch = True
         print("Reloading prior best checkpoint and restarting training at low LR")
         self.reload_best_test_checkpoint(epoch)
         self.update_lr(update_lr_ratio=0.75)  # reduce LR and try again
@@ -851,6 +854,8 @@ class Modeller:
                                data_loader=extra_test_loader,
                                update_weights=False,
                                iteration_override=None)
+
+        self.nan_last_epoch = False
 
     def post_epoch_logging_analysis(self, test_loader, epoch):
         """check convergence status and record metrics & analysis"""
@@ -1099,8 +1104,6 @@ class Modeller:
             torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping by norm
             self.optimizers_dict['autoencoder'].step()  # update parameters
-            if not torch.stack([torch.isfinite(p).any() for p in self.models_dict['autoencoder'].parameters()]).all():
-                aa = 1
 
         if not skip_stats:
             if self.always_do_analysis:
@@ -1233,7 +1236,7 @@ class Modeller:
                  iteration_override: bool = None):
 
         if self.config.dataset.otf_build_size > 0 and self.epoch_type == 'train' and os.cpu_count() > 1:
-            self.train_loader_to_replace = self.parallel_refresh_conformers(data_loader)
+            self.train_loader_to_replace = self.otf_dataset_generation(data_loader)
             data_loader = self.train_loader_to_replace
 
         if update_weights:
@@ -1260,7 +1263,7 @@ class Modeller:
         if self.epoch_type == 'train':
             self.ae_annealing()
 
-    def parallel_refresh_conformers(self, data_loader):
+    def otf_dataset_generation(self, data_loader):
         self.times['otc_refresh_start'] = time()
         temp_dataset_path = Path(self.working_directory).joinpath('otf_dataset.pt')
         # if previous batch is finished, or we are in first epoch,
@@ -1286,10 +1289,14 @@ class Modeller:
                                                                                'allowed_atom_types'].cpu().detach().numpy()),
                                                                        num_processes=num_processes,
                                                                        pool=self.mp_pool,
+                                                                       max_num_atoms=30,  # todo add config controls for this
+                                                                       max_num_heavy_atoms=9,
+                                                                       pare_to_size=9,
+                                                                       max_radius= 15,
                                                                        synchronize=False)
                 self.integrated_dataset = False
 
-                print("generated all chunks")
+                # print("generated all chunks")
 
         # if a batch is finished, merge it with our existing dataset
         if len(os.listdir(chunks_path)) == num_processes:  # only integrate when the batch is exactly complete
@@ -1298,35 +1305,49 @@ class Modeller:
             self.times['otc_dataset_join_end'] = time()
             # generate temporary training dataset
             miner = self.process_otf_dataset(chunks_path)
-            print("integrating otc dataset into dataloader")
+            # print("integrating otc dataset into dataloader")
             data_loader = quick_combine_dataloaders(miner.dataset,
                                                     data_loader,
                                                     data_loader.batch_size,
                                                     self.config.dataset.max_dataset_length)
             os.remove(temp_dataset_path)  # delete loaded dataset
             self.integrated_dataset = True
-        self.logger.train_buffer_size = len(data_loader.dataset)
+            num_atoms = np.sum([data.num_atoms for data in data_loader.dataset])
+            stats = {
+                'dataset_length': len(data_loader.dataset),
+                'mean_molecule_size': num_atoms / len(data_loader.dataset),
+                'mean_hydrogen_fraction': np.sum(
+                    np.concatenate([data.x == 1 for data in data_loader.dataset])) / num_atoms,
+                'mean_carbon_fraction': np.sum(
+                    np.concatenate([data.x == 6 for data in data_loader.dataset])) / num_atoms,
+                'mean_nitrogen_fraction': np.sum(
+                    np.concatenate([data.x == 7 for data in data_loader.dataset])) / num_atoms,
+                'mean_oxygen_fraction': np.sum(
+                    np.concatenate([data.x == 8 for data in data_loader.dataset])) / num_atoms,
+            }
+
+            self.logger.update_stats_dict(self.epoch_type,
+                                          stats.keys(),
+                                          stats.values(),
+                                          mode='append')
+
         os.chdir(self.working_directory)
         self.times['otc_refresh_end'] = time()
         return data_loader
 
     def process_otf_dataset(self, chunks_path):
-        print("starting otf dataset collation")
         miner = DataManager(device='cpu',
                             config=self.config.dataset,
                             datasets_path=self.working_directory,
                             chunks_path=chunks_path,
                             dataset_type='molecule', )
-        print("processing new dataset")
         miner.process_new_dataset(new_dataset_name='otf_dataset',
                                   chunks_patterns=['chunk'])
         del miner.dataset
-        print("processed new dataset")
         # kill old chunks so we don't re-use
         [os.remove(elem) for elem in os.listdir(chunks_path)]
         conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
         nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
-        print("loading otc dataset for modelling")
         miner.load_dataset_for_modelling(
             'otf_dataset.pt',
             filter_conditions=self.config.dataset.filter_conditions,
@@ -1339,7 +1360,6 @@ class Modeller:
                     self.config.mode not in ['gan', 'discriminator', 'generator']),
             single_identifier=self.config.dataset.single_identifier,
         )
-        print("otc dataset loaded")
         return miner
 
     def crystal_structure_prediction(self):
@@ -1449,11 +1469,11 @@ class Modeller:
             if noise is not None:
                 mol_batch.pos += torch.randn_like(mol_batch.pos) * noise
 
-        if affine_scale is not None:
-            graph_scale_factor = torch.randn(mol_batch.num_graphs, device=mol_batch.pos.device, dtype=torch.float32)
-            graph_scale_factor = (graph_scale_factor / 10 + affine_scale).clip(min=0.9, max=1.25)
-            atomwise_scaling = graph_scale_factor.repeat_interleave(mol_batch.num_atoms)
-            mol_batch.pos *= atomwise_scaling[:, None]
+            if affine_scale is not None:
+                graph_scale_factor = torch.randn(mol_batch.num_graphs, device=mol_batch.pos.device, dtype=torch.float32)
+                graph_scale_factor = (graph_scale_factor / 10 + affine_scale).clip(min=0.9, max=1.25)
+                atomwise_scaling = graph_scale_factor.repeat_interleave(mol_batch.num_atoms)
+                mol_batch.pos *= atomwise_scaling[:, None]
 
         # random global roto-inversion
         if orientation_override is not None:

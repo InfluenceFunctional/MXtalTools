@@ -2,6 +2,7 @@ import gzip
 import multiprocessing as mp
 import os
 from pathlib import Path
+from random import shuffle
 
 import numpy as np
 
@@ -17,6 +18,10 @@ def async_generate_random_conformer_dataset(dataset_length,
                                             allowed_atom_types: list,
                                             num_processes: int,
                                             pool,
+                                            max_num_atoms: int,
+                                            max_num_heavy_atoms: int,
+                                            pare_to_size: int,
+                                            max_radius: float,
                                             synchronize=True):
     dataset_path = Path(dataset_name)
     chunks_path = Path(workdir)
@@ -30,20 +35,23 @@ def async_generate_random_conformer_dataset(dataset_length,
     min_ind = len(os.listdir(chunks_path)) + 1  # always add one
 
     for ind, chunk in enumerate(chunks):
-        print(f'starting chunk {ind} with {len(chunk)} smiles')
+        # print(f'starting chunk {ind} with {len(chunk)} smiles')
         chunk_ind = min_ind + ind
         chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
         pool.apply_async(process_smiles_list,
                          args=(chunk, chunk_path, allowed_atom_types),
                          kwds={
-                             'max_radius': 15,
+                             'max_num_atoms': max_num_atoms,
+                             'max_num_heavy_atoms': max_num_heavy_atoms,
+                             'pare_to_size': pare_to_size,
+                             'max_radius': max_radius,
                              'protonate': True,
                              'rotamers_per_sample': 1,
                              'allow_simple_hydrogen_rotations': False
                          })
 
     pool.close()
-    print(f"finished processing smiles chunks")
+    # print(f"finished processing smiles chunks")
     if synchronize:
         pool.join()
         #
@@ -59,8 +67,8 @@ def async_generate_random_conformer_dataset(dataset_length,
         return pool
 
 
-def get_smiles_list(dataset_length, num_processes, smiles_path):
-    h_dirs = os.listdir(smiles_path)
+def get_smiles_list(dataset_length, num_processes, smiles_dirs_path):
+    h_dirs = os.listdir(smiles_dirs_path)
     h_dirs = [elem for elem in h_dirs if elem[0] == 'H']
     smiles_paths = []
     for dir in h_dirs:
@@ -87,9 +95,17 @@ def get_smiles_list(dataset_length, num_processes, smiles_path):
             replace=False,
             p=file_sizes / np.sum(file_sizes)
         )[0]
-        with gzip.open(smiles_paths[file_to_add], 'r') as f:
-            for line in f:
-                smiles_list.append(line.rstrip())
+        filename = smiles_paths[file_to_add]
+        if filename[-3:] == '.gz':
+            with gzip.open(filename, 'r') as f:
+                for line in f:
+                    smiles_list.append(line.rstrip())
+        elif filename[-4:] == '.txt':
+            with open(filename, 'r') as f:
+                for line in f:
+                    smiles_list.append(line.rstrip())
+
+    shuffle(smiles_list)
     chunks = chunkify(smiles_list[:dataset_length], num_processes)
     return chunks
 
