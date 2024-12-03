@@ -76,6 +76,7 @@ class Modeller:
         if self.config.device == 'cuda':
             backends.cudnn.benchmark = True  # auto-optimizes certain backend processes
 
+        self.num_naned_epochs = 0
         self.load_physical_constants()
         self.config = flatten_wandb_params(self.config)
 
@@ -1108,6 +1109,7 @@ class Modeller:
 
         decoding = self.models_dict['autoencoder'](input_data.clone(), return_latent=False)
         if torch.sum(torch.isnan(decoding)) > 0:
+            print('decoder output not finite')
             raise ValueError("Mean loss is NaN/Inf")
 
         losses, stats, decoded_mol_batch = self.compute_autoencoder_loss(decoding, mol_batch.clone(),
@@ -1115,6 +1117,7 @@ class Modeller:
 
         mean_loss = losses.mean()
         if torch.sum(torch.logical_not(torch.isfinite(mean_loss))) > 0:
+            print('loss is not finite')
             raise ValueError("Mean loss is NaN/Inf")
 
         if update_weights:
@@ -1568,15 +1571,12 @@ class Modeller:
         decoded_dists = torch.linalg.norm(decoded_mol_batch.pos, dim=1)
         constraining_loss = scatter(
             F.relu(
-                decoded_dists -  #self.models_dict['autoencoder'].radial_normalization),
+                decoded_dists -  # self.models_dict['autoencoder'].radial_normalization),
                 torch.repeat_interleave(mol_batch.radius, self.models_dict['autoencoder'].num_decoder_nodes, dim=0)),
             decoded_mol_batch.batch, reduce='mean')
 
         # node weight constraining loss
-        # node_weight_constraining_loss = scatter(
-        #     F.relu(-torch.log10(nodewise_weights_tensor / torch.amin(nodewise_graph_weights)) - 2),  # -2 was too much leeway here
-        #     decoded_mol_batch.batch)  # don't let these get too small
-        equal_to_actual_ratio = torch.log10(nodewise_graph_weights / nodewise_weights_tensor)
+        equal_to_actual_ratio = torch.log10(nodewise_graph_weights / (nodewise_weights_tensor + 1e-3))
         node_weight_constraining_loss = scatter(
             F.relu(equal_to_actual_ratio - 1),  # maximum of 10x the 'equal distribution'
             decoded_mol_batch.batch,

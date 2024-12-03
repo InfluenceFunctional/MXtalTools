@@ -57,7 +57,7 @@ positional_noise:
   discriminator: 0
   generator: 0
   regressor: 0
-  autoencoder: 0.1
+  autoencoder: 1
 
 generate_sgs: null
 supercell_size: 5
@@ -124,7 +124,7 @@ autoencoder:
         vector_norm: null
 
     decoder:
-      model_type: 'gnn'
+      model_type: 'mlp'
       activation: 'gelu'
       fc:
         hidden_dim: 32

@@ -67,8 +67,11 @@ class Mo3ENet(BaseGraphModel):
                 return_dists: bool = False,
                 ):
         encoding = self.encode(data)
+        if torch.sum(torch.isnan(encoding)) != 0:
+            assert False, "NaN values in encoding"
         decoding = self.decode(encoding)
-
+        if torch.sum(torch.isnan(decoding)) != 0:
+            assert False, "NaN values in decoding"
         if return_latent:
             return decoding, encoding
         else:
