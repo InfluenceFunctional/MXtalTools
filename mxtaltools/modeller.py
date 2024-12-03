@@ -775,12 +775,31 @@ class Modeller:
 
     def handle_nan(self, e, epoch):
         print(e)
-        if self.nan_last_epoch:
+        if self.num_naned_epochs > 3:
             raise e
-        self.nan_last_epoch = True
+        self.num_naned_epochs += 1
         print("Reloading prior best checkpoint and restarting training at low LR")
+
         self.reload_best_test_checkpoint(epoch)
-        self.update_lr(update_lr_ratio=0.75)  # reduce LR and try again
+
+        if self.num_naned_epochs > 1:
+            # pre-store current learning rates for downstream update
+            override_lrs = {}
+            for model_name in self.model_names:
+                if self.config.__dict__[model_name].optimizer is not None:
+                    override_lrs[model_name] = self.optimizers_dict[model_name].param_groups[0]['lr']
+
+            # resetting optimizer state
+            self.optimizers_dict = {
+                model_name: init_optimizer(
+                    model_name, self.config.__dict__[model_name].optimizer, model
+                )
+                for model_name, model in self.models_dict.items()
+            }
+        else:
+            override_lrs = None
+
+        self.update_lr(update_lr_ratio=0.75, override_current_lr = override_lrs)  # reduce LR and try again
         self.hit_max_lr_dict = {key: True for key in self.hit_max_lr_dict.keys()}
 
     def handle_oom(self, prev_epoch_failed, test_loader, train_loader):
@@ -855,7 +874,7 @@ class Modeller:
                                update_weights=False,
                                iteration_override=None)
 
-        self.nan_last_epoch = False
+        self.num_naned_epochs = 0
 
     def post_epoch_logging_analysis(self, test_loader, epoch):
         """check convergence status and record metrics & analysis"""
@@ -1289,10 +1308,11 @@ class Modeller:
                                                                                'allowed_atom_types'].cpu().detach().numpy()),
                                                                        num_processes=num_processes,
                                                                        pool=self.mp_pool,
-                                                                       max_num_atoms=30,  # todo add config controls for this
+                                                                       max_num_atoms=30,
+                                                                       # todo add config controls for this
                                                                        max_num_heavy_atoms=9,
                                                                        pare_to_size=9,
-                                                                       max_radius= 15,
+                                                                       max_radius=15,
                                                                        synchronize=False)
                 self.integrated_dataset = False
 
@@ -2678,12 +2698,15 @@ class Modeller:
                                     self.dataDims)
         self.times['checkpointing_end'] = time()
 
-    def update_lr(self, update_lr_ratio=None):
+    def update_lr(self, update_lr_ratio: float = None, override_current_lr: dict = None):
         for model_name in self.model_names:
             if self.config.__dict__[model_name].optimizer is not None:
 
                 if update_lr_ratio is not None:
-                    current_lr = self.optimizers_dict[model_name].param_groups[0]['lr']
+                    if override_current_lr is not None:
+                        current_lr = override_current_lr[model_name]
+                    else:
+                        current_lr = self.optimizers_dict[model_name].param_groups[0]['lr']
                     override_lr = current_lr * update_lr_ratio
                 else:
                     override_lr = None
