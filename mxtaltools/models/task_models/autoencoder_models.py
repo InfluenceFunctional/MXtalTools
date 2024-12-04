@@ -168,7 +168,7 @@ class Mo3ENet(BaseGraphModel):
                                  node_weight_temperature,
                                  data.x.device))
 
-        (nodewise_reconstruction_loss,
+        (nodewise_reconstruction_loss,  # todo adjust with new losses
          nodewise_type_loss,
          reconstruction_loss,
          self_likelihoods,

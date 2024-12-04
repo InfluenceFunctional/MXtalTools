@@ -1037,7 +1037,7 @@ def ae_reconstruction_loss(mol_batch,
     graph_reconstruction_loss = scatter(nodewise_reconstruction_loss, mol_batch.batch, reduce='mean')
 
     # new losses -
-    # 1 penalize components for distance to nearest atom
+    # 1 penalize output components for distance to nearest atom
     nearest_node_dist = scatter(input2output_dists,
                                 input2output_edges[0],
                                 reduce='min',
@@ -1045,7 +1045,16 @@ def ae_reconstruction_loss(mol_batch,
                                 )
     nearest_node_loss = scatter(nearest_node_dist, decoded_mol_batch.batch, reduce='mean',
                                 dim_size=mol_batch.num_graphs)
-
+    # 1a also identify reciprocal distance from each atom to nearest component
+    nearest_component_dist = scatter(input2output_dists,
+                                input2output_edges[1],
+                                reduce='min',
+                                dim_size=mol_batch.num_nodes
+                                )
+    nearest_component_loss = scatter(nearest_component_dist,
+                                     mol_batch.batch,
+                                     reduce='mean',
+                                     dim_size=mol_batch.num_graphs)
     # 2 penalize area near an atom for not being a part of an exactly atom-size clump
     collect_bools = input2output_dists < 0.5
     inds_within_cutoff = input2output_edges[0][collect_bools]
@@ -1063,7 +1072,8 @@ def ae_reconstruction_loss(mol_batch,
 
     return (nodewise_reconstruction_loss, nodewise_type_loss,
             graph_reconstruction_loss, self_likelihoods,
-            nearest_node_loss, graph_clumping_loss)
+            nearest_node_loss, graph_clumping_loss,
+            nearest_component_dist, nearest_component_loss)
 
 
 def clean_cell_params(samples,
