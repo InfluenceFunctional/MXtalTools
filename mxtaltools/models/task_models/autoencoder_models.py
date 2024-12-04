@@ -90,7 +90,10 @@ class Mo3ENet(BaseGraphModel):
 
     def decode(self, encoding):
         """encoding nx3xk"""
-        scalar_decoding, vector_decoding = self.decoder(self.scalarizer(encoding), v=encoding)
+        s = self.scalarizer(encoding)
+        if torch.sum(torch.isnan(s)) > 0:
+            assert False, "NaN values in scalarized encoding"
+        scalar_decoding, vector_decoding = self.decoder(s, v=encoding)
 
         '''combine vector and scalar features to n*nodes x m'''
         # de-normalize predicted node positions and rearrange to correct format

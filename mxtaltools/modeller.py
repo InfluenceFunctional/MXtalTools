@@ -876,6 +876,9 @@ class Modeller:
                                iteration_override=None)
 
         self.num_naned_epochs = 0
+        for model in self.models_dict.values():
+            if not torch.stack([torch.isfinite(p).any() for p in model.parameters()]).all():
+                assert False, "Model weights not finite"
 
     def post_epoch_logging_analysis(self, test_loader, epoch):
         """check convergence status and record metrics & analysis"""

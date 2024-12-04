@@ -49,12 +49,13 @@ class Scalarizer(nn.Module):
     def forward(self,
                 v: torch.Tensor
                 ) -> torch.Tensor:
+        eps = 1e-3
         v_red = self.dim_red(v)
         norm = torch.linalg.norm(v_red, dim=1)
-        normed_v_red = v_red / (norm[:, None, :] + 1e-5)
+        normed_v_red = v_red / (norm[:, None, :] + eps)
 
         directions = self.embedding(v_red)
-        normed_directions = directions / (torch.linalg.norm(directions, dim=1)[:, None, :] + 1e-5)
+        normed_directions = directions / (torch.linalg.norm(directions, dim=1)[:, None, :] + eps)
 
         projections = torch.einsum('nik,nij->njk', normed_v_red, normed_directions)
 
@@ -593,6 +594,12 @@ class vectorMLP(scalarMLP):
                 self.scalar_to_vector_norm, self.s_to_v_gating_layers, self.s_to_v_activations,
                 self.vector_to_scalar)):
             res_x, res_v = self.get_residues(i, x, v)
+
+            if torch.sum(torch.isnan(x)) != 0:
+                assert False, "NaN values in EMLP scalars"
+
+            if torch.sum(torch.isnan(v)) != 0:
+                assert False, "NaN values in EMLP vectors"
 
             'scalar forward'
             if self.v_to_s_combination == 'concatenate':
