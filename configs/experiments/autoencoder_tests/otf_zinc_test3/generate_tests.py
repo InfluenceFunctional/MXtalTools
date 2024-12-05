@@ -197,6 +197,54 @@ config_list = [
                     'num_nodes': 64
                 }}}
     },  # 3 - big mlp
+    {
+        'dataset': {'otf_build_size': 1000},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'nearest_node_threshold': 0.5,
+            'affine_scale_factor': None,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9985,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None,
+                        'vector_norm': None,
+                    }},
+                'decoder': {
+                    'model_type': 'mlp',
+                    'fc': {
+                        'hidden_dim': 256,
+                        'num_layers': 4,
+                        'dropout': 0,
+                        'norm': None,
+                        'vector_norm': None,
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 4 - baseline mlp with hard component loss
 
 ]
 
