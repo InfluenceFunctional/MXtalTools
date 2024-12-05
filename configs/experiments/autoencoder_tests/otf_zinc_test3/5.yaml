@@ -13,9 +13,9 @@ autoencoder:
       fc:
         dropout: 0
         hidden_dim: 256
-        norm: null
+        norm: layer
         num_layers: 4
-        vector_norm: null
+        vector_norm: vector layer
       model_type: mlp
       num_nodes: 256
       ramp_depth: true
@@ -37,11 +37,11 @@ autoencoder:
         max_num_neighbors: 100
         message_dim: 64
         node_dim: 256
-        norm: null
+        norm: graph layer
         num_convs: 2
         num_radial: 50
         radial_embedding: bessel
-        vector_norm: null
+        vector_norm: graph vector layer
   nearest_component_loss_coefficient: 1
   nearest_node_loss_coefficient: 0.01
   nearest_node_threshold: 0.5

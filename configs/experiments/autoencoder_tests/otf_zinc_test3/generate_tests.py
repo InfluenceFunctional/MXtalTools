@@ -230,8 +230,8 @@ config_list = [
                         'fcs_per_gc': 2,
                         'dropout': 0,
                         'cutoff': 3,
-                        'norm': None,
-                        'vector_norm': None,
+                        'norm': 'graph layer',
+                        'vector_norm': 'graph vector layer',
                     }},
                 'decoder': {
                     'model_type': 'mlp',
@@ -239,8 +239,8 @@ config_list = [
                         'hidden_dim': 256,
                         'num_layers': 4,
                         'dropout': 0,
-                        'norm': None,
-                        'vector_norm': None,
+                        'norm': 'layer',
+                        'vector_norm': 'vector layer',
                     },
                     'num_nodes': 64
                 }}}
@@ -278,8 +278,8 @@ config_list = [
                         'fcs_per_gc': 2,
                         'dropout': 0,
                         'cutoff': 3,
-                        'norm': None,
-                        'vector_norm': None,
+                        'norm': 'graph layer',
+                        'vector_norm': 'graph vector layer',
                     }},
                 'decoder': {
                     'model_type': 'mlp',
@@ -287,8 +287,8 @@ config_list = [
                         'hidden_dim': 256,
                         'num_layers': 4,
                         'dropout': 0,
-                        'norm': None,
-                        'vector_norm': None,
+                        'norm': 'layer',
+                        'vector_norm': 'vector layer',
                     },
                     'num_nodes': 256
                 }}}
