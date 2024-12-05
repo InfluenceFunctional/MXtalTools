@@ -700,63 +700,7 @@ def compute_gaussian_overlap(ref_types,
         return nodewise_overlap
     else:
         return nodewise_overlap, edges, dists
-
-
-def batch_rmsd(mol_batch,
-               decoded_mol_batch,
-               true_node_one_hot,
-               intrapoint_cutoff: float = 0.5,
-               probability_threshold: float = 0.25,
-               type_distance_scaling: float = 2):
-    ref_types = true_node_one_hot.float()
-    ref_points = torch.cat((mol_batch.pos, ref_types * type_distance_scaling), dim=1)
-    pred_types = decoded_mol_batch.x * type_distance_scaling  # nodes are already weighted at 1
-    pred_points = torch.cat((decoded_mol_batch.pos, pred_types), dim=1)  # assume input x has already been normalized
-    nodewise_weights = decoded_mol_batch.aux_ind
-
-    edges = radius(ref_points,
-                   pred_points,
-                   r=intrapoint_cutoff,
-                   max_num_neighbors=10000,
-                   batch_x=mol_batch.batch,
-                   batch_y=decoded_mol_batch.batch)  # this step is slower than before
-    dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
-
-    collect_bools = dists < intrapoint_cutoff
-    inds_within_cutoff = edges[0][collect_bools]
-    inside_edge_nodes = edges[1][collect_bools]
-    collected_particles = pred_points[inds_within_cutoff]
-    collected_particle_weights = nodewise_weights[inds_within_cutoff]
-    # # confirm each output is mapped to a single input
-    # a, b = torch.unique(edges[0][collect_bools], return_counts=True)
-    # assert b.max() == 1
-    pred_particle_weights = scatter(collected_particle_weights,
-                                    inside_edge_nodes,
-                                    reduce='sum',
-                                    dim_size=mol_batch.num_nodes,
-                                    )
-    # filter here for where we do not match the scaffold (no nearby nodes, or insufficient probability mass)
-    missing_particle_bools = (1 - pred_particle_weights).abs() >= probability_threshold
-    complete_graph_bools = scatter((~missing_particle_bools).long(),
-                                   mol_batch.batch,
-                                   reduce='mul',
-                                   dim_size=mol_batch.num_graphs,
-                                   dim=0
-                                   ).bool()
-    pred_particle_points = scatter(collected_particles * collected_particle_weights[:, None],
-                                   inside_edge_nodes,
-                                   reduce='sum',
-                                   dim=0,
-                                   dim_size=mol_batch.num_nodes,
-                                   )
-    pred_dists = torch.linalg.norm(ref_points - pred_particle_points, dim=1)
-    rmsd = scatter(pred_dists, mol_batch.batch, reduce='mean', dim_size=mol_batch.num_graphs)
-    rmsd[~complete_graph_bools] = torch.nan
-    pred_particle_points[missing_particle_bools] *= torch.nan
-
-    return rmsd, pred_dists, complete_graph_bools, ~missing_particle_bools, pred_particle_points, pred_particle_weights
-
-
+ypes
 """ # new cheap RMSD calculation
 
 # get radius about which to collect points for each input node
@@ -1262,3 +1206,58 @@ def coarse_crystal_filter(lj_record, lj_cutoff, packing_coeff_record, packing_cu
 import plotly.graph_objects as go
 fig = go.Figure(go.Heatmap(z=distmat)).show()
 '''
+
+
+def batch_rmsd(mol_batch,
+               decoded_mol_batch,
+               true_node_one_hot,
+               intrapoint_cutoff: float = 0.5,
+               probability_threshold: float = 0.25,
+               type_distance_scaling: float = 2):
+    ref_types = true_node_one_hot.float()
+    ref_points = torch.cat((mol_batch.pos, ref_types * type_distance_scaling), dim=1)
+    pred_types = decoded_mol_batch.x * type_distance_scaling  # nodes are already weighted at 1
+    pred_points = torch.cat((decoded_mol_batch.pos, pred_types), dim=1)  # assume input x has already been normalized
+    nodewise_weights = decoded_mol_batch.aux_ind
+
+    edges = radius(ref_points,
+                   pred_points,
+                   r=intrapoint_cutoff,
+                   max_num_neighbors=10000,
+                   batch_x=mol_batch.batch,
+                   batch_y=decoded_mol_batch.batch)  # this step is slower than before
+    dists = torch.linalg.norm(ref_points[edges[1]] - pred_points[edges[0]], dim=1)
+
+    collect_bools = dists < intrapoint_cutoff
+    inds_within_cutoff = edges[0][collect_bools]
+    inside_edge_nodes = edges[1][collect_bools]
+    collected_particles = pred_points[inds_within_cutoff]
+    collected_particle_weights = nodewise_weights[inds_within_cutoff]
+    # # confirm each output is mapped to a single input
+    # a, b = torch.unique(edges[0][collect_bools], return_counts=True)
+    # assert b.max() == 1
+    pred_particle_weights = scatter(collected_particle_weights,
+                                    inside_edge_nodes,
+                                    reduce='sum',
+                                    dim_size=mol_batch.num_nodes,
+                                    )
+    # filter here for where we do not match the scaffold (no nearby nodes, or insufficient probability mass)
+    missing_particle_bools = (1 - pred_particle_weights).abs() >= probability_threshold
+    complete_graph_bools = scatter((~missing_particle_bools).long(),
+                                   mol_batch.batch,
+                                   reduce='mul',
+                                   dim_size=mol_batch.num_graphs,
+                                   dim=0
+                                   ).bool()
+    pred_particle_points = scatter(collected_particles * collected_particle_weights[:, None],
+                                   inside_edge_nodes,
+                                   reduce='sum',
+                                   dim=0,
+                                   dim_size=mol_batch.num_nodes,
+                                   )
+    pred_dists = torch.linalg.norm(ref_points - pred_particle_points, dim=1)
+    rmsd = scatter(pred_dists, mol_batch.batch, reduce='mean', dim_size=mol_batch.num_graphs)
+    rmsd[~complete_graph_bools] = torch.nan
+    pred_particle_points[missing_particle_bools] *= torch.nan
+
+    return rmsd, pred_dists, complete_graph_bools, ~missing_particle_bools, pred_particle_points, pred_particle_weights
