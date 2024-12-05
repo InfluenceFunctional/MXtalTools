@@ -1047,10 +1047,10 @@ def ae_reconstruction_loss(mol_batch,
                                 dim_size=mol_batch.num_graphs)
     # 1a also identify reciprocal distance from each atom to nearest component
     nearest_component_dist = scatter(input2output_dists,
-                                input2output_edges[1],
-                                reduce='min',
-                                dim_size=mol_batch.num_nodes
-                                )
+                                     input2output_edges[1],
+                                     reduce='min',
+                                     dim_size=mol_batch.num_nodes
+                                     )
     nearest_component_loss = scatter(nearest_component_dist,
                                      mol_batch.batch,
                                      reduce='mean',
