@@ -762,7 +762,7 @@ class Modeller:
                                 e) or "nonzero is not supported for tensors with more than INT_MAX elements" in str(e):
                             test_loader, train_loader, prev_epoch_failed = self.handle_oom(prev_epoch_failed,
                                                                                            test_loader, train_loader)
-                        elif "Mean loss is NaN/Inf" == str(e):
+                        elif "numerical error" in str(e).lower():
                             self.handle_nan(e, epoch)
                         else:
                             raise e  # will simply raise error if other or if training on CPU
@@ -777,6 +777,15 @@ class Modeller:
     def handle_nan(self, e, epoch):
         print(e)
         if self.num_naned_epochs > 3:
+            for model_name in self.model_names:
+                if self.train_models_dict[model_name]:
+                    print(f"Saving {model_name} crash checkpoint")
+                    save_checkpoint(epoch,
+                                    self.models_dict[model_name],
+                                    self.optimizers_dict[model_name],
+                                    self.config.__dict__[model_name].__dict__,
+                                    self.config.checkpoint_dir_path + f'best_{model_name}' + self.run_identifier + '_crashed',
+                                    self.dataDims)
             raise e
         self.num_naned_epochs += 1
         print("Reloading prior best checkpoint and restarting training at low LR")
@@ -1112,8 +1121,7 @@ class Modeller:
 
         decoding = self.models_dict['autoencoder'](input_data.clone(), return_latent=False)
         if torch.sum(torch.isnan(decoding)) > 0:
-            print('decoder output not finite')
-            raise ValueError("Mean loss is NaN/Inf")
+            raise ValueError("Numerical Error: decoder output is not finite")
 
         losses, stats, decoded_mol_batch = self.compute_autoencoder_loss(decoding, mol_batch.clone(),
                                                                          skip_stats=skip_stats)
@@ -1121,7 +1129,7 @@ class Modeller:
         mean_loss = losses.mean()
         if torch.sum(torch.logical_not(torch.isfinite(mean_loss))) > 0:
             print('loss is not finite')
-            raise ValueError("Mean loss is NaN/Inf")
+            raise ValueError("Numerical Error: autoencoder loss is not finite")
 
         if update_weights:
             self.optimizers_dict['autoencoder'].zero_grad(set_to_none=True)
@@ -2053,9 +2061,9 @@ class Modeller:
                 scalar_mol_embedding, vector_mol_embedding,
                 self.prior_variation_scale, self.device)
 
-            if torch.sum(torch.isnan(generator_raw_samples)) > 0:
+            if torch.sum(torch.logical_not(torch.isfinite(generator_raw_samples))):
                 self.vdw_turnover_potential *= 0.75  # soften vdW
-                raise ValueError("Mean loss is NaN/Inf")
+                raise ValueError("Numerical Error: Generated samples contain NaN")
 
             supercell_data, generated_cell_volumes = (
                 self.crystal_builder.build_zp1_supercells(
@@ -2089,7 +2097,7 @@ class Modeller:
 
             generator_loss = generator_losses.mean()
             if torch.sum(torch.logical_not(torch.isfinite(generator_losses))) > 0:
-                raise ValueError("Mean loss is NaN/Inf")
+                raise ValueError("Numerical Error: NaN in generator losses")
 
             if update_weights:
                 self.optimizers_dict['generator'].zero_grad(set_to_none=True)  # reset gradients from previous passes

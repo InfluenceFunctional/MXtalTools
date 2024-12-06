@@ -1007,6 +1007,7 @@ def ae_reconstruction_loss(mol_batch,
                            num_atom_types,
                            type_distance_scaling,
                            autoencoder_sigma,
+                           ae_loss_func: str = 'L2',
                            ):
     true_node_one_hot = F.one_hot(mol_batch.x.flatten().long(), num_classes=num_atom_types).float()
 
@@ -1033,7 +1034,13 @@ def ae_reconstruction_loss(mol_batch,
             F.binary_cross_entropy(per_graph_pred_types.clip(min=1e-6, max=1 - 1e-6), per_graph_true_types) -
             F.binary_cross_entropy(per_graph_true_types, per_graph_true_types))
 
-    nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
+    if ae_loss_func == 'L1':
+        nodewise_reconstruction_loss = F.smooth_l1_loss(decoder_likelihoods, self_likelihoods, reduction='none')
+    elif ae_loss_func == 'L2':
+        nodewise_reconstruction_loss = F.mse_loss(decoder_likelihoods, self_likelihoods, reduction='none')
+    else:
+        assert False, f"{ae_loss_func} is not supported autoencoder loss function"
+
     graph_reconstruction_loss = scatter(nodewise_reconstruction_loss, mol_batch.batch, reduce='mean')
 
     # new losses -

@@ -84,8 +84,8 @@ autoencoder:
   optimizer:
     optimizer: adamw
     init_lr: 5.0E-5  # dummy
-    encoder_init_lr: 1.0E-4
-    decoder_init_lr: 1.0E-4
+    encoder_init_lr: 1.0E-1
+    decoder_init_lr: 1.0E-1
     max_lr: 1.0E-3
     min_lr: 1.0E-6
     lr_schedule: True
