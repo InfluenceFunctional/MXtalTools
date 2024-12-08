@@ -1489,7 +1489,7 @@ class Modeller:
             if mean_self_overlap_loss > self.config.autoencoder.overlap_eps.test:
                 # tighten the target distribution
                 self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
-                if self.config.autoencoder.weight_constraint_factor < 10:
+                if self.config.autoencoder.weight_constraint_factor < 0.9:
                     self.config.autoencoder.weight_constraint_factor *= 1.01
 
         # if we have way too much overlap, just tighten right away
