@@ -1007,7 +1007,7 @@ def ae_reconstruction_loss(mol_batch,
                            num_atom_types,
                            type_distance_scaling,
                            autoencoder_sigma,
-                           ae_loss_func: str = 'L2',
+                           ae_loss_func: str = 'L1',
                            ):
     true_node_one_hot = F.one_hot(mol_batch.x.flatten().long(), num_classes=num_atom_types).float()
 

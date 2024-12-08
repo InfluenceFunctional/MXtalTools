@@ -66,6 +66,7 @@ autoencoder:
   sigma_lambda: 0.99
   sigma_threshold: 0.15
   type_distance_scaling: 2
+  weight_constraint_factor: 0.1
 base_config_path: /experiments/base/autoencoder.yaml
 batch_growth_increment: 0.05
 dataset:

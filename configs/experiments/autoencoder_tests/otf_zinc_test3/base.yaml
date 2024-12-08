@@ -53,6 +53,7 @@ model_paths:
 
 autoencoder:
   nearest_node_threshold: 0.5
+  weight_constraint_factor: 0.1
   affine_scale_factor: 1
   infer_protons: False
   filter_protons: False

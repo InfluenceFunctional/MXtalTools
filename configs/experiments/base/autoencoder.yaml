@@ -64,6 +64,7 @@ supercell_size: 5
 
 autoencoder:
   nearest_node_threshold: 0.5
+  weight_constraint_factor: 0.1
   affine_scale_factor: 1  # null or float
   infer_protons: False
   filter_protons: False

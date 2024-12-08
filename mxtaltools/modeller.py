@@ -1482,12 +1482,15 @@ class Modeller:
         mean_loss = self.logger.train_stats['reconstruction_loss'][-100:].mean()
         nearest_component_dists = self.logger.train_stats['nearest_component_max_dist'][-100:]
         if (mean_loss < self.config.autoencoder.sigma_threshold and
-                nearest_component_dists.max() < self.config.autoencoder.nearest_node_threshold):
+            nearest_component_dists.max() < self.config.autoencoder.nearest_node_threshold
+        ):
             # and we more self-overlap than desired
             mean_self_overlap_loss = np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean()
             if mean_self_overlap_loss > self.config.autoencoder.overlap_eps.test:
                 # tighten the target distribution
                 self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
+                if self.config.autoencoder.weight_constraint_factor < 10:
+                    self.config.autoencoder.weight_constraint_factor *= 1.01
 
         # if we have way too much overlap, just tighten right away
         if (np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean()
@@ -1592,13 +1595,16 @@ class Modeller:
             decoded_mol_batch.batch, reduce='mean')
 
         # node weight constraining loss
-        equal_to_actual_ratio = torch.log10(nodewise_graph_weights / (nodewise_weights_tensor + 1e-3))
+        equal_to_actual_difference = (nodewise_graph_weights - nodewise_weights_tensor)/nodewise_graph_weights
+        # we don't want nodewise_weights_tensor to be too small, so equal_to_acutal_difference shouldn't be too positive
+        nodewise_constraining_loss = F.relu(equal_to_actual_difference - self.config.autoencoder.weight_constraint_factor) ** 2
         node_weight_constraining_loss = scatter(
-            F.relu(equal_to_actual_ratio - 1),  # maximum of 10x the 'equal distribution'
+            nodewise_constraining_loss,
             decoded_mol_batch.batch,
             dim=0,
-            dim_size=decoded_mol_batch.num_graphs
-        ).clip(max=1)
+            dim_size=decoded_mol_batch.num_graphs,
+            reduce='mean',
+        )
 
         # sum losses
         losses = (reconstruction_loss +
