@@ -437,7 +437,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 8 - baseline gnn rerun with l2 loss
+    },  # 8 - baseline gnn rerun with l2 loss # really good, bit worse than baseline though. Almost identical to 5
     {
         'dataset': {'otf_build_size': 1000},
         'positional_noise': {'autoencoder': 0},
@@ -485,7 +485,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 9 - big mlp rerun with l2 loss
+    },  # 9 - big mlp rerun with l2 loss # OK
     {
         'dataset': {'otf_build_size': 1000},
         'positional_noise': {'autoencoder': 0},
@@ -533,7 +533,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 10 - baseline mlp with l2 loss
+    },  # 10 - baseline mlp with l2 loss # terrible
     {
         'dataset': {'otf_build_size': 1000},
         'positional_noise': {'autoencoder': 0},
@@ -581,7 +581,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 11 - baseline gnn rerun with l2 loss and new constraint loss
+    },  # 11 - baseline gnn rerun with l2 loss and new constraint loss  # not particularly good
     {
         'dataset': {'otf_build_size': 1000},
         'positional_noise': {'autoencoder': 0},
@@ -629,7 +629,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 12 - new clean baseline gnn
+    },  # 12 - new clean baseline gnn  # garbo - high T seems to stink
 
 ]
 

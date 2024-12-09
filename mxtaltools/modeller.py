@@ -1480,17 +1480,12 @@ class Modeller:
     def ae_annealing(self):
         # if we have learned the existing distribution AND there are no orphaned nodes
         mean_loss = self.logger.train_stats['reconstruction_loss'][-100:].mean()
-        nearest_component_dists = self.logger.train_stats['nearest_component_max_dist'][-100:]
-        if (mean_loss < self.config.autoencoder.sigma_threshold and
-            nearest_component_dists.max() < self.config.autoencoder.nearest_node_threshold
-        ):
+        if mean_loss < self.config.autoencoder.sigma_threshold:
             # and we more self-overlap than desired
             mean_self_overlap_loss = np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean()
             if mean_self_overlap_loss > self.config.autoencoder.overlap_eps.test:
                 # tighten the target distribution
                 self.config.autoencoder_sigma *= self.config.autoencoder.sigma_lambda
-                if self.config.autoencoder.weight_constraint_factor < 0.9:
-                    self.config.autoencoder.weight_constraint_factor *= 1.01
 
         # if we have way too much overlap, just tighten right away
         if (np.abs(1 - self.logger.train_stats['mean_self_overlap'][-100:]).mean()
@@ -1597,7 +1592,7 @@ class Modeller:
         # node weight constraining loss
         equal_to_actual_difference = (nodewise_graph_weights - nodewise_weights_tensor)/nodewise_graph_weights
         # we don't want nodewise_weights_tensor to be too small, so equal_to_acutal_difference shouldn't be too positive
-        nodewise_constraining_loss = F.relu(equal_to_actual_difference - self.config.autoencoder.weight_constraint_factor) ** 2
+        nodewise_constraining_loss = F.relu(equal_to_actual_difference - self.config.autoencoder.weight_constraint_factor)
         node_weight_constraining_loss = scatter(
             nodewise_constraining_loss,
             decoded_mol_batch.batch,
@@ -1610,9 +1605,9 @@ class Modeller:
         losses = (reconstruction_loss +
                   constraining_loss +
                   node_weight_constraining_loss +
-                  self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss**2 +
-                  self.config.autoencoder.nearest_component_loss_coefficient * nearest_component_loss**2 +
-                  self.config.autoencoder.clumping_loss_coefficient * clumping_loss
+                  #self.config.autoencoder.nearest_node_loss_coefficient * nearest_node_loss**2 +
+                  self.config.autoencoder.nearest_component_loss_coefficient * nearest_component_loss**2
+                  #self.config.autoencoder.clumping_loss_coefficient * clumping_loss
                   )
 
         if not skip_stats:
