@@ -13,7 +13,7 @@ from torch_geometric.typing import EdgeType, NodeType, OptTensor
 from torch_geometric.utils import subgraph
 from torch_sparse import SparseTensor
 
-from mxtaltools.constants.space_group_info import SYM_OPS
+from constants.space_group_info import SYM_OPS
 
 
 ###############################################################################

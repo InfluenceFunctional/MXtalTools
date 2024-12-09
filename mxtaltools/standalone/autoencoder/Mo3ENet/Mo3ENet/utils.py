@@ -1,5 +1,4 @@
 from argparse import Namespace
-import torch
 from pathlib import Path
 import yaml
 from torch_scatter import scatter
@@ -377,8 +376,7 @@ def reload_model(model, device, optimizer, path, reload_optimizer=False):
     includes fix for potential dataparallel issue
     """
     checkpoint = torch.load(path, map_location=device)
-    if list(checkpoint['model_state_dict'])[0][
-       0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
+    if list(checkpoint['model_state_dict'])[0][0:6] == 'module':  # when we use dataparallel it breaks the state_dict - fix it by removing word 'module' from in front of everything
         for i in list(checkpoint['model_state_dict']):
             checkpoint['model_state_dict'][i[7:]] = checkpoint['model_state_dict'].pop(i)
 

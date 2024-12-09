@@ -15,11 +15,11 @@ from torch_geometric.nn import MessagePassing
 from torch_geometric.nn.aggr import Aggregation
 from torch_geometric.typing import OptTensor
 from torch_geometric.utils import softmax
-from utils import collate_decoded_data, swarm_vs_tgt_fig
 
 from CrystalData import CrystalData
 from utils import (
     VDW_RADII, ATOM_WEIGHTS, ELECTRONEGATIVITY, GROUP, PERIOD)
+from utils import collate_decoded_data, swarm_vs_tgt_fig, ae_reconstruction_loss
 
 
 # noinspection PyAttributeOutsideInit
@@ -585,6 +585,40 @@ class scalarMLP(nn.Module):  # todo simplify and smooth out +1's and other custo
         else:
             return self.output_layer(x)
 
+class VectorActivation(nn.Module):
+    r"""
+    Modified implementation of the vector activation function from https://github.com/FlyingGiraffe/vnn/blob/master/models/vn_layers.py
+
+    Generates an axis as a learned linear combination of input v, then the normalized overlaps of all the components of v.
+
+    Applies an activation function on the vector overlaps, such that, e.g., for ReLU activation, vectors with negative overlap are rotated to be perpendicular to the learned axis (zero overlap) and vectors with positive overlap are untouched.
+
+    Args:
+        hidden_dim (int): feature depth of input/output vectors, :math:`(k\times 3)`
+        act_func (str): activation function to apply to the normalized vector overlaps with the learned axis
+    """
+
+    def __init__(self,
+                 hidden_dim: int,
+                 act_func: str):
+        super(VectorActivation, self).__init__()
+
+        self.embedding = nn.Linear(hidden_dim, 1, bias=False)
+        self.activation = Activation(act_func, hidden_dim)
+
+    def forward(self,
+                v: torch.Tensor
+                ) -> torch.Tensor:
+        direction = self.embedding(v)[..., -1]
+        normed_direction = direction / (torch.linalg.norm(direction, dim=1, keepdim=True) + 1e-5)
+
+        projection = torch.einsum('nik,ni->nk', v, normed_direction).clip(max=0)
+        correction = -self.activation(projection[..., None]) * normed_direction[:, None, :]
+
+        activated_output = v + correction.permute(0, 2, 1)
+
+        return activated_output
+
 # noinspection PyAttributeOutsideInit
 class vectorMLP(scalarMLP):
     r"""
@@ -968,6 +1002,74 @@ class BaseGraphModel(torch.nn.Module):
     def compile_self(self, dynamic=True, fullgraph=False):
         self.model = torch.compile(self.model, dynamic=dynamic, fullgraph=fullgraph)
 
+
+
+class VectorAugSoftmaxAggregation(Aggregation):
+    """
+    adjusted to weigh by vector length rather than raw value
+    """
+
+    def __init__(self,
+                 temperature: float = 1.0,
+                 learn: bool = True,
+                 semi_grad: bool = False,
+                 channels: int = 1,
+                 bias: float = 0.1):
+        super().__init__()
+
+        if learn and semi_grad:
+            raise ValueError(
+                f"Cannot enable 'semi_grad' in '{self.__class__.__name__}' in "
+                f"case the temperature term 't' is learnable")
+
+        if not learn and channels != 1:
+            raise ValueError(f"Cannot set 'channels' greater than '1' in case "
+                             f"'{self.__class__.__name__}' is not trainable")
+
+        self._init_termperature = temperature
+        self._init_bias = bias
+        self.learn = learn
+        self.semi_grad = semi_grad
+        self.channels = channels
+
+        self.t = Parameter(torch.empty(channels)) if learn else temperature
+        self.b = Parameter(torch.empty(channels)) if learn else bias
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        if isinstance(self.t, Tensor):
+            self.t.data.fill_(self._init_termperature)
+        if isinstance(self.b, Tensor):
+            self.b.data.fill_(self._init_bias)
+
+    def forward(self, x: Tensor,
+                index: Optional[Tensor] = None,
+                ptr: Optional[Tensor] = None,
+                dim_size: Optional[int] = None,
+                dim: int = 0,
+                cart_dim: int = 1) -> Tensor:
+
+        t = self.t
+        b = self.b
+        if self.channels != 1:
+            t = t.view(-1, self.channels)
+            b = b.view(-1, self.channels)
+
+        alpha = x
+        if not isinstance(t, (int, float)) or t != 1:
+            alpha = torch.linalg.norm(x, dim=cart_dim) * t  # go via vector length
+
+        if not self.learn and self.semi_grad:
+            with torch.no_grad():
+                alpha = softmax(alpha, index, ptr, dim_size, dim)
+        else:
+            alpha = softmax(alpha, index, ptr, dim_size, dim)
+        return self.reduce(x * (alpha[:, None, :] + b[None, :, :]), index, ptr, dim_size, dim, reduce='sum')
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}(learn={self.learn})')
+
+
 # noinspection PyAttributeOutsideInit
 class VectorMoleculeGraphModel(nn.Module):
     def __init__(self,
@@ -1172,6 +1274,70 @@ class VectorMoleculeGraphModel(nn.Module):
         return x, v
 
 
+class v_MConv(MessagePassing):
+    """
+    Message passing layer with optional vector channel.
+    Aggregation done via softmax operator.
+    Message embedding via linear operator.
+    """
+
+    def __init__(
+            self,
+            message_depth,
+            node_depth,
+            edge_embedding_dim,
+            norm=None,
+    ):
+        super().__init__(aggr=VectorAugSoftmaxAggregation(temperature=1,
+                                                          learn=True,
+                                                          bias=0.1,
+                                                          channels=message_depth),
+                         node_dim=0)
+
+        self.in_channels = node_depth
+        self.out_channels = node_depth
+        self.edge_dim = edge_embedding_dim
+        self.message_dim = message_depth
+
+        '''initialize scalar transforms'''
+        self.edge2message = nn.Linear(edge_embedding_dim, message_depth, bias=False)
+        self.source_node2message = nn.Linear(node_depth, message_depth, bias=False)
+        self.tgt_node2message = nn.Linear(node_depth, message_depth, bias=False)
+        self.norm = Normalization(norm, message_depth)
+        self.update2node = nn.Linear(message_depth, node_depth, bias=False)
+
+        self.reset_parameters()
+
+    def forward(
+            self,
+            x: Tensor,
+            edge_index,
+            edge_attr,
+    ) -> Tensor:
+        r"""
+        Runs the forward pass of the module.
+        """
+
+        out = self.propagate(edge_index=edge_index,
+                             x=x,
+                             edge_attr=edge_attr,
+                             num_nodes=x.size(0))
+
+        return x + self.update2node(out)
+
+    def message(self,
+                x_i: Tensor,
+                x_j: Tensor,
+                edge_attr: OptTensor) -> Tensor:
+        edge_attr = self.edge2message(edge_attr)
+        msg_i = self.source_node2message(x_i)
+        msg_j = self.tgt_node2message(x_j)
+
+        out = (msg_i + msg_j) * edge_attr[:, None, :]  # switch to gating - addition is not allowed
+
+        return self.norm(out)
+
+
 class VectorGNN(torch.nn.Module):
     def __init__(self,
                  input_node_dim: int,
@@ -1311,6 +1477,113 @@ class VectorGNN(torch.nn.Module):
 
         return self.output_layer(x), self.v_output_layer(v)
 
+
+
+class ScalarGNN(torch.nn.Module):
+    def __init__(self,
+                 input_node_dim: int,
+                 node_dim: int,
+                 fcs_per_gc: int,
+                 message_dim: int,
+                 embedding_dim: int,
+                 num_convs: int,
+                 num_radial: int,
+                 num_input_classes=101,
+                 cutoff: float = 5.0,
+                 max_num_neighbors: int = 32,
+                 envelope_exponent: int = 5,
+                 activation='gelu',
+                 atom_type_embedding_dim: int = 5,
+                 norm: Optional[str] = None,
+                 dropout: float = 0,
+                 radial_embedding: str = 'bessel',
+                 override_cutoff: Optional[float] = None
+                 ):
+        super(ScalarGNN, self).__init__()
+
+        self.max_num_neighbors = max_num_neighbors
+
+        if override_cutoff is None:
+            self.register_buffer('cutoff', torch.tensor(cutoff, dtype=torch.float32))
+        else:
+            self.register_buffer('cutoff', torch.tensor(override_cutoff, dtype=torch.float32))
+
+        if radial_embedding == 'bessel':
+            self.rbf = BesselBasisLayer(num_radial, self.cutoff, envelope_exponent)
+        elif radial_embedding == 'gaussian':
+            self.rbf = GaussianEmbedding(start=0.0, stop=self.cutoff, num_gaussians=num_radial)
+
+        self.init_node_embedding = EmbeddingBlock(node_dim,
+                                                  num_input_classes,
+                                                  input_node_dim,
+                                                  atom_type_embedding_dim)
+
+        self.zeroth_fc_block = scalarMLP(layers=fcs_per_gc,
+                                         filters=node_dim,
+                                         input_dim=node_dim,
+                                         output_dim=node_dim,
+                                         activation=activation,
+                                         norm=norm,
+                                         dropout=dropout)
+
+        self.interaction_blocks = torch.nn.ModuleList([
+            MConv(
+                message_dim=message_dim,
+                node_dim=node_dim,
+                edge_embedding_dim=num_radial,
+                norm=None,
+                activation_fn=activation)
+            for _ in range(num_convs)
+        ])
+
+        self.fc_blocks = torch.nn.ModuleList([
+            scalarMLP(layers=fcs_per_gc,
+                      filters=node_dim,
+                      input_dim=node_dim,
+                      output_dim=node_dim,
+                      activation=activation,
+                      norm=norm,
+                      dropout=dropout)
+            for _ in range(num_convs)
+        ])
+
+        if node_dim != embedding_dim:
+            self.output_layer = nn.Linear(node_dim, embedding_dim, bias=False)
+        else:
+            self.output_layer = nn.Identity()
+
+    def radial_embedding(self,
+                         edge_index,
+                         pos: torch.Tensor,
+                         dist: Optional[torch.Tensor] = None,
+                         ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        compute elements for radial & spherical embeddings
+        """
+        if dist is None:
+            i, j = edge_index  # i->j source-to-target
+            dist = (pos[i] - pos[j]).pow(2).sum(dim=-1).sqrt()
+
+        return dist, self.rbf(dist)  # apply radial basis functions
+
+    def forward(self,
+                z: torch.Tensor,
+                pos: torch.Tensor,
+                batch: torch.LongTensor,
+                edge_index: torch.LongTensor,
+                dist: Optional[torch.Tensor] = None
+                ) -> torch.Tensor:
+
+        x = self.init_node_embedding(z)
+        x = self.zeroth_fc_block(x=x, batch=batch)
+
+        if len(self.interaction_blocks) > 0:
+            dist, rbf = self.radial_embedding(edge_index, pos, dist)
+            for n, (convolution, fc) in enumerate(zip(self.interaction_blocks, self.fc_blocks)):
+                x = convolution(x, edge_index, rbf)
+                x = fc(x, batch=batch)
+
+        return self.output_layer(x)
 
 
 

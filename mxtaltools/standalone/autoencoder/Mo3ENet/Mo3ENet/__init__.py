@@ -5,7 +5,6 @@ requirements numpy, scipy, torch, torch_geometric, torch_scatter, torch_cluster,
 """
 import pathlib
 from argparse import Namespace
-from typing import Union
 
 import numpy as np
 import torch
@@ -13,7 +12,7 @@ import torch.nn.functional as F
 from torch_geometric.loader.dataloader import Collater
 
 from CrystalData import CrystalData
-from models import MoleculeScalarRegressor, Mo3ENet
+from models import Mo3ENet
 from utils import (
     dict2namespace, load_yaml, batch_molecule_vdW_volume,
     VDW_RADII, ATOM_WEIGHTS, reload_model, collate_decoded_data, ae_reconstruction_loss, batch_rmsd, swarm_vs_tgt_fig
@@ -30,15 +29,16 @@ class MoleculeEncoder(torch.nn.Module):
         super(MoleculeEncoder, self).__init__()
 
         self.device = device
-
-        self.load_models()
-        self.num_atom_types = 5  # todo functionalize
+        self.allowed_types = [1, 6, 7, 8, 9]
+        self.num_atom_types = len(self.allowed_types)
         self.type_distance_scaling = 2
         self.sigma = 0.015
         self.vdw_radii = torch.tensor(list(VDW_RADII.values())).to(self.device)
         self.atomic_weights = torch.tensor(list(ATOM_WEIGHTS.values())).to(self.device)
         self.collater = Collater(None, None)
         self.renderer = 'browser'
+        self.load_models()
+
 
     @torch.no_grad()
     def encode(self,
@@ -74,25 +74,25 @@ class MoleculeEncoder(torch.nn.Module):
         mol_batch = self.prep_molecule_batch(atomic_numbers,
                                              atom_coordinates,
                                              )
-        encoding = self.model.encode(mol_batch)
+        encoding = self.model.encode(mol_batch.clone())
         decoding = self.model.decode(encoding)
 
         if visualize_decoding:
-            self.visualize_decoding(mol_batch, decoding)
+            self.visualize_decoding(mol_batch.clone(), decoding)
 
         if not evaluate_encoding:
             return encoding, decoding
         else:
-            report = self.evaluate_encoding(mol_batch, decoding)
+            report = self.evaluate_encoding(mol_batch.clone(), decoding)
             return encoding, decoding, report
 
     def evaluate_encoding(self, mol_batch, decoding):
 
-        mol_batch.x = self.atom_embedding_vector[mol_batch.x].flatten()
+        mol_batch.x = self.model.atom_embedding_vector[mol_batch.x].flatten()
         decoded_mol_batch, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
             collate_decoded_data(mol_batch,
                                  decoding,
-                                 self.num_decoder_nodes,
+                                 self.model.num_decoder_nodes,
                                  1,
                                  mol_batch.x.device))
 
@@ -112,7 +112,7 @@ class MoleculeEncoder(torch.nn.Module):
          pred_particle_points, pred_particle_weights) = batch_rmsd(
             mol_batch,
             decoded_mol_batch,
-            F.one_hot(mol_batch.x, self.num_atom_t),
+            F.one_hot(mol_batch.x, self.num_atom_types),
             intrapoint_cutoff=0.5,
             probability_threshold=0.25,
             type_distance_scaling=2
@@ -137,11 +137,11 @@ class MoleculeEncoder(torch.nn.Module):
         return report
 
     def visualize_decoding(self, mol_batch, decoding):
-        mol_batch.x = self.atom_embedding_vector[mol_batch.x].long().flatten()
+        mol_batch.x = self.model.atom_embedding_vector[mol_batch.x].long().flatten()
         decoded_mol_batch, nodewise_graph_weights, nodewise_weights, nodewise_weights_tensor = (
             collate_decoded_data(mol_batch,
                                  decoding,
-                                 self.num_decoder_nodes,
+                                 self.model.num_decoder_nodes,
                                  1,
                                  mol_batch.x.device))
 
@@ -182,42 +182,35 @@ class MoleculeEncoder(torch.nn.Module):
         model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
         self.config = Namespace(**{'autoencoder': Namespace(**{'optimizer': {}, 'model': {}})})
 
-        self.config.regressor.optimizer = model_config.optimizer
-        self.config.regressor.model = model_config.model
+        self.config.autoencoder.optimizer = model_config.optimizer
+        self.config.autoencoder.model = model_config.model
+
+        type_translation_index = np.zeros(np.array(self.allowed_types).max() + 1) - 1
+        for ind, atype in enumerate(self.allowed_types):
+            type_translation_index[atype] = ind
+        self.autoencoder_type_index = torch.tensor(type_translation_index, dtype=torch.long, device='cpu')
+
         self.model = Mo3ENet(seed=12345,
-                             config=self.config,
-                             num_atom_types=self.num_atom_types,  # todo functionalize
-                             atom_embedding_vector=torch.ones(1),  # overwritten
+                             config=self.config.autoencoder.model,
+                             num_atom_types=self.num_atom_types,
+                             atom_embedding_vector=self.autoencoder_type_index,
                              radial_normalization=1,  # overwritten
                              infer_protons=False,  # overwritten
                              protons_in_input=True,  # overwritten
                              )
         for param in self.model.parameters():  # freeze volume model
             param.requires_grad = False
-        self.model, _ = reload_model(self.gnn, device=self.device, optimizer=None,
+        self.model, _ = reload_model(self.model,
+                                     device=self.device,
+                                     optimizer=None,
                                      path=autoencoder_model_path)
         self.model.eval()
         self.model.to(self.device)
 
 
-if __name__ == '__main__':
-    # test this class
-    device = 'cpu'
-    encoder = MoleculeEncoder(device=device)
-
-    "load up some smiles"
-    smiles_list = [
-        "CC(=O)C(=O)CSCC(C)C",
-        "COCCN1CC2(C)CCC1C2",
-        "CN(CC#N)CCS(C)(=O)=O",
-        "NCC(F)C(=O)NC1CCNC1",
-        "CC1CC(CO)N1S(=O)(=O)F"
-    ]
-
-    # generate conformers
+def smiles2conformers(smiles_list):
     from rdkit import Chem
     from rdkit.Chem import AllChem
-
     positions_list = []
     atom_types_list = []
     for smile in smiles_list:
@@ -227,11 +220,35 @@ if __name__ == '__main__':
         conf = mol.GetConformer()
         pos = conf.GetPositions()
         z = np.asarray([atom.GetAtomicNum() for atom in mol.GetAtoms()])
-        positions_list.append(torch.tensor(pos, dtype=torch.Float32, device=device))
-        atom_types_list.append(torch.tensor(pos,dtype=torch.long, device=device))
+        positions_list.append(torch.tensor(pos - pos.mean(0), dtype=torch.float32, device=device))
+        atom_types_list.append(torch.tensor(z, dtype=torch.long, device=device))
 
-    encoding, decoding, report = encoder.encode_decode(positions_list,
-                                                       atom_types_list,
+    return positions_list, atom_types_list
+
+
+if __name__ == '__main__':
+    # test this class
+    device = 'cpu'
+
+    # initialize autoencoder
+    encoder = MoleculeEncoder(device=device)
+
+    "load up some smiles"
+    smiles_list = [
+        "COCCN1CC2(C)CCC1C2",
+        "NCC(F)C(=O)NC1CCNC1",
+        "CN(CCCO)C(=O)CCCN",
+        "CC1=CCC(=O)C1(C)O"
+    ]
+
+    # generate conformers
+    positions_list, atom_types_list = smiles2conformers(smiles_list)
+
+    # embed, visualize, and evaluate reconstruction statistics
+    encoding, decoding, report = encoder.encode_decode(atom_types_list,
+                                                       positions_list,
                                                        evaluate_encoding=True,
                                                        visualize_decoding=True
                                                        )
+
+    print(report)
