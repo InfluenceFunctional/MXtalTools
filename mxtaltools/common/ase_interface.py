@@ -138,7 +138,7 @@ def ase_mol_from_crystaldata(data,
     if highlight_canonical_conformer:  # highlight the atom aux index
         numbers = data.aux_ind[atom_inds].cpu().detach().numpy() + 6
     else:
-        if data.x.ndim > 0:
+        if data.x.ndim > 1:
             numbers = data.x[atom_inds, 0].cpu().detach().numpy()
         else:
             numbers = data.x[atom_inds].cpu().detach().numpy()

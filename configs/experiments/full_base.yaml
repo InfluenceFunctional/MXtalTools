@@ -79,7 +79,7 @@ generate_sgs: null  #["P-1","P21/c","P212121","C2/c"] # null -> will generate in
 supercell_size: 5
 
 autoencoder:
-  nearest_node_threshold: 0.5
+  weight_constraint_factor: 0.9
   affine_scale_factor: null # 1
   infer_protons: False
   filter_protons: True

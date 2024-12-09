@@ -4,7 +4,7 @@ autoencoder:
   evaluation_sigma: 0.35
   filter_protons: false
   infer_protons: false
-  init_sigma: 1.05
+  init_sigma: 2
   max_overlap_threshold: 0.25
   model:
     bottleneck_dim: 256
@@ -42,7 +42,7 @@ autoencoder:
         num_radial: 50
         radial_embedding: bessel
         vector_norm: null
-  nearest_component_loss_coefficient: 0.1
+  nearest_component_loss_coefficient: 1
   nearest_node_loss_coefficient: 0.01
   nearest_node_threshold: 0.5
   node_weight_temperature: 1
@@ -85,7 +85,7 @@ grow_batch_size: true
 history: 50
 logger:
   experiment_tag: otf_zinc_test3
-  run_name: otf_zinc_test3_0_1_2
+  run_name: otf_zinc_test3_0_1_2_3_4_5_6_7
   sample_reporting_frequency: 10
   stats_reporting_frequency: 10
 machine: cluster

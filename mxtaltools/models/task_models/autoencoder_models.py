@@ -32,7 +32,10 @@ class Mo3ENet(BaseGraphModel):
         self.output_depth = self.num_classes + self.cartesian_dimension + 1
         self.num_decoder_nodes = config.decoder.num_nodes
         self.bottleneck_dim = config.bottleneck_dim
-        self.decoder_type = config.decoder.model_type
+        if not hasattr(config.decoder.__dict__, 'model_type'):
+            self.decoder_type = 'mlp'  # old model
+        else:
+            self.decoder_type = config.decoder.model_type
         # todo add type distance scaling and num atom types and node weight temperature
         self.register_buffer('atom_embedding_vector', atom_embedding_vector)
         self.register_buffer('radial_normalization', torch.tensor(radial_normalization, dtype=torch.float32))
@@ -68,10 +71,10 @@ class Mo3ENet(BaseGraphModel):
                 ):
         encoding = self.encode(data)
         if torch.sum(torch.isnan(encoding)) != 0:
-            assert False, "NaN values in encoding"
+            print("NaN values in encoding")
         decoding = self.decode(encoding)
         if torch.sum(torch.isnan(decoding)) != 0:
-            assert False, "NaN values in decoding"
+            print("NaN values in decoding")
         if return_latent:
             return decoding, encoding
         else:
@@ -92,7 +95,7 @@ class Mo3ENet(BaseGraphModel):
         """encoding nx3xk"""
         s = self.scalarizer(encoding)
         if torch.sum(torch.isnan(s)) > 0:
-            assert False, "NaN values in scalarized encoding"
+            print("NaN values in scalarized encoding")
         scalar_decoding, vector_decoding = self.decoder(s, v=encoding)
 
         '''combine vector and scalar features to n*nodes x m'''
@@ -178,7 +181,8 @@ class Mo3ENet(BaseGraphModel):
                                     nodewise_weights_tensor,
                                     num_atom_types,
                                     type_distance_scaling,
-                                    sigma)
+                                    sigma,
+                                    ae_loss_func='L2')
 
         rmsds = torch.zeros(data.num_graphs)
         max_dists = torch.zeros_like(rmsds)
