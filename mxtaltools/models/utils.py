@@ -700,7 +700,7 @@ def compute_gaussian_overlap(ref_types,
         return nodewise_overlap
     else:
         return nodewise_overlap, edges, dists
-ypes
+
 """ # new cheap RMSD calculation
 
 # get radius about which to collect points for each input node
