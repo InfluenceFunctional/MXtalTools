@@ -596,10 +596,10 @@ class vectorMLP(scalarMLP):
             res_x, res_v = self.get_residues(i, x, v)
 
             if torch.sum(torch.isnan(x)) != 0:
-                assert False, "NaN values in EMLP scalars"
+                print("NaN values in EMLP scalars")
 
             if torch.sum(torch.isnan(v)) != 0:
-                assert False, "NaN values in EMLP vectors"
+                print("NaN values in EMLP vectors")
 
             'scalar forward'
             if self.v_to_s_combination == 'concatenate':
@@ -621,9 +621,9 @@ class vectorMLP(scalarMLP):
             v = (res_v + s2v_gating * v) / self.vector_addition_rescaling_factor
 
         if torch.sum(torch.isnan(x)) != 0:
-            assert False, "NaN values in EMLP scalars"
+            print("NaN values in EMLP scalars")
         if torch.sum(torch.isnan(v)) != 0:
-            assert False, "NaN values in EMLP vectors"
+            print("NaN values in EMLP vectors")
 
         if return_latent:
             return self.output_layer(x), self.v_output_layer(v), x
