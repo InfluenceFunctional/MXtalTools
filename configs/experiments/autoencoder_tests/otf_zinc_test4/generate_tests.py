@@ -487,9 +487,9 @@ config_list = [
     },  # 9 - deep gnn
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0},
+        'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
-            'affine_scale_factor': None,
+            'affine_scale_factor': 1,
             'filter_protons': False,
             'infer_protons': False,
             'sigma_threshold': 0.15,
