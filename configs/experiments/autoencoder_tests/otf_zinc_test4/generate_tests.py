@@ -197,6 +197,343 @@ config_list = [
                     'num_nodes': 64
                 }}}
     },  # 3 - baseline gnn with noise
+    {
+        'dataset': {'otf_build_size': 10000},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'affine_scale_factor': None,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'init_sigma': 2,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 0.1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9985,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None,
+                        'vector_norm': None,
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 64,
+                        'num_layers': 4,
+                        'dropout': 0,
+                        'norm': None,
+                        'vector_norm': None,
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 4 - baseline gnn with big decoder
+    {
+        'dataset': {'otf_build_size': 10000},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'affine_scale_factor': None,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'init_sigma': 2,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 0.1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9985,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 64,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None,
+                        'vector_norm': None,
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 64,
+                        'num_layers': 4,
+                        'dropout': 0,
+                        'norm': None,
+                        'vector_norm': None,
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 5 - baseline gnn with big encoder and decoder
+    {
+        'dataset': {'otf_build_size': 10000},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'affine_scale_factor': None,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'init_sigma': 2,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 0.1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9985,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0.25,
+                        'cutoff': 3,
+                        'norm': 'graph layer',
+                        'vector_norm': 'graph vector layer',
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 32,
+                        'num_layers': 4,
+                        'dropout': 0.25,
+                        'norm': 'layer',
+                        'vector_norm': 'vector layer',
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 6 - baseline gnn with norm and dropout
+    {
+        'dataset': {'otf_build_size': 10000},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'affine_scale_factor': None,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'init_sigma': 2,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 0.1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9985,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 64,
+                        'embedding_dim': 512,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0.25,
+                        'cutoff': 3,
+                        'norm': 'graph layer',
+                        'vector_norm': 'graph vector layer',
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 64,
+                        'num_layers': 4,
+                        'dropout': 0.25,
+                        'norm': 'layer',
+                        'vector_norm': 'vector layer',
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 7 - baseline gnn with big encoder and decoder and norm and dropout
+    {
+        'dataset': {'otf_build_size': 10000},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'affine_scale_factor': None,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'init_sigma': 2,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9985,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 2,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None,
+                        'vector_norm': None,
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 32,
+                        'num_layers': 4,
+                        'dropout': 0,
+                        'norm': None,
+                        'vector_norm': None,
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 8 - baseline gnn with big component factor
+    {
+        'dataset': {'otf_build_size': 10000},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'affine_scale_factor': None,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'init_sigma': 2,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 0.1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9985,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 256,
+                        'message_dim': 64,
+                        'embedding_dim': 256,
+                        'num_convs': 4,
+                        'fcs_per_gc': 2,
+                        'dropout': 0,
+                        'cutoff': 3,
+                        'norm': None,
+                        'vector_norm': None,
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 32,
+                        'num_layers': 8,
+                        'dropout': 0,
+                        'norm': None,
+                        'vector_norm': None,
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 9 - deep gnn
+    {
+        'dataset': {'otf_build_size': 10000},
+        'positional_noise': {'autoencoder': 0},
+        'autoencoder': {
+            'affine_scale_factor': None,
+            'filter_protons': False,
+            'infer_protons': False,
+            'sigma_threshold': 0.15,
+            'init_sigma': 2,
+            'nearest_node_loss_coefficient': 0.01,
+            'clumping_loss_coefficient': 0.01,
+            'nearest_component_loss_coefficient': 0.1,
+            'optimizer': {
+                'init_lr': 5e-5,
+                'encoder_init_lr': 1e-4,
+                'decoder_init_lr': 1e-4,
+                'max_lr': 5e-4,
+                'min_lr': 1e-6,
+                'weight_decay': 0.05,
+                'lr_growth_lambda': 1.05,
+                'lr_shrink_lambda': 0.9985,
+            },
+            'model': {
+                'bottleneck_dim': 256,
+                'encoder': {
+                    'graph': {
+                        'node_dim': 512,
+                        'message_dim': 64,
+                        'embedding_dim': 512,
+                        'num_convs': 4,
+                        'fcs_per_gc': 2,
+                        'dropout': 0.25,
+                        'cutoff': 3,
+                        'norm': 'graph layer',
+                        'vector_norm': 'graph vector layer',
+                    }},
+                'decoder': {
+                    'model_type': 'gnn',
+                    'fc': {
+                        'hidden_dim': 64,
+                        'num_layers': 8,
+                        'dropout': 0.25,
+                        'norm': 'layer',
+                        'vector_norm': 'vector layer',
+                    },
+                    'num_nodes': 64
+                }}}
+    },  # 10 - very large GNN with norming and noise
+
 ]
 
 def overwrite_nested_dict(d1, d2):
