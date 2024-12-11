@@ -32,7 +32,7 @@ class Mo3ENet(BaseGraphModel):
         self.output_depth = self.num_classes + self.cartesian_dimension + 1
         self.num_decoder_nodes = config.decoder.num_nodes
         self.bottleneck_dim = config.bottleneck_dim
-        if not hasattr(config.decoder.__dict__, 'model_type'):
+        if not hasattr(config.decoder, 'model_type'):
             self.decoder_type = 'mlp'  # old model
         else:
             self.decoder_type = config.decoder.model_type
