@@ -52,7 +52,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 0 - baseline gnn
+    },  # 0 - baseline gnn - good though had a big NaN crash
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
@@ -100,7 +100,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 1 - baseline gnn with norms
+    },  # 1 - baseline gnn with norms - big overfit and bad performance
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
@@ -148,7 +148,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 2 - baseline gnn with big encoder
+    },  # 2 - baseline gnn with big encoder - best model, big overfit - TO CONTINUE
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -196,7 +196,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 3 - baseline gnn with noise
+    },  # 3 - baseline gnn with noise - less overfit, also excellent - comparable to #2 - TO CONTINUE
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
@@ -244,7 +244,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 4 - baseline gnn with big decoder
+    },  # 4 - baseline gnn with big decoder - moderate overfit moderate performance
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
@@ -292,7 +292,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 5 - baseline gnn with big encoder and decoder
+    },  # 5 - baseline gnn with big encoder and decoder - big overfit, good performance
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
@@ -340,7 +340,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 6 - baseline gnn with norm and dropout
+    },  # 6 - baseline gnn with norm and dropout - big overfit, good PM overlap but OK RMSD
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
@@ -388,7 +388,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 7 - baseline gnn with big encoder and decoder and norm and dropout
+    },  # 7 - baseline gnn with big encoder and decoder and norm and dropout - decent overfit decent performance
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
@@ -436,7 +436,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 8 - baseline gnn with big component factor
+    },  # 8 - baseline gnn with big component factor - decent overfit decent performance, best component loss but only slightly
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0},
@@ -484,7 +484,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 9 - deep gnn
+    },  # 9 - deep gnn - low overfit pretty good performance
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -532,7 +532,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 10 - very large GNN with norming, dropout, and noise
+    },  # 10 - very large GNN with norming, dropout, and noise  - low overfit but kindof bad
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -580,7 +580,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 11 - very large GNN with norming, dropout, and noise, and 64 bottleneck
+    },  # 11 - very large GNN with norming, dropout, and noise, and 64 bottleneck - low overfit but kindof bad
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -628,9 +628,18 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 11 - very large GNN with norming, dropout, and noise, and 128 bottleneck
-
+    },  # 11 - very large GNN with norming, dropout, and noise, and 128 bottleneck- low overfit but kindof bad
 ]
+
+'''
+upshots
+norming - bad? weird
+dropout - good
+deep gnn - maybe good
+big encoder - good
+noise - good
+small bottleneck - slower to train
+'''
 
 def overwrite_nested_dict(d1, d2):
     for k, v in d2.items():
