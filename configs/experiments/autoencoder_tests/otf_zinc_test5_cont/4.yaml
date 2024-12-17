@@ -4,7 +4,7 @@ autoencoder:
   evaluation_sigma: 0.35
   filter_protons: false
   infer_protons: false
-  init_sigma: 2
+  init_sigma: 0.558
   max_overlap_threshold: 0.25
   model:
     bottleneck_dim: 64
