@@ -162,23 +162,34 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None,
 def vdw_analysis(vdw_radii: torch.Tensor,
                  dist_dict: dict,
                  num_graphs: int,
-                 turnover_potential: float = 10,
+                 clip_max: float = 100000
                  ):
     """
     new version of the vdw_overlap function for analysis of intermolecular contacts
     """
+    batch = dist_dict['intermolecular_dist_batch']
+    lj_pot, normed_overlap, overlap = compute_lj_pot(dist_dict, vdw_radii)
+
+    molwise_overlap = scatter(overlap, batch, reduce='sum', dim_size=num_graphs)
+    molwise_normed_overlap = scatter(normed_overlap, batch, reduce='sum', dim_size=num_graphs)
+    molwise_lj_pot = scatter(lj_pot, batch, reduce='sum', dim_size=num_graphs)
+
+    scaled_lj_pot = scale_vdw_pot(lj_pot, clip_max=clip_max)
+    molwise_loss = scatter(scaled_lj_pot, batch, reduce='sum', dim_size=num_graphs)
+
+    return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss, lj_pot
+
+
+def compute_lj_pot(dist_dict, vdw_radii):
     dists = dist_dict['intermolecular_dist']
     elements = dist_dict['intermolecular_dist_atoms']
-    batch = dist_dict['intermolecular_dist_batch']
 
     atom_radii = [vdw_radii[elements[0]], vdw_radii[elements[1]]]
     radii_sums = atom_radii[0] + atom_radii[1]
-
     # only punish positives (meaning overlaps)
     overlap = F.relu(radii_sums - dists)
     # norm overlaps against internuclear distances
     normed_overlap = F.relu((radii_sums - dists) / radii_sums)
-
     # uniform lennard jones potential
     sigma_r6 = torch.pow(radii_sums / dists, 6)
     sigma_r12 = torch.pow(sigma_r6, 2)
@@ -186,16 +197,4 @@ def vdw_analysis(vdw_radii: torch.Tensor,
         4 * 1 * (sigma_r12 - sigma_r6),
         nan=0.0, posinf=1e20, neginf=-1e-20
     )
-
-    molwise_overlap = scatter(overlap, batch, reduce='sum', dim_size=num_graphs)
-    molwise_normed_overlap = scatter(normed_overlap, batch, reduce='sum', dim_size=num_graphs)
-    molwise_lj_pot = scatter(lj_pot, batch, reduce='sum', dim_size=num_graphs)
-
-    scaled_lj_pot = scale_vdw_pot(lj_pot, turnover_pot=turnover_potential, clip_max=100)
-    eval_lj_pot = scale_vdw_pot(lj_pot, turnover_pot=10, clip_max=100)
-
-    molwise_loss = scatter(scaled_lj_pot, batch, reduce='sum', dim_size=num_graphs)
-    molwise_eval_loss = scatter(eval_lj_pot, batch, reduce='sum', dim_size=num_graphs)
-    # assert torch.all(torch.isfinite(molwise_loss)), 'ahhhhh!'
-
-    return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss, molwise_eval_loss
+    return lj_pot, normed_overlap, overlap

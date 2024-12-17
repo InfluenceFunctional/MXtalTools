@@ -17,7 +17,7 @@ from mxtaltools.crystal_building.utils import set_molecule_alignment, overwrite_
 from mxtaltools.crystal_search.utils import cell_clustering, coarse_filter, get_topk_samples, rdf_clustering
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
-from mxtaltools.models.functions.vdw_overlap import vdw_analysis
+from mxtaltools.models.functions.vdw_overlap import vdw_analysis, compute_lj_pot
 from mxtaltools.models.utils import denormalize_generated_cell_params, get_intermolecular_dists_dict, enforce_1d_bound, \
     enforce_crystal_system
 
@@ -34,8 +34,10 @@ class Sampler:
                  show_tqdm=False,
                  skip_rdf=False,
                  gd_score_func='vdW',  # 'vdW' or 'discriminator'
+                 num_cpus: int = 1
                  ):
         torch.manual_seed(seed)
+        self.num_cpus = num_cpus
         self.device = device
         self.machine = machine
         self.supercell_size = 5
@@ -74,13 +76,8 @@ class Sampler:
 
         if parallel:
             self.show_tqdm = False
-            if self.machine == 'local':
-                num_cpus = mp.cpu_count() - 4
-            else:
-                num_cpus = mp.cpu_count() - 1
-
             packing_coeff, rdf, rr, samples, vdw = self.do_sampling_parallel(batch_size, chain_length, molecule_data,
-                                                                             num_cpus, num_samples, sampling_type,
+                                                                             num_samples, sampling_type,
                                                                              sg_to_sample, step_size)
         else:
             packing_coeff, rdf, rr, samples, vdw = self.do_sampling(batch_size, chain_length, molecule_data,
@@ -101,7 +98,7 @@ class Sampler:
         #
         # # optimization
         if parallel:
-            packing_coeff, rdf, samples, vdw = self._local_optimization_parallel(batch_size, molecule_data, num_cpus,
+            packing_coeff, rdf, samples, vdw = self._local_optimization_parallel(batch_size, molecule_data,
                                                                                  packing_coeff, rdf, samples,
                                                                                  sg_to_sample,
                                                                                  vdw,
@@ -158,11 +155,11 @@ class Sampler:
         reduced_volume = generated_cell_volumes / supercell_data.sym_mult
         packing_coeff = mol_batch.mol_volume / reduced_volume
         dist_dict = get_intermolecular_dists_dict(supercell_data, self.cutoff, 100)
-        molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, eval_vdw_loss \
+        molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, lj_pot \
             = vdw_analysis(self.vdw_radii_tensor,
                            dist_dict,
                            mol_batch.num_graphs,
-                           turnover_potential=10)
+                           )
 
         per_mol_vdw_loss = (vdw_loss / mol_batch.num_atoms)
         return supercell_data, packing_coeff, per_mol_vdw_loss,
@@ -222,7 +219,6 @@ class Sampler:
     def _local_optimization_parallel(self,
                                      batch_size,
                                      molecule_data,
-                                     num_cpus,
                                      packing_coeff,
                                      rdf,
                                      samples,
@@ -230,7 +226,7 @@ class Sampler:
                                      vdw,
                                      opt_eps):
         # optimization
-        pool = mp.Pool(num_cpus)
+        pool = mp.Pool(self.num_cpus)
         num_samples = len(vdw)
         num_opt_jobs = ceil(num_samples / self.max_samples_per_optimization_job)
         samples_per_job = ceil(num_samples / num_opt_jobs)
@@ -259,9 +255,9 @@ class Sampler:
         vdw = torch.cat([out[3] for out in optimization_output])
         return packing_coeff, rdf, samples, vdw
 
-    def do_sampling_parallel(self, batch_size, chain_length, molecule_data, num_cpus, num_samples, sampling_type,
+    def do_sampling_parallel(self, batch_size, chain_length, molecule_data, num_samples, sampling_type,
                              sg_to_sample, step_size):
-        pool = mp.Pool(num_cpus)
+        pool = mp.Pool(self.num_cpus)
         num_jobs = ceil(num_samples / self.max_samples_per_sampling_job)
         samples_per_job = ceil(num_samples / num_jobs)
         sampling_output = []
@@ -296,10 +292,18 @@ class Sampler:
                             sg_to_sample,
                             opt_eps):
 
-        num_batches = ceil(len(samples) / batch_size)
+        if 'CrystalDataBatch' in str(type(molecule_data)):
+            num_batches = 1
+            prebatched = True
+        else:
+            num_batches = ceil(len(samples) / batch_size)
+            prebatched = False
 
         for batch_ind in tqdm(range(num_batches), disable=not self.show_tqdm):
-            mol_batch = self.collater([molecule_data for _ in range(batch_size)])
+            if prebatched:
+                mol_batch = molecule_data
+            else:
+                mol_batch = self.collater([molecule_data for _ in range(batch_size)])
 
             mol_batch, scalar_mol_embedding, vector_mol_embedding = self.embed_molecule_for_sampling(
                 mol_batch,
@@ -322,6 +326,47 @@ class Sampler:
             )
 
         return packing_coeff, rdf, samples, vdw
+
+    def local_opt_for_proxy_discrim(self,
+                                    mol_batch,
+                                    init_state,
+                                    opt_eps):
+
+        mol_batch, scalar_mol_embedding, vector_mol_embedding = self.embed_molecule_for_sampling(
+            mol_batch,
+            'as is',
+            mol_batch.sg_ind,
+            skip_embedding=True
+        )
+
+        (_, _, _, _,
+         optimization_record) = self._gradient_descent_optimization(
+            init_state,
+            mol_batch.clone(),
+            max_num_steps=1000,
+            convergence_eps=opt_eps,
+            lr=1e-3,
+            optimizer_func=torch.optim.Rprop,
+            score_func=self.gd_score_func,
+            store_aunit=True,
+            standardize_pose=False,
+        )
+        n_samples = len(optimization_record['std_cell_params'])
+        inds_to_sample = torch.unique(
+            torch.cat(
+                [torch.arange(0, n_samples, 100),
+                 torch.argwhere(
+                     torch.diff(optimization_record['vdw_potential'],dim=0).mean(1) > 1
+                 ).flatten()]
+            )
+        )
+        return (
+            optimization_record['vdw_potential'][inds_to_sample],
+            optimization_record['overall_loss'][inds_to_sample],
+            optimization_record['packing_coeff'][inds_to_sample],
+            optimization_record['std_cell_params'][inds_to_sample],
+            optimization_record['aunit_poses'][inds_to_sample],
+        )
 
     def sample_from_distribution(self,
                                  sample_data: CrystalData,
@@ -417,11 +462,10 @@ class Sampler:
         reduced_volume = generated_cell_volumes / supercell_data.sym_mult
         packing_coeff = mol_batch.mol_volume / reduced_volume
         dist_dict = get_intermolecular_dists_dict(supercell_data, self.cutoff, 100)
-        molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, eval_vdw_loss \
+        molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, lj_pot \
             = vdw_analysis(self.vdw_radii_tensor,
                            dist_dict,
-                           mol_batch.num_graphs,
-                           turnover_potential=10)
+                           mol_batch.num_graphs, )
 
         'canonicalize orientation'
         sample_to_compare = raw_sample.clone()
@@ -634,27 +678,27 @@ class Sampler:
 
         return mol_data, scalar_mol_embedding, vector_mol_embedding
 
-    def preprocess_ae_inputs(self, data,
+    def preprocess_ae_inputs(self, mol_batch,
                              orientation_override=None,
                              deprotonate=False):
         # random global roto-inversion
         if orientation_override is not None:
-            data = set_molecule_alignment(data,
-                                          mode=orientation_override,
-                                          right_handed=True,  # right handed
-                                          include_inversion=False)  # force all samples to come with same handedness
+            mol_batch = set_molecule_alignment(mol_batch,
+                                               mode=orientation_override,
+                                               right_handed=True,  # right handed
+                                               include_inversion=False)  # force all samples to come with same handedness
 
         # optionally, deprotonate
-        input_data = self.fix_autoencoder_protonation(data,
+        input_data = self.fix_autoencoder_protonation(mol_batch,
                                                       deprotonate=deprotonate)
 
         # subtract mean OF THE INPUT from BOTH reference and input
         centroids = scatter(input_data.pos, input_data.batch, reduce='mean', dim=0)
-        data.pos -= torch.repeat_interleave(centroids, data.num_atoms, dim=0, output_size=data.num_nodes)
+        mol_batch.pos -= torch.repeat_interleave(centroids, mol_batch.num_atoms, dim=0, output_size=mol_batch.num_nodes)
         input_data.pos -= torch.repeat_interleave(centroids, input_data.num_atoms, dim=0,
                                                   output_size=input_data.num_nodes)
 
-        return data, input_data
+        return mol_batch, input_data
 
     def fix_autoencoder_protonation(self, data, deprotonate=False):
         if deprotonate:
@@ -679,9 +723,11 @@ class Sampler:
                                        lr: float,
                                        optimizer_func,
                                        score_func: str,
+                                       store_aunit: bool = False,
+                                       standardize_pose: bool=True
                                        ):
         """
-        do a local optimization
+        do a local optimization via gradient descent on some score function
         """
 
         sample = torch.tensor(init_sample.clone(),
@@ -689,29 +735,16 @@ class Sampler:
                               requires_grad=True,
                               dtype=torch.float32)
 
-        optimizer = optimizer_func([sample], lr=lr)
-
-        max_lr_target_time = max_num_steps // 10
-        max_lr = 1e-2
-        grow_lambda = (max_lr / lr) ** (1 / max_lr_target_time)
-
-        scheduler1 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: 0.975)
-        scheduler2 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: grow_lambda)
-        hit_max_lr = False
-
-        n_samples = len(sample)
-
-        vdw_record = torch.zeros((max_num_steps, n_samples))
-        samples_record = torch.zeros((max_num_steps, n_samples, 12))
-        loss_record = torch.zeros_like(vdw_record)
-        lr_record = torch.zeros(max_num_steps)
-        packing_record = torch.zeros_like(vdw_record)
+        (hit_max_lr, loss_record, lr_record, max_lr,
+         optimizer, packing_record, samples_record,
+         scheduler1, scheduler2, vdw_record, aunit_poses) = self._init_for_local_opt(
+            lr, max_num_steps, optimizer_func, sample, mol_batch.num_nodes)
 
         converged = False
         with torch.enable_grad():
             with tqdm(total=max_num_steps, disable=not self.show_tqdm) as pbar:
                 s_ind = 0
-                while s_ind < max_num_steps and not converged:
+                while s_ind < max_num_steps - 1 and not converged:
                     optimizer.zero_grad()
 
                     cleaned_sample = self.cleanup_sample(sample, mol_batch.sg_ind)
@@ -720,47 +753,24 @@ class Sampler:
                     )
 
                     # todo functionalize the below - it seems we do it everywhere
-                    supercell_data, generated_cell_volumes = (
+                    supercell_batch, generated_cell_volumes = (
                         self.supercell_builder.build_zp1_supercells(
                             molecule_data=mol_batch,
                             cell_parameters=descaled_cleaned_sample,
                             supercell_size=self.supercell_size,
                             graph_convolution_cutoff=self.cutoff,
-                            align_to_standardized_orientation=True,
+                            align_to_standardized_orientation=standardize_pose,
                             skip_refeaturization=False,
                         ))
 
-                    reduced_volume = generated_cell_volumes / supercell_data.sym_mult
+                    reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
                     packing_coeff = mol_batch.mol_volume / reduced_volume
-                    if score_func == 'discriminator':
-                        output, extra_outputs = self.discriminator(
-                            supercell_data.clone(), return_dists=True, return_latent=False)
-                        dist_dict = extra_outputs['dists_dict']
-                    elif score_func == 'vdW':
-                        dist_dict = get_intermolecular_dists_dict(supercell_data, self.cutoff, 100)
-                    else:
-                        assert False, f"{score_func} is not an implemented score function for gradient descent optimization"
-
-                    molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, eval_vdw_loss \
-                        = vdw_analysis(self.vdw_radii_tensor,
-                                       dist_dict,
-                                       mol_batch.num_graphs,
-                                       turnover_potential=10)
-                    if score_func == 'discriminator':
-                        loss = F.softplus(output[:, 2])
-                    elif score_func == 'vdw':
-                        loss = vdw_loss / mol_batch.num_atoms
+                    dist_dict, loss, vdw_potential = self._score_crystal_batch(
+                        mol_batch, score_func, supercell_batch,
+                    )
 
                     loss.mean().backward()  # compute gradients
                     optimizer.step()  # apply grad
-
-                    sample_to_compare = cleaned_sample.clone()
-                    sample_to_compare[:, 9:] = supercell_data.cell_params[:, 9:]
-
-                    vdw_record[s_ind] = (vdw_loss / mol_batch.num_atoms).detach()
-                    samples_record[s_ind] = sample_to_compare.detach()
-                    loss_record[s_ind] = loss.detach()
-                    packing_record[s_ind] = packing_coeff.detach()
 
                     lr = optimizer.param_groups[0]['lr']
                     lr_record[s_ind] = lr
@@ -775,18 +785,32 @@ class Sampler:
                     if (s_ind > 10) and (s_ind % 50 == 0):
                         converged = all(vdw_record[s_ind - 10:s_ind, :].std(0) < convergence_eps)
 
+                    sample_to_compare = cleaned_sample.clone()
+                    sample_to_compare[:, 9:] = supercell_batch.cell_params[:, 9:]
+
+                    vdw_record[s_ind] = vdw_potential.detach()
+                    samples_record[s_ind] = sample_to_compare.detach()
+                    loss_record[s_ind] = loss.detach()
+                    packing_record[s_ind] = packing_coeff.detach()
+                    if store_aunit:
+                        pos = supercell_batch.pos[supercell_batch.aux_ind == 0].detach()
+                        aunit_poses[s_ind] = pos
+
                     s_ind += 1
                     if s_ind % 100 == 0:
                         pbar.update(100)
 
-        sampling_dict = {'std_cell_params': samples_record[:s_ind],
-                         'vdw_loss': vdw_record[:s_ind],
-                         'overall_loss': loss_record[:s_ind],
-                         'packing_coeff': packing_record[:s_ind],
+        sampling_dict = {'std_cell_params': samples_record[:s_ind].cpu(),
+                         'vdw_potential': vdw_record[:s_ind].cpu(),
+                         'overall_loss': loss_record[:s_ind].cpu(),
+                         'packing_coeff': packing_record[:s_ind].cpu(),
                          }
+        if store_aunit:
+            sampling_dict['aunit_poses'] = aunit_poses[:s_ind].cpu()
+
         # do RDF on final sample
         if not self.skip_rdf:
-            rdf, rr, _ = new_crystal_rdf(supercell_data, dist_dict,
+            rdf, rr, _ = new_crystal_rdf(supercell_batch, dist_dict,
                                          rrange=[0, 6], bins=2000,
                                          mode='intermolecular', atomwise=True,
                                          raw_density=True, cpu_detach=False,
@@ -797,6 +821,53 @@ class Sampler:
         return (packing_coeff.detach().cpu(), rdf.detach().cpu(),
                 sample_to_compare.detach().cpu(), loss.detach().cpu(),
                 sampling_dict)
+
+    def _init_for_local_opt(self, lr, max_num_steps, optimizer_func, sample, num_atoms):
+        optimizer = optimizer_func([sample], lr=lr)
+        max_lr_target_time = max_num_steps // 10
+        max_lr = 1e-2
+        grow_lambda = (max_lr / lr) ** (1 / max_lr_target_time)
+        scheduler1 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: 0.975)
+        scheduler2 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: grow_lambda)
+        hit_max_lr = False
+        n_samples = len(sample)
+        vdw_record = torch.zeros((max_num_steps, n_samples))
+        samples_record = torch.zeros((max_num_steps, n_samples, 12))
+        loss_record = torch.zeros_like(vdw_record)
+        lr_record = torch.zeros(max_num_steps)
+        packing_record = torch.zeros_like(vdw_record)
+        aunit_poses = torch.zeros((len(vdw_record), num_atoms, 3))
+        return (hit_max_lr, loss_record, lr_record, max_lr,
+                optimizer, packing_record, samples_record,
+                scheduler1, scheduler2, vdw_record, aunit_poses)
+
+    def _score_crystal_batch(self, mol_batch, score_func, supercell_data):
+        if score_func == 'discriminator':
+            output, extra_outputs = self.discriminator(
+                supercell_data.clone(), return_dists=True, return_latent=False)
+            dist_dict = extra_outputs['dists_dict']
+        elif score_func == 'vdW':
+            dist_dict = get_intermolecular_dists_dict(supercell_data, self.cutoff, 100)
+        else:
+            assert False, f"{score_func} is not an implemented score function for gradient descent optimization"
+        molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, lj_pot \
+            = vdw_analysis(self.vdw_radii_tensor,
+                           dist_dict,
+                           mol_batch.num_graphs, )
+        if score_func == 'discriminator':
+            loss = F.softplus(output[:, 2])
+        elif score_func.lower() == 'vdw':
+            # if mode==1:
+            #     scaled_lj_pot = lj_pot
+            #     scaled_lj_pot[lj_pot > 10] = 10 + torch.log10(lj_pot[lj_pot > 10] + 1 - 10)
+            #     loss = scatter(scaled_lj_pot.clip(max=100),
+            #                    dist_dict['intermolecular_dist_batch'],
+            #                    reduce='sum',
+            #                    dim_size=mol_batch.num_graphs,
+            #                    )
+            # elif mode == 2:
+            loss = vdw_loss
+        return dist_dict, loss, vdw_potential
 
     # from mxtaltools.common.ase_interface import crystaldata_batch_to_ase_mols_list
     #

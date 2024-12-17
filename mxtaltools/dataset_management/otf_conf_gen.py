@@ -8,7 +8,8 @@ import numpy as np
 
 from mxtaltools.common.utils import chunkify
 from mxtaltools.dataset_management.data_manager import DataManager
-from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import process_smiles_list
+from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import process_smiles_list_to_file, \
+    process_smiles_to_crystal_opt
 
 
 def async_generate_random_conformer_dataset(dataset_length,
@@ -38,7 +39,7 @@ def async_generate_random_conformer_dataset(dataset_length,
         # print(f'starting chunk {ind} with {len(chunk)} smiles')
         chunk_ind = min_ind + ind
         chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
-        pool.apply_async(process_smiles_list,
+        pool.apply_async(process_smiles_list_to_file,
                          args=(chunk, chunk_path, allowed_atom_types),
                          kwds={
                              'max_num_atoms': max_num_atoms,
@@ -51,18 +52,54 @@ def async_generate_random_conformer_dataset(dataset_length,
                          })
 
     pool.close()
-    # print(f"finished processing smiles chunks")
     if synchronize:
         pool.join()
-        #
-        # # generate temporary training dataset
-        # miner = DataManager(device='cpu',
-        #                     datasets_path=dataset_path,
-        #                     chunks_path=chunks_path,
-        #                     dataset_type='molecule',)
-        # miner.process_new_dataset(new_dataset_name='temp_zinc_conf_dataset',
-        #                           )
-        #os.rmdir('chunks')
+    else:
+        return pool
+
+
+def async_generate_random_crystal_dataset(dataset_length,
+                                          smiles_source,
+                                          dataset_name,
+                                          workdir,
+                                          allowed_atom_types: list,
+                                          num_processes: int,
+                                          pool,
+                                          max_num_atoms: int,
+                                          max_num_heavy_atoms: int,
+                                          pare_to_size: int,
+                                          max_radius: float,
+                                          synchronize=True):
+    dataset_path = Path(dataset_name)
+    chunks_path = Path(workdir)
+    smiles_path = Path(smiles_source)
+    # get batch of smiles, and chunkify
+    os.chdir(smiles_path)
+    chunks = get_smiles_list(dataset_length, num_processes, smiles_path)
+    os.chdir(chunks_path)
+
+    # generate samples
+    min_ind = len(os.listdir(chunks_path)) + 1  # always add one
+
+    for ind, chunk in enumerate(chunks):
+        # print(f'starting chunk {ind} with {len(chunk)} smiles')
+        chunk_ind = min_ind + ind
+        chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
+        pool.apply_async(process_smiles_to_crystal_opt,
+                         args=(chunk, chunk_path, allowed_atom_types, 1),
+                         kwds={
+                             'max_num_atoms': max_num_atoms,
+                             'max_num_heavy_atoms': max_num_heavy_atoms,
+                             'pare_to_size': pare_to_size,
+                             'max_radius': max_radius,
+                             'protonate': True,
+                             'rotamers_per_sample': 1,
+                             'allow_simple_hydrogen_rotations': False
+                         })
+
+    pool.close()
+    if synchronize:
+        pool.join()
     else:
         return pool
 
