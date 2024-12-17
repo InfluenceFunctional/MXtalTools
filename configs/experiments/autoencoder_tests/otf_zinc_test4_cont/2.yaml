@@ -60,6 +60,7 @@ autoencoder:
     optimizer: adamw
     use_plateau_scheduler: false
     weight_decay: 0.05
+    overwrite_on_reload: False
   overlap_eps:
     test: 0.001
   sigma_lambda: 0.99

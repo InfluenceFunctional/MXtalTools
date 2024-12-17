@@ -78,6 +78,7 @@ regressor:
     lr_growth_lambda: 1.00
     lr_shrink_lambda: 0.999
     use_plateau_scheduler: False
+    overwrite_on_reload: False
 
   model:
     graph_aggregator: 'softmax'

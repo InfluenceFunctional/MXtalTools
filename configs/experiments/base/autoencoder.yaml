@@ -96,6 +96,7 @@ autoencoder:
     lr_growth_lambda: 1.05
     lr_shrink_lambda: 0.99
     use_plateau_scheduler: False
+    overwrite_on_reload: False
 
   model:
     bottleneck_dim: 128

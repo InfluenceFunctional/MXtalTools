@@ -3,15 +3,9 @@ from math import ceil
 import numpy as np
 import torch
 from sklearn.cluster import AgglomerativeClustering
-from torch import optim
-from tqdm import tqdm
 
-from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
-from mxtaltools.models.functions.vdw_overlap import vdw_analysis
-from mxtaltools.models.utils import coarse_crystal_filter, \
-    denormalize_generated_cell_params, get_intermolecular_dists_dict
-from mxtaltools.common.rdf_calculation import compute_rdf_distmat, compute_rdf_distmat_block, \
-    compute_rdf_distmat_parallel
+from mxtaltools.common.rdf_calculation import compute_rdf_distmat, compute_rdf_distmat_parallel
+from mxtaltools.models.utils import coarse_crystal_filter
 
 
 def rdf_clustering(packing_coeff, rdf, rdf_cutoff, rr, samples, vdw, num_cpus=None):

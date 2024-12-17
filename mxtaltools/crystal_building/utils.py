@@ -671,7 +671,7 @@ def DEPRECATED_write_sg_to_all_crystals(override_sg, dataDims, supercell_data, s
     return supercell_data
 
 
-def overwrite_symmetry_info(mol_data, generate_sgs, symmetries_dict, randomize_sgs=False):
+def overwrite_symmetry_info(mol_batch, generate_sgs, symmetries_dict, randomize_sgs=False):
     """
     update the symmetry information in molecule-wise crystaldata objects
     """  # todo clean this up it's a mess
@@ -686,22 +686,25 @@ def overwrite_symmetry_info(mol_data, generate_sgs, symmetries_dict, randomize_s
 
     # randomly assign SGs to samples
     if randomize_sgs:
-        sample_sg_inds = np.random.choice(generate_sg_inds, size=mol_data.num_graphs, replace=True)
+        sample_sg_inds = np.random.choice(generate_sg_inds, size=mol_batch.num_graphs, replace=True)
     elif isinstance(generate_sgs, int):
-        sample_sg_inds = np.ones(mol_data.num_graphs, dtype=int) * generate_sgs
+        sample_sg_inds = np.ones(mol_batch.num_graphs, dtype=int) * generate_sgs
     else:
         sample_sg_inds = generate_sg_inds
 
-    assert len(sample_sg_inds) == mol_data.num_graphs, "Must have same number of sgs as graphs"
+    assert len(sample_sg_inds) == mol_batch.num_graphs, "Must have same number of sgs as graphs"
 
     # update sym ops
-    mol_data.symmetry_operators = [torch.Tensor(symmetries_dict['sym_ops'][sg_ind]).to(mol_data.x.device) for sg_ind in
-                                   sample_sg_inds]
-    mol_data.sg_ind = torch.tensor(sample_sg_inds, dtype=mol_data.sg_ind.dtype, device=mol_data.sg_ind.device)
-    mol_data.sym_mult = torch.tensor([len(ops) for ops in mol_data.symmetry_operators], dtype=torch.int32,
-                                     device=mol_data.sg_ind.device)
+    mol_batch.symmetry_operators = [torch.Tensor(symmetries_dict['sym_ops'][sg_ind]).to(mol_batch.x.device) for sg_ind in
+                                    sample_sg_inds]
+    mol_batch.sg_ind = torch.tensor(sample_sg_inds,
+                                    dtype=torch.long,
+                                    device=mol_batch.x.device)
+    mol_batch.sym_mult = torch.tensor([len(ops) for ops in mol_batch.symmetry_operators],
+                                      dtype=torch.int32,
+                                      device=mol_batch.x.device)
 
-    return mol_data
+    return mol_batch
 
 
 def find_coord_in_box_np(coords, box, epsilon=0):

@@ -18,7 +18,7 @@ dataset:
   regression_target: gap_energy
   single_identifier: null #100558
   buffer_size: 100000
-  resample_each: 5
+  resample_each: 20
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -70,7 +70,7 @@ supercell_size: 5
 proxy_discriminator:
   train_on_randn: True
   embedding_type: 'autoencoder' # autoencoder, principal_axes, principal_moments, mol_volume
-  vdw_turnover_potential: 0
+  vdw_turnover_potential: 10000
   cutoff: 6
   optimizer:
     beta1: 0.9
@@ -85,6 +85,7 @@ proxy_discriminator:
     optimizer: adamw
     use_plateau_scheduler: false
     weight_decay: 0.01
+    overwrite_on_reload: False
 
   model:
     hidden_dim: 512

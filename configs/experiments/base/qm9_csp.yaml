@@ -76,6 +76,7 @@ generator:
     optimizer: adamw
     use_plateau_scheduler: false
     weight_decay: 0
+    overwrite_on_reload: False
 
   model:
     hidden_dim: 1024
