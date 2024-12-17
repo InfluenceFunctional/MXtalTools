@@ -52,10 +52,10 @@ autoencoder:
     decoder_init_lr: 0.0001
     encoder_init_lr: 0.0001
     init_lr: 5.0e-05
-    lr_growth_lambda: 1.05
+    lr_growth_lambda: 1.00
     lr_schedule: true
     lr_shrink_lambda: 0.9985
-    max_lr: 0.0005
+    max_lr: 0.00005
     min_lr: 1.0e-06
     optimizer: adamw
     use_plateau_scheduler: false
