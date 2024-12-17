@@ -95,7 +95,7 @@ max_epochs: 10000
 min_batch_size: 10
 minimum_epochs: 10000
 model_paths:
-  autoencoder: null
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test5_7_14-12-10-52-04
   discriminator: null
   embedding_regressor: null
   generator: null
