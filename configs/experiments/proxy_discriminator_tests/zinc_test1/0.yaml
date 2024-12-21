@@ -5,7 +5,7 @@ dataset:
   buffer_size: 100000
   filter_protons: false
   max_dataset_length: 10000000
-  num_processes: 4
+  num_processes: 10
   otf_build_size: 1000
   regression_target: null
   single_identifier: null
@@ -21,7 +21,7 @@ generate_sgs:
 - 1
 gradient_norm_clip: 1
 grow_batch_size: true
-history: 50
+history: 200
 logger:
   experiment_tag: pd_zinc_test1
   log_figures: true
@@ -32,7 +32,7 @@ machine: cluster
 max_batch_size: 2000
 max_epochs: 10000
 min_batch_size: 50
-minimum_epochs: 50
+minimum_epochs: 1000
 mode: proxy_discriminator
 model_names:
 - autoencoder
