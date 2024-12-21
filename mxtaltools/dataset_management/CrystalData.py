@@ -121,6 +121,8 @@ class CrystalData(BaseData):
                  aunit_handedness: list = None,
                  is_well_defined: bool = True,
                  require_crystal_features: bool = True,
+                 vdw_pot: float = None,
+                 vdw_loss: float = None,
                  **kwargs):
         super().__init__()
         self.__dict__['_store'] = GlobalStorage(_parent=self)
@@ -145,6 +147,10 @@ class CrystalData(BaseData):
             if self.radius is None:
                 centroid = pos.mean(dim=0)
                 self.radius = torch.amax(torch.linalg.norm(pos - centroid, dim=1))
+        if vdw_pot is not None:
+            self.vdw_pot = vdw_pot
+        if vdw_loss is not None:
+            self.vdw_loss = vdw_loss
 
         # fix identifiers
         if smiles is not None:
@@ -528,6 +534,13 @@ class CrystalData(BaseData):
     @property
     def y(self) -> Any:
         return self['y'] if 'y' in self._store else None
+
+    @property
+    def vdw_pot(self) -> Any:
+        return self['vdw_pot'] if 'vdw_pot' in self._store else None
+    @property
+    def vdw_loss(self) -> Any:
+        return self['vdw_loss'] if 'vdw_loss' in self._store else None
 
     @property
     def pos(self) -> Any:

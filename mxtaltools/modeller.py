@@ -1344,7 +1344,7 @@ class Modeller:
             self.mp_pool.join()  # join only when the batch is already finished
             self.times['otf_dataset_join_end'] = time()
             # generate temporary training dataset
-            miner = self.process_otf_dataset(chunks_path)
+            miner = self.process_otf_molecules_dataset(chunks_path)
             # print("integrating otf dataset into dataloader")
             data_loader = quick_combine_dataloaders(miner.dataset,
                                                     data_loader,
@@ -1374,7 +1374,6 @@ class Modeller:
         os.chdir(self.working_directory)
         self.times['otf_refresh_end'] = time()
         return data_loader
-
 
     def otf_crystal_dataset_generation(self, data_loader):
         self.times['otf_refresh_start'] = time()
@@ -1393,31 +1392,49 @@ class Modeller:
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
                 self.mp_pool = mp.Pool(num_processes)
-                self.mp_pool = async_generate_random_crystal_dataset(self.config.dataset.otf_build_size,
-                                                                       self.config.dataset.smiles_source,
-                                                                       temp_dataset_path,
-                                                                       workdir=chunks_path,
-                                                                       allowed_atom_types=list(
-                                                                           self.dataDims[
-                                                                               'allowed_atom_types'].cpu().detach().numpy()),
-                                                                       num_processes=num_processes,
-                                                                       pool=self.mp_pool,
-                                                                       max_num_atoms=30,
-                                                                       # todo add config controls for this
-                                                                       max_num_heavy_atoms=9,
-                                                                       pare_to_size=9,
-                                                                       max_radius=15,
-                                                                       synchronize=False)
+                self.mp_pool = async_generate_random_crystal_dataset(
+                    self.config.dataset.otf_build_size,
+                    self.config.dataset.smiles_source,
+                    temp_dataset_path,
+                    workdir=chunks_path,
+                    allowed_atom_types=list(
+                        self.dataDims[
+                            'allowed_atom_types'].cpu().detach().numpy()),
+                    num_processes=num_processes,
+                    pool=self.mp_pool,
+                    max_num_atoms=30,
+                    # todo add config controls for this
+                    max_num_heavy_atoms=9,
+                    pare_to_size=None,
+                    max_radius=15,
+                    synchronize=False)
                 self.integrated_dataset = False
                 # print("generated all chunks")
 
         # if a batch is finished, merge it with our existing dataset
-        if len(os.listdir(chunks_path)) == num_processes:  # only integrate when the batch is exactly complete
+        if len(os.listdir(chunks_path)) >= num_processes:  # only integrate when the batch is exactly complete
             self.times['otf_dataset_join_start'] = time()
             self.mp_pool.join()  # join only when the batch is already finished
             self.times['otf_dataset_join_end'] = time()
             # generate temporary training dataset
-            miner = self.process_otf_dataset(chunks_path)
+            miner = self.process_otf_crystals_dataset(chunks_path)
+            embeddings = []
+            batch_size = data_loader.batch_size
+            num_batches = len(miner.dataset) // batch_size
+            if len(miner.dataset) % batch_size != 0:
+                num_batches += 1
+            with torch.no_grad():
+                for ind in range(num_batches):
+                    mols_to_embed = self.collater(miner.dataset[ind * batch_size:(ind + 1) * batch_size]).to(
+                        self.device)
+                    cell_params = torch.cat([
+                        mols_to_embed.cell_lengths, mols_to_embed.cell_angles, mols_to_embed.pose_params0
+                    ], dim=1)
+                    embeddings.append(self._embed_mol(mols_to_embed, mols_to_embed.pos, cell_params).cpu().detach())
+
+            embeddings = torch.cat(embeddings, dim=0)
+            for ind in range(len(miner.dataset)):
+                miner.dataset[ind].y = embeddings[None, ind]
             # print("integrating otf dataset into dataloader")
             data_loader = quick_combine_dataloaders(miner.dataset,
                                                     data_loader,
@@ -1448,7 +1465,7 @@ class Modeller:
         self.times['otf_refresh_end'] = time()
         return data_loader
 
-    def process_otf_dataset(self, chunks_path):
+    def process_otf_molecules_dataset(self, chunks_path):
         miner = DataManager(device='cpu',
                             config=self.config.dataset,
                             datasets_path=self.working_directory,
@@ -1472,6 +1489,35 @@ class Modeller:
             precompute_edges=not nonzero_positional_noise and (
                     self.config.mode not in ['gan', 'discriminator', 'generator']),
             single_identifier=self.config.dataset.single_identifier,
+        )
+        return miner
+
+    def process_otf_crystals_dataset(self, chunks_path):
+        miner = DataManager(device='cpu',
+                            config=self.config.dataset,
+                            datasets_path=self.working_directory,
+                            chunks_path=chunks_path,
+                            dataset_type='crystal',
+                            do_crystal_indexing=False)
+        miner.process_new_dataset(new_dataset_name='otf_dataset',
+                                  chunks_patterns=['chunk'])
+        del miner.dataset
+        # kill old chunks so we don't re-use
+        [os.remove(elem) for elem in os.listdir(chunks_path)]
+        conv_cutoff = self.config.autoencoder.model.encoder.graph.cutoff
+        #nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
+        miner.regression_target = None
+        miner.load_dataset_for_modelling(
+            'otf_dataset.pt',
+            filter_conditions=None,
+            filter_polymorphs=False,
+            filter_duplicate_molecules=False,
+            filter_protons=self.config.autoencoder.filter_protons if self.train_models_dict['autoencoder'] else False,
+            conv_cutoff=conv_cutoff,
+            do_shuffle=True,
+            precompute_edges=False,
+            single_identifier=None,
+
         )
         return miner
 
@@ -1846,18 +1892,33 @@ class Modeller:
         self.models_dict['autoencoder'].eval()
         self.crystal_builder.rotation_basis = 'cartesian'
 
-        for i, data in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
-            data = data.to(self.config.device)
+        if self.logger.epoch == 0:  # embed loaded dataset on first epoch
+            self.embed_dataloader_dataset(data_loader)
+
+        for i, mol_batch in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+            mol_batch = mol_batch.to(self.config.device)
             '''
             train proxy discriminator
             '''
-            self.proxy_discriminator_step(data, i, update_weights, skip_step=False)
+            self.proxy_discriminator_step(mol_batch, i, update_weights, skip_step=False)
 
             if iteration_override is not None:
                 if i >= iteration_override:
                     break  # stop training early
 
         self.logger.concatenate_stats_dict(self.epoch_type)
+
+    def embed_dataloader_dataset(self, data_loader):
+        embeddings = []
+        for i, mol_batch in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+            mol_batch = mol_batch.to(self.config.device)
+            cell_params = torch.cat([
+                mol_batch.cell_lengths, mol_batch.cell_angles, mol_batch.pose_params0
+            ], dim=1)
+            embeddings.append(self._embed_mol(mol_batch, mol_batch.pos, cell_params).cpu().detach())
+        embeddings = torch.cat(embeddings, dim=0)
+        for ind in range(len(data_loader.dataset)):
+            data_loader.dataset[ind].y = embeddings[None, ind]
 
     def update_buffers(self):
         # reprocess buffers
@@ -2027,20 +2088,20 @@ class Modeller:
                                           stats.values(),
                                           mode='extend')
 
-    def proxy_discriminator_step(self, data_batch, i, update_weights, skip_step):
+    def proxy_discriminator_step(self, mol_batch, i, update_weights, skip_step):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
         """
         if not hasattr(self.models_dict['proxy_discriminator'], 'target_std'):
-            self.models_dict['proxy_discriminator'].target_std = 40
-            self.models_dict['proxy_discriminator'].target_mean = 20
+            self.models_dict['proxy_discriminator'].target_std = 8.23
+            self.models_dict['proxy_discriminator'].target_mean = -8.6
 
         temp_std = self.models_dict['proxy_discriminator'].target_std
         temp_mean = self.models_dict['proxy_discriminator'].target_mean
 
-        embedding = data_batch[:, :-1]
-        vdw_score = data_batch[:, -1]
+        embedding = mol_batch.y
+        vdw_score = mol_batch.vdw_loss
 
         prediction = self.models_dict['proxy_discriminator'](x=embedding)[:, 0]
 
@@ -2154,7 +2215,7 @@ class Modeller:
 
             supercell_data, generated_cell_volumes = (
                 self.crystal_builder.build_zp1_supercells(
-                    molecule_data=mol_data.clone(),
+                    mol_batch=mol_data.clone(),
                     cell_parameters=generated_samples_to_build,
                     supercell_size=self.config.supercell_size,
                     graph_convolution_cutoff=self.config.discriminator.model.graph.cutoff,
@@ -2238,7 +2299,7 @@ class Modeller:
         prior, descaled_prior = self.sample_from_prior(mol_data)
         supercell_data, generated_cell_volumes = (
             self.crystal_builder.build_zp1_supercells(
-                molecule_data=mol_data,
+                mol_batch=mol_data,
                 cell_parameters=descaled_prior,
                 supercell_size=self.config.supercell_size,
                 graph_convolution_cutoff=self.config.discriminator.model.graph.cutoff,
@@ -2453,7 +2514,6 @@ class Modeller:
         return (discriminator_output_on_real, discriminator_output_on_fake,
                 rdf_dists, stats)
 
-
     #
     # def sample_from_buffer(self, i):
     #     stats = {}
@@ -2566,11 +2626,12 @@ class Modeller:
     #
     #     return opt_cell_params, opt_aunits, opt_packing_coeff, opt_vdw_loss, opt_vdw_pot
 
-    def _embed_mol(self, mol_batch, p1, cell_params, norm_by_size=True):
-        p2 = torch.cat(
-            [p1[mol_batch.batch == ind] - p1[mol_batch.batch == ind].mean(0) for ind in range(mol_batch.num_graphs)
+    def _embed_mol(self, mol_batch, aunit_coordinates, cell_params, norm_by_size=True):
+        centered_aunit_coordinates = torch.cat(
+            [aunit_coordinates[mol_batch.batch == ind] - aunit_coordinates[mol_batch.batch == ind].mean(0) for ind in
+             range(mol_batch.num_graphs)
              ])
-        mol_batch.pos = p2
+        mol_batch.pos = centered_aunit_coordinates
         embedding = self.get_mol_embedding_for_proxy(mol_batch.clone())
         scaled_params = self.rescale_proxy_discrim_cell_params(mol_batch, cell_params, norm_by_size)
         embedding = torch.cat([embedding, scaled_params[:, :9]], dim=1)
@@ -2884,7 +2945,13 @@ class Modeller:
             if model_path is not None:
                 checkpoint = torch.load(model_path, map_location=self.device)
                 model_config = Namespace(**checkpoint['config'])  # overwrite the settings for the model
-                if self.config.__dict__[model_name].optimizer.overwrite_on_reload:
+                if self.config.__dict__[model_name].optimizer is not None:
+                    if hasattr(self.config.__dict__[model_name].optimizer, 'overwrite_on_reload'):
+                        if self.config.__dict__[model_name].optimizer.overwrite_on_reload:
+                            self.config.__dict__[model_name].optimizer = model_config.optimizer
+                    else:
+                        pass
+                else:
                     self.config.__dict__[model_name].optimizer = model_config.optimizer
                 self.config.__dict__[model_name].model = model_config.model
                 print(f"Reloading {model_name} {model_path}")

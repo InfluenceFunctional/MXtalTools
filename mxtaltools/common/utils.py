@@ -508,14 +508,27 @@ def scale_vdw_pot(lj_pot: Union[np.ndarray, torch.tensor],
                   clip_max: float = 100) \
         -> Union[np.ndarray, torch.tensor]:
     if torch.is_tensor(lj_pot):
-        scaled_lj_pot = torch.log(2 + lj_pot)
+        scaled_lj_pot = torch.log(2 + lj_pot) / np.log(2) - 1
         #scaled_lj_pot = lj_pot.clone()
         #scaled_lj_pot[high_bools] = turnover_pot + torch.log10(scaled_lj_pot[high_bools] + 1 - turnover_pot)
     else:
-        scaled_lj_pot = torch.log(2 + lj_pot)
+        scaled_lj_pot = torch.log(2 + lj_pot) / torch.log(torch.Tensor([2])) - 1
         #scaled_lj_pot = lj_pot.copy()
         #scaled_lj_pot[high_bools] = turnover_pot + np.log10(scaled_lj_pot[high_bools] + 1 - turnover_pot)
     return scaled_lj_pot.clip(max=clip_max)
+
+'''
+import torch
+import plotly.graph_objects as go
+xx = torch.linspace(0.001, 5, 1001)
+lj = 4 * (1/xx**12 - 1/xx**6)
+scaled_lj = torch.log(lj+2) / torch.log(torch.Tensor([2])) - 1
+fig = go.Figure()
+#fig.add_scatter(x=xx,y=lj)
+fig.add_scatter(x=xx,y=scaled_lj)
+fig.update_layout(yaxis_range=[-5,10])
+fig.show()
+'''
 
 
 def signed_log(y: Union[torch.tensor, np.ndarray]

@@ -52,7 +52,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 0 - baseline gnn with noise
+    },  # 0 - baseline gnn with noise - about as good as baseline, only a bit less overfit
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -100,7 +100,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 1 - deep gnn with noise
+    },  # 1 - deep gnn with noise - crashed out very early
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -148,7 +148,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 2 - baseline gnn with noise and dropout
+    },  # 2 - baseline gnn with noise and dropout - slow and steady convergence
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -196,7 +196,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 3 - deep gnn with noise and dropout
+    },  # 3 - deep gnn with noise and dropout - crashed out very early
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -244,7 +244,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 4 - baseline gnn with noise and 64 embedding
+    },  # 4 - baseline gnn with noise and 64 embedding - pretty solid, slow and steady  RESTART
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -292,7 +292,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 5 - deep gnn with noise and 64 embedding
+    },  # 5 - deep gnn with noise and 64 embedding - levelled out very early
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -340,7 +340,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 6 - big encoder with noise and 64 embedding
+    },  # 6 - big encoder with noise and 64 embedding - levelled out midway, bad
     {
         'dataset': {'otf_build_size': 10000},
         'positional_noise': {'autoencoder': 0.1},
@@ -388,7 +388,7 @@ config_list = [
                     },
                     'num_nodes': 64
                 }}}
-    },  # 7 - baseline gnn with noise and dropout and 64 embedding
+    },  # 7 - baseline gnn with noise and dropout and 64 embedding - maybe levelled out or just slow RESTART
 
 ]
 

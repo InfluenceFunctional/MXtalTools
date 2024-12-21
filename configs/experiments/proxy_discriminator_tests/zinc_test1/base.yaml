@@ -2,7 +2,7 @@ machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: proxy_discriminator
-dataset_name: 'qm9_molecules_dataset.pt' #'test_dataset.pt'
+dataset_name: 'test_pd_dataset.pt' #'test_dataset.pt'
 dataset_yaml_path: '/proxy_discriminator.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached
@@ -18,6 +18,9 @@ dataset:
   regression_target: null
   single_identifier: null #100558
   buffer_size: 100000
+  otf_build_size: 1000
+  smiles_source: /scratch/mk8347/zinc22
+  num_processes: 4
 
 # batching & convergence
 early_epochs_step_override: 5
@@ -34,8 +37,8 @@ gradient_norm_clip: 1
 extra_test_period: 1 # # MUST BE MULTIPLE OF SAMPLE REPORTING FREQUENCY how often to evaluate on extra test sets (hardcoded analysis per extra test set)
 
 logger:
-  run_name: dev
-  experiment_tag: dev
+  run_name: pd_zinc_test1
+  experiment_tag: pd_zinc_test1
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
   sample_reporting_frequency: 5  # how often to do detailed reporting with figures
   log_figures: True
@@ -51,7 +54,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: null
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45
   embedding_regressor: null
   proxy_discriminator: null
 
@@ -59,7 +62,7 @@ positional_noise:
   discriminator: 0
   generator: 0
   regressor: 0
-  autoencoder: 0
+  autoencoder: 0.001
   embedding_regressor: 0
   proxy_discriminator: 0
 

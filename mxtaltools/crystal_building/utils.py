@@ -504,7 +504,7 @@ def rotvec2rotmat(mol_rotation: torch.tensor, basis='cartesian'):
     return applied_rotation_list
 
 
-def aunit2unit_cell(symmetry_multiplicity, aunit_coords_list, fc_transform_list, cf_transform_list, sym_ops_list):
+def aunit2unit_cell(symmetry_multiplicity, aunit_coords_list, fc_transform_list, cf_transform_list, sym_ops_list, override_aunit=False):
     """  # NEW VERSION - faster. See scratch_5 for testing
     use cell symmetry to pattern asymmetric unit into full unit cell
     'unzip' and 'collect' by Z to do the whole thing in a single parallel pass
@@ -516,6 +516,7 @@ def aunit2unit_cell(symmetry_multiplicity, aunit_coords_list, fc_transform_list,
     padded_coords_c = rnn.pad_sequence(aunit_coords_list, batch_first=True)
     flat_padded_coords_c = torch.repeat_interleave(padded_coords_c, symmetry_multiplicity, dim=0)
 
+    # todo could be faster with scatter if the aunit_coords_list was continuous
     centroids_c = torch.stack([aunit_coords_list[ii].mean(0) for ii in range(num_crystals)])
     # repeat each molecule Z times
     flat_centroids_c = torch.repeat_interleave(centroids_c, symmetry_multiplicity, dim=0)

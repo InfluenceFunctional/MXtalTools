@@ -117,7 +117,7 @@ with torch.no_grad():
 
                 '''build supercells'''
                 supercell_data, cell_volumes = supercell_builder.build_zp1_supercells(
-                    molecule_data=mol_batch,
+                    mol_batch=mol_batch,
                     cell_parameters=cell_parameters,
                     supercell_size=supercell_size,
                     graph_convolution_cutoff=6,
@@ -156,7 +156,7 @@ with torch.no_grad():
                     mol_batch = collater([mol_batch for _ in range(len(rebuild_samples))])
 
                     unit_cells, cell_volumes = supercell_builder.build_zp1_supercells(
-                        molecule_data=mol_batch,
+                        mol_batch=mol_batch,
                         cell_parameters=rebuild_samples,
                         supercell_size=0,
                         graph_convolution_cutoff=6,

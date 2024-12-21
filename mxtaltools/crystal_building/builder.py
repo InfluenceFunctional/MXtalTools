@@ -170,7 +170,7 @@ class CrystalBuilder:
         return molwise_data, molwise_parameters
 
     def build_zp1_supercells(self,
-                             molecule_data: CrystalData,
+                             mol_batch: CrystalData,
                              cell_parameters: torch.tensor,
                              supercell_size: int = 5,
                              graph_convolution_cutoff: float = 6,
@@ -188,32 +188,32 @@ class CrystalBuilder:
 
         (T_cf_list, T_fc_list,
          atomic_number_list, canonical_conformer_coords_list,
-         generated_cell_volumes, supercell_data, sym_ops_list) \
+         generated_cell_volumes, supercell_batch, sym_ops_list) \
             = self.build_zp_1_asymmetric_unit(
             align_to_standardized_orientation,
             cell_parameters,
-            molecule_data,
+            mol_batch,
             target_handedness,
             )
 
-        if not skip_molecule_posing:
-            pass
-        else:  # use original pose
-            canonical_conformer_coords_list = [molecule_data.pos[molecule_data.batch == ind] for ind in
-                                               range(molecule_data.num_graphs)]
+        if skip_molecule_posing:  # use original orientation as passed
+            canonical_conformer_coords_list = [mol_batch.pos[mol_batch.batch == ind] for ind in
+                                               range(mol_batch.num_graphs)]
 
         # apply symmetry ops to build unit cell
-        unit_cell_coords_list = aunit2unit_cell(supercell_data.sym_mult,
+        unit_cell_coords_list = aunit2unit_cell(supercell_batch.sym_mult,
                                                 canonical_conformer_coords_list,
                                                 T_fc_list,
                                                 T_cf_list,
-                                                sym_ops_list)
+                                                sym_ops_list,
+                                                override_aunit=skip_molecule_posing
+                                                )
 
-        supercell_data.cell_params = cell_parameters
+        supercell_batch.cell_params = cell_parameters
         if not skip_refeaturization:  # if the mol position is outside the asym unit, the below params will not correspond to the inputs
-            supercell_data, mol_orientation, aunit_handedness = (
-                self.refeaturize_generated_cell(supercell_data, unit_cell_coords_list))
-            supercell_data.cell_params = torch.cat([supercell_data.cell_params[:, :9], mol_orientation], dim=1)
+            supercell_batch, mol_orientation, aunit_handedness = (
+                self.refeaturize_generated_cell(supercell_batch, unit_cell_coords_list))
+            supercell_batch.cell_params = torch.cat([supercell_batch.cell_params[:, :9], mol_orientation], dim=1)
 
         # get minimal supercell cluster for convolving about a given canonical conformer
         cell_vector_list = T_fc_list.permute(0, 2, 1)
@@ -223,29 +223,29 @@ class CrystalBuilder:
                 cell_vector_list,
                 self.device,
                 atomic_number_list,
-                supercell_data.sym_mult,
+                supercell_batch.sym_mult,
                 sorted_fractional_translations=self.sorted_fractional_translations,
                 supercell_scale=supercell_size,
                 cutoff=graph_convolution_cutoff,
                 pare_to_convolution_cluster=pare_to_convolution_cluster)
 
-        supercell_data = update_supercell_data(supercell_data,
+        supercell_batch = update_supercell_data(supercell_batch,
                                                supercell_atoms_list,
                                                supercell_list,
                                                ref_mol_inds_list,
                                                unit_cell_coords_list)
 
-        return supercell_data, generated_cell_volumes
+        return supercell_batch, generated_cell_volumes
 
     def build_zp_1_asymmetric_unit(self,
                                    align_to_standardized_orientation,
                                    cell_parameters,
-                                   molecule_data,
+                                   molecule_batch,
                                    target_handedness,
                                    ):
-        supercell_data = molecule_data.clone()
-        supercell_data, cell_parameters, target_handedness = \
-            self.move_cell_data_to_device(supercell_data, cell_parameters, target_handedness)
+        supercell_batch = molecule_batch.clone()
+        supercell_batch, cell_parameters, target_handedness = \
+            self.move_cell_data_to_device(supercell_batch, cell_parameters, target_handedness)
 
         # assumes cell params arrive appropriately pre-cleaned
         cell_lengths, cell_angles, mol_position, mol_rotvec_i = (
@@ -256,19 +256,19 @@ class CrystalBuilder:
         else:
             mol_rotvec = mol_rotvec_i
 
-        T_cf_list, T_fc_list, generated_cell_volumes, supercell_data, sym_ops_list = (
-            get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotvec, supercell_data))
+        T_cf_list, T_fc_list, generated_cell_volumes, supercell_batch, sym_ops_list = (
+            get_symmetry_functions(cell_angles, cell_lengths, mol_position, mol_rotvec, supercell_batch))
 
         rotations_list = rotvec2rotmat(mol_rotvec)
 
         if align_to_standardized_orientation:  # align canonical conformers principal axes to cartesian axes - not usually done here, but allowed
-            supercell_data = align_molecules_to_principal_axes(supercell_data, handedness=target_handedness)
+            supercell_batch = align_molecules_to_principal_axes(supercell_batch, handedness=target_handedness)
 
         # get molecule information
         atomic_number_list, coords_list = [], []
-        for i in range(supercell_data.num_graphs):
-            atomic_number_list.append(supercell_data.x[supercell_data.batch == i])
-            coords_list.append(supercell_data.pos[supercell_data.batch == i])
+        for i in range(supercell_batch.num_graphs):
+            atomic_number_list.append(supercell_batch.x[supercell_batch.batch == i])
+            coords_list.append(supercell_batch.pos[supercell_batch.batch == i])
         # center, apply rotation, apply translation (to canonical conformer)
         canonical_conformer_coords_list = []
         for i, (rotation, coords, T_fc, new_frac_pos) in enumerate(
@@ -278,7 +278,7 @@ class CrystalBuilder:
             )
         return (T_cf_list, T_fc_list, atomic_number_list,
                 canonical_conformer_coords_list, generated_cell_volumes,
-                supercell_data, sym_ops_list)
+                supercell_batch, sym_ops_list)
 
     def refeaturize_generated_cell(self, supercell_data, unit_cell_coords_list):
         # reanalyze the constructed unit cell to get the canonical orientation & confirm correct construction

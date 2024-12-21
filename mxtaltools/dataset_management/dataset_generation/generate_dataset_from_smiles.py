@@ -3,10 +3,13 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 from time import time
+from typing import Optional
 
 from rdkit import RDLogger
 from torch_geometric.loader.dataloader import Collater
 
+from mxtaltools.common.geometry_calculations import batch_molecule_vdW_volume
+from mxtaltools.crystal_search.sampling import Sampler
 from mxtaltools.models.task_models.generator_models import CSDPrior
 
 RDLogger.DisableLog('rdApp.*')
@@ -39,31 +42,143 @@ def process_smiles_list(lines: list, allowed_atom_types, **conf_kwargs):
         if sample is not None:
             samples.append(sample)
 
-    print(f"finished processing smiles list with {len(samples)} samples")
+    #print(f"finished processing smiles list with {len(samples)} samples")
     return samples
 
 
 def process_smiles_to_crystal_opt(lines: list,
+                                  file_path,
                                   allowed_atom_types,
-                                  space_group_inds,
+                                  space_group,
                                   **conf_kwargs):
     """"""
     '''build molecules'''
     collater = Collater(0, 0)
-    mol_batch = collater(process_smiles_list(lines,
-                                             allowed_atom_types,
-                                             **conf_kwargs))
+    mol_samples = process_smiles_list(lines,allowed_atom_types, **conf_kwargs)
+    if len(mol_samples) == 0:
+        torch.save([], file_path)
+        return None
+
+    mol_batch = collater(mol_samples)
 
     '''sample random crystals'''
     crystal_generator = CSDPrior(
         sym_info=init_sym_info(),
         device="cpu",
         cell_means=None, cell_stds=None, lengths_cov_mat=None)
-    cell_params = crystal_generator(mol_batch, space_group_inds)
+    normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
+    mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
 
     '''optimize crystals and save opt trajectory'''
+    sampler = Sampler(0,
+                      'cpu',
+                      'local',
+                      None,
+                      None,
+                      None,
+                      None,
+                      show_tqdm=False,
+                      skip_rdf=True,
+                      gd_score_func='vdW',
+                      num_cpus=1,
+                      )
 
-    #return aunit_list, cell_params_traj, vdw_pot, vdw_score
+    mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
+                                                     mol_batch.pos,
+                                                     mol_batch.batch,
+                                                     mol_batch.num_graphs,
+                                                     sampler.vdw_radii_tensor)
+
+    opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = sampler.local_opt_for_proxy_discrim(
+        mol_batch.clone().cpu(),
+        normed_cell_params.cpu(),
+        opt_eps=1e-1,
+    )
+    samples = []
+    for graph_ind in range(mol_batch.num_graphs):
+        graph_inds = mol_batch.batch == graph_ind
+        for sample_ind in range(len(opt_vdw_pot)):
+            cell_params = opt_cell_params[sample_ind, graph_ind]
+            sample = CrystalData(
+                x=mol_batch.x[graph_inds],
+                pos=opt_aunits[sample_ind, graph_inds],
+                smiles=mol_batch.smiles[graph_ind],
+                identifier=mol_batch.smiles[graph_ind],
+                y=torch.zeros(1, dtype=torch.float32),
+                require_crystal_features=True,
+                sg_ind=int(mol_batch.sg_ind[graph_ind]),
+                z_prime=1,
+                cell_lengths=cell_params[:3],
+                cell_angles=cell_params[3:6],
+                pose_parameters=cell_params[None, 6:],
+                vdw_pot=opt_vdw_pot[sample_ind, graph_ind],
+                vdw_loss=opt_vdw_loss[sample_ind, graph_ind],
+                packing_coeff=opt_packing_coeff[sample_ind, graph_ind]
+            )
+
+            samples.append(sample)
+
+    print(
+        f"finished processing smiles list with {mol_batch.num_graphs} molecules and optimizing crystals with {len(samples)} samples")
+    torch.save(samples, file_path)
+
+
+""" script to confirm the above sampled structures are the same on being rebuilt
+
+
+from mxtaltools.crystal_building.builder import CrystalBuilder
+from mxtaltools.crystal_building.utils import overwrite_symmetry_info
+from mxtaltools.models.utils import denormalize_generated_cell_params
+
+supercell_builder = CrystalBuilder(device='cpu',
+                                   rotation_basis='cartesian')
+rebuild_pack = torch.zeros_like(opt_packing_coeff)
+rebuild_pot = torch.zeros_like(opt_vdw_pot)
+rebuild_aunit=torch.zeros_like(opt_aunits)
+for sample_ind in range(len(opt_cell_params)):
+    sample = opt_cell_params[sample_ind]
+    mol_batch2 = mol_batch.clone()
+    mol_batch2.pos = opt_aunits[sample_ind]
+    mol_batch2 = overwrite_symmetry_info(mol_batch2,
+                                       mol_batch2.sg_ind,
+                                       supercell_builder.symmetries_dict,
+                                       randomize_sgs=False)
+    supercell_batch, generated_cell_volumes = (
+        supercell_builder.build_zp1_supercells(
+            mol_batch=mol_batch2,
+            cell_parameters=sample,
+            supercell_size=5,
+            graph_convolution_cutoff=6,
+            align_to_standardized_orientation=False,
+            skip_refeaturization=True,
+            skip_molecule_posing=True,
+        ))
+    reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
+    packing_coeff = mol_batch2.mol_volume / reduced_volume
+    dist_dict, loss, vdw_potential = sampler._score_crystal_batch(
+        mol_batch2, 'vdW', supercell_batch,
+    )
+    rebuild_pot[sample_ind] = vdw_potential
+    rebuild_pack[sample_ind] = packing_coeff
+    rebuild_aunit[sample_ind] = supercell_batch.pos[supercell_batch.aux_ind == 0].detach()
+    if (rebuild_aunit[sample_ind] - opt_aunits[sample_ind]).abs().sum() > 1e-3:
+        print('aa!')
+
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+fig = make_subplots(rows=1, cols=min(5, mol_batch.num_graphs))
+for ind in range(min(5, mol_batch.num_graphs)):
+    fig.add_scatter(y=(rebuild_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1, col=ind + 1)
+    fig.add_scatter(y=(opt_vdw_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1, col=ind + 1)
+fig.show()
+
+fig = make_subplots(rows=1, cols=min(5, mol_batch.num_graphs))
+for ind in range(min(5, mol_batch.num_graphs)):
+    fig.add_scatter(y=(rebuild_pack[:, ind]).flatten().log(), row=1, col=ind + 1)
+    fig.add_scatter(y=(opt_packing_coeff[:, ind]).flatten().log(), row=1, col=ind + 1)
+fig.show()
+
+"""
 
 
 def process_smiles(smile: str,
@@ -75,13 +190,14 @@ def process_smiles(smile: str,
                    protonate: bool = True,
                    rotamers_per_sample: int = 1,
                    allow_simple_hydrogen_rotations: bool = False,
-                   pare_to_size: int = None):
+                   pare_to_size: Optional[int] = None):
     if rotamers_per_sample > 1:
         assert False, "Multiple rotamers not implemented"
-    coords, atom_types, mask_rotate, mask_edges = generate_random_conformers_from_smiles(smile,
-                                                                                         protonate=protonate,
-                                                                                         max_rotamers_per_samples=rotamers_per_sample,
-                                                                                         allow_simple_hydrogen_rotations=allow_simple_hydrogen_rotations)
+    coords, atom_types, mask_rotate, mask_edges = generate_random_conformers_from_smiles(
+        smile,
+        protonate=protonate,
+        max_rotamers_per_samples=rotamers_per_sample,
+        allow_simple_hydrogen_rotations=allow_simple_hydrogen_rotations)
 
     if coords is False:
         return None, 'no coordinates'

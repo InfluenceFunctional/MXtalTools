@@ -162,7 +162,7 @@ def raw_vdw_overlap(vdw_radii, dists=None, batch_numbers=None,
 def vdw_analysis(vdw_radii: torch.Tensor,
                  dist_dict: dict,
                  num_graphs: int,
-                 clip_max: float = 100000
+                 clip_max: float = 50
                  ):
     """
     new version of the vdw_overlap function for analysis of intermolecular contacts

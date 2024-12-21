@@ -65,7 +65,7 @@ class TestClass:
         # supercell_data.aunit_handedness = mol_handedness
 
         rebuilt_supercells, _ = supercell_builder.build_zp1_supercells(
-            molecule_data=test_crystals,
+            mol_batch=test_crystals,
             cell_parameters=updated_params,
             align_to_standardized_orientation=True,
             target_handedness=reference_supercells.aunit_handedness,
@@ -120,7 +120,7 @@ class TestClass:
                                           rescale_asymmetric_unit=False, destandardize=False, mode='hard')
 
         all_sg_supercells, _ = supercell_builder.build_zp1_supercells(
-            molecule_data=mol_batch,
+            mol_batch=mol_batch,
             cell_parameters=final_samples,
             align_to_standardized_orientation=False,
             graph_convolution_cutoff=6,

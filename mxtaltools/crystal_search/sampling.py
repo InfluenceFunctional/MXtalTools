@@ -345,7 +345,7 @@ class Sampler:
             mol_batch.clone(),
             max_num_steps=1000,
             convergence_eps=opt_eps,
-            lr=1e-3,
+            lr=1e-6,
             optimizer_func=torch.optim.Rprop,
             score_func=self.gd_score_func,
             store_aunit=True,
@@ -354,15 +354,20 @@ class Sampler:
         n_samples = len(optimization_record['std_cell_params'])
         inds_to_sample = torch.unique(
             torch.cat(
-                [torch.arange(0, n_samples, 100),
+                [torch.arange(0, n_samples, 10),
                  torch.argwhere(
-                     torch.diff(optimization_record['vdw_potential'],dim=0).mean(1) > 1
+                     torch.diff(optimization_record['vdw_potential'], dim=0).mean(1) > 1
                  ).flatten()]
             )
         )
+
+        # rescale after summing and norming
+        rescaled_vdw_loss = optimization_record['vdw_potential']/mol_batch.num_atoms[None, :]
+        rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0])
+
         return (
             optimization_record['vdw_potential'][inds_to_sample],
-            optimization_record['overall_loss'][inds_to_sample],
+            rescaled_vdw_loss[inds_to_sample],
             optimization_record['packing_coeff'][inds_to_sample],
             optimization_record['std_cell_params'][inds_to_sample],
             optimization_record['aunit_poses'][inds_to_sample],
@@ -451,7 +456,7 @@ class Sampler:
 
         supercell_data, generated_cell_volumes = (
             self.supercell_builder.build_zp1_supercells(
-                molecule_data=mol_batch,
+                mol_batch=mol_batch,
                 cell_parameters=descaled_sample,
                 supercell_size=self.supercell_size,
                 graph_convolution_cutoff=self.cutoff,
@@ -724,7 +729,7 @@ class Sampler:
                                        optimizer_func,
                                        score_func: str,
                                        store_aunit: bool = False,
-                                       standardize_pose: bool=True
+                                       standardize_pose: bool = True
                                        ):
         """
         do a local optimization via gradient descent on some score function
@@ -755,7 +760,7 @@ class Sampler:
                     # todo functionalize the below - it seems we do it everywhere
                     supercell_batch, generated_cell_volumes = (
                         self.supercell_builder.build_zp1_supercells(
-                            molecule_data=mol_batch,
+                            mol_batch=mol_batch,
                             cell_parameters=descaled_cleaned_sample,
                             supercell_size=self.supercell_size,
                             graph_convolution_cutoff=self.cutoff,
@@ -782,10 +787,10 @@ class Sampler:
                     else:
                         scheduler2.step()  # grow
 
-                    if (s_ind > 10) and (s_ind % 50 == 0):
+                    if (s_ind > 10) and (s_ind % 20 == 0):
                         converged = all(vdw_record[s_ind - 10:s_ind, :].std(0) < convergence_eps)
 
-                    sample_to_compare = cleaned_sample.clone()
+                    sample_to_compare = descaled_cleaned_sample.clone()
                     sample_to_compare[:, 9:] = supercell_batch.cell_params[:, 9:]
 
                     vdw_record[s_ind] = vdw_potential.detach()
@@ -793,8 +798,7 @@ class Sampler:
                     loss_record[s_ind] = loss.detach()
                     packing_record[s_ind] = packing_coeff.detach()
                     if store_aunit:
-                        pos = supercell_batch.pos[supercell_batch.aux_ind == 0].detach()
-                        aunit_poses[s_ind] = pos
+                        aunit_poses[s_ind] = supercell_batch.pos[supercell_batch.aux_ind == 0].detach()
 
                     s_ind += 1
                     if s_ind % 100 == 0:
@@ -825,7 +829,7 @@ class Sampler:
     def _init_for_local_opt(self, lr, max_num_steps, optimizer_func, sample, num_atoms):
         optimizer = optimizer_func([sample], lr=lr)
         max_lr_target_time = max_num_steps // 10
-        max_lr = 1e-2
+        max_lr = lr * 100
         grow_lambda = (max_lr / lr) ** (1 / max_lr_target_time)
         scheduler1 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: 0.975)
         scheduler2 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: grow_lambda)
@@ -846,7 +850,7 @@ class Sampler:
             output, extra_outputs = self.discriminator(
                 supercell_data.clone(), return_dists=True, return_latent=False)
             dist_dict = extra_outputs['dists_dict']
-        elif score_func == 'vdW':
+        elif score_func.lower() == 'vdw':
             dist_dict = get_intermolecular_dists_dict(supercell_data, self.cutoff, 100)
         else:
             assert False, f"{score_func} is not an implemented score function for gradient descent optimization"
@@ -857,15 +861,6 @@ class Sampler:
         if score_func == 'discriminator':
             loss = F.softplus(output[:, 2])
         elif score_func.lower() == 'vdw':
-            # if mode==1:
-            #     scaled_lj_pot = lj_pot
-            #     scaled_lj_pot[lj_pot > 10] = 10 + torch.log10(lj_pot[lj_pot > 10] + 1 - 10)
-            #     loss = scatter(scaled_lj_pot.clip(max=100),
-            #                    dist_dict['intermolecular_dist_batch'],
-            #                    reduce='sum',
-            #                    dim_size=mol_batch.num_graphs,
-            #                    )
-            # elif mode == 2:
             loss = vdw_loss
         return dist_dict, loss, vdw_potential
 

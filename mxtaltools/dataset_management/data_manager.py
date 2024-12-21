@@ -43,7 +43,8 @@ class DataManager:
                  mode='standard',
                  chunks_path=None,
                  seed=0, config=None,
-                 dataset_type=None):
+                 dataset_type=None,
+                 do_crystal_indexing=True):
         self.datapoints = None
         self.datasets_path = Path(datasets_path)
         if chunks_path is not None:
@@ -57,6 +58,7 @@ class DataManager:
         self.config = config
         self.dataset_stats = None
         self.regression_target = None
+        self.do_crystal_indexing = do_crystal_indexing
 
         if dataset_type is not None:
             self.dataset_type = dataset_type
@@ -167,6 +169,20 @@ class DataManager:
         for ind in range(len(self.dataset)):
             if self.dataset[ind].x.ndim == 1:
                 self.dataset[ind].x = self.dataset[ind].x[:, None]
+
+        # from torch_geometric.data import Data
+        # small_dataset = []
+        # for data in self.dataset:
+        #     small_dataset.append(
+        #         Data(
+        #             x=data.x,
+        #             pos=data.pos,
+        #             y=data.y,
+        #             mol_volume=data.mol_volume,
+        #             packing_coeff=data.packing_coeff,
+        #             radius=data.radius,
+        #         )
+        #     )
 
         if precompute_edges:
             self.compute_edges(conv_cutoff)
@@ -537,13 +553,15 @@ class DataManager:
                 'cell_volume': basic_stats(dataset_to_analyze.cell_volume.float()),
                 'reduced_volume': basic_stats(dataset_to_analyze.reduced_volume.float()),
             })
-            self.rebuild_crystal_indices()
 
-            misc_data_dict.update({
-                'crystal_to_mol_dict': self.crystal_to_mol_dict,
-                'mol_to_crystal_dict': self.mol_to_crystal_dict,
-                'unique_molecules_dict': self.unique_molecules_dict
-            })
+            if self.do_crystal_indexing:
+                self.rebuild_crystal_indices()
+
+                misc_data_dict.update({
+                    'crystal_to_mol_dict': self.crystal_to_mol_dict,
+                    'mol_to_crystal_dict': self.mol_to_crystal_dict,
+                    'unique_molecules_dict': self.unique_molecules_dict
+                })
         return misc_data_dict
 
     def generate_mol2crystal_mapping(self):
@@ -783,7 +801,7 @@ if __name__ == '__main__':
                         chunks_path=r"D:\crystal_datasets/CSD_featurized_chunks/",
                         dataset_type='crystal')
 
-    miner.load_dataset_for_modelling(dataset_name='dataset.pt',
+    miner.load_dataset_for_modelling(dataset_name='test_CSD_dataset.pt',
                                      filter_conditions=[
                                          ['crystal_z_prime', 'in', [1]],
                                          # NOTE we can currently only process Z' == 1 in models
@@ -793,9 +811,8 @@ if __name__ == '__main__':
                                          #['molecule_is_spherical_top','in',[False]],
                                          #['crystal_packing_coefficient','range',[0.55, 0.85]],
                                          ['molecule_num_atoms', 'range', [3, 100]],
-                                         ['molecule_radius', 'range', [1, 5]],
+                                         ['molecule_radius', 'range', [1, 10]],
                                          ['asymmetric_unit_is_well_defined', 'in', [True]],
-                                         ['reduced_volume_fraction', 'range', [0.75, 1.15]],
 
                                          #['crystal_identifier', 'not_in', ['OBEQUJ', 'OBEQOD', 'OBEQET', 'XATJOT', 'OBEQIX', 'KONTIQ','NACJAF', 'XAFPAY', 'XAFQON', 'XAFQIH', 'XAFPAY01', 'XAFPAY02', 'XAFPAY03', 'XAFPAY04','XAFQON','XAFQIH']],  # omit blind test 5 & 6 targets
                                          #['crystal_space_group_number','in',[2,14,19]]

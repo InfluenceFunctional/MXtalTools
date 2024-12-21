@@ -127,7 +127,7 @@ class CSDPrior(nn.Module):
         #cell_means = torch.tensor(cell_means, dtype=torch.float32, device='cpu')
         #cell_stds = torch.tensor(cell_stds, dtype=torch.float32, device='cpu')
         #lengths_cov_mat = torch.tensor(lengths_cov_mat, dtype=torch.float32, device='cpu')
-        print("Using hardcoded CSD statistics for prior!")
+        #print("Using hardcoded CSD statistics for prior!")
         cell_means = torch.tensor(
             [1.0411, 1.1640, 1.4564,
              1.5619, 1.5691, 1.5509],  # use triclinic
