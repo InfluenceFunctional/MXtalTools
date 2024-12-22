@@ -1407,7 +1407,7 @@ class Modeller:
                     max_num_heavy_atoms=9,
                     pare_to_size=None,
                     max_radius=15,
-                    synchronize=False,
+                    synchronize=True,
                     test=self.logger.epoch==0
                 )
                 self.integrated_dataset = False
