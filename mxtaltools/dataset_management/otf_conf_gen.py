@@ -69,7 +69,8 @@ def async_generate_random_crystal_dataset(dataset_length,
                                           max_num_heavy_atoms: int,
                                           pare_to_size: int,
                                           max_radius: float,
-                                          synchronize=True):
+                                          synchronize=True,
+                                          test: bool = False):
     dataset_path = Path(dataset_name)
     chunks_path = Path(workdir)
     smiles_path = Path(smiles_source)
@@ -85,19 +86,25 @@ def async_generate_random_crystal_dataset(dataset_length,
     # chunks = get_smiles_list(10000, 100, smiles_path)
     # os.chdir(chunks_path)
     # for ind in range(100):
-    #     chunk = chunks[ind]
-    #     chunk_ind = min_ind + ind
-    #     chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
-    #     process_smiles_to_crystal_opt(chunk, chunk_path, allowed_atom_types, 1,
-    #                                   **{'max_num_atoms': max_num_atoms,
-    #                                      'max_num_heavy_atoms': max_num_heavy_atoms,
-    #                                      'pare_to_size': pare_to_size,
-    #                                      'max_radius': max_radius,
-    #                                      'protonate': True,
-    #                                      'rotamers_per_sample': 1,
-    #                                      'allow_simple_hydrogen_rotations': False})
 
+    # test run to throw errors, if relevant
     min_ind = len(os.listdir(chunks_path)) + 1  # always add one
+
+    if test:
+        min_ind = 0
+        ind = 0
+        chunk = chunks[ind]
+        chunk_ind = min_ind + ind
+        chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
+        process_smiles_to_crystal_opt(chunk, chunk_path, allowed_atom_types, 1,
+                                      **{'max_num_atoms': max_num_atoms,
+                                         'max_num_heavy_atoms': max_num_heavy_atoms,
+                                         'pare_to_size': pare_to_size,
+                                         'max_radius': max_radius,
+                                         'protonate': True,
+                                         'rotamers_per_sample': 1,
+                                         'allow_simple_hydrogen_rotations': False})
+
     for ind, chunk in enumerate(chunks):
         # print(f'starting chunk {ind} with {len(chunk)} smiles')
         chunk_ind = min_ind + ind
