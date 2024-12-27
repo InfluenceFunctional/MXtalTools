@@ -10,6 +10,7 @@ from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.common.geometry_calculations import batch_molecule_vdW_volume
 from mxtaltools.crystal_search.sampling import Sampler
+from mxtaltools.models.functions.vdw_overlap import scale_molwise_vdw_pot
 from mxtaltools.models.task_models.generator_models import CSDPrior
 
 RDLogger.DisableLog('rdApp.*')
@@ -50,6 +51,7 @@ def process_smiles_to_crystal_opt(lines: list,
                                   file_path,
                                   allowed_atom_types,
                                   space_group,
+                                  run_tests=False,
                                   **conf_kwargs):
     """"""
     print('''build molecules''')
@@ -124,64 +126,173 @@ def process_smiles_to_crystal_opt(lines: list,
 
     print(
         f"finished processing smiles list with {mol_batch.num_graphs} molecules and optimizing crystals with {len(samples)} samples")
+
+    if run_tests:
+        test_crystal_rebuild_from_embedding(
+            mol_batch,
+            opt_vdw_pot,
+            opt_vdw_loss,
+            opt_aunits,
+            opt_cell_params,
+            denorm=False,
+            destd=False,
+            renorm=False,
+            restd=False,
+            make_figs=False,
+        )
     torch.save(samples, file_path)
 
 
-""" script to confirm the above sampled structures are the same on being rebuilt
+def test_crystal_rebuild_from_embedding(mol_batch,
+                                        opt_vdw_pot,
+                                        opt_vdw_loss,
+                                        opt_aunits,
+                                        opt_cell_params,
+                                        denorm=False,
+                                        destd=False,
+                                        renorm=False,
+                                        restd=False,
+                                        make_figs=True,
+                                        ):
+    def _score_crystal_batch(mol_batch, supercell_data, vdw_radii_tensor):
+        from mxtaltools.models.utils import get_intermolecular_dists_dict
+        dist_dict = get_intermolecular_dists_dict(supercell_data, 6, 100)
+        from mxtaltools.models.functions.vdw_overlap import vdw_analysis
+        molwise_overlap, molwise_normed_overlap, vdw_potential, vdw_loss, lj_pot \
+            = vdw_analysis(vdw_radii_tensor.cpu(),
+                           dist_dict,
+                           mol_batch.num_graphs, )
+        return vdw_potential, vdw_loss
+
+    from mxtaltools.crystal_building.builder import CrystalBuilder
+    from mxtaltools.crystal_building.utils import overwrite_symmetry_info
+    from mxtaltools.models.utils import denormalize_generated_cell_params, renormalize_generated_cell_params
+    from mxtaltools.constants.atom_properties import VDW_RADII
+    vdw_radii_tensor = torch.tensor(list(VDW_RADII.values()), device='cpu')
+
+    supercell_builder = CrystalBuilder(device='cpu',
+                                       rotation_basis='cartesian')
+
+    lattice_means = torch.tensor([
+        1, 1, 1,
+        torch.pi / 2, torch.pi / 2, torch.pi / 2,
+        0.5, 0.5, 0.5,
+        torch.pi / 4, 0, torch.pi / 2
+    ], device='cpu', dtype=torch.float32)
+    lattice_stds = torch.tensor([
+        .35, .35, .35,
+        .45, .45, .45,
+        0.25, 0.25, 0.25,
+        0.33, torch.pi / 2, torch.pi / 2
+    ], device='cpu', dtype=torch.float32)
+    rebuild_pot = torch.zeros_like(opt_vdw_pot)
+    rebuild_loss = torch.zeros_like(rebuild_pot)
+    rebuild_aunit = torch.zeros_like(opt_aunits)
+    for sample_ind in range(len(opt_cell_params)):
+        sample = opt_cell_params[sample_ind]
+
+        if renorm:
+            sample = renormalize_generated_cell_params(
+                sample,
+                mol_batch,
+                supercell_builder.asym_unit_dict
+            )
+        if restd:
+            sample = (sample - lattice_means[None, :]) / lattice_stds[None, :]
+
+        if destd:
+            sample = sample * lattice_stds[None, :] + lattice_means[None, :]
+        if denorm:
+            sample = denormalize_generated_cell_params(sample,
+                                                       mol_batch,
+                                                       supercell_builder.asym_unit_dict
+                                                       )
+
+        mol_batch2 = mol_batch.clone()
+        mol_batch2.pos = opt_aunits[sample_ind]
+        mol_batch2 = overwrite_symmetry_info(mol_batch2,
+                                             mol_batch2.sg_ind,
+                                             supercell_builder.symmetries_dict,
+                                             randomize_sgs=False)
+        supercell_batch, generated_cell_volumes = (
+            supercell_builder.build_zp1_supercells(
+                mol_batch=mol_batch2,
+                cell_parameters=sample,
+                supercell_size=5,
+                graph_convolution_cutoff=6,
+                align_to_standardized_orientation=False,
+                skip_refeaturization=True,
+                skip_molecule_posing=True,
+            ))
+        vdw_potential, vdw_loss = _score_crystal_batch(
+            mol_batch2, supercell_batch, vdw_radii_tensor
+        )
+        rebuild_pot[sample_ind] = vdw_potential
+        rebuild_aunit[sample_ind] = supercell_batch.pos[supercell_batch.aux_ind == 0].detach()
+        rebuild_loss[sample_ind] = scale_molwise_vdw_pot(vdw_potential, mol_batch.num_atoms)
+        if ((vdw_loss - opt_vdw_loss[sample_ind]).abs().log10() > 0.1).any():
+            aa = 1
+            bad_inds = torch.argwhere((vdw_potential - opt_vdw_pot[sample_ind]).abs() > 0.1).flatten()
+
+        if ((rebuild_aunit[sample_ind] - opt_aunits[sample_ind]).abs() > 0.1).any():
+            aa = 1
+
+    if make_figs:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+        fig = make_subplots(rows=1, cols=min(5, mol_batch.num_graphs))
+        for ind in range(min(5, mol_batch.num_graphs)):
+            fig.add_scatter(y=(rebuild_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1, col=ind + 1)
+            fig.add_scatter(y=(opt_vdw_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1, col=ind + 1)
+        fig.show()
+        fig = go.Figure()
+        fig.add_scatter(y=(((rebuild_pot.flatten() - opt_vdw_pot.flatten()).flatten()).abs() + 1).log10(),)
+        fig.add_scatter(y=(rebuild_pot.flatten() - opt_vdw_pot.amin() + 1).log10(), )
+        fig.add_scatter(y=(opt_vdw_pot.flatten() - opt_vdw_pot.amin() + 1).log10(), )
+        fig.show()
+        fig = go.Figure()
+        fig.add_scatter(y=(((rebuild_pot.flatten() - opt_vdw_pot.flatten())/opt_vdw_pot.flatten()).abs() + 1).log10(),)
+        fig.show()
+
+        fig = go.Figure()
+        fig.add_scatter(y=(((rebuild_loss.flatten() - opt_vdw_loss.flatten())).abs()),)
+        fig.add_scatter(y=(((rebuild_loss.flatten()))),)
+        fig.add_scatter(y=(((opt_vdw_loss.flatten()))),)
+        fig.show()
+
+        deviations = torch.zeros(mol_batch.num_graphs)
+        for ind in range(mol_batch.num_graphs):
+            deviations[ind] = (
+                        rebuild_aunit[0, mol_batch.batch == ind] - opt_aunits[0, mol_batch.batch == ind]).abs().std()
+        fig = go.Figure(go.Scatter(y=deviations)).show()
+
+    mae = (rebuild_loss.flatten() - opt_vdw_loss.flatten()).abs()
+    print(mae)
+    print(mae.sum())
+
+    return rebuild_pot, rebuild_loss, rebuild_aunit
 
 
-from mxtaltools.crystal_building.builder import CrystalBuilder
-from mxtaltools.crystal_building.utils import overwrite_symmetry_info
-from mxtaltools.models.utils import denormalize_generated_cell_params
+""" script to use the above
+from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import test_crystal_rebuild
+from torch_geometric.loader.dataloader import Collater
+collater = Collater(0,0)
+mol_batch = mols_to_embed.clone().cpu()
+opt_vdw_pot = mol_batch.vdw_pot[None, ...]
+opt_aunits = mol_batch.pos[None, ...]
+cell_params = torch.cat([
+    mol_batch.cell_lengths, mol_batch.cell_angles, mol_batch.pose_params0
+], dim=1)
+opt_cell_params = cell_params[None,...]
 
-supercell_builder = CrystalBuilder(device='cpu',
-                                   rotation_basis='cartesian')
-rebuild_pack = torch.zeros_like(opt_packing_coeff)
-rebuild_pot = torch.zeros_like(opt_vdw_pot)
-rebuild_aunit=torch.zeros_like(opt_aunits)
-for sample_ind in range(len(opt_cell_params)):
-    sample = opt_cell_params[sample_ind]
-    mol_batch2 = mol_batch.clone()
-    mol_batch2.pos = opt_aunits[sample_ind]
-    mol_batch2 = overwrite_symmetry_info(mol_batch2,
-                                       mol_batch2.sg_ind,
-                                       supercell_builder.symmetries_dict,
-                                       randomize_sgs=False)
-    supercell_batch, generated_cell_volumes = (
-        supercell_builder.build_zp1_supercells(
-            mol_batch=mol_batch2,
-            cell_parameters=sample,
-            supercell_size=5,
-            graph_convolution_cutoff=6,
-            align_to_standardized_orientation=False,
-            skip_refeaturization=True,
-            skip_molecule_posing=True,
-        ))
-    reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
-    packing_coeff = mol_batch2.mol_volume / reduced_volume
-    dist_dict, loss, vdw_potential = sampler._score_crystal_batch(
-        mol_batch2, 'vdW', supercell_batch,
-    )
-    rebuild_pot[sample_ind] = vdw_potential
-    rebuild_pack[sample_ind] = packing_coeff
-    rebuild_aunit[sample_ind] = supercell_batch.pos[supercell_batch.aux_ind == 0].detach()
-    if (rebuild_aunit[sample_ind] - opt_aunits[sample_ind]).abs().sum() > 1e-3:
-        print('aa!')
-
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-fig = make_subplots(rows=1, cols=min(5, mol_batch.num_graphs))
-for ind in range(min(5, mol_batch.num_graphs)):
-    fig.add_scatter(y=(rebuild_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1, col=ind + 1)
-    fig.add_scatter(y=(opt_vdw_pot[:, ind] - opt_vdw_pot[:, ind].amin() + 0.1).flatten().log(), row=1, col=ind + 1)
-fig.show()
-
-fig = make_subplots(rows=1, cols=min(5, mol_batch.num_graphs))
-for ind in range(min(5, mol_batch.num_graphs)):
-    fig.add_scatter(y=(rebuild_pack[:, ind]).flatten().log(), row=1, col=ind + 1)
-    fig.add_scatter(y=(opt_packing_coeff[:, ind]).flatten().log(), row=1, col=ind + 1)
-fig.show()
-
+r_pot, r_au = test_crystal_rebuild(
+    mol_batch,
+    opt_vdw_pot,
+    opt_aunits,
+    opt_cell_params,
+    denorm=True
+)
+print((r_pot-opt_vdw_pot).abs())
 """
 
 

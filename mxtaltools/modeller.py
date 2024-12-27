@@ -529,7 +529,7 @@ class Modeller:
             np.save(self.config.model_paths.autoencoder[:-3] + '_results.npy',
                     {'train_stats': self.logger.train_stats, 'test_stats': self.logger.test_stats})
 
-    def proxy_discriminator_analysis(self, samples_per_molecule: int = 1):
+    def pd_analysis(self, samples_per_molecule: int = 1):
         """prep workdir"""
         self.source_directory = os.getcwd()
         self.prep_new_working_directory()
@@ -576,7 +576,7 @@ class Modeller:
                 for ind in range(samples_per_molecule):
                     for i, data in enumerate(tqdm(test_loader, miniters=int(len(test_loader) / 25))):
                         data = data.to(self.config.device)
-                        self.proxy_discriminator_step(data, i, update_weights, skip_step=False)
+                        self.pd_step(data, i, update_weights, skip_step=False)
 
                 # post epoch processing
                 self.logger.concatenate_stats_dict(self.epoch_type)
@@ -987,7 +987,7 @@ class Modeller:
             self.polymorph_classification_epoch(data_loader, update_weights, iteration_override)
 
         elif self.config.mode == 'proxy_discriminator':
-            self.proxy_discriminator_epoch(data_loader, update_weights, iteration_override)
+            self.pd_epoch(data_loader, update_weights, iteration_override)
 
         self.times[epoch_type + "_epoch_end"] = time()
 
@@ -1407,8 +1407,8 @@ class Modeller:
                     max_num_heavy_atoms=9,
                     pare_to_size=None,
                     max_radius=15,
-                    synchronize=True,
-                    test=self.logger.epoch==0
+                    synchronize=False,
+                    test=self.logger.epoch == 0
                 )
                 self.integrated_dataset = False
                 # print("generated all chunks")
@@ -1874,10 +1874,10 @@ class Modeller:
 
         self.logger.concatenate_stats_dict(self.epoch_type)
 
-    def proxy_discriminator_epoch(self,
-                                  data_loader=None,
-                                  update_weights=True,
-                                  iteration_override=None):
+    def pd_epoch(self,
+                 data_loader=None,
+                 update_weights=True,
+                 iteration_override=None):
 
         if not hasattr(self, 'generator_prior'):  # first GAN epoch
             self.init_gan_constants()
@@ -1902,7 +1902,7 @@ class Modeller:
             '''
             train proxy discriminator
             '''
-            self.proxy_discriminator_step(mol_batch, i, update_weights, skip_step=False)
+            self.pd_step(mol_batch, i, update_weights, skip_step=False)
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -1912,15 +1912,43 @@ class Modeller:
 
     def embed_dataloader_dataset(self, data_loader):
         embeddings = []
-        for i, mol_batch in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
-            mol_batch = mol_batch.to(self.config.device)
+        batch_size = data_loader.batch_size
+        num_chunks = len(data_loader.dataset) // batch_size + int(len(data_loader.dataset) % batch_size != 0)
+        for ind in range(num_chunks):  # do it this way so to avoid shuffling
+            mol_batch = self.collater(data_loader.dataset[ind * batch_size:(ind + 1) * batch_size]).to(self.device)
             cell_params = torch.cat([
                 mol_batch.cell_lengths, mol_batch.cell_angles, mol_batch.pose_params0
             ], dim=1)
             embeddings.append(self._embed_mol(mol_batch, mol_batch.pos, cell_params).cpu().detach())
-        embeddings = torch.cat(embeddings, dim=0)
+        embeddings = torch.cat(embeddings, dim=0).to('cpu')
         for ind in range(len(data_loader.dataset)):
             data_loader.dataset[ind].y = embeddings[None, ind]
+
+        '''
+from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import test_crystal_rebuild_from_embedding
+mol_batch = next(iter(data_loader))
+
+opt_vdw_pot = mol_batch.vdw_pot[None, ...].cpu()
+opt_vdw_loss = mol_batch.vdw_loss[None, ...].cpu()
+opt_aunits = mol_batch.pos[None,...].cpu()
+cell_params = torch.cat([
+    mol_batch.y[:, -9:].cpu(), torch.ones((mol_batch.num_graphs,3))], dim=1)[None, ...].cpu()
+
+r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
+    mol_batch.clone().cpu(),
+    opt_vdw_pot,
+    opt_vdw_loss,
+    opt_aunits,
+    cell_params,
+    denorm=True,
+    destd=True,
+    renorm=False,
+    restd=False,
+    make_figs=False,
+)
+
+
+'''
 
     def update_buffers(self):
         # reprocess buffers
@@ -2090,7 +2118,7 @@ class Modeller:
                                           stats.values(),
                                           mode='extend')
 
-    def proxy_discriminator_step(self, mol_batch, i, update_weights, skip_step):
+    def pd_step(self, mol_batch, i, update_weights, skip_step):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
@@ -2102,7 +2130,7 @@ class Modeller:
         temp_std = self.models_dict['proxy_discriminator'].target_std
         temp_mean = self.models_dict['proxy_discriminator'].target_mean
 
-        embedding = mol_batch.y
+        embedding = mol_batch.y[:, :-3]  # cut trailing 3 dimensions for P1 modelling
         vdw_score = mol_batch.vdw_loss
 
         prediction = self.models_dict['proxy_discriminator'](x=embedding)[:, 0]
@@ -2629,11 +2657,7 @@ class Modeller:
     #     return opt_cell_params, opt_aunits, opt_packing_coeff, opt_vdw_loss, opt_vdw_pot
 
     def _embed_mol(self, mol_batch, aunit_coordinates, cell_params, norm_by_size=True):
-        centered_aunit_coordinates = torch.cat(
-            [aunit_coordinates[mol_batch.batch == ind] - aunit_coordinates[mol_batch.batch == ind].mean(0) for ind in
-             range(mol_batch.num_graphs)
-             ])
-        mol_batch.pos = centered_aunit_coordinates
+        mol_batch.pos = aunit_coordinates
         embedding = self.get_mol_embedding_for_proxy(mol_batch.clone())
         scaled_params = self.rescale_proxy_discrim_cell_params(mol_batch, cell_params, norm_by_size)
         embedding = torch.cat([embedding, scaled_params[:, :9]], dim=1)
@@ -2666,7 +2690,71 @@ class Modeller:
         scaled_params = (normed_params - lattice_means[None, :]) / lattice_stds[None, :]
         return scaled_params
 
+    ''' test crystal rebuilding with different rescalings
+    
+from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import test_crystal_rebuild_from_embedding
+
+opt_vdw_pot = mol_batch.vdw_pot[None, ...].cpu()
+opt_vdw_loss = mol_batch.vdw_loss[None, ...].cpu()
+opt_aunits = mol_batch.pos[None,...].cpu()
+cell_params=cell_params.cpu()
+opt_cell_params = cell_params[None, ...]
+
+normed_params = renormalize_generated_cell_params(
+    cell_params.cuda(),
+    mol_batch.cuda(),
+    self.crystal_builder.asym_unit_dict
+).cpu()
+
+r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
+    mol_batch.clone().cpu(),
+    opt_vdw_pot,
+    opt_vdw_loss,
+    opt_aunits,
+    normed_params[None,...],
+    denorm=True,
+    destd=False,
+    renorm=False,
+    restd=False,
+    make_figs=False,
+)
+
+# subtract means
+lattice_means = torch.tensor([
+    1, 1, 1,
+    torch.pi / 2, torch.pi / 2, torch.pi / 2,
+    0.5, 0.5, 0.5,
+    torch.pi / 4, 0, torch.pi / 2
+], device='cpu', dtype=torch.float32)
+lattice_stds = torch.tensor([
+    .35, .35, .35,
+    .45, .45, .45,
+    0.25, 0.25, 0.25,
+    0.33, torch.pi / 2, torch.pi / 2
+], device='cpu', dtype=torch.float32)
+scaled_params = (normed_params - lattice_means[None, :]) / lattice_stds[None, :]
+
+r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
+    mol_batch.clone().cpu(),
+    opt_vdw_pot,
+    opt_vdw_loss,
+    opt_aunits,
+    scaled_params[None,...],
+    denorm=True,
+    destd=True,
+    renorm=False,
+    restd=False,
+    make_figs=False,
+)
+
+    '''
+
     def get_mol_embedding_for_proxy(self, mol_batch):
+        centered_aunit_coordinates = torch.cat(
+            [mol_batch.pos[mol_batch.batch == ind] - mol_batch.pos[mol_batch.batch == ind].mean(0) for ind in
+             range(mol_batch.num_graphs)
+             ])
+        mol_batch.pos = centered_aunit_coordinates
         if self.config.proxy_discriminator.embedding_type == 'autoencoder':
             v_embedding = self.models_dict['autoencoder'].encode(mol_batch.clone())
             s_embedding = self.models_dict['autoencoder'].scalarizer(v_embedding)

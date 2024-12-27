@@ -55,6 +55,7 @@ class CrystalBuilder:
                 molwise_parameters,
                 molwise_data,
                 target_handedness,
+                skip_molecule_posing=False,
             ))
 
         # apply symmetry ops to build unit cell
@@ -194,6 +195,7 @@ class CrystalBuilder:
             cell_parameters,
             mol_batch,
             target_handedness,
+            skip_molecule_posing
             )
 
         if skip_molecule_posing:  # use original orientation as passed
@@ -242,6 +244,7 @@ class CrystalBuilder:
                                    cell_parameters,
                                    molecule_batch,
                                    target_handedness,
+                                   skip_molecule_posing
                                    ):
         supercell_batch = molecule_batch.clone()
         supercell_batch, cell_parameters, target_handedness = \
@@ -269,13 +272,17 @@ class CrystalBuilder:
         for i in range(supercell_batch.num_graphs):
             atomic_number_list.append(supercell_batch.x[supercell_batch.batch == i])
             coords_list.append(supercell_batch.pos[supercell_batch.batch == i])
-        # center, apply rotation, apply translation (to canonical conformer)
-        canonical_conformer_coords_list = []
-        for i, (rotation, coords, T_fc, new_frac_pos) in enumerate(
-                zip(rotations_list, coords_list, T_fc_list, mol_position)):
-            canonical_conformer_coords_list.append(
-                torch.inner(rotation, coords - coords.mean(0)).T + torch.inner(T_fc, new_frac_pos)
-            )
+
+        if not skip_molecule_posing:
+            # center, apply rotation, apply translation (to canonical conformer)
+            canonical_conformer_coords_list = []
+            for i, (rotation, coords, T_fc, new_frac_pos) in enumerate(
+                    zip(rotations_list, coords_list, T_fc_list, mol_position)):
+                canonical_conformer_coords_list.append(
+                    torch.inner(rotation, coords - coords.mean(0)).T + torch.inner(T_fc, new_frac_pos)
+                )
+        else:
+             canonical_conformer_coords_list = []
         return (T_cf_list, T_fc_list, atomic_number_list,
                 canonical_conformer_coords_list, generated_cell_volumes,
                 supercell_batch, sym_ops_list)

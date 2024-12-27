@@ -115,11 +115,12 @@ def instantiate_models(config: Namespace,
         else:
             assert False
 
+        conditions_dim = 6
         models_dict['proxy_discriminator'] = InvariantEmbeddingRegressor(
             config.seeds.model,
             config.proxy_discriminator.model,
             num_targets=1,
-            conditions_dim=9,
+            conditions_dim=conditions_dim,
         )
         assert config.model_paths.autoencoder is not None  # must preload the encoder
 

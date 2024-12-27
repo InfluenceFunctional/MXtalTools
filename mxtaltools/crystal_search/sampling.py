@@ -17,7 +17,7 @@ from mxtaltools.crystal_building.utils import set_molecule_alignment, overwrite_
 from mxtaltools.crystal_search.utils import cell_clustering, coarse_filter, get_topk_samples, rdf_clustering
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.crystal_rdf import new_crystal_rdf
-from mxtaltools.models.functions.vdw_overlap import vdw_analysis, compute_lj_pot
+from mxtaltools.models.functions.vdw_overlap import vdw_analysis, compute_lj_pot, scale_molwise_vdw_pot
 from mxtaltools.models.utils import denormalize_generated_cell_params, get_intermolecular_dists_dict, enforce_1d_bound, \
     enforce_crystal_system
 
@@ -349,7 +349,7 @@ class Sampler:
             optimizer_func=torch.optim.Rprop,
             score_func=self.gd_score_func,
             store_aunit=True,
-            standardize_pose=False,
+            standardize_pose=True,
         )
         n_samples = len(optimization_record['std_cell_params'])
         inds_to_sample = torch.unique(
@@ -362,8 +362,7 @@ class Sampler:
         )
 
         # rescale after summing and norming
-        rescaled_vdw_loss = optimization_record['vdw_potential']/mol_batch.num_atoms[None, :]
-        rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0])
+        rescaled_vdw_loss = scale_molwise_vdw_pot(optimization_record['vdw_potential'], mol_batch.num_atoms)
 
         return (
             optimization_record['vdw_potential'][inds_to_sample],
@@ -741,7 +740,7 @@ class Sampler:
                               dtype=torch.float32)
 
         (hit_max_lr, loss_record, lr_record, max_lr,
-         optimizer, packing_record, samples_record,
+         optimizer, packing_record, samples_record, handedness_record,
          scheduler1, scheduler2, vdw_record, aunit_poses) = self._init_for_local_opt(
             lr, max_num_steps, optimizer_func, sample, mol_batch.num_nodes)
 
@@ -766,6 +765,8 @@ class Sampler:
                             graph_convolution_cutoff=self.cutoff,
                             align_to_standardized_orientation=standardize_pose,
                             skip_refeaturization=False,
+                            target_handedness=torch.ones(mol_batch.num_graphs, dtype=torch.long,
+                                                         device=mol_batch.x.device)
                         ))
 
                     reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
@@ -797,6 +798,8 @@ class Sampler:
                     samples_record[s_ind] = sample_to_compare.detach()
                     loss_record[s_ind] = loss.detach()
                     packing_record[s_ind] = packing_coeff.detach()
+                    handedness_record[s_ind] = supercell_batch.aunit_handedness
+
                     if store_aunit:
                         aunit_poses[s_ind] = supercell_batch.pos[supercell_batch.aux_ind == 0].detach()
 
@@ -834,15 +837,16 @@ class Sampler:
         scheduler1 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: 0.975)
         scheduler2 = optim.lr_scheduler.MultiplicativeLR(optimizer, lr_lambda=lambda epoch: grow_lambda)
         hit_max_lr = False
-        n_samples = len(sample)
-        vdw_record = torch.zeros((max_num_steps, n_samples))
-        samples_record = torch.zeros((max_num_steps, n_samples, 12))
+        num_samples = len(sample)
+        vdw_record = torch.zeros((max_num_steps, num_samples))
+        samples_record = torch.zeros((max_num_steps, num_samples, 12))
+        handedness_record = torch.zeros((max_num_steps, num_samples))
         loss_record = torch.zeros_like(vdw_record)
         lr_record = torch.zeros(max_num_steps)
         packing_record = torch.zeros_like(vdw_record)
         aunit_poses = torch.zeros((len(vdw_record), num_atoms, 3))
         return (hit_max_lr, loss_record, lr_record, max_lr,
-                optimizer, packing_record, samples_record,
+                optimizer, packing_record, samples_record, handedness_record,
                 scheduler1, scheduler2, vdw_record, aunit_poses)
 
     def _score_crystal_batch(self, mol_batch, score_func, supercell_data):

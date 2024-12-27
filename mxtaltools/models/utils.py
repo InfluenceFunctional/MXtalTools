@@ -1128,17 +1128,17 @@ def get_intermolecular_dists_dict(supercell_data: CrystalData,
 
 
 def denormalize_generated_cell_params(
-        generator_raw_samples,
-        mol_data,
-        asym_unit_dict):
+        normed_cell_samples: torch.FloatTensor,
+        mol_data: CrystalData,
+        asym_unit_dict: dict):
     # denormalize the predicted cell lengths
-    cell_lengths = torch.pow(mol_data.sym_mult * mol_data.mol_volume, 1 / 3)[:, None] * generator_raw_samples[:, :3]
+    cell_lengths = torch.pow(mol_data.sym_mult * mol_data.mol_volume, 1 / 3)[:, None] * normed_cell_samples[:, :3]
     # rescale asymmetric units  # todo add assertions around these
     mol_positions = descale_asymmetric_unit(asym_unit_dict,
-                                            generator_raw_samples[:, 6:9],
+                                            normed_cell_samples[:, 6:9],
                                             mol_data.sg_ind)
     generated_samples_to_build = torch.cat(
-        [cell_lengths, generator_raw_samples[:, 3:6], mol_positions, generator_raw_samples[:, 9:12]], dim=1)
+        [cell_lengths, normed_cell_samples[:, 3:6], mol_positions, normed_cell_samples[:, 9:12]], dim=1)
     return generated_samples_to_build
 
 

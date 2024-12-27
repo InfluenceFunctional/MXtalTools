@@ -132,7 +132,7 @@ class CrystalAnalyzer(torch.nn.Module):
             = vdw_analysis(self.vdw_radii,
                            dist_dict,
                            crystal_batch.num_graphs,
-                           turnover_potential=turnover_potential)
+                           )
 
         reduced_volume = cell_volume / crystal_batch.sym_mult
         packing_coeff = crystal_batch.mol_volume / reduced_volume
@@ -191,7 +191,7 @@ class CrystalAnalyzer(torch.nn.Module):
             = vdw_analysis(self.vdw_radii,
                            dist_dict,
                            crystal_batch.num_graphs,
-                           turnover_potential=turnover_potential)
+                           )
 
         reduced_volume = cell_volume / crystal_batch.sym_mult
         packing_coeff = crystal_batch.mol_volume / reduced_volume

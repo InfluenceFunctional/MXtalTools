@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch_scatter import scatter
 
-from mxtaltools.common.utils import scale_vdw_pot
+from mxtaltools.common.utils import scale_edgewise_vdw_pot
 from mxtaltools.dataset_management.CrystalData import CrystalData
 from mxtaltools.models.functions.asymmetric_radius_graph import asymmetric_radius_graph
 
@@ -174,10 +174,21 @@ def vdw_analysis(vdw_radii: torch.Tensor,
     molwise_normed_overlap = scatter(normed_overlap, batch, reduce='sum', dim_size=num_graphs)
     molwise_lj_pot = scatter(lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
-    scaled_lj_pot = scale_vdw_pot(lj_pot, clip_max=clip_max)
+    scaled_lj_pot = scale_edgewise_vdw_pot(lj_pot, clip_max=clip_max)
     molwise_loss = scatter(scaled_lj_pot, batch, reduce='sum', dim_size=num_graphs)
 
     return molwise_overlap, molwise_normed_overlap, molwise_lj_pot, molwise_loss, lj_pot
+
+
+def scale_molwise_vdw_pot(vdw_potential, num_atoms):
+    if vdw_potential.ndim > 1:
+        rescaled_vdw_loss = vdw_potential / num_atoms[None, :]
+    else:
+        rescaled_vdw_loss = vdw_potential / num_atoms
+
+    rescaled_vdw_loss[rescaled_vdw_loss > 0] = torch.log(rescaled_vdw_loss[rescaled_vdw_loss > 0])
+
+    return rescaled_vdw_loss
 
 
 def compute_lj_pot(dist_dict, vdw_radii):

@@ -2,7 +2,7 @@ machine: "cluster"  # or "cluster"
 device: "cuda"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: proxy_discriminator
-dataset_name: 'test_pd_dataset.pt' #'test_dataset.pt'
+dataset_name: 'pd_dataset.pt' #'test_dataset.pt'
 dataset_yaml_path: '/proxy_discriminator.yaml'
 save_checkpoints: True # will do it always on cluster, only locally if True
 checkpointing_loss_type: test  # will save a new checkpoint when a minimum of this is reached

@@ -503,9 +503,9 @@ def flatten_wandb_params(config):
     return config
 
 
-def scale_vdw_pot(lj_pot: Union[np.ndarray, torch.tensor],
-                  turnover_pot: float = 5,
-                  clip_max: float = 100) \
+def scale_edgewise_vdw_pot(lj_pot: Union[np.ndarray, torch.tensor],
+                           turnover_pot: float = 5,
+                           clip_max: float = 100) \
         -> Union[np.ndarray, torch.tensor]:
     if torch.is_tensor(lj_pot):
         scaled_lj_pot = torch.log(2 + lj_pot) / np.log(2) - 1

@@ -67,7 +67,7 @@ generate_sgs: [1]
 supercell_size: 5
 
 proxy_discriminator:
-  embedding_type: 'mol_volume' # autoencoder, principal_axes, principal_moments, mol_volume
+  embedding_type: 'autoencoder' # autoencoder, principal_axes, principal_moments, mol_volume
   cutoff: 6
   optimizer:
     beta1: 0.9

@@ -29,4 +29,4 @@ for er_path in proxy_paths:
     config = process_main_config(override_args, append_model_paths=False)
 
     predictor = Modeller(config)
-    predictor.proxy_discriminator_analysis(samples_per_molecule=10)
+    predictor.pd_analysis(samples_per_molecule=10)
