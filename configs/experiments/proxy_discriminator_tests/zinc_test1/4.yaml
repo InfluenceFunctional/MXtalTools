@@ -27,9 +27,10 @@ logger:
   log_figures: true
   mini_csp_frequency: 5
   run_name: pd_zinc_test1_0_1_2_3_4
-  sample_reporting_frequency: 5
+  sample_reporting_frequency: 25
+  stats_reporting_frequency: 25
 machine: cluster
-max_batch_size: 10000
+max_batch_size: 100000
 max_epochs: 10000
 min_batch_size: 50
 minimum_epochs: 1000
