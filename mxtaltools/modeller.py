@@ -1391,27 +1391,28 @@ class Modeller:
         num_processes = self.config.dataset.num_processes
         if len(os.listdir(chunks_path)) == 0:  # only make a new batch if the previous batch has been integrated
             if self.logger.epoch == 0 or self.integrated_dataset == True:
-                self.mp_pool = mp.Pool(num_processes)
-                self.mp_pool = async_generate_random_crystal_dataset(
-                    self.config.dataset.otf_build_size,
-                    self.config.dataset.smiles_source,
-                    temp_dataset_path,
-                    workdir=chunks_path,
-                    allowed_atom_types=list(
-                        self.dataDims[
-                            'allowed_atom_types'].cpu().detach().numpy()),
-                    num_processes=num_processes,
-                    pool=self.mp_pool,
-                    max_num_atoms=30,
-                    # todo add config controls for this
-                    max_num_heavy_atoms=9,
-                    pare_to_size=None,
-                    max_radius=15,
-                    synchronize=False,
-                    test=self.logger.epoch == 0
-                )
-                self.integrated_dataset = False
-                # print("generated all chunks")
+                if not self.config.machine == 'cluster':
+                    self.mp_pool = mp.Pool(num_processes)
+                    self.mp_pool = async_generate_random_crystal_dataset(
+                        self.config.dataset.otf_build_size,
+                        self.config.dataset.smiles_source,
+                        temp_dataset_path,
+                        workdir=chunks_path,
+                        allowed_atom_types=list(
+                            self.dataDims[
+                                'allowed_atom_types'].cpu().detach().numpy()),
+                        num_processes=num_processes,
+                        pool=self.mp_pool,
+                        max_num_atoms=30,
+                        # todo add config controls for this
+                        max_num_heavy_atoms=9,
+                        pare_to_size=None,
+                        max_radius=15,
+                        synchronize=False,
+                        test=self.logger.epoch == 0
+                    )
+                    self.integrated_dataset = False
+                    # print("generated all chunks")
 
         # if a batch is finished, merge it with our existing dataset
         if len(os.listdir(chunks_path)) >= num_processes:  # only integrate when the batch is exactly complete

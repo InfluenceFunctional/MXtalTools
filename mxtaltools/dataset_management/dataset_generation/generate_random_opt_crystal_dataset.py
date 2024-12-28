@@ -13,9 +13,9 @@ from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smil
 from mxtaltools.dataset_management.otf_conf_gen import get_smiles_list
 
 if __name__ == '__main__':
-    test=False
+    test = False
     num_smiles = 50000
-    num_processes = 16
+    num_processes = 8
     smiles_path = r'D:\crystal_datasets\zinc22'
     chunks_path = Path(r'D:\crystal_datasets')
     new_dataset_name ='otf_dataset'
