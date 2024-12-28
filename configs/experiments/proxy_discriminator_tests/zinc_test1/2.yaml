@@ -29,7 +29,7 @@ logger:
   run_name: pd_zinc_test1_0_1_2
   sample_reporting_frequency: 5
 machine: cluster
-max_batch_size: 2000
+max_batch_size: 10000
 max_epochs: 10000
 min_batch_size: 50
 minimum_epochs: 1000
@@ -38,7 +38,7 @@ model_names:
 - autoencoder
 - proxy_discriminator
 model_paths:
-  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test4_cont_2_20-12-12-04-34
   discriminator: null
   embedding_regressor: null
   generator: null
@@ -57,11 +57,11 @@ proxy_discriminator:
   cutoff: 6
   embedding_type: mol_volume
   model:
-    depth: 512
+    depth: 256
     dropout: 0
     hidden_dim: 256
     norm: null
-    num_layers: 8
+    num_layers: 2
     vector_norm: null
   optimizer:
     beta1: 0.9

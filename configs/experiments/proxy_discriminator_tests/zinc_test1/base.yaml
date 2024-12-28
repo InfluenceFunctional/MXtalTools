@@ -54,7 +54,7 @@ model_paths:
   discriminator: null
   generator: null
   regressor: null
-  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test3_7_05-12-14-03-45
+  autoencoder: best_autoencoder_experiments_autoencoder_tests_otf_zinc_test4_cont_2_20-12-12-04-34
   embedding_regressor: null
   proxy_discriminator: null
 

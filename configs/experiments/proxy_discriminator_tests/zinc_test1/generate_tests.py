@@ -9,11 +9,11 @@ Proxy discriminator params
 """
 configs = [
     {
-        'num_layers': 8,
-        'depth': 512,
+        'num_layers': 2,
+        'depth': 256,
         'dropout': 0,
         'norm': None,
-        'max_batch_size': 2000,
+        'max_batch_size': 10000,
         'embedding_type': 'autoencoder',
         'max_lr': 5e-4,
         'init_lr': 1e-4,
@@ -22,11 +22,11 @@ configs = [
         'weight_decay': 0.0001,
     },  # 0 - baseline
     {
-        'num_layers': 8,
-        'depth': 512,
+        'num_layers': 2,
+        'depth': 256,
         'dropout': 0,
         'norm': None,
-        'max_batch_size': 2000,
+        'max_batch_size': 10000,
         'embedding_type': 'principal_axes',
         'max_lr': 5e-4,
         'init_lr': 1e-4,
@@ -35,11 +35,11 @@ configs = [
         'weight_decay': 0.0001,
     },  # 1 - Ips
     {
-        'num_layers': 8,
-        'depth': 512,
+        'num_layers': 2,
+        'depth': 256,
         'dropout': 0,
         'norm': None,
-        'max_batch_size': 2000,
+        'max_batch_size': 10000,
         'embedding_type': 'mol_volume',
         'max_lr': 5e-4,
         'init_lr': 1e-4,
