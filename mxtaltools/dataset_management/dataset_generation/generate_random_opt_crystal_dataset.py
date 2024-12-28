@@ -14,15 +14,17 @@ from mxtaltools.dataset_management.otf_conf_gen import get_smiles_list
 
 if __name__ == '__main__':
     test=False
+    num_smiles = 50000
+    num_processes = 16
     smiles_path = r'D:\crystal_datasets\zinc22'
     chunks_path = Path(r'D:\crystal_datasets')
     new_dataset_name ='otf_dataset'
     os.chdir(smiles_path)
-    chunks = get_smiles_list(10000, 8, smiles_path)
+    chunks = get_smiles_list(num_smiles, num_processes, smiles_path)
     os.chdir(chunks_path)
 
     min_ind = 0
-    pool = mp.Pool(8)
+    pool = mp.Pool(num_processes)
     # ind = 0
     # chunk_ind = min_ind + ind
     # chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')

@@ -47,6 +47,58 @@ configs = [
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
     },  # 2 - mol volume
+    {
+        'num_layers': 8,
+        'depth': 256,
+        'dropout': 0,
+        'norm': None,
+        'max_batch_size': 10000,
+        'embedding_type': 'autoencoder',
+        'max_lr': 5e-4,
+        'init_lr': 1e-4,
+        'lr_growth_lambda': 1.01,
+        'lr_shrink_lambda': 0.99975,
+        'weight_decay': 0.0001,
+    },  # 3 - ae, deep
+    {
+        'num_layers': 2,
+        'depth': 1024,
+        'dropout': 0,
+        'norm': None,
+        'max_batch_size': 10000,
+        'embedding_type': 'autoencoder',
+        'max_lr': 5e-4,
+        'init_lr': 1e-4,
+        'lr_growth_lambda': 1.01,
+        'lr_shrink_lambda': 0.99975,
+        'weight_decay': 0.0001,
+    },  # 4 - ae, wide
+    {
+        'num_layers': 8,
+        'depth': 1024,
+        'dropout': 0,
+        'norm': None,
+        'max_batch_size': 10000,
+        'embedding_type': 'autoencoder',
+        'max_lr': 5e-4,
+        'init_lr': 1e-4,
+        'lr_growth_lambda': 1.01,
+        'lr_shrink_lambda': 0.99975,
+        'weight_decay': 0.0001,
+    },  # 5 - ae, deep and wide
+    {
+        'num_layers': 8,
+        'depth': 1024,
+        'dropout': 0.1,
+        'norm': 'layer',
+        'max_batch_size': 10000,
+        'embedding_type': 'autoencoder',
+        'max_lr': 5e-4,
+        'init_lr': 1e-4,
+        'lr_growth_lambda': 1.01,
+        'lr_shrink_lambda': 0.99975,
+        'weight_decay': 0.0001,
+    },  # 6 - ae, deep, wide and normed
 ]
 
 # upshots:
