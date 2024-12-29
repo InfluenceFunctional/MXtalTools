@@ -1,5 +1,5 @@
 machine: "cluster"  # or "cluster"
-device: "cuda"  # or "cpu"
+device: "cpu"  # or "cpu"
 anomaly_detection: False  # slows down the code
 mode: proxy_discriminator
 dataset_name: 'pd_dataset.pt' #'test_dataset.pt'
