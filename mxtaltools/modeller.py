@@ -1898,7 +1898,7 @@ class Modeller:
         if self.logger.epoch == 0:  # embed loaded dataset on first epoch
             self.embed_dataloader_dataset(data_loader)
 
-        for i, mol_batch in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+        for step, mol_batch in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
             if step % self.config.logger.stats_reporting_frequency == 0:
                 skip_stats = False
             elif step == len(data_loader) - 1:
