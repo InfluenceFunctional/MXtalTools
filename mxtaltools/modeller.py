@@ -1899,11 +1899,18 @@ class Modeller:
             self.embed_dataloader_dataset(data_loader)
 
         for i, mol_batch in enumerate(tqdm(data_loader, miniters=int(len(data_loader) / 10), mininterval=30)):
+            if step % self.config.logger.stats_reporting_frequency == 0:
+                skip_stats = False
+            elif step == len(data_loader) - 1:
+                skip_stats = False
+            else:
+                skip_stats = True
+
             mol_batch = mol_batch.to(self.config.device)
             '''
             train proxy discriminator
             '''
-            self.pd_step(mol_batch, i, update_weights, skip_step=False)
+            self.pd_step(mol_batch, i, update_weights, skip_step=False, skip_stats=skip_stats)
 
             if iteration_override is not None:
                 if i >= iteration_override:
@@ -2119,7 +2126,7 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
                                           stats.values(),
                                           mode='extend')
 
-    def pd_step(self, mol_batch, i, update_weights, skip_step):
+    def pd_step(self, mol_batch, i, update_weights, skip_step, skip_stats: bool = False):
         """
         execute a complete training step for the discriminator
         compute losses, do reporting, update gradients
@@ -2128,26 +2135,16 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             self.models_dict['proxy_discriminator'].target_std = 8.23
             self.models_dict['proxy_discriminator'].target_mean = -8.6
 
-        temp_std = self.models_dict['proxy_discriminator'].target_std
-        temp_mean = self.models_dict['proxy_discriminator'].target_mean
-
-        embedding = mol_batch.y[:, :-3]  # cut trailing 3 dimensions for P1 modelling
-        vdw_score = mol_batch.vdw_loss
-
-        prediction = self.models_dict['proxy_discriminator'](x=embedding)[:, 0]
+        prediction = self.models_dict['proxy_discriminator'](x=mol_batch.y[:, :-3])[:, 0]  # cut trailing 3 dimensions for P1 modelling
 
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
-                                                (vdw_score.flatten() - temp_mean) / temp_std,
+                                                (mol_batch.vdw_loss.flatten() - self.models_dict['proxy_discriminator'].target_mean) / self.models_dict['proxy_discriminator'].target_std,
                                                 reduction='none')
 
         discriminator_loss = discriminator_losses.mean()
 
-        # if not torch.isfinite(discriminator_loss).all():
-        #     raise ValueError("Numerical Error: NaN in proxy discriminator loss")
-
         if update_weights and (not skip_step):
-            self.optimizers_dict['proxy_discriminator'].zero_grad(
-                set_to_none=True)  # reset gradients from previous passes
+            self.optimizers_dict['proxy_discriminator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
             discriminator_loss.backward()  # back-propagation
             torch.nn.utils.clip_grad_norm_(self.models_dict['proxy_discriminator'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping
@@ -2158,17 +2155,18 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
                                           discriminator_losses.mean().cpu().detach().numpy(),
                                           discriminator_losses.cpu().detach().numpy())
 
-        stats = {
-            'vdw_prediction': (prediction * temp_std + temp_mean).detach(),
-            'vdw_score': vdw_score.detach(),
-        }
+        if not skip_stats:
+            stats = {
+                'vdw_prediction': (prediction * self.models_dict['proxy_discriminator'].target_std + self.models_dict['proxy_discriminator'].target_mean).detach(),
+                'vdw_score': mol_batch.vdw_loss.detach(),
+            }
 
-        dict_of_tensors_to_cpu_numpy(stats)
+            dict_of_tensors_to_cpu_numpy(stats)
 
-        self.logger.update_stats_dict(self.epoch_type,
-                                      stats.keys(),
-                                      stats.values(),
-                                      mode='extend')
+            self.logger.update_stats_dict(self.epoch_type,
+                                          stats.keys(),
+                                          stats.values(),
+                                          mode='extend')
 
     def aggregate_discriminator_losses(self,
                                        discriminator_output_on_real,

@@ -56,7 +56,7 @@ positional_noise:
   regressor: 0
 proxy_discriminator:
   cutoff: 6
-  embedding_type: mol_volume
+  embedding_type: null
   model:
     depth: 256
     dropout: 0
