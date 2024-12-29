@@ -1910,10 +1910,10 @@ class Modeller:
             '''
             train proxy discriminator
             '''
-            self.pd_step(mol_batch, i, update_weights, skip_step=False, skip_stats=skip_stats)
+            self.pd_step(mol_batch, step, update_weights, skip_step=False, skip_stats=skip_stats)
 
             if iteration_override is not None:
-                if i >= iteration_override:
+                if step >= iteration_override:
                     break  # stop training early
 
         self.logger.concatenate_stats_dict(self.epoch_type)
