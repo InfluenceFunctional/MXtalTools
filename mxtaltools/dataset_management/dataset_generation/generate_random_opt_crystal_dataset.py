@@ -14,29 +14,31 @@ from mxtaltools.dataset_management.otf_conf_gen import get_smiles_list
 
 if __name__ == '__main__':
     test = False
-    num_smiles = 50000
-    num_processes = 8
+    num_smiles = 10000
+    num_processes = 6
+    num_chunks = 100
     smiles_path = r'D:\crystal_datasets\zinc22'
     chunks_path = Path(r'D:\crystal_datasets')
-    new_dataset_name ='otf_dataset'
+    new_dataset_name = 'pd_dataset'
     os.chdir(smiles_path)
-    chunks = get_smiles_list(num_smiles, num_processes, smiles_path)
+    chunks = get_smiles_list(num_smiles, num_chunks, smiles_path)
     os.chdir(chunks_path)
 
     min_ind = 0
     pool = mp.Pool(num_processes)
     # ind = 0
-    # chunk_ind = min_ind + ind
-    # chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
-    # process_smiles_to_crystal_opt(chunks[ind], chunk_path, np.array([1, 6, 7, 8, 9]), 1, True,** {
-    #     'max_num_atoms': 30,
-    #     'max_num_heavy_atoms': 9,
-    #     'pare_to_size': None,
-    #     'max_radius': 15,
-    #     'protonate': True,
-    #     'rotamers_per_sample': 1,
-    #     'allow_simple_hydrogen_rotations': False
-    # })
+    # for ind, chunk in enumerate(chunks):
+    #     chunk_ind = min_ind + ind
+    #     chunk_path = os.path.join(chunks_path, f'chunk_{chunk_ind}.pkl')
+    #     process_smiles_to_crystal_opt(chunks[ind], chunk_path, np.array([1, 6, 7, 8, 9]), 1, False,
+    #                                   ** {'max_num_atoms': 30,
+    #         'max_num_heavy_atoms': 9,
+    #         'pare_to_size': None,
+    #         'max_radius': 15,
+    #         'protonate': True,
+    #         'rotamers_per_sample': 1,
+    #         'allow_simple_hydrogen_rotations': False
+    #     })
 
     outputs = []
 
@@ -58,6 +60,7 @@ if __name__ == '__main__':
 
     pool.close()
     pool.join()
+    [print(out.get()) for out in outputs]
 
     '''process and save dataset'''
     miner = DataManager(device='cpu',

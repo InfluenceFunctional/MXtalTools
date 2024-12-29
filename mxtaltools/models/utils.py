@@ -525,7 +525,7 @@ def enforce_crystal_system(lattice_lengths, lattice_angles, sg_inds, symmetries_
 
     lattices = [symmetries_dict['lattice_type'][int(sg_inds[n])] for n in range(len(sg_inds))]
 
-    pi_tensor = torch.tensor(torch.ones_like(lattice_lengths[0, 0]) * torch.pi)
+    pi_tensor = torch.ones_like(lattice_lengths[0, 0]) * torch.pi
 
     fixed_lengths = torch.zeros_like(lattice_lengths)
     fixed_angles = torch.zeros_like(lattice_angles)

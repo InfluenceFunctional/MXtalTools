@@ -54,7 +54,7 @@ def process_smiles_to_crystal_opt(lines: list,
                                   run_tests=False,
                                   **conf_kwargs):
     """"""
-    print('''build molecules''')
+    #print('''build molecules''')
     collater = Collater(0, 0)
     mol_samples = process_smiles_list(lines,allowed_atom_types, **conf_kwargs)
     if len(mol_samples) == 0:
@@ -63,7 +63,7 @@ def process_smiles_to_crystal_opt(lines: list,
 
     mol_batch = collater(mol_samples)
 
-    print('''sample random crystals''')
+    #print('''sample random crystals''')
     crystal_generator = CSDPrior(
         sym_info=init_sym_info(),
         device="cpu",
@@ -71,7 +71,7 @@ def process_smiles_to_crystal_opt(lines: list,
     normed_cell_params = crystal_generator(mol_batch.num_graphs, space_group * torch.ones(mol_batch.num_graphs))
     mol_batch.sg_ind = space_group * torch.ones(mol_batch.num_graphs)
 
-    print('''optimize crystals and save opt trajectory''')
+    #print('''optimize crystals and save opt trajectory''')
     sampler = Sampler(0,
                       'cpu',
                       'local',
@@ -85,21 +85,22 @@ def process_smiles_to_crystal_opt(lines: list,
                       num_cpus=1,
                       )
 
-    print('''batch compute vdw volume''')
+    #print('''batch compute vdw volume''')
     mol_batch.mol_volume = batch_molecule_vdW_volume(mol_batch.x.flatten(),
                                                      mol_batch.pos,
                                                      mol_batch.batch,
                                                      mol_batch.num_graphs,
                                                      sampler.vdw_radii_tensor)
 
-    print('''do local opt''')
-    opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = sampler.local_opt_for_proxy_discrim(
+    #print('''do local opt''')
+    opt_vdw_pot, opt_vdw_loss, opt_packing_coeff, opt_cell_params, opt_aunits = sampler.sample_and_optimize_random_crystals(
         mol_batch.clone().cpu(),
         normed_cell_params.cpu(),
         opt_eps=1e-1,
+        post_scramble_each=10,
     )
 
-    print('''extract samples''')
+    #print('''extract samples''')
     samples = []
     for graph_ind in range(mol_batch.num_graphs):
         graph_inds = mol_batch.batch == graph_ind

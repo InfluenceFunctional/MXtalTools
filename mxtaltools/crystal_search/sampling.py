@@ -327,10 +327,11 @@ class Sampler:
 
         return packing_coeff, rdf, samples, vdw
 
-    def local_opt_for_proxy_discrim(self,
-                                    mol_batch,
-                                    init_state,
-                                    opt_eps):
+    def sample_and_optimize_random_crystals(self,
+                                            mol_batch,
+                                            init_state,
+                                            opt_eps,
+                                            post_scramble_each: int = None):
 
         mol_batch, scalar_mol_embedding, vector_mol_embedding = self.embed_molecule_for_sampling(
             mol_batch,
@@ -350,6 +351,7 @@ class Sampler:
             score_func=self.gd_score_func,
             store_aunit=True,
             standardize_pose=True,
+            post_scramble_each=post_scramble_each,
         )
         n_samples = len(optimization_record['std_cell_params'])
         inds_to_sample = torch.unique(
@@ -728,19 +730,18 @@ class Sampler:
                                        optimizer_func,
                                        score_func: str,
                                        store_aunit: bool = False,
-                                       standardize_pose: bool = True
+                                       standardize_pose: bool = True,
+                                       post_scramble_each: int = None
+                                       # specifically for adding diversity to existing samples
                                        ):
         """
         do a local optimization via gradient descent on some score function
         """
 
-        sample = torch.tensor(init_sample.clone(),
-                              device=mol_batch.x.device,
-                              requires_grad=True,
-                              dtype=torch.float32)
+        sample = init_sample.clone().detach().requires_grad_(True)
 
         (hit_max_lr, loss_record, lr_record, max_lr,
-         optimizer, packing_record, samples_record, handedness_record,
+         optimizer, packing_record, samples_record, raw_samples_record, handedness_record,
          scheduler1, scheduler2, vdw_record, aunit_poses) = self._init_for_local_opt(
             lr, max_num_steps, optimizer_func, sample, mol_batch.num_nodes)
 
@@ -748,54 +749,17 @@ class Sampler:
         with torch.enable_grad():
             with tqdm(total=max_num_steps, disable=not self.show_tqdm) as pbar:
                 s_ind = 0
-                while s_ind < max_num_steps - 1 and not converged:
-                    optimizer.zero_grad()
-
-                    cleaned_sample = self.cleanup_sample(sample, mol_batch.sg_ind)
-                    descaled_cleaned_sample = denormalize_generated_cell_params(
-                        cleaned_sample, mol_batch, self.supercell_builder.asym_unit_dict
-                    )
-
-                    # todo functionalize the below - it seems we do it everywhere
-                    supercell_batch, generated_cell_volumes = (
-                        self.supercell_builder.build_zp1_supercells(
-                            mol_batch=mol_batch,
-                            cell_parameters=descaled_cleaned_sample,
-                            supercell_size=self.supercell_size,
-                            graph_convolution_cutoff=self.cutoff,
-                            align_to_standardized_orientation=standardize_pose,
-                            skip_refeaturization=False,
-                            target_handedness=torch.ones(mol_batch.num_graphs, dtype=torch.long,
-                                                         device=mol_batch.x.device)
-                        ))
-
-                    reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
-                    packing_coeff = mol_batch.mol_volume / reduced_volume
-                    dist_dict, loss, vdw_potential = self._score_crystal_batch(
-                        mol_batch, score_func, supercell_batch,
-                    )
-
-                    loss.mean().backward()  # compute gradients
-                    optimizer.step()  # apply grad
-
-                    lr = optimizer.param_groups[0]['lr']
-                    lr_record[s_ind] = lr
-                    if lr >= max_lr:
-                        hit_max_lr = True
-                    if hit_max_lr:
-                        if lr > 1e-5:
-                            scheduler1.step()  # shrink
-                    else:
-                        scheduler2.step()  # grow
-
-                    if (s_ind > 10) and (s_ind % 20 == 0):
-                        converged = all(vdw_record[s_ind - 10:s_ind, :].std(0) < convergence_eps)
+                while not converged:
+                    descaled_cleaned_sample, dist_dict, loss, packing_coeff, supercell_batch, vdw_potential = self._gd_opt_step(
+                        hit_max_lr, lr_record, max_lr, mol_batch, optimizer, s_ind, sample, scheduler1, scheduler2,
+                        score_func, standardize_pose)
 
                     sample_to_compare = descaled_cleaned_sample.clone()
                     sample_to_compare[:, 9:] = supercell_batch.cell_params[:, 9:]
 
                     vdw_record[s_ind] = vdw_potential.detach()
                     samples_record[s_ind] = sample_to_compare.detach()
+                    raw_samples_record[s_ind] = sample.detach()
                     loss_record[s_ind] = loss.detach()
                     packing_record[s_ind] = packing_coeff.detach()
                     handedness_record[s_ind] = supercell_batch.aunit_handedness
@@ -807,13 +771,26 @@ class Sampler:
                     if s_ind % 100 == 0:
                         pbar.update(100)
 
-        sampling_dict = {'std_cell_params': samples_record[:s_ind].cpu(),
-                         'vdw_potential': vdw_record[:s_ind].cpu(),
-                         'overall_loss': loss_record[:s_ind].cpu(),
-                         'packing_coeff': packing_record[:s_ind].cpu(),
+                    if s_ind > 10:
+                        flag1 = all(vdw_record[s_ind - 10:s_ind, :].std(0) < convergence_eps)  # loss is converged
+                        flag2 = s_ind > (max_num_steps - 1)  # run out of time
+                        if flag1 or flag2:
+                            converged = True
+                            if post_scramble_each is not None:
+                                aunit_poses, dist_dict, loss, loss_record, packing_coeff, packing_record, s_ind, sample, sample_to_compare, samples_record, supercell_batch, vdw_record = self.add_scrambled_molecule_samples(
+                                    aunit_poses, dist_dict, handedness_record, hit_max_lr, loss, loss_record, lr_record,
+                                    max_lr, mol_batch, optimizer, packing_coeff, packing_record, post_scramble_each,
+                                    raw_samples_record, s_ind, sample, sample_to_compare, samples_record, scheduler1,
+                                    scheduler2, score_func, standardize_pose, store_aunit, supercell_batch, vdw_record)
+
+        good_inds = torch.argwhere(samples_record[:, 0, 0] != 0).flatten()
+        sampling_dict = {'std_cell_params': samples_record[good_inds].cpu(),
+                         'vdw_potential': vdw_record[good_inds].cpu(),
+                         'overall_loss': loss_record[good_inds].cpu(),
+                         'packing_coeff': packing_record[good_inds].cpu(),
                          }
         if store_aunit:
-            sampling_dict['aunit_poses'] = aunit_poses[:s_ind].cpu()
+            sampling_dict['aunit_poses'] = aunit_poses[good_inds].cpu()
 
         # do RDF on final sample
         if not self.skip_rdf:
@@ -829,6 +806,96 @@ class Sampler:
                 sample_to_compare.detach().cpu(), loss.detach().cpu(),
                 sampling_dict)
 
+    def add_scrambled_molecule_samples(self, aunit_poses, dist_dict, handedness_record, hit_max_lr, loss, loss_record,
+                                       lr_record, max_lr, mol_batch, optimizer, packing_coeff, packing_record,
+                                       post_scramble_each, raw_samples_record, s_ind, sample, sample_to_compare,
+                                       samples_record, scheduler1, scheduler2, score_func, standardize_pose,
+                                       store_aunit, supercell_batch, vdw_record):
+        s_ind -= 1
+        inds_to_scramble = torch.arange(0, s_ind, max(1, s_ind // post_scramble_each))
+        scrambled_samples_record = torch.zeros_like(samples_record)[:len(inds_to_scramble)]
+        scrambled_packing_record = torch.zeros_like(packing_record)[:len(inds_to_scramble)]
+        scrambled_loss_record = torch.zeros_like(packing_record)[:len(inds_to_scramble)]
+        scrambled_vdw_record = torch.zeros_like(packing_record)[:len(inds_to_scramble)]
+        scrambled_aunit_poses = torch.zeros_like(aunit_poses)[:len(inds_to_scramble)]
+        scrambled_handedness_record = torch.zeros_like(handedness_record)[
+                                      :len(inds_to_scramble)]
+        for s_ind2, scramble_ind in enumerate(inds_to_scramble):
+            sample = raw_samples_record[scramble_ind] + torch.cat([
+                torch.zeros_like(sample[:, :9]), torch.randn_like(sample[:, -3:])
+            ], dim=1)  # scramble molecule orientation
+            sample.requires_grad_(True)
+            descaled_cleaned_sample, dist_dict, loss, packing_coeff, supercell_batch, vdw_potential = self._gd_opt_step(
+                hit_max_lr, lr_record, max_lr, mol_batch, optimizer, s_ind, sample, scheduler1,
+                scheduler2,
+                score_func, standardize_pose)
+
+            sample_to_compare = descaled_cleaned_sample.clone()
+            sample_to_compare[:, 9:] = supercell_batch.cell_params[:, 9:]
+
+            scrambled_vdw_record[s_ind2] = vdw_potential.detach()
+            scrambled_samples_record[s_ind2] = sample_to_compare.detach()
+            scrambled_loss_record[s_ind2] = loss.detach()
+            scrambled_packing_record[s_ind2] = packing_coeff.detach()
+            scrambled_handedness_record[s_ind2] = supercell_batch.aunit_handedness
+            if store_aunit:
+                scrambled_aunit_poses[s_ind2] = supercell_batch.pos[
+                    supercell_batch.aux_ind == 0].detach()
+        s_ind += len(inds_to_scramble)
+        samples_record = torch.cat([samples_record, scrambled_samples_record], dim=0)
+        vdw_record = torch.cat([vdw_record, scrambled_vdw_record], dim=0)
+        loss_record = torch.cat([loss_record, scrambled_loss_record], dim=0)
+        packing_record = torch.cat([packing_record, scrambled_packing_record], dim=0)
+        aunit_poses = torch.cat([aunit_poses, scrambled_aunit_poses], dim=0)
+        return aunit_poses, dist_dict, loss, loss_record, packing_coeff, packing_record, s_ind, sample, sample_to_compare, samples_record, supercell_batch, vdw_record
+
+    '''visualize traj
+    import plotly.graph_objects as go
+    from mxtaltools.models.functions.vdw_overlap import scale_molwise_vdw_pot
+    
+    fig = go.Figure()
+    for ind in range(vdw_record.shape[1]):
+        fig.add_scatter(y=scale_molwise_vdw_pot(vdw_record[:s_ind, ind], mol_batch.num_atoms[ind].repeat(s_ind)))
+    fig.show()
+'''
+
+    def _gd_opt_step(self, hit_max_lr, lr_record, max_lr, mol_batch, optimizer, s_ind, sample, scheduler1, scheduler2,
+                     score_func, standardize_pose):
+        optimizer.zero_grad()
+        cleaned_sample = self.cleanup_sample(sample, mol_batch.sg_ind)
+        descaled_cleaned_sample = denormalize_generated_cell_params(
+            cleaned_sample, mol_batch, self.supercell_builder.asym_unit_dict
+        )
+        # todo functionalize the below - it seems we do it everywhere
+        supercell_batch, generated_cell_volumes = (
+            self.supercell_builder.build_zp1_supercells(
+                mol_batch=mol_batch,
+                cell_parameters=descaled_cleaned_sample,
+                supercell_size=self.supercell_size,
+                graph_convolution_cutoff=self.cutoff,
+                align_to_standardized_orientation=standardize_pose,
+                skip_refeaturization=False,
+                target_handedness=torch.ones(mol_batch.num_graphs, dtype=torch.long,
+                                             device=mol_batch.x.device)
+            ))
+        reduced_volume = generated_cell_volumes / supercell_batch.sym_mult
+        packing_coeff = mol_batch.mol_volume / reduced_volume
+        dist_dict, loss, vdw_potential = self._score_crystal_batch(
+            mol_batch, score_func, supercell_batch,
+        )
+        loss.mean().backward()  # compute gradients
+        optimizer.step()  # apply grad
+        lr = optimizer.param_groups[0]['lr']
+        lr_record[s_ind] = lr
+        if lr >= max_lr:
+            hit_max_lr = True
+        if hit_max_lr:
+            if lr > 1e-5:
+                scheduler1.step()  # shrink
+        else:
+            scheduler2.step()  # grow
+        return descaled_cleaned_sample, dist_dict, loss, packing_coeff, supercell_batch, vdw_potential
+
     def _init_for_local_opt(self, lr, max_num_steps, optimizer_func, sample, num_atoms):
         optimizer = optimizer_func([sample], lr=lr)
         max_lr_target_time = max_num_steps // 10
@@ -840,13 +907,14 @@ class Sampler:
         num_samples = len(sample)
         vdw_record = torch.zeros((max_num_steps, num_samples))
         samples_record = torch.zeros((max_num_steps, num_samples, 12))
+        raw_samples_record = torch.zeros_like(samples_record)
         handedness_record = torch.zeros((max_num_steps, num_samples))
         loss_record = torch.zeros_like(vdw_record)
         lr_record = torch.zeros(max_num_steps)
         packing_record = torch.zeros_like(vdw_record)
         aunit_poses = torch.zeros((len(vdw_record), num_atoms, 3))
         return (hit_max_lr, loss_record, lr_record, max_lr,
-                optimizer, packing_record, samples_record, handedness_record,
+                optimizer, packing_record, samples_record, raw_samples_record, handedness_record,
                 scheduler1, scheduler2, vdw_record, aunit_poses)
 
     def _score_crystal_batch(self, mol_batch, score_func, supercell_data):

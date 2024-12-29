@@ -200,6 +200,8 @@ class DataManager:
                                                      dataset_to_analyze.batch,
                                                      dataset_to_analyze.num_graphs,
                                                      self.vdw_radii_tensor)
+
+        assert torch.sum(torch.isnan(molecule_volumes)) == 0, "NaN in molecule volume calculations!"
         del dataset_to_analyze
 
         for ind in range(len(self.dataset)):

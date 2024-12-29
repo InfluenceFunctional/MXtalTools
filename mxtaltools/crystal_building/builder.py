@@ -360,6 +360,6 @@ class CrystalBuilder:
             cell_sample = cell_sample.to(self.device)
 
         if target_handedness is not None:
-            target_handedness = torch.tensor(target_handedness, device=self.device, dtype=torch.float32)
+            target_handedness = target_handedness.clone().detach()
 
         return supercell_data, cell_sample, target_handedness

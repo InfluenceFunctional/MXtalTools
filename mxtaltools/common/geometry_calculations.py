@@ -553,7 +553,7 @@ def compute_Ip_handedness(Ip):
 
     elif torch.is_tensor(Ip):
         if Ip.ndim == 2:
-            return torch.sign(torch.mul(Ip[0], torch.cross(Ip[1], Ip[2])).sum()).float()
+            return torch.sign(torch.mul(Ip[0], torch.cross(Ip[1], Ip[2], dim=0)).sum()).float()
         elif Ip.ndim == 3:
             return torch.sign(torch.mul(Ip[:, 0], torch.cross(Ip[:, 1], Ip[:, 2], dim=1)).sum(1))
 

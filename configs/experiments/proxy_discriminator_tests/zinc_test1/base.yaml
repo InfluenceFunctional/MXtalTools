@@ -40,7 +40,8 @@ logger:
   run_name: pd_zinc_test1
   experiment_tag: pd_zinc_test1
   mini_csp_frequency: 5  # how often to run CSP-style search WIP
-  sample_reporting_frequency: 5  # how often to do detailed reporting with figures
+  sample_reporting_frequency: 25  # how often to do detailed reporting with figures
+  stats_reporting_frequency: 25
   log_figures: True
 
 sample_steps: 100
