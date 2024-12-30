@@ -9,12 +9,13 @@ from torch_geometric.loader.dataloader import Collater
 
 from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import process_smiles_to_crystal_opt
-from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import test_crystal_rebuild_from_embedding
+from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import \
+    test_crystal_rebuild_from_embedding
 from mxtaltools.dataset_management.otf_conf_gen import get_smiles_list
 
 if __name__ == '__main__':
     test = False
-    num_smiles = 20000
+    num_smiles = 40000
     num_processes = 8
     num_chunks = num_smiles // 100
     smiles_path = r'D:\crystal_datasets\zinc22'
@@ -99,25 +100,24 @@ if __name__ == '__main__':
             make_figs=False,
         )
 
-    del miner.dataset
-
-    '''reload for testing'''
-    conv_cutoff = 6
-    # nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
-    miner.regression_target = None
-    miner.load_dataset_for_modelling(
-        new_dataset_name + '.pt',
-        filter_conditions=None,
-        filter_polymorphs=False,
-        filter_duplicate_molecules=False,
-        filter_protons=False,
-        conv_cutoff=conv_cutoff,
-        do_shuffle=True,
-        precompute_edges=False,
-        single_identifier=None,
-    )
-
     if test:
+        del miner.dataset
+
+        '''reload for testing'''
+        conv_cutoff = 6
+        # nonzero_positional_noise = sum(list(self.config.positional_noise.__dict__.values()))
+        miner.regression_target = None
+        miner.load_dataset_for_modelling(
+            new_dataset_name + '.pt',
+            filter_conditions=None,
+            filter_polymorphs=False,
+            filter_duplicate_molecules=False,
+            filter_protons=False,
+            conv_cutoff=conv_cutoff,
+            do_shuffle=True,
+            precompute_edges=False,
+            single_identifier=None,
+        )
         '''check sample quality'''
         collater = Collater(0, 0)
         mol_batch = collater([elem for elem in miner.dataset[:1000]]).clone().cpu()

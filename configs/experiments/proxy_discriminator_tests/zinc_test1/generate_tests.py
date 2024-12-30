@@ -20,6 +20,7 @@ configs = [
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
+        'device': 'cpu',
     },  # 0 - baseline
     {
         'num_layers': 2,
@@ -33,6 +34,7 @@ configs = [
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
+        'device': 'cpu',
     },  # 1 - Ips
     {
         'num_layers': 2,
@@ -46,6 +48,7 @@ configs = [
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
+        'device': 'cpu',
     },  # 2 - no embedding
     {
         'num_layers': 8,
@@ -59,6 +62,7 @@ configs = [
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
+        'device': 'cpu',
     },  # 3 - ae, deep
     {
         'num_layers': 2,
@@ -72,6 +76,7 @@ configs = [
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
+        'device': 'cpu',
     },  # 4 - ae, wide
     {
         'num_layers': 8,
@@ -85,6 +90,7 @@ configs = [
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
+        'device': 'cpu',
     },  # 5 - ae, deep and wide
     {
         'num_layers': 8,
@@ -98,7 +104,22 @@ configs = [
         'lr_growth_lambda': 1.01,
         'lr_shrink_lambda': 0.99975,
         'weight_decay': 0.0001,
+        'device': 'cpu',
     },  # 6 - ae, deep, wide and normed
+    {
+        'num_layers': 40,
+        'depth': 512,
+        'dropout': 0.1,
+        'norm': 'layer',
+        'max_batch_size': 50000,
+        'embedding_type': 'autoencoder',
+        'max_lr': 5e-4,
+        'init_lr': 1e-4,
+        'lr_growth_lambda': 1.01,
+        'lr_shrink_lambda': 0.99975,
+        'weight_decay': 0.001,
+        'device': 'cuda',
+    },  # 7 - ae, really big
 ]
 
 # upshots:
@@ -119,7 +140,7 @@ for ii, config_i in enumerate(configs):
     config['proxy_discriminator']['optimizer']['lr_growth_lambda'] = config_i['lr_growth_lambda']
     config['proxy_discriminator']['optimizer']['lr_shrink_lambda'] = config_i['lr_shrink_lambda']
     config['proxy_discriminator']['optimizer']['weight_decay'] = config_i['weight_decay']
-
+    config['device'] = config_i['device']
     with open(str(ind) + '.yaml', 'w') as outfile:
         yaml.dump(config, outfile, default_flow_style=False)
 
