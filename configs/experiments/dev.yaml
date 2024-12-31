@@ -1,7 +1,7 @@
 machine: "local"  # or "cluster"
 device: "cuda"  # or "cpu"
-base_config_path: /experiments/base/proxy_discriminator.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
-dataset_name: test_pd_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
+base_config_path: /experiments/base/autoencoder.yaml #/experiments/base/generator.yaml #/experiments/base/discriminator.yaml
+dataset_name: eval_qm9_dataset.pt #CSD_QM9_dataset.pt  #test_CSD_dataset.pt #'test_GEOM_QM9_DRUGS_dataset.pt' #'test_CSD_dataset.pt'
 #misc_dataset_name: 'misc_data_for_qm9_dataset.npy' #
 extra_test_set_name: null
 save_checkpoints: True

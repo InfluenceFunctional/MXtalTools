@@ -321,12 +321,16 @@ def process_smiles(smile: str,
     coords = coords[0]
     atom_types = atom_types[0]
 
-    # use rotatable bonds as fragmentation sites to pare the molecule
+    # use rotatable bonds as fragmentation sites to pare the molecule down to an acceptable size
     if pare_to_size is not None:
         while np.sum(atom_types > 1) > pare_to_size and len(mask_rotate) > 0:
-            fragment_size = np.sum(mask_rotate, axis=1)
-            min_atoms_to_remove = len(coords) - pare_to_size
-            fragment_to_pare = np.argmin(np.abs(min_atoms_to_remove - fragment_size))
+            #num_heavy_atoms = np.sum(atom_types > 1)
+            fragment_size = np.sum(mask_rotate[:, atom_types > 1], axis=1)  # how many heavy atoms in the fragment
+            #min_atoms_to_remove = num_heavy_atoms - pare_to_size
+            #resulting_num_atoms = num_heavy_atoms - fragment_size
+            #excess_atoms = resulting_num_atoms - pare_to_size
+            # select a fragment randomly, weighted towards smaller pieces
+            fragment_to_pare = np.random.choice(len(fragment_size),1,  p=np.exp(-fragment_size)/np.sum(np.exp(-fragment_size)))[0]
             atoms_to_pare = mask_rotate[fragment_to_pare, :]
             coords, atom_types = coords[~atoms_to_pare], atom_types[~atoms_to_pare]
             mask_rotate = np.delete(mask_rotate, fragment_to_pare, axis=0)
@@ -335,7 +339,7 @@ def process_smiles(smile: str,
     # molecule sizes filter
     if np.sum(atom_types > 1) > max_num_heavy_atoms:
         return None, "too many heavy atoms"
-    elif len(atom_types) < 6:
+    elif len(atom_types) < 5:
         return None, "too few atoms"
     elif len(atom_types) > max_num_atoms:
         return None, "too many atoms"

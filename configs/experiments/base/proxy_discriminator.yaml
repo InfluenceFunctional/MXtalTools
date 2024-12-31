@@ -68,6 +68,7 @@ supercell_size: 5
 
 proxy_discriminator:
   embedding_type: autoencoder # autoencoder, principal_axes, principal_moments, mol_volume
+  train_encoder: True  # option to train the encoder, if doing autoencoder training
   cutoff: 6
   optimizer:
     beta1: 0.9

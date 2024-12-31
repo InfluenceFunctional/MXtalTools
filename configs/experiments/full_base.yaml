@@ -112,6 +112,7 @@ embedding_regressor:
 proxy_discriminator:
   train_on_randn: True
   embedding_type: 'autoencoder' # autoencoder, principal_axes, principal_moments, mol_volume
+  train_encoder: False
   vdw_turnover_potential: 10
   cutoff: 6
 

@@ -111,7 +111,7 @@ configs = [
         'depth': 512,
         'dropout': 0.1,
         'norm': 'layer',
-        'max_batch_size': 50000,
+        'max_batch_size': 1000,
         'embedding_type': 'autoencoder',
         'max_lr': 5e-4,
         'init_lr': 1e-4,

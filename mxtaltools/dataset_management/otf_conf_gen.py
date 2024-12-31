@@ -1,5 +1,4 @@
 import gzip
-import multiprocessing as mp
 import os
 from pathlib import Path
 from random import shuffle
@@ -7,7 +6,6 @@ from random import shuffle
 import numpy as np
 
 from mxtaltools.common.utils import chunkify
-from mxtaltools.dataset_management.data_manager import DataManager
 from mxtaltools.dataset_management.dataset_generation.generate_dataset_from_smiles import process_smiles_list_to_file, \
     process_smiles_to_crystal_opt
 

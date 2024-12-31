@@ -1409,7 +1409,7 @@ class Modeller:
                         pare_to_size=None,
                         max_radius=15,
                         synchronize=False,
-                        test=self.logger.epoch == 0
+                        test=False, #self.logger.epoch == 0
                     )
                     self.integrated_dataset = False
                     # print("generated all chunks")
@@ -1887,12 +1887,17 @@ class Modeller:
             self.train_loader_to_replace = self.otf_crystal_dataset_generation(data_loader)
             data_loader = self.train_loader_to_replace
 
+        self.models_dict['autoencoder'].eval()
+
         if update_weights:
             self.models_dict['proxy_discriminator'].train(True)
+            if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
+                self.models_dict['autoencoder'].train(True)
         else:
             self.models_dict['proxy_discriminator'].eval()
+            if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
+                self.models_dict['autoencoder'].eval()
 
-        self.models_dict['autoencoder'].eval()
         self.crystal_builder.rotation_basis = 'cartesian'
 
         if self.logger.epoch == 0:  # embed loaded dataset on first epoch
@@ -1922,12 +1927,14 @@ class Modeller:
         embeddings = []
         batch_size = data_loader.batch_size
         num_chunks = len(data_loader.dataset) // batch_size + int(len(data_loader.dataset) % batch_size != 0)
-        for ind in range(num_chunks):  # do it this way so to avoid shuffling
-            mol_batch = self.collater(data_loader.dataset[ind * batch_size:(ind + 1) * batch_size]).to(self.device)
-            cell_params = torch.cat([
-                mol_batch.cell_lengths, mol_batch.cell_angles, mol_batch.pose_params0
-            ], dim=1)
-            embeddings.append(self._embed_mol(mol_batch, mol_batch.pos, cell_params).cpu().detach())
+        with torch.no_grad():
+            for ind in range(num_chunks):  # do it this way so to avoid shuffling
+                mol_batch = self.collater(data_loader.dataset[ind * batch_size:(ind + 1) * batch_size]).to(self.device)
+                cell_params = torch.cat([
+                    mol_batch.cell_lengths, mol_batch.cell_angles, mol_batch.pose_params0
+                ], dim=1)
+                embeddings.append(self._embed_mol(mol_batch, mol_batch.pos, cell_params).cpu().detach())
+
         embeddings = torch.cat(embeddings, dim=0).to('cpu')
         for ind in range(len(data_loader.dataset)):
             data_loader.dataset[ind].y = embeddings[None, ind]
@@ -2135,6 +2142,12 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
             self.models_dict['proxy_discriminator'].target_std = 8.23
             self.models_dict['proxy_discriminator'].target_mean = -8.6
 
+        if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
+            cell_params = torch.cat([
+                mol_batch.cell_lengths, mol_batch.cell_angles, mol_batch.pose_params0
+            ], dim=1)
+            mol_batch.y = self._embed_mol(mol_batch, mol_batch.pos, cell_params)
+
         prediction = self.models_dict['proxy_discriminator'](x=mol_batch.y[:, :-3])[:, 0]  # cut trailing 3 dimensions for P1 modelling
 
         discriminator_losses = F.smooth_l1_loss(prediction.flatten(),
@@ -2145,10 +2158,17 @@ r_pot, r_loss, r_au = test_crystal_rebuild_from_embedding(
 
         if update_weights and (not skip_step):
             self.optimizers_dict['proxy_discriminator'].zero_grad(set_to_none=True)  # reset gradients from previous passes
+            if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
+                self.optimizers_dict['autoencoder'].zero_grad(
+                    set_to_none=True)  # reset gradients from previous passes
             discriminator_loss.backward()  # back-propagation
             torch.nn.utils.clip_grad_norm_(self.models_dict['proxy_discriminator'].parameters(),
                                            self.config.gradient_norm_clip)  # gradient clipping
             self.optimizers_dict['proxy_discriminator'].step()  # update parameters
+            if self.config.proxy_discriminator.embedding_type == 'autoencoder' and self.config.proxy_discriminator.train_encoder:
+                torch.nn.utils.clip_grad_norm_(self.models_dict['autoencoder'].parameters(),
+                                               self.config.gradient_norm_clip)  # gradient clipping
+                self.optimizers_dict['autoencoder'].step()  # update parameters
 
         # don't move anything to the CPU until after the backward pass
         self.logger.update_current_losses('proxy_discriminator', self.epoch_type,
