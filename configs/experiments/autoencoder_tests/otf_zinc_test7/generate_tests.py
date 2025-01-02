@@ -7,7 +7,7 @@ base_config = load_yaml('base.yaml')
 config_list = [
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.25},
+        'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
             'affine_scale_factor': 1,
             'filter_protons': False,
@@ -55,7 +55,7 @@ config_list = [
     },  # 0 - baseline gnn with noise
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.25},
+        'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
             'affine_scale_factor': 1,
             'filter_protons': False,
@@ -103,7 +103,7 @@ config_list = [
     },  # 1 - baseline gnn with noise, 128
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.25},
+        'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
             'affine_scale_factor': 1,
             'filter_protons': False,
@@ -151,7 +151,7 @@ config_list = [
     },  # 2 - baseline gnn with noise, 64
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.25},
+        'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
             'affine_scale_factor': 1,
             'filter_protons': False,
@@ -199,7 +199,7 @@ config_list = [
     },  # 3 - baseline gnn with noise, aggressive lr
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.25},
+        'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
             'affine_scale_factor': 1,
             'filter_protons': False,
@@ -247,7 +247,7 @@ config_list = [
     },  # 4 - baseline gnn with noise, weak lr
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.25},
+        'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
             'affine_scale_factor': 1,
             'filter_protons': False,
@@ -295,7 +295,7 @@ config_list = [
     },  # 5 - baseline gnn with noise, deeper decoder
     {
         'dataset': {'otf_build_size': 10000},
-        'positional_noise': {'autoencoder': 0.25},
+        'positional_noise': {'autoencoder': 0.1},
         'autoencoder': {
             'affine_scale_factor': 1,
             'filter_protons': False,
